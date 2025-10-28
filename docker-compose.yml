@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: atrevete-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-atrevete_db}
+      POSTGRES_USER: ${POSTGRES_USER:-atrevete}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - atrevete-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atrevete} -d ${POSTGRES_DB:-atrevete_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis cache and pub/sub (with RedisSearch for LangGraph checkpointer)
+  redis:
+    image: redis/redis-stack:latest  # Pinned for reproducibility (2025-01)
+    container_name: atrevete-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - atrevete-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # API service: FastAPI webhook receiver
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: atrevete-api
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - atrevete-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Agent service: LangGraph orchestrator + workers
+  agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: atrevete-agent
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - atrevete-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import redis; r=redis.Redis(host='redis', port=6379); r.ping()\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  atrevete-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

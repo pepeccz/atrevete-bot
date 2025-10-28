@@ -1,0 +1,110 @@
+name: CI - Tests and Code Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+      REDIS_URL: redis://localhost:6379/1
+      STRIPE_WEBHOOK_SECRET: whsec_test_secret
+      CHATWOOT_WEBHOOK_SECRET: test_chatwoot_secret
+      ANTHROPIC_API_KEY: sk-ant-test-key
+      GOOGLE_SERVICE_ACCOUNT_JSON: /tmp/test-service-account.json
+      GOOGLE_CALENDAR_IDS: test-cal-1,test-cal-2,test-cal-3,test-cal-4,test-cal-5
+      CHATWOOT_API_URL: https://test.chatwoot.com
+      CHATWOOT_API_TOKEN: test_token
+      CHATWOOT_ACCOUNT_ID: "1"
+      CHATWOOT_INBOX_ID: "1"
+      STRIPE_SECRET_KEY: sk_test_fake_key
+      STRIPE_PUBLISHABLE_KEY: pk_test_fake_key
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Python version
+        run: python --version
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install production dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install development dependencies
+        run: pip install pytest-cov ruff mypy types-redis
+
+      - name: List installed packages
+        run: pip list
+
+      - name: Create test service account file
+        run: echo '{"type":"service_account","project_id":"test"}' > /tmp/test-service-account.json
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Run ruff linter
+        run: ruff check . --output-format=github
+
+      - name: Run mypy type checker
+        run: mypy .
+
+      - name: Run tests with coverage
+        run: pytest
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: htmlcov/
+          retention-days: 30

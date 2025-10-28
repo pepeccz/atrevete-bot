@@ -1,0 +1,201 @@
+[
+    {
+      "headers": {
+        "host": "n8n.autohomologacion.net",
+        "user-agent": "rest-client/2.1.0 (linux-musl x86_64) ruby/3.4.4p34",
+        "content-length": "5472",
+        "accept": "application/json",
+        "accept-encoding": "gzip, br",
+        "cdn-loop": "cloudflare; loops=1",
+        "cf-connecting-ip": "95.217.135.51",
+        "cf-ipcountry": "FI",
+        "cf-ray": "98f88decffdd9a02-HEL",
+        "cf-visitor": "{\"scheme\":\"https\"}",
+        "content-type": "application/json",
+        "x-forwarded-for": "172.64.223.28",
+        "x-forwarded-host": "n8n.autohomologacion.net",
+        "x-forwarded-port": "443",
+        "x-forwarded-proto": "https",
+        "x-forwarded-server": "76c68bcce822",
+        "x-real-ip": "172.64.223.28"
+      },
+      "params": {},
+      "query": {},
+      "body": {
+        "account": {
+          "id": 1,
+          "name": "MSI Homologaciones"
+        },
+        "additional_attributes": {},
+        "content_attributes": {},
+        "content_type": "text",
+        "content": null,
+        "conversation": {
+          "additional_attributes": {},
+          "can_reply": true,
+          "channel": "Channel::Api",
+          "contact_inbox": {
+            "id": 79,
+            "contact_id": 3526,
+            "inbox_id": 3,
+            "source_id": "2c1bdfb2-4115-4471-9944-d32779e01859",
+            "created_at": "2025-06-20T12:32:59.000Z",
+            "updated_at": "2025-07-15T09:36:34.919Z",
+            "hmac_verified": false,
+            "pubsub_token": "JqixXj2ihgEKEzimtHpWG7iU"
+          },
+          "id": 75,
+          "inbox_id": 3,
+          "messages": [
+            {
+              "id": 1099349,
+              "content": null,
+              "account_id": 1,
+              "inbox_id": 3,
+              "conversation_id": 75,
+              "message_type": 0,
+              "created_at": 1760628174,
+              "updated_at": "2025-10-16T15:22:54.322Z",
+              "private": false,
+              "status": "sent",
+              "source_id": "WAID:3F54A2DC7EF45296BB64",
+              "content_type": "text",
+              "content_attributes": {},
+              "sender_type": "Contact",
+              "sender_id": 3526,
+              "external_source_ids": {},
+              "additional_attributes": {},
+              "processed_message_content": null,
+              "sentiment": {},
+              "conversation": {
+                "assignee_id": 1,
+                "unread_count": 2,
+                "last_activity_at": 1760628174,
+                "contact_inbox": {
+                  "source_id": "2c1bdfb2-4115-4471-9944-d32779e01859"
+                }
+              },
+              "attachments": [
+                {
+                  "id": 2522,
+                  "message_id": 1099349,
+                  "file_type": "audio",
+                  "account_id": 1,
+                  "extension": null,
+                  "data_url": "https://chats.autohomologacion.net/rails/active_storage/blobs/redirect/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBcGthIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--5ad3a6673c35f71e0b92c89223368a7fe07fad9a/c5byz1u.oga",
+                  "thumb_url": "",
+                  "file_size": 13637,
+                  "width": null,
+                  "height": null,
+                  "transcribed_text": ""
+                }
+              ],
+              "sender": {
+                "additional_attributes": {
+                  "avatar_url_hash": "7831936e119461b81fb6d5da1c7b0f928867c2649f882834382937b95a8beb20",
+                  "last_avatar_sync_at": "2025-10-16T15:19:59Z"
+                },
+                "custom_attributes": {},
+                "email": null,
+                "id": 3526,
+                "identifier": "34623226544@s.whatsapp.net",
+                "name": "Pepe",
+                "phone_number": "+34623226544",
+                "thumbnail": "https://chats.autohomologacion.net/rails/active_storage/representations/redirect/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBcGdhIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--50ecca34b3380116ceab7503905044acd5a0809a/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaDdCem9MWm05eWJXRjBTU0lJYW5CbkJqb0dSVlE2RTNKbGMybDZaVjkwYjE5bWFXeHNXd2RwQWZvdyIsImV4cCI6bnVsbCwicHVyIjoidmFyaWF0aW9uIn19--72f9aa9ac16da38f639a4e80d30fbe65f7a64c2c/544550284_4071778789799796_3751688814296883924_n.jpg",
+                "blocked": false,
+                "type": "contact"
+              }
+            }
+          ],
+          "labels": [],
+          "meta": {
+            "sender": {
+              "additional_attributes": {
+                "avatar_url_hash": "7831936e119461b81fb6d5da1c7b0f928867c2649f882834382937b95a8beb20",
+                "last_avatar_sync_at": "2025-10-16T15:19:59Z"
+              },
+              "custom_attributes": {},
+              "email": null,
+              "id": 3526,
+              "identifier": "34623226544@s.whatsapp.net",
+              "name": "Pepe",
+              "phone_number": "+34623226544",
+              "thumbnail": "https://chats.autohomologacion.net/rails/active_storage/representations/redirect/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBcGdhIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--50ecca34b3380116ceab7503905044acd5a0809a/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaDdCem9MWm05eWJXRjBTU0lJYW5CbkJqb0dSVlE2RTNKbGMybDZaVjkwYjE5bWFXeHNXd2RwQWZvdyIsImV4cCI6bnVsbCwicHVyIjoidmFyaWF0aW9uIn19--72f9aa9ac16da38f639a4e80d30fbe65f7a64c2c/544550284_4071778789799796_3751688814296883924_n.jpg",
+              "blocked": false,
+              "type": "contact"
+            },
+            "assignee": {
+              "id": 1,
+              "name": "Pepe",
+              "available_name": "Pepe",
+              "avatar_url": "",
+              "type": "user",
+              "availability_status": null,
+              "thumbnail": ""
+            },
+            "team": null,
+            "hmac_verified": false
+          },
+          "status": "open",
+          "custom_attributes": {},
+          "snoozed_until": null,
+          "unread_count": 2,
+          "first_reply_created_at": null,
+          "priority": null,
+          "waiting_since": 1760627998,
+          "agent_last_seen_at": 1760357233,
+          "contact_last_seen_at": 0,
+          "last_activity_at": 1760628174,
+          "timestamp": 1760628174,
+          "created_at": 1750422779,
+          "updated_at": 1760628174.3279219
+        },
+        "created_at": "2025-10-16T15:22:54.322Z",
+        "id": 1099349,
+        "inbox": {
+          "id": 3,
+          "name": "WhatsApp Oficina"
+        },
+        "message_type": "incoming",
+        "private": false,
+        "sender": {
+          "account": {
+            "id": 1,
+            "name": "MSI Homologaciones"
+          },
+          "additional_attributes": {
+            "avatar_url_hash": "7831936e119461b81fb6d5da1c7b0f928867c2649f882834382937b95a8beb20",
+            "last_avatar_sync_at": "2025-10-16T15:19:59Z"
+          },
+          "avatar": "https://chats.autohomologacion.net/rails/active_storage/representations/redirect/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBcGdhIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--50ecca34b3380116ceab7503905044acd5a0809a/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaDdCem9MWm05eWJXRjBTU0lJYW5CbkJqb0dSVlE2RTNKbGMybDZaVjkwYjE5bWFXeHNXd2RwQWZvdyIsImV4cCI6bnVsbCwicHVyIjoidmFyaWF0aW9uIn19--72f9aa9ac16da38f639a4e80d30fbe65f7a64c2c/544550284_4071778789799796_3751688814296883924_n.jpg",
+          "custom_attributes": {},
+          "email": null,
+          "id": 3526,
+          "identifier": "34623226544@s.whatsapp.net",
+          "name": "Pepe",
+          "phone_number": "+34623226544",
+          "thumbnail": "https://chats.autohomologacion.net/rails/active_storage/representations/redirect/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBcGdhIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--50ecca34b3380116ceab7503905044acd5a0809a/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaDdCem9MWm05eWJXRjBTU0lJYW5CbkJqb0dSVlE2RTNKbGMybDZaVjkwYjE5bWFXeHNXd2RwQWZvdyIsImV4cCI6bnVsbCwicHVyIjoidmFyaWF0aW9uIn19--72f9aa9ac16da38f639a4e80d30fbe65f7a64c2c/544550284_4071778789799796_3751688814296883924_n.jpg",
+          "blocked": false
+        },
+        "source_id": "WAID:3F54A2DC7EF45296BB64",
+        "attachments": [
+          {
+            "id": 2522,
+            "message_id": 1099349,
+            "file_type": "audio",
+            "account_id": 1,
+            "extension": null,
+            "data_url": "https://chats.autohomologacion.net/rails/active_storage/blobs/redirect/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBcGthIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--5ad3a6673c35f71e0b92c89223368a7fe07fad9a/c5byz1u.oga",
+            "thumb_url": "",
+            "file_size": 13637,
+            "width": null,
+            "height": null,
+            "transcribed_text": ""
+          }
+        ],
+        "event": "message_created"
+      },
+      "webhookUrl": "https://n8n.autohomologacion.net/webhook-test/nuevo-mensaje",
+      "executionMode": "test"
+    }
+  ]
