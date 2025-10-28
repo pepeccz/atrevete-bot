@@ -15,11 +15,91 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agent.nodes.greeting import greet_customer
-from agent.nodes.identification import confirm_name, greet_new_customer, identify_customer
+from agent.nodes.identification import confirm_name, greet_new_customer, greet_returning_customer, identify_customer
+from agent.nodes.classification import extract_intent
+from agent.nodes.summarization import summarize_conversation
+from agent.nodes.faq import answer_faq, detect_faq_intent
+from agent.prompts import load_maite_system_prompt
 from agent.state.schemas import ConversationState
+from agent.state.helpers import should_summarize
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+# Load Maite system prompt at module level (cached)
+MAITE_SYSTEM_PROMPT = load_maite_system_prompt()
+logger.info(f"Maite system prompt loaded at module initialization ({len(MAITE_SYSTEM_PROMPT)} characters)")
+
+
+# ============================================================================
+# Placeholder Nodes for Future Stories
+# ============================================================================
+
+
+async def booking_handler(state: ConversationState) -> dict[str, Any]:
+    """Placeholder node for booking flow (Epic 3)."""
+    from langchain_core.messages import AIMessage
+
+    messages = list(state.get("messages", []))
+    messages.append(AIMessage(content="Entiendo que quieres hacer una reserva. Pronto podré ayudarte con esto. 😊"))
+
+    logger.info(f"booking_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
+    return {"messages": messages}
+
+
+async def modification_handler(state: ConversationState) -> dict[str, Any]:
+    """Placeholder node for modification flow (Epic 5)."""
+    from langchain_core.messages import AIMessage
+
+    messages = list(state.get("messages", []))
+    messages.append(AIMessage(content="Entiendo que quieres modificar una cita. Pronto podré ayudarte con esto. 😊"))
+
+    logger.info(f"modification_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
+    return {"messages": messages}
+
+
+async def cancellation_handler(state: ConversationState) -> dict[str, Any]:
+    """Placeholder node for cancellation flow (Epic 5)."""
+    from langchain_core.messages import AIMessage
+
+    messages = list(state.get("messages", []))
+    messages.append(AIMessage(content="Entiendo que quieres cancelar una cita. Pronto podré ayudarte con esto. 😊"))
+
+    logger.info(f"cancellation_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
+    return {"messages": messages}
+
+
+async def faq_handler(state: ConversationState) -> dict[str, Any]:
+    """Placeholder node for FAQ/inquiry handling (Epic 6)."""
+    from langchain_core.messages import AIMessage
+
+    messages = list(state.get("messages", []))
+    messages.append(AIMessage(content="Entiendo que tienes una consulta. Pronto podré ayudarte con esto. 😊"))
+
+    logger.info(f"faq_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
+    return {"messages": messages}
+
+
+async def usual_service_handler(state: ConversationState) -> dict[str, Any]:
+    """Placeholder node for 'lo de siempre' handling (Epic 4)."""
+    from langchain_core.messages import AIMessage
+
+    messages = list(state.get("messages", []))
+    messages.append(AIMessage(content="Entiendo que quieres tu servicio habitual. Pronto podré ayudarte con esto. 😊"))
+
+    logger.info(f"usual_service_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
+    return {"messages": messages}
+
+
+async def clarification_handler(state: ConversationState) -> dict[str, Any]:
+    """Placeholder node for clarification handling."""
+    from langchain_core.messages import AIMessage
+
+    messages = list(state.get("messages", []))
+    messages.append(AIMessage(content="¿Podrías darme más detalles sobre lo que necesitas? 😊"))
+
+    logger.info(f"clarification_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
+    return {"messages": messages}
 
 
 def create_conversation_graph(
@@ -51,11 +131,30 @@ def create_conversation_graph(
     # Initialize StateGraph with ConversationState schema
     graph = StateGraph(ConversationState)
 
-    # Add nodes
+    # Add identification and greeting nodes
     graph.add_node("greet_customer", greet_customer)
     graph.add_node("identify_customer", identify_customer)
     graph.add_node("greet_new_customer", greet_new_customer)
     graph.add_node("confirm_name", confirm_name)
+
+    # Add returning customer nodes (Story 2.3)
+    graph.add_node("extract_intent", extract_intent)
+    graph.add_node("greet_returning_customer", greet_returning_customer)
+
+    # Add FAQ nodes (Story 2.6)
+    graph.add_node("detect_faq_intent", detect_faq_intent)
+    graph.add_node("answer_faq", answer_faq)
+
+    # Add summarization node (Story 2.5b)
+    graph.add_node("summarize", summarize_conversation)
+
+    # Add placeholder handler nodes (Story 2.3)
+    graph.add_node("booking_handler", booking_handler)
+    graph.add_node("modification_handler", modification_handler)
+    graph.add_node("cancellation_handler", cancellation_handler)
+    graph.add_node("faq_handler", faq_handler)
+    graph.add_node("usual_service_handler", usual_service_handler)
+    graph.add_node("clarification_handler", clarification_handler)
 
     # Set entry point
     graph.set_entry_point("greet_customer")
@@ -65,10 +164,15 @@ def create_conversation_graph(
 
     # Conditional routing after customer identification
     def route_after_identification(state: ConversationState) -> str:
-        """Route based on whether customer is returning or new."""
+        """Route based on whether customer is returning or new, with optional summarization."""
+        # Check if summarization is needed first
+        if should_summarize(state):
+            return "summarize"
+
+        # Normal routing based on customer status
         if state.get("is_returning_customer"):
-            # TODO: Route to returning customer handler (Story 2.3)
-            return "end"
+            # Story 2.6: Route returning customers to FAQ detection first (before intent extraction)
+            return "detect_faq_intent"
         else:
             return "greet_new_customer"
 
@@ -76,13 +180,93 @@ def create_conversation_graph(
         "identify_customer",
         route_after_identification,
         {
+            "summarize": "summarize",
             "greet_new_customer": "greet_new_customer",
-            "end": END,
+            "detect_faq_intent": "detect_faq_intent",
         }
     )
 
     # Add edge from greet_new_customer to confirm_name
     graph.add_edge("greet_new_customer", "confirm_name")
+
+    # Conditional routing after FAQ detection (Story 2.6)
+    def route_after_faq_detection(state: ConversationState) -> str:
+        """Route based on FAQ detection result."""
+        if state.get("faq_detected"):
+            return "answer_faq"
+        else:
+            # No FAQ detected - proceed to intent extraction
+            return "extract_intent"
+
+    graph.add_conditional_edges(
+        "detect_faq_intent",
+        route_after_faq_detection,
+        {
+            "answer_faq": "answer_faq",
+            "extract_intent": "extract_intent",
+        }
+    )
+
+    # FAQ answered - end conversation (wait for next customer message)
+    graph.add_edge("answer_faq", END)
+
+    # Route from summarization node back to main flow (Story 2.5b)
+    def route_after_summarization(state: ConversationState) -> str:
+        """Route after summarization completes, continuing normal flow."""
+        # After summarization, continue with normal routing logic
+        if state.get("is_returning_customer"):
+            return "detect_faq_intent"
+        else:
+            return "greet_new_customer"
+
+    graph.add_conditional_edges(
+        "summarize",
+        route_after_summarization,
+        {
+            "detect_faq_intent": "detect_faq_intent",
+            "greet_new_customer": "greet_new_customer",
+        }
+    )
+
+    # Conditional routing by intent (Story 2.3)
+    def route_by_intent(state: ConversationState) -> str:
+        """Route to appropriate handler based on extracted intent."""
+        intent = state.get("current_intent")
+
+        routing_map = {
+            "booking": "booking_handler",
+            "modification": "modification_handler",
+            "cancellation": "cancellation_handler",
+            "inquiry": "faq_handler",
+            "faq": "faq_handler",
+            "usual_service": "usual_service_handler",
+            "greeting_only": "greet_returning_customer",
+        }
+
+        return routing_map.get(intent, "clarification_handler")
+
+    graph.add_conditional_edges(
+        "extract_intent",
+        route_by_intent,
+        {
+            "booking_handler": "booking_handler",
+            "modification_handler": "modification_handler",
+            "cancellation_handler": "cancellation_handler",
+            "faq_handler": "faq_handler",
+            "usual_service_handler": "usual_service_handler",
+            "greet_returning_customer": "greet_returning_customer",
+            "clarification_handler": "clarification_handler",
+        }
+    )
+
+    # All handler nodes end the conversation (for now)
+    graph.add_edge("booking_handler", END)
+    graph.add_edge("modification_handler", END)
+    graph.add_edge("cancellation_handler", END)
+    graph.add_edge("faq_handler", END)
+    graph.add_edge("usual_service_handler", END)
+    graph.add_edge("clarification_handler", END)
+    graph.add_edge("greet_returning_customer", END)
 
     # Conditional routing after name confirmation
     def route_after_name_confirmation(state: ConversationState) -> str:

@@ -42,3 +42,4 @@ stripe>=10.0
 # Utilities
 tenacity
 phonenumbers
+schedule>=1.2.0

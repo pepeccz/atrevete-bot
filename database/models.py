@@ -554,10 +554,10 @@ class ConversationHistory(Base):
     )
 
     # Foreign keys
-    customer_id: Mapped[UUID] = mapped_column(
+    customer_id: Mapped[Optional[UUID]] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("customers.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,  # Allows unidentified customer conversations before phone collection
         index=True,
     )
 
@@ -578,7 +578,7 @@ class ConversationHistory(Base):
     )
 
     # Relationship
-    customer: Mapped["Customer"] = relationship("Customer")
+    customer: Mapped[Optional["Customer"]] = relationship("Customer")
 
     # Indexes
     __table_args__ = (

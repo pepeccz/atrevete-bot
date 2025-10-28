@@ -13,8 +13,9 @@ from typing import Any
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage
 
+from agent.state.helpers import add_message, format_llm_messages_with_summary
 from agent.state.schemas import ConversationState
-from agent.tools.customer_tools import create_customer, get_customer_by_phone
+from agent.tools.customer_tools import create_customer, get_customer_by_phone, get_customer_history
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ async def identify_customer(state: ConversationState) -> dict[str, Any]:
         customer_result = await get_customer_by_phone.ainvoke({"phone": phone})
 
         if customer_result and "error" not in customer_result:
-            # Customer found
+            # Customer found - returning customer path
             logger.info(
                 f"Customer identified: {customer_result['id']}",
                 extra={"conversation_id": conversation_id, "customer_id": customer_result["id"]}
@@ -56,10 +57,41 @@ async def identify_customer(state: ConversationState) -> dict[str, Any]:
 
             full_name = f"{customer_result['first_name']} {customer_result['last_name']}".strip()
 
+            # Retrieve customer appointment history
+            history_result = await get_customer_history.ainvoke({
+                "customer_id": customer_result["id"],
+                "limit": 5
+            })
+
+            # Extract appointment list from history result
+            appointments = []
+            if history_result and "error" not in history_result:
+                appointments = history_result.get("appointments", [])
+                logger.info(
+                    f"Retrieved {len(appointments)} appointments for customer",
+                    extra={"conversation_id": conversation_id, "customer_id": customer_result["id"]}
+                )
+            else:
+                # Log warning if history retrieval failed, but don't block the flow
+                logger.warning(
+                    f"Failed to retrieve customer history, proceeding without history",
+                    extra={"conversation_id": conversation_id, "customer_id": customer_result["id"]}
+                )
+
+            # Handle incomplete profile (missing last_name)
+            if not customer_result.get("last_name"):
+                logger.info(
+                    f"Customer has incomplete profile (missing last_name)",
+                    extra={"conversation_id": conversation_id, "customer_id": customer_result["id"]}
+                )
+
             return {
                 "customer_id": customer_result["id"],
                 "customer_name": full_name,
                 "is_returning_customer": True,
+                "customer_identified": True,  # Skip name confirmation for returning customers
+                "customer_history": appointments,
+                "preferred_stylist_id": customer_result.get("preferred_stylist_id"),
             }
         else:
             # Customer not found
@@ -81,6 +113,58 @@ async def identify_customer(state: ConversationState) -> dict[str, Any]:
         return {
             "error_count": state.get("error_count", 0) + 1,
             "is_returning_customer": False,
+        }
+
+
+async def greet_returning_customer(state: ConversationState) -> dict[str, Any]:
+    """
+    Greet returning customer with personalized greeting.
+
+    Generates a warm personalized greeting for returning customers using their
+    first name and Maite's emoji.
+
+    Args:
+        state: Current conversation state
+
+    Returns:
+        dict: State updates with greeting message
+    """
+    conversation_id = state.get("conversation_id")
+    customer_name = state.get("customer_name", "")
+
+    try:
+        # Extract first name from full customer name
+        first_name = customer_name.split()[0] if customer_name else "Cliente"
+
+        logger.info(
+            f"Greeting returning customer",
+            extra={"conversation_id": conversation_id, "first_name": first_name}
+        )
+
+        # Generate personalized greeting for returning customer
+        greeting_text = f"¡Hola, {first_name}! Soy Maite 🌸. ¿En qué puedo ayudarte hoy?"
+
+        # Add greeting message to state using helper (with FIFO windowing)
+        updated_state = add_message(state, "assistant", greeting_text)
+
+        logger.info(
+            f"Greeting sent to returning customer",
+            extra={"conversation_id": conversation_id, "first_name": first_name}
+        )
+
+        return {
+            "messages": updated_state["messages"],
+            "updated_at": updated_state["updated_at"],
+        }
+
+    except Exception as e:
+        logger.error(
+            f"Error in greet_returning_customer: {e}",
+            extra={"conversation_id": conversation_id},
+            exc_info=True
+        )
+        return {
+            "error_count": state.get("error_count", 0) + 1,
         }
 
 
@@ -127,12 +211,8 @@ async def greet_new_customer(state: ConversationState) -> dict[str, Any]:
                 "Encantada de saludarte. ¿Me confirmas tu nombre para dirigirme a ti correctamente?"
             )
 
-        # Create AIMessage for the greeting
-        greeting_message = AIMessage(content=greeting_text)
-
-        # Get existing messages list and append the greeting
-        messages = list(state.get("messages", []))
-        messages.append(greeting_message)
+        # Add greeting message to state using helper (with FIFO windowing)
+        updated_state = add_message(state, "assistant", greeting_text)
 
         logger.info(
             f"Greeting sent to new customer",
@@ -140,7 +220,8 @@ async def greet_new_customer(state: ConversationState) -> dict[str, Any]:
         )
 
         return {
-            "messages": messages,
+            "messages": updated_state["messages"],
+            "updated_at": updated_state["updated_at"],
             "awaiting_name_confirmation": True,
         }
 
@@ -215,7 +296,9 @@ Classify the response:
 
 Return ONLY the classification, nothing else."""
 
-        llm_response = await llm.ainvoke(classification_prompt)
+        # Format messages with conversation summary if present
+        llm_messages = format_llm_messages_with_summary(state, classification_prompt)
+        llm_response = await llm.ainvoke(llm_messages)
         classification = llm_response.content.strip()
 
         logger.info(

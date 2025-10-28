@@ -21,15 +21,17 @@ logger = logging.getLogger(__name__)
 
 def get_redis_checkpointer() -> BaseCheckpointSaver[Any]:
     """
-    Get Redis checkpointer instance.
+    Get Redis checkpointer instance with 24-hour TTL.
 
     This function creates an AsyncRedisSaver instance for LangGraph state persistence.
+    Checkpoints are automatically expired after 24 hours (86400 seconds) to prevent
+    unbounded memory growth in Redis.
 
     The checkpointer stores conversation state in Redis with keys following
-    the pattern: checkpoint:{thread_id}:state
+    the pattern: langgraph:checkpoint:{thread_id}:{checkpoint_ns}
 
     Returns:
-        AsyncRedisSaver instance configured with REDIS_URL from settings
+        AsyncRedisSaver instance configured with REDIS_URL and 24-hour TTL
 
     Example:
         >>> checkpointer = get_redis_checkpointer()
@@ -40,7 +42,9 @@ def get_redis_checkpointer() -> BaseCheckpointSaver[Any]:
     Note:
         - Checkpoints are automatically saved after each node execution
         - Crash recovery: Invoke graph with same thread_id to resume
-        - Redis key pattern: checkpoint:{thread_id}:state
+        - Redis key pattern: langgraph:checkpoint:{thread_id}:{checkpoint_ns}
+        - TTL: 24 hours (86400 seconds) for automatic cleanup
+        - Older conversations (>24h) should be archived to PostgreSQL (Story 2.5c)
         - Not cached with @lru_cache to avoid issues with event loops
     """
     settings = get_settings()
@@ -48,12 +52,16 @@ def get_redis_checkpointer() -> BaseCheckpointSaver[Any]:
 
     logger.info(f"Creating Redis checkpointer with URL: {redis_url}")
 
-    # Create Redis async client
+    # Create Redis async client (decode_responses=False for binary checkpoint data)
     redis_client = Redis.from_url(redis_url, decode_responses=False)
 
-    # Create AsyncRedisSaver with the Redis client
-    checkpointer = AsyncRedisSaver(redis_client)
+    # Create AsyncRedisSaver with TTL configuration
+    # TTL of 86400 seconds (24 hours) for automatic checkpoint expiration
+    checkpointer = AsyncRedisSaver(
+        redis_client=redis_client,
+        ttl={"default": 86400}  # 24 hours in seconds
+    )
 
-    logger.info("Redis checkpointer created successfully")
+    logger.info("Redis checkpointer created with 24-hour TTL")
 
     return checkpointer

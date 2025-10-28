@@ -7,7 +7,7 @@ mutating the input state.
 """
 
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 
@@ -23,7 +23,7 @@ class ConversationState(TypedDict, total=False):
         conversation_id: LangGraph thread_id used for checkpointing
         customer_phone: E.164 formatted phone number (e.g., +34612345678)
         customer_name: Customer's name (may be empty for new customers)
-        messages: List of message dicts with 'role' and 'content' keys
+        messages: Recent 10 message exchanges (FIFO windowing) with 'role', 'content', 'timestamp' keys
         current_intent: Classified intent (booking, modification, cancellation, etc.)
         metadata: Flexible dict for future use and custom data
 
@@ -56,18 +56,24 @@ class ConversationState(TypedDict, total=False):
     conversation_id: str
     customer_phone: str
     customer_name: str | None
-    messages: list[dict]
-    current_intent: Literal["booking", "modification", "cancellation", "faq", "indecision", "usual_service", "escalation"] | None
-    metadata: dict
+    messages: list[dict[str, Any]]
+    current_intent: Literal["booking", "modification", "cancellation", "faq", "indecision", "usual_service", "escalation", "greeting_only", "inquiry"] | None
+    metadata: dict[str, Any]
+
+    # FAQ context (Story 2.6)
+    faq_detected: bool
+    detected_faq_id: str | None
+    faq_answered: bool
 
     # Customer context (populated after identification)
     customer_id: UUID | None
     is_returning_customer: bool
-    customer_history: list[dict]
+    customer_history: list[dict[str, Any]]
     preferred_stylist_id: UUID | None
 
-    # Message management
-    conversation_summary: str | None
+    # Message management (Story 2.5a, 2.5b)
+    conversation_summary: str | None  # Compressed history of messages beyond recent 10 (updated every 5 exchanges)
+    total_message_count: int  # Tracks all messages sent, including summarized ones
 
     # Booking context (populated during booking flow)
     requested_services: list[UUID]

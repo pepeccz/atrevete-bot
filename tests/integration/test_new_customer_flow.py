@@ -273,7 +273,7 @@ async def test_emoji_present_in_greeting(initial_state):
     # Greet new customer
     greet_result = await greet_new_customer(state_after_identify)
 
-    greeting_message = greet_result["messages"][0].content
+    greeting_message = greet_result["messages"][0]["content"]
     assert "🌸" in greeting_message
 
 

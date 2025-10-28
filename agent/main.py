@@ -8,7 +8,7 @@ import logging
 import signal
 from datetime import UTC, datetime
 
-from agent.graphs.conversation_flow import create_conversation_graph
+from agent.graphs.conversation_flow import MAITE_SYSTEM_PROMPT, create_conversation_graph
 from agent.state.checkpointer import get_redis_checkpointer
 from shared.logging_config import configure_logging
 from shared.redis_client import get_redis_client, publish_to_channel
@@ -86,12 +86,15 @@ async def subscribe_to_incoming_messages():
                         },
                     )
 
-                    # Create initial ConversationState
+                    # Create initial ConversationState with system prompt
                     state = {
                         "conversation_id": conversation_id,
                         "customer_phone": customer_phone,
                         "customer_name": None,
-                        "messages": [{"role": "user", "content": message_text}],
+                        "messages": [
+                            {"role": "system", "content": MAITE_SYSTEM_PROMPT},
+                            {"role": "user", "content": message_text}
+                        ],
                         "current_intent": None,
                         "metadata": {},
                         "created_at": datetime.now(UTC),
