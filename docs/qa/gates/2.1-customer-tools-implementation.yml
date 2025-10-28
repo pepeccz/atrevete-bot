@@ -1,0 +1,228 @@
+schema: 1
+story: '2.1'
+story_title: 'CustomerTools Implementation'
+gate: PASS
+status_reason: 'All acceptance criteria met with excellent test coverage (90%), comprehensive error handling, and full compliance with coding standards. No blocking issues identified.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-10-28T00:00:00Z'
+
+top_issues: []
+waiver:
+  active: false
+
+quality_score: 100
+expires: '2025-11-11T00:00:00Z'
+
+evidence:
+  tests_reviewed: 31
+  risks_identified: 7
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: |
+      - Phone numbers (PII) properly normalized to E.164 format
+      - UUID validation prevents injection attacks
+      - Database error messages sanitized (no data leakage)
+      - IntegrityError handling prevents duplicate records
+      - FK constraint enforcement validated
+  performance:
+    status: PASS
+    notes: |
+      - Async SQLAlchemy sessions used correctly throughout
+      - Database queries optimized (indexed phone lookups)
+      - No N+1 query issues identified
+      - History queries use LIMIT to prevent unbounded results
+      - Phone normalization cached at tool level
+  reliability:
+    status: PASS
+    notes: |
+      - Comprehensive error handling for all database operations
+      - Graceful degradation on invalid inputs
+      - All tools return structured error dicts
+      - Logging includes context (phone, customer_id) for debugging
+      - Transaction management properly handled
+  maintainability:
+    status: PASS
+    notes: |
+      - Code is well-structured with clear separation (schemas, helpers, tools)
+      - Comprehensive docstrings for all tools
+      - Type hints used throughout
+      - Consistent error handling patterns
+      - 90% test coverage ensures safe refactoring
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'Consider adding caching layer for frequently queried customers'
+      refs: ['agent/tools/customer_tools.py:get_customer_by_phone']
+    - action: 'Consider extracting phone normalization to shared utility module if used elsewhere'
+      refs: ['agent/tools/customer_tools.py:normalize_phone']
+    - action: 'Add E2E tests for concurrent customer operations (currently P2)'
+      refs: ['tests/integration/test_customer_tools.py']
+
+test_architecture_assessment:
+  total_scenarios_designed: 42
+  implemented_tests: 31
+  test_level_distribution:
+    unit: 23
+    integration: 8
+    e2e: 0
+  coverage_percentage: 90
+  test_design_quality: 'Excellent - Unit-heavy approach appropriate for logic-intensive tools'
+  test_level_appropriateness: 'Correct - Database operations tested at integration level, business logic at unit level'
+  missing_critical_tests: []
+
+requirements_traceability:
+  AC1_CustomerTools_class:
+    requirement: 'CustomerTools class created in /agent/tools/customer_tools.py'
+    tests:
+      - 'Unit: Import verification (structure validation)'
+      - 'Unit: All tools have @tool decorator'
+      - 'Integration: Module imports successfully with async session'
+    status: PASS
+
+  AC2_get_customer_by_phone:
+    requirement: 'Tool queries database and returns customer or None'
+    tests:
+      - 'Unit: Customer found returns record (test_customer_found)'
+      - 'Unit: Customer not found returns None (test_customer_not_found)'
+      - 'Unit: Invalid phone returns error (test_invalid_phone_format)'
+      - 'Unit: Database error handled gracefully (test_database_error)'
+      - 'Integration: Real database query returns customer (test_customer_lifecycle_create_query_update_verify)'
+      - 'Integration: Phone normalization matches (test_phone_normalization_consistency)'
+    status: PASS
+
+  AC3_create_customer:
+    requirement: 'Tool creates new customer with phone, first_name, last_name'
+    tests:
+      - 'Unit: Create customer success (test_create_customer_success)'
+      - 'Unit: Duplicate phone error (test_create_customer_duplicate_phone)'
+      - 'Unit: Invalid phone error (test_create_customer_invalid_phone)'
+      - 'Unit: Empty last_name handling (test_create_customer_with_empty_last_name)'
+      - 'Integration: Created customer persists (test_customer_lifecycle_create_query_update_verify)'
+      - 'Integration: Duplicate constraint enforced (test_duplicate_phone_number_constraint)'
+      - 'Integration: Empty last_name persists (test_empty_last_name_handling)'
+    status: PASS
+
+  AC4_update_customer_name:
+    requirement: 'Tool updates customer first_name and last_name'
+    tests:
+      - 'Unit: Update name success (test_update_name_success)'
+      - 'Unit: Customer not found error (test_update_name_customer_not_found)'
+      - 'Unit: Invalid UUID error (test_update_name_invalid_uuid)'
+      - 'Integration: Name update persists (test_customer_lifecycle_create_query_update_verify)'
+    status: PASS
+
+  AC5_update_customer_preferences:
+    requirement: 'Tool updates customer preferred_stylist_id'
+    tests:
+      - 'Unit: Update preferences success (test_update_preferences_success)'
+      - 'Unit: Invalid stylist_id FK error (test_update_preferences_invalid_stylist_id)'
+      - 'Unit: Invalid UUID error (test_update_preferences_invalid_uuid)'
+      - 'Integration: Preference update persists (test_customer_lifecycle_create_update_preferences_verify)'
+      - 'Integration: FK constraint enforced (test_invalid_stylist_id_foreign_key_constraint)'
+    status: PASS
+
+  AC6_get_customer_history:
+    requirement: 'Tool returns last N appointments ordered by recent first'
+    tests:
+      - 'Unit: Get history success with ordering (test_get_history_success)'
+      - 'Unit: Limit parameter works (test_get_history_with_limit)'
+      - 'Unit: Invalid customer_id error (test_get_history_invalid_customer_id)'
+      - 'Unit: Empty results handling (test_get_history_empty_results)'
+      - 'Integration: Real query with ordering (test_customer_lifecycle_create_appointment_get_history_verify)'
+      - 'Integration: Limit parameter verified (test_customer_lifecycle_create_appointment_get_history_verify)'
+    status: PASS
+
+  AC7_async_sqlalchemy:
+    requirement: 'All tools use async SQLAlchemy sessions'
+    tests:
+      - 'Code review: All tools use async for get_async_session()'
+      - 'Code review: All functions have async def signatures'
+      - 'Unit: AsyncMock used in all test fixtures'
+    status: PASS
+
+  AC8_langchain_tool_decorator:
+    requirement: 'Tools integrated with LangChain @tool decorator'
+    tests:
+      - 'Code review: All 5 tools have @tool decorator'
+      - 'Code review: All tools have Pydantic args_schema'
+      - 'Unit: Tools invoked via .ainvoke() (LangChain interface)'
+    status: PASS
+
+  AC9_phone_normalization:
+    requirement: 'Phone number normalization applied (E.164 format)'
+    tests:
+      - 'Unit: Spanish mobile with country code (test_spanish_mobile_with_country_code)'
+      - 'Unit: Spanish mobile without prefix (test_spanish_mobile_without_country_code)'
+      - 'Unit: Phone with spaces normalized (test_spanish_mobile_with_spaces)'
+      - 'Unit: International format (test_international_format)'
+      - 'Unit: Invalid phone returns None (test_invalid_phone)'
+      - 'Integration: Normalization consistency (test_phone_normalization_consistency)'
+    status: PASS
+
+  AC10_error_handling:
+    requirement: 'Database failures return graceful error messages'
+    tests:
+      - 'Unit: All tools have SQLAlchemyError exception handling'
+      - 'Unit: Error messages are user-friendly (no stack traces exposed)'
+      - 'Unit: Logging includes context (phone, customer_id)'
+      - 'Code review: All error paths return structured dicts with "error" key'
+    status: PASS
+
+  AC11_unit_tests:
+    requirement: 'Unit tests with mocked database'
+    tests:
+      - 'Implemented: 23 unit tests in tests/unit/test_customer_tools.py'
+      - 'All tests use AsyncMock for database sessions'
+      - 'Code coverage: 90% (exceeds 85% requirement)'
+    status: PASS
+
+  AC12_integration_test_lifecycle:
+    requirement: 'Integration test: Create → query → update → verify persistence'
+    tests:
+      - 'Integration: Create → query → update name → verify (test_customer_lifecycle_create_query_update_verify)'
+      - 'Integration: Create → update preferences → verify (test_customer_lifecycle_create_update_preferences_verify)'
+      - 'Integration: Create → appointments → history (test_customer_lifecycle_create_appointment_get_history_verify)'
+    status: PASS
+
+code_quality_highlights:
+  - 'Excellent code organization: Schemas, helpers, and tools clearly separated'
+  - 'Comprehensive docstrings with Args, Returns, and Examples'
+  - 'Consistent error handling pattern across all tools'
+  - 'Proper use of Python 3.11+ features (| None syntax)'
+  - 'Type hints used throughout for better IDE support'
+  - 'Logging at appropriate levels (info, warning, error)'
+
+standards_compliance:
+  coding_standards: PASS
+  project_structure: PASS
+  testing_strategy: PASS
+  architecture_alignment: PASS
+
+risk_mitigation:
+  RISK_001_duplicate_records:
+    mitigated: true
+    tests: ['test_create_customer_duplicate_phone', 'test_duplicate_phone_number_constraint']
+  RISK_002_phone_normalization_failure:
+    mitigated: true
+    tests: ['TestNormalizePhone (5 tests)', 'test_phone_normalization_consistency']
+  RISK_003_name_update_silent_failure:
+    mitigated: true
+    tests: ['test_update_name_success', 'test_customer_lifecycle_create_query_update_verify']
+  RISK_004_invalid_stylist_id:
+    mitigated: true
+    tests: ['test_update_preferences_invalid_stylist_id', 'test_invalid_stylist_id_foreign_key_constraint']
+  RISK_005_database_timeout:
+    mitigated: true
+    tests: ['test_database_error in all tool test classes']
+  RISK_006_incorrect_history_order:
+    mitigated: true
+    tests: ['test_get_history_success', 'test_customer_lifecycle_create_appointment_get_history_verify']
+  RISK_007_async_blocking:
+    mitigated: true
+    notes: 'All tools properly use async for get_async_session()'

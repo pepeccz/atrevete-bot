@@ -15,6 +15,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agent.nodes.greeting import greet_customer
+from agent.nodes.identification import confirm_name, greet_new_customer, identify_customer
 from agent.state.schemas import ConversationState
 
 # Configure logger
@@ -52,12 +53,58 @@ def create_conversation_graph(
 
     # Add nodes
     graph.add_node("greet_customer", greet_customer)
+    graph.add_node("identify_customer", identify_customer)
+    graph.add_node("greet_new_customer", greet_new_customer)
+    graph.add_node("confirm_name", confirm_name)
 
     # Set entry point
     graph.set_entry_point("greet_customer")
 
-    # Add edges
-    graph.add_edge("greet_customer", END)
+    # Add edges from greet_customer to identify_customer
+    graph.add_edge("greet_customer", "identify_customer")
+
+    # Conditional routing after customer identification
+    def route_after_identification(state: ConversationState) -> str:
+        """Route based on whether customer is returning or new."""
+        if state.get("is_returning_customer"):
+            # TODO: Route to returning customer handler (Story 2.3)
+            return "end"
+        else:
+            return "greet_new_customer"
+
+    graph.add_conditional_edges(
+        "identify_customer",
+        route_after_identification,
+        {
+            "greet_new_customer": "greet_new_customer",
+            "end": END,
+        }
+    )
+
+    # Add edge from greet_new_customer to confirm_name
+    graph.add_edge("greet_new_customer", "confirm_name")
+
+    # Conditional routing after name confirmation
+    def route_after_name_confirmation(state: ConversationState) -> str:
+        """Route based on confirmation status."""
+        if state.get("customer_identified"):
+            # TODO: Route to intent extraction (future story)
+            return "end"
+        elif state.get("escalated"):
+            # TODO: Route to escalation handler (future story)
+            return "end"
+        else:
+            # Loop back for retry
+            return "confirm_name"
+
+    graph.add_conditional_edges(
+        "confirm_name",
+        route_after_name_confirmation,
+        {
+            "confirm_name": "confirm_name",
+            "end": END,
+        }
+    )
 
     # Compile graph with optional checkpointer
     compiled_graph = graph.compile(checkpointer=checkpointer)

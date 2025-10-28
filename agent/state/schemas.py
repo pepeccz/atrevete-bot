@@ -45,6 +45,9 @@ class ConversationState(TypedDict, total=False):
         is_third_party_booking: Whether booking is for someone else
         escalated: Whether conversation has been escalated to human
         escalation_reason: Why escalation occurred
+        awaiting_name_confirmation: Whether bot is waiting for name confirmation
+        customer_identified: Whether customer has been fully identified
+        clarification_attempts: Counter for ambiguous name confirmation attempts
         last_node: Name of last executed node (for debugging)
         error_count: Number of errors encountered (for escalation logic)
     """
@@ -79,6 +82,11 @@ class ConversationState(TypedDict, total=False):
     # Escalation tracking
     escalated: bool
     escalation_reason: str | None
+
+    # Name confirmation tracking (Story 2.2)
+    awaiting_name_confirmation: bool
+    customer_identified: bool
+    clarification_attempts: int
 
     # Node execution tracking
     last_node: str | None
