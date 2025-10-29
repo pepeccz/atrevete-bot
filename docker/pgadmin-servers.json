@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Atrevete Database",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "atrevete_db",
+      "Username": "atrevete",
+      "SSLMode": "prefer"
+    }
+  }
+}

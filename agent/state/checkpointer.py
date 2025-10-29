@@ -6,6 +6,7 @@ The checkpointer enables crash recovery by persisting conversation state to Redi
 after each node execution.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -17,6 +18,39 @@ from shared.config import get_settings
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+# Global flag to track if Redis indexes have been initialized
+_redis_indexes_initialized = False
+
+
+async def initialize_redis_indexes(checkpointer: AsyncRedisSaver) -> None:
+    """
+    Initialize Redis indexes for LangGraph checkpointer.
+
+    This function calls setup() on the AsyncRedisSaver to create necessary
+    RedisSearch indexes (checkpoint_writes, etc.) that are required for
+    checkpoint persistence and retrieval.
+
+    Args:
+        checkpointer: AsyncRedisSaver instance to initialize
+
+    Raises:
+        Exception: If index creation fails
+    """
+    global _redis_indexes_initialized
+
+    if _redis_indexes_initialized:
+        logger.debug("Redis indexes already initialized, skipping")
+        return
+
+    try:
+        logger.info("Initializing Redis indexes for LangGraph checkpointer...")
+        await checkpointer.setup()
+        _redis_indexes_initialized = True
+        logger.info("✓ Redis indexes initialized successfully")
+    except Exception as e:
+        logger.error(f"✗ Failed to initialize Redis indexes: {e}", exc_info=True)
+        raise
 
 
 def get_redis_checkpointer() -> BaseCheckpointSaver[Any]:
@@ -35,6 +69,8 @@ def get_redis_checkpointer() -> BaseCheckpointSaver[Any]:
 
     Example:
         >>> checkpointer = get_redis_checkpointer()
+        >>> # Initialize indexes (must be called before using checkpointer)
+        >>> await initialize_redis_indexes(checkpointer)
         >>> graph = create_conversation_graph(checkpointer=checkpointer)
         >>> config = {"configurable": {"thread_id": "wa-msg-123"}}
         >>> result = await graph.ainvoke(state, config=config)
@@ -46,6 +82,7 @@ def get_redis_checkpointer() -> BaseCheckpointSaver[Any]:
         - TTL: 24 hours (86400 seconds) for automatic cleanup
         - Older conversations (>24h) should be archived to PostgreSQL (Story 2.5c)
         - Not cached with @lru_cache to avoid issues with event loops
+        - IMPORTANT: Call initialize_redis_indexes() before first use
     """
     settings = get_settings()
     redis_url = settings.REDIS_URL

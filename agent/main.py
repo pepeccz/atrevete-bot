@@ -8,8 +8,10 @@ import logging
 import signal
 from datetime import UTC, datetime
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from agent.graphs.conversation_flow import MAITE_SYSTEM_PROMPT, create_conversation_graph
-from agent.state.checkpointer import get_redis_checkpointer
+from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
 from shared.logging_config import configure_logging
 from shared.redis_client import get_redis_client, publish_to_channel
 
@@ -43,122 +45,132 @@ async def subscribe_to_incoming_messages():
             "message": "AI response text"
         }
     """
-    from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-    from shared.config import get_settings
-
     client = get_redis_client()
-    settings = get_settings()
 
-    logger.info(f"Initializing AsyncRedisSaver with URL: {settings.REDIS_URL}")
+    logger.info("Initializing Redis checkpointer...")
 
-    # Create checkpointer using async context manager pattern
-    async with AsyncRedisSaver.from_conn_string(settings.REDIS_URL) as checkpointer:
-        logger.info("AsyncRedisSaver initialized successfully")
+    # Create checkpointer using get_redis_checkpointer() (simpler than async context manager)
+    checkpointer = get_redis_checkpointer()
 
-        graph = create_conversation_graph(checkpointer=checkpointer)
+    # Initialize Redis indexes for LangGraph (creates checkpoint_writes, etc.)
+    try:
+        await initialize_redis_indexes(checkpointer)
+        logger.info("Redis checkpointer initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Redis indexes: {e}")
+        raise
 
-        logger.info("Subscribing to 'incoming_messages' channel...")
+    graph = create_conversation_graph(checkpointer=checkpointer)
+    logger.info("Conversation graph created successfully")
 
-        # Subscribe to channel
-        pubsub = client.pubsub()
-        await pubsub.subscribe("incoming_messages")
+    logger.info("Subscribing to 'incoming_messages' channel...")
 
-        logger.info("Subscribed to 'incoming_messages' channel")
+    # Subscribe to channel
+    pubsub = client.pubsub()
+    await pubsub.subscribe("incoming_messages")
 
-        try:
-            async for message in pubsub.listen():
-                # Skip subscription confirmation messages
-                if message["type"] != "message":
-                    continue
+    logger.info("Subscribed to 'incoming_messages' channel")
 
-                try:
-                    # Parse message JSON
-                    data = json.loads(message["data"])
-                    conversation_id = data.get("conversation_id")
-                    customer_phone = data.get("customer_phone")
-                    message_text = data.get("message_text")
+    try:
+        async for message in pubsub.listen():
+            # Skip subscription confirmation messages
+            if message["type"] != "message":
+                continue
 
-                    logger.info(
-                        f"Message received: conversation_id={conversation_id}, phone={customer_phone}",
-                        extra={
-                            "conversation_id": conversation_id,
-                            "customer_phone": customer_phone,
-                        },
-                    )
+            try:
+                # Parse message JSON
+                data = json.loads(message["data"])
+                conversation_id = data.get("conversation_id")
+                customer_phone = data.get("customer_phone")
+                message_text = data.get("message_text")
 
-                    # Create initial ConversationState with system prompt
-                    state = {
+                logger.info(
+                    f"Message received: conversation_id={conversation_id}, phone={customer_phone}",
+                    extra={
                         "conversation_id": conversation_id,
                         "customer_phone": customer_phone,
-                        "customer_name": None,
-                        "messages": [
-                            {"role": "system", "content": MAITE_SYSTEM_PROMPT},
-                            {"role": "user", "content": message_text}
-                        ],
-                        "current_intent": None,
-                        "metadata": {},
-                        "created_at": datetime.now(UTC),
-                        "updated_at": datetime.now(UTC),
-                    }
+                    },
+                )
 
-                    # Invoke graph with checkpointing
-                    config = {"configurable": {"thread_id": conversation_id}}
-                    logger.info(
-                        f"Invoking graph for thread_id={conversation_id}",
-                        extra={"conversation_id": conversation_id},
-                    )
+                # Create initial ConversationState with system prompt
+                state = {
+                    "conversation_id": conversation_id,
+                    "customer_phone": customer_phone,
+                    "customer_name": None,
+                    "messages": [
+                        SystemMessage(content=MAITE_SYSTEM_PROMPT()),
+                        HumanMessage(content=message_text)
+                    ],
+                    "current_intent": None,
+                    "metadata": {},
+                    "created_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
+                }
 
-                    result = await graph.ainvoke(state, config=config)
+                # Invoke graph with checkpointing
+                config = {"configurable": {"thread_id": conversation_id}}
+                logger.info(
+                    f"Invoking graph for thread_id={conversation_id}",
+                    extra={"conversation_id": conversation_id},
+                )
 
-                    # Extract AI response from result state
-                    ai_message = result["messages"][-1]["content"]
+                result = await graph.ainvoke(state, config=config)
 
-                    logger.info(
-                        f"Graph completed for conversation_id={conversation_id}",
-                        extra={
-                            "conversation_id": conversation_id,
-                            "ai_message_preview": ai_message[:50],
-                        },
-                    )
+                # Extract AI response from result state
+                last_message = result["messages"][-1]
 
-                    # Publish to outgoing_messages channel
-                    await publish_to_channel(
-                        "outgoing_messages",
-                        {
-                            "conversation_id": conversation_id,
-                            "customer_phone": customer_phone,
-                            "message": ai_message,
-                        },
-                    )
+                # Handle both dict and Message object formats
+                if isinstance(last_message, dict):
+                    ai_message = last_message.get("content", "")
+                else:
+                    ai_message = last_message.content
 
-                    logger.info(
-                        f"Message published to outgoing_messages: conversation_id={conversation_id}",
-                        extra={"conversation_id": conversation_id},
-                    )
+                logger.info(
+                    f"Graph completed for conversation_id={conversation_id}",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "ai_message_preview": ai_message[:50],
+                    },
+                )
 
-                except json.JSONDecodeError as e:
-                    logger.error(f"Invalid JSON in message: {e}")
-                    continue
+                # Publish to outgoing_messages channel
+                await publish_to_channel(
+                    "outgoing_messages",
+                    {
+                        "conversation_id": conversation_id,
+                        "customer_phone": customer_phone,
+                        "message": ai_message,
+                    },
+                )
 
-                except Exception as e:
-                    logger.error(
-                        f"Error processing message: {e}",
-                        extra={
-                            "conversation_id": data.get("conversation_id") if "data" in locals() else "unknown",
-                        },
-                        exc_info=True,
-                    )
-                    continue
+                logger.info(
+                    f"Message published to outgoing_messages: conversation_id={conversation_id}",
+                    extra={"conversation_id": conversation_id},
+                )
 
-        except asyncio.CancelledError:
-            logger.info("Incoming message subscriber cancelled")
-            await pubsub.unsubscribe("incoming_messages")
-            await pubsub.close()
-            raise
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in message: {e}")
+                continue
 
-        except Exception as e:
-            logger.error(f"Fatal error in incoming message subscriber: {e}", exc_info=True)
-            raise
+            except Exception as e:
+                logger.error(
+                    f"Error processing message: {e}",
+                    extra={
+                        "conversation_id": data.get("conversation_id") if "data" in locals() else "unknown",
+                    },
+                    exc_info=True,
+                )
+                continue
+
+    except asyncio.CancelledError:
+        logger.info("Incoming message subscriber cancelled")
+        await pubsub.unsubscribe("incoming_messages")
+        await pubsub.close()
+        raise
+
+    except Exception as e:
+        logger.error(f"Fatal error in incoming message subscriber: {e}", exc_info=True)
+        raise
 
 
 async def subscribe_to_outgoing_messages():

@@ -269,7 +269,7 @@ async def confirm_name(state: ConversationState) -> dict[str, Any]:
 
         logger.info(
             f"Processing name confirmation response",
-            extra={"conversation_id": conversation_id, "message": latest_user_message}
+            extra={"conversation_id": conversation_id, "user_message": latest_user_message}
         )
 
         # Use Claude to classify the response
@@ -328,11 +328,17 @@ Return ONLY the classification, nothing else."""
                     extra={"conversation_id": conversation_id, "customer_id": customer_result["id"]}
                 )
 
+                # Add confirmation message
+                confirmation_msg = f"Perfecto, {first_name}! Gracias por confirmar. ¿En qué puedo ayudarte hoy?"
+                updated_state = add_message(state, "assistant", confirmation_msg)
+
                 return {
                     "customer_id": customer_result["id"],
                     "customer_name": f"{first_name} {last_name}".strip(),
                     "customer_identified": True,
                     "awaiting_name_confirmation": False,
+                    "messages": updated_state["messages"],
+                    "updated_at": updated_state["updated_at"],
                 }
             else:
                 logger.error(
@@ -367,11 +373,17 @@ Return ONLY the classification, nothing else."""
                     extra={"conversation_id": conversation_id, "customer_id": customer_result["id"]}
                 )
 
+                # Add confirmation message
+                confirmation_msg = f"Encantada de conocerte, {first_name}! ¿En qué puedo ayudarte hoy?"
+                updated_state = add_message(state, "assistant", confirmation_msg)
+
                 return {
                     "customer_id": customer_result["id"],
                     "customer_name": f"{first_name} {last_name}".strip(),
                     "customer_identified": True,
                     "awaiting_name_confirmation": False,
+                    "messages": updated_state["messages"],
+                    "updated_at": updated_state["updated_at"],
                 }
             else:
                 logger.error(

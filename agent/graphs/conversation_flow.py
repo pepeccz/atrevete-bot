@@ -26,9 +26,29 @@ from agent.state.helpers import should_summarize
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# Load Maite system prompt at module level (cached)
-MAITE_SYSTEM_PROMPT = load_maite_system_prompt()
-logger.info(f"Maite system prompt loaded at module initialization ({len(MAITE_SYSTEM_PROMPT)} characters)")
+# Lazy-loaded system prompt cache (loaded on first graph creation, not at module import)
+_MAITE_SYSTEM_PROMPT_CACHE: str | None = None
+
+def get_maite_system_prompt() -> str:
+    """
+    Get Maite system prompt with lazy-loading and caching.
+
+    This function loads the prompt on first call and caches it for subsequent calls,
+    avoiding module-level I/O that could block async initialization.
+
+    Returns:
+        str: The Maite system prompt content
+    """
+    global _MAITE_SYSTEM_PROMPT_CACHE
+
+    if _MAITE_SYSTEM_PROMPT_CACHE is None:
+        _MAITE_SYSTEM_PROMPT_CACHE = load_maite_system_prompt()
+        logger.info(f"Maite system prompt loaded ({len(_MAITE_SYSTEM_PROMPT_CACHE)} characters)")
+
+    return _MAITE_SYSTEM_PROMPT_CACHE
+
+# For backward compatibility, export as MAITE_SYSTEM_PROMPT (but it's now a function)
+MAITE_SYSTEM_PROMPT = get_maite_system_prompt
 
 
 # ============================================================================
@@ -156,8 +176,44 @@ def create_conversation_graph(
     graph.add_node("usual_service_handler", usual_service_handler)
     graph.add_node("clarification_handler", clarification_handler)
 
-    # Set entry point
-    graph.set_entry_point("greet_customer")
+    # Conditional entry point based on conversation state
+    def route_entry(state: ConversationState) -> str:
+        """
+        Route entry based on conversation state and history.
+
+        Determines the appropriate entry point:
+        - First message in conversation → greet_customer
+        - Awaiting name confirmation → confirm_name
+        - Continuing conversation → detect_faq_intent (skip greeting)
+        """
+        # Check if awaiting name confirmation from new customer
+        if state.get("awaiting_name_confirmation") and not state.get("customer_identified"):
+            return "confirm_name"
+
+        # Check if this is a continuation of existing conversation
+        # If there are already messages (excluding system prompt), skip greeting
+        messages = state.get("messages", [])
+        # Filter out system messages to count only user/assistant messages
+        conversation_messages = [
+            msg for msg in messages
+            if hasattr(msg, 'type') and msg.type in ['human', 'ai']
+        ]
+
+        # If conversation has already started (has messages), skip greeting
+        if len(conversation_messages) > 0:
+            return "detect_faq_intent"
+
+        # First message - start with greeting flow
+        return "greet_customer"
+
+    graph.set_conditional_entry_point(
+        route_entry,
+        {
+            "greet_customer": "greet_customer",
+            "confirm_name": "confirm_name",
+            "detect_faq_intent": "detect_faq_intent",
+        }
+    )
 
     # Add edges from greet_customer to identify_customer
     graph.add_edge("greet_customer", "identify_customer")
@@ -186,8 +242,26 @@ def create_conversation_graph(
         }
     )
 
-    # Add edge from greet_new_customer to confirm_name
-    graph.add_edge("greet_new_customer", "confirm_name")
+    # Conditional routing after greeting new customer
+    def route_after_new_customer_greeting(state: ConversationState) -> str:
+        """Route after greeting new customer - wait for user response or confirm name."""
+        # If awaiting name confirmation, end and wait for user message
+        if state.get("awaiting_name_confirmation"):
+            return "end"
+        # If customer already identified (shouldn't happen), end
+        elif state.get("customer_identified"):
+            return "end"
+        else:
+            # Fallback: end conversation
+            return "end"
+
+    graph.add_conditional_edges(
+        "greet_new_customer",
+        route_after_new_customer_greeting,
+        {
+            "end": END,
+        }
+    )
 
     # Conditional routing after FAQ detection (Story 2.6)
     def route_after_faq_detection(state: ConversationState) -> str:
@@ -277,8 +351,14 @@ def create_conversation_graph(
         elif state.get("escalated"):
             # TODO: Route to escalation handler (future story)
             return "end"
+        elif state.get("awaiting_name_confirmation"):
+            # Still waiting for user response, end here
+            return "end"
         else:
-            # Loop back for retry
+            # Loop back for retry only if there was a clarification attempt
+            # This prevents infinite loops when there are no user messages
+            if state.get("clarification_attempts", 0) > 0:
+                return "end"  # Don't loop if we already tried clarifying
             return "confirm_name"
 
     graph.add_conditional_edges(
