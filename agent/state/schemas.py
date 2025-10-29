@@ -80,9 +80,48 @@ class ConversationState(TypedDict, total=False):
 
     # Booking context (populated during booking flow)
     requested_services: list[UUID]
+    requested_date: str | None  # Date in YYYY-MM-DD format
+    requested_time: str | None  # Time in HH:MM format (if specific time requested)
     suggested_pack_id: UUID | None
     provisional_appointment_id: UUID | None
     payment_link_url: str | None
+
+    # Availability checking context (Story 3.3)
+    available_slots: list[dict[str, Any]]  # All available slots from multi-calendar check
+    prioritized_slots: list[dict[str, Any]]  # Top 2-3 slots to present to customer
+    suggested_dates: list[dict[str, Any]]  # Alternative dates when requested date is fully booked
+    is_same_day: bool  # Flag for same-day booking (affects provisional block timeout)
+    holiday_detected: bool  # Flag for holiday closure detection
+    bot_response: str | None  # Pre-formatted response for availability results
+
+    # Pack suggestion context (Story 3.4)
+    matching_packs: list[Any]  # All packs matching requested services (Pack model instances)
+    suggested_pack: dict[str, Any] | None  # Selected pack with savings info
+    pack_id: UUID | None  # Accepted pack ID
+    pack_declined: bool  # Customer declined pack suggestion
+    individual_service_total: Any  # Total price of individual services (Decimal)
+
+    # Indecision detection & consultation offering (Story 3.5)
+    indecision_detected: bool  # Indecision identified in customer message
+    confidence: float  # Confidence score 0.0-1.0 for indecision classification
+    indecision_type: Literal["service_choice", "treatment_comparison", "price_comparison", "none"]  # Type of indecision
+    detected_services: list[str]  # Services customer is comparing or asking about
+    consultation_offered: bool  # Consultation offer presented to customer
+    consultation_accepted: bool  # Customer accepted consultation offer
+    consultation_declined: bool  # Customer declined consultation offer
+    consultation_service_id: UUID | None  # ID of CONSULTA GRATUITA service
+    skip_payment_flow: bool  # Flag to bypass payment for free consultations
+    previous_consultation_date: datetime | None  # Date of last consultation (for follow-up)
+    recommended_service_from_consultation: UUID | None  # Service recommended during consultation
+
+    # Service category validation (Story 3.6)
+    booking_validation_passed: bool  # Validation result (True = can proceed)
+    mixed_category_detected: bool  # Mixed categories found
+    awaiting_category_choice: bool  # Waiting for customer's choice
+    services_by_category: dict[str, list[UUID]]  # Services grouped by category (HAIRDRESSING/AESTHETICS)
+    pending_bookings: list[dict[str, Any]]  # Queue of bookings to process (for separate bookings)
+    current_booking_index: int  # Index of currently processing booking
+    is_multi_booking_flow: bool  # Flag for separate booking flow
 
     # Group/third-party booking flags
     is_group_booking: bool

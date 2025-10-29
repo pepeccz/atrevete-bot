@@ -14,14 +14,21 @@ from sqlalchemy import select
 from database.connection import get_async_session
 from database.models import Pack, Service
 
-# Sample pack from PRD Scenario 5
+# Sample packs from PRD scenarios
 SAMPLE_PACKS = [
     {
         "name": "Mechas + Corte",
         "service_names": ["MECHAS", "Corte de pelo"],  # Service names to look up
-        "duration_minutes": 180,
+        "duration_minutes": 60,  # Optimized: hairdresser does cut during mechas processing time
         "price_euros": Decimal("80.00"),
-        "description": "Pack ahorro: Mechas + Corte por solo €80 (ahorra €5)",
+        "description": "Pack ahorro: Mechas + Corte por solo €80 en 60min (ahorra €5 vs servicios individuales). Duración optimizada: corte durante tiempo de procesado de mechas",
+    },
+    {
+        "name": "Manicura Permanente + Bioterapia",
+        "service_names": ["MANICURA PERMANENTE", "BIOTERAPIA FACIAL"],
+        "duration_minutes": 90,
+        "price_euros": Decimal("40.70"),
+        "description": "Pack de belleza: Manicura permanente + Bioterapia facial por €40.70",
     },
 ]
 

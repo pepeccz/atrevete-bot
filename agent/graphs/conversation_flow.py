@@ -16,10 +16,18 @@ from langgraph.graph.state import CompiledStateGraph
 
 from agent.nodes.greeting import greet_customer
 from agent.nodes.identification import confirm_name, greet_new_customer, greet_returning_customer, identify_customer
-from agent.nodes.classification import extract_intent
+from agent.nodes.classification import (
+    extract_intent,
+    detect_indecision,
+    offer_consultation,
+    handle_consultation_response,
+)
 from agent.nodes.summarization import summarize_conversation
 from agent.nodes.faq import answer_faq, detect_faq_intent
 from agent.nodes.faq_generation import fetch_faq_context, generate_personalized_faq_response
+from agent.nodes.availability_nodes import check_availability
+from agent.nodes.pack_suggestion_nodes import suggest_pack, handle_pack_response
+from agent.nodes.booking_nodes import validate_booking_request, handle_category_choice
 from agent.prompts import load_maite_system_prompt
 from agent.state.schemas import ConversationState
 from agent.state.helpers import should_summarize
@@ -58,13 +66,27 @@ MAITE_SYSTEM_PROMPT = get_maite_system_prompt
 
 
 async def booking_handler(state: ConversationState) -> dict[str, Any]:
-    """Placeholder node for booking flow (Epic 3)."""
+    """
+    Placeholder node for booking flow (Epic 3).
+
+    For Story 3.4: If requested_services exist, proceed to pack suggestion.
+    Otherwise, show placeholder message.
+    """
     from langchain_core.messages import AIMessage
 
     messages = list(state.get("messages", []))
-    messages.append(AIMessage(content="Entiendo que quieres hacer una reserva. Pronto podré ayudarte con esto. 😊"))
 
-    logger.info(f"booking_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
+    # Check if services have been extracted (for Story 3.4 testing)
+    requested_services = state.get("requested_services", [])
+
+    if not requested_services:
+        # No services extracted yet - show placeholder
+        messages.append(AIMessage(content="Entiendo que quieres hacer una reserva. Pronto podré ayudarte con esto. 😊"))
+        logger.info(f"booking_handler placeholder called (no services)", extra={"conversation_id": state.get("conversation_id")})
+    else:
+        # Services extracted - proceed to pack suggestion
+        logger.info(f"booking_handler: services extracted, proceeding to pack suggestion", extra={"conversation_id": state.get("conversation_id")})
+
     return {"messages": messages}
 
 
@@ -171,6 +193,22 @@ def create_conversation_graph(
     # Add summarization node (Story 2.5b)
     graph.add_node("summarize", summarize_conversation)
 
+    # Add availability checking node (Story 3.3)
+    graph.add_node("check_availability", check_availability)
+
+    # Add pack suggestion nodes (Story 3.4)
+    graph.add_node("suggest_pack", suggest_pack)
+    graph.add_node("handle_pack_response", handle_pack_response)
+
+    # Add indecision detection & consultation nodes (Story 3.5)
+    graph.add_node("detect_indecision", detect_indecision)
+    graph.add_node("offer_consultation", offer_consultation)
+    graph.add_node("handle_consultation_response", handle_consultation_response)
+
+    # Add service category validation nodes (Story 3.6)
+    graph.add_node("validate_booking_request", validate_booking_request)
+    graph.add_node("handle_category_choice", handle_category_choice)
+
     # Add placeholder handler nodes (Story 2.3)
     graph.add_node("booking_handler", booking_handler)
     graph.add_node("modification_handler", modification_handler)
@@ -187,11 +225,37 @@ def create_conversation_graph(
         Determines the appropriate entry point:
         - First message in conversation → greet_customer
         - Awaiting name confirmation → confirm_name
+        - Awaiting consultation response → handle_consultation_response
+        - Awaiting pack response → handle_pack_response
+        - Awaiting category choice → handle_category_choice
         - Continuing conversation → detect_faq_intent (skip greeting)
         """
         # Check if awaiting name confirmation from new customer
         if state.get("awaiting_name_confirmation") and not state.get("customer_identified"):
             return "confirm_name"
+
+        # Check if awaiting category choice (Story 3.6)
+        # If mixed category detected and awaiting customer's choice
+        if state.get("awaiting_category_choice"):
+            return "handle_category_choice"
+
+        # Check if awaiting consultation response (Story 3.5)
+        # If consultation offered but not yet accepted/declined, handle response
+        consultation_offered = state.get("consultation_offered")
+        consultation_accepted = state.get("consultation_accepted")
+        consultation_declined = state.get("consultation_declined")
+
+        if consultation_offered and not consultation_accepted and not consultation_declined:
+            return "handle_consultation_response"
+
+        # Check if awaiting pack response (Story 3.4)
+        # If pack was suggested but not yet accepted/declined, handle response
+        suggested_pack = state.get("suggested_pack")
+        pack_id = state.get("pack_id")
+        pack_declined = state.get("pack_declined")
+
+        if suggested_pack and not pack_id and not pack_declined:
+            return "handle_pack_response"
 
         # Check if this is a continuation of existing conversation
         # If there are already messages (excluding system prompt), skip greeting
@@ -214,6 +278,9 @@ def create_conversation_graph(
         {
             "greet_customer": "greet_customer",
             "confirm_name": "confirm_name",
+            "handle_category_choice": "handle_category_choice",
+            "handle_consultation_response": "handle_consultation_response",
+            "handle_pack_response": "handle_pack_response",
             "detect_faq_intent": "detect_faq_intent",
         }
     )
@@ -374,8 +441,226 @@ def create_conversation_graph(
         }
     )
 
-    # All handler nodes end the conversation (for now)
-    graph.add_edge("booking_handler", END)
+    # Routing after check_availability (Story 3.3)
+    def route_after_availability_check(state: ConversationState) -> str:
+        """
+        Route after availability check completes.
+
+        If slots found or alternatives suggested, wait for customer selection.
+        If error occurred, end conversation (customer will retry).
+        """
+        # For now, just end after showing availability
+        # Future stories will add customer selection and booking confirmation
+        return "end"
+
+    graph.add_conditional_edges(
+        "check_availability",
+        route_after_availability_check,
+        {
+            "end": END,
+        }
+    )
+
+    # Conditional routing from booking_handler (Story 3.4, extended for Story 3.5)
+    def route_after_booking_handler(state: ConversationState) -> str:
+        """
+        Route after booking_handler based on service extraction.
+
+        If requested_services exist:
+        - Check for indecision first (Story 3.5)
+        - If no indecision, proceed to pack suggestion
+        Otherwise, end conversation (placeholder response shown).
+        """
+        requested_services = state.get("requested_services", [])
+        if requested_services:
+            # First check for indecision (Story 3.5)
+            return "detect_indecision"
+        else:
+            return "end"
+
+    graph.add_conditional_edges(
+        "booking_handler",
+        route_after_booking_handler,
+        {
+            "detect_indecision": "detect_indecision",
+            "end": END,
+        }
+    )
+
+    # Conditional routing after indecision detection (Story 3.5)
+    def route_after_indecision_detection(state: ConversationState) -> str:
+        """
+        Route after indecision detection based on confidence level.
+
+        If indecision detected (confidence > 0.7) → offer_consultation
+        Otherwise → suggest_pack (continue normal booking flow)
+        """
+        indecision_detected = state.get("indecision_detected", False)
+        confidence = state.get("confidence", 0.0)
+
+        if indecision_detected and confidence > 0.7:
+            return "offer_consultation"
+        else:
+            return "suggest_pack"
+
+    graph.add_conditional_edges(
+        "detect_indecision",
+        route_after_indecision_detection,
+        {
+            "offer_consultation": "offer_consultation",
+            "suggest_pack": "suggest_pack",
+        }
+    )
+
+    # After offering consultation, wait for customer response (end)
+    graph.add_edge("offer_consultation", END)
+
+    # Conditional routing after consultation response (Story 3.5)
+    def route_after_consultation_response(state: ConversationState) -> str:
+        """
+        Route after customer responds to consultation offer.
+
+        If accepted → proceed to availability checking
+        If declined → return to service selection (suggest_pack)
+        If unclear (awaiting clarification) → end and wait
+        """
+        consultation_accepted = state.get("consultation_accepted", False)
+        consultation_declined = state.get("consultation_declined", False)
+
+        if consultation_accepted:
+            # Proceed to availability checking for consultation booking
+            return "check_availability"
+        elif consultation_declined:
+            # Return to normal booking flow
+            return "suggest_pack"
+        else:
+            # Unclear response, waiting for clarification
+            return "end"
+
+    graph.add_conditional_edges(
+        "handle_consultation_response",
+        route_after_consultation_response,
+        {
+            "check_availability": "check_availability",
+            "suggest_pack": "suggest_pack",
+            "end": END,
+        }
+    )
+
+    # Conditional routing from suggest_pack (Story 3.4, updated for Story 3.6)
+    def route_after_pack_suggestion(state: ConversationState) -> str:
+        """
+        Route after pack suggestion based on whether pack was suggested.
+
+        If pack suggested, wait for customer response.
+        If no pack, proceed to service validation (Story 3.6) before availability.
+        """
+        suggested_pack = state.get("suggested_pack")
+        if suggested_pack:
+            # Pack suggested - wait for customer response (end here, next message will trigger handle_pack_response)
+            return "end"
+        else:
+            # No pack - proceed to service validation (Story 3.6)
+            return "validate_booking_request"
+
+    graph.add_conditional_edges(
+        "suggest_pack",
+        route_after_pack_suggestion,
+        {
+            "validate_booking_request": "validate_booking_request",
+            "end": END,
+        }
+    )
+
+    # Conditional routing from handle_pack_response (Story 3.4, updated for Story 3.6)
+    def route_after_pack_response(state: ConversationState) -> str:
+        """
+        Route after customer responds to pack suggestion.
+
+        If accepted or declined, proceed to service validation (Story 3.6).
+        If unclear and needs clarification, end and wait for response.
+        """
+        # Check if pack was accepted or declined
+        pack_id = state.get("pack_id")
+        pack_declined = state.get("pack_declined")
+
+        if pack_id or pack_declined:
+            # Decision made - proceed to service validation (Story 3.6)
+            return "validate_booking_request"
+        else:
+            # Still unclear - end and wait for clarification response
+            return "end"
+
+    graph.add_conditional_edges(
+        "handle_pack_response",
+        route_after_pack_response,
+        {
+            "validate_booking_request": "validate_booking_request",
+            "end": END,
+        }
+    )
+
+    # Conditional routing after validation (Story 3.6)
+    def route_after_validation(state: ConversationState) -> str:
+        """
+        Route after service validation based on validation result.
+
+        If validation passed, proceed to availability checking.
+        If mixed categories detected, wait for customer choice.
+        """
+        booking_validation_passed = state.get("booking_validation_passed", False)
+        mixed_category_detected = state.get("mixed_category_detected", False)
+
+        if booking_validation_passed:
+            # Validation passed - proceed to availability
+            return "check_availability"
+        elif mixed_category_detected:
+            # Mixed categories - wait for customer choice (end here)
+            return "end"
+        else:
+            # Error or other issue - end
+            return "end"
+
+    graph.add_conditional_edges(
+        "validate_booking_request",
+        route_after_validation,
+        {
+            "check_availability": "check_availability",
+            "end": END,
+        }
+    )
+
+    # Conditional routing after category choice (Story 3.6)
+    def route_after_category_choice(state: ConversationState) -> str:
+        """
+        Route after customer chooses category option.
+
+        If choice made and validation passed, proceed to availability.
+        If escalated, end conversation.
+        Otherwise, end and wait for clarification.
+        """
+        booking_validation_passed = state.get("booking_validation_passed", False)
+        escalated = state.get("escalated", False)
+
+        if escalated:
+            # Escalated due to unclear responses
+            return "end"
+        elif booking_validation_passed:
+            # Choice made, proceed to availability
+            return "check_availability"
+        else:
+            # Waiting for clarification
+            return "end"
+
+    graph.add_conditional_edges(
+        "handle_category_choice",
+        route_after_category_choice,
+        {
+            "check_availability": "check_availability",
+            "end": END,
+        }
+    )
+
     graph.add_edge("modification_handler", END)
     graph.add_edge("cancellation_handler", END)
     graph.add_edge("faq_handler", END)
