@@ -32,18 +32,19 @@ def get_llm() -> ChatAnthropic:
 
 async def detect_faq_intent(state: ConversationState, llm: ChatAnthropic | None = None) -> dict[str, Any]:
     """
-    Detect if customer message is an FAQ using Claude classification.
+    Detect if customer message contains one or more FAQs using Claude classification.
 
     Analyzes the most recent customer message and determines if it matches
-    one of the 5 core FAQ categories: hours, parking, address, cancellation_policy,
-    payment_info. If no FAQ is detected, returns "none".
+    one or more of the 5 core FAQ categories: hours, parking, address,
+    cancellation_policy, payment_info. Can detect compound queries like
+    "Where are you located and what time do you open?".
 
     Args:
         state: Current conversation state with messages
         llm: Optional ChatAnthropic instance for testing (uses get_llm() if None)
 
     Returns:
-        dict: State updates with faq_detected and detected_faq_id
+        dict: State updates with faq_detected, detected_faq_ids (list), and query_complexity
     """
     # Use provided LLM or get default instance
     if llm is None:
@@ -60,7 +61,7 @@ async def detect_faq_intent(state: ConversationState, llm: ChatAnthropic | None 
                 f"No user messages found for FAQ detection",
                 extra={"conversation_id": conversation_id}
             )
-            return {"faq_detected": False}
+            return {"faq_detected": False, "detected_faq_ids": []}
 
         latest_user_message = user_messages[-1].content
 
@@ -69,8 +70,8 @@ async def detect_faq_intent(state: ConversationState, llm: ChatAnthropic | None 
             extra={"conversation_id": conversation_id, "message_preview": latest_user_message[:50]}
         )
 
-        # Claude classification prompt
-        classification_prompt = f"""Analiza el siguiente mensaje del cliente y determina si es una pregunta frecuente (FAQ).
+        # Claude classification prompt for multi-FAQ detection
+        classification_prompt = f"""Analiza el siguiente mensaje del cliente y determina si contiene una o más preguntas frecuentes (FAQ).
 
 Mensaje: {latest_user_message}
 
@@ -80,41 +81,79 @@ Categorías de FAQ disponibles:
 - address: Ubicación o dirección del salón
 - cancellation_policy: Política de cancelación y reembolsos
 - payment_info: Información sobre pagos y anticipos
-- none: No es una FAQ (intención de booking, modificación, etc.)
 
-Responde SOLO con el faq_id correspondiente o "none" si no es FAQ."""
+Instrucciones:
+- Identifica TODAS las categorías de FAQ presentes en el mensaje
+- Si el mensaje contiene múltiples preguntas FAQ, lista todas
+- Si no es una FAQ, responde con una lista vacía
+
+Responde SOLO con un array JSON de faq_ids. Ejemplos:
+- ["hours"] para una sola pregunta sobre horarios
+- ["address", "hours"] para preguntas compuestas sobre ubicación y horarios
+- [] si no es una FAQ
+
+Respuesta (solo el array JSON):"""
 
         response = await llm.ainvoke([{"role": "user", "content": classification_prompt}])
-        faq_id = response.content.strip().lower()
+        response_content = response.content.strip()
+
+        # Parse JSON response
+        import json
+        try:
+            faq_ids = json.loads(response_content)
+            if not isinstance(faq_ids, list):
+                logger.warning(
+                    f"Claude returned non-list response: {response_content}",
+                    extra={"conversation_id": conversation_id}
+                )
+                return {"faq_detected": False, "detected_faq_ids": []}
+        except json.JSONDecodeError:
+            logger.warning(
+                f"Failed to parse Claude JSON response: {response_content}",
+                extra={"conversation_id": conversation_id}
+            )
+            return {"faq_detected": False, "detected_faq_ids": []}
 
         # Valid FAQ categories
         valid_faq_ids = ["hours", "parking", "address", "cancellation_policy", "payment_info"]
 
-        # Check if FAQ detected
-        if faq_id == "none":
+        # Filter to only valid FAQ IDs
+        filtered_faq_ids = [faq_id for faq_id in faq_ids if faq_id in valid_faq_ids]
+
+        # Check if any FAQs detected
+        if not filtered_faq_ids:
             logger.debug(
                 f"No FAQ detected",
                 extra={"conversation_id": conversation_id}
             )
-            return {"faq_detected": False}
-
-        elif faq_id in valid_faq_ids:
-            logger.info(
-                f"FAQ detected: {faq_id}",
-                extra={"conversation_id": conversation_id, "faq_id": faq_id}
-            )
             return {
-                "faq_detected": True,
-                "detected_faq_id": faq_id,
+                "faq_detected": False,
+                "detected_faq_ids": [],
+                "query_complexity": "none",
             }
 
+        # Classify query complexity
+        if len(filtered_faq_ids) == 1:
+            complexity = "simple"
         else:
-            # Unrecognized faq_id - log warning and fallback to no FAQ
-            logger.warning(
-                f"Unrecognized faq_id returned by Claude: {faq_id}",
-                extra={"conversation_id": conversation_id, "faq_id": faq_id}
-            )
-            return {"faq_detected": False}
+            complexity = "compound"
+
+        logger.info(
+            f"FAQ(s) detected: {filtered_faq_ids}",
+            extra={
+                "conversation_id": conversation_id,
+                "faq_ids": filtered_faq_ids,
+                "complexity": complexity
+            }
+        )
+
+        return {
+            "faq_detected": True,
+            "detected_faq_ids": filtered_faq_ids,
+            "query_complexity": complexity,
+            # Keep backward compatibility with single FAQ ID
+            "detected_faq_id": filtered_faq_ids[0] if filtered_faq_ids else None,
+        }
 
     except Exception as e:
         logger.error(
@@ -124,6 +163,8 @@ Responde SOLO con el faq_id correspondiente o "none" si no es FAQ."""
         )
         return {
             "faq_detected": False,
+            "detected_faq_ids": [],
+            "query_complexity": "none",
             "error_count": state.get("error_count", 0) + 1,
         }
 

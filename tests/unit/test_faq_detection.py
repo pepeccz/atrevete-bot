@@ -576,3 +576,171 @@ async def test_answer_faq_missing_detected_faq_id():
     # Assert
     assert result["faq_detected"] is False, "Should set faq_detected to False"
     assert result["error"] == "No FAQ ID provided", "Should return appropriate error"
+
+
+# ============================================================================
+# Multi-FAQ Detection Tests (Compound Queries)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question,expected_faq_ids,expected_complexity", [
+    # Compound queries with 2 FAQs
+    ("¿Dónde estáis ubicados y a qué hora abrís?", ["address", "hours"], "compound"),
+    ("¿Hay parking y cuál es vuestro horario?", ["parking", "hours"], "compound"),
+    ("¿Cómo se paga y puedo cancelar?", ["payment_info", "cancellation_policy"], "compound"),
+    ("¿Dónde están y hay parking?", ["address", "parking"], "compound"),
+
+    # Compound queries with 3 FAQs
+    ("¿Dónde estáis, a qué hora abrís y hay parking?", ["address", "hours", "parking"], "compound"),
+    ("¿Cómo se paga, puedo cancelar y qué horario tenéis?", ["payment_info", "cancellation_policy", "hours"], "compound"),
+])
+async def test_detect_compound_faq_queries(question, expected_faq_ids, expected_complexity):
+    """Test that compound queries (multiple FAQs) are correctly detected."""
+    # Arrange
+    state: ConversationState = {
+        "conversation_id": "test-compound",
+        "messages": [HumanMessage(content=question)],
+        "customer_phone": "+34612000000",
+        "customer_name": "Test Customer",
+        "current_intent": None,
+        "metadata": {},
+        "total_message_count": 1,
+    }
+
+    # Mock Claude LLM response with JSON array
+    mock_response = MagicMock()
+    import json
+    mock_response.content = json.dumps(expected_faq_ids)
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    # Act
+    result = await detect_faq_intent(state, llm=mock_llm)
+
+    # Assert
+    assert result["faq_detected"] is True, f"Should detect FAQ for compound question: {question}"
+    assert result["detected_faq_ids"] == expected_faq_ids, f"Should detect all FAQs: {expected_faq_ids}"
+    assert result["query_complexity"] == expected_complexity, f"Should classify as {expected_complexity}"
+    # Backward compatibility: detected_faq_id should be first FAQ
+    assert result["detected_faq_id"] == expected_faq_ids[0], "Should set detected_faq_id to first FAQ for backward compatibility"
+
+
+@pytest.mark.asyncio
+async def test_detect_single_faq_returns_simple_complexity():
+    """Test that single FAQ queries return 'simple' complexity."""
+    # Arrange
+    state: ConversationState = {
+        "conversation_id": "test-simple",
+        "messages": [HumanMessage(content="¿Qué horario tenéis?")],
+        "customer_phone": "+34612000000",
+        "customer_name": "Test Customer",
+        "current_intent": None,
+        "metadata": {},
+        "total_message_count": 1,
+    }
+
+    # Mock Claude LLM response
+    mock_response = MagicMock()
+    mock_response.content = '["hours"]'
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    # Act
+    result = await detect_faq_intent(state, llm=mock_llm)
+
+    # Assert
+    assert result["faq_detected"] is True
+    assert result["detected_faq_ids"] == ["hours"]
+    assert result["query_complexity"] == "simple", "Should classify single FAQ as 'simple'"
+
+
+@pytest.mark.asyncio
+async def test_detect_no_faq_returns_empty_list():
+    """Test that non-FAQ messages return empty list."""
+    # Arrange
+    state: ConversationState = {
+        "conversation_id": "test-no-faq",
+        "messages": [HumanMessage(content="Quiero hacer una reserva")],
+        "customer_phone": "+34612000000",
+        "customer_name": "Test Customer",
+        "current_intent": None,
+        "metadata": {},
+        "total_message_count": 1,
+    }
+
+    # Mock Claude LLM response
+    mock_response = MagicMock()
+    mock_response.content = '[]'
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    # Act
+    result = await detect_faq_intent(state, llm=mock_llm)
+
+    # Assert
+    assert result["faq_detected"] is False
+    assert result["detected_faq_ids"] == []
+    assert result["query_complexity"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_detect_faq_handles_invalid_json():
+    """Test that invalid JSON from Claude is handled gracefully."""
+    # Arrange
+    state: ConversationState = {
+        "conversation_id": "test-invalid-json",
+        "messages": [HumanMessage(content="¿Horarios?")],
+        "customer_phone": "+34612000000",
+        "customer_name": "Test Customer",
+        "current_intent": None,
+        "metadata": {},
+        "total_message_count": 1,
+    }
+
+    # Mock Claude LLM response with invalid JSON
+    mock_response = MagicMock()
+    mock_response.content = "hours"  # Not JSON array
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    # Act
+    result = await detect_faq_intent(state, llm=mock_llm)
+
+    # Assert
+    assert result["faq_detected"] is False, "Should handle invalid JSON gracefully"
+    assert result["detected_faq_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_detect_faq_filters_invalid_ids():
+    """Test that invalid FAQ IDs are filtered out."""
+    # Arrange
+    state: ConversationState = {
+        "conversation_id": "test-filter-invalid",
+        "messages": [HumanMessage(content="¿Horarios y precios?")],
+        "customer_phone": "+34612000000",
+        "customer_name": "Test Customer",
+        "current_intent": None,
+        "metadata": {},
+        "total_message_count": 1,
+    }
+
+    # Mock Claude LLM response with valid and invalid IDs
+    mock_response = MagicMock()
+    mock_response.content = '["hours", "pricing", "address"]'  # "pricing" is not a valid FAQ ID
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    # Act
+    result = await detect_faq_intent(state, llm=mock_llm)
+
+    # Assert
+    assert result["faq_detected"] is True
+    assert result["detected_faq_ids"] == ["hours", "address"], "Should filter out invalid 'pricing' ID"
+    assert "pricing" not in result["detected_faq_ids"], "Should not include invalid FAQ ID"

@@ -19,6 +19,7 @@ from agent.nodes.identification import confirm_name, greet_new_customer, greet_r
 from agent.nodes.classification import extract_intent
 from agent.nodes.summarization import summarize_conversation
 from agent.nodes.faq import answer_faq, detect_faq_intent
+from agent.nodes.faq_generation import fetch_faq_context, generate_personalized_faq_response
 from agent.prompts import load_maite_system_prompt
 from agent.state.schemas import ConversationState
 from agent.state.helpers import should_summarize
@@ -161,9 +162,11 @@ def create_conversation_graph(
     graph.add_node("extract_intent", extract_intent)
     graph.add_node("greet_returning_customer", greet_returning_customer)
 
-    # Add FAQ nodes (Story 2.6)
+    # Add FAQ nodes (Story 2.6, enhanced with AI generation)
     graph.add_node("detect_faq_intent", detect_faq_intent)
     graph.add_node("answer_faq", answer_faq)
+    graph.add_node("fetch_faq_context", fetch_faq_context)
+    graph.add_node("generate_faq_response", generate_personalized_faq_response)
 
     # Add summarization node (Story 2.5b)
     graph.add_node("summarize", summarize_conversation)
@@ -263,26 +266,64 @@ def create_conversation_graph(
         }
     )
 
-    # Conditional routing after FAQ detection (Story 2.6)
+    # Conditional routing after FAQ detection (Story 2.6, enhanced with hybrid approach)
     def route_after_faq_detection(state: ConversationState) -> str:
-        """Route based on FAQ detection result."""
-        if state.get("faq_detected"):
-            return "answer_faq"
-        else:
+        """
+        Route based on FAQ detection and query complexity.
+
+        Hybrid approach:
+        - Simple single-FAQ queries → static answer_faq (fast)
+        - Compound multi-FAQ queries → AI generation (smart)
+        - No FAQ → proceed to intent extraction
+        """
+        if not state.get("faq_detected"):
             # No FAQ detected - proceed to intent extraction
             return "extract_intent"
+
+        # FAQ detected - determine routing based on complexity
+        complexity = state.get("query_complexity", "simple")
+        detected_faq_ids = state.get("detected_faq_ids", [])
+
+        # Simple single FAQ → use fast static response
+        if complexity == "simple" and len(detected_faq_ids) == 1:
+            logger.debug(
+                f"Routing to static FAQ answer (simple query)",
+                extra={"conversation_id": state.get("conversation_id"), "faq_id": detected_faq_ids[0]}
+            )
+            return "answer_faq"
+
+        # Compound or multiple FAQs → use AI generation
+        elif complexity == "compound" or len(detected_faq_ids) > 1:
+            logger.debug(
+                f"Routing to AI FAQ generation (compound query)",
+                extra={"conversation_id": state.get("conversation_id"), "faq_ids": detected_faq_ids}
+            )
+            return "fetch_faq_context"
+
+        # Fallback to static response
+        else:
+            logger.debug(
+                f"Routing to static FAQ answer (fallback)",
+                extra={"conversation_id": state.get("conversation_id")}
+            )
+            return "answer_faq"
 
     graph.add_conditional_edges(
         "detect_faq_intent",
         route_after_faq_detection,
         {
             "answer_faq": "answer_faq",
+            "fetch_faq_context": "fetch_faq_context",
             "extract_intent": "extract_intent",
         }
     )
 
-    # FAQ answered - end conversation (wait for next customer message)
+    # After fetching FAQ context, generate AI response
+    graph.add_edge("fetch_faq_context", "generate_faq_response")
+
+    # FAQ answered (both static and AI) - end conversation
     graph.add_edge("answer_faq", END)
+    graph.add_edge("generate_faq_response", END)
 
     # Route from summarization node back to main flow (Story 2.5b)
     def route_after_summarization(state: ConversationState) -> str:

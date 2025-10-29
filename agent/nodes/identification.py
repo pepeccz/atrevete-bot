@@ -55,7 +55,10 @@ async def identify_customer(state: ConversationState) -> dict[str, Any]:
                 extra={"conversation_id": conversation_id, "customer_id": customer_result["id"]}
             )
 
-            full_name = f"{customer_result['first_name']} {customer_result['last_name']}".strip()
+            # Build full name, handling None last_name
+            first_name = customer_result['first_name'] or ""
+            last_name = customer_result['last_name'] or ""
+            full_name = f"{first_name} {last_name}".strip() if last_name else first_name
 
             # Retrieve customer appointment history
             history_result = await get_customer_history.ainvoke({
@@ -131,10 +134,35 @@ async def greet_returning_customer(state: ConversationState) -> dict[str, Any]:
     """
     conversation_id = state.get("conversation_id")
     customer_name = state.get("customer_name", "")
+    customer_phone = state.get("customer_phone")
 
     try:
+        # If customer_name is not set or is invalid, try to fetch from database
+        if not customer_name or customer_name == "None" or customer_name.strip() == "":
+            logger.info(
+                f"Customer name not in state, fetching from database",
+                extra={"conversation_id": conversation_id, "phone": customer_phone}
+            )
+
+            # Import here to avoid circular dependency
+            from agent.tools.customer_tools import get_customer_by_phone
+
+            # Fetch customer data
+            customer_result = await get_customer_by_phone.ainvoke({"phone": customer_phone})
+
+            if customer_result and "error" not in customer_result:
+                # Build customer name properly
+                first_name_db = customer_result.get('first_name') or ""
+                last_name_db = customer_result.get('last_name') or ""
+                customer_name = f"{first_name_db} {last_name_db}".strip() if last_name_db else first_name_db
+
+                logger.info(
+                    f"Fetched customer name from database: {customer_name}",
+                    extra={"conversation_id": conversation_id}
+                )
+
         # Extract first name from full customer name
-        first_name = customer_name.split()[0] if customer_name else "Cliente"
+        first_name = customer_name.split()[0] if customer_name and customer_name.strip() else "Cliente"
 
         logger.info(
             f"Greeting returning customer",
@@ -332,9 +360,12 @@ Return ONLY the classification, nothing else."""
                 confirmation_msg = f"Perfecto, {first_name}! Gracias por confirmar. ¿En qué puedo ayudarte hoy?"
                 updated_state = add_message(state, "assistant", confirmation_msg)
 
+                # Build full name, handling None last_name
+                full_name = f"{first_name} {last_name}".strip() if last_name and last_name != "None" else first_name
+
                 return {
                     "customer_id": customer_result["id"],
-                    "customer_name": f"{first_name} {last_name}".strip(),
+                    "customer_name": full_name,
                     "customer_identified": True,
                     "awaiting_name_confirmation": False,
                     "messages": updated_state["messages"],
@@ -377,9 +408,12 @@ Return ONLY the classification, nothing else."""
                 confirmation_msg = f"Encantada de conocerte, {first_name}! ¿En qué puedo ayudarte hoy?"
                 updated_state = add_message(state, "assistant", confirmation_msg)
 
+                # Build full name, handling None last_name
+                full_name = f"{first_name} {last_name}".strip() if last_name and last_name != "None" else first_name
+
                 return {
                     "customer_id": customer_result["id"],
-                    "customer_name": f"{first_name} {last_name}".strip(),
+                    "customer_name": full_name,
                     "customer_identified": True,
                     "awaiting_name_confirmation": False,
                     "messages": updated_state["messages"],

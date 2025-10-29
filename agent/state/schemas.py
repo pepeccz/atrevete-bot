@@ -60,9 +60,12 @@ class ConversationState(TypedDict, total=False):
     current_intent: Literal["booking", "modification", "cancellation", "faq", "indecision", "usual_service", "escalation", "greeting_only", "inquiry"] | None
     metadata: dict[str, Any]
 
-    # FAQ context (Story 2.6)
+    # FAQ context (Story 2.6, enhanced for multi-FAQ and AI generation)
     faq_detected: bool
-    detected_faq_id: str | None
+    detected_faq_id: str | None  # Backward compatibility: first FAQ ID
+    detected_faq_ids: list[str]  # NEW: List of all detected FAQ IDs for compound queries
+    query_complexity: Literal["simple", "compound", "contextual", "none"]  # NEW: Query complexity classification
+    faq_context: list[dict[str, Any]]  # NEW: FAQ data from database for AI generation
     faq_answered: bool
 
     # Customer context (populated after identification)

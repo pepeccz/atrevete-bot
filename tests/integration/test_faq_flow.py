@@ -410,3 +410,236 @@ async def test_faq_multiple_variations_same_category(returning_customer_faq):
         assert result["faq_detected"] is True, f"Should detect FAQ for question: {question}"
         assert result["detected_faq_id"] == "hours", f"Should detect hours FAQ for question: {question}"
         assert result["faq_answered"] is True, f"Should answer FAQ for question: {question}"
+
+
+# ============================================================================
+# Compound Query Integration Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_compound_faq_flow_address_and_hours(returning_customer_faq):
+    """
+    Test FAQ flow for compound query: location + hours.
+
+    Tests that system detects both FAQs and generates a single cohesive AI response
+    that answers both questions naturally.
+    """
+    # Arrange
+    graph = create_conversation_graph(checkpointer=None)
+
+    initial_state: ConversationState = {
+        "conversation_id": "test-compound-address-hours",
+        "customer_phone": returning_customer_faq.phone,
+        "customer_name": f"{returning_customer_faq.first_name} {returning_customer_faq.last_name}",
+        "messages": [HumanMessage(content="¿Dónde estáis ubicados y a qué hora abrís?")],
+        "current_intent": None,
+        "metadata": {},
+        "customer_id": returning_customer_faq.id,
+        "is_returning_customer": True,
+        "customer_history": [],
+        "preferred_stylist_id": None,
+        "total_message_count": 1,
+    }
+
+    # Mock Claude LLM responses
+    # First call: FAQ detection - returns JSON array with both FAQs
+    detection_response = MagicMock()
+    detection_response.content = '["address", "hours"]'
+
+    # Second call: AI generation - returns personalized response
+    generation_response = MagicMock()
+    generation_response.content = """¡Hola Laura! 🌸 Estamos en La Línea de la Concepción. Te dejo aquí el enlace para que llegues fácilmente:
+
+📍 https://maps.google.com/?q=Atrévete+Peluquería+La+Línea
+
+Nuestro horario es de lunes a viernes de 10:00 a 20:00, y los sábados de 10:00 a 14:00. Los domingos descansamos 😊.
+
+¿Hay algo más en lo que pueda ayudarte? 😊"""
+
+    mock_llm = AsyncMock()
+    # Configure side_effect to return different responses for each call
+    mock_llm.ainvoke = AsyncMock(side_effect=[detection_response, generation_response])
+
+    # Act
+    with patch("agent.nodes.faq.get_llm", return_value=mock_llm):
+        with patch("agent.nodes.faq_generation.get_llm", return_value=mock_llm):
+            result = await graph.ainvoke(initial_state)
+
+    # Assert
+    assert result["faq_detected"] is True, "Should detect FAQ"
+    assert set(result["detected_faq_ids"]) == {"address", "hours"}, "Should detect both address and hours FAQs"
+    assert result["query_complexity"] == "compound", "Should classify as compound query"
+    assert result["faq_answered"] is True, "Should answer FAQ"
+
+    # Verify AI-generated response
+    ai_messages = [msg for msg in result["messages"] if isinstance(msg, AIMessage)]
+    assert len(ai_messages) > 0, "Should have AI response"
+    last_response = ai_messages[-1].content
+
+    # Check that response addresses both questions
+    assert "línea" in last_response.lower() or "ubicados" in last_response.lower(), "Should mention location"
+    assert "maps.google.com" in last_response.lower(), "Should include Google Maps link"
+    assert ("10:00" in last_response and "20:00" in last_response) or "horario" in last_response.lower(), "Should mention hours"
+    assert "¿hay algo más" in last_response.lower(), "Should include follow-up question"
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_compound_faq_flow_parking_and_payment(returning_customer_faq):
+    """
+    Test FAQ flow for compound query: parking + payment info.
+    """
+    # Arrange
+    graph = create_conversation_graph(checkpointer=None)
+
+    initial_state: ConversationState = {
+        "conversation_id": "test-compound-parking-payment",
+        "customer_phone": returning_customer_faq.phone,
+        "customer_name": f"{returning_customer_faq.first_name} {returning_customer_faq.last_name}",
+        "messages": [HumanMessage(content="¿Hay parking y cómo se paga?")],
+        "current_intent": None,
+        "metadata": {},
+        "customer_id": returning_customer_faq.id,
+        "is_returning_customer": True,
+        "customer_history": [],
+        "preferred_stylist_id": None,
+        "total_message_count": 1,
+    }
+
+    # Mock Claude LLM responses
+    detection_response = MagicMock()
+    detection_response.content = '["parking", "payment_info"]'
+
+    generation_response = MagicMock()
+    generation_response.content = """¡Hola! 😊 Sí, hay parking público muy cerca y también zona azul en la calle, es fácil encontrar sitio 🚗.
+
+En cuanto al pago, para confirmar tu cita pedimos un anticipo del 20% que se paga online con tarjeta de forma segura 💳. El resto lo pagas en el salón después del servicio 🌸.
+
+¿Hay algo más en lo que pueda ayudarte? 😊"""
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke = AsyncMock(side_effect=[detection_response, generation_response])
+
+    # Act
+    with patch("agent.nodes.faq.get_llm", return_value=mock_llm):
+        with patch("agent.nodes.faq_generation.get_llm", return_value=mock_llm):
+            result = await graph.ainvoke(initial_state)
+
+    # Assert
+    assert result["faq_detected"] is True
+    assert set(result["detected_faq_ids"]) == {"parking", "payment_info"}
+    assert result["query_complexity"] == "compound"
+    assert result["faq_answered"] is True
+
+    # Verify response addresses both questions
+    ai_messages = [msg for msg in result["messages"] if isinstance(msg, AIMessage)]
+    last_response = ai_messages[-1].content
+
+    assert "parking" in last_response.lower() or "aparcar" in last_response.lower(), "Should mention parking"
+    assert "pag" in last_response.lower() or "anticipo" in last_response.lower(), "Should mention payment"
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_compound_faq_with_three_questions(returning_customer_faq):
+    """
+    Test FAQ flow for complex compound query with 3 FAQs.
+    """
+    # Arrange
+    graph = create_conversation_graph(checkpointer=None)
+
+    initial_state: ConversationState = {
+        "conversation_id": "test-compound-three-faqs",
+        "customer_phone": returning_customer_faq.phone,
+        "customer_name": f"{returning_customer_faq.first_name} {returning_customer_faq.last_name}",
+        "messages": [HumanMessage(content="¿Dónde estáis, a qué hora abrís y hay parking?")],
+        "current_intent": None,
+        "metadata": {},
+        "customer_id": returning_customer_faq.id,
+        "is_returning_customer": True,
+        "customer_history": [],
+        "preferred_stylist_id": None,
+        "total_message_count": 1,
+    }
+
+    # Mock Claude LLM responses
+    detection_response = MagicMock()
+    detection_response.content = '["address", "hours", "parking"]'
+
+    generation_response = MagicMock()
+    generation_response.content = """¡Hola! 🌸 Estamos en La Línea de la Concepción:
+
+📍 https://maps.google.com/?q=Atrévete+Peluquería+La+Línea
+
+Abrimos de lunes a viernes de 10:00 a 20:00, y los sábados de 10:00 a 14:00. Y sí, hay parking público cerca y zona azul, es fácil encontrar sitio 🚗😊.
+
+¿Hay algo más en lo que pueda ayudarte? 😊"""
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke = AsyncMock(side_effect=[detection_response, generation_response])
+
+    # Act
+    with patch("agent.nodes.faq.get_llm", return_value=mock_llm):
+        with patch("agent.nodes.faq_generation.get_llm", return_value=mock_llm):
+            result = await graph.ainvoke(initial_state)
+
+    # Assert
+    assert result["faq_detected"] is True
+    assert set(result["detected_faq_ids"]) == {"address", "hours", "parking"}
+    assert result["query_complexity"] == "compound"
+    assert result["faq_answered"] is True
+
+    # Verify response addresses all three questions
+    ai_messages = [msg for msg in result["messages"] if isinstance(msg, AIMessage)]
+    last_response = ai_messages[-1].content
+
+    assert "maps.google.com" in last_response.lower(), "Should include location"
+    assert "10:00" in last_response or "horario" in last_response.lower(), "Should mention hours"
+    assert "parking" in last_response.lower() or "aparcar" in last_response.lower(), "Should mention parking"
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_simple_faq_uses_static_response(returning_customer_faq):
+    """
+    Test that simple single-FAQ queries still use fast static response path.
+    """
+    # Arrange
+    graph = create_conversation_graph(checkpointer=None)
+
+    initial_state: ConversationState = {
+        "conversation_id": "test-simple-static",
+        "customer_phone": returning_customer_faq.phone,
+        "customer_name": f"{returning_customer_faq.first_name} {returning_customer_faq.last_name}",
+        "messages": [HumanMessage(content="¿Qué horario tenéis?")],
+        "current_intent": None,
+        "metadata": {},
+        "customer_id": returning_customer_faq.id,
+        "is_returning_customer": True,
+        "customer_history": [],
+        "preferred_stylist_id": None,
+        "total_message_count": 1,
+    }
+
+    # Mock Claude LLM response for detection only
+    detection_response = MagicMock()
+    detection_response.content = '["hours"]'
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke = AsyncMock(return_value=detection_response)
+
+    # Act
+    with patch("agent.nodes.faq.get_llm", return_value=mock_llm):
+        result = await graph.ainvoke(initial_state)
+
+    # Assert
+    assert result["faq_detected"] is True
+    assert result["detected_faq_ids"] == ["hours"]
+    assert result["query_complexity"] == "simple"
+    assert result["faq_answered"] is True
+
+    # Verify static response was used (no AI generation call)
+    # Should only have been called once for detection, not for generation
+    assert mock_llm.ainvoke.call_count == 1, "Should only call LLM once for detection, not for generation"
