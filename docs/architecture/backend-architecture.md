@@ -33,7 +33,10 @@ class ConversationState(TypedDict, total=False):
     # Intent classification
     current_intent: Optional[Literal[
         "booking", "modification", "cancellation",
-        "faq", "indecision", "usual_service", "escalation"
+        "faq",            # FAQ queries (hybrid: simple→static, compound→AI)
+        "indecision",     # Customer unsure about service
+        "usual_service",  # "lo de siempre" requests
+        "escalation"      # Medical/complex queries requiring human
     ]]
 
     # Booking context
@@ -77,5 +80,33 @@ class ConversationState(TypedDict, total=False):
     created_at: datetime
     updated_at: datetime
 ```
+
+### 10.1.2 FAQ Handling Architecture
+
+The FAQ system uses a **hybrid routing strategy** optimizing for both speed and intelligence:
+
+**Detection Phase:**
+- All queries analyzed by Claude for FAQ classification
+- Returns: `detected_faq_ids` (list), `query_complexity` (simple/compound/none)
+
+**Response Phase:**
+- **Simple Path** (single FAQ, clear intent):
+  - Route: `detect_faq_intent` → `answer_faq` → END
+  - Method: Static database retrieval
+  - Performance: <2s
+  - Use case: "¿Qué horario tenéis?"
+
+- **Smart Path** (compound queries, multiple FAQs):
+  - Route: `detect_faq_intent` → `fetch_faq_context` → `generate_personalized_faq_response` → END
+  - Method: AI synthesis with tone adaptation
+  - Performance: <5s
+  - Use case: "¿Dónde estáis y hay parking? Necesito cita mañana"
+
+**State Fields:**
+- `faq_detected`: bool
+- `detected_faq_ids`: list[str]  (e.g., ["hours", "parking"])
+- `detected_faq_id`: str  (backward compat - first FAQ)
+- `query_complexity`: "simple" | "compound" | "contextual" | "none"
+- `faq_context`: list[dict]  (FAQ data for AI generation)
 
 ---

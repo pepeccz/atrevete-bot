@@ -239,7 +239,11 @@ interface Policy {
     // For FAQs:
     question?: string;
     answer?: string;
-    keywords?: string[];
+    keywords?: string[];  // REFERENCE ONLY - Not used for matching.
+                          // Claude performs semantic classification.
+                          // Field exists for documentation/human reference.
+    category?: string;
+    requires_location_link?: boolean;
   };
 }
 ```

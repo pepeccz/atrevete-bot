@@ -47,6 +47,72 @@ This section defines major logical components/services across the fullstack, est
 
 ---
 
+## 6.2.1 FAQ Nodes
+
+**Responsibility:** Handle FAQ detection and response generation with hybrid routing for both simple and compound queries.
+
+**Nodes:**
+
+1. **`detect_faq_intent`** (`agent/nodes/faq.py:33-170`)
+   - Uses Claude Sonnet 4 for semantic FAQ classification
+   - Supports multi-FAQ detection (compound queries)
+   - Returns: `detected_faq_ids` list, `query_complexity` classification
+   - Example: "¿Dónde estáis y hay parking?" → ["address", "parking"], complexity="compound"
+
+2. **`answer_faq`** (`agent/nodes/faq.py:172-277`)
+   - Static response path for simple single-FAQ queries
+   - Retrieves FAQ from policies table
+   - Fast path: <2s response time
+   - Adds Google Maps link for location FAQs
+   - Appends proactive follow-up: "¿Hay algo más en lo que pueda ayudarte? 😊"
+
+3. **`fetch_faq_context`** (`agent/nodes/faq_generation.py:28-102`)
+   - Retrieves multiple FAQ contexts from database
+   - Prepares data for AI generation
+   - Stores in `faq_context` state field
+
+4. **`generate_personalized_faq_response`** (`agent/nodes/faq_generation.py:104-288`)
+   - AI-powered response generation for compound queries
+   - Detects customer tone (formal/informal) from message markers
+   - Personalizes with customer name
+   - Synthesizes multiple FAQs into cohesive response
+   - Enforces 150-word maximum
+   - Fallback: Returns to `answer_faq` on error
+
+**Routing Logic:** (`agent/graphs/conversation_flow.py:269-319`)
+
+```python
+def route_after_faq_detection(state: ConversationState) -> str:
+    """
+    Hybrid approach:
+    - Simple single-FAQ → static answer_faq (fast)
+    - Compound multi-FAQ → AI generation (smart)
+    """
+    if not state.get("faq_detected"):
+        return "extract_intent"
+
+    complexity = state.get("query_complexity", "simple")
+    detected_faq_ids = state.get("detected_faq_ids", [])
+
+    if complexity == "simple" and len(detected_faq_ids) == 1:
+        return "answer_faq"  # Fast static path
+    elif complexity == "compound" or len(detected_faq_ids) > 1:
+        return "fetch_faq_context"  # Smart AI path
+    else:
+        return "answer_faq"  # Fallback
+```
+
+**Performance:**
+- Simple FAQ (static): <2s response time
+- Compound FAQ (AI): <5s response time (95th percentile)
+
+**Dependencies:**
+- PostgreSQL policies table (FAQ storage)
+- Anthropic Claude API (classification and generation)
+- ConversationState (faq_detected, detected_faq_ids, query_complexity, faq_context)
+
+---
+
 ## 6.3 CalendarTools
 
 **Responsibility:** Abstracts Google Calendar API operations including availability checks across multiple stylists, event creation/modification/deletion, holiday detection, and timezone handling.

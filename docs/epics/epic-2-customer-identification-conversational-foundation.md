@@ -2,6 +2,10 @@
 
 **Epic Goal:** Implement intelligent customer identification (new vs returning), warm greeting protocol with "Maite" persona, name confirmation flow, and conversational memory system—enabling natural back-and-forth dialogue that remembers context across multiple message exchanges.
 
+## Implementation Notes
+
+**Enhanced FAQ System (Story 2.6):** The implemented FAQ system exceeds original specifications with a hybrid AI approach. While the basic static FAQ retrieval meets all original acceptance criteria, the production system includes intelligent multi-FAQ detection, query complexity classification, and AI-powered personalized response generation for compound queries. This enhancement improves conversational fluidity without affecting other Epic 2 stories. See Story 2.6 ACs 11-19 for details.
+
 ## Story 2.1: CustomerTools Implementation
 
 **As a** system,
