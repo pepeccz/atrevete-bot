@@ -139,7 +139,20 @@ def detect_booking_intent(response: AIMessage) -> bool:
     if not response.content:
         return False
 
-    content_lower = response.content.lower()
+    # Handle both string content and list content (when tool calls are present)
+    if isinstance(response.content, list):
+        # When tool calls are present, content is a list of content blocks
+        # Extract text from text blocks only
+        text_content = " ".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in response.content
+            if block
+        )
+        if not text_content.strip():
+            return False
+        content_lower = text_content.lower()
+    else:
+        content_lower = response.content.lower()
 
     # Strong booking intent keywords
     booking_keywords = [
@@ -245,12 +258,23 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         # Detect booking intent
         booking_intent_confirmed = detect_booking_intent(response)
 
+        # Extract content for message (handle both string and list formats)
+        if isinstance(response.content, list):
+            # When tool calls are present, content is a list of content blocks
+            message_content = " ".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in response.content
+                if block
+            ).strip()
+        else:
+            message_content = response.content
+
         # Prepare state updates
         updates = {
             "messages": state.get("messages", []) + [
                 {
                     "role": "ai",
-                    "content": response.content,
+                    "content": message_content,
                     "timestamp": datetime.now(ZoneInfo("Europe/Madrid")).isoformat(),
                 }
             ],
