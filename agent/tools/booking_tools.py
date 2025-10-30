@@ -14,6 +14,8 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import ARRAY as PGARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +24,20 @@ from database.connection import get_async_session
 from database.models import Pack, Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Tool Schemas for LangChain
+# ============================================================================
+
+
+class GetServicesSchema(BaseModel):
+    """Schema for get_services tool parameters."""
+
+    category: str | None = Field(
+        default=None,
+        description="Optional service category filter: 'Hairdressing' or 'Aesthetics'"
+    )
 
 
 async def get_service_by_name(name: str, fuzzy: bool = True) -> Service | None:
@@ -149,6 +165,40 @@ async def get_packs_for_multiple_services(service_ids: list[UUID]) -> list[Pack]
     except Exception as e:
         logger.exception(f"Error querying packs for multiple services: {e}")
         return []
+
+
+async def get_pack_by_id(pack_id: UUID) -> Pack | None:
+    """
+    Get a pack by its UUID.
+
+    Args:
+        pack_id: UUID of the pack to retrieve
+
+    Returns:
+        Pack object if found, None otherwise
+
+    Example:
+        >>> pack = await get_pack_by_id(UUID("123..."))
+        >>> # Returns Pack object or None
+    """
+    try:
+        logger.info(f"Querying pack by ID: {pack_id}")
+
+        async for session in get_async_session():
+            stmt = select(Pack).where(Pack.id == pack_id, Pack.is_active == True)
+            result = await session.execute(stmt)
+            pack = result.scalar_one_or_none()
+
+            if pack:
+                logger.info(f"Pack found: {pack.name} (ID: {pack_id})")
+            else:
+                logger.warning(f"Pack not found for ID: {pack_id}")
+
+            return pack
+
+    except Exception as e:
+        logger.exception(f"Error querying pack by ID '{pack_id}': {e}")
+        return None
 
 
 async def calculate_total(service_ids: list[UUID]) -> dict:
@@ -297,4 +347,75 @@ async def validate_service_combination(
             "valid": False,
             "reason": "validation_error",
             "services_by_category": {},
+        }
+
+
+# ============================================================================
+# LangChain Tools (for Conversational Agent)
+# ============================================================================
+
+
+@tool(args_schema=GetServicesSchema)
+async def get_services(category: str | None = None) -> dict[str, Any]:
+    """
+    Get all active services, optionally filtered by category.
+
+    Queries the Service table and returns service information including
+    name, price, duration, and category.
+
+    Args:
+        category: Optional category filter ("Hairdressing" or "Aesthetics")
+
+    Returns:
+        Dict with:
+        - services: List of service dicts with id, name, price_euros, duration_minutes, category
+        - count: Number of services returned
+
+    Example:
+        >>> result = await get_services("Hairdressing")
+        >>> result["services"]
+        [{"id": "...", "name": "Corte", "price_euros": 25.0, ...}, ...]
+    """
+    try:
+        async for session in get_async_session():
+            query = select(Service).where(Service.is_active == True)
+
+            # Filter by category if provided
+            if category:
+                try:
+                    category_enum = ServiceCategory[category.upper()]
+                    query = query.where(Service.category == category_enum)
+                except KeyError:
+                    logger.warning(f"Invalid category: {category}")
+
+            result = await session.execute(query)
+            services = list(result.scalars().all())
+
+        services_list = [
+            {
+                "id": str(service.id),
+                "name": service.name,
+                "price_euros": float(service.price_euros),
+                "duration_minutes": service.duration_minutes,
+                "category": service.category.value,
+            }
+            for service in services
+        ]
+
+        logger.info(
+            f"Retrieved {len(services_list)} services" +
+            (f" for category: {category}" if category else "")
+        )
+
+        return {
+            "services": services_list,
+            "count": len(services_list),
+        }
+
+    except Exception as e:
+        logger.error(f"Error in get_services: {e}", exc_info=True)
+        return {
+            "services": [],
+            "count": 0,
+            "error": "Error consultando servicios",
         }
