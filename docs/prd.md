@@ -171,6 +171,10 @@ For the **admin interface**, the vision is functional simplicity: salon staff ne
 
 **For Customers (via WhatsApp):**
 - **Conversational AI with Personality:** Warm greetings, emoji usage, natural language understanding
+- **Hybrid Conversational Flexibility:** The system uses a two-tier approach to balance natural conversation with transactional safety:
+  - **Informational Conversations (Tier 1):** FAQs, service inquiries, and general questions are handled via natural Claude conversation with tool access, allowing flexible topic shifts and human-like responses without rigid state management
+  - **Transactional Flows (Tier 2):** Booking, payment, and modification flows are guided through structured validation steps with explicit state tracking to ensure accuracy, compliance, and atomicity
+  - **Seamless Transition:** When customer expresses clear booking intent, the system transitions from flexible conversation to structured booking flow
 - **Progressive Disclosure:** System asks clarifying questions one at a time, never overwhelming with forms
 - **Multi-Option Selection:** When presenting availability, always offer 2+ choices to empower customer decision-making
 - **Confirmation Feedback:** Clear confirmation messages with booking details after successful payment

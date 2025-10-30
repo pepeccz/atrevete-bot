@@ -1,37 +1,26 @@
 """
-LangGraph nodes for conversation flow.
+LangGraph nodes for conversation flow - Hybrid Architecture.
 
-This package contains all node functions that process conversation state
-and implement business logic for the booking agent.
+This package contains node functions that process conversation state:
+- Tier 1: conversational_agent (Claude + tools)
+- Tier 2: Transactional nodes (booking, availability, payment)
 """
 
-from agent.nodes.greeting import greet_customer
-from agent.nodes.identification import (
-    confirm_name,
-    greet_new_customer,
-    greet_returning_customer,
-    identify_customer,
-)
-from agent.nodes.classification import extract_intent
+from agent.nodes.conversational_agent import conversational_agent
 from agent.nodes.summarization import summarize_conversation
-from agent.nodes.faq import answer_faq, detect_faq_intent
-from agent.nodes.faq_generation import fetch_faq_context, generate_personalized_faq_response
 from agent.nodes.availability_nodes import check_availability
 from agent.nodes.pack_suggestion_nodes import suggest_pack, handle_pack_response
+from agent.nodes.booking_nodes import validate_booking_request, handle_category_choice
 
 __all__ = [
-    "greet_customer",
-    "identify_customer",
-    "greet_new_customer",
-    "greet_returning_customer",
-    "confirm_name",
-    "extract_intent",
+    # Tier 1: Conversational
+    "conversational_agent",
+    # Message management
     "summarize_conversation",
-    "answer_faq",
-    "detect_faq_intent",
-    "fetch_faq_context",
-    "generate_personalized_faq_response",
+    # Tier 2: Transactional
     "check_availability",
     "suggest_pack",
     "handle_pack_response",
+    "validate_booking_request",
+    "handle_category_choice",
 ]

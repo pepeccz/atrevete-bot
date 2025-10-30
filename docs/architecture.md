@@ -139,7 +139,21 @@ graph TB
 
 ### 2.5 Architectural Patterns
 
-- **Stateful Agent Orchestration (LangGraph StateGraph):** Core orchestration pattern for 18 conversational scenarios with automatic checkpointing, conditional routing, and crash recovery - _Rationale:_ Enables complex multi-step flows with branching logic (pack suggestions, escalation, timeouts) while maintaining conversation context across crashes/restarts; superior to manual state machines for AI-driven workflows
+- **Hybrid Conversational + Transactional Orchestration (PRIMARY PATTERN):** Two-tier architecture separating conversational flexibility from transactional control - _Rationale:_ Informational conversations (FAQs, greetings, service inquiries) benefit from Claude's natural language capabilities without rigid state management, while transactional flows (booking, payment, modification) require strict validation and atomic operations. This hybrid approach prevents conversational rigidity while maintaining transaction safety.
+
+  **Tier 1: Conversational Agent (Claude + Tools)**
+  - Handles: FAQs, greetings, service inquiries, indecision detection, consultation offering
+  - Orchestration: Claude decides conversation flow using 8 available tools
+  - State: Minimal (customer context: ~20 fields)
+  - Pattern: Tool-augmented LLM with natural conversation flow
+  - Transition: Detects booking intent and hands off to Tier 2
+
+  **Tier 2: Transactional Flow (LangGraph Nodes)**
+  - Handles: Booking validation, provisional calendar blocks, payment processing, confirmation
+  - Orchestration: Explicit LangGraph nodes with conditional routing
+  - State: Comprehensive (booking context: ~30 fields)
+  - Pattern: State machine with atomic transactions
+  - Guarantee: ACID properties for financial operations
 
 - **Event-Driven Messaging (Redis Pub/Sub):** Decouples webhook receivers from agent processing via asynchronous message queues - _Rationale:_ Webhooks must return 200 OK immediately (<3s) while LangGraph conversations can take 5-10s; pub/sub enables fast webhook acks and scalable async processing
 
@@ -149,7 +163,7 @@ graph TB
 
 - **Intelligent Escalation with Human-in-the-Loop:** LangGraph interrupt mechanism pauses bot, notifies team via WhatsApp, and sets Redis flag to prevent bot re-entry - _Rationale:_ Medical consultations, payment failures, and ambiguity require human judgment; interrupt pattern enables graceful handoff without losing conversation context
 
-- **Tool-Augmented LLM (ReAct Pattern):** Claude reasons about which tools to call based on conversation state, with LangGraph enforcing deterministic control flow - _Rationale:_ Balances flexibility (LLM chooses calendar slots, suggests packs) with safety (payment flows follow strict node sequences); reduces hallucination risk by grounding responses in real data
+- **Tool-Augmented LLM (ReAct Pattern):** Claude reasons about which tools to call based on conversation context - _Rationale:_ In Tier 1 (conversational), Claude has full autonomy to use tools (get_faqs, check_availability, suggest_pack) naturally within conversation. In Tier 2 (transactional), tools are called by explicit node logic to ensure deterministic payment flows. Reduces hallucination risk by grounding responses in real data.
 
 - **Backend for Frontend (Admin Panel):** Django Admin serves as lightweight BFF for salon staff CRUD operations - _Rationale:_ Auto-generated forms reduce development time; read-only calendar views prevent accidental conflicts with bot-managed bookings; staff don't need direct database access
 
@@ -621,27 +635,96 @@ This section defines major logical components/services across the fullstack, est
 
 ---
 
-### 6.2 LangGraph Conversation Orchestrator
+### 6.2a Conversational Agent (Tier 1)
 
-**Responsibility:** Core AI agent that orchestrates 18 conversational scenarios using a StateGraph, manages conversation state with automatic checkpointing, coordinates tool execution, and implements conditional routing based on Claude's reasoning.
+**Responsibility:** Handles informational conversations (FAQs, greetings, service inquiries, indecision detection) using Claude with tool access. Provides natural, flexible conversation flow without rigid state tracking. Detects booking intent and transitions to Transactional Flow.
 
 **Key Interfaces:**
-- `process_incoming_message(conversation_id, customer_phone, message_text)` - Main entry point
-- `resume_from_checkpoint(conversation_id)` - Crash recovery
-- `escalate_to_human(reason, context)` - Human handoff trigger
+- `conversational_agent(state: ConversationState)` - Single node entry point
+- `detect_booking_intent(response: AIMessage)` → bool - Transition detector
+
+**Conversational Capabilities:**
+- Customer identification (new vs returning)
+- FAQ answering (hours, location, parking, policies)
+- Service inquiries (descriptions, prices, durations)
+- Availability checking (as informational query, not booking)
+- Pack suggestions (money-saving opportunities)
+- Consultation offering (when customer indecisive)
+- Escalation triggering (medical queries, frustration)
+
+**Tool Access (8 tools):**
+1. `get_customer_by_phone(phone)` → Customer | None
+2. `create_customer(phone, name)` → Customer
+3. `get_faqs(keywords=None)` → List[FAQ]
+4. `get_services(category=None, name_query=None)` → List[Service]
+5. `check_availability_tool(category, date, time_range)` → AvailableSlots
+6. `suggest_pack_tool(service_ids)` → PackSuggestion | None
+7. `offer_consultation_tool(reason)` → ConsultationService
+8. `escalate_to_human(reason, context)` → Escalation
+
+**State Management:**
+- **Minimal state:** Customer context only (~20 fields)
+- No awaiting flags (Claude manages conversation context)
+- No intent tracking (Claude reasons about conversation flow)
 
 **Dependencies:**
-- Redis (checkpointing, state persistence, pub/sub subscription)
-- PostgreSQL (customer data, appointments, policies via Tools)
-- Anthropic Claude API (LLM reasoning)
-- All 5 tool categories (Calendar, Payment, Customer, Booking, Notification)
+- Anthropic Claude API (Claude Sonnet 4)
+- Redis (checkpointing via RedisSaver)
+- PostgreSQL (via tools: customer, FAQ, service queries)
+- Maite system prompt (conversational guidance)
+
+**Technology Stack:**
+- LangChain 0.3.0+ ChatAnthropic
+- langchain-anthropic 0.3.0+ with tool binding
+- Custom tool implementations (agent/tools/)
+- Expanded system prompt (agent/prompts/maite_system_prompt.md)
+
+---
+
+### 6.2b Transactional Flow Orchestrator (Tier 2)
+
+**Responsibility:** Orchestrates booking, payment, modification, and cancellation flows using LangGraph StateGraph with explicit validation, atomic transactions, and conditional routing. Ensures ACID properties for financial operations.
+
+**Key Interfaces:**
+- `validate_booking_request(state)` - Service category validation
+- `create_provisional_booking(state)` - Provisional calendar block
+- `process_payment_confirmation(state)` - Webhook-triggered confirmation
+- `confirm_booking(state)` - Finalize appointment + notification
+- `handle_modification(state)` - Modify existing appointment
+- `handle_cancellation(state)` - Cancel + refund logic
+
+**Transactional Scenarios:**
+- Booking validation (mixed category detection, Story 3.6)
+- Provisional appointment creation (30min timeout, 2-hour same-day)
+- Payment processing (Stripe webhook validation)
+- Booking confirmation (upgrade calendar event + WhatsApp notification)
+- Modification handling (policy enforcement, calendar update)
+- Cancellation handling (>24h refund, <24h no refund)
+
+**State Management:**
+- **Comprehensive state:** Booking context (~30 fields)
+- Booking validation flags (booking_validation_passed, mixed_category_detected)
+- Payment state (provisional_appointment_id, payment_link_url, stripe_payment_id)
+- Transactional integrity (atomic state updates, rollback on error)
+
+**Dependencies:**
+- LangGraph StateGraph (explicit nodes + conditional routing)
+- Redis (checkpointing, state persistence)
+- PostgreSQL (appointment CRUD, atomic transactions with row locking)
+- Google Calendar API (via CalendarTools)
+- Stripe API (via PaymentTools)
+- Chatwoot API (via NotificationTools)
 
 **Technology Stack:**
 - LangGraph 0.6.7+ StateGraph engine
-- LangChain 0.3.0+ for tool abstraction
-- langchain-anthropic 0.3.0+ for Claude Sonnet 4 integration
-- Redis MemorySaver for checkpointing
-- Custom ConversationState TypedDict
+- Redis AsyncRedisSaver for checkpointing
+- SQLAlchemy 2.0+ with async support
+- Custom ConversationState TypedDict (50 fields total)
+- Transaction isolation: SERIALIZABLE for concurrent bookings
+
+**Entry Point:**
+- Triggered when conversational_agent sets `booking_intent_confirmed=True`
+- Re-entry via `resume_from_checkpoint(conversation_id)` for payment webhooks
 
 ---
 
@@ -1144,7 +1227,9 @@ The backend implements the core business logic through three architectural layer
 
 Atrévete Bot uses a **stateful agent architecture** (not serverless) running as a long-lived Python process in a Docker container.
 
-#### 10.1.1 ConversationState Schema (TypedDict)
+#### 10.1.1 ConversationState Schema (TypedDict) - Simplified Architecture
+
+**Design Philosophy:** Hybrid architecture with minimal state for conversational flows (Tier 1) and comprehensive state for transactional flows (Tier 2). Total ~50 fields vs 158 in previous architecture.
 
 ```python
 # agent/state/schemas.py
@@ -1153,43 +1238,76 @@ from datetime import datetime
 from uuid import UUID
 
 class ConversationState(TypedDict, total=False):
-    # Conversation metadata
+    # ========================================================================
+    # CORE METADATA (10 fields) - Used by both Tier 1 and Tier 2
+    # ========================================================================
     conversation_id: str  # LangGraph thread_id
     customer_phone: str   # E.164 format
-
-    # Customer context
-    customer_id: Optional[UUID]
     customer_name: Optional[str]
-    is_returning_customer: bool
-    customer_history: List[dict]  # Last 5 appointments
-    preferred_stylist_id: Optional[UUID]
-
-    # Message management
     messages: List[dict]  # Recent 10 messages (HumanMessage, AIMessage)
-    conversation_summary: Optional[str]  # Compressed history after 15+ messages
-
-    # Intent classification
     current_intent: Optional[Literal[
         "booking", "modification", "cancellation",
-        "faq", "indecision", "usual_service", "escalation"
+        "faq", "inquiry", "usual_service", "escalation", "greeting_only"
     ]]
+    metadata: dict  # Flexible key-value pairs for custom data
+    created_at: datetime
+    updated_at: datetime
+    last_node: Optional[str]  # Debugging: track execution path
+    error_count: int
 
-    # Booking context
+    # ========================================================================
+    # CUSTOMER CONTEXT (10 fields) - Used by both Tier 1 and Tier 2
+    # ========================================================================
+    customer_id: Optional[UUID]
+    is_returning_customer: bool
+    customer_history: List[dict]  # Last 5 appointments with service details
+    preferred_stylist_id: Optional[UUID]
+    conversation_summary: Optional[str]  # Compressed history after 15+ messages
+    total_message_count: int  # Track all messages (including summarized)
+
+    # ========================================================================
+    # BOOKING CONTEXT (30 fields) - Primarily used by Tier 2 (Transactional)
+    # ========================================================================
+
+    # Transition flag (set by Tier 1, read by Tier 2)
+    booking_intent_confirmed: bool  # Triggers transition to transactional flow
+
+    # Service selection
     requested_services: List[UUID]  # Service IDs
-    suggested_pack_id: Optional[UUID]
-    pack_accepted: bool
-    selected_date: Optional[str]  # ISO 8601 date
-    selected_time: Optional[str]  # HH:MM format
-    selected_stylist_id: Optional[UUID]
-    available_slots: List[dict]  # {time, stylist_id, stylist_name}
+    requested_date: Optional[str]  # ISO 8601 date (YYYY-MM-DD)
+    requested_time: Optional[str]  # HH:MM format (if specific time requested)
 
-    # Provisional booking tracking
+    # Pack suggestions
+    suggested_pack: Optional[dict]  # {id, name, price, savings, services}
+    pack_id: Optional[UUID]  # Accepted pack ID
+    pack_declined: bool
+    individual_service_total: float  # For savings comparison
+
+    # Availability checking
+    available_slots: List[dict]  # [{time, stylist_id, stylist_name, duration}]
+    prioritized_slots: List[dict]  # Top 2-3 slots to present
+    suggested_dates: List[dict]  # Alternative dates when requested date full
+    is_same_day: bool  # Flag for same-day booking (2h timeout vs 30min)
+    holiday_detected: bool
+
+    # Service validation (Story 3.6)
+    booking_validation_passed: bool
+    mixed_category_detected: bool  # HAIRDRESSING + AESTHETICS mixed
+    services_by_category: dict  # {category: [service_ids]}
+
+    # Provisional booking
     provisional_appointment_id: Optional[UUID]
     appointment_expires_at: Optional[datetime]
     payment_link_url: Optional[str]
     payment_retry_count: int
+    stripe_payment_id: Optional[str]
 
-    # Group booking context
+    # Booking confirmation
+    confirmed_appointment_id: Optional[UUID]
+    confirmed_stylist_id: Optional[UUID]
+    confirmed_date_time: Optional[datetime]
+
+    # Group booking
     is_group_booking: bool
     group_size: int
     group_appointment_ids: List[UUID]
@@ -1199,22 +1317,43 @@ class ConversationState(TypedDict, total=False):
     third_party_name: Optional[str]
     third_party_customer_id: Optional[UUID]
 
-    # Escalation tracking
+    # ========================================================================
+    # ESCALATION TRACKING (5 fields) - Used by both tiers
+    # ========================================================================
     escalated: bool
     escalation_reason: Optional[Literal[
         "medical_consultation", "payment_failure",
         "ambiguity", "delay_notice", "manual_request"
     ]]
-    clarification_attempts: int
 
-    # Node execution tracking
-    last_node: Optional[str]
-    error_count: int
-
-    # Metadata
-    created_at: datetime
-    updated_at: datetime
+    # ========================================================================
+    # FIELDS REMOVED IN ARCHITECTURE SIMPLIFICATION
+    # ========================================================================
+    # These fields were deleted as part of the hybrid architecture refactoring
+    # (See BMAD 3.0 for rationale):
+    #
+    # awaiting_name_confirmation: bool  # Claude handles conversationally
+    # awaiting_category_choice: bool  # Claude handles conversationally
+    # consultation_offered: bool  # Claude decides via offer_consultation_tool
+    # consultation_accepted: bool  # Handled in conversational flow
+    # consultation_declined: bool  # Handled in conversational flow
+    # indecision_detected: bool  # Claude reasons about indecision
+    # confidence: float  # No explicit classification needed
+    # indecision_type: str  # Claude reasons about context
+    # detected_services: list[str]  # Not persisted, Claude extracts on-demand
+    # faq_detected: bool  # Claude handles FAQ answering naturally
+    # detected_faq_ids: list[str]  # FAQ lookup via tool, not state
+    # query_complexity: str  # No explicit classification needed
+    # topic_changed_during_pack_response: bool  # Claude handles topic shifts
+    # topic_changed_during_consultation_response: bool  # Claude handles naturally
+    # clarification_attempts: int  # Claude manages conversation context
+    # ... 18 more conversational tracking fields
 ```
+
+**State Reduction Summary:**
+- **Before (old architecture):** 158 fields (30 conversational tracking, 20 customer, 30 booking, 78 other)
+- **After (hybrid architecture):** 50 fields (10 core, 10 customer, 30 booking, 0 conversational tracking)
+- **Reduction:** 68% fewer fields, simpler mental model, easier testing
 
 ---
 
