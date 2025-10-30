@@ -105,7 +105,8 @@ def test_detect_booking_intent_empty():
     response = AIMessage(content="")
     assert detect_booking_intent(response) is False
 
-    response = AIMessage(content=None)
+    # Test with whitespace-only content
+    response = AIMessage(content="   ")
     assert detect_booking_intent(response) is False
 
 
