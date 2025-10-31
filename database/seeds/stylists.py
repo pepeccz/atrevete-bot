@@ -1,12 +1,13 @@
 """
 Seed script for stylists table.
 
-Populates the database with 5 stylists:
+Populates the database with 6 stylists with real Google Calendar IDs:
+- Victor (Hairdressing)
+- Ana (Hairdressing)
+- Marta (Hairdressing)
+- Ana Maria (Hairdressing)
 - Pilar (Hairdressing)
-- Marta (Both - Hairdressing + Aesthetics)
 - Rosa (Aesthetics)
-- Harol (Hairdressing)
-- Víctor (Hairdressing)
 """
 
 import asyncio
@@ -17,40 +18,47 @@ from sqlalchemy import select
 from database.connection import AsyncSessionLocal
 from database.models import ServiceCategory, Stylist
 
-# Stylist seed data
+# Stylist seed data with real Google Calendar IDs
 STYLISTS_DATA: list[dict[str, Any]] = [
     {
-        "name": "Pilar",
+        "name": "Victor",
         "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "pilar@atrevete.com",
+        "google_calendar_id": "02ac48c0a2b9ed4e3b82b48ff92c951c2369519401c88ace2f14e024f57b59d1@group.calendar.google.com",
+        "is_active": True,
+        "metadata_": {},
+    },
+    {
+        "name": "Ana",
+        "category": ServiceCategory.HAIRDRESSING,
+        "google_calendar_id": "740ac1de72d7343d38e7c29e21f88da2654c805d3918710b24e491bce3effd34@group.calendar.google.com",
         "is_active": True,
         "metadata_": {},
     },
     {
         "name": "Marta",
-        "category": ServiceCategory.BOTH,
-        "google_calendar_id": "marta@atrevete.com",
+        "category": ServiceCategory.HAIRDRESSING,
+        "google_calendar_id": "4824b0be9f7479672cf08e305c18ff87b607c2ea7f2fc7c3e2641f2e07671062@group.calendar.google.com",
+        "is_active": True,
+        "metadata_": {},
+    },
+    {
+        "name": "Ana Maria",
+        "category": ServiceCategory.HAIRDRESSING,
+        "google_calendar_id": "97124a0d577423f6efc3d8f72a253ed987178f31c8f138395a99817200e75883@group.calendar.google.com",
+        "is_active": True,
+        "metadata_": {},
+    },
+    {
+        "name": "Pilar",
+        "category": ServiceCategory.HAIRDRESSING,
+        "google_calendar_id": "3b266f75917395ff0cfe7ed47703a5f9c8a8a14a8f680882693df6da80122c39@group.calendar.google.com",
         "is_active": True,
         "metadata_": {},
     },
     {
         "name": "Rosa",
         "category": ServiceCategory.AESTHETICS,
-        "google_calendar_id": "rosa@atrevete.com",
-        "is_active": True,
-        "metadata_": {},
-    },
-    {
-        "name": "Harol",
-        "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "harol@atrevete.com",
-        "is_active": True,
-        "metadata_": {},
-    },
-    {
-        "name": "Víctor",
-        "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "victor@atrevete.com",
+        "google_calendar_id": "2eda3449b5832c981f72fc4c3cee8eac296868ea889aba41e507c7cb550cef4b@group.calendar.google.com",
         "is_active": True,
         "metadata_": {},
     },
@@ -59,7 +67,7 @@ STYLISTS_DATA: list[dict[str, Any]] = [
 
 async def seed_stylists() -> None:
     """
-    Seed the stylists table with 5 stylists.
+    Seed the stylists table with 6 stylists.
 
     Checks if each stylist already exists by google_calendar_id before inserting.
     Uses UPSERT logic to avoid duplicate entries.

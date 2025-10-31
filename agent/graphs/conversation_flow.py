@@ -24,7 +24,7 @@ from agent.nodes.pack_suggestion_nodes import suggest_pack, handle_pack_response
 from agent.nodes.booking_nodes import validate_booking_request, handle_category_choice
 from agent.prompts import load_maite_system_prompt
 from agent.state.schemas import ConversationState
-from agent.state.helpers import should_summarize
+from agent.state.helpers import add_message, should_summarize
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -68,66 +68,89 @@ async def booking_handler(state: ConversationState) -> dict[str, Any]:
     For Story 3.4: If requested_services exist, proceed to pack suggestion.
     Otherwise, show placeholder message.
     """
-    from langchain_core.messages import AIMessage
-
-    messages = list(state.get("messages", []))
-
     # Check if services have been extracted (for Story 3.4 testing)
     requested_services = state.get("requested_services", [])
 
     if not requested_services:
         # No services extracted yet - show placeholder
-        messages.append(AIMessage(content="Entiendo que quieres hacer una reserva. Pronto podré ayudarte con esto. 😊"))
+        updated_state = add_message(state, "assistant", "Entiendo que quieres hacer una reserva. Pronto podré ayudarte con esto. 😊")
         logger.info(f"booking_handler placeholder called (no services)", extra={"conversation_id": state.get("conversation_id")})
+        return updated_state
     else:
         # Services extracted - proceed to pack suggestion
         logger.info(f"booking_handler: services extracted, proceeding to pack suggestion", extra={"conversation_id": state.get("conversation_id")})
-
-    return {"messages": messages}
+        return {}
 
 
 async def modification_handler(state: ConversationState) -> dict[str, Any]:
     """Placeholder node for modification flow (Epic 5)."""
-    from langchain_core.messages import AIMessage
-
-    messages = list(state.get("messages", []))
-    messages.append(AIMessage(content="Entiendo que quieres modificar una cita. Pronto podré ayudarte con esto. 😊"))
-
     logger.info(f"modification_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
-    return {"messages": messages}
+    return add_message(state, "assistant", "Entiendo que quieres modificar una cita. Pronto podré ayudarte con esto. 😊")
 
 
 async def cancellation_handler(state: ConversationState) -> dict[str, Any]:
     """Placeholder node for cancellation flow (Epic 5)."""
-    from langchain_core.messages import AIMessage
-
-    messages = list(state.get("messages", []))
-    messages.append(AIMessage(content="Entiendo que quieres cancelar una cita. Pronto podré ayudarte con esto. 😊"))
-
     logger.info(f"cancellation_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
-    return {"messages": messages}
+    return add_message(state, "assistant", "Entiendo que quieres cancelar una cita. Pronto podré ayudarte con esto. 😊")
 
 
 async def usual_service_handler(state: ConversationState) -> dict[str, Any]:
     """Placeholder node for 'lo de siempre' handling (Epic 4)."""
-    from langchain_core.messages import AIMessage
-
-    messages = list(state.get("messages", []))
-    messages.append(AIMessage(content="Entiendo que quieres tu servicio habitual. Pronto podré ayudarte con esto. 😊"))
-
     logger.info(f"usual_service_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
-    return {"messages": messages}
+    return add_message(state, "assistant", "Entiendo que quieres tu servicio habitual. Pronto podré ayudarte con esto. 😊")
 
 
 async def clarification_handler(state: ConversationState) -> dict[str, Any]:
     """Placeholder node for clarification handling."""
-    from langchain_core.messages import AIMessage
-
-    messages = list(state.get("messages", []))
-    messages.append(AIMessage(content="¿Podrías darme más detalles sobre lo que necesitas? 😊"))
-
     logger.info(f"clarification_handler placeholder called", extra={"conversation_id": state.get("conversation_id")})
-    return {"messages": messages}
+    return add_message(state, "assistant", "¿Podrías darme más detalles sobre lo que necesitas? 😊")
+
+
+async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
+    """
+    Process incoming user message and add it to conversation history.
+
+    This node is the first to execute in the graph. It takes the user_message
+    field (set by agent/main.py) and adds it to the messages history using
+    add_message() helper, which handles FIFO windowing and preserves previous messages.
+
+    This approach ensures that:
+    1. The checkpoint is loaded first by LangGraph (preserving conversation history)
+    2. The new user message is appended to existing history
+    3. Memory is maintained across messages
+
+    Args:
+        state: Current conversation state (with checkpoint loaded by LangGraph)
+
+    Returns:
+        Updated state with new user message added to history
+    """
+    user_message = state.get("user_message")
+    conversation_id = state.get("conversation_id", "unknown")
+
+    if not user_message:
+        logger.warning(
+            f"process_incoming_message called without user_message",
+            extra={"conversation_id": conversation_id}
+        )
+        return {}
+
+    logger.info(
+        f"Processing incoming message for conversation {conversation_id}",
+        extra={
+            "conversation_id": conversation_id,
+            "message_preview": user_message[:50],
+            "existing_messages_count": len(state.get("messages", []))
+        }
+    )
+
+    # Add user message to conversation history (preserves existing messages from checkpoint)
+    updated_state = add_message(state, "user", user_message)
+
+    # Clear user_message field after processing
+    updated_state["user_message"] = None
+
+    return updated_state
 
 
 def create_conversation_graph(
@@ -170,6 +193,11 @@ def create_conversation_graph(
     """
     # Initialize StateGraph with ConversationState schema
     graph = StateGraph(ConversationState)
+
+    # ========================================================================
+    # Message Processing Entry Point
+    # ========================================================================
+    graph.add_node("process_incoming_message", process_incoming_message)
 
     # ========================================================================
     # Tier 1: Conversational Agent (Claude + tools)
@@ -240,7 +268,12 @@ def create_conversation_graph(
         # This handles: greetings, FAQs, identification, service inquiries, consultation
         return "conversational_agent"
 
-    graph.set_conditional_entry_point(
+    # Set process_incoming_message as the entry point (always runs first)
+    graph.set_entry_point("process_incoming_message")
+
+    # Route from process_incoming_message to appropriate next node
+    graph.add_conditional_edges(
+        "process_incoming_message",
         route_entry,
         {
             "conversational_agent": "conversational_agent",
@@ -385,14 +418,27 @@ def create_conversation_graph(
         """
         Route after service validation based on validation result.
 
-        If validation passed, proceed to availability checking.
+        If validation passed and date available, proceed to availability checking.
+        If validation passed but awaiting date, end and wait for customer response.
         If mixed categories detected, wait for customer choice.
         """
         booking_validation_passed = state.get("booking_validation_passed", False)
         mixed_category_detected = state.get("mixed_category_detected", False)
+        awaiting_date_input = state.get("awaiting_date_input", False)
 
-        if booking_validation_passed:
-            # Validation passed - proceed to availability
+        if booking_validation_passed and awaiting_date_input:
+            # Validation passed but waiting for date - end and wait for customer response
+            logger.info(
+                "Validation passed but awaiting date input - ending to wait for customer",
+                extra={"conversation_id": state.get("conversation_id")}
+            )
+            return "end"
+        elif booking_validation_passed:
+            # Validation passed and date available - proceed to availability
+            logger.info(
+                "Validation passed with date - proceeding to availability check",
+                extra={"conversation_id": state.get("conversation_id")}
+            )
             return "check_availability"
         elif mixed_category_detected:
             # Mixed categories - wait for customer choice (end here)

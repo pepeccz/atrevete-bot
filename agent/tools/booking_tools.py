@@ -419,3 +419,163 @@ async def get_services(category: str | None = None) -> dict[str, Any]:
             "count": 0,
             "error": "Error consultando servicios",
         }
+
+
+# ============================================================================
+# Booking Flow Initiation Tool
+# ============================================================================
+
+
+class StartBookingFlowSchema(BaseModel):
+    """Schema for start_booking_flow tool parameters."""
+
+    services: list[str] = Field(
+        description="Lista de servicios que el cliente quiere reservar (nombres o IDs)"
+    )
+    preferred_date: str | None = Field(
+        default=None,
+        description="Fecha preferida del cliente (ej: '2025-11-01', 'viernes', 'mañana')"
+    )
+    preferred_time: str | None = Field(
+        default=None,
+        description="Hora preferida del cliente (ej: '15:00', 'por la tarde', 'mañana')"
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Notas adicionales del cliente sobre la reserva"
+    )
+
+
+@tool(args_schema=StartBookingFlowSchema)
+async def start_booking_flow(
+    services: list[str],
+    preferred_date: str | None = None,
+    preferred_time: str | None = None,
+    notes: str | None = None
+) -> dict[str, Any]:
+    """
+    Inicia el flujo transaccional de reserva de cita.
+
+    CUÁNDO USAR ESTA HERRAMIENTA:
+    ✅ USA cuando el cliente exprese intención CLARA de reservar:
+       - "Quiero reservar mechas para el viernes"
+       - "Dame cita para corte"
+       - "Perfecto, agéndame"
+       - "Sí, quiero reservar"
+       - "¿Tenéis libre el viernes? Si hay, reservo" (con confirmación)
+
+    ❌ NO LA USES si el cliente solo está consultando:
+       - "¿Cuánto cuesta?" → NO (solo consulta precio)
+       - "¿Tenéis libre?" → NO (a menos que diga "si hay, reserva")
+       - "¿Qué incluye el pack?" → NO (aún comparando)
+       - Cliente indeciso o preguntando opciones → NO
+
+    CRITERIO CLAVE: El cliente debe expresar COMPROMISO de reservar,
+    no solo curiosidad o consulta informativa.
+
+    Args:
+        services: Lista de nombres de servicios solicitados (ej: ["mechas", "corte"])
+        preferred_date: Fecha preferida en cualquier formato natural
+        preferred_time: Hora preferida en cualquier formato natural
+        notes: Notas adicionales sobre preferencias o necesidades especiales
+
+    Returns:
+        Dict con confirmación de inicio del flujo y datos capturados
+
+    Example:
+        >>> # Cliente dice: "Quiero mechas y corte para el viernes a las 3"
+        >>> result = await start_booking_flow(
+        ...     services=["mechas", "corte"],
+        ...     preferred_date="viernes",
+        ...     preferred_time="15:00"
+        ... )
+        >>> # Resultado: {"booking_initiated": True, ...}
+    """
+    logger.info(
+        f"Booking flow initiated",
+        extra={
+            "services": services,
+            "preferred_date": preferred_date,
+            "preferred_time": preferred_time,
+            "has_notes": bool(notes),
+        }
+    )
+
+    return {
+        "booking_initiated": True,
+        "services": services,
+        "preferred_date": preferred_date,
+        "preferred_time": preferred_time,
+        "notes": notes,
+        "message": "Flujo de reserva iniciado. Procederé a validar servicios y verificar disponibilidad.",
+    }
+
+
+# ============================================================================
+# Set Preferred Date Tool
+# ============================================================================
+
+
+class SetPreferredDateSchema(BaseModel):
+    """Schema for set_preferred_date tool parameters."""
+
+    preferred_date: str = Field(
+        description="Fecha preferida del cliente en formato natural (ej: '2025-11-01', 'viernes', 'mañana', '5 de noviembre')"
+    )
+    preferred_time: str | None = Field(
+        default=None,
+        description="Hora preferida del cliente si la menciona (ej: '15:00', 'por la tarde', '3 de la tarde')"
+    )
+
+
+@tool(args_schema=SetPreferredDateSchema)
+async def set_preferred_date(
+    preferred_date: str,
+    preferred_time: str | None = None
+) -> dict[str, Any]:
+    """
+    Registra la fecha y hora preferida del cliente para su cita.
+
+    CUÁNDO USAR ESTA HERRAMIENTA:
+    ✅ USA cuando el cliente responda con una fecha después de preguntarle:
+       - Cliente: "El viernes" → set_preferred_date(preferred_date="viernes")
+       - Cliente: "Mañana a las 3" → set_preferred_date(preferred_date="mañana", preferred_time="15:00")
+       - Cliente: "5 de noviembre" → set_preferred_date(preferred_date="2025-11-05")
+
+    ❌ NO LA USES si:
+       - El cliente aún está preguntando sin confirmar
+       - Ya usaste start_booking_flow() con la fecha
+
+    Esta herramienta se usa SOLO cuando el sistema ya preguntó "¿Qué día prefieres?"
+    y el cliente está respondiendo con su preferencia.
+
+    Args:
+        preferred_date: Fecha preferida en cualquier formato natural
+        preferred_time: Hora preferida si el cliente la especifica
+
+    Returns:
+        Dict confirmando que la fecha fue registrada
+
+    Example:
+        >>> # Sistema preguntó: "¿Qué día prefieres?"
+        >>> # Cliente respondió: "El viernes por la tarde"
+        >>> result = await set_preferred_date(
+        ...     preferred_date="viernes",
+        ...     preferred_time="por la tarde"
+        ... )
+        >>> # Resultado: {"date_set": True, "preferred_date": "viernes", ...}
+    """
+    logger.info(
+        f"Preferred date set by customer",
+        extra={
+            "preferred_date": preferred_date,
+            "preferred_time": preferred_time,
+        }
+    )
+
+    return {
+        "date_set": True,
+        "preferred_date": preferred_date,
+        "preferred_time": preferred_time,
+        "message": f"Fecha registrada: {preferred_date}" + (f" a las {preferred_time}" if preferred_time else ""),
+    }

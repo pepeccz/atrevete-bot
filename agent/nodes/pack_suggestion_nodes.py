@@ -21,6 +21,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.prompts import load_maite_system_prompt
+from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
 from agent.tools.booking_tools import (
     calculate_total,
@@ -469,9 +470,8 @@ async def suggest_pack(state: ConversationState) -> dict[str, Any]:
             f"conversation_id={conversation_id}"
         )
 
-        # Append bot response to messages
-        messages = list(state.get("messages", []))
-        messages.append(AIMessage(content=bot_response))
+        # Add bot response using helper (ensures FIFO windowing + total_message_count)
+        updated_state = add_message(state, "assistant", bot_response)
 
         # Convert suggested_pack to serializable format (Pack object → dict)
         serializable_suggested_pack = {
@@ -485,11 +485,11 @@ async def suggest_pack(state: ConversationState) -> dict[str, Any]:
         }
 
         return {
+            **updated_state,  # Include messages and total_message_count from add_message
             "matching_packs": [str(p.id) for p in packs],  # Serialize to UUID strings
             "suggested_pack": serializable_suggested_pack,  # Serializable dict
             "individual_service_total": float(individual_total),  # Decimal → float
             "bot_response": bot_response,
-            "messages": messages,
         }
 
     except Exception as e:
@@ -723,17 +723,16 @@ Return ONLY the classification word (accept/decline/unclear)."""
             customer_name = state.get("customer_name", "")
             confirmation_message = f"¡Perfecto, {customer_name}! 😊 Te reservo el pack de {pack.name.lower()}."
 
-            # Append confirmation to messages
-            updated_messages = list(messages)
-            updated_messages.append(AIMessage(content=confirmation_message))
+            # Add confirmation message using helper (ensures FIFO windowing + total_message_count)
+            updated_state = add_message(state, "assistant", confirmation_message)
 
             return {
+                **updated_state,  # Include messages and total_message_count
                 "pack_id": pack_id,
                 "requested_services": pack_services,
                 "total_price": pack.price_euros,
                 "total_duration": pack.duration_minutes,
                 "bot_response": confirmation_message,
-                "messages": updated_messages,
             }
 
         # Handle decline
@@ -750,14 +749,13 @@ Return ONLY the classification word (accept/decline/unclear)."""
             # For now, use generic message (service extraction will be in future story)
             decline_message = f"Entendido, {customer_name} 😊. Te reservo el servicio entonces."
 
-            # Append acknowledgment to messages
-            updated_messages = list(messages)
-            updated_messages.append(AIMessage(content=decline_message))
+            # Add decline message using helper (ensures FIFO windowing + total_message_count)
+            updated_state = add_message(state, "assistant", decline_message)
 
             return {
+                **updated_state,  # Include messages and total_message_count
                 "pack_declined": True,
                 "bot_response": decline_message,
-                "messages": updated_messages,
             }
 
         # Handle unclear response
@@ -773,10 +771,6 @@ Return ONLY the classification word (accept/decline/unclear)."""
                 f"¿Prefieres el pack de {pack_name} o solo el servicio individual? 😊"
             )
 
-            # Append clarification to messages
-            updated_messages = list(messages)
-            updated_messages.append(AIMessage(content=clarification_message))
-
             # Increment clarification attempts
             clarification_attempts = state.get("clarification_attempts", 0) + 1
 
@@ -791,9 +785,12 @@ Return ONLY the classification word (accept/decline/unclear)."""
                     "clarification_attempts": clarification_attempts,
                 }
 
+            # Add clarification message using helper (ensures FIFO windowing + total_message_count)
+            updated_state = add_message(state, "assistant", clarification_message)
+
             return {
+                **updated_state,  # Include messages and total_message_count
                 "bot_response": clarification_message,
-                "messages": updated_messages,
                 "clarification_attempts": clarification_attempts,
             }
 

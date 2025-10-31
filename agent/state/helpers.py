@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 # Maximum number of messages to retain in state (10 exchanges = 10 user or assistant messages)
 MAX_MESSAGES = 10
 
+# Maximum character length for a single message (prevents token overflow)
+MAX_MESSAGE_LENGTH = 2000
+
 
 def add_message(
     state: ConversationState,
@@ -25,16 +28,17 @@ def add_message(
     content: str
 ) -> ConversationState:
     """
-    Add a message to the conversation state with FIFO windowing.
+    Add a message to the conversation state with FIFO windowing and length limits.
 
-    This function immutably adds a new message to the conversation state while
-    maintaining a maximum of 10 recent messages. When the limit is exceeded,
-    the oldest message is automatically removed (FIFO queue behavior).
+    This function immutably adds a new message to the conversation state while:
+    1. Maintaining a maximum of 10 recent messages (FIFO windowing)
+    2. Truncating messages longer than 2000 characters with warning
+    3. Tracking total message count for summarization triggers
 
     Args:
         state: Current conversation state
         role: Message role - either "user" or "assistant"
-        content: Message content text
+        content: Message content text (will be truncated if > 2000 chars)
 
     Returns:
         New ConversationState with updated messages list and updated_at timestamp.
@@ -53,10 +57,25 @@ def add_message(
         # Create a copy to avoid mutating the original state
         messages = list(state.get("messages", []))
 
+        # Truncate message if too long (preserve first 800 and last 800 chars)
+        truncated_content = content
+        if len(content) > MAX_MESSAGE_LENGTH:
+            conversation_id = state.get("conversation_id", "unknown")
+            logger.warning(
+                f"Message exceeds {MAX_MESSAGE_LENGTH} chars ({len(content)} chars), "
+                f"truncating for conversation {conversation_id}"
+            )
+            # Preserve beginning and end of message
+            truncated_content = (
+                content[:800] +
+                f"\n\n[... {len(content) - 1600} caracteres omitidos ...]\n\n" +
+                content[-800:]
+            )
+
         # Create new message dict with timestamp
         new_message = {
             "role": role,
-            "content": content,
+            "content": truncated_content,
             "timestamp": datetime.now(ZoneInfo("Europe/Madrid")).isoformat()
         }
 

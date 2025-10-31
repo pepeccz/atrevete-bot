@@ -85,6 +85,7 @@ run_seeds() {
     SEED_SCRIPTS=(
         "database.seeds.services"
         "database.seeds.stylists"
+        "database.seeds.business_hours"
         "database.seeds.packs"
         "database.seeds.faqs"
         "database.seeds.policies"

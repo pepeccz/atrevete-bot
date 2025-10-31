@@ -108,7 +108,12 @@ async def check_availability_tool(
             }
 
         # Check for holidays
-        is_holiday = await check_holiday_closure(requested_date)
+        calendar_client = get_calendar_client()
+        is_holiday = await check_holiday_closure(
+            calendar_client.service,
+            requested_date,
+            conversation_id=state.get("conversation_id", "")
+        )
         if is_holiday:
             logger.info(f"Holiday detected on {date}")
             return {

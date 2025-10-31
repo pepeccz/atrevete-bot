@@ -1,11 +1,12 @@
 """
 SQLAlchemy ORM models for core database tables.
 
-This module defines the 4 core tables:
+This module defines the core tables:
 - customers: Salon customers with contact info and preferences
 - stylists: Salon professionals with Google Calendar integration
 - services: Individual salon services with pricing and duration
 - packs: Discounted service packages
+- business_hours: Salon operating hours configuration by day of week
 
 All models use:
 - UUID primary keys (auto-generated)
@@ -594,3 +595,81 @@ class ConversationHistory(Base):
 
     def __repr__(self) -> str:
         return f"<ConversationHistory(id={self.id}, conversation_id='{self.conversation_id}', role='{self.message_role.value}')>"
+
+
+class BusinessHours(Base):
+    """
+    Salon business hours configuration.
+
+    Stores opening/closing times for each day of the week.
+    Allows dynamic configuration of salon schedule without code changes.
+
+    Day of week: 0=Monday, 1=Tuesday, ..., 6=Sunday
+    """
+
+    __tablename__ = "business_hours"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
+    day_of_week: Mapped[int] = mapped_column(
+        Integer,
+        CheckConstraint("day_of_week >= 0 AND day_of_week <= 6", name="valid_day_of_week"),
+        nullable=False,
+        unique=True,  # One row per day
+    )
+
+    # Closed status
+    is_closed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Opening time (null if closed)
+    start_hour: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        CheckConstraint("start_hour IS NULL OR (start_hour >= 0 AND start_hour <= 23)", name="valid_start_hour"),
+        nullable=True,
+    )
+    start_minute: Mapped[int] = mapped_column(
+        Integer,
+        CheckConstraint("start_minute >= 0 AND start_minute <= 59", name="valid_start_minute"),
+        default=0,
+        nullable=False,
+    )
+
+    # Closing time (null if closed)
+    end_hour: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        CheckConstraint("end_hour IS NULL OR (end_hour >= 0 AND end_hour <= 23)", name="valid_end_hour"),
+        nullable=True,
+    )
+    end_minute: Mapped[int] = mapped_column(
+        Integer,
+        CheckConstraint("end_minute >= 0 AND end_minute <= 59", name="valid_end_minute"),
+        default=0,
+        nullable=False,
+    )
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_business_hours_day", "day_of_week"),
+    )
+
+    def __repr__(self) -> str:
+        if self.is_closed:
+            return f"<BusinessHours(day={self.day_of_week}, CLOSED)>"
+        return f"<BusinessHours(day={self.day_of_week}, {self.start_hour}:{self.start_minute:02d}-{self.end_hour}:{self.end_minute:02d})>"

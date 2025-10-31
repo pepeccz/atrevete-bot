@@ -80,14 +80,42 @@ async def validate_booking_request(state: ConversationState) -> dict[str, Any]:
         async for session in get_async_session():
             validation = await validate_service_combination(requested_services, session)
 
-            # If validation passed, proceed to availability
+            # If validation passed, check if we have requested_date
             if validation["valid"]:
                 logger.info(
                     f"Booking validation passed: conversation_id={conversation_id}, customer_id={customer_id}"
                 )
+
+                # Check if requested_date is set
+                requested_date = state.get("requested_date")
+
+                if not requested_date:
+                    # No date provided - ask for it
+                    logger.info(
+                        f"Validation passed but no requested_date - asking customer for date | conversation_id={conversation_id}"
+                    )
+
+                    # Get service names for context
+                    service_names = await _get_service_names_str(requested_services, session)
+
+                    message = f"Perfecto, {customer_name} 😊. ¿Qué día prefieres para {service_names}?"
+
+                    from agent.state.helpers import add_message
+                    updated_state = add_message(state, "assistant", message)
+
+                    return {
+                        **updated_state,
+                        "booking_validation_passed": True,
+                        "awaiting_date_input": True,
+                        "updated_at": datetime.now(UTC),
+                        "last_node": "validate_booking_request",
+                    }
+
+                # Date is available - proceed to availability check
                 return {
                     **state,
                     "booking_validation_passed": True,
+                    "awaiting_date_input": False,
                     "updated_at": datetime.now(UTC),
                     "last_node": "validate_booking_request",
                 }

@@ -29,13 +29,14 @@ from agent.tools.calendar_tools import (
     check_holiday_closure,
     fetch_calendar_events,
     generate_time_slots,
+    generate_time_slots_async,
     get_calendar_client,
     get_stylist_by_id,
     get_stylists_by_category,
     is_slot_available,
 )
 from database.connection import get_async_session
-from database.models import Service, ServiceCategory, Stylist
+from database.models import Pack, Service, ServiceCategory, Stylist
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +301,7 @@ async def query_all_stylists_parallel(
     stylists: list[Stylist],
     date: datetime,
     time_slots: list[datetime],
+    service_duration_minutes: int,
     conversation_id: str = ""
 ) -> list[dict]:
     """
@@ -312,6 +314,7 @@ async def query_all_stylists_parallel(
         stylists: List of Stylist model instances to check
         date: Date to check availability for
         time_slots: List of potential time slots to check
+        service_duration_minutes: Total duration of service/pack in minutes
         conversation_id: For logging traceability
 
     Returns:
@@ -344,10 +347,10 @@ async def query_all_stylists_parallel(
                 time_max_str
             )
 
-            # Check each time slot
+            # Check each time slot with full service duration validation
             available_slots = []
             for slot_time in time_slots:
-                if is_slot_available(slot_time, busy_events):
+                if is_slot_available(slot_time, busy_events, service_duration_minutes):
                     available_slots.append({
                         "time": slot_time.strftime("%H:%M"),
                         "stylist_id": str(stylist.id),
@@ -407,6 +410,7 @@ async def query_all_stylists_parallel(
 async def suggest_alternative_dates(
     requested_date: datetime,
     category: str,
+    service_duration_minutes: int,
     preferred_stylist_id: UUID | None = None,
     conversation_id: str = ""
 ) -> list[dict]:
@@ -419,6 +423,7 @@ async def suggest_alternative_dates(
     Args:
         requested_date: Originally requested date
         category: Service category to check
+        service_duration_minutes: Total duration of service/pack in minutes
         preferred_stylist_id: Optional preferred stylist filter
         conversation_id: For logging traceability
 
@@ -469,9 +474,13 @@ async def suggest_alternative_dates(
             )
             break
 
-        # Generate time slots
+        # Generate time slots with service duration validation (from database)
         day_of_week = current_date.weekday()
-        time_slots = generate_time_slots(current_date, day_of_week)
+        time_slots = await generate_time_slots_async(
+            current_date,
+            day_of_week,
+            service_duration_minutes=service_duration_minutes
+        )
 
         if not time_slots:
             # This date is closed (shouldn't happen after Sunday check)
@@ -484,6 +493,7 @@ async def suggest_alternative_dates(
             stylists,
             current_date,
             time_slots,
+            service_duration_minutes,
             conversation_id
         )
 
@@ -634,6 +644,7 @@ async def check_availability(state: ConversationState) -> dict[str, Any]:
             alternatives = await suggest_alternative_dates(
                 requested_date,
                 category,
+                total_duration_minutes,
                 preferred_stylist_id,
                 conversation_id
             )
@@ -683,9 +694,44 @@ async def check_availability(state: ConversationState) -> dict[str, Any]:
                 "prioritized_slots": []
             }
 
-        # Generate time slots
+        # Calculate total service duration
+        # Check if we're using a pack (with pre-defined duration) or individual services
+        pack_id = state.get("pack_id")
+        if pack_id:
+            # Pack selected - use pack duration
+            async with get_async_session() as session:
+                pack_query = select(Pack).where(Pack.id == pack_id)
+                pack_result = await session.execute(pack_query)
+                pack = pack_result.scalar_one_or_none()
+
+                if pack:
+                    total_duration_minutes = pack.duration_minutes
+                    logger.info(
+                        f"Using pack duration: {total_duration_minutes} min | "
+                        f"pack_id={pack_id} | conversation_id={conversation_id}"
+                    )
+                else:
+                    # Fallback to service sum if pack not found
+                    total_duration_minutes = sum(s.duration_minutes for s in services)
+                    logger.warning(
+                        f"Pack not found, using service sum: {total_duration_minutes} min | "
+                        f"conversation_id={conversation_id}"
+                    )
+        else:
+            # Individual services - sum durations
+            total_duration_minutes = sum(s.duration_minutes for s in services)
+            logger.info(
+                f"Using individual service durations sum: {total_duration_minutes} min | "
+                f"conversation_id={conversation_id}"
+            )
+
+        # Generate time slots with service duration validation (from database)
         day_of_week = requested_date.weekday()
-        time_slots = generate_time_slots(requested_date, day_of_week)
+        time_slots = await generate_time_slots_async(
+            requested_date,
+            day_of_week,
+            service_duration_minutes=total_duration_minutes
+        )
 
         if not time_slots:
             # Salon closed on this day (likely Sunday)
@@ -697,6 +743,7 @@ async def check_availability(state: ConversationState) -> dict[str, Any]:
             alternatives = await suggest_alternative_dates(
                 requested_date,
                 category,
+                total_duration_minutes,
                 preferred_stylist_id,
                 conversation_id
             )
@@ -723,6 +770,7 @@ async def check_availability(state: ConversationState) -> dict[str, Any]:
             stylists,
             requested_date,
             time_slots,
+            total_duration_minutes,
             conversation_id
         )
 
@@ -747,6 +795,7 @@ async def check_availability(state: ConversationState) -> dict[str, Any]:
             alternatives = await suggest_alternative_dates(
                 requested_date,
                 category,
+                total_duration_minutes,
                 preferred_stylist_id,
                 conversation_id
             )

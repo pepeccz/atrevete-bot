@@ -8,10 +8,9 @@ import logging
 import signal
 from datetime import UTC, datetime
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from agent.graphs.conversation_flow import MAITE_SYSTEM_PROMPT, create_conversation_graph
 from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
+from agent.state.helpers import add_message
 from shared.logging_config import configure_logging
 from shared.redis_client import get_redis_client, publish_to_channel
 
@@ -83,27 +82,29 @@ async def subscribe_to_incoming_messages():
                 conversation_id = data.get("conversation_id")
                 customer_phone = data.get("customer_phone")
                 message_text = data.get("message_text")
+                customer_name = data.get("customer_name")  # Get name from Chatwoot webhook
 
                 logger.info(
-                    f"Message received: conversation_id={conversation_id}, phone={customer_phone}",
+                    f"Message received: conversation_id={conversation_id}, phone={customer_phone}, name={customer_name}",
                     extra={
                         "conversation_id": conversation_id,
                         "customer_phone": customer_phone,
+                        "customer_name": customer_name,
                     },
                 )
 
-                # Create initial ConversationState with system prompt
+                # Create initial ConversationState
+                # NOTE: Only pass essential fields. LangGraph will load messages, total_message_count,
+                # and other fields from the checkpoint (if thread_id exists in Redis).
+                # Do NOT initialize messages/total_message_count here as it would overwrite the checkpoint.
+                #
+                # The graph's entry point will handle adding the new user message to the existing
+                # conversation history loaded from the checkpoint.
                 state = {
                     "conversation_id": conversation_id,
                     "customer_phone": customer_phone,
-                    "customer_name": None,
-                    "messages": [
-                        SystemMessage(content=MAITE_SYSTEM_PROMPT()),
-                        HumanMessage(content=message_text)
-                    ],
-                    "current_intent": None,
-                    "metadata": {},
-                    "created_at": datetime.now(UTC),
+                    "customer_name": customer_name,  # Use name from webhook if available
+                    "user_message": message_text,  # Store the incoming message for the graph to process
                     "updated_at": datetime.now(UTC),
                 }
 
@@ -114,7 +115,31 @@ async def subscribe_to_incoming_messages():
                     extra={"conversation_id": conversation_id},
                 )
 
-                result = await graph.ainvoke(state, config=config)
+                try:
+                    result = await graph.ainvoke(state, config=config)
+                except Exception as graph_error:
+                    # Handle checkpoint corruption or graph execution errors
+                    logger.error(
+                        f"Graph invocation failed for conversation_id={conversation_id}: {graph_error}",
+                        extra={
+                            "conversation_id": conversation_id,
+                            "error_type": type(graph_error).__name__,
+                        },
+                        exc_info=True,
+                    )
+
+                    # Send fallback error message to user
+                    fallback_message = "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕"
+                    await publish_to_channel(
+                        "outgoing_messages",
+                        {
+                            "conversation_id": conversation_id,
+                            "customer_phone": customer_phone,
+                            "message": fallback_message,
+                        },
+                    )
+                    logger.info(f"Sent fallback message for conversation_id={conversation_id}")
+                    continue
 
                 # Extract AI response from result state
                 last_message = result["messages"][-1]

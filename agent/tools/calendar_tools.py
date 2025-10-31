@@ -33,7 +33,7 @@ from tenacity import (
 from zoneinfo import ZoneInfo
 
 from database.connection import get_async_session
-from database.models import ServiceCategory, Stylist
+from database.models import BusinessHours, ServiceCategory, Stylist
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -45,9 +45,11 @@ logger = logging.getLogger(__name__)
 TIMEZONE = ZoneInfo("Europe/Madrid")
 
 # Business hours (hour only, 24-hour format)
+# DEPRECATED: Use get_business_hours_from_db() instead
+# This constant serves as fallback if database is unavailable
 BUSINESS_HOURS = {
-    "weekday": {"start": 10, "end": 20},  # Monday-Friday 10:00-20:00
-    "saturday": {"start": 10, "end": 14},  # Saturday 10:00-14:00
+    "weekday": {"start": 10, "end": 20},  # Tuesday-Friday 10:00-20:00 (FALLBACK)
+    "saturday": {"start": 9, "end": 14},  # Saturday 9:00-14:00 (FALLBACK)
 }
 
 # Slot duration in minutes
@@ -248,16 +250,169 @@ async def get_stylist_by_id(stylist_id: UUID) -> Stylist | None:
             return None
 
 
-def generate_time_slots(date: datetime, day_of_week: int) -> list[datetime]:
+async def get_business_hours_from_db(day_of_week: int) -> dict[str, int] | None:
     """
-    Generate available time slots for a given date based on business hours.
+    Get business hours for a specific day from the database.
+
+    Args:
+        day_of_week: Day of week (0=Monday, 6=Sunday)
+
+    Returns:
+        Dictionary with 'start' and 'end' hours, or None if day is closed or error occurs.
+        Returns None for closed days (is_closed=True).
+
+    Example:
+        >>> hours = await get_business_hours_from_db(1)  # Tuesday
+        >>> # Returns: {"start": 10, "end": 20}
+        >>> hours = await get_business_hours_from_db(0)  # Monday (closed)
+        >>> # Returns: None
+    """
+    try:
+        async for session in get_async_session():
+            result = await session.execute(
+                select(BusinessHours).where(BusinessHours.day_of_week == day_of_week)
+            )
+            business_hours = result.scalar_one_or_none()
+
+            if business_hours is None:
+                logger.warning(
+                    f"No business hours found in database for day_of_week={day_of_week}, "
+                    f"using fallback"
+                )
+                return None
+
+            if business_hours.is_closed:
+                logger.debug(f"Day {day_of_week} is closed (from database)")
+                return None
+
+            if business_hours.start_hour is None or business_hours.end_hour is None:
+                logger.warning(
+                    f"Business hours for day_of_week={day_of_week} has NULL hours but is_closed=False, "
+                    f"using fallback"
+                )
+                return None
+
+            return {
+                "start": business_hours.start_hour,
+                "end": business_hours.end_hour,
+            }
+
+    except Exception as e:
+        logger.error(
+            f"Error fetching business hours from database for day_of_week={day_of_week}: {e}",
+            exc_info=True
+        )
+        return None
+
+
+async def generate_time_slots_async(
+    date: datetime,
+    day_of_week: int,
+    service_duration_minutes: int = SLOT_DURATION_MINUTES
+) -> list[datetime]:
+    """
+    Generate available time slots for a given date based on business hours from database.
+
+    IMPORTANT: This is the async version that reads from the database. Use this function
+    from async contexts. For backwards compatibility, generate_time_slots() remains
+    as a synchronous function using the hardcoded fallback.
+
+    Only generates slots where the FULL service can complete within business hours.
+    For example, if business closes at 20:00 and service is 3 hours, the last slot
+    will be at 17:00 (ending at 20:00).
 
     Args:
         date: Date to generate slots for (timezone-aware)
         day_of_week: Day of week (0=Monday, 6=Sunday)
+        service_duration_minutes: Total duration of service/pack in minutes.
+            Defaults to SLOT_DURATION_MINUTES (30) for backwards compatibility.
 
     Returns:
-        List of datetime objects representing slot start times
+        List of datetime objects representing slot start times where the
+        full service can complete within business hours.
+
+    Example:
+        >>> # Service duration: 180 minutes (3 hours)
+        >>> # Business hours: 10:00-20:00
+        >>> slots = await generate_time_slots_async(date, 1, service_duration_minutes=180)
+        >>> # Returns slots: 10:00, 10:30, ..., 16:30, 17:00
+        >>> # Last slot: 17:00 (service ends at 20:00)
+        >>> # Slots 17:30-19:30 are excluded (would exceed closing time)
+    """
+    slots = []
+
+    # Get business hours from database
+    hours_config = await get_business_hours_from_db(day_of_week)
+
+    if hours_config is None:
+        # Day is closed or database error - use fallback
+        logger.info(
+            f"Using fallback business hours for day_of_week={day_of_week}"
+        )
+
+        # Sunday is closed
+        if day_of_week == 6:
+            return slots
+
+        # Monday is closed (not in fallback constant)
+        if day_of_week == 0:
+            return slots
+
+        # Determine business hours based on day of week (FALLBACK)
+        if day_of_week == 5:  # Saturday
+            hours_config = BUSINESS_HOURS["saturday"]
+        else:  # Tuesday-Friday
+            hours_config = BUSINESS_HOURS["weekday"]
+
+    # Generate slots in 30-minute increments
+    start_hour = hours_config["start"]
+    end_hour = hours_config["end"]
+
+    current_time = date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    end_time = date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+
+    while current_time < end_time:
+        # Calculate when service would end if started at this slot
+        service_end_time = current_time + timedelta(minutes=service_duration_minutes)
+
+        # Only add slot if the FULL service completes within business hours
+        if service_end_time <= end_time:
+            slots.append(current_time)
+
+        current_time += timedelta(minutes=SLOT_DURATION_MINUTES)
+
+    return slots
+
+
+def generate_time_slots(
+    date: datetime,
+    day_of_week: int,
+    service_duration_minutes: int = SLOT_DURATION_MINUTES
+) -> list[datetime]:
+    """
+    Generate available time slots for a given date based on business hours.
+
+    IMPORTANT: Only generates slots where the FULL service can complete within
+    business hours. For example, if business closes at 20:00 and service is 3 hours,
+    the last slot will be at 17:00 (ending at 20:00).
+
+    Args:
+        date: Date to generate slots for (timezone-aware)
+        day_of_week: Day of week (0=Monday, 6=Sunday)
+        service_duration_minutes: Total duration of service/pack in minutes.
+            Defaults to SLOT_DURATION_MINUTES (30) for backwards compatibility.
+
+    Returns:
+        List of datetime objects representing slot start times where the
+        full service can complete within business hours.
+
+    Example:
+        >>> # Service duration: 180 minutes (3 hours)
+        >>> # Business hours: 10:00-20:00
+        >>> slots = generate_time_slots(date, 0, service_duration_minutes=180)
+        >>> # Returns slots: 10:00, 10:30, ..., 16:30, 17:00
+        >>> # Last slot: 17:00 (service ends at 20:00)
+        >>> # Slots 17:30-19:30 are excluded (would exceed closing time)
     """
     slots = []
 
@@ -279,7 +434,13 @@ def generate_time_slots(date: datetime, day_of_week: int) -> list[datetime]:
     end_time = date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
 
     while current_time < end_time:
-        slots.append(current_time)
+        # Calculate when service would end if started at this slot
+        service_end_time = current_time + timedelta(minutes=service_duration_minutes)
+
+        # Only add slot if the FULL service completes within business hours
+        if service_end_time <= end_time:
+            slots.append(current_time)
+
         current_time += timedelta(minutes=SLOT_DURATION_MINUTES)
 
     return slots
@@ -417,19 +578,35 @@ async def check_holiday_closure(
 
 def is_slot_available(
     slot_time: datetime,
-    busy_events: list[dict[str, Any]]
+    busy_events: list[dict[str, Any]],
+    service_duration_minutes: int = SLOT_DURATION_MINUTES
 ) -> bool:
     """
     Check if a time slot is available (not overlapping with busy events).
 
+    IMPORTANT: Validates that the FULL service duration is available, not just
+    the slot start time. For example, if service is 3 hours, checks that all
+    3 hours are free of conflicts.
+
     Args:
         slot_time: Slot start time (timezone-aware)
         busy_events: List of busy event dictionaries from Calendar API
+        service_duration_minutes: Total duration of service/pack in minutes.
+            Defaults to SLOT_DURATION_MINUTES (30) for backwards compatibility.
 
     Returns:
-        True if slot is available, False if busy
+        True if the full service duration is available, False if any part
+        overlaps with existing events.
+
+    Example:
+        >>> # Service duration: 180 minutes (3 hours)
+        >>> # Slot: 15:00
+        >>> # Existing event: 17:00-18:00
+        >>> is_slot_available(slot_15_00, events, 180)
+        >>> # Returns False (service 15:00-18:00 overlaps with event 17:00-18:00)
     """
-    slot_end = slot_time + timedelta(minutes=SLOT_DURATION_MINUTES)
+    # Calculate when the full service would end
+    service_end_time = slot_time + timedelta(minutes=service_duration_minutes)
 
     for event in busy_events:
         # Parse event start and end times
@@ -443,9 +620,10 @@ def is_slot_available(
             event_start = datetime.fromisoformat(event_start_str.replace("Z", "+00:00"))
             event_end = datetime.fromisoformat(event_end_str.replace("Z", "+00:00"))
 
-            # Check for overlap: slot overlaps if it starts before event ends
-            # and ends after event starts
-            if slot_time < event_end and slot_end > event_start:
+            # Check for overlap: service overlaps with event if:
+            # - Service starts before event ends AND
+            # - Service ends after event starts
+            if slot_time < event_end and service_end_time > event_start:
                 return False
 
         except Exception as e:

@@ -33,7 +33,13 @@ class ConversationState(TypedDict, total=False):
         conversation_id: LangGraph thread_id used for checkpointing
         customer_phone: E.164 formatted phone number (e.g., +34612345678)
         customer_name: Customer's name (may be empty for new customers)
-        messages: Recent 10 message exchanges (FIFO windowing) with 'role', 'content', 'timestamp' keys
+        messages: Recent 10 message exchanges (FIFO windowing) with dict format:
+            {
+                "role": "user" | "assistant",  # NEVER "human" or "ai" - use user/assistant only
+                "content": str,                 # Message text content
+                "timestamp": str                # ISO 8601 format in Europe/Madrid timezone
+            }
+            NOTE: Use add_message() helper from state.helpers to ensure correct format
         metadata: Flexible dict for future use and custom data
 
         # Customer Context (populated by customer_tools)
@@ -99,6 +105,7 @@ class ConversationState(TypedDict, total=False):
     customer_name: str | None
     messages: list[dict[str, Any]]
     metadata: dict[str, Any]
+    user_message: str | None  # Incoming user message to be processed by graph nodes
 
     # ============================================================================
     # Customer Context (Populated by customer_tools)
@@ -123,6 +130,7 @@ class ConversationState(TypedDict, total=False):
     suggested_pack_id: UUID | None
     provisional_appointment_id: UUID | None
     payment_link_url: str | None
+    awaiting_date_input: bool  # Flag when waiting for customer to provide booking date
 
     # ============================================================================
     # Tier 1 → Tier 2 Transition Signal

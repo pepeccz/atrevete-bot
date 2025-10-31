@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from api.middleware.rate_limiting import RateLimitMiddleware
-from api.routes import chatwoot
+from api.routes import chatwoot, conversations
 from api.routes import stripe as stripe_routes
 from shared.logging_config import configure_logging
 
@@ -37,6 +37,9 @@ app.add_middleware(
 # Include webhook routers
 app.include_router(chatwoot.router, prefix="/webhook", tags=["webhooks"])
 app.include_router(stripe_routes.router, prefix="/webhook", tags=["webhooks"])
+
+# Include conversation history router
+app.include_router(conversations.router, tags=["conversations"])
 
 
 # Exception handler for validation errors
@@ -101,4 +104,4 @@ async def health_check() -> JSONResponse:
 @app.get("/")
 async def root() -> dict[str, str]:
     """Root endpoint"""
-    return {"message": "Atrévete Bot API - Use /health for health checks"}
+    return {"message": "Atrévete Bot API by zanovix.com - Use /health for health checks"}
