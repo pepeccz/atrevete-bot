@@ -59,7 +59,7 @@ def get_llm_with_tools() -> ChatAnthropic:
     llm = ChatAnthropic(
         model="claude-sonnet-4-20250514",
         api_key=settings.ANTHROPIC_API_KEY,
-        temperature=0.7,  # Slightly higher for natural conversation
+        temperature=0.3,
     )
 
     # Bind all tools for conversational agent

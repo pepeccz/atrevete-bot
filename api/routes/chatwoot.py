@@ -53,6 +53,7 @@ async def receive_chatwoot_webhook(
 
     # Read and parse webhook payload
     body = await request.body()
+    logger.info(f"Raw webhook payload: {body.decode('utf-8')[:500]}")
     payload = ChatwootWebhookPayload.model_validate_json(body)
 
     # Filter: Only process conversations with messages
@@ -81,6 +82,12 @@ async def receive_chatwoot_webhook(
         customer_phone=last_message.sender.phone_number,  # Will be normalized to E.164
         message_text=last_message.content or "",
         customer_name=last_message.sender.name,
+    )
+
+    logger.info(
+        f"Parsed message event: conversation_id={message_event.conversation_id}, "
+        f"phone={message_event.customer_phone}, name={message_event.customer_name}, "
+        f"text='{message_event.message_text[:100]}'"
     )
 
     # Publish to Redis channel
