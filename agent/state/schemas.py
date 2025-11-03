@@ -13,7 +13,7 @@ tracking fields now handled by Claude's reasoning in the conversational_agent no
 """
 
 from datetime import datetime
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 
@@ -131,6 +131,23 @@ class ConversationState(TypedDict, total=False):
     provisional_appointment_id: UUID | None
     payment_link_url: str | None
     awaiting_date_input: bool  # Flag when waiting for customer to provide booking date
+
+    # Booking Phase Tracking (NEW - for 4-phase booking flow)
+    booking_phase: Literal["service_selection", "availability", "customer_data", "payment"] | None
+
+    # Slot Selection (NEW - Fase 2 completion)
+    selected_slot: dict[str, Any] | None  # {"time": "15:00", "stylist_id": "...", "date": "2025-11-05"}
+    selected_stylist_id: UUID | None  # Stylist UUID from selected slot
+
+    # Customer Data Collection (NEW - Fase 3)
+    customer_notes: str | None  # Optional notes from customer (allergies, preferences)
+    awaiting_customer_name: bool  # Waiting for customer name confirmation/input
+    awaiting_customer_notes: bool  # Waiting for customer notes input
+
+    # Payment Management (NEW - Fase 4)
+    payment_timeout_at: datetime | None  # When provisional booking expires
+    total_price: Any  # Decimal - Total cost of services/pack
+    advance_payment_amount: Any  # Decimal - 20% deposit amount
 
     # ============================================================================
     # Tier 1 → Tier 2 Transition Signal

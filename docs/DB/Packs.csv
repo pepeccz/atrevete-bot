@@ -1,0 +1,9 @@
+ID,Nombre,Categoría,Descripción,Servicios_IDs,Sesiones,Precio_Total (€),Precio_Por_Sesión (€),Ahorro (€),Disponible
+1,PACK BIOTERAPIA FACIAL VITALIZADORA (5+1),Estética,"Pack de 6 sesiones de Bioterapia Facial Vitalizadora que genera vitalidad y energía a nivel celular. Pagas 5 sesiones y recibes 1 gratis.",43,6,307.50,51.25,61.50,Si
+2,PACK BIOTERAPIA FACIAL SENSITIVA (5+1),Estética,"Pack de 6 sesiones de Bioterapia Facial Sensitiva que calma la piel sensible e irritada. Pagas 5 sesiones y recibes 1 gratis.",43,6,307.50,51.25,61.50,Si
+3,PACK BIOTERAPIA FACIAL ILUMINANTE (5+1),Estética,"Pack de 6 sesiones de Bioterapia Facial Iluminante que reduce las manchas de la piel. Pagas 5 sesiones y recibes 1 gratis.",43,6,307.50,51.25,61.50,Si
+4,PACK BIOTERAPIA FACIAL DETOX (5+1),Estética,"Pack de 6 sesiones de Bioterapia Facial Detox que reequilibra problemas de piel grasa. Pagas 5 sesiones y recibes 1 gratis.",43,6,307.50,51.25,61.50,Si
+5,PACK BIOTERAPIA DE SENOS (5+1),Estética,"Pack de 6 sesiones de Bioterapia de Senos que tonifica y mejora la firmeza. Pagas 5 sesiones y recibes 1 gratis.",54,6,312.00,52.00,62.40,Si
+6,PACK PIERNAS PERFECTAS + PRESOTERAPIA (5+1),Estética,"Pack de 6 sesiones de Piernas Perfectas con Presoterapia que mejora la circulación y reduce retención. Pagas 5 sesiones y recibes 1 gratis.",58,6,360.00,60.00,72.00,Si
+7,PACK BIOTERAPIA ESCULTOR COMPLETO (5+1),Estética,"Pack de 6 sesiones de Bioterapia Escultor Completo que reafirma y modela la silueta. Pagas 5 sesiones y recibes 1 gratis.",66,6,307.05,51.18,63.20,Si
+8,PACK BIOTERAPIA ESCULTOR + RADIOFRECUENCIA 30MIN (5+1),Estética,"Pack de 6 sesiones de Bioterapia Escultor con 30 minutos de Radiofrecuencia para reafirmación intensa. Pagas 5 sesiones y recibes 1 gratis.",51,6,384.00,64.00,76.80,Si
