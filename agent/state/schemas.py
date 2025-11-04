@@ -87,6 +87,8 @@ class ConversationState(TypedDict, total=False):
         # Node Execution Tracking
         last_node: Name of last executed node (for debugging)
         error_count: Number of errors encountered (for escalation logic)
+        escalation_triggered: Whether conversation has been escalated to human team
+        escalation_reason: Reason for escalation (e.g., 'technical_error', 'payment_failure')
 
         # Timestamps
         created_at: When conversation started (Europe/Madrid timezone)
@@ -186,6 +188,8 @@ class ConversationState(TypedDict, total=False):
     # ============================================================================
     last_node: str | None
     error_count: int
+    escalation_triggered: bool
+    escalation_reason: str | None
 
     # ============================================================================
     # Timestamps

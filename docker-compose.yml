@@ -95,6 +95,8 @@ services:
       dockerfile: docker/Dockerfile.agent
     container_name: atrevete-agent
     env_file: .env
+    volumes:
+      - ./service-account-key.json:/app/service-account-key.json:ro
     depends_on:
       postgres:
         condition: service_healthy

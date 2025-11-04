@@ -46,7 +46,7 @@ async def get_service_by_name(name: str, fuzzy: bool = True, limit: int = 5) -> 
 
     Args:
         name: Service name to search for
-        fuzzy: If True, use pg_trgm similarity matching (threshold > 0.3).
+        fuzzy: If True, use pg_trgm similarity matching (threshold > 0.7).
                If False, use exact case-insensitive ILIKE matching.
         limit: Maximum number of results to return (default: 5)
 
@@ -69,11 +69,11 @@ async def get_service_by_name(name: str, fuzzy: bool = True, limit: int = 5) -> 
 
         async for session in get_async_session():
             if fuzzy:
-                # Use pg_trgm similarity with threshold > 0.3
+                # Use pg_trgm similarity with threshold > 0.7 (more restrictive to reduce false positives)
                 stmt = (
                     select(Service)
                     .where(
-                        func.similarity(Service.name, name) > 0.3,
+                        func.similarity(Service.name, name) > 0.7,
                         Service.is_active == True,
                     )
                     .order_by(func.similarity(Service.name, name).desc())
@@ -495,3 +495,137 @@ async def set_preferred_date(
         "preferred_time": preferred_time,
         "message": f"Fecha registrada: {preferred_date}" + (f" a las {preferred_time}" if preferred_time else ""),
     }
+
+
+# ============================================================================
+# Validate Booking Date Tool (for early 3-day validation)
+# ============================================================================
+
+
+class ValidateBookingDateSchema(BaseModel):
+    """Schema for validate_booking_date tool parameters."""
+
+    date: str = Field(
+        description="Fecha a validar en formato YYYY-MM-DD (ej: '2025-11-05')"
+    )
+
+
+@tool(args_schema=ValidateBookingDateSchema)
+async def validate_booking_date(date: str) -> dict[str, Any]:
+    """
+    Valida si una fecha cumple con la política de aviso mínimo de 3 días.
+
+    Esta herramienta permite validar fechas ANTES de iniciar el flujo de reserva,
+    útil cuando el cliente menciona una fecha en su mensaje inicial pero hay
+    ambigüedad en el servicio solicitado.
+
+    CUÁNDO USAR ESTA HERRAMIENTA:
+    ✅ USA cuando el cliente mencione una fecha PERO aún no esté clara la reserva:
+       - "Me quiero cortar el pelo mañana" (fecha clara, servicio ambiguo)
+       - "Tenéis disponible el viernes para mechas?" (pregunta informativa con fecha)
+       - "Quiero cita para mañana" (fecha clara, servicio no especificado)
+
+    ❌ NO LA USES si:
+       - Ya llamaste start_booking_flow() (la validación ocurre automáticamente en Tier 2)
+       - El cliente no mencionó ninguna fecha
+       - La reserva es clara y sin ambigüedad (usa start_booking_flow directamente)
+
+    La herramienta valida la regla de negocio: MÍNIMO 3 DÍAS DE AVISO.
+    Si la fecha no cumple, retorna la fecha más cercana válida para que puedas
+    informar al cliente proactivamente.
+
+    Args:
+        date: Fecha en formato YYYY-MM-DD (ej: "2025-11-05")
+
+    Returns:
+        Dict con:
+        - valid: bool (True si cumple regla de 3 días)
+        - days_difference: int (días entre hoy y la fecha solicitada)
+        - earliest_date: str en formato YYYY-MM-DD (si valid=False)
+        - earliest_date_formatted: str legible (ej: "viernes 7 de noviembre")
+        - message: str (mensaje explicativo para el cliente)
+
+    Example:
+        >>> # Hoy es 2025-11-04, cliente dice "mañana" (2025-11-05)
+        >>> result = await validate_booking_date(date="2025-11-05")
+        >>> result["valid"]
+        False
+        >>> result["days_difference"]
+        1
+        >>> result["earliest_date_formatted"]
+        "viernes 7 de noviembre"
+        >>> result["message"]
+        "Lo siento, necesitamos mínimo 3 días de aviso..."
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from agent.validators.booking_validators import validate_min_advance_notice
+
+    TIMEZONE = ZoneInfo("Europe/Madrid")
+
+    try:
+        # Parse fecha
+        try:
+            requested_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=TIMEZONE)
+        except ValueError:
+            logger.error(f"validate_booking_date: Invalid date format '{date}'")
+            return {
+                "valid": False,
+                "error": "Formato de fecha inválido",
+                "message": "No pude entender esa fecha. Por favor usa formato YYYY-MM-DD.",
+            }
+
+        # Validar regla de 3 días
+        validation_result = await validate_min_advance_notice(
+            requested_date=requested_date,
+            conversation_id=""  # Tool doesn't have conversation context
+        )
+
+        is_valid = validation_result["valid"]
+        days_diff = validation_result["days_difference"]
+
+        if is_valid:
+            logger.info(
+                f"Date validation passed: {date} ({days_diff} days advance)",
+                extra={"date": date, "days_difference": days_diff}
+            )
+            return {
+                "valid": True,
+                "days_difference": days_diff,
+                "message": f"Fecha válida ({days_diff} días de aviso)",
+            }
+        else:
+            # Fecha no válida - preparar mensaje informativo
+            earliest_formatted = validation_result["earliest_date_formatted"]
+            earliest_date_str = validation_result["earliest_date"].strftime("%Y-%m-%d")
+
+            message = (
+                f"Lo siento, necesitamos mínimo 3 días de aviso para las citas. "
+                f"La fecha más cercana disponible sería el {earliest_formatted}."
+            )
+
+            logger.info(
+                f"Date validation failed: {date} (only {days_diff} days) | "
+                f"Earliest: {earliest_date_str}",
+                extra={
+                    "date": date,
+                    "days_difference": days_diff,
+                    "earliest_date": earliest_date_str,
+                }
+            )
+
+            return {
+                "valid": False,
+                "days_difference": days_diff,
+                "earliest_date": earliest_date_str,
+                "earliest_date_formatted": earliest_formatted,
+                "message": message,
+            }
+
+    except Exception as e:
+        logger.exception(f"Error in validate_booking_date: {e}")
+        return {
+            "valid": False,
+            "error": str(e),
+            "message": "Error validando la fecha",
+        }

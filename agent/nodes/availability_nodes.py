@@ -262,6 +262,8 @@ def format_availability_response(slots: list[dict], date: datetime) -> str:
     """
     Format availability response with Maite's warm Spanish tone.
 
+    🎯 OPTIMIZACIÓN 3: Mensajes más cálidos y conversacionales para transición Tier 1→2
+
     Args:
         slots: List of 1-3 prioritized slot dictionaries
         date: Date of availability
@@ -279,23 +281,28 @@ def format_availability_response(slots: list[dict], date: datetime) -> str:
     elif num_slots == 1:
         slot = slots[0]
         return (
-            f"Este {day_name} tenemos libre a las {slot['time']} con "
-            f"{slot['stylist_name']}. ¿Te viene bien? 🌸"
+            f"¡Perfecto! 😊 Este {day_name} tenemos libre a las *{slot['time']}* con "
+            f"*{slot['stylist_name']}*. ¿Te viene bien?"
         )
 
     elif num_slots == 2:
         s1, s2 = slots[0], slots[1]
         return (
-            f"Este {day_name} tenemos libre a las {s1['time']} con {s1['stylist_name']} "
-            f"y a las {s2['time']} con {s2['stylist_name']}. ¿Cuál prefieres? 😊"
+            f"¡Genial! 🌸 Este {day_name} tenemos:\n\n"
+            f"• *{s1['time']}* con {s1['stylist_name']}\n"
+            f"• *{s2['time']}* con {s2['stylist_name']}\n\n"
+            f"¿Cuál prefieres?"
         )
 
     else:  # 3 slots
         s1, s2, s3 = slots[0], slots[1], slots[2]
         return (
-            f"Este {day_name} tenemos libre a las {s1['time']} con {s1['stylist_name']}, "
-            f"a las {s2['time']} con {s2['stylist_name']} y a las {s3['time']} con "
-            f"{s3['stylist_name']}. ¿Cuál te viene mejor? 💕"
+            f"¡Te muestro los horarios disponibles! 💕\n\n"
+            f"Este {day_name} tenemos:\n"
+            f"• *{s1['time']}* con {s1['stylist_name']}\n"
+            f"• *{s2['time']}* con {s2['stylist_name']}\n"
+            f"• *{s3['time']}* con {s3['stylist_name']}\n\n"
+            f"¿Cuál te viene mejor?"
         )
 
 
@@ -624,10 +631,11 @@ async def check_availability(state: ConversationState) -> dict[str, Any]:
             }
 
         # Query services to determine category
-        async with get_async_session() as session:
+        async for session in get_async_session():
             query = select(Service).where(Service.id.in_(requested_services))
             result = await session.execute(query)
             services = list(result.scalars().all())
+            break
 
         if not services:
             logger.error(

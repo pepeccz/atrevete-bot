@@ -17,7 +17,7 @@ class EscalateToHumanSchema(BaseModel):
     """Schema for escalate_to_human tool parameters."""
 
     reason: str = Field(
-        description="Reason for escalation: 'medical_consultation', 'payment_failure', 'ambiguity', 'delay_notice', 'manual_request'"
+        description="Reason for escalation: 'medical_consultation', 'payment_failure', 'ambiguity', 'delay_notice', 'manual_request', 'technical_error'"
     )
 
 
@@ -56,6 +56,7 @@ async def escalate_to_human(reason: str) -> dict[str, Any]:
         "ambiguity": "Quiero asegurarme de ayudarte bien. Te conecto con el equipo para que te asistan mejor 🌸",
         "delay_notice": "Entendido. Notificaré al equipo de inmediato para ajustar tu cita si es posible 😊",
         "manual_request": "¡Claro! Te conecto con el equipo ahora mismo 💕",
+        "technical_error": "Disculpa, he tenido un problema al procesar tu mensaje. He notificado al equipo y te atenderán lo antes posible 🌸",
     }
 
     customer_message = messages.get(reason, "Te conecto con el equipo ahora mismo 💕")

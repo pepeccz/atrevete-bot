@@ -45,6 +45,12 @@ docker-compose logs -f archiver # Conversation archival worker
 
 # Restart specific service
 docker-compose restart api
+
+# IMPORTANT: Google Calendar credentials
+# The agent service requires service-account-key.json to be present in the project root
+# This file is mounted as a read-only volume in docker-compose.yml
+# Verify it's accessible inside the container:
+docker exec atrevete-agent ls -la /app/service-account-key.json
 ```
 
 ### Database Operations
@@ -274,3 +280,29 @@ endpoint = f"{api_url}/api/v1/accounts/{account_id}/conversations/{conversation_
 - Environment variables: NEVER commit `.env` to git
 - API keys: Use test keys for development, live keys only in production
 - Database credentials: Minimum 16 characters for security
+- Google service account key: Mounted as read-only volume, never commit to git
+
+## Troubleshooting
+
+### Google Calendar API Errors
+
+**Error:** `FileNotFoundError: [Errno 2] No such file or directory: 'service-account-key.json'`
+
+**Cause:** The Google service account credentials file is not accessible inside the Docker container.
+
+**Solution:**
+1. Verify the file exists on the host: `ls -la /home/pepe/atrevete-bot/service-account-key.json`
+2. Verify `docker-compose.yml` has the volume mount in the `agent` service:
+   ```yaml
+   agent:
+     volumes:
+       - ./service-account-key.json:/app/service-account-key.json:ro
+   ```
+3. Recreate the container (restart is not enough): `docker-compose up -d agent`
+4. Verify the file is accessible: `docker exec atrevete-agent ls -la /app/service-account-key.json`
+
+**Impact if not fixed:**
+- Customers cannot check availability
+- Booking flow is blocked (requires availability check)
+- Agent can only handle informational queries (FAQs, service info)
+- All booking attempts will escalate to human staff

@@ -195,7 +195,8 @@ Return choice type and selected_index (0-based) if applicable."""
                 stylist_name = selected_slot["stylist_name"]
                 time = selected_slot["time"]
 
-                response = f"Perfecto, {customer_name} 😊. Te agendo para el {requested_date} a las {time} con {stylist_name}."
+                # 🎯 OPTIMIZACIÓN 3: Respuesta más cálida y personal
+                response = f"¡Genial! 🎉 Te reservo para el *{requested_date}* a las *{time}* con {stylist_name}."
 
                 return {
                     **state,
@@ -216,7 +217,8 @@ Return choice type and selected_index (0-based) if applicable."""
             stylist_name = selected_slot["stylist_name"]
             time = selected_slot["time"]
 
-            response = f"Perfecto 😊. Te agendo para el {requested_date} a las {time} con {stylist_name}."
+            # 🎯 OPTIMIZACIÓN 3: Respuesta más cálida y personal
+            response = f"¡Perfecto! 🎉 Te reservo para el *{requested_date}* a las *{time}* con {stylist_name}."
 
             return {
                 **state,
@@ -338,30 +340,36 @@ async def collect_customer_data(state: ConversationState) -> dict[str, Any]:
         # State 1: Initial call - Ask for name confirmation/input
         if not awaiting_customer_name and not awaiting_customer_notes:
             if is_returning_customer and customer_name:
-                # Returning customer - confirm name
+                # 🎯 OPTIMIZACIÓN 1: Saltar confirmación para clientes recurrentes
+                # Skip name confirmation - go directly to notes
                 response = (
-                    f"Tengo registrado tu nombre como {customer_name}. "
-                    f"¿Confirmas que esos datos son correctos o prefieres cambiarlos?"
+                    f"¿Hay algo que debamos saber antes de tu cita, {customer_name}? "
+                    f"(alergias, preferencias, etc.) Si no, puedes responder 'no' o 'nada'."
                 )
                 return {
                     **state,
-                    "awaiting_customer_name": True,
+                    "awaiting_customer_notes": True,  # Skip name, go to notes
                     "bot_response": response,
                     "updated_at": datetime.now(UTC),
                     "last_node": "collect_customer_data",
                 }
             else:
-                # New customer - request name
-                response = "Para finalizar, necesito tu nombre y apellido para la reserva 😊."
+                # New customer - request name AND notes in one message
+                # 🎯 OPTIMIZACIÓN 2: Consolidar recolección de datos
+                response = (
+                    "Para finalizar, necesito tu nombre completo y, si tienes alguna alergia o preferencia especial, "
+                    "por favor indícamelo también 😊. Ejemplo: 'María García, sin alergias'"
+                )
                 return {
                     **state,
                     "awaiting_customer_name": True,
+                    "awaiting_customer_notes": True,  # Ask for both at once
                     "bot_response": response,
                     "updated_at": datetime.now(UTC),
                     "last_node": "collect_customer_data",
                 }
 
-        # State 2: Processing name response
+        # State 2: Processing name response (consolidated with notes if both requested)
         if awaiting_customer_name:
             if not messages or not messages[-1].get("content"):
                 logger.error(
@@ -377,10 +385,11 @@ async def collect_customer_data(state: ConversationState) -> dict[str, Any]:
 
             customer_message = messages[-1]["content"]
 
-            # Use Claude to extract name confirmation/update
+            # Use Claude to extract name AND notes (consolidated)
             structured_llm = llm.with_structured_output(CustomerDataClassification)
 
-            name_prompt = f"""Classify customer's name confirmation/update.
+            # 🎯 OPTIMIZACIÓN 2: Prompt consolidado que extrae nombre Y notas
+            consolidated_prompt = f"""Extract customer name and notes from message.
 
 Current name: "{customer_name or 'ninguno'}"
 Customer message: "{customer_message}"
@@ -388,29 +397,36 @@ Customer message: "{customer_message}"
 Detect:
 - has_name: Whether customer provided a full name (first + last)
 - name: Extract full name if provided
-- If customer says "sí", "correcto", "está bien" → has_name=False (confirmed existing)
+- has_notes: Whether customer provided notes/preferences
+- notes: Extract notes if provided
+- declined_notes: Whether customer said "sin alergias", "nada", "no"
 
 Examples:
-- "Sí" → has_name=False (confirmation)
-- "Juan Pérez" → has_name=True, name="Juan Pérez"
-- "Cambia a María García" → has_name=True, name="María García"
+- "María García, sin alergias" → has_name=True, name="María García", declined_notes=True
+- "Juan Pérez, alérgico al tinte" → has_name=True, name="Juan Pérez", has_notes=True, notes="alérgico al tinte"
+- "Sí" → has_name=False (confirmation), declined_notes=False
 """
 
             try:
-                classification = await structured_llm.ainvoke(name_prompt)
+                classification = await structured_llm.ainvoke(consolidated_prompt)
                 has_name = classification.has_name
                 extracted_name = classification.name
+                has_notes = classification.has_notes
+                extracted_notes = classification.notes
+                declined_notes = classification.declined_notes
             except Exception as e:
                 logger.exception(
-                    f"Claude classification error in name extraction | "
+                    f"Claude classification error in consolidated extraction | "
                     f"conversation_id={conversation_id}: {e}"
                 )
                 has_name = False
                 extracted_name = None
+                has_notes = False
+                extracted_notes = None
+                declined_notes = False
 
             # Process name
             if has_name and extracted_name:
-                # Customer provided new name - update
                 new_customer_name = extracted_name
 
                 # Update customer in database
@@ -432,24 +448,45 @@ Examples:
                                 f"new_name={new_customer_name}"
                             )
 
-                # Ask for notes next
-                response = (
-                    f"Perfecto, {new_customer_name} 😊. "
-                    f"¿Hay algo que debamos saber antes de tu cita? (alergias, preferencias, etc.) "
-                    f"Si no, puedes responder 'no' o 'nada'."
-                )
+                # 🎯 OPTIMIZACIÓN 2: Si también pedimos notas y las proporcionaron, completar fase
+                if awaiting_customer_notes and (has_notes or declined_notes):
+                    customer_notes = extracted_notes if has_notes else None
 
-                return {
-                    **state,
-                    "customer_name": new_customer_name,
-                    "awaiting_customer_name": False,
-                    "awaiting_customer_notes": True,
-                    "bot_response": response,
-                    "updated_at": datetime.now(UTC),
-                    "last_node": "collect_customer_data",
-                }
+                    logger.info(
+                        f"Consolidated data collection complete | name={new_customer_name} | "
+                        f"has_notes={has_notes} | conversation_id={conversation_id}"
+                    )
+
+                    # Data collection complete - progress to payment
+                    return {
+                        **state,
+                        "customer_name": new_customer_name,
+                        "customer_notes": customer_notes,
+                        "awaiting_customer_name": False,
+                        "awaiting_customer_notes": False,
+                        "booking_phase": "payment",
+                        "updated_at": datetime.now(UTC),
+                        "last_node": "collect_customer_data",
+                    }
+                else:
+                    # Still need notes - ask for them
+                    response = (
+                        f"Perfecto, {new_customer_name} 😊. "
+                        f"¿Hay algo que debamos saber antes de tu cita? (alergias, preferencias, etc.) "
+                        f"Si no, puedes responder 'no' o 'nada'."
+                    )
+
+                    return {
+                        **state,
+                        "customer_name": new_customer_name,
+                        "awaiting_customer_name": False,
+                        "awaiting_customer_notes": True,
+                        "bot_response": response,
+                        "updated_at": datetime.now(UTC),
+                        "last_node": "collect_customer_data",
+                    }
             else:
-                # Customer confirmed existing name - ask for notes next
+                # No name provided (confirmation) - ask for notes if needed
                 response = (
                     f"¿Hay algo que debamos saber antes de tu cita? (alergias, preferencias, etc.) "
                     f"Si no, puedes responder 'no' o 'nada'."

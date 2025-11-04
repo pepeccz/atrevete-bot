@@ -28,7 +28,7 @@ from agent.prompts import load_maite_system_prompt, load_stylist_context
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
 from agent.tools.availability_tools import check_availability_tool
-from agent.tools.booking_tools import get_services, start_booking_flow, set_preferred_date
+from agent.tools.booking_tools import get_services, start_booking_flow, set_preferred_date, validate_booking_date
 from agent.tools.business_hours_tools import get_business_hours
 from agent.tools.consultation_tools import offer_consultation_tool
 from agent.tools.customer_tools import create_customer, get_customer_by_phone
@@ -78,6 +78,7 @@ def get_llm_with_tools() -> ChatAnthropic:
         get_cancellation_policy,
         get_services,
         # Availability & scheduling
+        validate_booking_date,  # 🆕 Validate 3-day rule early (Tier 1)
         check_availability_tool,
         set_preferred_date,
         # Value propositions
@@ -124,6 +125,7 @@ async def execute_tool_call(tool_call: dict) -> str:
         "get_payment_policies": get_payment_policies,
         "get_cancellation_policy": get_cancellation_policy,
         "get_services": get_services,
+        "validate_booking_date": validate_booking_date,  # 🆕 Early 3-day validation
         "check_availability_tool": check_availability_tool,
         "set_preferred_date": set_preferred_date,
         # "suggest_pack_tool": suggest_pack_tool,  # Removed - packs functionality eliminated
@@ -277,8 +279,11 @@ def extract_preferred_date(all_tool_calls_history: list[dict]) -> tuple[str | No
     """
     Extract preferred date and time from tool calls.
 
-    This function checks if Claude called set_preferred_date() tool during
-    the ReAct loop and extracts the date/time values.
+    This function checks if Claude called either:
+    - set_preferred_date() - explicit date setting tool
+    - start_booking_flow() - booking initiation with optional date parameters
+
+    Priority: set_preferred_date takes precedence if both are called
 
     Args:
         all_tool_calls_history: List of all tool calls made during ReAct loop
@@ -286,7 +291,7 @@ def extract_preferred_date(all_tool_calls_history: list[dict]) -> tuple[str | No
     Returns:
         tuple: (preferred_date, preferred_time) or (None, None) if not set
     """
-    # Check if set_preferred_date was called in any iteration
+    # Check for set_preferred_date first (explicit date setting - higher priority)
     for tool_call in all_tool_calls_history:
         tool_name = tool_call.get("name")
         if tool_name == "set_preferred_date":
@@ -295,13 +300,32 @@ def extract_preferred_date(all_tool_calls_history: list[dict]) -> tuple[str | No
             preferred_time = args.get("preferred_time")
 
             logger.info(
-                "Preferred date extracted from tool call",
+                "Preferred date extracted from set_preferred_date tool",
                 extra={
                     "preferred_date": preferred_date,
                     "preferred_time": preferred_time,
                 }
             )
             return preferred_date, preferred_time
+
+    # Check for start_booking_flow (booking initiation with optional date)
+    for tool_call in all_tool_calls_history:
+        tool_name = tool_call.get("name")
+        if tool_name == "start_booking_flow":
+            args = tool_call.get("args", {})
+            preferred_date = args.get("preferred_date")
+            preferred_time = args.get("preferred_time")
+
+            # Only extract if date was actually provided (not None)
+            if preferred_date:
+                logger.info(
+                    "Preferred date extracted from start_booking_flow tool",
+                    extra={
+                        "preferred_date": preferred_date,
+                        "preferred_time": preferred_time,
+                    }
+                )
+                return preferred_date, preferred_time
 
     return None, None
 
@@ -374,33 +398,46 @@ async def extract_requested_services(all_tool_calls_history: list[dict]) -> dict
                         )
 
                     else:
-                        # Ambiguous - multiple matches found
-                        logger.warning(
-                            f"Ambiguous service query '{service_name}': {len(matching_services)} matches found"
-                        )
+                        # Multiple matches - check if first is exact match
+                        normalized_query = service_name.strip().lower()
+                        first_match_name = matching_services[0].name.strip().lower()
 
-                        # Store ambiguity info for Claude to handle
-                        ambiguous_services = {
-                            "query": service_name,
-                            "options": [
-                                {
-                                    "id": str(s.id),
-                                    "name": s.name,
-                                    "price_euros": float(s.price_euros),
-                                    "duration_minutes": s.duration_minutes,
-                                    "category": s.category.value,
-                                }
-                                for s in matching_services
-                            ]
-                        }
+                        if normalized_query == first_match_name:
+                            # Exact match found - use it directly (ignore other fuzzy matches)
+                            service = matching_services[0]
+                            resolved_uuids.append(service.id)
+                            logger.info(
+                                f"Exact match found (ignoring {len(matching_services) - 1} other fuzzy matches): "
+                                f"'{service_name}' → {service.name} (UUID: {service.id})"
+                            )
+                        else:
+                            # True ambiguity - multiple matches without exact match
+                            logger.warning(
+                                f"Ambiguous service query '{service_name}': {len(matching_services)} matches found"
+                            )
 
-                        logger.info(
-                            f"Flagging '{service_name}' as ambiguous with {len(matching_services)} options: "
-                            f"{[s.name for s in matching_services]}"
-                        )
+                            # Store ambiguity info for Claude to handle
+                            ambiguous_services = {
+                                "query": service_name,
+                                "options": [
+                                    {
+                                        "id": str(s.id),
+                                        "name": s.name,
+                                        "price_euros": float(s.price_euros),
+                                        "duration_minutes": s.duration_minutes,
+                                        "category": s.category.value,
+                                    }
+                                    for s in matching_services
+                                ]
+                            }
 
-                        # Stop processing more services - handle one ambiguity at a time
-                        break
+                            logger.info(
+                                f"Flagging '{service_name}' as ambiguous with {len(matching_services)} options: "
+                                f"{[s.name for s in matching_services]}"
+                            )
+
+                            # Stop processing more services - handle one ambiguity at a time
+                            break
 
                 except Exception as e:
                     logger.error(
@@ -624,13 +661,27 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         else:
             message_content = response.content
 
-        # Fallback: If message_content is empty but we had tool execution, use a default
+        # Fallback: If message_content is empty but we had tool execution, escalate to human
         if not message_content or not message_content.strip():
-            logger.warning(
-                "Final LLM response has empty content after tool execution",
+            logger.error(
+                "Final LLM response has empty content after tool execution - escalating to human",
                 extra={"conversation_id": state.get("conversation_id")}
             )
-            message_content = "¿En qué más puedo ayudarte? 😊"
+            try:
+                # Call escalate_to_human to get appropriate message
+                escalation_result = await escalate_to_human.ainvoke({"reason": "technical_error"})
+                message_content = escalation_result.get("message", "Te conecto con el equipo 💕")
+                # Mark escalation in state (will be added to updates later)
+                escalation_triggered = True
+                escalation_reason = "technical_error"
+            except Exception as escalation_error:
+                logger.error(f"Failed to escalate during empty content fallback: {escalation_error}")
+                message_content = "Disculpa, he tenido un problema al procesar tu mensaje. He notificado al equipo y te atenderán lo antes posible 🌸"
+                escalation_triggered = True
+                escalation_reason = "technical_error"
+        else:
+            escalation_triggered = False
+            escalation_reason = None
 
         # Add assistant message using helper (ensures FIFO windowing + total_message_count)
         updated_state = add_message(state, "assistant", message_content)
@@ -641,6 +692,8 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             "booking_intent_confirmed": booking_intent_confirmed,
             "updated_at": datetime.now(ZoneInfo("Europe/Madrid")),
             "last_node": "conversational_agent",
+            "escalation_triggered": escalation_triggered,
+            "escalation_reason": escalation_reason,
         }
 
         # Set preferred date if it was provided by customer
@@ -711,16 +764,22 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             exc_info=True
         )
 
+        # Attempt to escalate with proper message
+        try:
+            escalation_result = await escalate_to_human.ainvoke({"reason": "technical_error"})
+            error_message = escalation_result.get("message", "Te conecto con el equipo 💕")
+        except Exception as escalation_error:
+            logger.error(f"Failed to escalate during error handling: {escalation_error}")
+            error_message = "Disculpa, he tenido un problema al procesar tu mensaje. He notificado al equipo y te atenderán lo antes posible 🌸"
+
         # Return error state update using add_message helper
-        error_state = add_message(
-            state,
-            "assistant",
-            "Lo siento, tuve un problema. ¿Puedes repetir tu pregunta? 💕"
-        )
+        error_state = add_message(state, "assistant", error_message)
 
         return {
             **error_state,
             "error_count": state.get("error_count", 0) + 1,
+            "escalation_triggered": True,
+            "escalation_reason": "technical_error",
             "last_node": "conversational_agent",
             "updated_at": datetime.now(ZoneInfo("Europe/Madrid")),
         }

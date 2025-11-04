@@ -294,15 +294,22 @@ def create_conversation_graph(
         This is the critical Tier 1 → Tier 2 transition with ambiguity handling:
         - If pending_service_clarification exists → END (stay in Tier 1 for user to clarify)
         - If booking_intent_confirmed=True AND requested_services populated → booking_handler (Tier 2)
+        - If date was just provided (after being requested) → booking_handler (resume Tier 2 flow)
         - Otherwise → END (continue conversation, wait for user)
 
         Safety checks:
         1. Block Tier 2 transition if service ambiguity pending
         2. Validate that requested_services is populated when booking intent is detected
+        3. Return to booking flow when customer provides requested date
         """
         booking_intent_confirmed = state.get("booking_intent_confirmed", False)
         requested_services = state.get("requested_services", [])
         pending_service_clarification = state.get("pending_service_clarification", None)
+        requested_date = state.get("requested_date", None)
+
+        # Check if booking flow was initiated (to detect date collection resumption)
+        # This happens when: booking was started → asked for date → user provided date
+        booking_validation_passed = state.get("booking_validation_passed", False)
 
         # Priority 1: Check for pending service clarification
         if pending_service_clarification:
@@ -317,7 +324,25 @@ def create_conversation_graph(
             # Stay in Tier 1 - Claude must clarify with customer first
             return "end"
 
-        # Priority 2: Check booking intent with services
+        # Priority 2: Check if customer just provided date to resume booking flow
+        # This covers the case where:
+        # - Booking flow started (booking_intent_confirmed=True, requested_services populated)
+        # - Tier 2 asked for date (set awaiting_date_input=True)
+        # - Customer provided date (requested_date now populated)
+        # - System should return to booking_handler to continue validation → check_availability
+        if booking_intent_confirmed and requested_services and requested_date:
+            logger.info(
+                "Date provided for active booking - resuming Tier 2 flow",
+                extra={
+                    "conversation_id": state.get("conversation_id"),
+                    "requested_services_count": len(requested_services),
+                    "requested_date": requested_date,
+                    "booking_validation_passed": booking_validation_passed
+                }
+            )
+            return "booking_handler"
+
+        # Priority 3: Check booking intent with services (initial transition)
         if booking_intent_confirmed:
             # Validate that requested_services is populated
             if not requested_services:
