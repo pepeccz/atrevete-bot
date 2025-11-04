@@ -70,9 +70,69 @@ def parse_natural_date(
         - Custom logic for Spanish weekday handling
         - Validates that parsed date is not in the past
     """
-    # Implementation to be completed in Phase 1, Day 2
-    raise NotImplementedError(
-        "parse_natural_date() will be implemented in Phase 1, Day 2"
+    import re
+
+    # Get reference date (default to now in timezone)
+    if reference_date is None:
+        reference_date = datetime.now(timezone)
+
+    # Normalize input
+    date_str_normalized = date_str.strip().lower()
+
+    # 1. Try relative dates first (hoy, mañana, pasado mañana)
+    if date_str_normalized in RELATIVE_DATES:
+        days_offset = RELATIVE_DATES[date_str_normalized]
+        result = reference_date + timedelta(days=days_offset)
+        return result.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # 2. Try weekdays (lunes, martes, vie, etc.)
+    if date_str_normalized in SPANISH_WEEKDAYS:
+        target_weekday = SPANISH_WEEKDAYS[date_str_normalized]
+        current_weekday = reference_date.weekday()
+
+        # Calculate days until target weekday
+        if target_weekday > current_weekday:
+            # Target is later this week
+            days_ahead = target_weekday - current_weekday
+        else:
+            # Target already passed this week, go to next week
+            days_ahead = 7 - (current_weekday - target_weekday)
+
+        result = reference_date + timedelta(days=days_ahead)
+        return result.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # 3. Try ISO 8601 format (2025-11-08, 2025/11/08)
+    iso_match = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', date_str_normalized)
+    if iso_match:
+        year, month, day = map(int, iso_match.groups())
+        return datetime(year, month, day, 0, 0, 0, tzinfo=timezone)
+
+    # 4. Try written Spanish dates: "8 de noviembre", "15 de diciembre de 2025"
+    # Pattern: number + "de" + month_name + optional("de" + year)
+    written_match = re.match(
+        r'^(\d{1,2})\s+de\s+(\w+)(?:\s+de\s+(\d{4}))?$',
+        date_str_normalized
+    )
+    if written_match:
+        day = int(written_match.group(1))
+        month_name = written_match.group(2)
+        year = int(written_match.group(3)) if written_match.group(3) else reference_date.year
+
+        if month_name in SPANISH_MONTHS:
+            month = SPANISH_MONTHS[month_name]
+            return datetime(year, month, day, 0, 0, 0, tzinfo=timezone)
+
+    # 5. Try day/month format: "08/11", "8-11"
+    day_month_match = re.match(r'^(\d{1,2})[-/](\d{1,2})$', date_str_normalized)
+    if day_month_match:
+        day, month = map(int, day_month_match.groups())
+        year = reference_date.year
+        return datetime(year, month, day, 0, 0, 0, tzinfo=timezone)
+
+    # If nothing matched, raise error
+    raise ValueError(
+        f"No se pudo parsear la fecha '{date_str}'. "
+        f"Formatos aceptados: 'mañana', 'viernes', '2025-11-08', '8 de noviembre', etc."
     )
 
 
@@ -92,10 +152,16 @@ def get_weekday_name(date: datetime, locale: str = "es_ES") -> str:
         >>> get_weekday_name(date)
         'viernes'
     """
-    # Implementation to be completed in Phase 1, Day 2
-    raise NotImplementedError(
-        "get_weekday_name() will be implemented in Phase 1, Day 2"
-    )
+    weekday_names = [
+        "lunes",
+        "martes",
+        "miércoles",
+        "jueves",
+        "viernes",
+        "sábado",
+        "domingo"
+    ]
+    return weekday_names[date.weekday()]
 
 
 def format_date_spanish(date: datetime) -> str:
@@ -113,10 +179,16 @@ def format_date_spanish(date: datetime) -> str:
         >>> format_date_spanish(date)
         'viernes 8 de noviembre'
     """
-    # Implementation to be completed in Phase 1, Day 2
-    raise NotImplementedError(
-        "format_date_spanish() will be implemented in Phase 1, Day 2"
-    )
+    month_names = [
+        "enero", "febrero", "marzo", "abril", "mayo", "junio",
+        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+    ]
+
+    weekday = get_weekday_name(date)
+    day = date.day
+    month = month_names[date.month - 1]
+
+    return f"{weekday} {day} de {month}"
 
 
 # Spanish weekday mappings for parsing

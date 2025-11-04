@@ -12,10 +12,18 @@ from agent.utils.date_parser import (
     format_date_spanish,
     MADRID_TZ,
 )
+from agent.utils.service_resolver import (
+    resolve_service_names,
+    resolve_single_service,
+)
 
 __all__ = [
+    # Date parsing
     "parse_natural_date",
     "get_weekday_name",
     "format_date_spanish",
     "MADRID_TZ",
+    # Service resolution
+    "resolve_service_names",
+    "resolve_single_service",
 ]
