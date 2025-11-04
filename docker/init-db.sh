@@ -82,12 +82,11 @@ run_seeds() {
     export DATABASE_URL="postgresql+asyncpg://${DB_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 
     # List of seed scripts in order
+    # NOTE: packs removed (functionality eliminated), faqs consolidated into policies
     SEED_SCRIPTS=(
         "database.seeds.services"
         "database.seeds.stylists"
         "database.seeds.business_hours"
-        "database.seeds.packs"
-        "database.seeds.faqs"
         "database.seeds.policies"
     )
 

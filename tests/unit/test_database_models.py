@@ -18,7 +18,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
 from database.connection import AsyncSessionLocal, engine
-from database.models import Base, Customer, Pack, Service, ServiceCategory, Stylist
+from database.models import Base, Customer, Service, ServiceCategory, Stylist  # Pack removed - packs functionality eliminated
 from database.seeds.stylists import seed_stylists
 
 
@@ -302,64 +302,10 @@ async def test_service_check_price_non_negative(session):
 
 
 # ============================================================================
-# Pack Model Tests
+# Pack Model Tests - REMOVED (packs functionality eliminated, lines 305-362)
 # ============================================================================
 
 
-@pytest.mark.asyncio
-async def test_create_pack_with_services_array(session):
-    """Test creating a pack with included_service_ids array."""
-    # Create some services first
-    service1 = Service(
-        name="Service 1",
-        category=ServiceCategory.HAIRDRESSING,
-        duration_minutes=60,
-        price_euros=Decimal("30.00"),
-    )
-    service2 = Service(
-        name="Service 2",
-        category=ServiceCategory.HAIRDRESSING,
-        duration_minutes=90,
-        price_euros=Decimal("50.00"),
-    )
-    session.add_all([service1, service2])
-    await session.flush()
-
-    # Create pack with service IDs
-    pack = Pack(
-        name="Combo Pack",
-        included_service_ids=[service1.id, service2.id],
-        duration_minutes=150,
-        price_euros=Decimal("70.00"),  # Discounted from 80
-        description="Save €10 with this combo",
-    )
-    session.add(pack)
-    await session.commit()
-
-    assert pack.id is not None
-    assert len(pack.included_service_ids) == 2
-    assert service1.id in pack.included_service_ids
-    assert service2.id in pack.included_service_ids
-
-
-@pytest.mark.asyncio
-async def test_pack_check_constraints(session):
-    """Test that pack price and duration must be positive."""
-    # Test zero price (should fail for packs - price must be > 0, not >= 0)
-    pack_zero_price = Pack(
-        name="Zero Price Pack",
-        included_service_ids=[uuid4()],
-        duration_minutes=60,
-        price_euros=Decimal("0.00"),
-    )
-    session.add(pack_zero_price)
-
-    with pytest.raises(IntegrityError) as exc_info:
-        await session.commit()
-    assert "check_pack_price_positive" in str(exc_info.value)
-
-
-# ============================================================================
 # Seed Data Tests
 # ============================================================================
 

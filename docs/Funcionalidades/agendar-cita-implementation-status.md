@@ -23,7 +23,6 @@
 
 **Lo que FUNCIONA ahora:**
 - Validación de categorías mixtas (Fase 1)
-- Sugerencia de packs (Fase 1)
 - Consulta de disponibilidad multi-calendar (Fase 2)
 - Lógica de nodos (no conectados al flujo principal)
 
@@ -829,11 +828,11 @@ async def test_create_provisional_booking_success():
 👤 Cliente: "Hola, quiero mechas para el viernes"
 
 🤖 Bot: [conversational_agent detecta intención, llama start_booking_flow()]
-       "¡Perfecto! 💇 Tenemos un pack de Mechas + Corte por 80€ (ahorras 10€). ¿Te interesa?"
+       "¡Perfecto! 💇 Te ayudo a reservar mechas."
 
-👤 Cliente: "Sí, con corte"
+👤 Cliente: "Mechas largas"
 
-🤖 Bot: [validate_booking_request → handle_pack_response → check_availability]
+🤖 Bot: [validate_booking_request → check_availability]
        "Este viernes tenemos libre a las 15:00 con Marta y a las 17:00 con Pilar. ¿Cuál prefieres? 😊"
 
 👤 Cliente: "15:00 con Marta"
@@ -1145,10 +1144,8 @@ Requieren:
 ## 📊 Progreso General
 
 ```
-FASE 1: Selección de Servicio/Pack
-├─ validate_booking_request      ✅ Ya existía
-├─ suggest_pack                  ✅ Ya existía
-└─ handle_pack_response          ✅ Ya existía
+FASE 1: Selección de Servicios
+└─ validate_booking_request      ✅ Ya existía
 
 FASE 2: Disponibilidad y Slot Selection
 ├─ check_availability            ✅ Ya existía

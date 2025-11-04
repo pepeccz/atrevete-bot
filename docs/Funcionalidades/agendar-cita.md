@@ -55,12 +55,12 @@ Para clientes que ya tienen historial, el sistema debe:
 ## Información Necesaria para Completar el Agendamiento
 
 ### Del Servicio
-- **Servicios o pack seleccionados**: Qué servicios individuales o qué pack desea el cliente
+- **Servicios seleccionados**: Qué servicios individuales desea el cliente
 - **Categoría del servicio**: Todos los servicios deben pertenecer a la misma categoría
 - **Duración total**: Suma del tiempo de todos los servicios seleccionados (en minutos)
 - **Costo total**: Suma del precio de todos los servicios (en euros)
 
-**Nota:** Si se seleccionan múltiples servicios, TODOS deben ser de la misma categoría. Si es un pack, se usa la categoría del pack.
+**Nota:** Si se seleccionan múltiples servicios, TODOS deben ser de la misma categoría (Peluquería O Estética, no ambos).
 
 ### De la Asistenta
 - **Asistenta seleccionada**: Qué asistenta atenderá la cita
@@ -90,23 +90,22 @@ Para clientes que ya tienen historial, el sistema debe:
 
 El proceso de agendamiento se divide en 4 fases secuenciales que el sistema debe completar con el cliente:
 
-### Fase 1: Selección del Servicio o Pack
+### Fase 1: Selección de Servicios
 
 **Qué debe lograr esta fase:**
-Identificar qué servicio(s) o pack desea el cliente y asegurar que todos pertenezcan a una sola categoría.
+Identificar qué servicio(s) desea el cliente y asegurar que todos pertenezcan a una sola categoría.
 
 **Cómo debe funcionar:**
 
-1. **Preguntar al cliente** qué servicio(s) o pack desea agendar
+1. **Preguntar al cliente** qué servicio(s) desea agendar
 
 2. **Validar la selección:**
    - Si selecciona múltiples servicios, verificar que TODOS sean de la misma categoría
    - Si son de categorías diferentes: rechazar la combinación y pedir que elija una sola categoría
-   - Si selecciona un pack, validar que esté disponible y activo
 
 3. **Calcular información del servicio:**
    - Duración total: sumar los minutos de todos los servicios
-   - Costo total: sumar el precio de todos los servicios (o precio del pack)
+   - Costo total: sumar el precio de todos los servicios
    - Guardar la categoría para la siguiente fase
 
 **Ejemplos de conversación:**
@@ -122,7 +121,7 @@ Sistema: "Perfecto, has elegido Corte de Pelo (30 min, 25€) y Tinte (90 min, 6
 ```
 Cliente: "Quiero manicura y masaje facial"
 Sistema: "Lo siento, no puedo agendar servicios de diferentes categorías en la misma cita.
-         Por favor, elige solo servicios de Nails O servicios de Skincare."
+         Por favor, elige solo servicios de Manicura O servicios de Masaje Facial."
 ```
 
 ---
@@ -293,7 +292,7 @@ Procesar el anticipo del 20% (si aplica) y confirmar la cita definitivamente.
 - Fecha: [Día de la semana], [DD/MM/YYYY]
 - Hora: [HH:MM] - [HH:MM]
 - Asistenta: [Nombre de la asistenta]
-- Servicios: [Lista de servicios/pack]
+- Servicios: [Lista de servicios]
 - Duración: [minutos] minutos
 - Costo total: [costo]€
 
@@ -352,7 +351,7 @@ que podrá ayudarte personalmente con tu solicitud."
 
 ### En Google Calendar
 Cada cita confirmada debe guardarse en el calendario de Google de la asistenta con:
-- Título: "Cita - [Nombre Cliente] - [Servicios]"
+- Título: "[Nombre Cliente] - [Servicios]"
 - Descripción: Datos del cliente, teléfono, servicios, notas
 - Fecha y hora de inicio y fin (incluyendo buffer de 10 minutos)
 - Zona horaria: Europe/Madrid
@@ -396,7 +395,7 @@ Las siguientes funcionalidades se desarrollarán en fases posteriores:
 ## Resumen del Flujo Completo
 
 1. **Cliente inicia conversación** → Sistema identifica intención de agendar cita
-2. **Fase 1:** Cliente selecciona servicio(s) o pack → Sistema valida categorías y calcula duración/costo
+2. **Fase 1:** Cliente selecciona servicio(s) → Sistema valida categorías y calcula duración/costo
 3. **Fase 2:** Sistema muestra disponibilidad de asistentas → Cliente elige asistenta y horario
 4. **Fase 3:** Sistema solicita/confirma datos del cliente → Guarda nombre, apellido y notas
 5. **Fase 4:** Si hay costo > 0€, genera enlace de pago → Cliente paga anticipo → Sistema confirma cita

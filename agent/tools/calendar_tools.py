@@ -1096,3 +1096,84 @@ async def delete_calendar_event(
             "success": False,
             "error": f"Internal error: {str(e)}"
         }
+
+
+@retry(
+    retry=retry_if_exception_type(HttpError),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True,
+)
+async def update_calendar_event_color(
+    calendar_id: str,
+    event_id: str,
+    color_id: str,
+) -> None:
+    """
+    Update the color of a Google Calendar event.
+
+    Used to visually indicate appointment status:
+    - Yellow (5): PROVISIONAL booking (payment pending)
+    - Green (9): CONFIRMED booking (payment received)
+    - Red (11): CANCELLED booking (future use)
+
+    Args:
+        calendar_id: Google Calendar ID (from stylist.google_calendar_id)
+        event_id: Google Calendar event ID
+        color_id: Color ID as string (5=yellow, 9=green, 11=red)
+
+    Raises:
+        HttpError: If Google Calendar API call fails after retries
+
+    Example:
+        >>> await update_calendar_event_color(
+        ...     calendar_id="stylist@example.com",
+        ...     event_id="event123",
+        ...     color_id="9"  # Green for confirmed
+        ... )
+    """
+    try:
+        client = get_calendar_client()
+
+        # Fetch existing event
+        event = client.service.events().get(
+            calendarId=calendar_id,
+            eventId=event_id
+        ).execute()
+
+        # Update color
+        event['colorId'] = color_id
+
+        # Update event in calendar
+        client.service.events().update(
+            calendarId=calendar_id,
+            eventId=event_id,
+            body=event
+        ).execute()
+
+        logger.info(
+            f"Calendar event color updated | event_id={event_id} | "
+            f"calendar_id={calendar_id} | color={color_id}"
+        )
+
+    except HttpError as e:
+        if e.resp.status == 404:
+            logger.warning(
+                f"Calendar event not found for color update | "
+                f"event_id={event_id} | calendar_id={calendar_id}"
+            )
+            # Don't raise for 404 - event might have been deleted
+            return
+
+        logger.error(
+            f"HTTP error updating calendar event color | "
+            f"event_id={event_id} | calendar_id={calendar_id}: {e}"
+        )
+        raise
+
+    except Exception as e:
+        logger.error(
+            f"Unexpected error updating calendar event color | "
+            f"event_id={event_id} | calendar_id={calendar_id}: {e}"
+        )
+        raise

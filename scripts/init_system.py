@@ -62,9 +62,9 @@ async def check_tables_exist() -> dict[str, bool]:
         "customers",
         "stylists",
         "services",
-        "packs",
+        # "packs",  # Removed - packs functionality eliminated
         "appointments",
-        "faqs",
+        # "faqs",  # Removed - FAQs now consolidated in policies table
         "policies",
         "conversation_history",
         "alembic_version"
@@ -103,7 +103,7 @@ async def check_seed_data() -> dict[str, int]:
     Returns:
         dict: Mapping of table names to row counts
     """
-    seed_tables = ["services", "stylists", "packs", "faqs", "policies"]
+    seed_tables = ["services", "stylists", "policies"]  # "packs" and "faqs" removed
     row_counts = {}
 
     try:

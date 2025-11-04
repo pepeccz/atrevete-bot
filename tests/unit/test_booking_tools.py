@@ -1,7 +1,8 @@
 """
 Unit tests for booking_tools module.
 
-Tests service/pack query functions and pricing calculations.
+Tests service query functions and pricing calculations.
+Note: Pack-related tests disabled - packs functionality eliminated.
 """
 
 from decimal import Decimal
@@ -12,15 +13,15 @@ from sqlalchemy import select, text
 
 from agent.tools.booking_tools import (
     calculate_total,
-    get_packs_containing_service,
-    get_packs_for_multiple_services,
+    # get_packs_containing_service,  # Removed - packs functionality eliminated
+    # get_packs_for_multiple_services,  # Removed - packs functionality eliminated
     get_service_by_name,
     validate_service_combination,
 )
 from database.connection import AsyncSessionLocal, engine
-from database.models import Base, Pack, Service, ServiceCategory
+from database.models import Base, Service, ServiceCategory  # Pack removed - packs functionality eliminated
 from database.seeds.services import seed_services
-from database.seeds.packs import seed_packs
+# from database.seeds.packs import seed_packs  # Removed - packs functionality eliminated
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -41,9 +42,9 @@ async def setup_database():
         # Now create fresh tables (which depend on extensions)
         await conn.run_sync(Base.metadata.create_all)
 
-    # Seed services and packs for tests
+    # Seed services for tests (packs removed)
     await seed_services()
-    await seed_packs()
+    # await seed_packs()  # Removed - packs functionality eliminated
 
     yield
 
@@ -165,132 +166,7 @@ class TestGetServiceByName:
         assert service is None, "Inactive service should not be returned"
 
 
-@pytest.mark.asyncio
-class TestGetPacksContainingService:
-    """Test get_packs_containing_service function."""
-
-    async def test_query_packs_containing_cortar(self):
-        """Test querying packs containing CORTAR service."""
-        from database.connection import get_async_session
-
-        # Arrange: Get Corte de pelo service ID
-        async for session in get_async_session():
-            stmt = select(Service.id).where(Service.name == "Corte de pelo")
-            result = await session.execute(stmt)
-            corte_id = result.scalar_one()
-
-        # Act
-        packs = await get_packs_containing_service(corte_id)
-
-        # Assert
-        assert len(packs) >= 1, "Should find at least 'Mechas + Corte' pack"
-        pack_names = [pack.name for pack in packs]
-        assert "Mechas + Corte" in pack_names
-
-    async def test_query_packs_for_nonexistent_service(self):
-        """Test querying packs for non-existent service returns empty list."""
-        # Arrange: Use random UUID that doesn't exist
-        nonexistent_id = uuid4()
-
-        # Act
-        packs = await get_packs_containing_service(nonexistent_id)
-
-        # Assert
-        assert packs == [], "Should return empty list for non-existent service"
-
-    async def test_inactive_pack_not_returned(self):
-        """Test inactive packs are not returned."""
-        from database.connection import get_async_session
-
-        # Arrange: Get a service ID and create inactive pack
-        async for session in get_async_session():
-            stmt = select(Service.id).where(Service.name == "BARRO")
-            result = await session.execute(stmt)
-            barro_id = result.scalar_one()
-
-            inactive_pack = Pack(
-                id=uuid4(),
-                name="INACTIVE_TEST_PACK",
-                included_service_ids=[barro_id],
-                duration_minutes=40,
-                price_euros=Decimal("30.00"),
-                description="Test inactive pack",
-                is_active=False,
-            )
-            session.add(inactive_pack)
-            await session.commit()
-
-        # Act
-        packs = await get_packs_containing_service(barro_id)
-
-        # Assert
-        pack_names = [pack.name for pack in packs]
-        assert "INACTIVE_TEST_PACK" not in pack_names
-
-
-@pytest.mark.asyncio
-class TestGetPacksForMultipleServices:
-    """Test get_packs_for_multiple_services function."""
-
-    async def test_exact_match_mechas_corte(self):
-        """Test exact service match returns 'Mechas + Corte' pack."""
-        from database.connection import get_async_session
-
-        # Arrange: Get service IDs for MECHAS and Corte de pelo
-        async for session in get_async_session():
-            stmt_mechas = select(Service.id).where(Service.name == "MECHAS")
-            result_mechas = await session.execute(stmt_mechas)
-            mechas_id = result_mechas.scalar_one()
-
-            stmt_corte = select(Service.id).where(Service.name == "Corte de pelo")
-            result_corte = await session.execute(stmt_corte)
-            corte_id = result_corte.scalar_one()
-
-        # Act
-        packs = await get_packs_for_multiple_services([mechas_id, corte_id])
-
-        # Assert
-        assert len(packs) >= 1, "Should find 'Mechas + Corte' pack"
-        assert any(pack.name == "Mechas + Corte" for pack in packs)
-
-    async def test_partial_match_returns_empty(self):
-        """Test partial service match does not return pack."""
-        from database.connection import get_async_session
-
-        # Arrange: Get only MECHAS ID (pack requires MECHAS + Corte)
-        async for session in get_async_session():
-            stmt = select(Service.id).where(Service.name == "MECHAS")
-            result = await session.execute(stmt)
-            mechas_id = result.scalar_one()
-
-        # Act
-        packs = await get_packs_for_multiple_services([mechas_id])
-
-        # Assert: Should not return "Mechas + Corte" pack (requires 2 services)
-        pack_names = [pack.name for pack in packs]
-        assert "Mechas + Corte" not in pack_names
-
-    async def test_order_independent_matching(self):
-        """Test pack matching is order-independent."""
-        from database.connection import get_async_session
-
-        # Arrange: Get service IDs in different order
-        async for session in get_async_session():
-            stmt_mechas = select(Service.id).where(Service.name == "MECHAS")
-            result_mechas = await session.execute(stmt_mechas)
-            mechas_id = result_mechas.scalar_one()
-
-            stmt_corte = select(Service.id).where(Service.name == "Corte de pelo")
-            result_corte = await session.execute(stmt_corte)
-            corte_id = result_corte.scalar_one()
-
-        # Act: Try reversed order
-        packs = await get_packs_for_multiple_services([corte_id, mechas_id])
-
-        # Assert: Should still find pack regardless of order
-        assert len(packs) >= 1
-        assert any(pack.name == "Mechas + Corte" for pack in packs)
-
+# DISABLED PACK TESTS REMOVED: Packs functionality eliminated (lines 169-297 removed)
 
 @pytest.mark.asyncio
 class TestCalculateTotal:

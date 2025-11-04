@@ -13,7 +13,7 @@ Este documento describe la arquitectura completa del sistema de agendamiento de 
 ### Objetivo
 
 Permitir a los clientes agendar citas de manera conversacional a través de WhatsApp, gestionando:
-- Selección de servicios/packs con validación de categorías
+- Selección de servicios (92 servicios individuales) con validación de categorías
 - Consulta de disponibilidad en tiempo real (5 calendarios Google)
 - Recopilación de datos del cliente
 - Procesamiento de pagos de anticipo (20%) vía Stripe
@@ -43,9 +43,8 @@ Permitir a los clientes agendar citas de manera conversacional a través de What
 │                    TIER 2: TRANSACCIONAL                      │
 │                                                               │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  FASE 1: Selección de Servicio/Pack                    │ │
-│  │  Nodos: validate_booking_request, suggest_pack,        │ │
-│  │         handle_pack_response                           │ │
+│  │  FASE 1: Selección de Servicios                        │ │
+│  │  Nodo: validate_booking_request                        │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                           ↓                                   │
 │  ┌────────────────────────────────────────────────────────┐ │
@@ -84,7 +83,6 @@ Permitir a los clientes agendar citas de manera conversacional a través de What
 | **Google Calendar** | `agent/tools/calendar_tools.py` | ✅ Completo | Create/delete events, holiday detection |
 | **Disponibilidad** | `agent/nodes/availability_nodes.py` | ✅ Completo | Multi-calendar query, prioritization, alternatives |
 | **Validación Categorías** | `agent/nodes/booking_nodes.py` | ✅ Completo | validate_booking_request, handle_category_choice |
-| **Pack Suggestion** | `agent/nodes/pack_suggestion_nodes.py` | ✅ Completo | suggest_pack, handle_pack_response |
 | **Stripe Webhook** | `api/routes/stripe.py` | ✅ Completo | Webhook validation y enqueue a Redis |
 
 ### ❌ Componentes Faltantes (A Implementar)
@@ -589,10 +587,8 @@ else:
 
 ```
 Cliente: "Quiero mechas para el viernes"
-Bot: "¡Perfecto! 💇 Tenemos un pack de Mechas + Corte por 80€ (ahorras 10€). ¿Te interesa?"
-
-Cliente: "Sí"
-[validate_booking_request, suggest_pack, handle_pack_response]
+Bot: "¡Perfecto! 💇 Te ayudo a reservar mechas."
+[validate_booking_request]
 
 Bot: "Este viernes tenemos libre a las 15:00 con Marta y a las 17:00 con Pilar. ¿Cuál prefieres? 😊"
 [check_availability]
@@ -624,13 +620,13 @@ Bot: "✅ ¡Tu cita ha sido confirmada!
 - Fecha: Viernes, 05/11/2025
 - Hora: 15:00 - 17:00
 - Asistenta: Marta
-- Servicios: Mechas + Corte
+- Servicios: Mechas
 - Duración: 120 minutos
-- Costo total: 80€
+- Costo total: 60€
 
 💶 Información de pago:
-- Anticipo pagado: 16€ ✓
-- Saldo pendiente: 64€ (a pagar en el salón)
+- Anticipo pagado: 12€ ✓
+- Saldo pendiente: 48€ (a pagar en el salón)
 
 ⚠️ Política de cancelación:
 Para modificar o cancelar tu cita, debes hacerlo con al menos 24 horas de antelación.

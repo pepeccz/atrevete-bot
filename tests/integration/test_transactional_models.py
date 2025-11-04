@@ -33,13 +33,13 @@ from database.models import (
     ConversationHistory,
     Customer,
     MessageRole,
-    Pack,
+    # Pack,  # Removed - packs functionality eliminated
     PaymentStatus,
     Policy,
     Service,
     Stylist,
 )
-from database.seeds.packs import seed_packs
+# from database.seeds.packs import seed_packs  # Removed - packs functionality eliminated
 from database.seeds.policies import seed_policies
 from database.seeds.services import seed_services
 from database.seeds.stylists import seed_stylists
@@ -399,7 +399,7 @@ async def test_seed_scripts_execution():
     async with AsyncSessionLocal() as session:
         # Run seed scripts
         await seed_policies()
-        await seed_packs()
+        # await seed_packs()  # Removed - packs functionality eliminated
 
         # Verify policies seeded
         stmt = select(Policy)
@@ -413,16 +413,16 @@ async def test_seed_scripts_execution():
         services = result.scalars().all()
         assert len(services) == 5
 
-        # Verify packs seeded
-        stmt_pack = select(Pack)
-        result_pack = await session.execute(stmt_pack)
-        packs = result_pack.scalars().all()
-        assert len(packs) == 1
-
-        # Verify pack has correct service IDs
-        pack = packs[0]
-        assert pack.name == "Mechas + Corte"
-        assert len(pack.included_service_ids) == 2
+        # Verify packs seeded - DISABLED (packs functionality eliminated)
+        # stmt_pack = select(Pack)
+        # result_pack = await session.execute(stmt_pack)
+        # packs = result_pack.scalars().all()
+        # assert len(packs) == 1
+        #
+        # # Verify pack has correct service IDs
+        # pack = packs[0]
+        # assert pack.name == "Mechas + Corte"
+        # assert len(pack.included_service_ids) == 2
 
 
 @pytest.mark.asyncio

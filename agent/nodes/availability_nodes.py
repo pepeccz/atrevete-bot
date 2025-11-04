@@ -24,7 +24,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 
 from agent.state.schemas import ConversationState
+from agent.state.helpers import add_message
 from agent.tools.booking_tools import calculate_total
+from agent.validators.booking_validators import validate_min_advance_notice
 from agent.tools.calendar_tools import (
     check_holiday_closure,
     fetch_calendar_events,
@@ -36,7 +38,7 @@ from agent.tools.calendar_tools import (
     is_slot_available,
 )
 from database.connection import get_async_session
-from database.models import Pack, Service, ServiceCategory, Stylist
+from database.models import Service, ServiceCategory, Stylist
 
 logger = logging.getLogger(__name__)
 
@@ -585,6 +587,42 @@ async def check_availability(state: ConversationState) -> dict[str, Any]:
                 "prioritized_slots": []
             }
 
+        # Validate minimum 3-day advance notice
+        # Parse string to datetime for validation
+        requested_dt = datetime.strptime(requested_date_str, "%Y-%m-%d").replace(tzinfo=TIMEZONE)
+
+        # Call async validation function
+        validation_result = await validate_min_advance_notice(
+            requested_date=requested_dt,
+            conversation_id=conversation_id
+        )
+
+        is_valid = validation_result["valid"]
+        error_message = validation_result["reason"]
+
+        if not is_valid:
+            logger.warning(
+                f"3-day validation failed | requested={requested_date_str} | "
+                f"earliest={validation_result.get('earliest_date')} | conversation_id={conversation_id}"
+            )
+
+            # Use pre-formatted date from validation result
+            formatted_date = validation_result["earliest_date_formatted"]
+
+            rejection_message = (
+                f"{error_message}\n\n"
+                f"La fecha más cercana disponible sería el {formatted_date}. "
+                f"¿Te gustaría agendar para esa fecha o prefieres que te conecte con el equipo "
+                f"para ver si hay alguna excepción?"
+            )
+
+            return {
+                **add_message(state, "assistant", rejection_message),
+                "available_slots": [],
+                "prioritized_slots": [],
+                "escalation_offered": True,
+            }
+
         # Query services to determine category
         async with get_async_session() as session:
             query = select(Service).where(Service.id.in_(requested_services))
@@ -694,36 +732,12 @@ async def check_availability(state: ConversationState) -> dict[str, Any]:
                 "prioritized_slots": []
             }
 
-        # Calculate total service duration
-        # Check if we're using a pack (with pre-defined duration) or individual services
-        pack_id = state.get("pack_id")
-        if pack_id:
-            # Pack selected - use pack duration
-            async with get_async_session() as session:
-                pack_query = select(Pack).where(Pack.id == pack_id)
-                pack_result = await session.execute(pack_query)
-                pack = pack_result.scalar_one_or_none()
-
-                if pack:
-                    total_duration_minutes = pack.duration_minutes
-                    logger.info(
-                        f"Using pack duration: {total_duration_minutes} min | "
-                        f"pack_id={pack_id} | conversation_id={conversation_id}"
-                    )
-                else:
-                    # Fallback to service sum if pack not found
-                    total_duration_minutes = sum(s.duration_minutes for s in services)
-                    logger.warning(
-                        f"Pack not found, using service sum: {total_duration_minutes} min | "
-                        f"conversation_id={conversation_id}"
-                    )
-        else:
-            # Individual services - sum durations
-            total_duration_minutes = sum(s.duration_minutes for s in services)
-            logger.info(
-                f"Using individual service durations sum: {total_duration_minutes} min | "
-                f"conversation_id={conversation_id}"
-            )
+        # Calculate total service duration (sum of individual services)
+        total_duration_minutes = sum(s.duration_minutes for s in services)
+        logger.info(
+            f"Using service durations sum: {total_duration_minutes} min | "
+            f"conversation_id={conversation_id}"
+        )
 
         # Generate time slots with service duration validation (from database)
         day_of_week = requested_date.weekday()

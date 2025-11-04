@@ -56,9 +56,10 @@ class ConversationState(TypedDict, total=False):
         requested_services: List of service UUIDs for booking
         requested_date: Date in YYYY-MM-DD format
         requested_time: Time in HH:MM format (if specific time requested)
-        suggested_pack_id: Suggested service pack UUID
         provisional_appointment_id: Temporary appointment ID before payment
         payment_link_url: Stripe payment link URL
+        pending_service_clarification: Ambiguous service info when multiple matches found
+            (Claude must clarify with customer before proceeding to booking)
 
         # Tier 1 → Tier 2 Transition
         booking_intent_confirmed: True when customer ready to book (triggers Tier 2)
@@ -69,11 +70,6 @@ class ConversationState(TypedDict, total=False):
         suggested_dates: Alternative dates when requested date is fully booked
         is_same_day: Flag for same-day booking (affects provisional block timeout)
         holiday_detected: Flag for holiday closure detection
-
-        # Pack Context (Tier 2: pack suggestion nodes)
-        pack_id: Accepted pack ID
-        pack_declined: Customer declined pack suggestion
-        individual_service_total: Total price of individual services (Decimal)
 
         # Consultation Context (from offer_consultation_tool)
         consultation_service_id: ID of CONSULTA GRATUITA service
@@ -127,10 +123,13 @@ class ConversationState(TypedDict, total=False):
     requested_services: list[UUID]
     requested_date: str | None
     requested_time: str | None
-    suggested_pack_id: UUID | None
     provisional_appointment_id: UUID | None
     payment_link_url: str | None
     awaiting_date_input: bool  # Flag when waiting for customer to provide booking date
+
+    # Service Ambiguity Handling (Tier 1: Conversational Agent)
+    pending_service_clarification: dict[str, Any] | None  # Ambiguous service info for Claude to resolve
+    # Structure: {"query": str, "options": [{"id": str, "name": str, "price_euros": float, "duration_minutes": int, "category": str}]}
 
     # Booking Phase Tracking (NEW - for 4-phase booking flow)
     booking_phase: Literal["service_selection", "availability", "customer_data", "payment"] | None
@@ -162,13 +161,6 @@ class ConversationState(TypedDict, total=False):
     suggested_dates: list[dict[str, Any]]
     is_same_day: bool
     holiday_detected: bool
-
-    # ============================================================================
-    # Pack Context (Tier 2: pack suggestion after availability)
-    # ============================================================================
-    pack_id: UUID | None
-    pack_declined: bool
-    individual_service_total: Any  # Decimal type from booking_tools
 
     # ============================================================================
     # Consultation Context (from offer_consultation_tool in Tier 1)

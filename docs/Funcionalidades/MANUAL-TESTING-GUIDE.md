@@ -54,8 +54,6 @@ docker-compose logs -f api
 |------------|--------|-----------|
 | **Fase 1: Selección de Servicios** | ✅ Completo | ✅ SÍ |
 | - Validación de categorías mixtas | ✅ | ✅ SÍ |
-| - Sugerencia de packs | ✅ | ✅ SÍ |
-| - Respuesta a pack | ✅ | ✅ SÍ |
 | **Fase 2: Disponibilidad** | ✅ Completo | ✅ SÍ |
 | - Consulta multi-calendar | ✅ | ✅ SÍ |
 | - Priorización de slots | ✅ | ✅ SÍ |
@@ -235,14 +233,12 @@ Probar que Claude detecta cuando el cliente quiere reservar y llama `start_booki
 
 "¡Perfecto! 💇 Te ayudo a reservar mechas.
 
-Tenemos un pack especial:
-📦 **Mechas + Corte** por 80€ (ahorras 10€)
-- Mechas: 60€
-- Corte: 25€
-- Total individual: 85€
-- Con pack: 80€
+Tenemos varias opciones de mechas:
+- Mechas (Corto-Medio): 60€, 120 min
+- Mechas (Largo): 70€, 150 min
+- Mechas (Extra): 85€, 180 min
 
-¿Te interesa el pack o prefieres solo las mechas? 😊"
+¿Cuál te interesa? 😊"
 ```
 
 ### Variaciones
@@ -323,54 +319,35 @@ docker-compose logs agent | grep "services_by_category"
 
 ---
 
-## FLUJO 6: Sugerencia de Pack ✅ FUNCIONAL
+## FLUJO 6: Selección de Servicios - 92 Servicios Individuales ✅ ACTUALIZADO
 
-### Objetivo
-Probar que el bot sugiere packs cuando el cliente pide múltiples servicios.
+**NOTA:** El sistema ha sido actualizado para ofrecer **92 servicios individuales** (47 Peluquería + 45 Estética).
+
+Ya no existe el sistema de "packs" con descuentos. Todos los servicios se ofrecen de manera individual con sus precios correspondientes.
 
 ### Conversación de Prueba
 
 ```
-👤 Cliente: "Quiero mechas y corte"
+👤 Cliente: "Quiero mechas"
 
 🤖 Respuesta Esperada:
-"¡Genial! 💇 Tenemos un pack perfecto para ti:
+"¡Perfecto! 💇 Tenemos varios tipos de mechas:
 
-📦 **Mechas + Corte** - 80€
-- Mechas: 60€
-- Corte: 25€
-- **Precio individual:** 85€
-- **Precio pack:** 80€
-- **Ahorras:** 5€ 🎉
+**Mechas (Corto-Medio):** 60€, 120 min
+**Mechas (Largo):** 70€, 150 min
+**Mechas (Extra Largo):** 85€, 180 min
 
-¿Quieres el pack o prefieres los servicios por separado? 😊"
-```
-
-### Respuestas del Cliente
-
-#### Cliente Acepta Pack
-```
-👤 "Sí, el pack"
-
-🤖 Respuesta Esperada:
-"¡Perfecto! 😊 Vamos a reservarte el pack Mechas + Corte.
-¿Qué día prefieres?"
-```
-
-#### Cliente Rechaza Pack
-```
-👤 "No, solo las mechas"
-
-🤖 Respuesta Esperada:
-"Entendido 😊. Vamos a reservar solo Mechas (60€, 120 min).
-¿Qué día prefieres?"
+¿Cuál te interesa? 😊"
 ```
 
 ### Cómo Verificar
 
+1. **El bot NO debe mencionar packs ni descuentos**
+2. **Debe ofrecer servicios individuales del catálogo**
+3. **Los precios deben coincidir con la BD:**
+
 ```bash
-docker-compose logs agent | grep "suggest_pack"
-docker-compose logs agent | grep "pack_id"
+docker exec -it atrevete-postgres psql -U atrevete -d atrevete_db -c "SELECT name, price_euros, duration_minutes FROM services WHERE name LIKE '%Mechas%' AND is_active = true;"
 ```
 
 ---
@@ -384,12 +361,12 @@ Probar la consulta multi-calendar y presentación de slots disponibles.
 
 ```
 👤 Cliente: "Quiero mechas para el viernes"
-🤖 [Bot detecta intención, sugiere pack]
+🤖 [Bot ofrece opciones de servicio]
 
-👤 Cliente: "Sí, el pack"
+👤 Cliente: "Las mechas largas"
 
-🤖 [Bot pregunta fecha]
-"¿Qué día prefieres?"
+🤖 [Bot confirma servicio]
+"Perfecto, mechas largo por 70€ (150 minutos). ¿Para el viernes 8 de noviembre?"
 
 👤 Cliente: "El viernes 8 de noviembre"
 
@@ -564,11 +541,8 @@ docker-compose logs agent | grep "Tool result:"
 # Conectar a PostgreSQL
 docker exec -it atrevete-postgres psql -U atrevete -d atrevete_db
 
-# Ver servicios activos
-SELECT name, price_euros, category FROM services WHERE is_active = true;
-
-# Ver packs disponibles
-SELECT name, price_euros FROM packs WHERE is_active = true;
+# Ver servicios activos (92 servicios individuales - sin packs)
+SELECT name, price_euros, category, duration_minutes FROM services WHERE is_active = true ORDER BY category, name;
 
 # Ver estilistas activas
 SELECT name, category FROM stylists WHERE is_active = true;
@@ -637,8 +611,8 @@ docker-compose ps
 3. **Booking - Fase 1:**
    - Detección de intención
    - Validación de categorías mixtas
-   - Sugerencia de packs
-   - Respuesta a pack
+   - ~~Sugerencia de packs~~ (ELIMINADO)
+   - ~~Respuesta a pack~~ (ELIMINADO)
 
 4. **Booking - Fase 2 (parcial):**
    - Consulta de disponibilidad multi-calendar

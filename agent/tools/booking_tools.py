@@ -21,7 +21,7 @@ from sqlalchemy.dialects.postgresql import ARRAY as PGARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
-from database.models import Pack, Service, ServiceCategory
+from database.models import Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
 
@@ -40,165 +40,72 @@ class GetServicesSchema(BaseModel):
     )
 
 
-async def get_service_by_name(name: str, fuzzy: bool = True) -> Service | None:
+async def get_service_by_name(name: str, fuzzy: bool = True, limit: int = 5) -> list[Service]:
     """
-    Search for a service by name.
+    Search for services by name (can return multiple matches for ambiguous queries).
 
     Args:
         name: Service name to search for
-        fuzzy: If True, use pg_trgm similarity matching (threshold > 0.6).
+        fuzzy: If True, use pg_trgm similarity matching (threshold > 0.3).
                If False, use exact case-insensitive ILIKE matching.
+        limit: Maximum number of results to return (default: 5)
 
     Returns:
-        Service object if found, None otherwise
+        List of Service objects ordered by relevance (similarity DESC).
+        Empty list if no matches found.
 
     Example:
-        >>> service = await get_service_by_name("mechas")  # Exact match
-        >>> service = await get_service_by_name("mecha", fuzzy=True)  # Fuzzy match
+        >>> services = await get_service_by_name("mechas")  # May return multiple "Mechas" services
+        >>> services = await get_service_by_name("corte", fuzzy=True)  # Returns all "corte" variations
+        >>> if len(services) == 1:
+        ...     # Unambiguous - use directly
+        ...     service = services[0]
+        >>> elif len(services) > 1:
+        ...     # Ambiguous - ask user to clarify
+        ...     present_options_to_user(services)
     """
     try:
-        logger.info(f"Searching service: name='{name}', fuzzy={fuzzy}")
+        logger.info(f"Searching service: name='{name}', fuzzy={fuzzy}, limit={limit}")
 
         async for session in get_async_session():
             if fuzzy:
-                # Use pg_trgm similarity with threshold > 0.6
+                # Use pg_trgm similarity with threshold > 0.3
                 stmt = (
                     select(Service)
                     .where(
-                        func.similarity(Service.name, name) > 0.6,
+                        func.similarity(Service.name, name) > 0.3,
                         Service.is_active == True,
                     )
                     .order_by(func.similarity(Service.name, name).desc())
+                    .limit(limit)
                 )
             else:
                 # Use exact case-insensitive match
-                stmt = select(Service).where(
-                    Service.name.ilike(name),
-                    Service.is_active == True,
+                stmt = (
+                    select(Service)
+                    .where(
+                        Service.name.ilike(f"%{name}%"),
+                        Service.is_active == True,
+                    )
+                    .limit(limit)
                 )
 
             result = await session.execute(stmt)
-            service = result.scalar_one_or_none()
+            services = list(result.scalars().all())
 
-            if service:
-                logger.info(f"Service found: {service.name} for query '{name}'")
+            if services:
+                logger.info(
+                    f"Found {len(services)} service(s) for query '{name}': "
+                    f"{[s.name for s in services]}"
+                )
             else:
-                logger.debug(f"Service not found for query '{name}'")
+                logger.debug(f"No services found for query '{name}'")
 
-            return service
+            return services
 
     except Exception as e:
         logger.exception(f"Error searching service '{name}': {e}")
-        return None
-
-
-async def get_packs_containing_service(service_id: UUID) -> list[Pack]:
-    """
-    Query packs that contain a specific service.
-
-    Args:
-        service_id: UUID of the service to search for in packs
-
-    Returns:
-        List of Pack objects containing the service (empty list if none found)
-
-    Example:
-        >>> packs = await get_packs_containing_service(cortar_service_id)
-        >>> # Returns ["Mechas + Corte"] pack
-    """
-    try:
-        logger.info(f"Querying packs containing service_id={service_id}")
-
-        async for session in get_async_session():
-            # Query packs where service_id is in included_service_ids array
-            # Use PostgreSQL array @> operator for containment
-            stmt = select(Pack).where(
-                Pack.included_service_ids.op("@>")([service_id]),
-                Pack.is_active == True,
-            )
-
-            result = await session.execute(stmt)
-            packs = list(result.scalars().all())
-
-            logger.info(f"Found {len(packs)} packs for service {service_id}")
-            return packs
-
-    except Exception as e:
-        logger.exception(f"Error querying packs for service {service_id}: {e}")
         return []
-
-
-async def get_packs_for_multiple_services(service_ids: list[UUID]) -> list[Pack]:
-    """
-    Query packs that exactly match a set of services.
-
-    Args:
-        service_ids: List of service UUIDs to match exactly (order-independent)
-
-    Returns:
-        List of Pack objects with exact service match (empty list if none found)
-
-    Example:
-        >>> packs = await get_packs_for_multiple_services([mechas_id, corte_id])
-        >>> # Returns ["Mechas + Corte"] pack if it contains exactly those services
-    """
-    try:
-        logger.info(f"Querying packs for {len(service_ids)} services")
-
-        async for session in get_async_session():
-            # Query all active packs
-            stmt = select(Pack).where(Pack.is_active == True)
-            result = await session.execute(stmt)
-            all_packs = result.scalars().all()
-
-            # Filter packs where service_ids match exactly (as sets)
-            service_ids_set = set(service_ids)
-            matching_packs = [
-                pack
-                for pack in all_packs
-                if set(pack.included_service_ids) == service_ids_set
-            ]
-
-            logger.info(f"Found {len(matching_packs)} packs matching exact service set")
-            return matching_packs
-
-    except Exception as e:
-        logger.exception(f"Error querying packs for multiple services: {e}")
-        return []
-
-
-async def get_pack_by_id(pack_id: UUID) -> Pack | None:
-    """
-    Get a pack by its UUID.
-
-    Args:
-        pack_id: UUID of the pack to retrieve
-
-    Returns:
-        Pack object if found, None otherwise
-
-    Example:
-        >>> pack = await get_pack_by_id(UUID("123..."))
-        >>> # Returns Pack object or None
-    """
-    try:
-        logger.info(f"Querying pack by ID: {pack_id}")
-
-        async for session in get_async_session():
-            stmt = select(Pack).where(Pack.id == pack_id, Pack.is_active == True)
-            result = await session.execute(stmt)
-            pack = result.scalar_one_or_none()
-
-            if pack:
-                logger.info(f"Pack found: {pack.name} (ID: {pack_id})")
-            else:
-                logger.warning(f"Pack not found for ID: {pack_id}")
-
-            return pack
-
-    except Exception as e:
-        logger.exception(f"Error querying pack by ID '{pack_id}': {e}")
-        return None
 
 
 async def calculate_total(service_ids: list[UUID]) -> dict:
@@ -454,7 +361,13 @@ async def start_booking_flow(
     notes: str | None = None
 ) -> dict[str, Any]:
     """
-    Inicia el flujo transaccional de reserva de cita.
+    Inicia el flujo transaccional de reserva de cita (INTENT DETECTION ONLY).
+
+    ⚠️ IMPORTANTE: Esta herramienta es SOLO para detectar intención de reserva.
+    El sistema automáticamente:
+    1. Resuelve los nombres de servicios a UUIDs en la base de datos
+    2. Actualiza el estado con requested_services
+    3. Transfiere a Tier 2 (flujo transaccional)
 
     CUÁNDO USAR ESTA HERRAMIENTA:
     ✅ USA cuando el cliente exprese intención CLARA de reservar:
@@ -475,12 +388,14 @@ async def start_booking_flow(
 
     Args:
         services: Lista de nombres de servicios solicitados (ej: ["mechas", "corte"])
+                  El sistema los resolverá automáticamente a UUIDs.
         preferred_date: Fecha preferida en cualquier formato natural
         preferred_time: Hora preferida en cualquier formato natural
         notes: Notas adicionales sobre preferencias o necesidades especiales
 
     Returns:
-        Dict con confirmación de inicio del flujo y datos capturados
+        Dict con confirmación de inicio del flujo y datos capturados.
+        Nota: La resolución de servicios a UUIDs ocurre en conversational_agent.py
 
     Example:
         >>> # Cliente dice: "Quiero mechas y corte para el viernes a las 3"
@@ -490,6 +405,7 @@ async def start_booking_flow(
         ...     preferred_time="15:00"
         ... )
         >>> # Resultado: {"booking_initiated": True, ...}
+        >>> # Sistema automáticamente resuelve "mechas" y "corte" a UUIDs
     """
     logger.info(
         f"Booking flow initiated",

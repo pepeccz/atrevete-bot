@@ -106,13 +106,13 @@ The system uses a **hybrid architecture** with two distinct tiers:
 
 **Tier 1: Conversational Agent (Claude-powered)**
 - Single `conversational_agent` node handles all informational conversations
-- Claude Sonnet 4 with tool access manages: FAQs, greetings, inquiries, customer identification, service information, indecision detection, pack suggestions
+- Claude Sonnet 4 with tool access manages: FAQs, greetings, inquiries, customer identification, service information, indecision detection
 - Natural language understanding and dialogue management via Claude's reasoning
 - Transitions to Tier 2 when `booking_intent_confirmed=True`
 
 **Tier 2: Transactional Nodes (Explicit flow)**
 - Deterministic nodes for booking, availability checking, payment processing
-- Examples: `check_availability`, `suggest_pack`, `handle_pack_response`, `validate_booking_request`
+- Examples: `check_availability`, `validate_booking_request`, `handle_category_choice`
 - Ensures reliable transactional operations with explicit state transitions
 
 This simplification reduced complexity from 25 nodes to 12 nodes by consolidating conversational logic into Claude.
@@ -147,7 +147,7 @@ This simplification reduced complexity from 25 nodes to 12 nodes by consolidatin
 
 **Conversational Agent Node (agent/nodes/conversational_agent.py)**
 - Tier 1 workhorse: Claude Sonnet 4 with bound tools
-- Tools available: customer management, FAQs, services, availability, packs, consultations, escalation
+- Tools available: customer management, FAQs, services (92 individual), availability, consultations, escalation
 - Uses LangChain's `ChatAnthropic` with tool binding
 - Converts state messages to LangChain format (SystemMessage, HumanMessage, AIMessage, ToolMessage)
 
@@ -158,16 +158,15 @@ This simplification reduced complexity from 25 nodes to 12 nodes by consolidatin
 - FIFO windowing: Recent 10 messages kept, older messages summarized
 
 **Database Models (database/models.py)**
-- Core tables: `customers`, `stylists`, `services`, `packs`, `business_hours`
+- Core tables: `customers`, `stylists`, `services`, `business_hours`
 - Transactional tables: `appointments`, `payments`, `conversation_history`
 - All use UUID primary keys, TIMESTAMP WITH TIME ZONE, JSONB metadata
 - Enums: `ServiceCategory`, `PaymentStatus`, `AppointmentStatus`, `MessageRole`
 
 **Tools (agent/tools/)**
 - Customer tools: `get_customer_by_phone`, `create_customer`
-- Booking tools: `get_services`, `start_booking_flow`, `set_preferred_date`
+- Booking tools: `get_services`, `start_booking_flow`, `set_preferred_date`, `calculate_total`
 - Availability tools: `check_availability_tool` (multi-calendar Google Calendar API)
-- Pack tools: `suggest_pack_tool` (suggests discounted service packages)
 - FAQ tools: `get_faqs` (knowledge base responses)
 - Consultation tools: `offer_consultation_tool` (free consultation for indecisive customers)
 - Escalation tools: `escalate_to_human` (notify team via Chatwoot group)

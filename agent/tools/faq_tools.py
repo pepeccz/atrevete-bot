@@ -49,23 +49,30 @@ async def get_faqs(keywords: list[str] | None = None) -> dict[str, Any]:
     """
     try:
         async for session in get_async_session():
-            query = select(Policy).where(Policy.is_active == True)
-
-            # Filter by keywords if provided
-            if keywords:
-                query = query.where(Policy.category.in_(keywords))
+            # Filter only FAQ policies (keys starting with 'faq_')
+            query = select(Policy).where(Policy.key.like('faq_%'))
 
             result = await session.execute(query)
             policies = list(result.scalars().all())
+            break
 
-        faqs = [
-            {
-                "category": policy.category,
-                "question": policy.question or policy.category,
-                "answer": policy.value,
-            }
-            for policy in policies
-        ]
+        # Parse JSONB value field to extract FAQ data
+        faqs = []
+        for policy in policies:
+            faq_data = policy.value  # JSONB dict with 'question', 'answer', 'keywords'
+
+            # Filter by keywords if provided (match against FAQ keywords)
+            if keywords:
+                faq_keywords = faq_data.get("keywords", [])
+                # Check if any requested keyword matches FAQ keywords
+                if not any(kw in faq_keywords for kw in keywords):
+                    continue
+
+            faqs.append({
+                "category": policy.key.replace("faq_", ""),  # Extract category from key
+                "question": faq_data.get("question", ""),
+                "answer": faq_data.get("answer", ""),
+            })
 
         logger.info(f"Retrieved {len(faqs)} FAQs" + (f" for keywords: {keywords}" if keywords else ""))
 

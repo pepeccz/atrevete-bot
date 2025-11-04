@@ -163,7 +163,7 @@ graph TB
 
 - **Intelligent Escalation with Human-in-the-Loop:** LangGraph interrupt mechanism pauses bot, notifies team via WhatsApp, and sets Redis flag to prevent bot re-entry - _Rationale:_ Medical consultations, payment failures, and ambiguity require human judgment; interrupt pattern enables graceful handoff without losing conversation context
 
-- **Tool-Augmented LLM (ReAct Pattern):** Claude reasons about which tools to call based on conversation context - _Rationale:_ In Tier 1 (conversational), Claude has full autonomy to use tools (get_faqs, check_availability, suggest_pack) naturally within conversation. In Tier 2 (transactional), tools are called by explicit node logic to ensure deterministic payment flows. Reduces hallucination risk by grounding responses in real data.
+- **Tool-Augmented LLM (ReAct Pattern):** Claude reasons about which tools to call based on conversation context - _Rationale:_ In Tier 1 (conversational), Claude has full autonomy to use tools (get_faqs, check_availability, get_services) naturally within conversation. In Tier 2 (transactional), tools are called by explicit node logic to ensure deterministic payment flows. Reduces hallucination risk by grounding responses in real data.
 
 - **Backend for Frontend (Admin Panel):** Django Admin serves as lightweight BFF for salon staff CRUD operations - _Rationale:_ Auto-generated forms reduce development time; read-only calendar views prevent accidental conflicts with bot-managed bookings; staff don't need direct database access
 
@@ -328,43 +328,10 @@ interface Service {
 #### Relationships
 
 - **Many-to-Many with Appointments:** Appointments can include multiple services (e.g., "Corte + Color")
-- **Many-to-Many with Packs:** Services can belong to multiple package deals
 
 ---
 
-### 4.4 Pack
-
-**Purpose:** Represents discounted service packages (e.g., "Mechas + Corte" for €80 instead of €90).
-
-**Key Attributes:**
-- `id`: UUID - Primary identifier
-- `name`: string - Pack name (e.g., "Mechas + Corte")
-- `included_service_ids`: array<UUID> - List of services in the pack
-- `duration_minutes`: integer - Total pack duration
-- `price_euros`: decimal - Discounted total price
-- `description`: text - Pack description and savings explanation
-
-#### TypeScript Interface
-
-```typescript
-interface Pack {
-  id: string; // UUID
-  name: string;
-  included_service_ids: string[]; // Array of Service UUIDs
-  duration_minutes: number;
-  price_euros: number; // Discounted price
-  description: string;
-}
-```
-
-#### Relationships
-
-- **Many-to-Many with Services:** Pack references multiple services via `included_service_ids`
-- **One-to-Many with Appointments:** Appointments can book a pack instead of individual services
-
----
-
-### 4.5 Appointment
+### 4.4 Appointment
 
 **Purpose:** Represents booking transactions with state management (provisional → confirmed) and payment tracking.
 
@@ -372,8 +339,7 @@ interface Pack {
 - `id`: UUID - Primary identifier
 - `customer_id`: UUID - FK to Customer
 - `stylist_id`: UUID - FK to Stylist
-- `service_ids`: array<UUID> - List of services booked (or pack reference)
-- `pack_id`: UUID (nullable) - FK to Pack if booking a package
+- `service_ids`: array<UUID> - List of services booked
 - `start_time`: datetime - Appointment start (Europe/Madrid timezone)
 - `duration_minutes`: integer - Total duration
 - `total_price`: decimal - Full service price
@@ -400,7 +366,6 @@ interface Appointment {
   customer_id: string;
   stylist_id: string;
   service_ids: string[]; // Array of Service UUIDs
-  pack_id: string | null;
   start_time: string; // ISO 8601
   duration_minutes: number;
   total_price: number;
@@ -648,19 +613,18 @@ This section defines major logical components/services across the fullstack, est
 - FAQ answering (hours, location, parking, policies)
 - Service inquiries (descriptions, prices, durations)
 - Availability checking (as informational query, not booking)
-- Pack suggestions (money-saving opportunities)
+- Service information (92 individual services available)
 - Consultation offering (when customer indecisive)
 - Escalation triggering (medical queries, frustration)
 
-**Tool Access (8 tools):**
+**Tool Access (7 tools):**
 1. `get_customer_by_phone(phone)` → Customer | None
 2. `create_customer(phone, name)` → Customer
 3. `get_faqs(keywords=None)` → List[FAQ]
 4. `get_services(category=None, name_query=None)` → List[Service]
 5. `check_availability_tool(category, date, time_range)` → AvailableSlots
-6. `suggest_pack_tool(service_ids)` → PackSuggestion | None
-7. `offer_consultation_tool(reason)` → ConsultationService
-8. `escalate_to_human(reason, context)` → Escalation
+6. `offer_consultation_tool(reason)` → ConsultationService
+7. `escalate_to_human(reason, context)` → Escalation
 
 **State Management:**
 - **Minimal state:** Customer context only (~20 fields)
@@ -800,7 +764,7 @@ This section defines major logical components/services across the fullstack, est
 **Responsibility:** Business logic for appointment management including provisional booking creation, price/duration calculations, timeout tracking, and state transitions (provisional → confirmed).
 
 **Key Interfaces:**
-- `calculate_booking_details(service_ids, pack_id=None)` → {total_price, duration, advance_payment}
+- `calculate_booking_details(service_ids)` → {total_price, duration, advance_payment}
 - `create_provisional_booking(customer_id, stylist_id, start_time, service_ids, is_same_day)` → Appointment
 - `confirm_booking(appointment_id, stripe_payment_id)` → success
 - `cancel_booking(appointment_id, reason)` → {refund_triggered, amount}
@@ -1117,7 +1081,6 @@ CREATE TABLE appointments (
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     stylist_id UUID NOT NULL REFERENCES stylists(id) ON DELETE RESTRICT,
     service_ids UUID[] NOT NULL, -- Array of service UUIDs
-    pack_id UUID REFERENCES packs(id) ON DELETE SET NULL,
     start_time TIMESTAMP WITH TIME ZONE NOT NULL,
     duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),
     total_price NUMERIC(10, 2) NOT NULL CHECK (total_price >= 0),
@@ -1277,12 +1240,6 @@ class ConversationState(TypedDict, total=False):
     requested_date: Optional[str]  # ISO 8601 date (YYYY-MM-DD)
     requested_time: Optional[str]  # HH:MM format (if specific time requested)
 
-    # Pack suggestions
-    suggested_pack: Optional[dict]  # {id, name, price, savings, services}
-    pack_id: Optional[UUID]  # Accepted pack ID
-    pack_declined: bool
-    individual_service_total: float  # For savings comparison
-
     # Availability checking
     available_slots: List[dict]  # [{time, stylist_id, stylist_name, duration}]
     prioritized_slots: List[dict]  # Top 2-3 slots to present
@@ -1397,7 +1354,7 @@ atrevete-bot/
 │   │   ├── __init__.py
 │   │   ├── identification.py            # identify_customer, load_history
 │   │   ├── classification.py            # classify_intent, detect_indecision
-│   │   ├── availability.py              # check_availability, suggest_pack
+│   │   ├── availability.py              # check_availability
 │   │   ├── booking.py                   # create_provisional, confirm_booking
 │   │   ├── payment.py                   # handle_payment, check_timeout
 │   │   ├── modification.py              # modify_appointment, reschedule

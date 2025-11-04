@@ -7,9 +7,10 @@ using Claude LLM with tool access. Part of the hybrid architecture simplificatio
 Handles:
 - FAQs, greetings, service inquiries
 - Indecision detection and consultation offering
-- Pack suggestions
 - Availability checking (informational only)
 - Customer identification and creation
+
+Note: Pack suggestions removed (packs functionality eliminated)
 
 Transitions to Tier 2 (transactional flow) when:
 - booking_intent_confirmed=True (customer ready to book)
@@ -23,16 +24,18 @@ from zoneinfo import ZoneInfo
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agent.prompts import load_maite_system_prompt
+from agent.prompts import load_maite_system_prompt, load_stylist_context
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
 from agent.tools.availability_tools import check_availability_tool
 from agent.tools.booking_tools import get_services, start_booking_flow, set_preferred_date
+from agent.tools.business_hours_tools import get_business_hours
 from agent.tools.consultation_tools import offer_consultation_tool
 from agent.tools.customer_tools import create_customer, get_customer_by_phone
 from agent.tools.escalation_tools import escalate_to_human
 from agent.tools.faq_tools import get_faqs
-from agent.tools.pack_tools import suggest_pack_tool
+from agent.tools.policy_tools import get_payment_policies, get_cancellation_policy
+# from agent.tools.pack_tools import suggest_pack_tool  # Removed - packs functionality eliminated
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -42,14 +45,15 @@ def get_llm_with_tools() -> ChatAnthropic:
     """
     Get Claude LLM instance with all available tools bound.
 
-    Tools available (Phase 1-2 complete):
+    Tools available (Optimized - Dynamic Data Fetching):
     - Customer tools: get_customer_by_phone, create_customer
-    - FAQ tools: get_faqs
-    - Booking tools: get_services
+    - Information tools: get_faqs, get_business_hours, get_payment_policies, get_cancellation_policy
+    - Booking tools: get_services, set_preferred_date, start_booking_flow
     - Availability tools: check_availability_tool
-    - Pack tools: suggest_pack_tool
     - Consultation tools: offer_consultation_tool
     - Escalation tools: escalate_to_human
+
+    Note: Pack tools removed (packs functionality eliminated)
 
     Returns:
         ChatAnthropic instance with tools bound
@@ -67,14 +71,17 @@ def get_llm_with_tools() -> ChatAnthropic:
         # Customer management
         get_customer_by_phone,
         create_customer,
-        # Information retrieval
+        # Information retrieval (dynamic from DB)
         get_faqs,
+        get_business_hours,
+        get_payment_policies,
+        get_cancellation_policy,
         get_services,
         # Availability & scheduling
         check_availability_tool,
         set_preferred_date,
         # Value propositions
-        suggest_pack_tool,
+        # suggest_pack_tool,  # Removed - packs functionality eliminated
         offer_consultation_tool,
         # Booking flow initiation
         start_booking_flow,
@@ -113,10 +120,13 @@ async def execute_tool_call(tool_call: dict) -> str:
         "get_customer_by_phone": get_customer_by_phone,
         "create_customer": create_customer,
         "get_faqs": get_faqs,
+        "get_business_hours": get_business_hours,
+        "get_payment_policies": get_payment_policies,
+        "get_cancellation_policy": get_cancellation_policy,
         "get_services": get_services,
         "check_availability_tool": check_availability_tool,
         "set_preferred_date": set_preferred_date,
-        "suggest_pack_tool": suggest_pack_tool,
+        # "suggest_pack_tool": suggest_pack_tool,  # Removed - packs functionality eliminated
         "offer_consultation_tool": offer_consultation_tool,
         "start_booking_flow": start_booking_flow,
         "escalate_to_human": escalate_to_human,
@@ -164,7 +174,11 @@ async def execute_tool_call(tool_call: dict) -> str:
         return error_msg
 
 
-def format_llm_messages_with_summary(state: ConversationState, system_prompt: str) -> list:
+def format_llm_messages_with_summary(
+    state: ConversationState,
+    system_prompt: str,
+    stylist_context: str | None = None
+) -> list:
     """
     Format messages for LLM with conversation summary if needed.
 
@@ -174,11 +188,17 @@ def format_llm_messages_with_summary(state: ConversationState, system_prompt: st
     Args:
         state: Current conversation state
         system_prompt: System prompt content
+        stylist_context: Optional dynamic stylist team context from database
 
     Returns:
         List of messages formatted for LLM (SystemMessage + conversation history)
     """
     messages = [SystemMessage(content=system_prompt)]
+
+    # Add dynamic stylist context (database source of truth)
+    # Injected after system prompt, before temporal context
+    if stylist_context:
+        messages.append(SystemMessage(content=stylist_context))
 
     # Add current date/time context so Claude knows what "today", "tomorrow", etc. mean
     now = datetime.now(ZoneInfo("Europe/Madrid"))
@@ -286,6 +306,125 @@ def extract_preferred_date(all_tool_calls_history: list[dict]) -> tuple[str | No
     return None, None
 
 
+async def extract_requested_services(all_tool_calls_history: list[dict]) -> dict[str, Any]:
+    """
+    Extract and resolve service names to UUIDs from tool calls.
+
+    This function checks if Claude called start_booking_flow() tool during
+    the ReAct loop and resolves the service names to database UUIDs.
+
+    **Ambiguity Handling:**
+    - If a service name matches EXACTLY ONE service → auto-resolve to UUID
+    - If a service name matches MULTIPLE services → flag as ambiguous for clarification
+
+    Args:
+        all_tool_calls_history: List of all tool calls made during ReAct loop
+
+    Returns:
+        dict with:
+            - resolved_uuids: list[UUID] - Successfully resolved service UUIDs
+            - ambiguous_services: dict | None - Info about ambiguous service if detected
+                Structure: {
+                    "query": str,  # Original query (e.g., "corte")
+                    "options": [   # List of matching services
+                        {"id": str, "name": str, "price_euros": float, "duration_minutes": int, "category": str}
+                    ]
+                }
+    """
+    from agent.tools.booking_tools import get_service_by_name
+    from uuid import UUID
+
+    # Find start_booking_flow tool call
+    for tool_call in all_tool_calls_history:
+        tool_name = tool_call.get("name")
+        if tool_name == "start_booking_flow":
+            args = tool_call.get("args", {})
+            service_names = args.get("services", [])
+
+            if not service_names:
+                logger.warning("start_booking_flow called without services")
+                return {"resolved_uuids": [], "ambiguous_services": None}
+
+            logger.info(
+                f"Resolving service names to UUIDs: {service_names}",
+                extra={"service_names": service_names}
+            )
+
+            # Resolve each service name to UUID
+            resolved_uuids = []
+            ambiguous_services = None
+
+            for service_name in service_names:
+                try:
+                    # Use fuzzy matching to find services (returns list)
+                    matching_services = await get_service_by_name(service_name, fuzzy=True, limit=5)
+
+                    if len(matching_services) == 0:
+                        # No matches found
+                        logger.warning(
+                            f"Could not resolve service name '{service_name}' to UUID (no matches)"
+                        )
+
+                    elif len(matching_services) == 1:
+                        # Unambiguous - single match found
+                        service = matching_services[0]
+                        resolved_uuids.append(service.id)
+                        logger.info(
+                            f"Resolved '{service_name}' → {service.name} (UUID: {service.id})"
+                        )
+
+                    else:
+                        # Ambiguous - multiple matches found
+                        logger.warning(
+                            f"Ambiguous service query '{service_name}': {len(matching_services)} matches found"
+                        )
+
+                        # Store ambiguity info for Claude to handle
+                        ambiguous_services = {
+                            "query": service_name,
+                            "options": [
+                                {
+                                    "id": str(s.id),
+                                    "name": s.name,
+                                    "price_euros": float(s.price_euros),
+                                    "duration_minutes": s.duration_minutes,
+                                    "category": s.category.value,
+                                }
+                                for s in matching_services
+                            ]
+                        }
+
+                        logger.info(
+                            f"Flagging '{service_name}' as ambiguous with {len(matching_services)} options: "
+                            f"{[s.name for s in matching_services]}"
+                        )
+
+                        # Stop processing more services - handle one ambiguity at a time
+                        break
+
+                except Exception as e:
+                    logger.error(
+                        f"Error resolving service '{service_name}': {e}",
+                        exc_info=True
+                    )
+
+            logger.info(
+                f"Service resolution complete: {len(resolved_uuids)}/{len(service_names)} resolved, "
+                f"ambiguous: {ambiguous_services is not None}",
+                extra={
+                    "requested_services": [str(uuid) for uuid in resolved_uuids],
+                    "has_ambiguity": ambiguous_services is not None
+                }
+            )
+
+            return {
+                "resolved_uuids": resolved_uuids,
+                "ambiguous_services": ambiguous_services
+            }
+
+    return {"resolved_uuids": [], "ambiguous_services": None}
+
+
 async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     """
     Tier 1 conversational agent powered by Claude + tools.
@@ -379,11 +518,34 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         # Load system prompt with conversational guidance
         system_prompt = load_maite_system_prompt()
 
+        # Load dynamic stylist context from database (source of truth)
+        stylist_context = await load_stylist_context()
+
+        # Inject pending service clarification if ambiguity detected
+        ambiguity_context = ""
+        pending_clarification = state.get("pending_service_clarification")
+        if pending_clarification:
+            query = pending_clarification.get("query", "")
+            options = pending_clarification.get("options", [])
+            ambiguity_context = "\n\n## ⚠️ ACCIÓN REQUERIDA: Clarificar Servicio Ambiguo\n\n"
+            ambiguity_context += f"El cliente mencionó '{query}', pero hay {len(options)} servicios que coinciden:\n\n"
+            for i, opt in enumerate(options, 1):
+                ambiguity_context += (
+                    f"{i}. **{opt['name']}** - {opt['price_euros']}€, {opt['duration_minutes']} min "
+                    f"({opt['category']})\n"
+                )
+            ambiguity_context += (
+                "\n**DEBES presentar TODAS estas opciones al cliente de forma clara y amigable "
+                "(usa emojis, lista numerada) y pedirle que elija cuál prefiere.**\n"
+                "\n**Cuando responda**, llama `start_booking_flow(services=[\"nombre exacto del servicio elegido\"], ...)`\n"
+            )
+
         # Get LLM with tools
         llm_with_tools = get_llm_with_tools()
 
-        # Format messages for LLM
-        messages = format_llm_messages_with_summary(state, system_prompt)
+        # Format messages for LLM (includes dynamic stylist injection + ambiguity alert)
+        full_context = stylist_context + ambiguity_context
+        messages = format_llm_messages_with_summary(state, system_prompt, full_context)
 
         # ReAct loop: Invoke LLM with tools and execute them until no more tool calls
         logger.debug(f"Starting ReAct loop with {len(messages)} messages")
@@ -446,6 +608,11 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         # Extract preferred date from tool calls (if set_preferred_date was called)
         preferred_date, preferred_time = extract_preferred_date(all_tool_calls)
 
+        # Extract and resolve requested services from tool calls (if start_booking_flow was called)
+        service_resolution = await extract_requested_services(all_tool_calls)
+        requested_services_uuids = service_resolution.get("resolved_uuids", [])
+        ambiguous_services = service_resolution.get("ambiguous_services", None)
+
         # Extract content for message (handle both string and list formats)
         if isinstance(response.content, list):
             # When tool calls are present, content is a list of content blocks
@@ -490,6 +657,31 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             logger.info(
                 f"Requested time set from customer response: {preferred_time}",
                 extra={"conversation_id": state.get("conversation_id"), "requested_time": preferred_time}
+            )
+
+        # Handle service ambiguity or resolution
+        if ambiguous_services:
+            # Ambiguous service detected - store for Claude to clarify
+            updates["pending_service_clarification"] = ambiguous_services
+            logger.warning(
+                f"Service ambiguity detected for '{ambiguous_services['query']}' "
+                f"with {len(ambiguous_services['options'])} options",
+                extra={
+                    "conversation_id": state.get("conversation_id"),
+                    "ambiguous_query": ambiguous_services['query'],
+                    "num_options": len(ambiguous_services['options'])
+                }
+            )
+        elif requested_services_uuids:
+            # Services resolved successfully - clear any pending clarification
+            updates["requested_services"] = requested_services_uuids
+            updates["pending_service_clarification"] = None
+            logger.info(
+                f"Requested services set: {len(requested_services_uuids)} service(s) resolved",
+                extra={
+                    "conversation_id": state.get("conversation_id"),
+                    "requested_services": [str(uuid) for uuid in requested_services_uuids]
+                }
             )
 
         # Include customer data if it was loaded/updated

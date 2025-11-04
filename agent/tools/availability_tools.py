@@ -18,7 +18,8 @@ from sqlalchemy import select
 from agent.tools.calendar_tools import (
     check_holiday_closure,
     fetch_calendar_events,
-    generate_time_slots,
+    generate_time_slots_async,
+    get_calendar_client,
     get_stylists_by_category,
     is_slot_available,
 )
@@ -30,6 +31,11 @@ logger = logging.getLogger(__name__)
 TIMEZONE = ZoneInfo("Europe/Madrid")
 SAME_DAY_BUFFER_HOURS = 1
 MAX_SLOTS_TO_PRESENT = 3
+
+# Conservative service duration for informational availability checks
+# Used when exact service duration is unknown (Tier 1 conversational queries)
+# Set to 90 minutes to cover most common service combinations
+CONSERVATIVE_SERVICE_DURATION_MINUTES = 90
 
 
 class CheckAvailabilitySchema(BaseModel):
@@ -59,7 +65,14 @@ async def check_availability_tool(
     stylist_id: str | None = None
 ) -> dict[str, Any]:
     """
-    Check availability across multiple stylist calendars.
+    Check availability across multiple stylist calendars (informational only).
+
+    This tool is used for informal availability queries during Tier 1 conversations
+    (e.g., "Do you have availability tomorrow?"). It uses a conservative service
+    duration of 90 minutes to ensure slots can accommodate most service combinations.
+
+    For precise availability during actual booking flow, the system uses the
+    check_availability node in Tier 2 which calculates exact service durations.
 
     Queries Google Calendar API for all stylists in the specified category
     and returns available time slots prioritized by business rules.
@@ -76,6 +89,11 @@ async def check_availability_tool(
         - is_same_day: Boolean indicating same-day booking
         - holiday_detected: Boolean if day is closed
         - error: Error message if failed (None if success)
+
+    Note:
+        Uses CONSERVATIVE_SERVICE_DURATION_MINUTES (90 min) for slot validation.
+        This ensures slots can fit most service combinations within business hours
+        and prevents conflicts with existing events.
 
     Example:
         >>> result = await check_availability_tool("Hairdressing", "2025-11-01", "afternoon")
@@ -112,7 +130,7 @@ async def check_availability_tool(
         is_holiday = await check_holiday_closure(
             calendar_client.service,
             requested_date,
-            conversation_id=state.get("conversation_id", "")
+            conversation_id=""  # Tool doesn't have access to state
         )
         if is_holiday:
             logger.info(f"Holiday detected on {date}")
@@ -154,21 +172,38 @@ async def check_availability_tool(
 
         for stylist in stylists:
             # Generate candidate slots for the day
-            slots = generate_time_slots(requested_date, time_range)
+            # Use conservative duration to ensure services fit within business hours
+            day_of_week = requested_date.weekday()
+            slots = await generate_time_slots_async(
+                requested_date,
+                day_of_week,
+                service_duration_minutes=CONSERVATIVE_SERVICE_DURATION_MINUTES
+            )
 
             # Fetch busy events from Google Calendar
-            busy_events = await fetch_calendar_events(
+            calendar_client = get_calendar_client()
+            service = calendar_client.get_service()
+
+            time_min = requested_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            time_max = requested_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+            busy_events = fetch_calendar_events(
+                service,
                 stylist.google_calendar_id,
-                requested_date,
-                requested_date + timedelta(days=1)
+                time_min.isoformat(),
+                time_max.isoformat()
             )
 
             # Filter available slots
             for slot_time in slots:
-                if is_slot_available(slot_time, busy_events):
+                if is_slot_available(
+                    slot_time,
+                    busy_events,
+                    service_duration_minutes=CONSERVATIVE_SERVICE_DURATION_MINUTES
+                ):
                     all_slots.append({
                         "time": slot_time.strftime("%H:%M"),
-                        "stylist": stylist.first_name,
+                        "stylist": stylist.name,
                         "stylist_id": str(stylist.id),
                         "datetime_iso": slot_time.isoformat(),
                     })

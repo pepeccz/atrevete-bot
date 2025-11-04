@@ -22,7 +22,8 @@ from sqlalchemy import select
 
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
-from agent.tools.booking_tools import calculate_total, get_pack_by_id
+from agent.tools.booking_tools import calculate_total
+# get_pack_by_id removed - packs functionality eliminated
 from agent.validators.booking_validators import validate_buffer_between_appointments
 from database.connection import get_async_session
 from database.models import Appointment, AppointmentStatus, Customer, Payment, PaymentStatus, Stylist
@@ -585,7 +586,7 @@ async def create_provisional_booking(state: ConversationState) -> dict[str, Any]
     customer_notes = state.get("customer_notes")
     selected_slot = state.get("selected_slot")
     requested_services = state.get("requested_services", [])
-    pack_id = state.get("pack_id")
+    # pack_id = state.get("pack_id")  # Removed - packs functionality eliminated
 
     try:
         logger.info(
@@ -620,9 +621,9 @@ async def create_provisional_booking(state: ConversationState) -> dict[str, Any]
                 "last_node": "create_provisional_booking",
             }
 
-        if not requested_services and not pack_id:
+        if not requested_services:
             logger.error(
-                f"create_provisional_booking called without services or pack | "
+                f"create_provisional_booking called without services | "
                 f"conversation_id={conversation_id}"
             )
             return {
@@ -643,31 +644,11 @@ async def create_provisional_booking(state: ConversationState) -> dict[str, Any]
         hour, minute = map(int, time_str.split(":"))
         start_time = date_obj.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
-        # Calculate price and duration
-        if pack_id:
-            # Use pack price and duration
-            pack = await get_pack_by_id(pack_id)
-            if not pack:
-                logger.error(
-                    f"Pack not found | pack_id={pack_id} | conversation_id={conversation_id}"
-                )
-                return {
-                    **state,
-                    "bot_response": "Disculpa 💕, hubo un error con el pack seleccionado.",
-                    "error_count": state.get("error_count", 0) + 1,
-                    "updated_at": datetime.now(UTC),
-                    "last_node": "create_provisional_booking",
-                }
-
-            total_price = pack.price_euros
-            duration_minutes = pack.duration_minutes
-            service_ids_to_use = pack.included_service_ids
-        else:
-            # Use individual services
-            total_data = await calculate_total(requested_services)
-            total_price = total_data["total_price"]
-            duration_minutes = total_data["total_duration"]
-            service_ids_to_use = requested_services
+        # Calculate price and duration from individual services
+        total_data = await calculate_total(requested_services)
+        total_price = total_data["total_price"]
+        duration_minutes = total_data["total_duration"]
+        service_ids_to_use = requested_services
 
         # Calculate deposit (20%)
         advance_payment_amount = total_price * Decimal("0.20")
@@ -716,7 +697,7 @@ async def create_provisional_booking(state: ConversationState) -> dict[str, Any]
                 customer_id=customer_id,
                 stylist_id=stylist_id,
                 service_ids=service_ids_to_use,
-                pack_id=pack_id,
+                # pack_id removed - packs functionality eliminated
                 start_time=start_time,
                 duration_minutes=duration_minutes,
                 total_price=total_price,
@@ -906,19 +887,64 @@ async def generate_payment_link(state: ConversationState) -> dict[str, Any]:
                     }
 
         # Payment required - generate Stripe Payment Link
-        # TODO: Integrate with Stripe API to create Payment Link
-        # For now, return placeholder
+        from shared.stripe_client import create_payment_link_for_appointment
+        from database.models import Service
 
         # Calculate timeout in minutes
         timeout_minutes = int(settings.BOOKING_PAYMENT_TIMEOUT_MINUTES or 10)
 
-        # Placeholder payment link (replace with actual Stripe integration)
-        payment_link_url = f"https://buy.stripe.com/test_PLACEHOLDER_{provisional_appointment_id}"
+        # Get appointment details for payment link description
+        async for session in get_async_session():
+            stmt = select(Appointment).where(Appointment.id == provisional_appointment_id)
+            result = await session.execute(stmt)
+            appointment = result.scalar_one_or_none()
 
-        logger.info(
-            f"Payment link generated (placeholder) | url={payment_link_url} | "
-            f"conversation_id={conversation_id}"
-        )
+            if not appointment:
+                raise ValueError(f"Appointment {provisional_appointment_id} not found")
+
+            # Get service names for description
+            stmt = select(Service).where(Service.id.in_(appointment.service_ids))
+            result = await session.execute(stmt)
+            services = list(result.scalars().all())
+            service_names = ", ".join([s.name for s in services])
+
+            # Get customer details
+            customer_id = state.get("customer_id")
+            customer_email = state.get("customer_email")  # If available
+
+            # Create payment link via Stripe API
+            try:
+                payment_link_data = await create_payment_link_for_appointment(
+                    appointment_id=str(provisional_appointment_id),
+                    customer_id=str(customer_id),
+                    conversation_id=conversation_id,
+                    amount_euros=advance_payment_amount,
+                    description=f"{service_names} - Atrévete Peluquería",
+                    customer_email=customer_email,
+                    customer_name=customer_name,
+                )
+
+                payment_link_url = payment_link_data["url"]
+                payment_link_id = payment_link_data["id"]
+
+                # Store payment_link_id in appointment for later deactivation
+                appointment.stripe_payment_link_id = payment_link_id
+                await session.commit()
+
+                logger.info(
+                    f"Payment link generated successfully | url={payment_link_url} | "
+                    f"link_id={payment_link_id} | conversation_id={conversation_id}"
+                )
+
+            except Exception as stripe_error:
+                logger.error(
+                    f"Stripe API error generating payment link | "
+                    f"appointment_id={provisional_appointment_id}: {stripe_error}"
+                )
+                # Re-raise to trigger escalation in outer exception handler
+                raise
+
+            break  # Exit async for loop
 
         # Format message with payment link
         response_message = (
