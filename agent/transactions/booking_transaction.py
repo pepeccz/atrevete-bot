@@ -1,384 +1,400 @@
 """
-Atomic Booking Transaction Handler.
+Booking Transaction Handler for v3.0 Architecture.
 
-This module implements the core booking logic as a single atomic transaction that:
-1. Validates all preconditions
-2. Creates provisional appointment in PostgreSQL
-3. Creates Google Calendar event (yellow = provisional)
-4. Generates Stripe payment link (if required)
-5. Auto-confirms if free (no payment required)
-6. Rolls back completely on any failure
+This module implements the atomic booking transaction that creates appointments with:
+- Business rule validation (3-day rule, category consistency, slot availability)
+- Google Calendar event creation
+- Database persistence with SERIALIZABLE isolation
+- Complete rollback on any failure
 
-This replaces 5 nodes from v2 architecture:
-- booking_handler
-- validate_booking_request
-- create_provisional_booking
-- generate_payment_link
-- Auto-confirmation logic
-
-The handler ensures ACID properties using:
-- SERIALIZABLE isolation level
-- SELECT FOR UPDATE row locks
-- Comprehensive rollback on errors
-- Idempotency (safe to retry)
+The BookingTransaction.execute() method is the single entry point for creating appointments.
+It's called by the book() tool in agent/tools/booking_tools.py.
 """
 
 import logging
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from agent.tools.calendar_tools import create_calendar_event
+from agent.validators.transaction_validators import (
+    validate_3_day_rule,
+    validate_category_consistency,
+    validate_slot_availability,
+)
 from database.connection import get_async_session
-from database.models import Appointment, Customer, Service, Stylist
+from database.models import Appointment, AppointmentStatus, PaymentStatus, Service, Stylist
 
 logger = logging.getLogger(__name__)
+
+# 10-minute buffer between appointments for cleanup/preparation
+BUFFER_MINUTES = 10
 
 
 class BookingTransaction:
     """
-    Atomic transaction handler for creating bookings.
+    Atomic transaction handler for creating appointments.
 
-    This class encapsulates all the logic for creating a provisional or confirmed
-    booking, coordinating between:
-    - PostgreSQL (appointment data)
-    - Google Calendar (event creation with color coding)
-    - Stripe (payment link generation)
+    This class encapsulates the complete booking flow:
+    1. Validate business rules (3-day, category, slot availability)
+    2. Calculate totals (price, duration)
+    3. Create Google Calendar event
+    4. Create database appointment record
+    5. Rollback everything if any step fails
 
-    Usage:
-        transaction = BookingTransaction()
-        result = await transaction.execute(
-            services=["Corte de Caballero"],
-            slot={"time": "10:00", "date": "2025-11-08", "stylist_id": "uuid", ...},
-            customer_phone="+34612345678",
-            customer_name="Pedro Gómez",
-            customer_notes=None
-        )
-
-        if result["success"]:
-            appointment_id = result["appointment_id"]
-            payment_link = result.get("payment_link")
-            # ... send payment link to customer
-        else:
-            error_code = result["error_code"]
-            # ... handle error conversationally
-
-    Error Codes:
-        - SERVICE_NOT_FOUND: Service name not in database
-        - SERVICE_AMBIGUOUS: Multiple services match name
-        - CATEGORY_MISMATCH: Mix of Peluquería + Estética services
-        - DATE_TOO_SOON: Booking < 3 days from now
-        - SLOT_TAKEN: Slot occupied by concurrent booking
-        - BUFFER_CONFLICT: <10 min buffer with existing appointment
-        - CALENDAR_ERROR: Google Calendar API failure
-        - STRIPE_ERROR: Stripe API failure
-        - TRANSACTION_FAILED: General error
-
-    Transaction Steps:
-        1. Validate preconditions (services exist, category consistent, 3-day rule)
-        2. BEGIN TRANSACTION (SERIALIZABLE)
-        3. Check slot availability with row lock
-        4. INSERT Appointment (status=provisional)
-        5. Create Google Calendar event (yellow color)
-        6. Generate Stripe payment link (if price > 0)
-        7. Auto-confirm if price = 0
-        8. COMMIT
-        9. If any step fails → ROLLBACK + cleanup external APIs
+    All operations use SERIALIZABLE isolation to prevent race conditions.
     """
 
-    def __init__(self):
-        """Initialize transaction handler."""
-        self.session: AsyncSession | None = None
-        self.appointment_id: UUID | None = None
-        self.calendar_event_id: str | None = None
-        self.stripe_payment_link_id: str | None = None
-        self.trace_id: str = str(uuid4())
-
+    @staticmethod
     async def execute(
-        self,
-        services: list[str],
-        slot: dict,
-        customer_phone: str,
-        customer_name: str | None = None,
-        customer_notes: str | None = None,
+        customer_id: UUID,
+        service_ids: list[UUID],
+        stylist_id: UUID,
+        start_time: datetime
     ) -> dict[str, Any]:
         """
         Execute atomic booking transaction.
 
-        Args:
-            services: List of service names (e.g., ["Corte de Caballero", "Barba"])
-            slot: Selected slot from check_availability() result:
-                {
-                    "time": "10:00",
-                    "end_time": "11:30",
-                    "date": "2025-11-08",
-                    "stylist_id": "uuid-stylist",
-                    "stylist_name": "María",
-                    "duration_minutes": 90,
-                    "total_price": 50.0
-                }
-            customer_phone: Phone in E.164 format (e.g., +34612345678)
-            customer_name: Full name if customer doesn't exist (optional)
-            customer_notes: Additional notes (allergies, preferences, etc.)
-
-        Returns:
-            Success case:
-                {
-                    "success": True,
-                    "appointment_id": "uuid",
-                    "payment_required": True,
-                    "payment_link": "https://checkout.stripe.com/...",
-                    "payment_timeout_minutes": 10,
-                    "summary": {
-                        "date": "viernes 8 de noviembre",
-                        "time": "10:00",
-                        "end_time": "11:30",
-                        "stylist": "María",
-                        "services": ["Corte de Caballero"],
-                        "duration_minutes": 90,
-                        "total_price_euros": 50.0,
-                        "advance_payment_euros": 10.0
-                    }
-                }
-
-            Error case:
-                {
-                    "success": False,
-                    "error_code": "SLOT_TAKEN",
-                    "error_message": "El horario se ocupó hace un momento.",
-                    "retry_possible": True,
-                    "suggested_action": "Llama check_availability de nuevo"
-                }
-        """
-        logger.info(
-            "BookingTransaction started",
-            extra={
-                "trace_id": self.trace_id,
-                "services": services,
-                "slot": slot,
-                "customer_phone": customer_phone,
-            },
-        )
-
-        try:
-            # Step 1: Validate preconditions (before starting DB transaction)
-            logger.info(f"Step 1: Validating preconditions", extra={"trace_id": self.trace_id})
-
-            # Implementation to be completed in Phase 3 (Day 4)
-            raise NotImplementedError(
-                "BookingTransaction.execute() will be implemented in Phase 3, Day 4"
-            )
-
-        except Exception as e:
-            # Step 9: Rollback + cleanup
-            logger.error(
-                "BookingTransaction failed",
-                extra={
-                    "trace_id": self.trace_id,
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
-
-            # Cleanup external APIs if needed
-            await self._rollback_calendar_event()
-
-            return {
-                "success": False,
-                "error_code": "TRANSACTION_FAILED",
-                "error_message": str(e),
-                "retry_possible": False,
-            }
-
-    async def _resolve_services(self, service_names: list[str]) -> list[UUID]:
-        """
-        Resolve service names to UUIDs using fuzzy matching.
-
-        Args:
-            service_names: List of service names
-
-        Returns:
-            List of resolved Service UUIDs
-
-        Raises:
-            ValueError: If any service not found or ambiguous
-        """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
-
-    async def _validate_category_consistency(self, service_ids: list[UUID]) -> None:
-        """
-        Validate all services belong to same category.
-
-        Args:
-            service_ids: List of Service UUIDs
-
-        Raises:
-            ValueError: If services mix Peluquería + Estética categories
-        """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
-
-    async def _validate_3_day_rule(self, date_str: str) -> None:
-        """
-        Validate booking date meets 3-day minimum notice requirement.
-
-        Args:
-            date_str: Date in ISO format (e.g., "2025-11-08")
-
-        Raises:
-            ValueError: If date < 3 days from now
-        """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
-
-    async def _get_or_create_customer(
-        self, phone: str, name: str | None
-    ) -> Customer:
-        """
-        Get existing customer or create new one.
-
-        Args:
-            phone: Phone in E.164 format
-            name: Full name (required if customer doesn't exist)
-
-        Returns:
-            Customer object
-
-        Raises:
-            ValueError: If customer doesn't exist and name not provided
-        """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
-
-    async def _check_slot_with_lock(
-        self, stylist_id: UUID, start_time: str, duration_minutes: int
-    ) -> bool:
-        """
-        Check slot availability with database row lock.
-
-        Uses SELECT FOR UPDATE to prevent race conditions.
-
-        Args:
-            stylist_id: Stylist UUID
-            start_time: Start time in ISO format
-            duration_minutes: Duration including 10-min buffer
-
-        Returns:
-            True if slot available, False otherwise
-        """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
-
-    async def _create_provisional_appointment(
-        self,
-        customer_id: UUID,
-        stylist_id: UUID,
-        service_ids: list[UUID],
-        start_time: str,
-        duration_minutes: int,
-        total_price: Decimal,
-    ) -> Appointment:
-        """
-        Create provisional appointment in database.
+        This is the single entry point for creating appointments. Performs all validation,
+        calendar event creation, and database persistence in a single atomic transaction.
 
         Args:
             customer_id: Customer UUID
-            stylist_id: Stylist UUID
             service_ids: List of Service UUIDs
-            start_time: Start time in ISO format
-            duration_minutes: Total duration
-            total_price: Total price in euros
+            stylist_id: Stylist UUID
+            start_time: Appointment start time (timezone-aware)
 
         Returns:
-            Created Appointment object
+            Dict with booking result. Structure:
+
+            Success:
+                {
+                    "success": True,
+                    "appointment_id": str,
+                    "google_calendar_event_id": str,
+                    "start_time": str,
+                    "end_time": str,
+                    "total_price": float,
+                    "duration_minutes": int,
+                    "customer_id": str,
+                    "stylist_id": str,
+                    "service_ids": list[str],
+                    "status": "provisional" | "confirmed"
+                }
+
+            Failure:
+                {
+                    "success": False,
+                    "error_code": str,
+                    "error_message": str,
+                    "details": dict
+                }
+
+        Example:
+            >>> result = await BookingTransaction.execute(
+            ...     customer_id=UUID("..."),
+            ...     service_ids=[UUID("..."), UUID("...")],
+            ...     stylist_id=UUID("..."),
+            ...     start_time=datetime(2025, 11, 8, 10, 0, tzinfo=MADRID_TZ)
+            ... )
+            >>> if result["success"]:
+            ...     appointment_id = result["appointment_id"]
         """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
+        trace_id = f"{customer_id}_{start_time.isoformat()}"
+        logger.info(
+            f"[{trace_id}] Starting booking transaction",
+            extra={
+                "customer_id": str(customer_id),
+                "service_count": len(service_ids),
+                "stylist_id": str(stylist_id),
+                "start_time": start_time.isoformat()
+            }
+        )
 
-    async def _create_calendar_event(self, appointment: Appointment) -> dict:
-        """
-        Create Google Calendar event for provisional booking.
-
-        Event properties:
-        - Title: "[PROVISIONAL] {customer_name} - {services}"
-        - Color: Yellow (#FFFF00)
-        - Duration: duration_minutes + 10 min buffer
-        - Calendar: stylist's google_calendar_id
-
-        Args:
-            appointment: Appointment object
-
-        Returns:
-            dict with event details including "id"
-        """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
-
-    async def _generate_payment_link(self, appointment: Appointment) -> dict:
-        """
-        Generate Stripe payment link for advance payment (20% of total).
-
-        Args:
-            appointment: Appointment object
-
-        Returns:
-            dict with payment link details including "url"
-        """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
-
-    async def _auto_confirm_free_appointment(self, appointment: Appointment) -> None:
-        """
-        Auto-confirm appointment if price = 0 (no payment required).
-
-        Updates:
-        - Appointment status: provisional → confirmed
-        - Calendar event color: yellow → green
-
-        Args:
-            appointment: Appointment object
-        """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
-
-    async def _rollback_calendar_event(self) -> None:
-        """
-        Delete Google Calendar event if it was created.
-
-        Called during rollback if transaction fails after calendar event creation.
-        """
-        if self.calendar_event_id:
-            try:
+        try:
+            # Step 1: Validate 3-day rule
+            validation_3day = await validate_3_day_rule(start_time)
+            if not validation_3day["valid"]:
                 logger.warning(
-                    "Rolling back calendar event",
-                    extra={
-                        "trace_id": self.trace_id,
-                        "calendar_event_id": self.calendar_event_id,
-                    },
+                    f"[{trace_id}] 3-day rule validation failed",
+                    extra={"days_until": validation_3day["days_until_appointment"]}
                 )
-                # Delete calendar event
-                # Implementation to be completed in Phase 3, Day 4
-            except Exception as e:
-                logger.error(
-                    "Failed to rollback calendar event",
-                    extra={
-                        "trace_id": self.trace_id,
-                        "error": str(e),
-                    },
+                return {
+                    "success": False,
+                    "error_code": validation_3day["error_code"],
+                    "error_message": validation_3day["error_message"],
+                    "details": {
+                        "days_until_appointment": validation_3day["days_until_appointment"],
+                        "minimum_required_days": validation_3day["minimum_required_days"]
+                    }
+                }
+
+            # Step 2: Validate category consistency
+            validation_category = await validate_category_consistency(service_ids)
+            if not validation_category["valid"]:
+                logger.warning(
+                    f"[{trace_id}] Category consistency validation failed",
+                    extra={"categories": validation_category["categories_found"]}
                 )
+                return {
+                    "success": False,
+                    "error_code": validation_category["error_code"],
+                    "error_message": validation_category["error_message"],
+                    "details": {
+                        "categories_found": validation_category["categories_found"]
+                    }
+                }
 
-    def _build_summary(self, appointment: Appointment) -> dict:
-        """
-        Build summary dictionary for successful booking response.
+            # Step 3: Start database transaction with SERIALIZABLE isolation
+            async for session in get_async_session():
+                try:
+                    # Set SERIALIZABLE isolation for this transaction
+                    await session.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 
-        Args:
-            appointment: Appointment object
+                    # Step 3a: Fetch services and calculate totals
+                    stmt = select(Service).where(Service.id.in_(service_ids))
+                    result = await session.execute(stmt)
+                    services = list(result.scalars().all())
 
-        Returns:
-            dict with human-readable appointment summary
-        """
-        # Implementation to be completed in Phase 3, Day 4
-        raise NotImplementedError()
+                    if len(services) != len(service_ids):
+                        found_ids = {s.id for s in services}
+                        missing_ids = set(service_ids) - found_ids
+                        logger.error(
+                            f"[{trace_id}] Service IDs not found: {missing_ids}"
+                        )
+                        return {
+                            "success": False,
+                            "error_code": "INVALID_SERVICE_IDS",
+                            "error_message": "Uno o más servicios no fueron encontrados",
+                            "details": {"missing_service_ids": [str(sid) for sid in missing_ids]}
+                        }
+
+                    total_price = sum(s.price_euros for s in services)
+                    total_duration = sum(s.duration_minutes for s in services)
+                    duration_with_buffer = total_duration + BUFFER_MINUTES
+
+                    # Step 3b: Fetch stylist for name
+                    stmt = select(Stylist).where(Stylist.id == stylist_id)
+                    result = await session.execute(stmt)
+                    stylist = result.scalar_one_or_none()
+
+                    if not stylist:
+                        logger.error(f"[{trace_id}] Stylist not found: {stylist_id}")
+                        return {
+                            "success": False,
+                            "error_code": "STYLIST_NOT_FOUND",
+                            "error_message": "Estilista no encontrado",
+                            "details": {"stylist_id": str(stylist_id)}
+                        }
+
+                    # Step 3c: Validate slot availability with row lock
+                    validation_slot = await validate_slot_availability(
+                        stylist_id=stylist_id,
+                        start_time=start_time,
+                        duration_minutes=duration_with_buffer,
+                        session=session
+                    )
+
+                    if not validation_slot["available"]:
+                        logger.warning(
+                            f"[{trace_id}] Slot availability validation failed",
+                            extra={"conflict_id": str(validation_slot.get("conflicting_appointment_id"))}
+                        )
+                        await session.rollback()
+                        return {
+                            "success": False,
+                            "error_code": validation_slot["error_code"],
+                            "error_message": validation_slot["error_message"],
+                            "details": {
+                                "conflicting_appointment_id": str(validation_slot["conflicting_appointment_id"])
+                                if validation_slot.get("conflicting_appointment_id")
+                                else None
+                            }
+                        }
+
+                    # Step 4: Create Google Calendar event
+                    service_names = ", ".join(s.name for s in services)
+
+                    # Get customer name from database
+                    from database.models import Customer
+                    stmt = select(Customer).where(Customer.id == customer_id)
+                    result = await session.execute(stmt)
+                    customer = result.scalar_one_or_none()
+
+                    if not customer:
+                        logger.error(f"[{trace_id}] Customer not found: {customer_id}")
+                        await session.rollback()
+                        return {
+                            "success": False,
+                            "error_code": "CUSTOMER_NOT_FOUND",
+                            "error_message": "Cliente no encontrado",
+                            "details": {"customer_id": str(customer_id)}
+                        }
+
+                    customer_name = f"{customer.first_name} {customer.last_name or ''}".strip()
+
+                    logger.info(
+                        f"[{trace_id}] Creating Google Calendar event",
+                        extra={
+                            "customer_name": customer_name,
+                            "services": service_names,
+                            "duration": duration_with_buffer
+                        }
+                    )
+
+                    calendar_result = await create_calendar_event(
+                        stylist_id=str(stylist_id),
+                        start_time=start_time.isoformat(),
+                        duration_minutes=duration_with_buffer,
+                        customer_name=customer_name,
+                        service_names=service_names,
+                        status="provisional",  # Always start as provisional
+                        customer_id=str(customer_id),
+                        conversation_id=trace_id
+                    )
+
+                    if not calendar_result.get("success"):
+                        logger.error(
+                            f"[{trace_id}] Failed to create Google Calendar event",
+                            extra={"error": calendar_result.get("error")}
+                        )
+                        await session.rollback()
+                        return {
+                            "success": False,
+                            "error_code": "CALENDAR_EVENT_FAILED",
+                            "error_message": "Error al crear el evento en el calendario",
+                            "details": {"calendar_error": calendar_result.get("error")}
+                        }
+
+                    google_event_id = calendar_result["event_id"]
+                    logger.info(
+                        f"[{trace_id}] Google Calendar event created",
+                        extra={"event_id": google_event_id}
+                    )
+
+                    # Step 5: Create database appointment record
+                    end_time = start_time + timedelta(minutes=total_duration)
+
+                    new_appointment = Appointment(
+                        customer_id=customer_id,
+                        stylist_id=stylist_id,
+                        service_ids=service_ids,
+                        start_time=start_time,
+                        duration_minutes=total_duration,
+                        total_price=total_price,
+                        advance_payment_amount=Decimal("0.00"),  # Calculated later if needed
+                        payment_status=PaymentStatus.PENDING,
+                        status="provisional",
+                        google_calendar_event_id=google_event_id,
+                    )
+
+                    session.add(new_appointment)
+                    await session.commit()
+                    await session.refresh(new_appointment)
+
+                    logger.info(
+                        f"[{trace_id}] Booking transaction completed successfully",
+                        extra={
+                            "appointment_id": str(new_appointment.id),
+                            "google_event_id": google_event_id,
+                            "total_price": float(total_price),
+                            "duration_minutes": total_duration
+                        }
+                    )
+
+                    return {
+                        "success": True,
+                        "appointment_id": str(new_appointment.id),
+                        "google_calendar_event_id": google_event_id,
+                        "start_time": start_time.isoformat(),
+                        "end_time": end_time.isoformat(),
+                        "total_price": float(total_price),
+                        "duration_minutes": total_duration,
+                        "customer_id": str(customer_id),
+                        "stylist_id": str(stylist_id),
+                        "service_ids": [str(sid) for sid in service_ids],
+                        "status": "provisional"
+                    }
+
+                except IntegrityError as e:
+                    logger.error(
+                        f"[{trace_id}] Database integrity error",
+                        extra={"error": str(e)},
+                        exc_info=True
+                    )
+                    await session.rollback()
+
+                    # Try to delete calendar event (cleanup on rollback)
+                    if 'google_event_id' in locals():
+                        try:
+                            from agent.tools.calendar_tools import delete_calendar_event
+                            await delete_calendar_event(
+                                stylist_id=str(stylist_id),
+                                event_id=google_event_id,
+                                conversation_id=trace_id
+                            )
+                            logger.info(f"[{trace_id}] Cleaned up calendar event on rollback")
+                        except Exception as cleanup_error:
+                            logger.warning(
+                                f"[{trace_id}] Failed to cleanup calendar event",
+                                extra={"error": str(cleanup_error)}
+                            )
+
+                    return {
+                        "success": False,
+                        "error_code": "DATABASE_INTEGRITY_ERROR",
+                        "error_message": "Error de integridad en la base de datos",
+                        "details": {"error": str(e)}
+                    }
+
+                except SQLAlchemyError as e:
+                    logger.error(
+                        f"[{trace_id}] Database error",
+                        extra={"error": str(e)},
+                        exc_info=True
+                    )
+                    await session.rollback()
+
+                    # Try to delete calendar event (cleanup on rollback)
+                    if 'google_event_id' in locals():
+                        try:
+                            from agent.tools.calendar_tools import delete_calendar_event
+                            await delete_calendar_event(
+                                stylist_id=str(stylist_id),
+                                event_id=google_event_id,
+                                conversation_id=trace_id
+                            )
+                            logger.info(f"[{trace_id}] Cleaned up calendar event on rollback")
+                        except Exception as cleanup_error:
+                            logger.warning(
+                                f"[{trace_id}] Failed to cleanup calendar event",
+                                extra={"error": str(cleanup_error)}
+                            )
+
+                    return {
+                        "success": False,
+                        "error_code": "DATABASE_ERROR",
+                        "error_message": "Error al crear la reserva en la base de datos",
+                        "details": {"error": str(e)}
+                    }
+
+                finally:
+                    # Exit async for loop
+                    break
+
+        except Exception as e:
+            logger.error(
+                f"[{trace_id}] Unexpected error in booking transaction",
+                extra={"error": str(e)},
+                exc_info=True
+            )
+            return {
+                "success": False,
+                "error_code": "BOOKING_TRANSACTION_ERROR",
+                "error_message": "Error inesperado al procesar la reserva",
+                "details": {"error": str(e)}
+            }

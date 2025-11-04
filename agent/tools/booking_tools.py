@@ -158,35 +158,17 @@ async def book(
             }
         )
 
-        # TODO: Import and execute BookingTransaction (Phase 3, Day 4)
-        # from agent.transactions.booking_transaction import BookingTransaction
-        #
-        # result = await BookingTransaction.execute(
-        #     customer_id=customer_uuid,
-        #     service_ids=service_uuids,
-        #     stylist_id=stylist_uuid,
-        #     start_time=start_datetime
-        # )
-        #
-        # return result
+        # Execute BookingTransaction
+        from agent.transactions.booking_transaction import BookingTransaction
 
-        # TEMPORARY: Return not implemented error until Phase 3
-        logger.warning("BookingTransaction not yet implemented (Phase 3, Day 4)")
-        return {
-            "success": False,
-            "error_code": "NOT_IMPLEMENTED",
-            "error_message": (
-                "La funcionalidad de reserva está en desarrollo. "
-                "Por favor, contacta con el equipo para procesar tu reserva."
-            ),
-            "details": {
-                "phase": "Phase 3, Day 4 pending",
-                "customer_id": customer_id,
-                "service_ids": service_ids,
-                "stylist_id": stylist_id,
-                "start_time": start_time
-            }
-        }
+        result = await BookingTransaction.execute(
+            customer_id=customer_uuid,
+            service_ids=service_uuids,
+            stylist_id=stylist_uuid,
+            start_time=start_datetime
+        )
+
+        return result
 
     except Exception as e:
         logger.error(f"Error in book(): {e}", exc_info=True)
