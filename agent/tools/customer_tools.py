@@ -1,18 +1,18 @@
 """
-Customer tools for database operations on customer lifecycle management.
+Consolidated Customer Management Tool for v3.0 Architecture.
 
-This module provides LangChain tools for:
-- Querying customers by phone number
-- Creating new customer records
-- Updating customer names
-- Managing customer preferences
-- Retrieving customer appointment history
+This module consolidates customer CRUD operations into a single manage_customer() tool:
+- get_customer_by_phone() → manage_customer(action="get", ...)
+- create_customer() → manage_customer(action="create", ...)
+- update_customer_name() → manage_customer(action="update", ...)
+- update_customer_preferences() → (kept separate for clarity)
+- get_customer_history() → (kept separate, different use case)
 
-All tools use async SQLAlchemy sessions and follow E.164 phone normalization.
+The manage_customer() tool uses an action parameter to route to the appropriate operation.
 """
 
 import logging
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import phonenumbers
@@ -25,47 +25,6 @@ from database.connection import get_async_session
 from database.models import Appointment, Customer
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# Pydantic Schemas for Tool Parameters
-# ============================================================================
-
-
-class CustomerPhoneSchema(BaseModel):
-    """Schema for phone number parameter."""
-
-    phone: str = Field(description="Customer phone number in any format (will be normalized to E.164)")
-
-
-class CreateCustomerSchema(BaseModel):
-    """Schema for creating a new customer."""
-
-    phone: str = Field(description="Customer phone number in any format")
-    first_name: str = Field(description="Customer's first name")
-    last_name: str = Field(default="", description="Customer's last name (optional)")
-
-
-class UpdateCustomerNameSchema(BaseModel):
-    """Schema for updating customer name."""
-
-    customer_id: str = Field(description="Customer UUID as string")
-    first_name: str = Field(description="New first name")
-    last_name: str = Field(description="New last name")
-
-
-class UpdateCustomerPreferencesSchema(BaseModel):
-    """Schema for updating customer preferences."""
-
-    customer_id: str = Field(description="Customer UUID as string")
-    preferred_stylist_id: str = Field(description="Preferred stylist UUID as string")
-
-
-class GetCustomerHistorySchema(BaseModel):
-    """Schema for getting customer appointment history."""
-
-    customer_id: str = Field(description="Customer UUID as string")
-    limit: int = Field(default=5, description="Maximum number of appointments to return")
 
 
 # ============================================================================
@@ -103,23 +62,150 @@ def normalize_phone(phone: str) -> str | None:
 
 
 # ============================================================================
+# Pydantic Schemas
+# ============================================================================
+
+
+class ManageCustomerSchema(BaseModel):
+    """Schema for manage_customer tool parameters."""
+
+    action: Literal["get", "create", "update"] = Field(
+        description=(
+            "Customer management action:\n"
+            "- 'get': Retrieve existing customer by phone\n"
+            "- 'create': Create new customer with phone and name\n"
+            "- 'update': Update existing customer's name"
+        )
+    )
+
+    phone: str = Field(
+        description="Customer phone number (required for get/create, optional for update)"
+    )
+
+    data: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Additional data for the action:\n"
+            "For 'create': {'first_name': str, 'last_name': str (optional)}\n"
+            "For 'update': {'customer_id': str, 'first_name': str, 'last_name': str}"
+        )
+    )
+
+
+class GetCustomerHistorySchema(BaseModel):
+    """Schema for getting customer appointment history."""
+
+    customer_id: str = Field(description="Customer UUID as string")
+    limit: int = Field(default=5, description="Maximum number of appointments to return")
+
+
+# ============================================================================
 # Customer Tools
 # ============================================================================
 
 
-@tool(args_schema=CustomerPhoneSchema)
-async def get_customer_by_phone(phone: str) -> dict[str, Any] | None:
+@tool(args_schema=ManageCustomerSchema)
+async def manage_customer(
+    action: Literal["get", "create", "update"],
+    phone: str,
+    data: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """
+    Manage customer operations (get, create, update).
+
+    This consolidated tool handles all customer CRUD operations through a single interface.
+    Use the 'action' parameter to specify what operation you need.
+
+    Args:
+        action: Customer management action:
+            - "get": Retrieve existing customer by phone number
+            - "create": Create new customer with phone and name
+            - "update": Update existing customer's name
+        phone: Customer phone number (any format, will be normalized to E.164)
+        data: Additional data dict for create/update:
+            - For create: {"first_name": str, "last_name": str (optional)}
+            - For update: {"customer_id": str, "first_name": str, "last_name": str}
+
+    Returns:
+        Dict with customer data or error. Structure varies by action:
+
+        get (success):
+            {
+                "id": str,
+                "phone": str,
+                "first_name": str,
+                "last_name": str,
+                "total_spent": float,
+                "last_service_date": str | None,
+                "preferred_stylist_id": str | None,
+                "created_at": str
+            }
+
+        get (not found):
+            None
+
+        create (success):
+            {
+                "id": str,
+                "phone": str,
+                "first_name": str,
+                "last_name": str,
+                "total_spent": float,
+                "created_at": str
+            }
+
+        create (duplicate):
+            {"error": "Customer with this phone number already exists", "phone": str}
+
+        update (success):
+            {
+                "success": True,
+                "customer_id": str,
+                "first_name": str,
+                "last_name": str
+            }
+
+        update (not found):
+            {"error": "Customer not found", "customer_id": str}
+
+    Examples:
+        Get existing customer:
+        >>> await manage_customer("get", "+34612345678")
+        {"id": "uuid", "phone": "+34612345678", "first_name": "Pedro", ...}
+
+        Get non-existent customer:
+        >>> await manage_customer("get", "+34999999999")
+        None
+
+        Create new customer:
+        >>> await manage_customer("create", "612345678", {"first_name": "Pedro", "last_name": "Gómez"})
+        {"id": "uuid", "phone": "+34612345678", "first_name": "Pedro", ...}
+
+        Update customer name:
+        >>> await manage_customer("update", "+34612345678", {"customer_id": "uuid", "first_name": "Pedro", "last_name": "García"})
+        {"success": True, "customer_id": "uuid", "first_name": "Pedro", "last_name": "García"}
+    """
+    try:
+        if action == "get":
+            return await _get_customer(phone)
+        elif action == "create":
+            return await _create_customer(phone, data or {})
+        elif action == "update":
+            return await _update_customer(phone, data or {})
+        else:
+            logger.error(f"Invalid action: {action}")
+            return {"error": f"Invalid action: {action}"}
+
+    except Exception as e:
+        logger.error(f"Error in manage_customer(action={action}): {e}", exc_info=True)
+        return {"error": f"Error in {action} operation", "details": str(e)}
+
+
+async def _get_customer(phone: str) -> dict[str, Any] | None:
     """
     Get customer by phone number.
 
-    Queries the database for a customer with the given phone number.
-    Phone number is automatically normalized to E.164 format.
-
-    Args:
-        phone: Customer phone number in any format
-
-    Returns:
-        Customer data dict with id, phone, first_name, last_name, etc., or None if not found
+    Internal function called by manage_customer(action="get").
     """
     normalized_phone = normalize_phone(phone)
     if not normalized_phone:
@@ -151,30 +237,27 @@ async def get_customer_by_phone(phone: str) -> dict[str, Any] | None:
             }
 
     except SQLAlchemyError as e:
-        logger.error(f"Database error in get_customer_by_phone: {e}", extra={"phone": normalized_phone})
+        logger.error(f"Database error in _get_customer: {e}", extra={"phone": normalized_phone})
         return {"error": "Failed to retrieve customer from database", "details": str(e)}
 
 
-@tool(args_schema=CreateCustomerSchema)
-async def create_customer(phone: str, first_name: str, last_name: str = "") -> dict[str, Any]:
+async def _create_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
     """
     Create a new customer record.
 
-    Creates a new customer with the provided phone number and name.
-    Phone number is automatically normalized to E.164 format.
-
-    Args:
-        phone: Customer phone number in any format
-        first_name: Customer's first name
-        last_name: Customer's last name (optional, defaults to empty string)
-
-    Returns:
-        Created customer data dict with id, phone, first_name, last_name, etc.
+    Internal function called by manage_customer(action="create").
     """
     normalized_phone = normalize_phone(phone)
     if not normalized_phone:
         logger.error(f"Invalid phone number format: {phone}")
         return {"error": "Invalid phone number format", "phone": phone}
+
+    first_name = data.get("first_name")
+    if not first_name:
+        logger.error("first_name is required for customer creation")
+        return {"error": "first_name is required", "data": data}
+
+    last_name = data.get("last_name", "")
 
     try:
         async for session in get_async_session():
@@ -210,30 +293,33 @@ async def create_customer(phone: str, first_name: str, last_name: str = "") -> d
         return {"error": "Customer with this phone number already exists", "phone": normalized_phone}
 
     except SQLAlchemyError as e:
-        logger.error(f"Database error in create_customer: {e}", extra={"phone": normalized_phone})
+        logger.error(f"Database error in _create_customer: {e}", extra={"phone": normalized_phone})
         return {"error": "Failed to create customer in database", "details": str(e)}
 
 
-@tool(args_schema=UpdateCustomerNameSchema)
-async def update_customer_name(customer_id: str, first_name: str, last_name: str) -> dict[str, Any]:
+async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
     """
     Update customer's name.
 
-    Updates the first name and last name for an existing customer.
-
-    Args:
-        customer_id: Customer UUID as string
-        first_name: New first name
-        last_name: New last name
-
-    Returns:
-        Success dict with updated customer data, or error dict if customer not found
+    Internal function called by manage_customer(action="update").
     """
+    customer_id_str = data.get("customer_id")
+    first_name = data.get("first_name")
+    last_name = data.get("last_name")
+
+    if not customer_id_str:
+        logger.error("customer_id is required for update")
+        return {"error": "customer_id is required", "data": data}
+
+    if not first_name:
+        logger.error("first_name is required for update")
+        return {"error": "first_name is required", "data": data}
+
     try:
-        customer_uuid = UUID(customer_id)
+        customer_uuid = UUID(customer_id_str)
     except ValueError:
-        logger.error(f"Invalid customer_id format: {customer_id}")
-        return {"error": "Invalid customer_id format", "customer_id": customer_id}
+        logger.error(f"Invalid customer_id format: {customer_id_str}")
+        return {"error": "Invalid customer_id format", "customer_id": customer_id_str}
 
     try:
         async for session in get_async_session():
@@ -243,8 +329,8 @@ async def update_customer_name(customer_id: str, first_name: str, last_name: str
             customer = result.scalar_one_or_none()
 
             if customer is None:
-                logger.warning(f"Customer not found: {customer_id}")
-                return {"error": "Customer not found", "customer_id": customer_id}
+                logger.warning(f"Customer not found: {customer_id_str}")
+                return {"error": "Customer not found", "customer_id": customer_id_str}
 
             customer.first_name = first_name
             customer.last_name = last_name if last_name else None
@@ -253,8 +339,8 @@ async def update_customer_name(customer_id: str, first_name: str, last_name: str
             await session.refresh(customer)
 
             logger.info(
-                f"Customer name updated: {customer_id}",
-                extra={"customer_id": customer_id, "first_name": first_name, "last_name": last_name}
+                f"Customer name updated: {customer_id_str}",
+                extra={"customer_id": customer_id_str, "first_name": first_name, "last_name": last_name}
             )
 
             return {
@@ -265,68 +351,8 @@ async def update_customer_name(customer_id: str, first_name: str, last_name: str
             }
 
     except SQLAlchemyError as e:
-        logger.error(f"Database error in update_customer_name: {e}", extra={"customer_id": customer_id})
+        logger.error(f"Database error in _update_customer: {e}", extra={"customer_id": customer_id_str})
         return {"error": "Failed to update customer name", "details": str(e)}
-
-
-@tool(args_schema=UpdateCustomerPreferencesSchema)
-async def update_customer_preferences(customer_id: str, preferred_stylist_id: str) -> dict[str, Any]:
-    """
-    Update customer's preferred stylist.
-
-    Sets or updates the customer's preferred stylist preference.
-
-    Args:
-        customer_id: Customer UUID as string
-        preferred_stylist_id: Preferred stylist UUID as string
-
-    Returns:
-        Success dict with updated preference, or error dict if customer/stylist not found
-    """
-    try:
-        customer_uuid = UUID(customer_id)
-        stylist_uuid = UUID(preferred_stylist_id)
-    except ValueError as e:
-        logger.error(f"Invalid UUID format: {e}")
-        return {"error": "Invalid UUID format", "details": str(e)}
-
-    try:
-        async for session in get_async_session():
-            result = await session.execute(
-                select(Customer).where(Customer.id == customer_uuid)
-            )
-            customer = result.scalar_one_or_none()
-
-            if customer is None:
-                logger.warning(f"Customer not found: {customer_id}")
-                return {"error": "Customer not found", "customer_id": customer_id}
-
-            customer.preferred_stylist_id = stylist_uuid
-
-            await session.commit()
-            await session.refresh(customer)
-
-            logger.info(
-                f"Customer preferences updated: {customer_id}",
-                extra={"customer_id": customer_id, "preferred_stylist_id": preferred_stylist_id}
-            )
-
-            return {
-                "success": True,
-                "customer_id": str(customer.id),
-                "preferred_stylist_id": str(customer.preferred_stylist_id) if customer.preferred_stylist_id else None,
-            }
-
-    except IntegrityError as e:
-        logger.warning(
-            f"Invalid stylist_id (FK constraint): {preferred_stylist_id}",
-            extra={"customer_id": customer_id, "preferred_stylist_id": preferred_stylist_id}
-        )
-        return {"error": "Invalid stylist_id - stylist does not exist", "preferred_stylist_id": preferred_stylist_id}
-
-    except SQLAlchemyError as e:
-        logger.error(f"Database error in update_customer_preferences: {e}", extra={"customer_id": customer_id})
-        return {"error": "Failed to update customer preferences", "details": str(e)}
 
 
 @tool(args_schema=GetCustomerHistorySchema)
@@ -335,14 +361,44 @@ async def get_customer_history(customer_id: str, limit: int = 5) -> dict[str, An
     Get customer's appointment history.
 
     Retrieves the most recent appointments for a customer, ordered by start time (most recent first).
-    Includes related stylist and service information.
+    Includes related appointment information.
+
+    This tool is kept separate from manage_customer() because it serves a different use case
+    (querying appointments rather than managing customer data).
 
     Args:
         customer_id: Customer UUID as string
         limit: Maximum number of appointments to return (default: 5)
 
     Returns:
-        Dict with list of appointments or error dict if customer not found
+        Dict with:
+            {
+                "customer_id": str,
+                "appointments": [
+                    {
+                        "id": str,
+                        "start_time": str,
+                        "duration_minutes": int,
+                        "total_price": float,
+                        "status": str,
+                        "payment_status": str,
+                        "stylist_id": str,
+                        "service_ids": list[str]
+                    }
+                ]
+            }
+
+        Or error dict if customer not found
+
+    Example:
+        >>> await get_customer_history("customer-uuid", limit=3)
+        {
+            "customer_id": "customer-uuid",
+            "appointments": [
+                {"id": "apt-1", "start_time": "2025-11-03T10:00:00+01:00", ...},
+                {"id": "apt-2", "start_time": "2025-10-15T14:00:00+02:00", ...}
+            ]
+        }
     """
     try:
         customer_uuid = UUID(customer_id)
