@@ -1,631 +1,198 @@
 """
-Booking tools for service and pack query functions.
+Booking Tool for v3.0 Architecture.
 
-Provides functions to:
-- Search services by name with fuzzy matching
-- Query packs containing specific services
-- Calculate totals for multiple services
-- Validate service combinations by category
+This module contains only the book() tool which delegates to BookingTransaction.
+All helper functions (get_service_by_name, calculate_total, validate_service_combination)
+have been removed as they're now handled by:
+- service_resolver.py (service name resolution)
+- BookingTransaction (validation + atomic booking)
+- info_tools.py (service queries)
+
+The book() tool is the single entry point for creating appointments.
 """
 
 import logging
-from collections import defaultdict
-from decimal import Decimal
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import ARRAY as PGARRAY
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from database.connection import get_async_session
-from database.models import Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# Tool Schemas for LangChain
+# Pydantic Schema
 # ============================================================================
 
 
-class GetServicesSchema(BaseModel):
-    """Schema for get_services tool parameters."""
+class BookSchema(BaseModel):
+    """Schema for book tool parameters."""
 
-    category: str | None = Field(
-        default=None,
-        description="Optional service category filter: 'Hairdressing' or 'Aesthetics'"
+    customer_id: str = Field(
+        description="Customer UUID as string (from manage_customer tool)"
+    )
+    service_ids: list[str] = Field(
+        description="List of Service UUIDs as strings (from resolve_service_names utility)"
+    )
+    stylist_id: str = Field(
+        description="Stylist UUID as string (from check_availability tool)"
+    )
+    start_time: str = Field(
+        description="Appointment start time in ISO 8601 format with timezone (e.g., '2025-11-08T10:00:00+01:00')"
     )
 
 
-async def get_service_by_name(name: str, fuzzy: bool = True, limit: int = 5) -> list[Service]:
-    """
-    Search for services by name (can return multiple matches for ambiguous queries).
-
-    Args:
-        name: Service name to search for
-        fuzzy: If True, use pg_trgm similarity matching (threshold > 0.7).
-               If False, use exact case-insensitive ILIKE matching.
-        limit: Maximum number of results to return (default: 5)
-
-    Returns:
-        List of Service objects ordered by relevance (similarity DESC).
-        Empty list if no matches found.
-
-    Example:
-        >>> services = await get_service_by_name("mechas")  # May return multiple "Mechas" services
-        >>> services = await get_service_by_name("corte", fuzzy=True)  # Returns all "corte" variations
-        >>> if len(services) == 1:
-        ...     # Unambiguous - use directly
-        ...     service = services[0]
-        >>> elif len(services) > 1:
-        ...     # Ambiguous - ask user to clarify
-        ...     present_options_to_user(services)
-    """
-    try:
-        logger.info(f"Searching service: name='{name}', fuzzy={fuzzy}, limit={limit}")
-
-        async for session in get_async_session():
-            if fuzzy:
-                # Use pg_trgm similarity with threshold > 0.7 (more restrictive to reduce false positives)
-                stmt = (
-                    select(Service)
-                    .where(
-                        func.similarity(Service.name, name) > 0.7,
-                        Service.is_active == True,
-                    )
-                    .order_by(func.similarity(Service.name, name).desc())
-                    .limit(limit)
-                )
-            else:
-                # Use exact case-insensitive match
-                stmt = (
-                    select(Service)
-                    .where(
-                        Service.name.ilike(f"%{name}%"),
-                        Service.is_active == True,
-                    )
-                    .limit(limit)
-                )
-
-            result = await session.execute(stmt)
-            services = list(result.scalars().all())
-
-            if services:
-                logger.info(
-                    f"Found {len(services)} service(s) for query '{name}': "
-                    f"{[s.name for s in services]}"
-                )
-            else:
-                logger.debug(f"No services found for query '{name}'")
-
-            return services
-
-    except Exception as e:
-        logger.exception(f"Error searching service '{name}': {e}")
-        return []
+# ============================================================================
+# Booking Tool
+# ============================================================================
 
 
-async def calculate_total(service_ids: list[UUID]) -> dict:
-    """
-    Calculate total price and duration for a list of services.
-
-    Args:
-        service_ids: List of service UUIDs to calculate totals for
-
-    Returns:
-        Dictionary with:
-        - total_price: Sum of service prices (Decimal)
-        - total_duration: Sum of service durations in minutes (int)
-        - service_count: Number of services (int)
-        - services: List of Service objects for reference
-
-    Example:
-        >>> total = await calculate_total([mechas_id, corte_id])
-        >>> # Returns {"total_price": Decimal("85.00"), "total_duration": 180, ...}
-    """
-    try:
-        logger.info(f"Calculating total for {len(service_ids)} services")
-
-        if not service_ids:
-            logger.debug("Empty service_ids list, returning zero totals")
-            return {
-                "total_price": Decimal("0.00"),
-                "total_duration": 0,
-                "service_count": 0,
-                "services": [],
-            }
-
-        async for session in get_async_session():
-            # Query services by IDs
-            stmt = select(Service).where(Service.id.in_(service_ids))
-            result = await session.execute(stmt)
-            services = list(result.scalars().all())
-
-            # Calculate totals
-            total_price = sum(s.price_euros for s in services)
-            total_duration = sum(s.duration_minutes for s in services)
-
-            logger.info(f"Total calculated: {total_price}€, {total_duration}min")
-
-            return {
-                "total_price": total_price,
-                "total_duration": total_duration,
-                "service_count": len(services),
-                "services": services,
-            }
-
-    except Exception as e:
-        logger.exception(f"Error calculating total: {e}")
-        return {
-            "total_price": Decimal("0.00"),
-            "total_duration": 0,
-            "service_count": 0,
-            "services": [],
-        }
-
-
-async def validate_service_combination(
-    service_ids: list[UUID], session: AsyncSession
+@tool(args_schema=BookSchema)
+async def book(
+    customer_id: str,
+    service_ids: list[str],
+    stylist_id: str,
+    start_time: str
 ) -> dict[str, Any]:
     """
-    Validate that requested services are from the same category.
+    Create a new appointment booking (atomic transaction).
+
+    This is the single entry point for creating appointments in v3.0 architecture.
+    Delegates to BookingTransaction which handles:
+    - Validation (3-day rule, category consistency, slot availability)
+    - Calendar event creation (Google Calendar API)
+    - Database persistence (PostgreSQL with SERIALIZABLE isolation)
+    - Rollback on any failure (atomic operation)
+
+    Prerequisites (must be completed before calling this tool):
+    1. Customer identified/created via manage_customer()
+    2. Services resolved from names to UUIDs via resolve_service_names()
+    3. Availability checked and slot selected via check_availability()
 
     Args:
-        service_ids: List of service UUIDs to validate
-        session: Database session
+        customer_id: Customer UUID as string
+        service_ids: List of Service UUIDs as strings
+        stylist_id: Stylist UUID as string
+        start_time: Appointment start time (ISO 8601 with timezone)
 
     Returns:
-        Dict with validation result:
-        - valid: bool (True if same category or single service)
-        - reason: str | None ('mixed_categories' if invalid)
-        - services_by_category: dict[ServiceCategory, list[Service]] (grouped services)
+        Dict with booking result. Structure:
 
-    Example:
-        >>> result = await validate_service_combination([corte_id, color_id], session)
-        >>> result["valid"]  # True (both Hairdressing)
-
-        >>> result = await validate_service_combination([corte_id, bioterapia_id], session)
-        >>> result["valid"]  # False (Hairdressing + Aesthetics)
-    """
-    try:
-        logger.info(f"Validating service combination: {len(service_ids)} services")
-
-        # Edge case: empty list is valid
-        if not service_ids:
-            logger.debug("Empty service_ids list, validation passed")
-            return {
-                "valid": True,
-                "reason": None,
-                "services_by_category": {},
-            }
-
-        # Query all services at once (single DB call)
-        stmt = select(Service).where(Service.id.in_(service_ids))
-        result = await session.execute(stmt)
-        services = list(result.scalars().all())
-
-        # Check for non-existent service IDs
-        if len(services) != len(service_ids):
-            found_ids = {s.id for s in services}
-            missing_ids = set(service_ids) - found_ids
-            logger.error(
-                f"Service validation failed: {len(missing_ids)} non-existent service_ids: {missing_ids}"
-            )
-            return {
-                "valid": False,
-                "reason": "invalid_service_ids",
-                "services_by_category": {},
-            }
-
-        # Group services by category
-        by_category: dict[ServiceCategory, list[Service]] = defaultdict(list)
-        for service in services:
-            by_category[service.category].append(service)
-
-        # Validation rules
-        num_categories = len(by_category)
-
-        # Single service or all same category → valid
-        if num_categories <= 1:
-            logger.info(f"Validation passed: {num_categories} category")
-            return {
-                "valid": True,
-                "reason": None,
-                "services_by_category": dict(by_category),
-            }
-
-        # Multiple categories → invalid
-        category_names = [cat.value for cat in by_category.keys()]
-        logger.warning(
-            f"Validation failed: mixed categories detected: {category_names}"
-        )
-        return {
-            "valid": False,
-            "reason": "mixed_categories",
-            "services_by_category": dict(by_category),
-        }
-
-    except Exception as e:
-        logger.exception(f"Error validating service combination: {e}")
-        return {
-            "valid": False,
-            "reason": "validation_error",
-            "services_by_category": {},
-        }
-
-
-# ============================================================================
-# LangChain Tools (for Conversational Agent)
-# ============================================================================
-
-
-@tool(args_schema=GetServicesSchema)
-async def get_services(category: str | None = None) -> dict[str, Any]:
-    """
-    Get all active services, optionally filtered by category.
-
-    Queries the Service table and returns service information including
-    name, price, duration, and category.
-
-    Args:
-        category: Optional category filter ("Hairdressing" or "Aesthetics")
-
-    Returns:
-        Dict with:
-        - services: List of service dicts with id, name, price_euros, duration_minutes, category
-        - count: Number of services returned
-
-    Example:
-        >>> result = await get_services("Hairdressing")
-        >>> result["services"]
-        [{"id": "...", "name": "Corte", "price_euros": 25.0, ...}, ...]
-    """
-    try:
-        async for session in get_async_session():
-            query = select(Service).where(Service.is_active == True)
-
-            # Filter by category if provided
-            if category:
-                try:
-                    category_enum = ServiceCategory[category.upper()]
-                    query = query.where(Service.category == category_enum)
-                except KeyError:
-                    logger.warning(f"Invalid category: {category}")
-
-            result = await session.execute(query)
-            services = list(result.scalars().all())
-
-        services_list = [
+        Success:
             {
-                "id": str(service.id),
-                "name": service.name,
-                "price_euros": float(service.price_euros),
-                "duration_minutes": service.duration_minutes,
-                "category": service.category.value,
+                "success": True,
+                "appointment_id": str,
+                "google_calendar_event_id": str,
+                "start_time": str,
+                "end_time": str,
+                "total_price": float,
+                "duration_minutes": int,
+                "customer_id": str,
+                "stylist_id": str,
+                "service_ids": list[str]
             }
-            for service in services
-        ]
+
+        Failure:
+            {
+                "success": False,
+                "error_code": str,  # "CATEGORY_MISMATCH", "SLOT_TAKEN", "DATE_TOO_SOON", etc.
+                "error_message": str,
+                "details": dict  # Additional error context
+            }
+
+    Example:
+        >>> # After customer identified, services resolved, availability checked:
+        >>> result = await book(
+        ...     customer_id="550e8400-e29b-41d4-a716-446655440000",
+        ...     service_ids=["...", "..."],
+        ...     stylist_id="...",
+        ...     start_time="2025-11-08T10:00:00+01:00"
+        ... )
+        >>> if result["success"]:
+        ...     print(f"Booking created: {result['appointment_id']}")
+        ... else:
+        ...     print(f"Booking failed: {result['error_message']}")
+
+    Notes:
+        - Uses SERIALIZABLE transaction isolation to prevent race conditions
+        - Creates Google Calendar event before DB commit (rollback on failure)
+        - Validates business rules: 3-day rule, category consistency, slot availability
+        - All-or-nothing operation: either fully succeeds or fully rolls back
+    """
+    try:
+        # Parse UUIDs
+        try:
+            customer_uuid = UUID(customer_id)
+            service_uuids = [UUID(sid) for sid in service_ids]
+            stylist_uuid = UUID(stylist_id)
+        except ValueError as e:
+            logger.error(f"Invalid UUID format in book() parameters: {e}")
+            return {
+                "success": False,
+                "error_code": "INVALID_UUID",
+                "error_message": "ID inválido en los parámetros de reserva",
+                "details": {"error": str(e)}
+            }
+
+        # Parse start time
+        try:
+            start_datetime = datetime.fromisoformat(start_time)
+        except ValueError as e:
+            logger.error(f"Invalid start_time format '{start_time}': {e}")
+            return {
+                "success": False,
+                "error_code": "INVALID_DATETIME",
+                "error_message": "Formato de fecha/hora inválido",
+                "details": {"error": str(e)}
+            }
 
         logger.info(
-            f"Retrieved {len(services_list)} services" +
-            (f" for category: {category}" if category else "")
+            f"Booking requested",
+            extra={
+                "customer_id": customer_id,
+                "service_count": len(service_ids),
+                "stylist_id": stylist_id,
+                "start_time": start_time
+            }
         )
 
+        # TODO: Import and execute BookingTransaction (Phase 3, Day 4)
+        # from agent.transactions.booking_transaction import BookingTransaction
+        #
+        # result = await BookingTransaction.execute(
+        #     customer_id=customer_uuid,
+        #     service_ids=service_uuids,
+        #     stylist_id=stylist_uuid,
+        #     start_time=start_datetime
+        # )
+        #
+        # return result
+
+        # TEMPORARY: Return not implemented error until Phase 3
+        logger.warning("BookingTransaction not yet implemented (Phase 3, Day 4)")
         return {
-            "services": services_list,
-            "count": len(services_list),
+            "success": False,
+            "error_code": "NOT_IMPLEMENTED",
+            "error_message": (
+                "La funcionalidad de reserva está en desarrollo. "
+                "Por favor, contacta con el equipo para procesar tu reserva."
+            ),
+            "details": {
+                "phase": "Phase 3, Day 4 pending",
+                "customer_id": customer_id,
+                "service_ids": service_ids,
+                "stylist_id": stylist_id,
+                "start_time": start_time
+            }
         }
 
     except Exception as e:
-        logger.error(f"Error in get_services: {e}", exc_info=True)
+        logger.error(f"Error in book(): {e}", exc_info=True)
         return {
-            "services": [],
-            "count": 0,
-            "error": "Error consultando servicios",
-        }
-
-
-# ============================================================================
-# Booking Flow Initiation Tool
-# ============================================================================
-
-
-class StartBookingFlowSchema(BaseModel):
-    """Schema for start_booking_flow tool parameters."""
-
-    services: list[str] = Field(
-        description="Lista de servicios que el cliente quiere reservar (nombres o IDs)"
-    )
-    preferred_date: str | None = Field(
-        default=None,
-        description="Fecha preferida del cliente (ej: '2025-11-01', 'viernes', 'mañana')"
-    )
-    preferred_time: str | None = Field(
-        default=None,
-        description="Hora preferida del cliente (ej: '15:00', 'por la tarde', 'mañana')"
-    )
-    notes: str | None = Field(
-        default=None,
-        description="Notas adicionales del cliente sobre la reserva"
-    )
-
-
-@tool(args_schema=StartBookingFlowSchema)
-async def start_booking_flow(
-    services: list[str],
-    preferred_date: str | None = None,
-    preferred_time: str | None = None,
-    notes: str | None = None
-) -> dict[str, Any]:
-    """
-    Inicia el flujo transaccional de reserva de cita (INTENT DETECTION ONLY).
-
-    ⚠️ IMPORTANTE: Esta herramienta es SOLO para detectar intención de reserva.
-    El sistema automáticamente:
-    1. Resuelve los nombres de servicios a UUIDs en la base de datos
-    2. Actualiza el estado con requested_services
-    3. Transfiere a Tier 2 (flujo transaccional)
-
-    CUÁNDO USAR ESTA HERRAMIENTA:
-    ✅ USA cuando el cliente exprese intención CLARA de reservar:
-       - "Quiero reservar mechas para el viernes"
-       - "Dame cita para corte"
-       - "Perfecto, agéndame"
-       - "Sí, quiero reservar"
-       - "¿Tenéis libre el viernes? Si hay, reservo" (con confirmación)
-
-    ❌ NO LA USES si el cliente solo está consultando:
-       - "¿Cuánto cuesta?" → NO (solo consulta precio)
-       - "¿Tenéis libre?" → NO (a menos que diga "si hay, reserva")
-       - "¿Qué incluye el pack?" → NO (aún comparando)
-       - Cliente indeciso o preguntando opciones → NO
-
-    CRITERIO CLAVE: El cliente debe expresar COMPROMISO de reservar,
-    no solo curiosidad o consulta informativa.
-
-    Args:
-        services: Lista de nombres de servicios solicitados (ej: ["mechas", "corte"])
-                  El sistema los resolverá automáticamente a UUIDs.
-        preferred_date: Fecha preferida en cualquier formato natural
-        preferred_time: Hora preferida en cualquier formato natural
-        notes: Notas adicionales sobre preferencias o necesidades especiales
-
-    Returns:
-        Dict con confirmación de inicio del flujo y datos capturados.
-        Nota: La resolución de servicios a UUIDs ocurre en conversational_agent.py
-
-    Example:
-        >>> # Cliente dice: "Quiero mechas y corte para el viernes a las 3"
-        >>> result = await start_booking_flow(
-        ...     services=["mechas", "corte"],
-        ...     preferred_date="viernes",
-        ...     preferred_time="15:00"
-        ... )
-        >>> # Resultado: {"booking_initiated": True, ...}
-        >>> # Sistema automáticamente resuelve "mechas" y "corte" a UUIDs
-    """
-    logger.info(
-        f"Booking flow initiated",
-        extra={
-            "services": services,
-            "preferred_date": preferred_date,
-            "preferred_time": preferred_time,
-            "has_notes": bool(notes),
-        }
-    )
-
-    return {
-        "booking_initiated": True,
-        "services": services,
-        "preferred_date": preferred_date,
-        "preferred_time": preferred_time,
-        "notes": notes,
-        "message": "Flujo de reserva iniciado. Procederé a validar servicios y verificar disponibilidad.",
-    }
-
-
-# ============================================================================
-# Set Preferred Date Tool
-# ============================================================================
-
-
-class SetPreferredDateSchema(BaseModel):
-    """Schema for set_preferred_date tool parameters."""
-
-    preferred_date: str = Field(
-        description="Fecha preferida del cliente en formato natural (ej: '2025-11-01', 'viernes', 'mañana', '5 de noviembre')"
-    )
-    preferred_time: str | None = Field(
-        default=None,
-        description="Hora preferida del cliente si la menciona (ej: '15:00', 'por la tarde', '3 de la tarde')"
-    )
-
-
-@tool(args_schema=SetPreferredDateSchema)
-async def set_preferred_date(
-    preferred_date: str,
-    preferred_time: str | None = None
-) -> dict[str, Any]:
-    """
-    Registra la fecha y hora preferida del cliente para su cita.
-
-    CUÁNDO USAR ESTA HERRAMIENTA:
-    ✅ USA cuando el cliente responda con una fecha después de preguntarle:
-       - Cliente: "El viernes" → set_preferred_date(preferred_date="viernes")
-       - Cliente: "Mañana a las 3" → set_preferred_date(preferred_date="mañana", preferred_time="15:00")
-       - Cliente: "5 de noviembre" → set_preferred_date(preferred_date="2025-11-05")
-
-    ❌ NO LA USES si:
-       - El cliente aún está preguntando sin confirmar
-       - Ya usaste start_booking_flow() con la fecha
-
-    Esta herramienta se usa SOLO cuando el sistema ya preguntó "¿Qué día prefieres?"
-    y el cliente está respondiendo con su preferencia.
-
-    Args:
-        preferred_date: Fecha preferida en cualquier formato natural
-        preferred_time: Hora preferida si el cliente la especifica
-
-    Returns:
-        Dict confirmando que la fecha fue registrada
-
-    Example:
-        >>> # Sistema preguntó: "¿Qué día prefieres?"
-        >>> # Cliente respondió: "El viernes por la tarde"
-        >>> result = await set_preferred_date(
-        ...     preferred_date="viernes",
-        ...     preferred_time="por la tarde"
-        ... )
-        >>> # Resultado: {"date_set": True, "preferred_date": "viernes", ...}
-    """
-    logger.info(
-        f"Preferred date set by customer",
-        extra={
-            "preferred_date": preferred_date,
-            "preferred_time": preferred_time,
-        }
-    )
-
-    return {
-        "date_set": True,
-        "preferred_date": preferred_date,
-        "preferred_time": preferred_time,
-        "message": f"Fecha registrada: {preferred_date}" + (f" a las {preferred_time}" if preferred_time else ""),
-    }
-
-
-# ============================================================================
-# Validate Booking Date Tool (for early 3-day validation)
-# ============================================================================
-
-
-class ValidateBookingDateSchema(BaseModel):
-    """Schema for validate_booking_date tool parameters."""
-
-    date: str = Field(
-        description="Fecha a validar en formato YYYY-MM-DD (ej: '2025-11-05')"
-    )
-
-
-@tool(args_schema=ValidateBookingDateSchema)
-async def validate_booking_date(date: str) -> dict[str, Any]:
-    """
-    Valida si una fecha cumple con la política de aviso mínimo de 3 días.
-
-    Esta herramienta permite validar fechas ANTES de iniciar el flujo de reserva,
-    útil cuando el cliente menciona una fecha en su mensaje inicial pero hay
-    ambigüedad en el servicio solicitado.
-
-    CUÁNDO USAR ESTA HERRAMIENTA:
-    ✅ USA cuando el cliente mencione una fecha PERO aún no esté clara la reserva:
-       - "Me quiero cortar el pelo mañana" (fecha clara, servicio ambiguo)
-       - "Tenéis disponible el viernes para mechas?" (pregunta informativa con fecha)
-       - "Quiero cita para mañana" (fecha clara, servicio no especificado)
-
-    ❌ NO LA USES si:
-       - Ya llamaste start_booking_flow() (la validación ocurre automáticamente en Tier 2)
-       - El cliente no mencionó ninguna fecha
-       - La reserva es clara y sin ambigüedad (usa start_booking_flow directamente)
-
-    La herramienta valida la regla de negocio: MÍNIMO 3 DÍAS DE AVISO.
-    Si la fecha no cumple, retorna la fecha más cercana válida para que puedas
-    informar al cliente proactivamente.
-
-    Args:
-        date: Fecha en formato YYYY-MM-DD (ej: "2025-11-05")
-
-    Returns:
-        Dict con:
-        - valid: bool (True si cumple regla de 3 días)
-        - days_difference: int (días entre hoy y la fecha solicitada)
-        - earliest_date: str en formato YYYY-MM-DD (si valid=False)
-        - earliest_date_formatted: str legible (ej: "viernes 7 de noviembre")
-        - message: str (mensaje explicativo para el cliente)
-
-    Example:
-        >>> # Hoy es 2025-11-04, cliente dice "mañana" (2025-11-05)
-        >>> result = await validate_booking_date(date="2025-11-05")
-        >>> result["valid"]
-        False
-        >>> result["days_difference"]
-        1
-        >>> result["earliest_date_formatted"]
-        "viernes 7 de noviembre"
-        >>> result["message"]
-        "Lo siento, necesitamos mínimo 3 días de aviso..."
-    """
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    from agent.validators.booking_validators import validate_min_advance_notice
-
-    TIMEZONE = ZoneInfo("Europe/Madrid")
-
-    try:
-        # Parse fecha
-        try:
-            requested_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=TIMEZONE)
-        except ValueError:
-            logger.error(f"validate_booking_date: Invalid date format '{date}'")
-            return {
-                "valid": False,
-                "error": "Formato de fecha inválido",
-                "message": "No pude entender esa fecha. Por favor usa formato YYYY-MM-DD.",
-            }
-
-        # Validar regla de 3 días
-        validation_result = await validate_min_advance_notice(
-            requested_date=requested_date,
-            conversation_id=""  # Tool doesn't have conversation context
-        )
-
-        is_valid = validation_result["valid"]
-        days_diff = validation_result["days_difference"]
-
-        if is_valid:
-            logger.info(
-                f"Date validation passed: {date} ({days_diff} days advance)",
-                extra={"date": date, "days_difference": days_diff}
-            )
-            return {
-                "valid": True,
-                "days_difference": days_diff,
-                "message": f"Fecha válida ({days_diff} días de aviso)",
-            }
-        else:
-            # Fecha no válida - preparar mensaje informativo
-            earliest_formatted = validation_result["earliest_date_formatted"]
-            earliest_date_str = validation_result["earliest_date"].strftime("%Y-%m-%d")
-
-            message = (
-                f"Lo siento, necesitamos mínimo 3 días de aviso para las citas. "
-                f"La fecha más cercana disponible sería el {earliest_formatted}."
-            )
-
-            logger.info(
-                f"Date validation failed: {date} (only {days_diff} days) | "
-                f"Earliest: {earliest_date_str}",
-                extra={
-                    "date": date,
-                    "days_difference": days_diff,
-                    "earliest_date": earliest_date_str,
-                }
-            )
-
-            return {
-                "valid": False,
-                "days_difference": days_diff,
-                "earliest_date": earliest_date_str,
-                "earliest_date_formatted": earliest_formatted,
-                "message": message,
-            }
-
-    except Exception as e:
-        logger.exception(f"Error in validate_booking_date: {e}")
-        return {
-            "valid": False,
-            "error": str(e),
-            "message": "Error validando la fecha",
+            "success": False,
+            "error_code": "BOOKING_ERROR",
+            "error_message": "Error al procesar la reserva",
+            "details": {"error": str(e)}
         }
