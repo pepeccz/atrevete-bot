@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -33,10 +33,19 @@ logger = logging.getLogger(__name__)
 
 TIMEZONE = ZoneInfo("Europe/Madrid")
 
-# Initialize Claude for classification
-llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
-
 settings = get_settings()
+
+# Initialize Claude for classification via OpenRouter
+llm = ChatOpenAI(
+    model="anthropic/claude-3.5-sonnet-20241022",
+    api_key=settings.OPENROUTER_API_KEY,
+    base_url="https://openrouter.ai/api/v1",
+    temperature=0,
+    default_headers={
+        "HTTP-Referer": settings.SITE_URL,
+        "X-Title": settings.SITE_NAME,
+    }
+)
 
 
 # ============================================================================

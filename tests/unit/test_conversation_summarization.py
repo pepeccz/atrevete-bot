@@ -152,7 +152,7 @@ class TestSummarizeConversation:
         mock_response = MagicMock()
         mock_response.content = "Cliente solicita cita para corte de pelo."
 
-        with patch("agent.nodes.summarization.ChatAnthropic") as mock_llm:
+        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm:
             mock_instance = AsyncMock()
             mock_instance.ainvoke = AsyncMock(return_value=mock_response)
             mock_llm.return_value = mock_instance
@@ -179,7 +179,7 @@ class TestSummarizeConversation:
         mock_response = MagicMock()
         mock_response.content = "Cliente confirma cita para mañana 10am."
 
-        with patch("agent.nodes.summarization.ChatAnthropic") as mock_llm:
+        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm:
             mock_instance = AsyncMock()
             mock_instance.ainvoke = AsyncMock(return_value=mock_response)
             mock_llm.return_value = mock_instance
@@ -203,7 +203,7 @@ class TestSummarizeConversation:
         }
 
         # Mock Claude API to raise exception
-        with patch("agent.nodes.summarization.ChatAnthropic") as mock_llm:
+        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm:
             mock_instance = AsyncMock()
             mock_instance.ainvoke = AsyncMock(side_effect=Exception("API error"))
             mock_llm.return_value = mock_instance

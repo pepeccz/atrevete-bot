@@ -56,8 +56,16 @@ class Settings(BaseSettings):
         description="Secret token for Chatwoot webhook URL authentication (min 24 chars recommended)"
     )
 
-    # Anthropic
-    ANTHROPIC_API_KEY: str = Field(default="sk-ant-placeholder")
+    # OpenRouter (Unified LLM API)
+    OPENROUTER_API_KEY: str = Field(default="sk-or-placeholder")
+    SITE_URL: str = Field(
+        default="https://atrevetepeluqueria.com",
+        description="Site URL for OpenRouter rankings (optional)"
+    )
+    SITE_NAME: str = Field(
+        default="Atrévete Bot",
+        description="Site name for OpenRouter rankings (optional)"
+    )
 
     # Langfuse (Observability & Monitoring)
     LANGFUSE_PUBLIC_KEY: str = Field(

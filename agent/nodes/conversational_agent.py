@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from agent.prompts import load_maite_system_prompt, load_stylist_context
@@ -40,9 +40,9 @@ from shared.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-def get_llm_with_tools() -> ChatAnthropic:
+def get_llm_with_tools() -> ChatOpenAI:
     """
-    Get Claude LLM instance with 7 consolidated tools bound.
+    Get Claude LLM instance with 7 consolidated tools bound via OpenRouter.
 
     Tools available (v3.0 consolidated):
     1. query_info: Unified information queries (services, FAQs, hours, policies)
@@ -54,14 +54,19 @@ def get_llm_with_tools() -> ChatAnthropic:
     7. escalate_to_human: Human escalation
 
     Returns:
-        ChatAnthropic instance with 7 tools bound
+        ChatOpenAI instance configured for OpenRouter with 7 tools bound
     """
     settings = get_settings()
 
-    llm = ChatAnthropic(
-        model="claude-3-5-haiku-20241022",
-        api_key=settings.ANTHROPIC_API_KEY,
+    llm = ChatOpenAI(
+        model="anthropic/claude-3.5-haiku-20241022",
+        api_key=settings.OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
         temperature=0.3,
+        default_headers={
+            "HTTP-Referer": settings.SITE_URL,
+            "X-Title": settings.SITE_NAME,
+        }
     )
 
     # Bind 7 consolidated tools for v3.0 architecture

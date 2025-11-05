@@ -269,7 +269,7 @@ class TestHandleCategoryChoice:
         mock_classification.choice = "book_separately"
         mock_classification.confidence = 0.95
 
-        with patch('agent.nodes.booking_nodes.ChatAnthropic') as mock_chat:
+        with patch('agent.nodes.booking_nodes.ChatOpenAI') as mock_chat:
             mock_llm = MagicMock()
             mock_structured_llm = AsyncMock()
             mock_structured_llm.ainvoke = AsyncMock(return_value=mock_classification)
@@ -326,7 +326,7 @@ class TestHandleCategoryChoice:
         mock_classification.choice = "choose_hairdressing"
         mock_classification.confidence = 0.90
 
-        with patch('agent.nodes.booking_nodes.ChatAnthropic') as mock_chat:
+        with patch('agent.nodes.booking_nodes.ChatOpenAI') as mock_chat:
             mock_llm = MagicMock()
             mock_structured_llm = AsyncMock()
             mock_structured_llm.ainvoke = AsyncMock(return_value=mock_classification)
@@ -379,7 +379,7 @@ class TestHandleCategoryChoice:
         mock_classification.choice = "choose_aesthetics"
         mock_classification.confidence = 0.92
 
-        with patch('agent.nodes.booking_nodes.ChatAnthropic') as mock_chat:
+        with patch('agent.nodes.booking_nodes.ChatOpenAI') as mock_chat:
             mock_llm = MagicMock()
             mock_structured_llm = AsyncMock()
             mock_structured_llm.ainvoke = AsyncMock(return_value=mock_classification)
@@ -426,7 +426,7 @@ class TestHandleCategoryChoice:
         mock_classification.choice = "cancel"
         mock_classification.confidence = 0.88
 
-        with patch('agent.nodes.booking_nodes.ChatAnthropic') as mock_chat:
+        with patch('agent.nodes.booking_nodes.ChatOpenAI') as mock_chat:
             mock_llm = MagicMock()
             mock_structured_llm = AsyncMock()
             mock_structured_llm.ainvoke = AsyncMock(return_value=mock_classification)
@@ -468,7 +468,7 @@ class TestHandleCategoryChoice:
         mock_classification.choice = "unclear"
         mock_classification.confidence = 0.30
 
-        with patch('agent.nodes.booking_nodes.ChatAnthropic') as mock_chat:
+        with patch('agent.nodes.booking_nodes.ChatOpenAI') as mock_chat:
             mock_llm = MagicMock()
             mock_structured_llm = AsyncMock()
             mock_structured_llm.ainvoke = AsyncMock(return_value=mock_classification)
@@ -510,7 +510,7 @@ class TestHandleCategoryChoice:
         mock_classification.choice = "unclear"
         mock_classification.confidence = 0.25
 
-        with patch('agent.nodes.booking_nodes.ChatAnthropic') as mock_chat:
+        with patch('agent.nodes.booking_nodes.ChatOpenAI') as mock_chat:
             mock_llm = MagicMock()
             mock_structured_llm = AsyncMock()
             mock_structured_llm.ainvoke = AsyncMock(return_value=mock_classification)

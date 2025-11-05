@@ -9,7 +9,7 @@ triggered automatically after every 10 messages beyond the first 10.
 import logging
 from pathlib import Path
 
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 
 from agent.state.schemas import ConversationState
 from agent.state.helpers import should_summarize, check_token_overflow
@@ -79,13 +79,22 @@ async def summarize_conversation(state: ConversationState) -> dict:
             formatted_messages
         )
 
-        # Step 5: Call Claude Sonnet 4 to generate summary
+        # Step 5: Call Claude Sonnet 4 via OpenRouter to generate summary
         # Note: Langfuse callbacks passed in graph config are automatically
         # inherited by this LLM invocation (LangChain callback propagation)
-        llm = ChatAnthropic(
-            model="claude-sonnet-4-20250514",
+        from shared.config import get_settings
+        settings = get_settings()
+
+        llm = ChatOpenAI(
+            model="anthropic/claude-sonnet-4-20250514",
+            api_key=settings.OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
             temperature=0.3,  # Deterministic summaries
-            max_tokens=300    # 2-3 sentences ~100-200 tokens
+            max_tokens=300,   # 2-3 sentences ~100-200 tokens
+            default_headers={
+                "HTTP-Referer": settings.SITE_URL,
+                "X-Title": settings.SITE_NAME,
+            }
         )
 
         response = await llm.ainvoke([{"role": "user", "content": prompt_text}])
