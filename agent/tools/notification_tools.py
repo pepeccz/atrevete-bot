@@ -220,6 +220,16 @@ class ChatwootClient:
         try:
             logger.info(f"Sending message to {customer_phone}")
 
+            # Log message preview for debugging
+            logger.debug(
+                f"Message to send: '{message}'",
+                extra={
+                    "customer_phone": customer_phone,
+                    "message_length": len(message) if message else 0,
+                    "conversation_id": conversation_id,
+                }
+            )
+
             # If conversation_id provided, use it directly
             if conversation_id is not None:
                 logger.info(f"Using existing conversation_id={conversation_id}")
@@ -240,17 +250,37 @@ class ChatwootClient:
 
             # Send message
             async with httpx.AsyncClient() as client:
+                api_payload = {
+                    "content": message,
+                    "message_type": "outgoing",
+                    "private": False,
+                }
+
+                # Log API payload for debugging
+                logger.debug(
+                    f"Chatwoot API payload: {api_payload}",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "customer_phone": customer_phone,
+                    }
+                )
+
                 response = await client.post(
                     f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}/messages",
-                    json={
-                        "content": message,
-                        "message_type": "outgoing",
-                        "private": False,
-                    },
+                    json=api_payload,
                     headers=self.headers,
                     timeout=10.0,
                 )
                 response.raise_for_status()
+
+                # Log API response for debugging
+                logger.debug(
+                    f"Chatwoot API response: status={response.status_code}, body={response.text[:500]}",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "customer_phone": customer_phone,
+                    }
+                )
 
                 logger.info(
                     f"Message sent successfully to {customer_phone}, conversation_id={conversation_id}"

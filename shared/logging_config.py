@@ -9,6 +9,39 @@ from typing import Any
 from shared.config import get_settings
 
 
+def sanitize_phone(phone: str) -> str:
+    """
+    Mask middle digits of phone number for logs.
+
+    Args:
+        phone: E.164 format phone number (e.g., "+34612345678")
+
+    Returns:
+        Sanitized phone with middle digits masked (e.g., "+34***5678")
+    """
+    if not phone or len(phone) < 7:
+        return "***"
+    return f"{phone[:3]}***{phone[-4:]}"
+
+
+def truncate_message(message: str, max_length: int = 200) -> str:
+    """
+    Truncate message content for logs with length indicator.
+
+    Args:
+        message: Full message text
+        max_length: Maximum characters to show (default: 200)
+
+    Returns:
+        Truncated message with total length indicator
+    """
+    if not message:
+        return ""
+    if len(message) <= max_length:
+        return message
+    return f"{message[:max_length]}... (truncated, total: {len(message)} chars)"
+
+
 class JSONFormatter(logging.Formatter):
     """
     Custom JSON formatter for structured logging.

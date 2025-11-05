@@ -80,6 +80,8 @@ async def summarize_conversation(state: ConversationState) -> dict:
         )
 
         # Step 5: Call Claude Sonnet 4 to generate summary
+        # Note: Langfuse callbacks passed in graph config are automatically
+        # inherited by this LLM invocation (LangChain callback propagation)
         llm = ChatAnthropic(
             model="claude-sonnet-4-20250514",
             temperature=0.3,  # Deterministic summaries

@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from agent.graphs.conversation_flow import MAITE_SYSTEM_PROMPT, create_conversation_graph
 from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
 from agent.state.helpers import add_message
+from agent.utils.monitoring import get_langfuse_handler
 from shared.logging_config import configure_logging
 from shared.redis_client import get_redis_client, publish_to_channel
 
@@ -93,6 +94,15 @@ async def subscribe_to_incoming_messages():
                     },
                 )
 
+                # Log full incoming message for debugging
+                logger.debug(
+                    f"Full incoming message: '{message_text}'",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "message_length": len(message_text) if message_text else 0,
+                    }
+                )
+
                 # Create initial ConversationState
                 # NOTE: Only pass essential fields. LangGraph will load messages, total_message_count,
                 # and other fields from the checkpoint (if thread_id exists in Redis).
@@ -108,8 +118,25 @@ async def subscribe_to_incoming_messages():
                     "updated_at": datetime.now(UTC),
                 }
 
-                # Invoke graph with checkpointing
-                config = {"configurable": {"thread_id": conversation_id}}
+                # Create Langfuse handler for tracing and token monitoring
+                try:
+                    langfuse_handler = get_langfuse_handler(
+                        conversation_id=conversation_id,
+                        customer_phone=customer_phone,
+                        customer_name=customer_name,
+                    )
+                except Exception as langfuse_error:
+                    logger.warning(
+                        f"Failed to create Langfuse handler (continuing without tracing): {langfuse_error}",
+                        extra={"conversation_id": conversation_id},
+                    )
+                    langfuse_handler = None
+
+                # Invoke graph with checkpointing and Langfuse callbacks
+                config = {
+                    "configurable": {"thread_id": conversation_id},
+                    "callbacks": [langfuse_handler] if langfuse_handler else [],
+                }
                 logger.info(
                     f"Invoking graph for thread_id={conversation_id}",
                     extra={"conversation_id": conversation_id},
@@ -117,6 +144,19 @@ async def subscribe_to_incoming_messages():
 
                 try:
                     result = await graph.ainvoke(state, config=config)
+
+                    # Flush Langfuse traces to ensure they're sent
+                    if langfuse_handler:
+                        try:
+                            await langfuse_handler.flushAsync()
+                            logger.debug(
+                                f"Langfuse traces flushed for conversation_id={conversation_id}"
+                            )
+                        except Exception as flush_error:
+                            logger.warning(
+                                f"Failed to flush Langfuse traces (trace may be incomplete): {flush_error}",
+                                extra={"conversation_id": conversation_id},
+                            )
                 except Exception as graph_error:
                     # Handle checkpoint corruption or graph execution errors
                     logger.error(
@@ -127,6 +167,13 @@ async def subscribe_to_incoming_messages():
                         },
                         exc_info=True,
                     )
+
+                    # Flush Langfuse traces even on error to capture error context
+                    if langfuse_handler:
+                        try:
+                            await langfuse_handler.flushAsync()
+                        except Exception as flush_error:
+                            logger.warning(f"Failed to flush Langfuse traces on error: {flush_error}")
 
                     # Send fallback error message to user
                     fallback_message = "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕"
@@ -146,9 +193,32 @@ async def subscribe_to_incoming_messages():
 
                 # Handle both dict and Message object formats
                 if isinstance(last_message, dict):
-                    ai_message = last_message.get("content", "")
+                    content = last_message.get("content", "")
                 else:
-                    ai_message = last_message.content
+                    content = last_message.content
+
+                # Extract text from content (handle both string and list of blocks)
+                if isinstance(content, str):
+                    ai_message = content
+                elif isinstance(content, list):
+                    # Content is a list of blocks (text + tool_use) - extract only text blocks
+                    text_blocks = [
+                        block.get("text", "") if isinstance(block, dict) else str(block)
+                        for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ]
+                    ai_message = " ".join(text_blocks).strip()
+                else:
+                    ai_message = str(content)
+
+                # Log full AI response for debugging
+                logger.debug(
+                    f"Full AI response: '{ai_message}'",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "response_length": len(ai_message) if ai_message else 0,
+                    }
+                )
 
                 logger.info(
                     f"Graph completed for conversation_id={conversation_id}",
@@ -158,15 +228,21 @@ async def subscribe_to_incoming_messages():
                     },
                 )
 
-                # Publish to outgoing_messages channel
-                await publish_to_channel(
-                    "outgoing_messages",
-                    {
-                        "conversation_id": conversation_id,
-                        "customer_phone": customer_phone,
-                        "message": ai_message,
-                    },
+                # Prepare outgoing message payload
+                outgoing_payload = {
+                    "conversation_id": conversation_id,
+                    "customer_phone": customer_phone,
+                    "message": ai_message,
+                }
+
+                # Log full outgoing payload for debugging
+                logger.debug(
+                    f"Outgoing Redis payload: {outgoing_payload}",
+                    extra={"conversation_id": conversation_id}
                 )
+
+                # Publish to outgoing_messages channel
+                await publish_to_channel("outgoing_messages", outgoing_payload)
 
                 logger.info(
                     f"Message published to outgoing_messages: conversation_id={conversation_id}",
@@ -244,6 +320,16 @@ async def subscribe_to_outgoing_messages():
                         "conversation_id": conversation_id,
                         "customer_phone": customer_phone,
                     },
+                )
+
+                # Log full outgoing message for debugging
+                logger.debug(
+                    f"Full outgoing message to Chatwoot: '{message_text}'",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "customer_phone": customer_phone,
+                        "message_length": len(message_text) if message_text else 0,
+                    }
                 )
 
                 # Send message via Chatwoot

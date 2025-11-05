@@ -59,6 +59,20 @@ class Settings(BaseSettings):
     # Anthropic
     ANTHROPIC_API_KEY: str = Field(default="sk-ant-placeholder")
 
+    # Langfuse (Observability & Monitoring)
+    LANGFUSE_PUBLIC_KEY: str = Field(
+        default="pk-lf-placeholder",
+        description="Langfuse public key for tracing and monitoring"
+    )
+    LANGFUSE_SECRET_KEY: str = Field(
+        default="sk-lf-placeholder",
+        description="Langfuse secret key for authentication"
+    )
+    LANGFUSE_BASE_URL: str = Field(
+        default="https://cloud.langfuse.com",
+        description="Langfuse API base URL (EU: cloud.langfuse.com, US: us.cloud.langfuse.com)"
+    )
+
     # Application Settings
     TIMEZONE: str = Field(default="Europe/Madrid")
     LOG_LEVEL: str = Field(default="INFO")

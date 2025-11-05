@@ -64,7 +64,7 @@ FAQ_POLICIES = [
                 "dirección",
                 "¿dónde es?",
             ],
-            "answer": "Estamos en La Línea de la Concepción 📍. ¿Te gustaría que te envíe el enlace de Google Maps para llegar fácilmente?",
+            "answer": "Estamos en Alcobendas 📍. ¿Te gustaría que te envíe el enlace de Google Maps para llegar fácilmente?",
             "category": "location",
             "requires_location_link": True,
         },

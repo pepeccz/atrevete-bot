@@ -90,10 +90,26 @@ async def receive_chatwoot_webhook(
         f"text='{message_event.message_text[:100]}'"
     )
 
+    # Log full message content for debugging
+    logger.debug(
+        f"Full incoming message: '{message_event.message_text}'",
+        extra={
+            "conversation_id": message_event.conversation_id,
+            "customer_phone": message_event.customer_phone,
+            "message_length": len(message_event.message_text) if message_event.message_text else 0,
+        }
+    )
+
     # Publish to Redis channel
     await publish_to_channel(
         "incoming_messages",
         message_event.model_dump(),
+    )
+
+    # Log Redis payload for debugging
+    logger.debug(
+        f"Redis payload published: {message_event.model_dump()}",
+        extra={"conversation_id": message_event.conversation_id}
     )
 
     logger.info(
