@@ -59,7 +59,7 @@ def get_llm_with_tools() -> ChatAnthropic:
     settings = get_settings()
 
     llm = ChatAnthropic(
-        model="claude-sonnet-4-20250514",
+        model="claude-3-5-haiku-20241022",
         api_key=settings.ANTHROPIC_API_KEY,
         temperature=0.3,
     )
