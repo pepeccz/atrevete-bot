@@ -86,7 +86,7 @@ async def summarize_conversation(state: ConversationState) -> dict:
         settings = get_settings()
 
         llm = ChatOpenAI(
-            model="anthropic/claude-sonnet-4-20250514",
+            model="anthropic/claude-haiku-4.5",
             api_key=settings.OPENROUTER_API_KEY,
             base_url="https://openrouter.ai/api/v1",
             temperature=0.3,  # Deterministic summaries

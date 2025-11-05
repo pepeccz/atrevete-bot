@@ -59,7 +59,7 @@ def get_llm_with_tools() -> ChatOpenAI:
     settings = get_settings()
 
     llm = ChatOpenAI(
-        model="anthropic/claude-3.5-haiku-20241022",
+        model="anthropic/claude-haiku-4.5",
         api_key=settings.OPENROUTER_API_KEY,
         base_url="https://openrouter.ai/api/v1",
         temperature=0.3,
