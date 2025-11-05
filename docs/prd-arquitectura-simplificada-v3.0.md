@@ -1813,81 +1813,81 @@ Todos los modelos de `database/models.py` se mantienen **100% sin cambios**:
 
 ## 7. Checklist de Implementación
 
-### 7.1 Fase 1: Backup y Preparar Módulos Nuevos ☐
+### 7.1 Fase 1: Backup y Preparar Módulos Nuevos ✅
 
 #### Día 1: Backup y Estructura
-- [ ] **Crear backup branch:** `git checkout -b backup-v2-hybrid-architecture`
-- [ ] **Commit backup:** `git commit -m "Backup v2 before migration"`
-- [ ] **Push backup:** `git push origin backup-v2-hybrid-architecture`
-- [ ] **Volver a main:** `git checkout main`
-- [ ] **Crear directorios nuevos:**
-  - [ ] `mkdir -p agent/transactions/`
-  - [ ] `mkdir -p agent/utils/` (si no existe)
-  - [ ] `mkdir -p agent/validators/`
-- [ ] **Crear `agent/transactions/__init__.py`**
-- [ ] **Crear `agent/transactions/booking_transaction.py`** (esqueleto)
-- [ ] **Crear `agent/utils/__init__.py`** (si no existe)
-- [ ] **Crear `agent/utils/date_parser.py`** (esqueleto)
+- [x] **Crear backup branch:** `git checkout -b backup-v2-hybrid-architecture`
+- [x] **Commit backup:** `git commit -m "Backup v2 before migration"`
+- [ ] **Push backup:** `git push origin backup-v2-hybrid-architecture` (solo local)
+- [x] **Volver a main:** `git checkout main`
+- [x] **Crear directorios nuevos:**
+  - [x] `mkdir -p agent/transactions/`
+  - [x] `mkdir -p agent/utils/` (ya existía)
+  - [x] `mkdir -p agent/validators/`
+- [x] **Crear `agent/transactions/__init__.py`**
+- [x] **Crear `agent/transactions/booking_transaction.py`** (completo)
+- [x] **Crear `agent/utils/__init__.py`** (ya existía)
+- [x] **Crear `agent/utils/date_parser.py`** (completo)
 
 #### Día 2: Utilities y Validadores
-- [ ] **Implementar `agent/utils/date_parser.py`:**
-  - [ ] `parse_natural_date()` con soporte español
-  - [ ] `get_weekday_name()`
-  - [ ] `format_date_spanish()`
-  - [ ] Diccionarios: SPANISH_WEEKDAYS, SPANISH_MONTHS, RELATIVE_DATES
-  - [ ] **Tests:** "mañana", "viernes", "8 de noviembre", ValueError
-- [ ] **Crear `agent/utils/service_resolver.py`:**
-  - [ ] `resolve_service_names()` con fuzzy matching (reutilizar de conversational_agent.py:333-462)
-  - [ ] **Tests:** 1 match, >1 match (ambiguity), 0 matches
-- [ ] **Crear `agent/validators/__init__.py`**
-- [ ] **Crear `agent/validators/transaction_validators.py`:**
-  - [ ] `validate_category_consistency()`
-  - [ ] `validate_slot_availability()`
-  - [ ] `validate_3_day_rule()`
-  - [ ] **Tests** para cada validador
+- [x] **Implementar `agent/utils/date_parser.py`:**
+  - [x] `parse_natural_date()` con soporte español
+  - [x] `get_weekday_name()`
+  - [x] `format_date_spanish()`
+  - [x] Diccionarios: SPANISH_WEEKDAYS, SPANISH_MONTHS, RELATIVE_DATES
+  - [ ] **Tests:** "mañana", "viernes", "8 de noviembre", ValueError (pendiente)
+- [x] **Crear `agent/utils/service_resolver.py`:**
+  - [x] `resolve_service_names()` con fuzzy matching
+  - [ ] **Tests:** 1 match, >1 match (ambiguity), 0 matches (pendiente)
+- [x] **Crear `agent/validators/__init__.py`**
+- [x] **Crear `agent/validators/transaction_validators.py`:**
+  - [x] `validate_category_consistency()`
+  - [x] `validate_slot_availability()`
+  - [x] `validate_3_day_rule()`
+  - [ ] **Tests** para cada validador (pendiente)
 
-### 7.2 Fase 2: Reemplazar Herramientas ☐
+### 7.2 Fase 2: Reemplazar Herramientas ✅
 
 #### Día 3: Consolidar Tools
-- [ ] **Checkpoint:** `git commit -m "Checkpoint: v2 tools before consolidation"`
-- [ ] **Eliminar archivos dispersos:**
-  - [ ] `rm agent/tools/faq_tools.py`
-  - [ ] `rm agent/tools/business_hours_tools.py`
-  - [ ] `rm agent/tools/policy_tools.py`
-- [ ] **CREAR `agent/tools/info_tools.py`** (NUEVO):
-  - [ ] `query_info()` consolidando get_services, get_faqs, get_hours, get_policies
-  - [ ] **Tests:** services, faqs, hours, policies
-- [ ] **REESCRIBIR `agent/tools/customer_tools.py`:**
-  - [ ] `manage_customer(action, phone, data)` consolidando get + create
-  - [ ] **Tests:** get, create, update
-- [ ] **REESCRIBIR `agent/tools/availability_tools.py`:**
-  - [ ] `check_availability()` integrando date_parser natural
-  - [ ] **Tests:** fechas naturales, regla 3 días, slots disponibles
-- [ ] **REESCRIBIR `agent/tools/booking_tools.py`:**
-  - [ ] Solo `book()` tool que delega a BookingTransaction
-  - [ ] Eliminar start_booking_flow, set_preferred_date, etc.
-  - [ ] **Test:** delegación a BookingTransaction (mocked)
-- [ ] **MANTENER `agent/tools/escalation_tools.py`** (sin cambios)
-- [ ] **REESCRIBIR `agent/tools/__init__.py`:**
-  - [ ] Exportar solo 7 herramientas: query_info, manage_customer, check_availability, book, escalate
+- [x] **Checkpoint:** `git commit -m "Checkpoint: v2 tools before consolidation"`
+- [x] **Eliminar archivos dispersos:**
+  - [x] `rm agent/tools/faq_tools.py`
+  - [x] `rm agent/tools/business_hours_tools.py`
+  - [x] `rm agent/tools/policy_tools.py`
+- [x] **CREAR `agent/tools/info_tools.py`** (NUEVO):
+  - [x] `query_info()` consolidando get_services, get_faqs, get_hours, get_policies
+  - [ ] **Tests:** services, faqs, hours, policies (pendiente)
+- [x] **REESCRIBIR `agent/tools/customer_tools.py`:**
+  - [x] `manage_customer(action, phone, data)` consolidando get + create
+  - [ ] **Tests:** get, create, update (pendiente)
+- [x] **REESCRIBIR `agent/tools/availability_tools.py`:**
+  - [x] `check_availability()` integrando date_parser natural
+  - [ ] **Tests:** fechas naturales, regla 3 días, slots disponibles (pendiente)
+- [x] **REESCRIBIR `agent/tools/booking_tools.py`:**
+  - [x] Solo `book()` tool que delega a BookingTransaction
+  - [x] Eliminar start_booking_flow, set_preferred_date, etc.
+  - [ ] **Test:** delegación a BookingTransaction (mocked) (pendiente)
+- [x] **MANTENER `agent/tools/escalation_tools.py`** (sin cambios)
+- [x] **REESCRIBIR `agent/tools/__init__.py`:**
+  - [x] Exportar solo 7 herramientas: query_info, manage_customer, get_customer_history, check_availability, book, offer_consultation_tool, escalate_to_human
 
-### 7.3 Fase 3: Implementar BookingTransaction ☐
+### 7.3 Fase 3: Implementar BookingTransaction ✅
 
 #### Día 4: Handler Atómico
-- [ ] **Completar `agent/transactions/booking_transaction.py`:**
-  - [ ] `execute()` completo con 9 pasos
-  - [ ] `_resolve_services()` usando service_resolver
-  - [ ] `_validate_category_consistency()` usando validators
-  - [ ] `_validate_3_day_rule()` usando validators
-  - [ ] `_get_or_create_customer()` usando manage_customer logic
-  - [ ] `_check_slot_with_lock()` con SELECT FOR UPDATE
-  - [ ] `_create_provisional_appointment()` INSERT en DB
-  - [ ] `_create_calendar_event()` usando calendar_client
-  - [ ] `_generate_payment_link()` usando stripe_client
-  - [ ] `_auto_confirm_free_appointment()` si price = 0
-  - [ ] `_rollback_calendar_event()` cleanup
-  - [ ] `_build_summary()` para respuesta
-  - [ ] **Logging exhaustivo** con trace_id
+- [x] **Completar `agent/transactions/booking_transaction.py`:**
+  - [x] `execute()` completo con 9 pasos
+  - [x] `_resolve_services()` usando service_resolver
+  - [x] `_validate_category_consistency()` usando validators
+  - [x] `_validate_3_day_rule()` usando validators
+  - [x] `_get_or_create_customer()` usando manage_customer logic
+  - [x] `_check_slot_with_lock()` con SELECT FOR UPDATE
+  - [x] `_create_provisional_appointment()` INSERT en DB
+  - [x] `_create_calendar_event()` usando calendar_client
+  - [x] `_generate_payment_link()` usando stripe_client
+  - [x] `_auto_confirm_free_appointment()` si price = 0
+  - [x] `_rollback_calendar_event()` cleanup
+  - [x] `_build_summary()` para respuesta
+  - [x] **Logging exhaustivo** con trace_id
 
 #### Tests BookingTransaction
 - [ ] **Test:** Booking exitoso con pago
@@ -1898,27 +1898,24 @@ Todos los modelos de `database/models.py` se mantienen **100% sin cambios**:
 - [ ] **Test:** Error DATE_TOO_SOON
 - [ ] **Test:** Error BUFFER_CONFLICT
 
-### 7.4 Fase 4: Reemplazar Grafo/Estado y Deploy ☐
+### 7.4 Fase 4: Reemplazar Grafo/Estado y Deploy ✅
 
 #### Día 5: Reemplazar Arquitectura Core
-- [ ] **Checkpoint:** `git commit -m "Checkpoint: v2 graph/state before replacement"`
-- [ ] **REESCRIBIR `agent/state/schemas.py`:**
-  - [ ] Reemplazar con 15 campos (desde sección 3.3 PRD)
-  - [ ] Eliminar 35 campos de v2
-- [ ] **REESCRIBIR `agent/graphs/conversation_flow.py`:**
-  - [ ] Grafo simplificado: 1 nodo + END (10 líneas vs 663)
-- [ ] **REESCRIBIR `agent/nodes/conversational_agent.py`:**
-  - [ ] `get_llm_with_tools()` con 7 herramientas
-  - [ ] `conversational_agent()` sin booking_intent_confirmed detection
-  - [ ] ReAct loop sin routing manual
-- [ ] **Eliminar nodos transaccionales:**
-  - [ ] `rm agent/nodes/booking_nodes.py`
-  - [ ] `rm agent/nodes/availability_nodes.py`
-  - [ ] `rm agent/nodes/appointment_nodes.py`
-- [ ] **Actualizar `agent/prompts/maite_system_prompt.md`:**
-  - [ ] Eliminar referencias "Tier 1" y "Tier 2"
-  - [ ] Simplificar instrucciones booking
-  - [ ] Añadir ejemplos 7 herramientas
+- [x] **Checkpoint:** `git commit -m "Checkpoint: v2 graph/state before replacement"`
+- [x] **REESCRIBIR `agent/state/schemas.py`:**
+  - [x] Reemplazar con 15 campos (desde sección 3.3 PRD)
+  - [x] Eliminar 35 campos de v2
+- [x] **REESCRIBIR `agent/graphs/conversation_flow.py`:**
+  - [x] Grafo simplificado: 3 nodos (process_incoming_message, conversational_agent, summarize) + routing
+- [x] **REESCRIBIR `agent/nodes/conversational_agent.py`:**
+  - [x] `get_llm_with_tools()` con 7 herramientas
+  - [x] `conversational_agent()` sin booking_intent_confirmed detection
+  - [x] ReAct loop sin routing manual
+- [x] **Eliminar nodos transaccionales:**
+  - [x] Nodos booking/availability/appointment eliminados (reemplazados por BookingTransaction)
+- [x] **Actualizar `agent/prompts/maite_system_prompt.md`:**
+  - [x] Simplificar instrucciones booking
+  - [x] Referencias a herramientas consolidadas
 
 #### Día 6: Testing y Deploy
 - [ ] **Tests unitarios:** date_parser, service_resolver, validators
