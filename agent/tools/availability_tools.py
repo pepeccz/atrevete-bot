@@ -438,6 +438,12 @@ async def find_next_available(
 
         # Collect ALL slots from ALL stylists across multiple dates
         all_slots_by_stylist = {stylist.id: [] for stylist in stylists}
+        # Track calendar health: total events seen per stylist to detect broken calendars
+        calendar_events_seen = {stylist.id: 0 for stylist in stylists}
+        # Track days searched per stylist to detect suspicious empty calendars
+        days_searched_per_stylist = {stylist.id: 0 for stylist in stylists}
+        # Track which stylists to skip due to calendar issues
+        skipped_stylists = set()
         dates_searched = 0
         MAX_SLOTS_PER_STYLIST = 2  # Return 2 slots per stylist
 
@@ -467,6 +473,10 @@ async def find_next_available(
                 if len(all_slots_by_stylist[stylist.id]) >= MAX_SLOTS_PER_STYLIST:
                     continue
 
+                # Skip if this stylist has been marked as having calendar issues
+                if stylist.id in skipped_stylists:
+                    continue
+
                 # Generate candidate slots for the day
                 day_of_week = current_date.weekday()
                 slots = await generate_time_slots_async(
@@ -485,6 +495,26 @@ async def find_next_available(
                     time_min.isoformat(),
                     time_max.isoformat()
                 )
+
+                # Track calendar health: count events seen and days searched
+                days_searched_per_stylist[stylist.id] += 1
+                calendar_events_seen[stylist.id] += len(busy_events)
+
+                # DEFENSIVE VALIDATION: Detect suspiciously empty calendars
+                # If we've searched 3+ days for this stylist and seen 0 total events,
+                # this likely indicates a calendar setup issue (empty calendar, wrong ID, API failure)
+                # Rather than showing "100% available", skip this stylist and log warning
+                if (days_searched_per_stylist[stylist.id] >= 3 and
+                    calendar_events_seen[stylist.id] == 0):
+                    logger.warning(
+                        f"CALENDAR HEALTH CHECK FAILED for {stylist.name} (ID: {stylist.id}, "
+                        f"Calendar ID: {stylist.google_calendar_id}): "
+                        f"Returned 0 events across {days_searched_per_stylist[stylist.id]} days. "
+                        f"Possible causes: empty calendar, wrong calendar ID, or API failure. "
+                        f"Skipping this stylist from availability results to prevent false availability."
+                    )
+                    skipped_stylists.add(stylist.id)
+                    continue
 
                 # Filter available slots for this stylist on this date
                 for slot_time in slots:

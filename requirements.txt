@@ -34,6 +34,10 @@ httpx>=0.27.0
 
 # Admin Panel
 django>=5.0
+gunicorn>=21.0.0
+django-extensions>=3.2.0
+django-jsoneditor>=0.2.0
+django-import-export>=3.3.0
 
 # External Service Integrations
 google-api-python-client>=2.150

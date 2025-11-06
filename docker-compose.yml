@@ -88,6 +88,28 @@ services:
       retries: 3
       start_period: 40s
 
+  # Admin service: Django Admin Panel
+  admin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.admin
+    container_name: atrevete-admin
+    env_file: .env
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - atrevete-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/admin/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   # Agent service: LangGraph orchestrator + workers
   agent:
     build:

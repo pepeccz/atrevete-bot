@@ -314,5 +314,19 @@ async def get_service_by_name(
 
                 return services
 
+        except Exception as e:
+            logger.error(
+                f"Error in get_service_by_name('{service_name}', fuzzy={fuzzy}): {e}",
+                exc_info=True
+            )
+            return []  # Return empty list on error, never None
+
         finally:
             break  # Exit async for loop
+
+    # Edge case: If async for loop exits without returning (should never happen)
+    logger.warning(
+        f"get_service_by_name('{service_name}', fuzzy={fuzzy}) "
+        f"exited async loop without returning - returning empty list"
+    )
+    return []

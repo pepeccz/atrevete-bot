@@ -1,0 +1,22 @@
+{% extends "admin/base.html" %}
+{% load static %}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | Atrévete Admin{% endblock %}
+
+{% block branding %}
+<div id="site-name">
+    <h1>
+        <a href="{% url 'admin:index' %}">
+            🎨 Atrévete Admin
+        </a>
+    </h1>
+    <p class="subtitle">Panel de Administración - Salón de Belleza</p>
+</div>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<link rel="stylesheet" type="text/css" href="{% static 'admin/css/custom.css' %}">
+{% endblock %}
