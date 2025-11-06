@@ -10,15 +10,16 @@ This module consolidates 4 dispersed information tools into a single query_info(
 The query_info() tool uses a type parameter to route to the appropriate data source.
 """
 
+import json
 import logging
 from typing import Any, Literal
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from database.connection import get_async_session
-from database.models import BusinessHours, Policy, Service
+from database.models import BusinessHours, Policy, Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,29 @@ class QueryInfoSchema(BaseModel):
             "For 'faqs': {'keywords': ['hours', 'parking', 'address']}"
         )
     )
+
+    @field_validator('filters', mode='before')
+    @classmethod
+    def parse_filters(cls, v):
+        """
+        Parse filters parameter to accept both dict and JSON string.
+
+        This handles cases where LLMs incorrectly serialize the filters
+        parameter as a JSON string instead of a native dict object.
+        """
+        if v is None:
+            return None
+
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"filters must be a valid JSON string or dict, got invalid JSON: {e}")
+
+        if isinstance(v, dict):
+            return v
+
+        raise ValueError(f"filters must be a dict or JSON string, got {type(v).__name__}")
 
 
 @tool(args_schema=QueryInfoSchema)
@@ -153,42 +177,39 @@ async def _get_services(filters: dict[str, Any] | None) -> dict[str, Any]:
     Internal function called by query_info(type="services").
     """
     async for session in get_async_session():
-        try:
-            query = select(Service).where(Service.is_active == True)
+        query = select(Service).where(Service.is_active == True)
 
-            # Filter by category if provided
-            if filters and "category" in filters:
-                category_value = filters["category"]
-                # Convert to ServiceCategory enum value
-                if category_value in ["Peluquería", "PELUQUERIA", "HAIRDRESSING"]:
-                    query = query.where(Service.category == "PELUQUERIA")
-                elif category_value in ["Estética", "ESTETICA", "AESTHETICS"]:
-                    query = query.where(Service.category == "ESTETICA")
+        # Filter by category if provided
+        if filters and "category" in filters:
+            category_value = filters["category"]
+            # Convert to ServiceCategory enum value
+            if category_value in ["Peluquería", "PELUQUERIA", "HAIRDRESSING"]:
+                query = query.where(Service.category == ServiceCategory.HAIRDRESSING)
+            elif category_value in ["Estética", "ESTETICA", "AESTHETICS"]:
+                query = query.where(Service.category == ServiceCategory.AESTHETICS)
 
-            query = query.order_by(Service.category, Service.name)
+        query = query.order_by(Service.category, Service.name)
 
-            result = await session.execute(query)
-            services = list(result.scalars().all())
+        result = await session.execute(query)
+        services = list(result.scalars().all())
 
-            logger.info(f"Retrieved {len(services)} services" + (f" for category {filters.get('category')}" if filters else ""))
+        logger.info(f"Retrieved {len(services)} services" + (f" for category {filters.get('category')}" if filters else ""))
 
-            return {
-                "services": [
-                    {
-                        "id": str(s.id),
-                        "name": s.name,
-                        "price_euros": float(s.price_euros),
-                        "duration_minutes": s.duration_minutes,
-                        "category": s.category.value,
-                        "requires_advance_payment": s.requires_advance_payment,
-                    }
-                    for s in services
-                ],
-                "count": len(services),
-            }
-
-        finally:
-            break
+        return {
+            "services": [
+                {
+                    "id": str(s.id),
+                    "name": s.name,
+                    "price_euros": float(s.price_euros),
+                    "duration_minutes": s.duration_minutes,
+                    "category": s.category.value,
+                    "requires_advance_payment": s.requires_advance_payment,
+                }
+                for s in services
+            ],
+            "count": len(services),
+        }
+        break
 
 
 async def _get_faqs(filters: dict[str, Any] | None) -> dict[str, Any]:
@@ -198,44 +219,41 @@ async def _get_faqs(filters: dict[str, Any] | None) -> dict[str, Any]:
     Internal function called by query_info(type="faqs").
     """
     async for session in get_async_session():
-        try:
-            # Filter only FAQ policies (keys starting with 'faq_')
-            query = select(Policy).where(Policy.key.like('faq_%'))
+        # Filter only FAQ policies (keys starting with 'faq_')
+        query = select(Policy).where(Policy.key.like('faq_%'))
 
-            result = await session.execute(query)
-            policies = list(result.scalars().all())
+        result = await session.execute(query)
+        policies = list(result.scalars().all())
 
-            # Parse JSONB value field to extract FAQ data
-            faqs = []
-            for policy in policies:
-                faq_data = policy.value  # JSONB dict with 'question', 'answer', 'keywords'
+        # Parse JSONB value field to extract FAQ data
+        faqs = []
+        for policy in policies:
+            faq_data = policy.value  # JSONB dict with 'question', 'answer', 'keywords'
 
-                # Filter by keywords if provided
-                if filters and "keywords" in filters:
-                    requested_keywords = filters["keywords"]
-                    faq_keywords = faq_data.get("keywords", [])
-                    # Check if any requested keyword matches FAQ keywords
-                    if not any(kw in faq_keywords for kw in requested_keywords):
-                        continue
+            # Filter by keywords if provided
+            if filters and "keywords" in filters:
+                requested_keywords = filters["keywords"]
+                faq_keywords = faq_data.get("keywords", [])
+                # Check if any requested keyword matches FAQ keywords
+                if not any(kw in faq_keywords for kw in requested_keywords):
+                    continue
 
-                faqs.append({
-                    "category": policy.key.replace("faq_", ""),
-                    "question": faq_data.get("question", ""),
-                    "answer": faq_data.get("answer", ""),
-                })
+            faqs.append({
+                "category": policy.key.replace("faq_", ""),
+                "question": faq_data.get("question", ""),
+                "answer": faq_data.get("answer", ""),
+            })
 
-            logger.info(
-                f"Retrieved {len(faqs)} FAQs" +
-                (f" for keywords: {filters.get('keywords')}" if filters else "")
-            )
+        logger.info(
+            f"Retrieved {len(faqs)} FAQs" +
+            (f" for keywords: {filters.get('keywords')}" if filters else "")
+        )
 
-            return {
-                "faqs": faqs,
-                "count": len(faqs),
-            }
-
-        finally:
-            break
+        return {
+            "faqs": faqs,
+            "count": len(faqs),
+        }
+        break
 
 
 async def _get_business_hours() -> dict[str, Any]:
@@ -245,58 +263,55 @@ async def _get_business_hours() -> dict[str, Any]:
     Internal function called by query_info(type="hours").
     """
     async for session in get_async_session():
-        try:
-            # Query all days ordered by day_of_week
-            query = select(BusinessHours).order_by(BusinessHours.day_of_week)
-            result = await session.execute(query)
-            hours = list(result.scalars().all())
+        # Query all days ordered by day_of_week
+        query = select(BusinessHours).order_by(BusinessHours.day_of_week)
+        result = await session.execute(query)
+        hours = list(result.scalars().all())
 
-            if not hours:
-                logger.warning("No business hours found in database")
-                return {
-                    "schedule": [],
-                    "formatted": "No hay horarios configurados",
-                    "error": "No business hours configured",
-                }
-
-            # Build schedule data
-            schedule = []
-            for day_hours in hours:
-                day_name = DAY_NAMES.get(day_hours.day_of_week, f"Day {day_hours.day_of_week}")
-
-                if day_hours.is_closed:
-                    schedule.append({
-                        "day": day_name,
-                        "day_of_week": day_hours.day_of_week,
-                        "is_closed": True,
-                        "hours": "Cerrado",
-                    })
-                else:
-                    start_time = f"{day_hours.start_hour:02d}:{day_hours.start_minute:02d}"
-                    end_time = f"{day_hours.end_hour:02d}:{day_hours.end_minute:02d}"
-                    schedule.append({
-                        "day": day_name,
-                        "day_of_week": day_hours.day_of_week,
-                        "is_closed": False,
-                        "hours": f"{start_time}-{end_time}",
-                        "start_hour": day_hours.start_hour,
-                        "start_minute": day_hours.start_minute,
-                        "end_hour": day_hours.end_hour,
-                        "end_minute": day_hours.end_minute,
-                    })
-
-            # Format human-readable summary
-            formatted = _format_schedule_summary(schedule)
-
-            logger.info("Retrieved business hours")
-
+        if not hours:
+            logger.warning("No business hours found in database")
             return {
-                "schedule": schedule,
-                "formatted": formatted,
+                "schedule": [],
+                "formatted": "No hay horarios configurados",
+                "error": "No business hours configured",
             }
 
-        finally:
-            break
+        # Build schedule data
+        schedule = []
+        for day_hours in hours:
+            day_name = DAY_NAMES.get(day_hours.day_of_week, f"Day {day_hours.day_of_week}")
+
+            if day_hours.is_closed:
+                schedule.append({
+                    "day": day_name,
+                    "day_of_week": day_hours.day_of_week,
+                    "is_closed": True,
+                    "hours": "Cerrado",
+                })
+            else:
+                start_time = f"{day_hours.start_hour:02d}:{day_hours.start_minute:02d}"
+                end_time = f"{day_hours.end_hour:02d}:{day_hours.end_minute:02d}"
+                schedule.append({
+                    "day": day_name,
+                    "day_of_week": day_hours.day_of_week,
+                    "is_closed": False,
+                    "hours": f"{start_time}-{end_time}",
+                    "start_hour": day_hours.start_hour,
+                    "start_minute": day_hours.start_minute,
+                    "end_hour": day_hours.end_hour,
+                    "end_minute": day_hours.end_minute,
+                })
+
+        # Format human-readable summary
+        formatted = _format_schedule_summary(schedule)
+
+        logger.info("Retrieved business hours")
+
+        return {
+            "schedule": schedule,
+            "formatted": formatted,
+        }
+        break
 
 
 def _format_schedule_summary(schedule: list[dict]) -> str:
@@ -354,61 +369,58 @@ async def _get_payment_policies() -> dict[str, Any]:
     Internal function called by query_info(type="policies").
     """
     async for session in get_async_session():
-        try:
-            # Query payment-related policies
-            query = select(Policy).where(
-                Policy.key.in_([
-                    "advance_payment_percentage",
-                    "provisional_timeout_standard",
-                    "provisional_timeout_same_day",
-                ])
-            )
-            result = await session.execute(query)
-            policies = list(result.scalars().all())
+        # Query payment-related policies
+        query = select(Policy).where(
+            Policy.key.in_([
+                "advance_payment_percentage",
+                "provisional_timeout_standard",
+                "provisional_timeout_same_day",
+            ])
+        )
+        result = await session.execute(query)
+        policies = list(result.scalars().all())
 
-            if not policies:
-                logger.warning("No payment policies found in database")
-                # Return fallback defaults
-                return {
-                    "advance_payment_percentage": 20,
-                    "provisional_timeout_standard": 30,
-                    "provisional_timeout_same_day": 10,
-                    "formatted": "Anticipo: 20% del total. Tiempo para pagar: 30 minutos (10 minutos para citas del mismo día).",
-                }
-
-            # Parse policies
-            policies_dict = {}
-            for policy in policies:
-                key = policy.key
-                value = policy.value
-
-                # Handle different value types
-                if isinstance(value, dict):
-                    # JSONB with nested data
-                    policies_dict[key] = value.get("value", value)
-                else:
-                    # Direct integer value
-                    policies_dict[key] = value
-
-            advance_percentage = policies_dict.get("advance_payment_percentage", 20)
-            timeout_standard = policies_dict.get("provisional_timeout_standard", 30)
-            timeout_same_day = policies_dict.get("provisional_timeout_same_day", 10)
-
-            # Format human-readable summary
-            formatted = (
-                f"Anticipo: {advance_percentage}% del total. "
-                f"Tiempo para pagar: {timeout_standard} minutos "
-                f"({timeout_same_day} minutos para citas del mismo día)."
-            )
-
-            logger.info("Retrieved payment policies")
-
+        if not policies:
+            logger.warning("No payment policies found in database")
+            # Return fallback defaults
             return {
-                "advance_payment_percentage": advance_percentage,
-                "provisional_timeout_standard": timeout_standard,
-                "provisional_timeout_same_day": timeout_same_day,
-                "formatted": formatted,
+                "advance_payment_percentage": 20,
+                "provisional_timeout_standard": 30,
+                "provisional_timeout_same_day": 10,
+                "formatted": "Anticipo: 20% del total. Tiempo para pagar: 30 minutos (10 minutos para citas del mismo día).",
             }
 
-        finally:
-            break
+        # Parse policies
+        policies_dict = {}
+        for policy in policies:
+            key = policy.key
+            value = policy.value
+
+            # Handle different value types
+            if isinstance(value, dict):
+                # JSONB with nested data
+                policies_dict[key] = value.get("value", value)
+            else:
+                # Direct integer value
+                policies_dict[key] = value
+
+        advance_percentage = policies_dict.get("advance_payment_percentage", 20)
+        timeout_standard = policies_dict.get("provisional_timeout_standard", 30)
+        timeout_same_day = policies_dict.get("provisional_timeout_same_day", 10)
+
+        # Format human-readable summary
+        formatted = (
+            f"Anticipo: {advance_percentage}% del total. "
+            f"Tiempo para pagar: {timeout_standard} minutos "
+            f"({timeout_same_day} minutos para citas del mismo día)."
+        )
+
+        logger.info("Retrieved payment policies")
+
+        return {
+            "advance_payment_percentage": advance_percentage,
+            "provisional_timeout_standard": timeout_standard,
+            "provisional_timeout_same_day": timeout_same_day,
+            "formatted": formatted,
+        }
+        break

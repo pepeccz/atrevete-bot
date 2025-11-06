@@ -166,9 +166,9 @@ async def check_availability(
         # Convert service_category string to enum
         category_normalized = service_category.upper()
         if category_normalized in ["PELUQUERÍA", "PELUQUERIA", "HAIRDRESSING"]:
-            category_enum = ServiceCategory.PELUQUERIA
+            category_enum = ServiceCategory.HAIRDRESSING
         elif category_normalized in ["ESTÉTICA", "ESTETICA", "AESTHETICS"]:
-            category_enum = ServiceCategory.ESTETICA
+            category_enum = ServiceCategory.AESTHETICS
         else:
             logger.error(f"Invalid service category: {service_category}")
             return {
@@ -263,7 +263,7 @@ async def check_availability(
                     all_slots.append({
                         "time": slot_time.strftime("%H:%M"),
                         "end_time": end_time.strftime("%H:%M"),
-                        "stylist": f"{stylist.first_name} {stylist.last_name}".strip(),
+                        "stylist": stylist.name,
                         "stylist_id": str(stylist.id),
                         "date": requested_date.strftime("%Y-%m-%d"),
                         "full_datetime": slot_time.isoformat(),
@@ -297,6 +297,297 @@ async def check_availability(
             "holiday_detected": False,
             "date_too_soon": False,
         }
+
+
+class FindNextAvailableSchema(BaseModel):
+    """Schema for find_next_available tool parameters."""
+
+    service_category: str = Field(
+        description="Service category: 'Peluquería' or 'Estética' (or English: 'Hairdressing', 'Aesthetics')"
+    )
+    time_range: str | None = Field(
+        default=None,
+        description="Optional time range: 'morning', 'afternoon', or specific like '14:00-18:00'"
+    )
+    stylist_id: str | None = Field(
+        default=None,
+        description="Optional preferred stylist UUID as string"
+    )
+    max_days_to_search: int = Field(
+        default=10,
+        description="Maximum number of days to search ahead (default: 10)"
+    )
+
+
+@tool(args_schema=FindNextAvailableSchema)
+async def find_next_available(
+    service_category: str,
+    time_range: str | None = None,
+    stylist_id: str | None = None,
+    max_days_to_search: int = 10
+) -> dict[str, Any]:
+    """
+    Automatically search for next available slots across multiple dates.
+
+    This tool searches the next N days (default: 10) to find available appointment slots.
+    Unlike check_availability which checks a single date, this tool iterates through
+    multiple dates automatically and returns slots from the first 2-3 dates that have
+    availability.
+
+    WHEN TO USE:
+    - Customer asks for "próxima disponibilidad" / "next available"
+    - check_availability returned empty for a specific date
+    - Customer is flexible with dates
+    - You want to present multiple date options automatically
+
+    WHEN NOT TO USE:
+    - Customer has a specific date in mind (use check_availability instead)
+    - Customer is asking about availability on a particular day
+
+    Args:
+        service_category: "Peluquería"/"Hairdressing" or "Estética"/"Aesthetics"
+        time_range: Optional time filter ("morning", "afternoon", or "14:00-18:00")
+        stylist_id: Optional preferred stylist UUID
+        max_days_to_search: Maximum days to search ahead (default: 10)
+
+    Returns:
+        Dict with:
+            {
+                "available_stylists": [
+                    {
+                        "stylist_name": "Ana",
+                        "stylist_id": "uuid",
+                        "slots": [
+                            {
+                                "time": "10:00",
+                                "end_time": "11:30",
+                                "date": "2025-11-08",
+                                "day_name": "viernes",
+                                "stylist": "Ana",
+                                "stylist_id": "uuid",
+                                "full_datetime": "2025-11-08T10:00:00+01:00"
+                            }
+                        ]
+                    }
+                ],
+                "total_slots_found": int,
+                "dates_searched": int,
+                "error": str | None
+            }
+
+    Example:
+        >>> await find_next_available("Peluquería", time_range="afternoon")
+        {
+            "available_stylists": [
+                {"stylist_name": "Ana", "stylist_id": "...", "slots": [...]},
+                {"stylist_name": "Pilar", "stylist_id": "...", "slots": [...]},
+                {"stylist_name": "Rosa", "stylist_id": "...", "slots": [...]}
+            ],
+            "total_slots_found": 6,
+            "dates_searched": 10
+        }
+    """
+    try:
+        # Convert service_category string to enum
+        category_normalized = service_category.upper()
+        if category_normalized in ["PELUQUERÍA", "PELUQUERIA", "HAIRDRESSING"]:
+            category_enum = ServiceCategory.HAIRDRESSING
+        elif category_normalized in ["ESTÉTICA", "ESTETICA", "AESTHETICS"]:
+            category_enum = ServiceCategory.AESTHETICS
+        else:
+            logger.error(f"Invalid service category: {service_category}")
+            return {
+                "error": f"Categoría inválida: {service_category}. Usa 'Peluquería' o 'Estética'.",
+                "available_dates": [],
+                "total_slots_found": 0,
+                "dates_searched": 0,
+            }
+
+        # Get stylists for category
+        stylists = await get_stylists_by_category(category_enum)
+
+        if not stylists:
+            logger.warning(f"No stylists found for category {service_category}")
+            return {
+                "error": f"No hay estilistas disponibles para {service_category}",
+                "available_dates": [],
+                "total_slots_found": 0,
+                "dates_searched": 0,
+            }
+
+        # Filter by preferred stylist if specified
+        if stylist_id:
+            try:
+                stylist_uuid = UUID(stylist_id)
+                stylists = [s for s in stylists if s.id == stylist_uuid]
+                if not stylists:
+                    logger.warning(f"Preferred stylist {stylist_id} not found or wrong category")
+            except ValueError:
+                logger.error(f"Invalid stylist_id format: {stylist_id}")
+
+        # Spanish day names for formatting
+        day_names_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+        # Start searching from the earliest valid date (3 days from now)
+        now = datetime.now(MADRID_TZ)
+        earliest_valid = now + timedelta(days=3)
+        search_start = earliest_valid.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        calendar_client = get_calendar_client()
+        service = calendar_client.get_service()
+
+        # Collect ALL slots from ALL stylists across multiple dates
+        all_slots_by_stylist = {stylist.id: [] for stylist in stylists}
+        dates_searched = 0
+        MAX_SLOTS_PER_STYLIST = 2  # Return 2 slots per stylist
+
+        # Iterate through days
+        for day_offset in range(max_days_to_search):
+            current_date = search_start + timedelta(days=day_offset)
+            dates_searched += 1
+
+            # Check if we have enough slots for all stylists (2 per stylist)
+            if all(len(slots) >= MAX_SLOTS_PER_STYLIST for slots in all_slots_by_stylist.values()):
+                logger.info(f"Found {MAX_SLOTS_PER_STYLIST} slots for all stylists, stopping search")
+                break
+
+            # Check for holidays
+            is_holiday = await check_holiday_closure(
+                service,
+                current_date,
+                conversation_id=""
+            )
+            if is_holiday:
+                logger.info(f"Skipping holiday: {current_date.date()}")
+                continue
+
+            # Query availability for each stylist on this date
+            for stylist in stylists:
+                # Skip if we already have enough slots for this stylist
+                if len(all_slots_by_stylist[stylist.id]) >= MAX_SLOTS_PER_STYLIST:
+                    continue
+
+                # Generate candidate slots for the day
+                day_of_week = current_date.weekday()
+                slots = await generate_time_slots_async(
+                    current_date,
+                    day_of_week,
+                    service_duration_minutes=CONSERVATIVE_SERVICE_DURATION_MINUTES
+                )
+
+                # Fetch busy events from Google Calendar
+                time_min = current_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                time_max = current_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+                busy_events = fetch_calendar_events(
+                    service,
+                    stylist.google_calendar_id,
+                    time_min.isoformat(),
+                    time_max.isoformat()
+                )
+
+                # Filter available slots for this stylist on this date
+                for slot_time in slots:
+                    # Stop if we already have enough slots for this stylist
+                    if len(all_slots_by_stylist[stylist.id]) >= MAX_SLOTS_PER_STYLIST:
+                        break
+
+                    if is_slot_available(
+                        slot_time,
+                        busy_events,
+                        CONSERVATIVE_SERVICE_DURATION_MINUTES
+                    ):
+                        # Calculate end time
+                        end_time = slot_time + timedelta(minutes=CONSERVATIVE_SERVICE_DURATION_MINUTES)
+
+                        # Apply time_range filter if specified
+                        slot_data = {
+                            "time": slot_time.strftime("%H:%M"),
+                            "end_time": end_time.strftime("%H:%M"),
+                            "date": current_date.strftime("%Y-%m-%d"),
+                            "day_name": day_names_es[current_date.weekday()],
+                            "stylist": stylist.name,
+                            "stylist_id": str(stylist.id),
+                            "full_datetime": slot_time.isoformat(),
+                        }
+
+                        # Filter by time_range if specified
+                        if time_range:
+                            if not _slot_matches_time_range(slot_data, time_range):
+                                continue
+
+                        all_slots_by_stylist[stylist.id].append(slot_data)
+
+        # Format results by stylist (group slots by stylist)
+        available_stylists = []
+        total_slots_found = 0
+
+        for stylist in stylists:
+            stylist_slots = all_slots_by_stylist[stylist.id]
+            if stylist_slots:
+                available_stylists.append({
+                    "stylist_name": stylist.name,
+                    "stylist_id": str(stylist.id),
+                    "slots": stylist_slots
+                })
+                total_slots_found += len(stylist_slots)
+
+                logger.info(
+                    f"Found {len(stylist_slots)} slots for {stylist.name}"
+                )
+
+        logger.info(
+            f"find_next_available completed: {total_slots_found} total slots across "
+            f"{len(available_stylists)} stylists (searched {dates_searched} days)"
+        )
+
+        return {
+            "error": None,
+            "available_stylists": available_stylists,  # Changed from available_dates to available_stylists
+            "total_slots_found": total_slots_found,
+            "dates_searched": dates_searched,
+        }
+
+    except Exception as e:
+        logger.error(f"Error in find_next_available: {e}", exc_info=True)
+        return {
+            "error": f"Error searching availability: {str(e)}",
+            "available_dates": [],
+            "total_slots_found": 0,
+            "dates_searched": 0,
+        }
+
+
+def _slot_matches_time_range(slot_data: dict, time_range: str) -> bool:
+    """
+    Check if a single slot matches the specified time range.
+
+    Args:
+        slot_data: Slot dict with "time" field (format: "HH:MM")
+        time_range: "morning", "afternoon", or "HH:MM-HH:MM"
+
+    Returns:
+        True if slot matches time range, False otherwise
+    """
+    slot_time = slot_data["time"]
+
+    if time_range.lower() == "morning":
+        # Morning: before 14:00
+        return slot_time < "14:00"
+    elif time_range.lower() == "afternoon":
+        # Afternoon: 14:00 or later
+        return slot_time >= "14:00"
+    elif "-" in time_range:
+        # Specific range like "14:00-18:00"
+        try:
+            start, end = time_range.split("-")
+            return start <= slot_time < end
+        except ValueError:
+            logger.warning(f"Invalid time range format: {time_range}")
+            return True  # Include slot if format is invalid
+    else:
+        logger.warning(f"Unknown time range: {time_range}")
+        return True  # Include slot if format is unknown
 
 
 def _filter_slots_by_time_range(slots: list[dict], time_range: str) -> list[dict]:

@@ -416,10 +416,10 @@ HAIRDRESSING_SERVICES = [
     {
         "name": "Consulta Gratuita Peluquería",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 15,
+        "duration_minutes": 10,
         "price_euros": Decimal("0.00"),
         "requires_advance_payment": False,
-        "description": "Consulta gratuita de 15 minutos para asesoramiento sobre servicios de peluquería y tratamientos capilares.",
+        "description": "Consulta gratuita de 10 minutos para asesoramiento sobre servicios de peluquería y tratamientos capilares.",
     },
 ]
 
@@ -796,10 +796,10 @@ AESTHETICS_SERVICES = [
     {
         "name": "Consulta Gratuita Estética",
         "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
+        "duration_minutes": 10,
         "price_euros": Decimal("0.00"),
         "requires_advance_payment": False,
-        "description": "Consulta estética gratuita de 30 minutos para evaluar tratamientos y necesidades.",
+        "description": "Consulta estética gratuita de 10 minutos para evaluar tratamientos y necesidades.",
     },
 ]
 

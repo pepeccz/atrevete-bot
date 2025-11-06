@@ -110,28 +110,36 @@ async def load_stylist_context() -> str:
                     if stylist.category == ServiceCategory.HAIRDRESSING
                     else "Estética"
                 )
-                stylists_by_category[category_es].append(stylist.name)
+                # Store dict with name and UUID for prompt injection
+                stylists_by_category[category_es].append({
+                    "name": stylist.name,
+                    "id": str(stylist.id)
+                })
 
             break  # Exit async for loop after first iteration
 
         # Count total stylists
         total_count = sum(len(names) for names in stylists_by_category.values())
 
-        # Format for prompt injection
+        # Format for prompt injection with UUIDs
         context = f"### Equipo de Estilistas ({total_count} profesionales)\n\n"
         context += "**Peluquería:**\n"
         if stylists_by_category["Peluquería"]:
-            context += "- " + "\n- ".join(stylists_by_category["Peluquería"]) + "\n\n"
+            for stylist in stylists_by_category["Peluquería"]:
+                # Include first 8 chars of UUID for readability
+                context += f"- {stylist['name']} (ID: {stylist['id'][:8]}...)\n"
+            context += "\n"
         else:
             context += "- (Ninguno activo)\n\n"
 
         context += "**Estética:**\n"
         if stylists_by_category["Estética"]:
-            context += "- " + "\n- ".join(stylists_by_category["Estética"])
+            for stylist in stylists_by_category["Estética"]:
+                context += f"- {stylist['name']} (ID: {stylist['id'][:8]}...)\n"
         else:
             context += "- (Ninguno activo)"
 
-        logger.info(f"Loaded dynamic stylist context: {total_count} active stylists")
+        logger.info(f"Loaded dynamic stylist context: {total_count} active stylists with UUIDs")
         return context
 
     except Exception as e:

@@ -71,7 +71,7 @@ FAQ_POLICIES = [
         "key": "faq_location",
         "value": {
             "question": "¿Dónde están ubicados?",
-            "answer": "Estamos en Calle Mayor 123, Madrid",
+            "answer": "Estamos en C/ Olivar 2.  28100, Alcobendas (Madrid). Enlace a google maps: https://maps.app.goo.gl/iXWaUFVVzJbavboEA",
             "keywords": ["ubicación", "dirección", "dónde"],
         },
         "description": "FAQ: Salon location",

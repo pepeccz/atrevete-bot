@@ -1178,3 +1178,111 @@ async def update_calendar_event_color(
             f"event_id={event_id} | calendar_id={calendar_id}: {e}"
         )
         raise
+
+
+async def update_calendar_event_status(
+    stylist_id: str,
+    event_id: str,
+    status: str
+) -> dict[str, Any]:
+    """
+    Update the status of a calendar event (changes color and removes [PROVISIONAL] prefix).
+
+    This is a convenience function that:
+    1. Looks up the stylist's calendar_id
+    2. Updates the event color based on status
+    3. Updates the event summary to remove [PROVISIONAL] prefix if needed
+
+    Args:
+        stylist_id: Stylist UUID as string
+        event_id: Google Calendar event ID
+        status: 'provisional' or 'confirmed'
+
+    Returns:
+        Dictionary with:
+        - success: bool
+        - error: str (if failed)
+    """
+    try:
+        # Parse stylist UUID
+        try:
+            stylist_uuid = UUID(stylist_id)
+        except ValueError:
+            return {
+                "success": False,
+                "error": f"Invalid stylist_id UUID format: {stylist_id}"
+            }
+
+        # Query stylist to get google_calendar_id
+        stylist = await get_stylist_by_id(stylist_uuid)
+        if not stylist:
+            return {
+                "success": False,
+                "error": f"Stylist not found: {stylist_id}"
+            }
+
+        # Get calendar client
+        calendar_client = get_calendar_client()
+        service = calendar_client.get_service()
+
+        # Fetch existing event
+        try:
+            event = service.events().get(
+                calendarId=stylist.google_calendar_id,
+                eventId=event_id
+            ).execute()
+        except HttpError as e:
+            if e.resp.status == 404:
+                logger.warning(
+                    f"Calendar event not found | event_id={event_id} | "
+                    f"stylist={stylist.name}"
+                )
+                return {
+                    "success": False,
+                    "error": "Event not found (may have been deleted)"
+                }
+            raise
+
+        # Update color based on status
+        color_id = EVENT_COLORS.get(status, EVENT_COLORS["provisional"])
+        event['colorId'] = color_id
+
+        # Update summary if changing to confirmed (remove [PROVISIONAL] prefix)
+        if status == "confirmed":
+            summary = event.get("summary", "")
+            if summary.startswith("[PROVISIONAL] "):
+                event['summary'] = summary.replace("[PROVISIONAL] ", "")
+
+        # Update event in calendar
+        service.events().update(
+            calendarId=stylist.google_calendar_id,
+            eventId=event_id,
+            body=event
+        ).execute()
+
+        logger.info(
+            f"Calendar event status updated to {status} | event_id={event_id} | "
+            f"stylist={stylist.name}"
+        )
+
+        return {"success": True}
+
+    except HttpError as e:
+        logger.error(
+            f"HTTP error updating calendar event status | "
+            f"event_id={event_id} | stylist_id={stylist_id}: {e}"
+        )
+        return {
+            "success": False,
+            "error": f"Failed to update event status: {str(e)}"
+        }
+
+    except Exception as e:
+        logger.error(
+            f"Unexpected error updating calendar event status | "
+            f"event_id={event_id} | stylist_id={stylist_id}: {e}"
+        )
+        return {
+            "success": False,
+            "error": f"Internal error: {str(e)}"
+        }

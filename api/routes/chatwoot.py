@@ -1,15 +1,22 @@
 """Chatwoot webhook route handler."""
 
+import aiohttp
 import hmac
 import logging
+import os
+import tempfile
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from groq import RateLimitError, APIError
 
 from api.models.chatwoot_webhook import (
     ChatwootMessageEvent,
     ChatwootWebhookPayload,
 )
+from shared.audio_conversion import convert_ogg_to_wav
+from shared.audio_transcription import get_transcription_service
 from shared.config import get_settings
 from shared.redis_client import publish_to_channel
 
@@ -53,16 +60,32 @@ async def receive_chatwoot_webhook(
 
     # Read and parse webhook payload
     body = await request.body()
-    logger.info(f"Raw webhook payload: {body.decode('utf-8')[:500]}")
-    payload = ChatwootWebhookPayload.model_validate_json(body)
+    body_str = body.decode('utf-8')
+    logger.info(f"Raw webhook payload: {body_str[:2000]}")
+    logger.debug(f"Full webhook payload: {body_str}")
+
+    try:
+        payload = ChatwootWebhookPayload.model_validate_json(body)
+    except Exception as e:
+        logger.error(
+            f"Failed to parse webhook payload: {e}",
+            exc_info=True,
+            extra={"payload_preview": body_str[:1000]}
+        )
+        raise HTTPException(status_code=400, detail=f"Invalid payload format: {str(e)}")
+
+    # Filter: Only process message_created events
+    if payload.event != "message_created":
+        logger.debug(f"Ignoring non-message event: {payload.event}")
+        return JSONResponse(status_code=200, content={"status": "ignored"})
 
     # Filter: Only process conversations with messages
-    if not payload.messages:
-        logger.debug(f"Ignoring conversation {payload.id} with no messages")
+    if not payload.conversation.messages:
+        logger.debug(f"Ignoring conversation {payload.conversation.id} with no messages")
         return JSONResponse(status_code=200, content={"status": "ignored"})
 
     # Get the last (most recent) message from the array
-    last_message = payload.messages[-1]
+    last_message = payload.conversation.messages[-1]
 
     # Filter: Only process incoming messages (message_type == 0)
     if last_message.message_type != 0:
@@ -71,17 +94,152 @@ async def receive_chatwoot_webhook(
         )
         return JSONResponse(status_code=200, content={"status": "ignored"})
 
-    # Ensure phone number exists
-    if not last_message.sender.phone_number:
+    # Ensure phone number exists (use sender from root level, not from message)
+    if not payload.sender.phone_number:
         logger.warning(f"Message {last_message.id} has no phone number, ignoring")
         return JSONResponse(status_code=200, content={"status": "ignored"})
 
+    # Initialize message text and audio tracking fields
+    message_text = last_message.content or ""
+    is_audio_transcription = False
+    audio_url = None
+
+    # Check if message has audio attachments (attachments are in message.attachments)
+    # Also check root-level attachments for backward compatibility
+    message_attachments = last_message.attachments or payload.attachments
+    if message_attachments:
+        audio_attachments = [
+            att for att in message_attachments
+            if att.file_type == "audio"
+        ]
+
+        if audio_attachments:
+            # Process first audio attachment (WhatsApp sends one audio per message)
+            audio_attachment = audio_attachments[0]
+            audio_url = audio_attachment.data_url
+
+            logger.info(
+                f"Audio message detected: conversation_id={payload.conversation.id}, "
+                f"attachment_id={audio_attachment.id}, url={audio_url}",
+                extra={
+                    "conversation_id": str(payload.conversation.id),
+                    "attachment_id": audio_attachment.id,
+                    "audio_url": audio_url,
+                }
+            )
+
+            # Download and transcribe audio
+            ogg_path = None
+            wav_path = None
+
+            try:
+                # 1. Download audio from Chatwoot
+                logger.debug(f"Downloading audio from: {audio_url}")
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(audio_url) as response:
+                        if response.status != 200:
+                            raise Exception(f"Failed to download audio: HTTP {response.status}")
+                        audio_data = await response.read()
+
+                # 2. Save to temporary OGG file
+                with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as temp_ogg:
+                    temp_ogg.write(audio_data)
+                    ogg_path = Path(temp_ogg.name)
+
+                logger.debug(
+                    f"Audio downloaded: {ogg_path.name}",
+                    extra={
+                        "conversation_id": str(payload.conversation.id),
+                        "file_size_mb": len(audio_data) / (1024 * 1024),
+                    }
+                )
+
+                # 3. Convert OGG → WAV for optimal compatibility
+                wav_path = await convert_ogg_to_wav(ogg_path)
+
+                # 4. Transcribe audio to text using Groq Whisper with confidence scoring
+                transcription_service = get_transcription_service()
+                message_text, confidence = await transcription_service.transcribe_audio(wav_path)
+
+                # Check confidence threshold (< 0.7 indicates potential transcription error)
+                if confidence < 0.7:
+                    logger.warning(
+                        f"Low confidence transcription: {confidence:.2f}",
+                        extra={
+                            "conversation_id": str(payload.conversation.id),
+                            "confidence_score": confidence,
+                            "transcription_preview": message_text[:100],
+                        }
+                    )
+                    # Ask user to resend audio or send text instead
+                    message_text = "[AUDIO_LOW_CONFIDENCE] Lo siento, no pude entender bien el audio. ¿Puedes enviarlo de nuevo o escribir tu mensaje en texto? 😊"
+                    is_audio_transcription = False
+                else:
+                    is_audio_transcription = True
+                    logger.info(
+                        f"Audio transcribed successfully: {len(message_text)} characters, confidence: {confidence:.2f}",
+                        extra={
+                            "conversation_id": str(payload.conversation.id),
+                            "transcription_length": len(message_text),
+                            "transcription_preview": message_text[:100],
+                            "confidence_score": confidence,
+                        }
+                    )
+
+            except RateLimitError:
+                logger.error(
+                    f"Groq rate limit exceeded for conversation {payload.conversation.id}",
+                    extra={"conversation_id": str(payload.conversation.id)},
+                    exc_info=True,
+                )
+                # Fallback: Ask user to send text instead
+                message_text = "[AUDIO_RATE_LIMIT] Por favor, escribe tu mensaje en texto. Estamos experimentando alta demanda de transcripciones."
+                is_audio_transcription = False
+
+            except APIError as e:
+                logger.error(
+                    f"Groq API error during transcription: {e}",
+                    extra={"conversation_id": str(payload.conversation.id)},
+                    exc_info=True,
+                )
+                # Fallback: Ask user to send text instead
+                message_text = "[AUDIO_API_ERROR] Lo siento, no pude procesar el audio. ¿Puedes escribir tu mensaje en texto?"
+                is_audio_transcription = False
+
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error processing audio: {e}",
+                    extra={"conversation_id": str(payload.conversation.id)},
+                    exc_info=True,
+                )
+                # Fallback: Ask user to send text instead
+                message_text = "[AUDIO_ERROR] Lo siento, hubo un problema con el audio. ¿Puedes escribir tu mensaje?"
+                is_audio_transcription = False
+
+            finally:
+                # Cleanup temporary files
+                if ogg_path and ogg_path.exists():
+                    try:
+                        os.unlink(ogg_path)
+                        logger.debug(f"Cleaned up: {ogg_path.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup OGG file: {e}")
+
+                if wav_path and wav_path.exists():
+                    try:
+                        os.unlink(wav_path)
+                        logger.debug(f"Cleaned up: {wav_path.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup WAV file: {e}")
+
     # Create message event for Redis
     message_event = ChatwootMessageEvent(
-        conversation_id=str(payload.id),
-        customer_phone=last_message.sender.phone_number,  # Will be normalized to E.164
-        message_text=last_message.content or "",
-        customer_name=last_message.sender.name,
+        conversation_id=str(payload.conversation.id),
+        customer_phone=payload.sender.phone_number,  # Will be normalized to E.164
+        message_text=message_text,
+        customer_name=payload.sender.name,
+        is_audio_transcription=is_audio_transcription,
+        audio_url=audio_url,
     )
 
     logger.info(

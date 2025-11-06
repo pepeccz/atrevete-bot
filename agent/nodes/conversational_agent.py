@@ -1,22 +1,22 @@
 """
-Conversational Agent Node - v3.0 Architecture.
+Conversational Agent Node - v3.1 Architecture.
 
-This is the single node that handles ALL conversations using Claude Sonnet 4
+This is the single node that handles ALL conversations using Claude Haiku 4.5
 with 7 consolidated tools. Replaces the hybrid Tier 1/Tier 2 architecture.
 
 Handles everything:
 - FAQs, greetings, service inquiries → query_info tool
 - Customer identification → manage_customer tool
-- Availability checking → check_availability tool
+- Availability checking (single date) → check_availability tool
+- Availability search (multi-date) → find_next_available tool (NEW)
 - Booking → book tool (delegates to BookingTransaction)
-- Indecision → offer_consultation_tool
 - Escalation → escalate_to_human tool
 
 No transitions to transactional nodes. Claude orchestrates entire conversation.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -28,12 +28,13 @@ from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
 from agent.tools import (
     check_availability,
+    find_next_available,
     book,
     escalate_to_human,
     get_customer_history,
     manage_customer,
-    offer_consultation_tool,
     query_info,
+    search_services,
 )
 from shared.config import get_settings
 
@@ -42,24 +43,25 @@ logger = logging.getLogger(__name__)
 
 def get_llm_with_tools() -> ChatOpenAI:
     """
-    Get Claude LLM instance with 7 consolidated tools bound via OpenRouter.
+    Get Claude LLM instance with 8 consolidated tools bound via OpenRouter.
 
-    Tools available (v3.0 consolidated):
+    Tools available (v3.1 enhanced):
     1. query_info: Unified information queries (services, FAQs, hours, policies)
-    2. manage_customer: Unified customer management (get, create, update)
-    3. get_customer_history: Customer appointment history
-    4. check_availability: Calendar availability with natural date parsing
-    5. book: Atomic booking via BookingTransaction handler
-    6. offer_consultation_tool: Free consultation for indecisive customers
-    7. escalate_to_human: Human escalation
+    2. search_services: Fuzzy search for specific services (NEW - solves 47-service overflow)
+    3. manage_customer: Unified customer management (get, create, update)
+    4. get_customer_history: Customer appointment history
+    5. check_availability: Calendar availability with natural date parsing (single date)
+    6. find_next_available: Automatic multi-date availability search
+    7. book: Atomic booking via BookingTransaction handler
+    8. escalate_to_human: Human escalation
 
     Returns:
-        ChatOpenAI instance configured for OpenRouter with 7 tools bound
+        ChatOpenAI instance configured for OpenRouter with 8 tools bound
     """
     settings = get_settings()
 
     llm = ChatOpenAI(
-        model="anthropic/claude-haiku-4.5",
+        model=settings.LLM_MODEL,
         api_key=settings.OPENROUTER_API_KEY,
         base_url="https://openrouter.ai/api/v1",
         temperature=0.3,
@@ -69,36 +71,46 @@ def get_llm_with_tools() -> ChatOpenAI:
         }
     )
 
-    # Bind 7 consolidated tools for v3.0 architecture
+    # Bind 8 consolidated tools for v3.1 architecture
     tools = [
         query_info,               # 1. Information queries (replaces 4 tools)
-        manage_customer,          # 2. Customer management (replaces 3 tools)
-        get_customer_history,     # 3. Customer history
-        check_availability,       # 4. Availability checking (enhanced with natural dates)
-        book,                     # 5. Atomic booking (replaces entire booking flow)
-        offer_consultation_tool,  # 6. Free consultation offering
-        escalate_to_human,        # 7. Human escalation
+        search_services,          # 2. Service search with fuzzy matching (NEW - solves overflow)
+        manage_customer,          # 3. Customer management (replaces 3 tools)
+        get_customer_history,     # 4. Customer history
+        check_availability,       # 5. Availability checking (single date, enhanced with natural dates)
+        find_next_available,      # 6. Multi-date availability search
+        book,                     # 7. Atomic booking (replaces entire booking flow)
+        escalate_to_human,        # 8. Human escalation
     ]
 
     llm_with_tools = llm.bind_tools(tools)
 
-    logger.info("Claude LLM initialized with 7 consolidated tools (v3.0)")
+    logger.info("Claude LLM initialized with 8 consolidated tools (v3.1)")
 
     return llm_with_tools
 
 
-async def execute_tool_call(tool_call: dict) -> str:
+async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[str, dict[str, Any]]:
     """
-    Execute a single tool call and return the result as a string.
+    Execute a single tool call with state-aware validation and return result plus state updates.
+
+    This function implements deterministic validation to prevent duplicate tool calls
+    (e.g., calling manage_customer twice) by tracking execution state.
 
     Args:
         tool_call: Tool call dict with 'name', 'args', and 'id' keys
+        state: Current conversation state for validation
 
     Returns:
-        String representation of tool result (JSON or error message)
+        Tuple of (result_string, state_updates_dict)
+        - result_string: JSON or error message to send to Claude
+        - state_updates_dict: Fields to update in state after tool execution
     """
+    import json
+
     tool_name = tool_call.get("name")
     tool_args = tool_call.get("args", {})
+    state_updates = {}
 
     logger.info(
         f"Executing tool: {tool_name}",
@@ -108,14 +120,64 @@ async def execute_tool_call(tool_call: dict) -> str:
         }
     )
 
-    # Map tool names to their implementations (7 tools)
+    # ============================================================================
+    # PRE-EXECUTION VALIDATION
+    # ============================================================================
+
+    # Prevent duplicate manage_customer calls
+    if tool_name == "manage_customer":
+        action = tool_args.get("action")
+        if action == "create" and state.get("customer_data_collected"):
+            error_result = {
+                "error": "DUPLICATE_CALL",
+                "message": (
+                    "❌ Ya obtuviste los datos del cliente anteriormente. "
+                    "NO necesitas llamar a manage_customer otra vez. "
+                    f"Usa directamente el customer_id que YA TIENES: {state.get('customer_id')} "
+                    "para llamar a book()."
+                ),
+                "customer_id": str(state.get("customer_id")),
+                "instruction": "Llama a book() con este customer_id ahora."
+            }
+            logger.warning(
+                f"Prevented duplicate manage_customer call (action={action})",
+                extra={
+                    "customer_id": state.get("customer_id"),
+                    "customer_data_collected": state.get("customer_data_collected")
+                }
+            )
+            return json.dumps(error_result, ensure_ascii=False, indent=2), state_updates
+
+    # Ensure customer data is collected before booking
+    if tool_name == "book":
+        if not state.get("customer_data_collected"):
+            error_result = {
+                "error": "MISSING_CUSTOMER_DATA",
+                "message": (
+                    "❌ Debes obtener los datos del cliente primero. "
+                    "Llama a manage_customer(action='get', phone='...') antes de llamar a book()."
+                ),
+                "instruction": "Llama a manage_customer(action='get') ahora."
+            }
+            logger.warning(
+                "Prevented book() call without customer data collection",
+                extra={"customer_data_collected": state.get("customer_data_collected")}
+            )
+            return json.dumps(error_result, ensure_ascii=False, indent=2), state_updates
+
+    # ============================================================================
+    # TOOL EXECUTION
+    # ============================================================================
+
+    # Map tool names to their implementations (8 tools)
     tool_map = {
         "query_info": query_info,
+        "search_services": search_services,
         "manage_customer": manage_customer,
         "get_customer_history": get_customer_history,
         "check_availability": check_availability,
+        "find_next_available": find_next_available,
         "book": book,
-        "offer_consultation_tool": offer_consultation_tool,
         "escalate_to_human": escalate_to_human,
     }
 
@@ -124,26 +186,69 @@ async def execute_tool_call(tool_call: dict) -> str:
     if not tool:
         error_msg = f"Tool '{tool_name}' not found in tool map (available: {list(tool_map.keys())})"
         logger.error(error_msg)
-        return error_msg
+        return error_msg, state_updates
 
     try:
         # Execute tool asynchronously
         result = await tool.ainvoke(tool_args)
 
-        logger.info(
-            f"Tool {tool_name} executed successfully",
-            extra={
-                "tool_name": tool_name,
-                "result_preview": str(result)[:200],
-            }
-        )
+        # Check if tool returned an error
+        if isinstance(result, dict) and result.get("error"):
+            logger.error(
+                f"Tool {tool_name} returned error",
+                extra={
+                    "tool_name": tool_name,
+                    "error": result.get("error"),
+                    "result_preview": str(result)[:200],
+                }
+            )
+        else:
+            logger.info(
+                f"Tool {tool_name} executed successfully",
+                extra={
+                    "tool_name": tool_name,
+                    "result_preview": str(result)[:200],
+                }
+            )
+
+        # ============================================================================
+        # POST-EXECUTION STATE UPDATES
+        # ============================================================================
+
+        # Track successful customer data collection
+        if tool_name == "manage_customer" and isinstance(result, dict) and not result.get("error"):
+            state_updates["customer_data_collected"] = True
+            state_updates["customer_id"] = result.get("id")
+            logger.info(
+                "Customer data collected successfully",
+                extra={
+                    "customer_id": result.get("id"),
+                    "action": tool_args.get("action")
+                }
+            )
+
+            # Add explicit instruction to call book() next (prevents blank responses)
+            result["NEXT_STEP_REQUIRED"] = "BOOKING"
+            result["instruction"] = (
+                "✅ Customer data collected. "
+                f"customer_id={result.get('id')} is now available. "
+                "\n\n⚠️ CRITICAL: You MUST call book() NOW with:\n"
+                f"- customer_id: \"{result.get('id')}\"\n"
+                "- services: [list of service names the user requested]\n"
+                "- stylist_id: UUID of the stylist the user chose\n"
+                "- start_time: ISO timestamp of the slot the user selected\n"
+                "\n🚫 DO NOT send a blank response to the user.\n"
+                "🚫 DO NOT wait for more input.\n"
+                "✅ Execute book() immediately with the booking details from the conversation."
+            )
 
         # Convert result to string for LangChain ToolMessage
-        import json
         if isinstance(result, dict):
-            return json.dumps(result, ensure_ascii=False, indent=2)
+            result_str = json.dumps(result, ensure_ascii=False, indent=2)
         else:
-            return str(result)
+            result_str = str(result)
+
+        return result_str, state_updates
 
     except Exception as e:
         error_msg = f"Error executing tool {tool_name}: {str(e)}"
@@ -156,12 +261,12 @@ async def execute_tool_call(tool_call: dict) -> str:
             },
             exc_info=True
         )
-        return error_msg
+        return error_msg, state_updates
 
 
 async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     """
-    Main conversational agent node using Claude Sonnet 4 with 7 consolidated tools.
+    Main conversational agent node using Claude Haiku 4.5 with 7 consolidated tools.
 
     This single node handles ALL conversation via Claude's reasoning + tool calling.
     No explicit state transitions, no booking phases, no transactional nodes.
@@ -196,8 +301,46 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
 
     # Add system prompt
     system_prompt = load_maite_system_prompt()
-    stylist_context = load_stylist_context()
-    full_system_prompt = f"{system_prompt}\n\n{stylist_context}"
+    stylist_context = await load_stylist_context()
+
+    # Add temporal context (current date/time for date interpretation)
+    now = datetime.now(ZoneInfo("Europe/Madrid"))
+    day_names_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    month_names_es = [
+        "enero", "febrero", "marzo", "abril", "mayo", "junio",
+        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+    ]
+
+    earliest_valid = now + timedelta(days=3)
+    temporal_context = f"""
+---
+CONTEXTO TEMPORAL (actualizado en cada conversación):
+Hoy es {day_names_es[now.weekday()]} {now.day} de {month_names_es[now.month-1]} de {now.year}.
+Hora actual: {now.strftime('%H:%M')}
+
+IMPORTANTE: Las reservas requieren mínimo 3 días de aviso.
+Fecha más cercana válida: {day_names_es[earliest_valid.weekday()]} {earliest_valid.day} de {month_names_es[earliest_valid.month-1]}
+---
+"""
+
+    # Add customer context (phone is always available from WhatsApp)
+    customer_phone = state.get("customer_phone", "Desconocido")
+    customer_name = state.get("customer_name")
+    customer_id = state.get("customer_id")
+
+    customer_context = f"""
+---
+DATOS DEL CLIENTE (disponibles automáticamente desde WhatsApp):
+- Teléfono: {customer_phone}
+- Nombre registrado: {customer_name if customer_name else "No disponible (preguntar si es necesario)"}
+- ID de cliente: {customer_id if customer_id else "No registrado aún (crear con manage_customer si es necesario)"}
+
+⚠️ CRÍTICO: El teléfono ({customer_phone}) ya está disponible del WhatsApp del cliente.
+NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a manage_customer.
+---
+"""
+
+    full_system_prompt = f"{system_prompt}\n\n{stylist_context}\n\n{temporal_context}\n\n{customer_context}"
 
     langchain_messages.append(SystemMessage(content=full_system_prompt))
 
@@ -246,7 +389,7 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         return add_message(
             state,
             "assistant",
-            "Lo siento, he tenido un problema técnico. ¿Podrías repetir tu mensaje? 🌸"
+            "Lo siento, he tenido un problema técnico. El equipo tecnico lo solucionará lo antes posible. Una asistenta atenderá tu consulta lo antes posible."
         )
 
     # Step 4: Handle tool calls if any
@@ -262,9 +405,17 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         # Add Claude's response with tool calls to message history
         langchain_messages.append(response)
 
-        # Execute each tool call
+        # Execute each tool call with state-aware validation
         for tool_call in response.tool_calls:
-            tool_result = await execute_tool_call(tool_call)
+            tool_result, state_updates = await execute_tool_call(tool_call, state)
+
+            # Apply state updates immediately
+            for key, value in state_updates.items():
+                state[key] = value
+                logger.debug(
+                    f"State updated: {key} = {value}",
+                    extra={"conversation_id": conversation_id, "key": key}
+                )
 
             # Add tool result to message history
             langchain_messages.append(
@@ -309,7 +460,22 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         # No tool calls - use response content directly
         assistant_response = response.content
 
-    # Step 6: Check for escalation trigger
+    # Step 6: Validate response is not blank/whitespace-only
+    if not assistant_response or assistant_response.strip() == "":
+        logger.error(
+            f"Blank response detected from Claude",
+            extra={
+                "conversation_id": conversation_id,
+                "response_content": repr(assistant_response),
+                "had_tool_calls": bool(response.tool_calls),
+            }
+        )
+        assistant_response = (
+            "Lo siento, tuve un problema al procesar tu solicitud. "
+            "¿Podrías intentarlo de nuevo? 🌸"
+        )
+
+    # Step 7: Check for escalation trigger
     # If escalate_to_human was called, mark escalation in state
     if response.tool_calls:
         for tool_call in response.tool_calls:
@@ -329,7 +495,7 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
                 updated_state["updated_at"] = datetime.now(ZoneInfo("Europe/Madrid"))
                 return updated_state
 
-    # Step 7: Update state with assistant response
+    # Step 8: Update state with assistant response
     updated_state = add_message(state, "assistant", assistant_response)
     updated_state["last_node"] = "conversational_agent"
     updated_state["updated_at"] = datetime.now(ZoneInfo("Europe/Madrid"))

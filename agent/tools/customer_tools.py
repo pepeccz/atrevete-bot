@@ -142,7 +142,11 @@ async def manage_customer(
             }
 
         get (not found):
-            None
+            {
+                "exists": False,
+                "phone": str,
+                "message": str
+            }
 
         create (success):
             {
@@ -175,7 +179,7 @@ async def manage_customer(
 
         Get non-existent customer:
         >>> await manage_customer("get", "+34999999999")
-        None
+        {"exists": False, "phone": "+34999999999", "message": "Customer not found. Use action='create' to register this customer."}
 
         Create new customer:
         >>> await manage_customer("create", "612345678", {"first_name": "Pedro", "last_name": "Gómez"})
@@ -201,11 +205,12 @@ async def manage_customer(
         return {"error": f"Error in {action} operation", "details": str(e)}
 
 
-async def _get_customer(phone: str) -> dict[str, Any] | None:
+async def _get_customer(phone: str) -> dict[str, Any]:
     """
     Get customer by phone number.
 
     Internal function called by manage_customer(action="get").
+    Returns a dict with customer data if found, or {"exists": False} if not found.
     """
     normalized_phone = normalize_phone(phone)
     if not normalized_phone:
@@ -221,7 +226,11 @@ async def _get_customer(phone: str) -> dict[str, Any] | None:
 
             if customer is None:
                 logger.info(f"Customer not found for phone: {normalized_phone}")
-                return None
+                return {
+                    "exists": False,
+                    "phone": normalized_phone,
+                    "message": "Customer not found. Use action='create' to register this customer."
+                }
 
             logger.info(f"Customer found: {customer.id} for phone {normalized_phone}")
 
@@ -287,10 +296,11 @@ async def _create_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
 
     except IntegrityError as e:
         logger.warning(
-            f"Duplicate phone number: {normalized_phone}",
+            f"Duplicate phone number detected: {normalized_phone}. Falling back to retrieving existing customer.",
             extra={"phone": normalized_phone, "error": str(e)}
         )
-        return {"error": "Customer with this phone number already exists", "phone": normalized_phone}
+        # Customer already exists - retrieve and return existing customer instead of error
+        return await _get_customer(normalized_phone)
 
     except SQLAlchemyError as e:
         logger.error(f"Database error in _create_customer: {e}", extra={"phone": normalized_phone})

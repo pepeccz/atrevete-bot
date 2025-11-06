@@ -169,13 +169,14 @@ This simplification reduced complexity from 25 nodes to 12 nodes by consolidatin
 - All use UUID primary keys, TIMESTAMP WITH TIME ZONE, JSONB metadata
 - Enums: `ServiceCategory`, `PaymentStatus`, `AppointmentStatus`, `MessageRole`
 
-**Tools (agent/tools/)**
-- Customer tools: `get_customer_by_phone`, `create_customer`
-- Booking tools: `get_services`, `start_booking_flow`, `set_preferred_date`, `calculate_total`
-- Availability tools: `check_availability_tool` (multi-calendar Google Calendar API)
-- FAQ tools: `get_faqs` (knowledge base responses)
-- Consultation tools: `offer_consultation_tool` (free consultation for indecisive customers)
-- Escalation tools: `escalate_to_human` (notify team via Chatwoot group)
+**Tools (agent/tools/) - v3.1 Consolidated (7 tools)**
+- Information: `query_info` (services, FAQs, hours, policies - replaces 4 tools)
+- Customer management: `manage_customer` (get, create, update - replaces 3 tools)
+- Customer history: `get_customer_history` (appointment history)
+- Availability: `check_availability` (single date) and `find_next_available` (multi-date search)
+- Booking: `book` (atomic transaction via BookingTransaction handler)
+- Escalation: `escalate_to_human` (human handoff)
+- Note: Consultation service is offered via `query_info("services", {"name": "consulta gratuita"})`, not a separate tool
 
 **Background Workers (agent/workers/)**
 - `conversation_archiver.py`: Archives expired Redis checkpoints to PostgreSQL

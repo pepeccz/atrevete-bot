@@ -65,7 +65,7 @@ async def expire_provisional_bookings() -> int:
 
             stmt = select(Appointment).where(
                 and_(
-                    Appointment.status == "provisional",
+                    Appointment.status == AppointmentStatus.PROVISIONAL,
                     # Using raw SQL to compare JSONB timestamp with current time
                     # metadata->>'payment_timeout_at' < NOW()
                 )

@@ -4,12 +4,13 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for PostgreSQL and curl (healthcheck)
+# Install system dependencies for PostgreSQL, audio processing, and curl (healthcheck)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
     libpq-dev \
     gcc \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies

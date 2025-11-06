@@ -122,6 +122,7 @@ async def validate_slot_availability(
     Checks for conflicts with existing appointments:
     - Slot overlaps with another appointment
     - Slot is within 10 minutes before/after another appointment (buffer)
+    - Ignores provisional appointments that have expired (payment timeout passed)
 
     Args:
         stylist_id: Stylist UUID
@@ -156,6 +157,7 @@ async def validate_slot_availability(
         - Uses SELECT FOR UPDATE to lock rows and prevent race conditions
         - duration_minutes should already include 10-min buffer
         - Only checks appointments with status in ('provisional', 'confirmed')
+        - Filters out provisional appointments with expired payment timeout
     """
     end_time = start_time + timedelta(minutes=duration_minutes)
 
@@ -173,7 +175,50 @@ async def validate_slot_availability(
     )
 
     result = await session.execute(stmt)
-    conflicting_appointments = result.scalars().all()
+    all_appointments = result.scalars().all()
+
+    # Filter out expired provisional appointments (payment timeout passed)
+    now = datetime.now(MADRID_TZ)
+    conflicting_appointments = []
+
+    for appointment in all_appointments:
+        # Confirmed appointments always count as conflicts
+        if appointment.status == "confirmed":
+            conflicting_appointments.append(appointment)
+            continue
+
+        # For provisional appointments, check if payment timeout expired
+        if appointment.status == "provisional":
+            metadata = appointment.metadata or {}
+            timeout_str = metadata.get("payment_timeout_at")
+
+            if timeout_str:
+                try:
+                    # Parse ISO timestamp from metadata
+                    timeout_dt = datetime.fromisoformat(timeout_str.replace("Z", "+00:00"))
+
+                    # Only count as conflict if timeout hasn't passed
+                    if timeout_dt >= now:
+                        conflicting_appointments.append(appointment)
+                    else:
+                        logger.info(
+                            f"Ignoring expired provisional appointment: {appointment.id} "
+                            f"(timeout: {timeout_str}, now: {now.isoformat()})"
+                        )
+                except (ValueError, AttributeError) as e:
+                    # If we can't parse timeout, be conservative and count as conflict
+                    logger.warning(
+                        f"Could not parse payment_timeout_at for appointment {appointment.id}: "
+                        f"{timeout_str} | error: {e}. Counting as conflict."
+                    )
+                    conflicting_appointments.append(appointment)
+            else:
+                # No timeout metadata - be conservative and count as conflict
+                logger.warning(
+                    f"Provisional appointment {appointment.id} has no payment_timeout_at. "
+                    f"Counting as conflict."
+                )
+                conflicting_appointments.append(appointment)
 
     if conflicting_appointments:
         conflict = conflicting_appointments[0]

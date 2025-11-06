@@ -113,11 +113,10 @@ def create_conversation_graph(
     - Entry → (check summarization) → conversational_agent → END
 
     No booking nodes, no transactional flow. Claude + tools handle all logic:
-    - query_info: FAQs, business hours, services, policies
+    - query_info: FAQs, business hours, services, policies (includes consultation info)
     - manage_customer / get_customer_history: Customer identification
-    - check_availability: Calendar checking with natural dates
+    - check_availability / find_next_available: Calendar checking with natural dates
     - book: Atomic booking via BookingTransaction handler
-    - offer_consultation_tool: Free consultation for indecisive customers
     - escalate_to_human: Human escalation
 
     Args:

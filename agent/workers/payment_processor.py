@@ -90,7 +90,7 @@ async def process_payment_success(event_data: dict[str, Any]) -> None:
                 return
 
             # Validate appointment is PROVISIONAL
-            if appointment.status != "provisional":
+            if appointment.status != AppointmentStatus.PROVISIONAL:
                 logger.warning(
                     f"Appointment is not PROVISIONAL, skipping confirmation | "
                     f"appointment_id={appointment_id} | status={appointment.status}"
@@ -98,7 +98,7 @@ async def process_payment_success(event_data: dict[str, Any]) -> None:
                 return
 
             # Update appointment status
-            appointment.status = "confirmed"
+            appointment.status = AppointmentStatus.CONFIRMED
             appointment.payment_status = PaymentStatus.CONFIRMED
             appointment.stripe_payment_id = payment_intent_id
 
@@ -275,8 +275,8 @@ async def process_payment_expired(event_data: dict[str, Any]) -> None:
                 return
 
             # Only update if still PROVISIONAL
-            if appointment.status == "provisional":
-                appointment.status = "expired"
+            if appointment.status == AppointmentStatus.PROVISIONAL:
+                appointment.status = AppointmentStatus.EXPIRED
                 await db_session.commit()
 
                 logger.info(

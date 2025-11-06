@@ -32,7 +32,7 @@ class ConversationState(TypedDict, total=False):
     No booking phases, no explicit state transitions - Claude orchestrates everything
     through tool calls (query_info, manage_customer, check_availability, book, etc.)
 
-    Fields (15 total):
+    Fields (16 total):
         # Core Metadata (5 fields)
         conversation_id: LangGraph thread_id for checkpointing
         customer_phone: E.164 phone (e.g., +34612345678)
@@ -50,6 +50,9 @@ class ConversationState(TypedDict, total=False):
         escalation_triggered: Whether escalated to human
         escalation_reason: Why escalated (e.g., "medical_consultation")
         error_count: Consecutive errors (for auto-escalation)
+
+        # Tool Execution Tracking (1 field)
+        customer_data_collected: Prevents duplicate manage_customer calls
 
         # Node Tracking (1 field)
         last_node: Last executed node (for debugging)
@@ -84,6 +87,11 @@ class ConversationState(TypedDict, total=False):
     escalation_triggered: bool
     escalation_reason: str | None
     error_count: int
+
+    # ============================================================================
+    # Tool Execution Tracking (1 field)
+    # ============================================================================
+    customer_data_collected: bool
 
     # ============================================================================
     # Node Tracking (1 field)

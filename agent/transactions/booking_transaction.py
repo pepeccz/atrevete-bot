@@ -279,6 +279,9 @@ class BookingTransaction:
                     # Step 5: Create database appointment record
                     end_time = start_time + timedelta(minutes=total_duration)
 
+                    # Calculate advance payment (20% of total)
+                    advance_payment_amount = total_price * Decimal("0.20")
+
                     new_appointment = Appointment(
                         customer_id=customer_id,
                         stylist_id=stylist_id,
@@ -286,9 +289,9 @@ class BookingTransaction:
                         start_time=start_time,
                         duration_minutes=total_duration,
                         total_price=total_price,
-                        advance_payment_amount=Decimal("0.00"),  # Calculated later if needed
+                        advance_payment_amount=advance_payment_amount,
                         payment_status=PaymentStatus.PENDING,
-                        status="provisional",
+                        status=AppointmentStatus.PROVISIONAL,
                         google_calendar_event_id=google_event_id,
                     )
 
@@ -297,28 +300,160 @@ class BookingTransaction:
                     await session.refresh(new_appointment)
 
                     logger.info(
-                        f"[{trace_id}] Booking transaction completed successfully",
+                        f"[{trace_id}] Appointment created in database",
                         extra={
                             "appointment_id": str(new_appointment.id),
                             "google_event_id": google_event_id,
                             "total_price": float(total_price),
+                            "advance_payment_amount": float(advance_payment_amount),
                             "duration_minutes": total_duration
                         }
                     )
 
-                    return {
-                        "success": True,
-                        "appointment_id": str(new_appointment.id),
-                        "google_calendar_event_id": google_event_id,
-                        "start_time": start_time.isoformat(),
-                        "end_time": end_time.isoformat(),
-                        "total_price": float(total_price),
-                        "duration_minutes": total_duration,
-                        "customer_id": str(customer_id),
-                        "stylist_id": str(stylist_id),
-                        "service_ids": [str(sid) for sid in service_ids],
-                        "status": "provisional"
-                    }
+                    # Step 6: Handle payment based on price
+                    if total_price > 0:
+                        # Generate Stripe payment link for services with cost
+                        from shared.stripe_client import create_payment_link_for_appointment
+
+                        service_names = ", ".join(s.name for s in services)
+                        description = f"{service_names} - Atrévete Peluquería"
+
+                        logger.info(
+                            f"[{trace_id}] Generating Stripe payment link",
+                            extra={
+                                "appointment_id": str(new_appointment.id),
+                                "amount_euros": float(advance_payment_amount),
+                                "description": description
+                            }
+                        )
+
+                        try:
+                            payment_link_result = await create_payment_link_for_appointment(
+                                appointment_id=str(new_appointment.id),
+                                customer_id=str(customer_id),
+                                conversation_id=trace_id,
+                                amount_euros=advance_payment_amount,
+                                description=description,
+                                customer_email=customer.metadata.get("email") if hasattr(customer, "metadata") else None,
+                                customer_name=customer_name
+                            )
+
+                            payment_link_url = payment_link_result["url"]
+                            payment_link_id = payment_link_result["id"]
+
+                            # Update appointment with payment link ID
+                            new_appointment.stripe_payment_link_id = payment_link_id
+                            await session.commit()
+
+                            logger.info(
+                                f"[{trace_id}] Payment link generated successfully",
+                                extra={
+                                    "appointment_id": str(new_appointment.id),
+                                    "payment_link_id": payment_link_id,
+                                    "payment_link_url": payment_link_url
+                                }
+                            )
+
+                            # Return success with payment required
+                            return {
+                                "success": True,
+                                "appointment_id": str(new_appointment.id),
+                                "google_calendar_event_id": google_event_id,
+                                "start_time": start_time.isoformat(),
+                                "end_time": end_time.isoformat(),
+                                "total_price": float(total_price),
+                                "advance_payment_amount": float(advance_payment_amount),
+                                "duration_minutes": total_duration,
+                                "customer_id": str(customer_id),
+                                "customer_name": customer_name,
+                                "stylist_id": str(stylist_id),
+                                "stylist_name": stylist.name,
+                                "service_ids": [str(sid) for sid in service_ids],
+                                "service_names": service_names,
+                                "status": "provisional",
+                                "payment_required": True,
+                                "payment_link": payment_link_url,
+                                "payment_timeout_minutes": 10
+                            }
+
+                        except Exception as payment_error:
+                            logger.error(
+                                f"[{trace_id}] Failed to create payment link",
+                                extra={
+                                    "appointment_id": str(new_appointment.id),
+                                    "error": str(payment_error)
+                                },
+                                exc_info=True
+                            )
+                            # Rollback appointment and calendar event
+                            await session.rollback()
+                            if google_event_id:
+                                try:
+                                    from agent.tools.calendar_tools import delete_calendar_event
+                                    await delete_calendar_event(
+                                        stylist_id=str(stylist_id),
+                                        event_id=google_event_id,
+                                        conversation_id=trace_id
+                                    )
+                                except Exception:
+                                    pass
+
+                            return {
+                                "success": False,
+                                "error_code": "PAYMENT_LINK_FAILED",
+                                "error_message": "Error al generar el enlace de pago. Por favor, contacta con el equipo.",
+                                "details": {"error": str(payment_error)}
+                            }
+
+                    else:
+                        # Service is free (e.g., consultation) - auto-confirm
+                        logger.info(
+                            f"[{trace_id}] Service is free, auto-confirming appointment",
+                            extra={"appointment_id": str(new_appointment.id)}
+                        )
+
+                        new_appointment.status = AppointmentStatus.CONFIRMED
+                        new_appointment.payment_status = PaymentStatus.CONFIRMED
+                        await session.commit()
+
+                        # Update calendar event to confirmed (green)
+                        try:
+                            from agent.tools.calendar_tools import update_calendar_event_status
+                            await update_calendar_event_status(
+                                stylist_id=str(stylist_id),
+                                event_id=google_event_id,
+                                status="confirmed"
+                            )
+                        except Exception as calendar_error:
+                            logger.warning(
+                                f"[{trace_id}] Failed to update calendar event to confirmed",
+                                extra={"error": str(calendar_error)}
+                            )
+
+                        logger.info(
+                            f"[{trace_id}] Free appointment auto-confirmed",
+                            extra={"appointment_id": str(new_appointment.id)}
+                        )
+
+                        # Return success without payment required
+                        return {
+                            "success": True,
+                            "appointment_id": str(new_appointment.id),
+                            "google_calendar_event_id": google_event_id,
+                            "start_time": start_time.isoformat(),
+                            "end_time": end_time.isoformat(),
+                            "total_price": float(total_price),
+                            "advance_payment_amount": float(advance_payment_amount),
+                            "duration_minutes": total_duration,
+                            "customer_id": str(customer_id),
+                            "customer_name": customer_name,
+                            "stylist_id": str(stylist_id),
+                            "stylist_name": stylist.name,
+                            "service_ids": [str(sid) for sid in service_ids],
+                            "service_names": service_names,
+                            "status": "confirmed",
+                            "payment_required": False
+                        }
 
                 except IntegrityError as e:
                     logger.error(

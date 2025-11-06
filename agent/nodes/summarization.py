@@ -79,14 +79,14 @@ async def summarize_conversation(state: ConversationState) -> dict:
             formatted_messages
         )
 
-        # Step 5: Call Claude Sonnet 4 via OpenRouter to generate summary
+        # Step 5: Call LLM via OpenRouter to generate summary
         # Note: Langfuse callbacks passed in graph config are automatically
         # inherited by this LLM invocation (LangChain callback propagation)
         from shared.config import get_settings
         settings = get_settings()
 
         llm = ChatOpenAI(
-            model="anthropic/claude-haiku-4.5",
+            model=settings.LLM_MODEL,
             api_key=settings.OPENROUTER_API_KEY,
             base_url="https://openrouter.ai/api/v1",
             temperature=0.3,  # Deterministic summaries

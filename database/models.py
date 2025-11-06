@@ -360,9 +360,9 @@ class Appointment(Base):
         default=PaymentStatus.PENDING,
         nullable=False,
     )
-    status: Mapped[str] = mapped_column(
-        PG_ENUM("provisional", "confirmed", "completed", "cancelled", "expired", name="appointment_status", create_type=False),
-        default="provisional",
+    status: Mapped[AppointmentStatus] = mapped_column(
+        SQLEnum(AppointmentStatus, name="appointment_status", create_type=False),
+        default=AppointmentStatus.PROVISIONAL,
         nullable=False,
         index=True,
     )
