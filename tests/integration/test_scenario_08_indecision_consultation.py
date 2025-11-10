@@ -2,7 +2,7 @@
 Integration test for Story 3.5 - Indecision detection and free consultation offering.
 
 Tests the complete conversation flow from initial indecision message
-through consultation offer, acceptance, and booking without payment.
+through consultation offer, acceptance, and booking.
 
 Scenario 8 (from docs/specs/scenarios.md):
 1. Customer: "Hola, quiero un cambio de color pero no sé si elegir óleos o barro gol, ¿cuál me recomiendas?"
@@ -41,8 +41,7 @@ async def test_scenario8_indecision_consultation_full_flow():
     - Consultation offer triggered
     - Free consultation (CONSULTA GRATUITA) service retrieved
     - Consultation acceptance handling
-    - State updates (consultation_accepted=true, skip_payment_flow=true)
-    - No payment link generated for free consultation
+    - State updates (consultation_accepted=true)
 
     NOTE: Full booking flow (availability checking, calendar creation) depends on
     Stories 3.3 and 4.x. This test focuses on indecision detection and consultation
@@ -78,8 +77,6 @@ async def test_scenario8_indecision_consultation_full_flow():
 
         # Verify consultation service has correct attributes
         assert consulta_service.duration_minutes == 15, "CONSULTA GRATUITA should be 15 minutes"
-        assert consulta_service.price_euros == 0, "CONSULTA GRATUITA should be free (0€)"
-        assert consulta_service.requires_advance_payment is False, "CONSULTA GRATUITA should not require payment"
 
         # Find or create test customer Laura
         stmt = select(Customer).where(Customer.phone == "+34612000001")
@@ -155,17 +152,9 @@ async def test_scenario8_indecision_consultation_full_flow():
         assert consulta_service.id in requested_services, \
             f"Consultation service ID should be in requested_services, got {requested_services}"
 
-        # Verify skip_payment_flow flag set
-        assert result_state_2.get("skip_payment_flow") is True, \
-            "skip_payment_flow should be true for free consultation"
-
         # Verify current_intent updated to booking
         assert result_state_2.get("current_intent") == "booking", \
             f"Intent should change to 'booking' after acceptance, got {result_state_2.get('current_intent')}"
-
-        # Verify no payment link generated (this would be in future booking flow)
-        # For now, we just verify the flag is set correctly
-        assert result_state_2.get("payment_link") is None, "No payment link should be generated for free consultation"
 
         print("✓ Scenario 8 test passed: Indecision detection and consultation acceptance flow works correctly")
 
@@ -251,10 +240,6 @@ async def test_scenario8_consultation_decline():
         requested_services = result_state_2.get("requested_services", [])
         assert consulta_service.id not in requested_services, \
             "Consultation service should not be in requested_services after decline"
-
-        # Verify skip_payment_flow NOT set (normal service booking will require payment)
-        assert result_state_2.get("skip_payment_flow") != True, \
-            "skip_payment_flow should not be set after declining consultation"
 
         # Verify bot response acknowledges decline and re-presents options
         bot_response = result_state_2.get("bot_response")

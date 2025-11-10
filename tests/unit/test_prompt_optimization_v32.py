@@ -91,13 +91,10 @@ class TestBookingStateDetection:
         }
         assert _detect_booking_state(state) == "BOOKING_EXECUTION"
 
-    def test_post_booking_state_payment_link_sent(self):
-        """Test POST_BOOKING state when payment_link_sent flag is set."""
         state = {
             "service_selected": "Corte de Caballero",
             "slot_selected": {"stylist_id": str(uuid4()), "start_time": "2025-01-15T10:00:00"},
             "customer_data_collected": True,
-            "payment_link_sent": True,
             "messages": []
         }
         assert _detect_booking_state(state) == "POST_BOOKING"
@@ -118,7 +115,6 @@ class TestBookingStateDetection:
             "service_selected": "Corte",
             "slot_selected": {"stylist_id": str(uuid4())},
             "customer_data_collected": True,
-            "payment_link_sent": True,
             "messages": [{"role": "user", "content": "Quiero una cita"}]  # Has booking keywords
         }
 
@@ -393,7 +389,6 @@ class TestContextualPromptLoading:
     def test_post_booking_state_loads_step5(self):
         """Test that POST_BOOKING state loads step5_post_booking.md."""
         state = {
-            "payment_link_sent": True,
             "messages": []
         }
 
@@ -485,7 +480,6 @@ class TestToolOutputTruncation:
         expected_service_fields = ["name", "duration_minutes", "category"]
 
         # Fields that should NOT be present (removed in v3.2)
-        removed_fields = ["id", "price_euros"]
 
         # This is verified by code inspection - the function returns:
         # {"services": [{"name": s.name, "duration_minutes": ..., "category": ...}]}

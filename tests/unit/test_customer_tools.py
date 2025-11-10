@@ -25,7 +25,6 @@ from agent.tools.customer_tools import (
     update_customer_name,
     update_customer_preferences,
 )
-from database.models import Appointment, AppointmentStatus, Customer, PaymentStatus
 
 
 # ============================================================================
@@ -414,7 +413,6 @@ class TestGetCustomerHistory:
         apt1.duration_minutes = 60
         apt1.total_price = Decimal("50.00")
         apt1.status = AppointmentStatus.COMPLETED
-        apt1.payment_status = PaymentStatus.CONFIRMED
         apt1.stylist_id = stylist_id
         apt1.service_ids = [uuid4()]
 
@@ -424,7 +422,6 @@ class TestGetCustomerHistory:
         apt2.duration_minutes = 90
         apt2.total_price = Decimal("75.00")
         apt2.status = AppointmentStatus.COMPLETED
-        apt2.payment_status = PaymentStatus.CONFIRMED
         apt2.stylist_id = stylist_id
         apt2.service_ids = [uuid4(), uuid4()]
 
@@ -464,7 +461,6 @@ class TestGetCustomerHistory:
             apt.duration_minutes = 60
             apt.total_price = Decimal("50.00")
             apt.status = AppointmentStatus.COMPLETED
-            apt.payment_status = PaymentStatus.CONFIRMED
             apt.stylist_id = uuid4()
             apt.service_ids = [uuid4()]
             appointments.append(apt)

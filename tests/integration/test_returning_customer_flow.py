@@ -16,7 +16,6 @@ from sqlalchemy import delete
 from agent.graphs.conversation_flow import create_conversation_graph
 from agent.state.schemas import ConversationState
 from database.connection import get_async_session
-from database.models import Appointment, AppointmentStatus, Customer, PaymentStatus
 
 
 # ============================================================================

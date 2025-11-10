@@ -93,7 +93,6 @@ async def test_long_conversation_with_summarization():
             ("assistant", "Te envío el link de pago para confirmar la reserva"),
             ("user", "Ok, ¿puedo pagar ahora?"),
             # Messages 16-20: Payment link (SUMMARIZATION SHOULD TRIGGER AT 20)
-            ("assistant", "Sí, aquí está el link: https://stripe.com/pay/123"),
             ("user", "Gracias, ya pagué"),
             ("assistant", "¡Perfecto! Pago confirmado. Tu cita está reservada"),
             ("user", "¿Dónde está la peluquería?"),

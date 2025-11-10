@@ -122,7 +122,6 @@ async def query_info(
 
         services:
             {
-                "services": [{"id": str, "name": str, "price_euros": float, "duration_minutes": int, "category": str}],
                 "count": int
             }
 

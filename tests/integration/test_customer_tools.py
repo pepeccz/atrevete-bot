@@ -25,7 +25,6 @@ from agent.tools.customer_tools import (
     update_customer_preferences,
 )
 from database.connection import AsyncSessionLocal
-from database.models import Appointment, AppointmentStatus, PaymentStatus, Service, Stylist
 from database.seeds.services import seed_services
 from database.seeds.stylists import seed_stylists
 
@@ -203,7 +202,6 @@ async def test_customer_lifecycle_create_appointment_get_history_verify():
                 duration_minutes=service.duration_minutes,
                 total_price=apt_data["price"],
                 advance_payment_amount=Decimal("0.00"),
-                payment_status=PaymentStatus.CONFIRMED,
                 status=AppointmentStatus.COMPLETED,
             )
             session.add(appointment)
