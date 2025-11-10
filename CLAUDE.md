@@ -4,11 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Atrévete Bot is an AI-powered WhatsApp booking assistant for a beauty salon. It handles customer bookings via WhatsApp through Chatwoot, managing appointments across 5 stylists using Google Calendar, processing payments via Stripe, and escalating to staff when needed. The agent uses LangGraph for stateful conversation orchestration and GPT-4.1-mini via OpenRouter for natural language understanding in Spanish.
+Atrévete Bot is an AI-powered WhatsApp booking assistant for a beauty salon. It handles customer bookings via WhatsApp through Chatwoot, managing appointments across 5 stylists using Google Calendar, and escalating to staff when needed. The agent uses LangGraph for stateful conversation orchestration and GPT-4.1-mini via OpenRouter for natural language understanding in Spanish.
 
 **Key External Dependencies:**
 - Google Calendar API (5 stylist calendars)
-- Stripe API (payments)
 - Chatwoot API (WhatsApp integration)
 - OpenRouter API (LLM gateway - using openai/gpt-4.1-mini for cost optimization)
 - PostgreSQL 15+ (data persistence)
@@ -105,9 +104,8 @@ docker exec atrevete-admin python manage.py collectstatic --noinput
 **Django Admin Features:**
 - **Customers**: Full CRUD with export/import (CSV, Excel, JSON), appointment history, total spent statistics
 - **Stylists**: Manage stylist profiles, categories, Google Calendar integration
-- **Services**: Service catalog management with pricing, duration, categories
-- **Appointments**: View/edit appointments with service details, payment status, Google Calendar sync
-- **Payments**: Stripe payment tracking and status monitoring
+- **Services**: Service catalog management with duration, categories
+- **Appointments**: View/edit appointments with service details, Google Calendar sync
 - **Policies**: Manage FAQ responses and business policies (JSON format)
 - **Conversation History**: View customer conversation logs with the AI agent
 - **Business Hours**: Configure salon opening hours by day of week
@@ -163,7 +161,7 @@ The system uses a **hybrid architecture** with two distinct tiers:
 - Transitions to Tier 2 when `booking_intent_confirmed=True`
 
 **Tier 2: Transactional Nodes (Explicit flow)**
-- Deterministic nodes for booking, availability checking, payment processing
+- Deterministic nodes for booking, availability checking
 - Examples: `check_availability`, `validate_booking_request`, `handle_category_choice`
 - Ensures reliable transactional operations with explicit state transitions
 
@@ -199,7 +197,6 @@ This simplification reduced complexity from 25 nodes to 12 nodes by consolidatin
      - `BOOKING_EXECUTION`: Ready to execute `book()` tool
      - `POST_BOOKING`: Booking completed, handling confirmations
    - Each state loads focused prompt (2-4KB) instead of monolithic 27KB
-   - New state flags: `service_selected`, `slot_selected`, `payment_link_sent`
 
 3. **In-Memory Caching (Stylist Context)**
    - TTL: 10 minutes
@@ -210,7 +207,7 @@ This simplification reduced complexity from 25 nodes to 12 nodes by consolidatin
 
 4. **Tool Output Truncation**
    - `query_info`: Max 10 results (default), configurable 1-50
-   - `search_services`: Max 5 results, simplified output (removed `id`, `price_euros`)
+   - `search_services`: Max 5 results, simplified output (removed `id`)
    - `find_next_available`: Max 5 slots per stylist, simplified output
    - Output fields reduced: Only essential data returned to LLM
 
@@ -284,14 +281,13 @@ This simplification reduced complexity from 25 nodes to 12 nodes by consolidatin
 - **New v3.2 fields for granular state detection:**
   - `service_selected: str | None` - Selected service name
   - `slot_selected: dict | None` - Selected slot `{stylist_id, start_time, duration}`
-  - `payment_link_sent: bool` - True after `book()` returns payment link
 - These flags enable 6-state detection for focused prompt loading
 
 **Database Models (database/models.py)**
 - Core tables: `customers`, `stylists`, `services`, `business_hours`
-- Transactional tables: `appointments`, `payments`, `conversation_history`
+- Transactional tables: `appointments`, `conversation_history`
 - All use UUID primary keys, TIMESTAMP WITH TIME ZONE, JSONB metadata
-- Enums: `ServiceCategory`, `PaymentStatus`, `AppointmentStatus`, `MessageRole`
+- Enums: `ServiceCategory`, `AppointmentStatus`, `MessageRole`
 
 **Tools (agent/tools/) - v3.1 Consolidated (7 tools)**
 - Information: `query_info` (services, FAQs, hours, policies - replaces 4 tools)
@@ -374,7 +370,7 @@ endpoint = f"{api_url}/api/v1/accounts/{account_id}/conversations/{conversation_
 - **Unit tests (tests/unit/)**: Test individual functions/tools in isolation with mocks
 - **Integration tests (tests/integration/)**: Test component interactions (API → Redis → Agent)
 - **Scenario tests (tests/integration/scenarios/)**: Test complete conversation flows end-to-end
-- **Mocks (tests/mocks/)**: Shared mock objects (Chatwoot, Stripe, Google Calendar APIs)
+- **Mocks (tests/mocks/)**: Shared mock objects (Chatwoot, Google Calendar APIs)
 - **Coverage requirement**: 85% minimum (configured in pyproject.toml)
 - **Excluded from coverage**: `admin/*` (deferred to Epic 7), migrations, tests
 
@@ -390,7 +386,7 @@ endpoint = f"{api_url}/api/v1/accounts/{account_id}/conversations/{conversation_
 
 ## Project Structure Notes
 
-- `api/` - FastAPI webhook receiver with routes for Chatwoot/Stripe webhooks
+- `api/` - FastAPI webhook receiver with routes for Chatwoot webhooks
 - `agent/` - LangGraph orchestrator with graphs, nodes, tools, prompts, workers
 - `database/` - SQLAlchemy models + Alembic migrations + seed data
 - `shared/` - Shared utilities: config, logging, Redis client, Chatwoot client
@@ -402,7 +398,6 @@ endpoint = f"{api_url}/api/v1/accounts/{account_id}/conversations/{conversation_
 ## Security Notes
 
 - Chatwoot webhook authentication: Token in URL path + timing-safe comparison
-- Stripe webhook authentication: Signature validation via `stripe.Webhook.construct_event`
 - Environment variables: NEVER commit `.env` to git
 - API keys: Use test keys for development, live keys only in production
 - Database credentials: Minimum 16 characters for security
