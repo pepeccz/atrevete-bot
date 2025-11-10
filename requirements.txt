@@ -38,6 +38,7 @@ gunicorn>=21.0.0
 django-extensions>=3.2.0
 django-jsoneditor>=0.2.0
 django-import-export>=3.3.0
+whitenoise[brotli]>=6.6.0
 
 # External Service Integrations
 google-api-python-client>=2.150

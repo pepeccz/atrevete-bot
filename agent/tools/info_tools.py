@@ -57,6 +57,17 @@ class QueryInfoSchema(BaseModel):
         )
     )
 
+    max_results: int = Field(
+        default=10,
+        ge=1,
+        le=50,
+        description=(
+            "Maximum number of results to return (1-50). Default: 10.\n"
+            "Use lower values (5-10) when user asks general questions.\n"
+            "Use higher values (20-50) only if user specifically needs complete catalog."
+        )
+    )
+
     @field_validator('filters', mode='before')
     @classmethod
     def parse_filters(cls, v):
@@ -84,13 +95,16 @@ class QueryInfoSchema(BaseModel):
 @tool(args_schema=QueryInfoSchema)
 async def query_info(
     type: Literal["services", "faqs", "hours", "policies"],
-    filters: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None,
+    max_results: int = 10
 ) -> dict[str, Any]:
     """
-    Query salon information (services, FAQs, hours, policies).
+    Query salon information (services, FAQs, hours, policies) with truncation.
 
     This consolidated tool provides access to all salon information through a single interface.
     Use the 'type' parameter to specify what information you need.
+
+    **v3.2 Enhancement**: Added max_results parameter to reduce token usage. Default: 10 items.
 
     Args:
         type: Type of information to query:
@@ -101,6 +115,7 @@ async def query_info(
         filters: Optional filters dict:
             - For services: {"category": "Peluquería" | "Estética"}
             - For faqs: {"keywords": ["hours", "parking"]}
+        max_results: Maximum results to return (1-50). Default: 10.
 
     Returns:
         Dict with queried data. Structure varies by type:
@@ -154,9 +169,9 @@ async def query_info(
     """
     try:
         if type == "services":
-            return await _get_services(filters)
+            return await _get_services(filters, max_results)
         elif type == "faqs":
-            return await _get_faqs(filters)
+            return await _get_faqs(filters, max_results)
         elif type == "hours":
             return await _get_business_hours()
         elif type == "policies":
@@ -170,11 +185,18 @@ async def query_info(
         return {"error": f"Error querying {type}"}
 
 
-async def _get_services(filters: dict[str, Any] | None) -> dict[str, Any]:
+async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -> dict[str, Any]:
     """
-    Get all active services, optionally filtered by category.
+    Get active services with optional filtering and truncation (v3.2).
 
     Internal function called by query_info(type="services").
+
+    Args:
+        filters: Optional category filter
+        max_results: Maximum results to return (default: 10)
+
+    Returns:
+        Dict with truncated services list, count_shown, and count_total
     """
     async for session in get_async_session():
         query = select(Service).where(Service.is_active == True)
@@ -193,30 +215,45 @@ async def _get_services(filters: dict[str, Any] | None) -> dict[str, Any]:
         result = await session.execute(query)
         services = list(result.scalars().all())
 
-        logger.info(f"Retrieved {len(services)} services" + (f" for category {filters.get('category')}" if filters else ""))
+        # Truncate to max_results
+        total_count = len(services)
+        truncated_services = services[:max_results]
+
+        logger.info(
+            f"Retrieved {len(truncated_services)}/{total_count} services" +
+            (f" for category {filters.get('category')}" if filters else "") +
+            (f" (truncated to {max_results})" if total_count > max_results else "")
+        )
 
         return {
             "services": [
                 {
-                    "id": str(s.id),
-                    "name": s.name,
-                    "price_euros": float(s.price_euros),
+                    "name": s.name,  # Simplified: removed id to save tokens
                     "duration_minutes": s.duration_minutes,
                     "category": s.category.value,
-                    "requires_advance_payment": s.requires_advance_payment,
                 }
-                for s in services
+                for s in truncated_services
             ],
-            "count": len(services),
+            "count_shown": len(truncated_services),
+            "count_total": total_count,
+            "note": (
+                f"Showing {len(truncated_services)} of {total_count} services. "
+                "Ask user to be more specific if needed."
+                if total_count > max_results else None
+            )
         }
         break
 
 
-async def _get_faqs(filters: dict[str, Any] | None) -> dict[str, Any]:
+async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> dict[str, Any]:
     """
-    Get FAQ/policy information from database.
+    Get FAQ/policy information from database with truncation (v3.2).
 
     Internal function called by query_info(type="faqs").
+
+    Args:
+        filters: Optional keyword filters
+        max_results: Maximum results to return (default: 10)
     """
     async for session in get_async_session():
         # Filter only FAQ policies (keys starting with 'faq_')
@@ -244,14 +281,25 @@ async def _get_faqs(filters: dict[str, Any] | None) -> dict[str, Any]:
                 "answer": faq_data.get("answer", ""),
             })
 
+        # Truncate to max_results
+        total_count = len(faqs)
+        truncated_faqs = faqs[:max_results]
+
         logger.info(
-            f"Retrieved {len(faqs)} FAQs" +
-            (f" for keywords: {filters.get('keywords')}" if filters else "")
+            f"Retrieved {len(truncated_faqs)}/{total_count} FAQs" +
+            (f" for keywords: {filters.get('keywords')}" if filters else "") +
+            (f" (truncated to {max_results})" if total_count > max_results else "")
         )
 
         return {
-            "faqs": faqs,
-            "count": len(faqs),
+            "faqs": truncated_faqs,
+            "count_shown": len(truncated_faqs),
+            "count_total": total_count,
+            "note": (
+                f"Showing {len(truncated_faqs)} of {total_count} FAQs. "
+                "Refine keywords for more specific results."
+                if total_count > max_results else None
+            )
         }
         break
 

@@ -202,7 +202,7 @@ async def search_services(
                 "message": f"No se encontraron servicios que coincidan con '{query}'"
             }
 
-        # Extract matched services and scores
+        # Extract matched services and scores (v3.2: simplified output to save tokens)
         matched_services = []
         for match in matches:
             service_name = match[0]  # Matched service name
@@ -210,12 +210,9 @@ async def search_services(
             service_obj = choices_dict[service_name]  # Get service object from dict
 
             matched_services.append({
-                "id": str(service_obj.id),
                 "name": service_obj.name,
-                "price_euros": float(service_obj.price_euros),
                 "duration_minutes": service_obj.duration_minutes,
                 "category": service_obj.category.value,
-                "requires_advance_payment": service_obj.requires_advance_payment,
                 "match_score": int(match_score)  # Add fuzzy match score for transparency
             })
 

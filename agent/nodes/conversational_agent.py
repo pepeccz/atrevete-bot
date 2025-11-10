@@ -1,8 +1,10 @@
 """
-Conversational Agent Node - v3.1 Architecture.
+Conversational Agent Node - v3.2 Architecture.
 
-This is the single node that handles ALL conversations using Claude Haiku 4.5
-with 7 consolidated tools. Replaces the hybrid Tier 1/Tier 2 architecture.
+This is the single node that handles ALL conversations using GPT-4.1-mini via OpenRouter
+with 8 consolidated tools. Replaces the hybrid Tier 1/Tier 2 architecture.
+
+Model: openai/gpt-4.1-mini (cost-optimized, automatic prompt caching)
 
 Handles everything:
 - FAQs, greetings, service inquiries → query_info tool
@@ -12,7 +14,7 @@ Handles everything:
 - Booking → book tool (delegates to BookingTransaction)
 - Escalation → escalate_to_human tool
 
-No transitions to transactional nodes. Claude orchestrates entire conversation.
+No transitions to transactional nodes. LLM orchestrates entire conversation.
 """
 
 import logging
@@ -23,7 +25,7 @@ from zoneinfo import ZoneInfo
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agent.prompts import load_maite_system_prompt, load_stylist_context
+from agent.prompts import load_contextual_prompt, load_stylist_context
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
 from agent.tools import (
@@ -43,9 +45,12 @@ logger = logging.getLogger(__name__)
 
 def get_llm_with_tools() -> ChatOpenAI:
     """
-    Get Claude LLM instance with 8 consolidated tools bound via OpenRouter.
+    Get GPT-4.1-mini LLM instance with 8 consolidated tools bound via OpenRouter.
 
-    Tools available (v3.1 enhanced):
+    Model: openai/gpt-4.1-mini (cost-optimized with automatic prompt caching)
+    Provider: OpenRouter API
+
+    Tools available (v3.2 enhanced):
     1. query_info: Unified information queries (services, FAQs, hours, policies)
     2. search_services: Fuzzy search for specific services (NEW - solves 47-service overflow)
     3. manage_customer: Unified customer management (get, create, update)
@@ -85,7 +90,7 @@ def get_llm_with_tools() -> ChatOpenAI:
 
     llm_with_tools = llm.bind_tools(tools)
 
-    logger.info("Claude LLM initialized with 8 consolidated tools (v3.1)")
+    logger.info(f"GPT-4.1-mini LLM initialized with 8 consolidated tools (v3.2) via OpenRouter")
 
     return llm_with_tools
 
@@ -299,9 +304,29 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     # Step 1: Build LangChain message history from state
     langchain_messages = []
 
-    # Add system prompt
-    system_prompt = load_maite_system_prompt()
+    # PHASE 1: CACHEABLE CONTENT (Static + Semi-static)
+    # This content is stable and benefits from OpenRouter's automatic caching
+    system_prompt = load_contextual_prompt(state)
     stylist_context = await load_stylist_context()
+
+    cacheable_system_prompt = f"{system_prompt}\n\n{stylist_context}"
+
+    # Measure prompt sizes for monitoring (v3.2 enhancement)
+    cacheable_size_chars = len(cacheable_system_prompt)
+    cacheable_size_tokens = cacheable_size_chars // 4  # Estimate: 4 chars ≈ 1 token
+
+    # Add cacheable system prompt as SystemMessage
+    # OpenRouter will automatically cache prompts >1024 tokens (~2500 tokens here)
+    langchain_messages.append(SystemMessage(content=cacheable_system_prompt))
+
+    logger.info(
+        f"Cacheable prompt size: {cacheable_size_chars} chars (~{cacheable_size_tokens} tokens) | "
+        f"Cache eligible: {cacheable_size_tokens > 256}"
+    )
+
+    # PHASE 2: DYNAMIC CONTENT (Per-request)
+    # This content changes frequently and should NOT be cached
+    # By separating it, we maximize cache hit rate on the static portion
 
     # Add temporal context (current date/time for date interpretation)
     now = datetime.now(ZoneInfo("Europe/Madrid"))
@@ -312,37 +337,43 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     ]
 
     earliest_valid = now + timedelta(days=3)
-    temporal_context = f"""
----
-CONTEXTO TEMPORAL (actualizado en cada conversación):
+    temporal_context = f"""CONTEXTO TEMPORAL:
 Hoy es {day_names_es[now.weekday()]} {now.day} de {month_names_es[now.month-1]} de {now.year}.
 Hora actual: {now.strftime('%H:%M')}
 
 IMPORTANTE: Las reservas requieren mínimo 3 días de aviso.
-Fecha más cercana válida: {day_names_es[earliest_valid.weekday()]} {earliest_valid.day} de {month_names_es[earliest_valid.month-1]}
----
-"""
+Fecha más cercana válida: {day_names_es[earliest_valid.weekday()]} {earliest_valid.day} de {month_names_es[earliest_valid.month-1]}"""
 
     # Add customer context (phone is always available from WhatsApp)
     customer_phone = state.get("customer_phone", "Desconocido")
     customer_name = state.get("customer_name")
     customer_id = state.get("customer_id")
 
-    customer_context = f"""
----
-DATOS DEL CLIENTE (disponibles automáticamente desde WhatsApp):
+    customer_context = f"""DATOS DEL CLIENTE:
 - Teléfono: {customer_phone}
-- Nombre registrado: {customer_name if customer_name else "No disponible (preguntar si es necesario)"}
-- ID de cliente: {customer_id if customer_id else "No registrado aún (crear con manage_customer si es necesario)"}
+- Nombre registrado: {customer_name if customer_name else "No disponible"}
+- ID de cliente: {customer_id if customer_id else "No registrado aún"}
 
-⚠️ CRÍTICO: El teléfono ({customer_phone}) ya está disponible del WhatsApp del cliente.
-NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a manage_customer.
----
-"""
+⚠️ CRÍTICO: El teléfono ({customer_phone}) ya está disponible del WhatsApp.
+NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a manage_customer."""
 
-    full_system_prompt = f"{system_prompt}\n\n{stylist_context}\n\n{temporal_context}\n\n{customer_context}"
+    # Combine dynamic contexts
+    dynamic_context = f"{temporal_context}\n\n{customer_context}"
 
-    langchain_messages.append(SystemMessage(content=full_system_prompt))
+    # Measure dynamic context size
+    dynamic_size_chars = len(dynamic_context)
+    dynamic_size_tokens = dynamic_size_chars // 4
+
+    # Add dynamic context as a separate HumanMessage (not cached)
+    # This allows OpenRouter to cache the SystemMessage above
+    langchain_messages.append(
+        HumanMessage(content=f"[CONTEXTO DINÁMICO]\n{dynamic_context}")
+    )
+
+    logger.info(
+        f"Dynamic context size: {dynamic_size_chars} chars (~{dynamic_size_tokens} tokens) | "
+        f"NOT cached (changes per request)"
+    )
 
     # Convert state messages to LangChain format
     for msg in messages_history:
@@ -362,7 +393,25 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
     # Step 2: Get LLM with tools
     llm_with_tools = get_llm_with_tools()
 
-    # Step 3: Invoke Claude LLM with tools (first pass)
+    # Log total prompt sizes and detect if booking state (v3.2 monitoring)
+    total_prompt_tokens = cacheable_size_tokens + dynamic_size_tokens
+    from agent.prompts import _detect_booking_state
+    booking_state = _detect_booking_state(state)
+
+    logger.info(
+        f"Total prompt size: ~{total_prompt_tokens} tokens "
+        f"({cacheable_size_tokens} cacheable + {dynamic_size_tokens} dynamic) | "
+        f"Booking state: {booking_state}"
+    )
+
+    # Alert if prompt is unusually large (>4000 tokens = ~16KB)
+    if total_prompt_tokens > 4000:
+        logger.warning(
+            f"⚠️ Prompt unusually large ({total_prompt_tokens} tokens, ~{total_prompt_tokens * 4} chars). "
+            f"Check if contextual loading is working correctly. State: {booking_state}"
+        )
+
+    # Step 3: Invoke GPT-4.1-mini LLM with tools (first pass)
     try:
         response = await llm_with_tools.ainvoke(langchain_messages)
 

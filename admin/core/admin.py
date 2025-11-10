@@ -243,8 +243,8 @@ class AppointmentAdmin(ImportExportModelAdmin):
     def has_google_event(self, obj):
         """Display if appointment has Google Calendar event."""
         if obj.google_calendar_event_id:
-            return format_html('<span style="color: green;">✓</span>')
-        return format_html('<span style="color: red;">✗</span>')
+            return format_html('<span style="color: #27ae60;">Sí</span>')
+        return format_html('<span style="color: #e74c3c;">No</span>')
     has_google_event.short_description = 'Google Calendar'
 
     def service_list_display(self, obj):
@@ -465,9 +465,9 @@ class BusinessHoursAdmin(admin.ModelAdmin):
     def opening_hours_display(self, obj):
         """Display opening hours in readable format."""
         if obj.is_closed:
-            return format_html('<span style="color: red; font-weight: bold;">CERRADO</span>')
+            return format_html('<span style="color: #e74c3c; font-weight: 600;">CERRADO</span>')
 
         start = f"{obj.start_hour:02d}:{obj.start_minute:02d}"
         end = f"{obj.end_hour:02d}:{obj.end_minute:02d}"
-        return format_html('<span style="color: green;">{} - {}</span>', start, end)
+        return format_html('<span style="color: #27ae60;">{} - {}</span>', start, end)
     opening_hours_display.short_description = 'Horario'

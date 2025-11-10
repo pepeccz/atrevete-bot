@@ -23,8 +23,8 @@ COPY database/ ./database/
 # Set working directory to admin app
 WORKDIR /app/admin
 
-# Collect static files (run on container start)
-# We'll use a startup script to handle this
+# Collect static files during build
+RUN python manage.py collectstatic --noinput --clear
 
 # Expose Django Admin port
 EXPOSE 8001

@@ -99,6 +99,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"  # Ignore extra env vars (e.g., LANGCHAIN_* variables)
 
 
 @lru_cache

@@ -1,15 +1,16 @@
 """
-ConversationState schema for LangGraph StateGraph - v3.0 Architecture (Simplified).
+ConversationState schema for LangGraph StateGraph - v3.2 Architecture (Optimized).
 
-This module defines the minimalist typed state structure for v3.0 architecture.
+This module defines the typed state structure for v3.2 architecture with granular state detection.
 The state is immutable - nodes must return new dicts rather than mutating the input state.
 
 Architecture:
-- Single conversational_agent node handles all conversation via Claude + 7 consolidated tools
+- Single conversational_agent node handles all conversation via GPT-4.1-mini + 8 consolidated tools
 - Booking delegated to BookingTransaction handler (atomic, no graph nodes)
+- Enhanced state tracking for granular prompt loading (6 booking states)
 
-Simplification: Reduced from 50 fields (v2 hybrid) to 15 fields (v3 tool-based).
-Claude's reasoning + tool calling replaces explicit state tracking for booking phases.
+Evolution: v3.2 adds granular state flags (service_selected, slot_selected, payment_link_sent)
+to enable focused prompt loading per booking phase, reducing token usage by 60-70%.
 """
 
 from datetime import datetime
@@ -19,20 +20,23 @@ from uuid import UUID
 
 class ConversationState(TypedDict, total=False):
     """
-    Minimalist state schema for v3.0 tool-based architecture.
+    State schema for v3.2 architecture with granular state detection.
 
-    This TypedDict defines only essential conversation context. All fields are
-    optional (total=False) to allow partial state updates.
+    This TypedDict defines conversation context plus booking state flags for
+    granular prompt loading. All fields are optional (total=False) to allow
+    partial state updates.
 
-    Core Principle: Claude + tools handle all logic. State only stores:
+    Core Principle: GPT-4.1-mini + tools handle all logic. State stores:
     - Conversation history (messages)
+    - Booking progress flags (for granular prompt loading)
     - Metadata for checkpointing
     - Escalation state
 
-    No booking phases, no explicit state transitions - Claude orchestrates everything
-    through tool calls (query_info, manage_customer, check_availability, book, etc.)
+    v3.2 Enhancement: Added service_selected, slot_selected, payment_link_sent
+    flags to enable 6-state detection (GENERAL, SERVICE_SELECTION, AVAILABILITY_CHECK,
+    CUSTOMER_DATA, BOOKING_EXECUTION, POST_BOOKING) for focused prompt loading.
 
-    Fields (16 total):
+    Fields (19 total):
         # Core Metadata (5 fields)
         conversation_id: LangGraph thread_id for checkpointing
         customer_phone: E.164 phone (e.g., +34612345678)
@@ -51,8 +55,11 @@ class ConversationState(TypedDict, total=False):
         escalation_reason: Why escalated (e.g., "medical_consultation")
         error_count: Consecutive errors (for auto-escalation)
 
-        # Tool Execution Tracking (1 field)
-        customer_data_collected: Prevents duplicate manage_customer calls
+        # Tool Execution Tracking - v3.2 Enhanced (4 fields)
+        customer_data_collected: True after manage_customer returns customer_id
+        service_selected: Service name selected (e.g., "CORTE LARGO")
+        slot_selected: Selected slot dict {stylist_id, start_time, duration}
+        payment_link_sent: True after book() returns payment link
 
         # Node Tracking (1 field)
         last_node: Last executed node (for debugging)
@@ -89,9 +96,12 @@ class ConversationState(TypedDict, total=False):
     error_count: int
 
     # ============================================================================
-    # Tool Execution Tracking (1 field)
+    # Tool Execution Tracking (4 fields) - v3.2 enhanced state detection
     # ============================================================================
-    customer_data_collected: bool
+    customer_data_collected: bool  # True after manage_customer returns customer_id
+    service_selected: str | None  # Service name selected by user
+    slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
+    payment_link_sent: bool  # True after book() returns payment link
 
     # ============================================================================
     # Node Tracking (1 field)

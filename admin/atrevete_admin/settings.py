@@ -48,6 +48,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Serve static files efficiently
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -108,7 +109,7 @@ if database_url.startswith('postgresql://'):
                 'NAME': settings.POSTGRES_DB,
                 'USER': settings.POSTGRES_USER,
                 'PASSWORD': settings.POSTGRES_PASSWORD,
-                'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
+                'HOST': os.getenv('POSTGRES_HOST', 'postgres'),
                 'PORT': os.getenv('POSTGRES_PORT', '5432'),
             }
         }
@@ -120,13 +121,15 @@ else:
             'NAME': settings.POSTGRES_DB,
             'USER': settings.POSTGRES_USER,
             'PASSWORD': settings.POSTGRES_PASSWORD,
-            'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
+            'HOST': os.getenv('POSTGRES_HOST', 'postgres'),
             'PORT': os.getenv('POSTGRES_PORT', '5432'),
         }
     }
 
-# Database Router - CRITICAL: Prevents Django migrations
-DATABASE_ROUTERS = ['atrevete_admin.router.UnmanagedRouter']
+# Database Router - CRITICAL: Prevents Django migrations for core app
+# Temporarily commented out to debug
+# DATABASE_ROUTERS = ['atrevete_admin.router.UnmanagedRouter']
+DATABASE_ROUTERS = []
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -157,6 +160,9 @@ USE_TZ = True  # Use timezone-aware datetimes
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [BASE_DIR / 'static']
+
+# WhiteNoise configuration for serving static files with Gunicorn
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

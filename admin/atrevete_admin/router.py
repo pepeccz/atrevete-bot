@@ -34,9 +34,17 @@ class UnmanagedRouter:
 
     def allow_migrate(self, db, app_label, model_name=None, **hints):
         """
-        CRITICAL: Never allow Django to run migrations.
+        CRITICAL: Only allow Django to manage its own tables (auth, admin, sessions, contenttypes).
 
-        The database is managed by Alembic. Django is only used for
-        the admin interface to read/write data.
+        Block migrations for 'core' app - those tables are managed by Alembic.
         """
+        # Allow Django's built-in apps to migrate
+        if app_label in ['auth', 'admin', 'sessions', 'contenttypes']:
+            return True
+
+        # Block migrations for our core app (managed by Alembic)
+        if app_label == 'core':
+            return False
+
+        # Block everything else by default
         return False

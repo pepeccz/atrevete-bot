@@ -548,22 +548,40 @@ async def find_next_available(
 
                         all_slots_by_stylist[stylist.id].append(slot_data)
 
-        # Format results by stylist (group slots by stylist)
+        # Format results by stylist (group slots by stylist, v3.2: truncate to 5 per stylist)
         available_stylists = []
         total_slots_found = 0
+        max_slots_per_stylist = 5  # Limit slots to reduce token usage
 
         for stylist in stylists:
             stylist_slots = all_slots_by_stylist[stylist.id]
             if stylist_slots:
+                # Truncate to first 5 slots per stylist
+                truncated_slots = stylist_slots[:max_slots_per_stylist]
+
+                # Simplify slot output: remove redundant fields
+                simplified_slots = [
+                    {
+                        "time": slot["time"],
+                        "date": slot["date"],
+                        "day_name": slot["day_name"],
+                        "full_datetime": slot["full_datetime"]  # Keep for booking
+                    }
+                    for slot in truncated_slots
+                ]
+
                 available_stylists.append({
                     "stylist_name": stylist.name,
                     "stylist_id": str(stylist.id),
-                    "slots": stylist_slots
+                    "slots": simplified_slots,
+                    "slots_shown": len(simplified_slots),
+                    "slots_total": len(stylist_slots)
                 })
                 total_slots_found += len(stylist_slots)
 
                 logger.info(
-                    f"Found {len(stylist_slots)} slots for {stylist.name}"
+                    f"Found {len(simplified_slots)}/{len(stylist_slots)} slots for {stylist.name} "
+                    f"(truncated to {max_slots_per_stylist})"
                 )
 
         logger.info(
