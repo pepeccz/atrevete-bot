@@ -68,7 +68,6 @@ class TestGetServiceByName:
         # Assert
         assert service is not None, "Service 'MECHAS' should be found"
         assert service.name == "MECHAS"
-        assert service.price_euros == Decimal("60.00")
         assert service.duration_minutes == 120
 
     async def test_fuzzy_search_with_typo(self):
@@ -151,8 +150,6 @@ class TestGetServiceByName:
                 name="INACTIVE_TEST_SERVICE",
                 category=ServiceCategory.HAIRDRESSING,
                 duration_minutes=30,
-                price_euros=Decimal("10.00"),
-                requires_advance_payment=False,
                 description="Test inactive service",
                 is_active=False,
             )

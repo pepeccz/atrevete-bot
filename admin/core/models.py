@@ -24,14 +24,6 @@ class ServiceCategory(models.TextChoices):
     AESTHETICS = "Estética", "Estética"
 
 
-class PaymentStatus(models.TextChoices):
-    """Payment status for appointments."""
-    PENDING = "pending", "Pendiente"
-    CONFIRMED = "confirmed", "Confirmado"
-    REFUNDED = "refunded", "Reembolsado"
-    FORFEITED = "forfeited", "Perdido"
-
-
 class AppointmentStatus(models.TextChoices):
     """Appointment lifecycle status."""
     PROVISIONAL = "provisional", "Provisional"
@@ -163,7 +155,7 @@ class Customer(models.Model):
 
 class Service(models.Model):
     """
-    Service model - Individual salon services with pricing and duration.
+    Service model - Individual salon services with duration.
 
     Maps to 'services' table managed by Alembic.
     """
@@ -179,18 +171,6 @@ class Service(models.Model):
         validators=[MinValueValidator(1)],
         verbose_name="Duración (minutos)",
         help_text="Duración aproximada en minutos"
-    )
-    price_euros = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        validators=[MinValueValidator(Decimal("0.00"))],
-        verbose_name="Precio (€)",
-        help_text="Precio en euros"
-    )
-    requires_advance_payment = models.BooleanField(
-        default=True,
-        verbose_name="Requiere anticipo",
-        help_text="Marcar si este servicio requiere pago anticipado"
     )
     description = models.TextField(
         blank=True,
@@ -214,7 +194,7 @@ class Service(models.Model):
         ordering = ['category', 'name']
 
     def __str__(self):
-        return f"{self.name} - {self.price_euros}€ ({self.duration_minutes}min)"
+        return f"{self.name} ({self.duration_minutes}min)"
 
 
 class Appointment(models.Model):
@@ -250,26 +230,6 @@ class Appointment(models.Model):
         validators=[MinValueValidator(1)],
         verbose_name="Duración (minutos)"
     )
-    total_price = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        validators=[MinValueValidator(Decimal("0.00"))],
-        verbose_name="Precio total (€)"
-    )
-    advance_payment_amount = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=Decimal("0.00"),
-        validators=[MinValueValidator(Decimal("0.00"))],
-        verbose_name="Anticipo (€)",
-        help_text="Cantidad pagada por adelantado"
-    )
-    payment_status = models.CharField(
-        max_length=20,
-        choices=PaymentStatus.choices,
-        default=PaymentStatus.PENDING,
-        verbose_name="Estado del pago"
-    )
     status = models.CharField(
         max_length=20,
         choices=AppointmentStatus.choices,
@@ -282,25 +242,6 @@ class Appointment(models.Model):
         null=True,
         verbose_name="ID evento Google Calendar",
         help_text="ID del evento en Google Calendar (gestionado automáticamente)"
-    )
-    stripe_payment_id = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True,
-        verbose_name="ID pago Stripe",
-        help_text="PaymentIntent ID de Stripe (gestionado automáticamente)"
-    )
-    stripe_payment_link_id = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True,
-        verbose_name="ID Payment Link Stripe",
-        help_text="Stripe Payment Link ID (gestionado automáticamente)"
-    )
-    payment_retry_count = models.IntegerField(
-        default=0,
-        validators=[MinValueValidator(0)],
-        verbose_name="Intentos de pago"
     )
     reminder_sent = models.BooleanField(
         default=False,
@@ -333,65 +274,6 @@ class Appointment(models.Model):
 
     def __str__(self):
         return f"Cita {self.customer.first_name} - {self.start_time.strftime('%d/%m/%Y %H:%M')} ({self.get_status_display()})"
-
-
-class Payment(models.Model):
-    """
-    Payment model - Records Stripe payment transactions for appointment deposits.
-
-    Maps to 'payments' table managed by Alembic.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    appointment = models.ForeignKey(
-        Appointment,
-        on_delete=models.CASCADE,
-        related_name='payments',
-        verbose_name="Cita"
-    )
-    stripe_payment_intent_id = models.CharField(
-        max_length=255,
-        unique=True,
-        verbose_name="PaymentIntent ID",
-        help_text="ID del PaymentIntent de Stripe (pi_xxx)"
-    )
-    stripe_checkout_session_id = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True,
-        verbose_name="Checkout Session ID",
-        help_text="ID de la sesión de checkout de Stripe (cs_xxx)"
-    )
-    amount = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        verbose_name="Monto (€)",
-        help_text="Monto del pago en euros"
-    )
-    status = models.CharField(
-        max_length=20,
-        choices=PaymentStatus.choices,
-        default=PaymentStatus.PENDING,
-        verbose_name="Estado"
-    )
-    stripe_metadata = models.JSONField(
-        blank=True,
-        null=True,
-        verbose_name="Metadata Stripe",
-        help_text="Datos adicionales del webhook de Stripe"
-    )
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Fecha de creación")
-    updated_at = models.DateTimeField(auto_now=True, verbose_name="Última actualización")
-
-    class Meta:
-        managed = False
-        db_table = 'payments'
-        verbose_name = 'Pago'
-        verbose_name_plural = 'Pagos'
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"Pago {self.stripe_payment_intent_id} - {self.amount}€ ({self.get_status_display()})"
 
 
 class Policy(models.Model):

@@ -42,7 +42,6 @@ whitenoise[brotli]>=6.6.0
 
 # External Service Integrations
 google-api-python-client>=2.150
-stripe>=10.0
 
 # Audio Transcription
 groq>=0.11.0

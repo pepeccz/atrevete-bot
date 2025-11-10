@@ -242,8 +242,6 @@ async def test_create_service(session):
         name="Corte de pelo",
         category=ServiceCategory.HAIRDRESSING,
         duration_minutes=60,
-        price_euros=Decimal("25.00"),
-        requires_advance_payment=False,
         description="Haircut service",
         is_active=True,
     )
@@ -253,8 +251,7 @@ async def test_create_service(session):
     assert service.id is not None
     assert service.name == "Corte de pelo"
     assert service.duration_minutes == 60
-    assert service.price_euros == Decimal("25.00")
-    assert service.requires_advance_payment is False
+    assert service.description == "Haircut service"
 
 
 @pytest.mark.asyncio
@@ -264,7 +261,6 @@ async def test_service_check_duration_positive(session):
         name="Invalid Service",
         category=ServiceCategory.HAIRDRESSING,
         duration_minutes=0,  # Invalid: must be > 0
-        price_euros=Decimal("10.00"),
     )
     session.add(service)
 
@@ -273,36 +269,8 @@ async def test_service_check_duration_positive(session):
     assert "check_duration_positive" in str(exc_info.value)
 
 
-@pytest.mark.asyncio
-async def test_service_check_price_non_negative(session):
-    """Test that price_euros can be 0 (free consultation) but not negative."""
-    # Test free service (price = 0) - should succeed
-    service_free = Service(
-        name="Free Consultation",
-        category=ServiceCategory.AESTHETICS,
-        duration_minutes=30,
-        price_euros=Decimal("0.00"),
-    )
-    session.add(service_free)
-    await session.commit()
-    assert service_free.price_euros == Decimal("0.00")
-
-    # Test negative price - should fail
-    service_negative = Service(
-        name="Invalid Price Service",
-        category=ServiceCategory.HAIRDRESSING,
-        duration_minutes=60,
-        price_euros=Decimal("-10.00"),
-    )
-    session.add(service_negative)
-
-    with pytest.raises(IntegrityError) as exc_info:
-        await session.commit()
-    assert "check_price_non_negative" in str(exc_info.value)
-
-
 # ============================================================================
-# Pack Model Tests - REMOVED (packs functionality eliminated, lines 305-362)
+# Pack Model Tests - REMOVED (packs functionality eliminated)
 # ============================================================================
 
 

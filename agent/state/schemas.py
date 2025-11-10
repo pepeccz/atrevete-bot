@@ -9,7 +9,7 @@ Architecture:
 - Booking delegated to BookingTransaction handler (atomic, no graph nodes)
 - Enhanced state tracking for granular prompt loading (6 booking states)
 
-Evolution: v3.2 adds granular state flags (service_selected, slot_selected, payment_link_sent)
+Evolution: v3.2 adds granular state flags (service_selected, slot_selected)
 to enable focused prompt loading per booking phase, reducing token usage by 60-70%.
 """
 
@@ -32,11 +32,11 @@ class ConversationState(TypedDict, total=False):
     - Metadata for checkpointing
     - Escalation state
 
-    v3.2 Enhancement: Added service_selected, slot_selected, payment_link_sent
-    flags to enable 6-state detection (GENERAL, SERVICE_SELECTION, AVAILABILITY_CHECK,
-    CUSTOMER_DATA, BOOKING_EXECUTION, POST_BOOKING) for focused prompt loading.
+    v3.2 Enhancement: Added service_selected, slot_selected flags to enable
+    5-state detection (GENERAL, SERVICE_SELECTION, AVAILABILITY_CHECK,
+    CUSTOMER_DATA, BOOKING_EXECUTION) for focused prompt loading.
 
-    Fields (19 total):
+    Fields (18 total):
         # Core Metadata (5 fields)
         conversation_id: LangGraph thread_id for checkpointing
         customer_phone: E.164 phone (e.g., +34612345678)
@@ -55,11 +55,10 @@ class ConversationState(TypedDict, total=False):
         escalation_reason: Why escalated (e.g., "medical_consultation")
         error_count: Consecutive errors (for auto-escalation)
 
-        # Tool Execution Tracking - v3.2 Enhanced (4 fields)
+        # Tool Execution Tracking - v3.2 Enhanced (3 fields)
         customer_data_collected: True after manage_customer returns customer_id
         service_selected: Service name selected (e.g., "CORTE LARGO")
         slot_selected: Selected slot dict {stylist_id, start_time, duration}
-        payment_link_sent: True after book() returns payment link
 
         # Node Tracking (1 field)
         last_node: Last executed node (for debugging)
@@ -96,12 +95,11 @@ class ConversationState(TypedDict, total=False):
     error_count: int
 
     # ============================================================================
-    # Tool Execution Tracking (4 fields) - v3.2 enhanced state detection
+    # Tool Execution Tracking (3 fields) - v3.2 enhanced state detection
     # ============================================================================
     customer_data_collected: bool  # True after manage_customer returns customer_id
     service_selected: str | None  # Service name selected by user
     slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
-    payment_link_sent: bool  # True after book() returns payment link
 
     # ============================================================================
     # Node Tracking (1 field)

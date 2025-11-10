@@ -64,15 +64,6 @@ class ServiceCategory(str, PyEnum):
     AESTHETICS = "Estética"
 
 
-class PaymentStatus(str, PyEnum):
-    """Payment status for appointments."""
-
-    PENDING = "pending"
-    CONFIRMED = "confirmed"
-    REFUNDED = "refunded"
-    FORFEITED = "forfeited"
-
-
 class AppointmentStatus(PyEnum):
     """Appointment lifecycle status."""
 
@@ -240,9 +231,8 @@ class Customer(Base):
 
 class Service(Base):
     """
-    Service model - Individual salon services with pricing and duration.
+    Service model - Individual salon services with duration.
 
-    Services can require advance payment (anticipo) or allow walk-ins.
     Supports fuzzy search on service name using pg_trgm extension.
     """
 
@@ -260,10 +250,6 @@ class Service(Base):
         nullable=False,
     )
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
-    price_euros: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    requires_advance_payment: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False
-    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -282,7 +268,6 @@ class Service(Base):
     __table_args__ = (
         # CHECK constraints
         CheckConstraint("duration_minutes > 0", name="check_duration_positive"),
-        CheckConstraint("price_euros >= 0", name="check_price_non_negative"),
         # Conditional index on category where active
         Index(
             "idx_services_category_active",
@@ -299,7 +284,7 @@ class Service(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Service(id={self.id}, name='{self.name}', price={self.price_euros}€)>"
+        return f"<Service(id={self.id}, name='{self.name}')>"
 
 
 # ============================================================================
@@ -311,8 +296,8 @@ class Appointment(Base):
     """
     Appointment model - Booking transactions with state management.
 
-    Tracks the full appointment lifecycle from provisional to confirmed/completed.
-    Integrates with Stripe (payment tracking) and Google Calendar (scheduling).
+    Tracks the full appointment lifecycle (confirmed/completed/cancelled).
+    Integrates with Google Calendar (scheduling).
     Supports group bookings and third-party bookings.
     """
 
@@ -348,18 +333,7 @@ class Appointment(Base):
     )
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # Financial
-    total_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    advance_payment_amount: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), default=Decimal("0.00"), nullable=False
-    )
-
     # Status tracking
-    payment_status: Mapped[PaymentStatus] = mapped_column(
-        SQLEnum(PaymentStatus, name="payment_status", create_type=True),
-        default=PaymentStatus.PENDING,
-        nullable=False,
-    )
     status: Mapped[AppointmentStatus] = mapped_column(
         SQLEnum(AppointmentStatus, name="appointment_status", create_type=False),
         default=AppointmentStatus.PROVISIONAL,
@@ -371,15 +345,8 @@ class Appointment(Base):
     google_calendar_event_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )
-    stripe_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    stripe_payment_link_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, comment="Stripe Payment Link ID for deactivation on expiration"
-    )
 
     # Operational fields
-    payment_retry_count: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
     reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Group booking support
@@ -413,23 +380,11 @@ class Appointment(Base):
     booked_by: Mapped[Optional["Customer"]] = relationship(
         "Customer", foreign_keys=[booked_by_customer_id]
     )
-    payments: Mapped[list["Payment"]] = relationship(
-        "Payment", back_populates="appointment", cascade="all, delete-orphan"
-    )
 
     # Constraints and indexes
     __table_args__ = (
         # CHECK constraints
         CheckConstraint("duration_minutes > 0", name="check_appointment_duration_positive"),
-        CheckConstraint("total_price >= 0", name="check_appointment_total_price_non_negative"),
-        CheckConstraint("advance_payment_amount >= 0", name="check_appointment_advance_payment_non_negative"),
-        CheckConstraint("payment_retry_count >= 0", name="check_appointment_payment_retry_count_non_negative"),
-        # Conditional index on stripe_payment_id for webhook lookups (sparse - only when NOT NULL)
-        Index(
-            "idx_appointments_stripe_payment_id",
-            "stripe_payment_id",
-            postgresql_where=text("stripe_payment_id IS NOT NULL"),
-        ),
         # Conditional index on group_booking_id for group booking queries (sparse - only when NOT NULL)
         Index(
             "idx_appointments_group_booking_id",
@@ -447,104 +402,6 @@ class Appointment(Base):
 
     def __repr__(self) -> str:
         return f"<Appointment(id={self.id}, customer_id={self.customer_id}, status='{self.status.value}')>"
-
-
-class Payment(Base):
-    """
-    Payment model - Records Stripe payment transactions for appointment deposits.
-
-    Tracks payment lifecycle from intent creation through completion/failure.
-    Each payment is linked to exactly one appointment.
-    """
-
-    __tablename__ = "payments"
-
-    # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        primary_key=True,
-        default=uuid4,
-        comment="Unique payment identifier",
-    )
-
-    # Foreign key to appointment
-    appointment_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("appointments.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-        comment="Associated appointment",
-    )
-
-    # Stripe identifiers
-    stripe_payment_intent_id: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-        unique=True,
-        index=True,
-        comment="Stripe PaymentIntent ID (pi_xxx)",
-    )
-
-    stripe_checkout_session_id: Mapped[str | None] = mapped_column(
-        String(255),
-        nullable=True,
-        index=True,
-        comment="Stripe Checkout Session ID (cs_xxx)",
-    )
-
-    # Payment details
-    amount: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2),
-        nullable=False,
-        comment="Payment amount in euros (e.g., 15.00 for 15€ deposit)",
-    )
-
-    status: Mapped[PaymentStatus] = mapped_column(
-        SQLEnum(PaymentStatus, name="payment_status", create_type=False),
-        nullable=False,
-        default=PaymentStatus.PENDING,
-        index=True,
-        comment="Payment status (pending, succeeded, failed, canceled)",
-    )
-
-    # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        comment="When payment intent was created",
-    )
-
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-        comment="Last status update",
-    )
-
-    # Additional metadata from Stripe
-    stripe_metadata: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB,
-        nullable=True,
-        comment="Additional Stripe webhook data (payment method, receipt URL, etc.)",
-    )
-
-    # Relationship back to appointment
-    appointment: Mapped["Appointment"] = relationship(
-        "Appointment",
-        back_populates="payments",
-    )
-
-    __table_args__ = (
-        # Index for querying payments by status
-        Index("idx_payments_status", "status"),
-        # Index for querying payments by appointment
-        Index("idx_payments_appointment_id", "appointment_id"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<Payment(id={self.id}, appointment_id={self.appointment_id}, status='{self.status.value}', amount={self.amount})>"
 
 
 class Policy(Base):

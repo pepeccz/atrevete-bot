@@ -1,8 +1,8 @@
 Resume la siguiente conversación en 2-3 oraciones, manteniendo SOLO la información crítica para continuar ayudando al cliente:
 - Identidad del cliente (nombre, si es cliente recurrente)
 - Intención principal (reserva, modificación, cancelación, consulta)
-- Decisiones tomadas (servicios elegidos, fecha/hora seleccionada, pago realizado)
-- Contexto pendiente (esperando confirmación, link de pago enviado, etc.)
+- Decisiones tomadas (servicios elegidos, fecha/hora seleccionada, cita confirmada)
+- Contexto pendiente (esperando datos del cliente, confirmación pendiente, etc.)
 
 OMITE detalles conversacionales innecesarios (saludos, cortesías, preguntas ya resueltas).
 

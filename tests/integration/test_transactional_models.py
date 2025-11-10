@@ -3,7 +3,7 @@ Integration tests for transactional database models.
 
 Tests cover:
 - Appointment creation with all fields and foreign keys
-- Payment status and appointment status transitions
+- Appointment status transitions
 - Foreign key constraints (CASCADE, RESTRICT, SET NULL)
 - CHECK constraint violations
 - Conditional index usage
@@ -34,7 +34,6 @@ from database.models import (
     Customer,
     MessageRole,
     # Pack,  # Removed - packs functionality eliminated
-    PaymentStatus,
     Policy,
     Service,
     Stylist,
@@ -99,10 +98,7 @@ async def test_create_complete_appointment():
             service_ids=[service.id],
             start_time=start_time,
             duration_minutes=120,
-            total_price=Decimal("60.00"),
-            advance_payment_amount=Decimal("12.00"),
-            payment_status=PaymentStatus.PENDING,
-            status=AppointmentStatus.PROVISIONAL,
+            status=AppointmentStatus.CONFIRMED,
         )
         session.add(appointment)
         await session.commit()
@@ -114,46 +110,7 @@ async def test_create_complete_appointment():
         assert appointment.stylist_id == stylist.id
         assert appointment.service_ids == [service.id]
         assert appointment.start_time == start_time
-        assert appointment.payment_status == PaymentStatus.PENDING
-        assert appointment.status == AppointmentStatus.PROVISIONAL
-
-
-@pytest.mark.asyncio
-async def test_query_appointment_by_stripe_payment_id():
-    """Test querying appointment by stripe_payment_id (conditional index)."""
-    async with AsyncSessionLocal() as session:
-        # Create customer and appointment
-        customer = Customer(phone="+34612345679", first_name="Test")
-        session.add(customer)
-        await session.flush()  # Flush to generate customer.id
-
-        result = await session.execute(select(Stylist).limit(1))
-        stylist = result.scalar_one()
-
-        result = await session.execute(select(Service).limit(1))
-        service = result.scalar_one()
-
-        appointment = Appointment(
-            customer_id=customer.id,
-            stylist_id=stylist.id,
-            service_ids=[service.id],
-            start_time=datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1),
-            duration_minutes=60,
-            total_price=Decimal("25.00"),
-            stripe_payment_id="pi_test_123456",
-        )
-        session.add(appointment)
-        await session.commit()
-
-        # Query by stripe_payment_id
-        stmt_appt = select(Appointment).where(
-            Appointment.stripe_payment_id == "pi_test_123456"
-        )
-        result_appt = await session.execute(stmt_appt)
-        found_appointment = result_appt.scalar_one()
-
-        assert found_appointment.id == appointment.id
-        assert found_appointment.stripe_payment_id == "pi_test_123456"
+        assert appointment.status == AppointmentStatus.CONFIRMED
 
 
 @pytest.mark.asyncio
@@ -175,7 +132,6 @@ async def test_appointment_invalid_customer_fk():
             service_ids=[service.id],
             start_time=datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1),
             duration_minutes=60,
-            total_price=Decimal("25.00"),
         )
         session.add(appointment)
 
@@ -183,36 +139,6 @@ async def test_appointment_invalid_customer_fk():
             await session.commit()
 
         assert "violates foreign key constraint" in str(exc_info.value).lower()
-
-
-@pytest.mark.asyncio
-async def test_appointment_negative_total_price_check_constraint():
-    """Test creating appointment with negative total_price raises IntegrityError."""
-    async with AsyncSessionLocal() as session:
-        customer = Customer(phone="+34612345680", first_name="Test")
-        session.add(customer)
-        await session.flush()  # Flush to generate customer.id
-
-        result = await session.execute(select(Stylist).limit(1))
-        stylist = result.scalar_one()
-
-        result = await session.execute(select(Service).limit(1))
-        service = result.scalar_one()
-
-        appointment = Appointment(
-            customer_id=customer.id,
-            stylist_id=stylist.id,
-            service_ids=[service.id],
-            start_time=datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1),
-            duration_minutes=60,
-            total_price=Decimal("-10.00"),  # Negative price
-        )
-        session.add(appointment)
-
-        with pytest.raises(IntegrityError) as exc_info:
-            await session.commit()
-
-        assert "check_appointment_total_price_non_negative" in str(exc_info.value).lower()
 
 
 @pytest.mark.asyncio
@@ -235,7 +161,6 @@ async def test_delete_customer_cascades_to_appointments():
             service_ids=[service.id],
             start_time=datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1),
             duration_minutes=60,
-            total_price=Decimal("25.00"),
         )
         session.add(appointment)
         await session.commit()
@@ -280,7 +205,6 @@ async def test_delete_stylist_with_appointments_restricted():
             service_ids=[service.id],
             start_time=datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1),
             duration_minutes=60,
-            total_price=Decimal("25.00"),
         )
         session.add(appointment)
         await session.commit()
@@ -446,7 +370,6 @@ async def test_appointment_reminder_pending_conditional_index():
             service_ids=[service.id],
             start_time=datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=2),
             duration_minutes=60,
-            total_price=Decimal("25.00"),
             status=AppointmentStatus.CONFIRMED,
             reminder_sent=False,
         )

@@ -1,7 +1,6 @@
 """Unit tests for webhook Pydantic models."""
 
 from typing import Any, TypedDict
-from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -10,7 +9,6 @@ from api.models.chatwoot_webhook import (
     ChatwootMessageEvent,
     ChatwootWebhookPayload,
 )
-from api.models.stripe_webhook import StripePaymentEvent, StripeWebhookEvent
 
 
 # TypedDict definitions for test fixtures
@@ -39,23 +37,6 @@ class ChatwootWebhookPayloadDict(TypedDict, total=False):
     sender: dict[str, Any]  # Pydantic handles nested conversion
     created_at: str  # Pydantic handles datetime conversion
     message_type: str | None
-
-
-class StripeWebhookEventDict(TypedDict, total=False):
-    """Type definition for Stripe webhook event test data."""
-
-    type: str
-    id: str
-    created: int
-    data: dict[str, Any]  # Pydantic accepts nested dicts
-
-
-class StripePaymentEventDict(TypedDict):
-    """Type definition for Stripe payment event test data."""
-
-    appointment_id: str | UUID  # Pydantic handles string-to-UUID conversion
-    stripe_payment_id: str
-    event_type: str
 
 
 class TestChatwootWebhookPayload:
@@ -168,90 +149,3 @@ class TestChatwootMessageEvent:
 
         errors = exc_info.value.errors()
         assert any("phone" in str(e).lower() for e in errors)
-
-
-class TestStripeWebhookEvent:
-    """Tests for StripeWebhookEvent model."""
-
-    def test_valid_stripe_event_parses_correctly(self) -> None:
-        """Test that a valid Stripe event is parsed correctly."""
-        payload: StripeWebhookEventDict = {
-            "type": "checkout.session.completed",
-            "id": "evt_test_12345",
-            "created": 1698412800,
-            "data": {
-                "object": {
-                    "id": "cs_test_abc123",
-                    "metadata": {"appointment_id": str(uuid4())},
-                }
-            },
-        }
-
-        result = StripeWebhookEvent(**payload)
-
-        assert result.type == "checkout.session.completed"
-        assert result.id == "evt_test_12345"
-        assert result.created == 1698412800
-        assert "object" in result.data
-
-    def test_missing_required_fields_raises_error(self) -> None:
-        """Test that missing required fields raise ValidationError."""
-        payload: dict[str, str] = {
-            "type": "checkout.session.completed",
-            # Missing 'id', 'created', 'data'
-        }
-
-        with pytest.raises(ValidationError) as exc_info:
-            StripeWebhookEvent(**payload)  # type: ignore[arg-type]  # Intentionally invalid for testing
-
-        errors = exc_info.value.errors()
-        assert any(e["loc"] == ("id",) for e in errors)
-        assert any(e["loc"] == ("created",) for e in errors)
-
-
-class TestStripePaymentEvent:
-    """Tests for StripePaymentEvent model."""
-
-    def test_valid_uuid_string_parses_correctly(self) -> None:
-        """Test that valid UUID strings are parsed correctly."""
-        appointment_id = uuid4()
-        event: StripePaymentEventDict = {
-            "appointment_id": str(appointment_id),
-            "stripe_payment_id": "ch_abc123",
-            "event_type": "checkout.session.completed",
-        }
-
-        # Pydantic validator converts string to UUID at runtime
-        result = StripePaymentEvent(**event)  # type: ignore[arg-type]
-
-        assert result.appointment_id == appointment_id
-        assert result.stripe_payment_id == "ch_abc123"
-
-    def test_uuid_object_accepted(self) -> None:
-        """Test that UUID objects are accepted directly."""
-        appointment_id = uuid4()
-        event: StripePaymentEventDict = {
-            "appointment_id": appointment_id,
-            "stripe_payment_id": "ch_abc123",
-            "event_type": "checkout.session.completed",
-        }
-
-        # Pydantic validator accepts UUID objects directly
-        result = StripePaymentEvent(**event)  # type: ignore[arg-type]
-
-        assert result.appointment_id == appointment_id
-
-    def test_invalid_uuid_raises_error(self) -> None:
-        """Test that invalid UUID strings raise ValidationError."""
-        event: StripePaymentEventDict = {
-            "appointment_id": "not-a-uuid",
-            "stripe_payment_id": "ch_abc123",
-            "event_type": "checkout.session.completed",
-        }
-
-        # Pydantic validator will raise error for invalid UUID
-        with pytest.raises(ValidationError) as exc_info:
-            StripePaymentEvent(**event)  # type: ignore[arg-type]
-
-        errors = exc_info.value.errors()
-        assert any("uuid" in str(e).lower() or "appointment" in str(e).lower() for e in errors)

@@ -16,7 +16,6 @@ from .models import (
     Customer,
     Service,
     Appointment,
-    Payment,
     Policy,
     ConversationHistory,
     BusinessHours,
@@ -133,8 +132,8 @@ class CustomerAdmin(ImportExportModelAdmin):
 class ServiceAdmin(ImportExportModelAdmin):
     """Admin interface for Service model with import/export capabilities."""
 
-    list_display = ['name', 'category', 'price_euros', 'duration_minutes', 'requires_advance_payment', 'is_active']
-    list_filter = ['category', 'is_active', 'requires_advance_payment', 'created_at']
+    list_display = ['name', 'category', 'duration_minutes', 'is_active']
+    list_filter = ['category', 'is_active', 'created_at']
     search_fields = ['name', 'description']
     readonly_fields = ['id', 'created_at', 'updated_at']
     ordering = ['category', 'name']
@@ -144,8 +143,8 @@ class ServiceAdmin(ImportExportModelAdmin):
         ('Información Básica', {
             'fields': ('name', 'category', 'description', 'is_active')
         }),
-        ('Precio y Duración', {
-            'fields': ('price_euros', 'duration_minutes', 'requires_advance_payment'),
+        ('Duración', {
+            'fields': ('duration_minutes',),
         }),
         ('Información del Sistema', {
             'fields': ('id', 'created_at', 'updated_at'),
@@ -157,7 +156,6 @@ class ServiceAdmin(ImportExportModelAdmin):
         """Customize form help text."""
         form = super().get_form(request, obj, **kwargs)
         form.base_fields['duration_minutes'].help_text = 'Duración aproximada en minutos'
-        form.base_fields['price_euros'].help_text = 'Precio en euros (ej: 45.00)'
         return form
 
 
@@ -170,23 +168,18 @@ class AppointmentAdmin(ImportExportModelAdmin):
         'customer_link',
         'stylist',
         'status',
-        'payment_status',
-        'total_price',
         'has_google_event',
     ]
-    list_filter = ['status', 'payment_status', 'stylist', 'start_time', 'created_at']
+    list_filter = ['status', 'stylist', 'start_time', 'created_at']
     search_fields = [
         'customer__first_name',
         'customer__last_name',
         'customer__phone',
         'google_calendar_event_id',
-        'stripe_payment_id',
     ]
     readonly_fields = [
         'id',
         'google_calendar_event_id',
-        'stripe_payment_id',
-        'stripe_payment_link_id',
         'created_at',
         'updated_at',
         'service_list_display',
@@ -204,18 +197,11 @@ class AppointmentAdmin(ImportExportModelAdmin):
             'description': 'Lista de UUIDs de servicios. Ver servicios seleccionados abajo.'
         }),
         ('Estado', {
-            'fields': ('status', 'payment_status', 'reminder_sent'),
-        }),
-        ('Información Financiera', {
-            'fields': ('total_price', 'advance_payment_amount', 'payment_retry_count'),
+            'fields': ('status', 'reminder_sent'),
         }),
         ('Integraciones Externas', {
-            'fields': (
-                'google_calendar_event_id',
-                'stripe_payment_id',
-                'stripe_payment_link_id',
-            ),
-            'description': 'Estos campos son gestionados automáticamente por el sistema. NO editar manualmente.',
+            'fields': ('google_calendar_event_id',),
+            'description': 'Este campo es gestionado automáticamente por el sistema. NO editar manualmente.',
             'classes': ('collapse',),
         }),
         ('Reservas Grupales', {
@@ -257,7 +243,7 @@ class AppointmentAdmin(ImportExportModelAdmin):
             return f"{len(obj.service_ids)} servicios (no encontrados en BD)"
 
         service_list = "<ul>" + "".join(
-            f"<li>{service.name} - {service.price_euros}€ ({service.duration_minutes}min)</li>"
+            f"<li>{service.name} ({service.duration_minutes}min)</li>"
             for service in services
         ) + "</ul>"
         return mark_safe(service_list)
@@ -267,66 +253,6 @@ class AppointmentAdmin(ImportExportModelAdmin):
         """Optimize queries with select_related."""
         qs = super().get_queryset(request)
         return qs.select_related('customer', 'stylist', 'booked_by')
-
-
-@admin.register(Payment)
-class PaymentAdmin(admin.ModelAdmin):
-    """Admin interface for Payment model."""
-
-    list_display = [
-        'stripe_payment_intent_id',
-        'appointment_link',
-        'amount',
-        'status',
-        'created_at',
-    ]
-    list_filter = ['status', 'created_at']
-    search_fields = [
-        'stripe_payment_intent_id',
-        'stripe_checkout_session_id',
-        'appointment__customer__first_name',
-        'appointment__customer__last_name',
-    ]
-    readonly_fields = [
-        'id',
-        'stripe_payment_intent_id',
-        'stripe_checkout_session_id',
-        'created_at',
-        'updated_at',
-    ]
-    ordering = ['-created_at']
-    list_per_page = 50
-    date_hierarchy = 'created_at'
-
-    fieldsets = (
-        ('Información del Pago', {
-            'fields': ('appointment', 'amount', 'status')
-        }),
-        ('Stripe', {
-            'fields': (
-                'stripe_payment_intent_id',
-                'stripe_checkout_session_id',
-                'stripe_metadata',
-            ),
-            'description': 'Información de Stripe (gestionado automáticamente).',
-        }),
-        ('Información del Sistema', {
-            'fields': ('id', 'created_at', 'updated_at'),
-            'classes': ('collapse',),
-        }),
-    )
-
-    def appointment_link(self, obj):
-        """Display appointment as clickable link."""
-        url = reverse('admin:core_appointment_change', args=[obj.appointment.id])
-        appointment_display = f"{obj.appointment.customer.full_name} - {obj.appointment.start_time.strftime('%d/%m/%Y')}"
-        return format_html('<a href="{}">{}</a>', url, appointment_display)
-    appointment_link.short_description = 'Cita'
-
-    def get_queryset(self, request):
-        """Optimize queries with select_related."""
-        qs = super().get_queryset(request)
-        return qs.select_related('appointment', 'appointment__customer')
 
 
 @admin.register(Policy)

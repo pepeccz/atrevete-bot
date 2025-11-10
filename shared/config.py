@@ -39,12 +39,6 @@ class Settings(BaseSettings):
         description="Comma-separated Google Calendar IDs for stylists"
     )
 
-    # Stripe
-    STRIPE_SECRET_KEY: str = Field(default="sk_test_placeholder")
-    STRIPE_PUBLISHABLE_KEY: str = Field(default="pk_test_placeholder")
-    STRIPE_WEBHOOK_SECRET: str = Field(default="whsec_placeholder")
-    STRIPE_API_VERSION: str = Field(default="2024-11-20.acacia")
-
     # Chatwoot
     CHATWOOT_API_URL: str = Field(default="https://app.chatwoot.com")
     CHATWOOT_API_TOKEN: str = Field(default="placeholder")

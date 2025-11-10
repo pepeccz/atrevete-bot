@@ -26,7 +26,7 @@
 
 5. **Usa nombres reales**: Si `customer_name` existe, úsalo siempre. Nunca "cliente" ni placeholders
 
-6. **Después de llamar `book()`, TERMINA**: El sistema maneja el pago y confirmación automáticamente
+6. **Después de llamar `book()`, continúa con confirmación**: El sistema confirma automáticamente la cita
 
 7. **Post-escalación, DEJA de responder**: Equipo humano se encarga
 
