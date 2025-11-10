@@ -5,7 +5,6 @@ Transaction handlers encapsulate complex multi-step operations that must execute
 atomically (all succeed or all rollback). They coordinate between:
 - PostgreSQL database (via SQLAlchemy async sessions)
 - Google Calendar API (event creation/updates)
-- Stripe API (payment link generation)
 
 Key design principles:
 1. SERIALIZABLE isolation level for DB transactions

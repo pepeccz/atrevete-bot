@@ -5,7 +5,6 @@ This module implements the atomic booking transaction that creates appointments 
 - Business rule validation (3-day rule, category consistency, slot availability)
 - Google Calendar event creation
 - Database persistence with SERIALIZABLE isolation
-- Auto-confirmation (no payment system)
 - Complete rollback on any failure
 
 The BookingTransaction.execute() method is the single entry point for creating appointments.

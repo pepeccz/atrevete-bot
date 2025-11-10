@@ -6,7 +6,6 @@ by implementing exponential backoff, retry logic, and graceful error handling.
 
 Used for:
 - Google Calendar API calls
-- Stripe API calls
 - Database operations
 - External service integrations
 """
@@ -17,7 +16,6 @@ from typing import Any, Callable, TypeVar, ParamSpec
 from functools import wraps
 
 from googleapiclient.errors import HttpError
-import stripe
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +76,6 @@ async def call_with_retry(
                 )
             return result
 
-        except (HttpError, stripe.error.StripeError, Exception) as e:
             last_exception = e
 
             # Check if this is a retryable error
@@ -122,7 +119,6 @@ def is_retryable_error(error: Exception) -> bool:
 
     Retryable errors:
     - Google Calendar API: 429 (rate limit), 500, 502, 503, 504
-    - Stripe API: rate limits, temporary failures
     - Network errors, timeouts
     """
     # Google Calendar HTTP errors
@@ -131,14 +127,10 @@ def is_retryable_error(error: Exception) -> bool:
         # Retryable: Rate limit, server errors
         return status in (429, 500, 502, 503, 504)
 
-    # Stripe errors
-    if isinstance(error, stripe.error.RateLimitError):
         return True
 
-    if isinstance(error, stripe.error.APIConnectionError):
         return True
 
-    if isinstance(error, stripe.error.APIError):
         return True
 
     # Generic network/timeout errors

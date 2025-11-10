@@ -391,7 +391,6 @@ async def get_customer_history(customer_id: str, limit: int = 5) -> dict[str, An
                         "duration_minutes": int,
                         "total_price": float,
                         "status": str,
-                        "payment_status": str,
                         "stylist_id": str,
                         "service_ids": list[str]
                     }
@@ -440,7 +439,6 @@ async def get_customer_history(customer_id: str, limit: int = 5) -> dict[str, An
                         "duration_minutes": apt.duration_minutes,
                         "total_price": float(apt.total_price),
                         "status": apt.status.value,
-                        "payment_status": apt.payment_status.value,
                         "stylist_id": str(apt.stylist_id),
                         "service_ids": [str(sid) for sid in apt.service_ids],
                     }

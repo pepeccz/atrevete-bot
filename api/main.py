@@ -1,6 +1,5 @@
 """
 FastAPI API Service Entry Point
-Webhook receiver for Chatwoot and Stripe events
 """
 
 from fastapi import FastAPI, Request
@@ -10,7 +9,6 @@ from pydantic import ValidationError
 
 from api.middleware.rate_limiting import RateLimitMiddleware
 from api.routes import chatwoot, conversations
-from api.routes import stripe as stripe_routes
 from shared.logging_config import configure_logging
 
 # Configure structured JSON logging on startup
@@ -18,7 +16,6 @@ configure_logging()
 
 app = FastAPI(
     title="Atrévete Bot API",
-    description="Webhook receiver for WhatsApp conversations via Chatwoot and Stripe",
     version="1.0.0",
 )
 
@@ -36,7 +33,6 @@ app.add_middleware(
 
 # Include webhook routers
 app.include_router(chatwoot.router, prefix="/webhook", tags=["webhooks"])
-app.include_router(stripe_routes.router, prefix="/webhook", tags=["webhooks"])
 
 # Include conversation history router
 app.include_router(conversations.router, tags=["conversations"])

@@ -1114,8 +1114,6 @@ async def update_calendar_event_color(
     Update the color of a Google Calendar event.
 
     Used to visually indicate appointment status:
-    - Yellow (5): PROVISIONAL booking (payment pending)
-    - Green (9): CONFIRMED booking (payment received)
     - Red (11): CANCELLED booking (future use)
 
     Args:

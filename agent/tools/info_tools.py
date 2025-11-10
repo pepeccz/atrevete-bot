@@ -5,7 +5,6 @@ This module consolidates 4 dispersed information tools into a single query_info(
 - get_services() (from booking_tools.py)
 - get_faqs() (from faq_tools.py)
 - get_business_hours() (from business_hours_tools.py)
-- get_payment_policies() (from policy_tools.py)
 
 The query_info() tool uses a type parameter to route to the appropriate data source.
 """
@@ -38,13 +37,12 @@ DAY_NAMES = {
 class QueryInfoSchema(BaseModel):
     """Schema for query_info tool parameters."""
 
-    type: Literal["services", "faqs", "hours", "policies"] = Field(
+    type: Literal["services", "faqs", "hours"] = Field(
         description=(
             "Type of information to query:\n"
             "- 'services': Get list of available salon services\n"
             "- 'faqs': Get frequently asked questions/answers\n"
             "- 'hours': Get business hours schedule\n"
-            "- 'policies': Get payment and booking policies"
         )
     )
 
@@ -94,12 +92,12 @@ class QueryInfoSchema(BaseModel):
 
 @tool(args_schema=QueryInfoSchema)
 async def query_info(
-    type: Literal["services", "faqs", "hours", "policies"],
+    type: Literal["services", "faqs", "hours"],
     filters: dict[str, Any] | None = None,
     max_results: int = 10
 ) -> dict[str, Any]:
     """
-    Query salon information (services, FAQs, hours, policies) with truncation.
+    Query salon information (services, FAQs, hours) with truncation.
 
     This consolidated tool provides access to all salon information through a single interface.
     Use the 'type' parameter to specify what information you need.
@@ -111,7 +109,6 @@ async def query_info(
             - "services": Available salon services with prices/durations
             - "faqs": Frequently asked questions and answers
             - "hours": Business hours schedule
-            - "policies": Payment and booking policies
         filters: Optional filters dict:
             - For services: {"category": "Peluquería" | "Estética"}
             - For faqs: {"keywords": ["hours", "parking"]}
@@ -137,14 +134,6 @@ async def query_info(
                 "formatted": str  # Human-readable summary
             }
 
-        policies:
-            {
-                "advance_payment_percentage": int,
-                "provisional_timeout_standard": int,
-                "provisional_timeout_same_day": int,
-                "formatted": str
-            }
-
     Examples:
         Get all services:
         >>> await query_info("services")
@@ -161,10 +150,6 @@ async def query_info(
         Get business hours:
         >>> await query_info("hours")
         {"schedule": [...], "formatted": "Martes a Viernes: 10:00-20:00, ..."}
-
-        Get payment policies:
-        >>> await query_info("policies")
-        {"advance_payment_percentage": 20, ...}
     """
     try:
         if type == "services":
@@ -173,8 +158,6 @@ async def query_info(
             return await _get_faqs(filters, max_results)
         elif type == "hours":
             return await _get_business_hours()
-        elif type == "policies":
-            return await _get_payment_policies()
         else:
             logger.error(f"Invalid query type: {type}")
             return {"error": f"Invalid type: {type}"}
@@ -407,67 +390,3 @@ def _format_schedule_summary(schedule: list[dict]) -> str:
         formatted_parts.append(f"{day_str}: {group['hours']}")
 
     return ", ".join(formatted_parts)
-
-
-async def _get_payment_policies() -> dict[str, Any]:
-    """
-    Get payment and booking policies from database.
-
-    Internal function called by query_info(type="policies").
-    """
-    async for session in get_async_session():
-        # Query payment-related policies
-        query = select(Policy).where(
-            Policy.key.in_([
-                "advance_payment_percentage",
-                "provisional_timeout_standard",
-                "provisional_timeout_same_day",
-            ])
-        )
-        result = await session.execute(query)
-        policies = list(result.scalars().all())
-
-        if not policies:
-            logger.warning("No payment policies found in database")
-            # Return fallback defaults
-            return {
-                "advance_payment_percentage": 20,
-                "provisional_timeout_standard": 30,
-                "provisional_timeout_same_day": 10,
-                "formatted": "Anticipo: 20% del total. Tiempo para pagar: 30 minutos (10 minutos para citas del mismo día).",
-            }
-
-        # Parse policies
-        policies_dict = {}
-        for policy in policies:
-            key = policy.key
-            value = policy.value
-
-            # Handle different value types
-            if isinstance(value, dict):
-                # JSONB with nested data
-                policies_dict[key] = value.get("value", value)
-            else:
-                # Direct integer value
-                policies_dict[key] = value
-
-        advance_percentage = policies_dict.get("advance_payment_percentage", 20)
-        timeout_standard = policies_dict.get("provisional_timeout_standard", 30)
-        timeout_same_day = policies_dict.get("provisional_timeout_same_day", 10)
-
-        # Format human-readable summary
-        formatted = (
-            f"Anticipo: {advance_percentage}% del total. "
-            f"Tiempo para pagar: {timeout_standard} minutos "
-            f"({timeout_same_day} minutos para citas del mismo día)."
-        )
-
-        logger.info("Retrieved payment policies")
-
-        return {
-            "advance_payment_percentage": advance_percentage,
-            "provisional_timeout_standard": timeout_standard,
-            "provisional_timeout_same_day": timeout_same_day,
-            "formatted": formatted,
-        }
-        break

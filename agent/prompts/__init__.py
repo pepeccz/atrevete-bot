@@ -213,7 +213,7 @@ def _detect_booking_state(state: dict) -> str:
         str: One of the 6 booking states
     """
     # Check flags in order of booking flow progression
-    if state.get("payment_link_sent") or state.get("appointment_created"):
+    if state.get("appointment_created"):
         return "POST_BOOKING"
 
     if state.get("customer_data_collected"):

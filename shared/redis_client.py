@@ -81,7 +81,6 @@ async def publish_to_channel(channel: str, message: dict[str, Any]) -> None:
     Publish a message to a Redis pub/sub channel.
 
     Args:
-        channel: Redis channel name (e.g., 'incoming_messages', 'payment_events')
         message: Message dict to publish (will be JSON-serialized)
 
     Raises:

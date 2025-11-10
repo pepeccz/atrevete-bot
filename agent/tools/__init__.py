@@ -28,7 +28,6 @@ from agent.tools.search_services import search_services
 
 __all__ = [
     # Information tools (2 tools: general queries + search)
-    "query_info",  # Replaces: get_services, get_faqs, get_business_hours, get_payment_policies
     "search_services",  # NEW: Fuzzy search for specific services (solves 47-service overflow)
     # Customer tools (2 tools: 1 consolidated + 1 specialized)
     "manage_customer",  # Replaces: get_customer_by_phone, create_customer, update_customer_name
