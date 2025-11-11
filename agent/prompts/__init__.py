@@ -37,7 +37,7 @@ def load_maite_system_prompt() -> str:
     """
     prompt_path = Path(__file__).parent / "maite_system_prompt.md"
     fallback_prompt = (
-        "Eres Maite, asistenta virtual de Atrevete Peluqueria. "
+        "Eres Maite, asistente virtual de Atrevete Peluqueria. "
         "Se amable, usa herramientas, y escala cuando sea necesario."
     )
 
