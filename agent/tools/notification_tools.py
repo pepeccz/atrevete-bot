@@ -192,6 +192,59 @@ class ChatwootClient:
         retry=retry_if_exception_type(httpx.HTTPError),
         reraise=True,
     )
+    async def update_conversation_attributes(
+        self,
+        conversation_id: int,
+        attributes: dict[str, Any],
+    ) -> bool:
+        """
+        Update custom attributes for a Chatwoot conversation.
+
+        Args:
+            conversation_id: Chatwoot conversation ID
+            attributes: Dict of custom attributes to set (e.g., {"atencion_automatica": true})
+
+        Returns:
+            True if update successful, False otherwise
+
+        Example:
+            >>> await client.update_conversation_attributes(
+            ...     conversation_id=123,
+            ...     attributes={"atencion_automatica": true}
+            ... )
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                logger.info(
+                    f"Updating conversation {conversation_id} custom_attributes: {attributes}"
+                )
+
+                response = await client.patch(
+                    f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}",
+                    json={"custom_attributes": attributes},
+                    headers=self.headers,
+                    timeout=10.0,
+                )
+                response.raise_for_status()
+
+                logger.info(
+                    f"Successfully updated conversation {conversation_id} custom_attributes"
+                )
+                return True
+
+            except httpx.HTTPError as e:
+                logger.error(
+                    f"HTTP error updating conversation {conversation_id} attributes: {e}",
+                    exc_info=True,
+                )
+                raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(httpx.HTTPError),
+        reraise=True,
+    )
     async def send_message(
         self,
         customer_phone: str,

@@ -14,44 +14,66 @@ class TestChatwootWebhook:
 
     def test_valid_chatwoot_webhook_returns_200(self):
         """Test that valid Chatwoot webhook is accepted and returns 200."""
-        client = TestClient(app)
+        from shared.config import get_settings
+
+        # Get the actual default token from settings
+        settings = get_settings()
+        token = settings.CHATWOOT_WEBHOOK_TOKEN
 
         # Create test payload
         payload = {
             "event": "message_created",
-            "id": 12345,
-            "content": "Hello, I need an appointment",
-            "conversation": {"id": 100, "inbox_id": 1},
+            "conversation": {
+                "id": 100,
+                "inbox_id": 1,
+                "messages": [
+                    {
+                        "id": 12345,
+                        "content": "Hello, I need an appointment",
+                        "message_type": 0,
+                        "created_at": 1730000000,
+                        "conversation_id": 100,
+                    }
+                ],
+                "custom_attributes": {},  # Empty attributes
+            },
             "sender": {"phone_number": "612345678", "name": "María García"},
             "created_at": "2025-10-27T10:00:00Z",
-            "message_type": "incoming",
         }
 
         body = json.dumps(payload).encode()
 
-        # Token from default test config
-        token = "chatwoot_webhook_token_placeholder"
-
-        # Mock Redis publish
+        # Mock Redis publish and ChatwootClient for first message
         with patch("api.routes.chatwoot.publish_to_channel") as mock_publish:
-            mock_publish.return_value = AsyncMock()
+            with patch("api.routes.chatwoot.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = AsyncMock()
+                mock_chatwoot.update_conversation_attributes = AsyncMock(return_value=True)
+                mock_chatwoot_class.return_value = mock_chatwoot
+                mock_publish.return_value = AsyncMock()
 
-            response = client.post(
-                f"/webhook/chatwoot/{token}",
-                content=body,
-                headers={"Content-Type": "application/json"},
-            )
+                client = TestClient(app)
+                response = client.post(
+                    f"/webhook/chatwoot/{token}",
+                    content=body,
+                    headers={"Content-Type": "application/json"},
+                )
 
-            assert response.status_code == 200
-            assert response.json()["status"] == "received"
+                assert response.status_code == 200
+                assert response.json()["status"] == "received"
 
-            # Verify message was published to Redis
-            mock_publish.assert_called_once()
-            call_args = mock_publish.call_args
-            assert call_args[0][0] == "incoming_messages"
-            published_data = call_args[0][1]
-            assert published_data["conversation_id"] == "100"
-            assert published_data["customer_phone"] == "+34612345678"  # Normalized
+                # Verify message was published to Redis
+                mock_publish.assert_called_once()
+                call_args = mock_publish.call_args
+                assert call_args[0][0] == "incoming_messages"
+                published_data = call_args[0][1]
+                assert published_data["conversation_id"] == "100"
+                assert published_data["customer_phone"] == "+34612345678"  # Normalized
+
+                # Verify atencion_automatica was set since custom_attributes was empty
+                mock_chatwoot.update_conversation_attributes.assert_called_once_with(
+                    conversation_id=100,
+                    attributes={"atencion_automatica": True}
+                )
 
     def test_invalid_chatwoot_token_returns_401(self):
         """Test that invalid Chatwoot token returns 401."""
@@ -59,12 +81,21 @@ class TestChatwootWebhook:
 
         payload = {
             "event": "message_created",
-            "id": 12345,
-            "content": "Hello",
-            "conversation": {"id": 100, "inbox_id": 1},
+            "conversation": {
+                "id": 100,
+                "inbox_id": 1,
+                "messages": [
+                    {
+                        "id": 12345,
+                        "content": "Hello",
+                        "message_type": 0,
+                        "created_at": 1730000000,
+                        "conversation_id": 100,
+                    }
+                ],
+            },
             "sender": {"phone_number": "612345678", "name": "María"},
             "created_at": "2025-10-27T10:00:00Z",
-            "message_type": "incoming",
         }
 
         body = json.dumps(payload).encode()
@@ -83,12 +114,21 @@ class TestChatwootWebhook:
 
         payload = {
             "event": "message_created",
-            "id": 12345,
-            "content": "Hello",
-            "conversation": {"id": 100, "inbox_id": 1},
+            "conversation": {
+                "id": 100,
+                "inbox_id": 1,
+                "messages": [
+                    {
+                        "id": 12345,
+                        "content": "Hello",
+                        "message_type": 1,  # Outgoing message (1 = outgoing)
+                        "created_at": 1730000000,
+                        "conversation_id": 100,
+                    }
+                ],
+            },
             "sender": {"phone_number": "612345678", "name": "Bot"},
             "created_at": "2025-10-27T10:00:00Z",
-            "message_type": "outgoing",  # Outgoing message
         }
 
         body = json.dumps(payload).encode()
@@ -105,6 +145,144 @@ class TestChatwootWebhook:
             assert response.json()["status"] == "ignored"
             # Should NOT publish to Redis
             mock_publish.assert_not_called()
+
+    def test_atencion_automatica_true_processes_message(self):
+        """Test that message is processed when atencion_automatica=true."""
+        client = TestClient(app)
+
+        payload = {
+            "event": "message_created",
+            "id": 12345,
+            "content": "Hello, I need an appointment",
+            "conversation": {
+                "id": 100,
+                "inbox_id": 1,
+                "messages": [
+                    {
+                        "id": 12345,
+                        "content": "Hello, I need an appointment",
+                        "message_type": 0,
+                        "created_at": 1730000000,
+                        "conversation_id": 100,
+                    }
+                ],
+                "custom_attributes": {"atencion_automatica": True},
+            },
+            "sender": {"phone_number": "612345678", "name": "María García"},
+            "created_at": "2025-10-27T10:00:00Z",
+        }
+
+        body = json.dumps(payload).encode()
+        token = "chatwoot_webhook_token_placeholder"
+
+        with patch("api.routes.chatwoot.publish_to_channel") as mock_publish:
+            mock_publish.return_value = AsyncMock()
+
+            response = client.post(
+                f"/webhook/chatwoot/{token}",
+                content=body,
+                headers={"Content-Type": "application/json"},
+            )
+
+            assert response.status_code == 200
+            assert response.json()["status"] == "received"
+            # Message should be published to Redis
+            mock_publish.assert_called_once()
+
+    def test_atencion_automatica_false_ignores_message(self):
+        """Test that message is ignored when atencion_automatica=false."""
+        client = TestClient(app)
+
+        payload = {
+            "event": "message_created",
+            "id": 12345,
+            "content": "Hello, I need an appointment",
+            "conversation": {
+                "id": 100,
+                "inbox_id": 1,
+                "messages": [
+                    {
+                        "id": 12345,
+                        "content": "Hello, I need an appointment",
+                        "message_type": 0,
+                        "created_at": 1730000000,
+                        "conversation_id": 100,
+                    }
+                ],
+                "custom_attributes": {"atencion_automatica": False},
+            },
+            "sender": {"phone_number": "612345678", "name": "María García"},
+            "created_at": "2025-10-27T10:00:00Z",
+        }
+
+        body = json.dumps(payload).encode()
+        token = "chatwoot_webhook_token_placeholder"
+
+        with patch("api.routes.chatwoot.publish_to_channel") as mock_publish:
+            response = client.post(
+                f"/webhook/chatwoot/{token}",
+                content=body,
+                headers={"Content-Type": "application/json"},
+            )
+
+            assert response.status_code == 200
+            assert response.json()["status"] == "ignored_auto_attention_disabled"
+            # Message should NOT be published to Redis
+            mock_publish.assert_not_called()
+
+    def test_atencion_automatica_undefined_sets_and_processes(self):
+        """Test that atencion_automatica is set to true and message is processed when attribute is missing."""
+        client = TestClient(app)
+
+        payload = {
+            "event": "message_created",
+            "id": 12345,
+            "content": "Hello, I need an appointment",
+            "conversation": {
+                "id": 100,
+                "inbox_id": 1,
+                "messages": [
+                    {
+                        "id": 12345,
+                        "content": "Hello, I need an appointment",
+                        "message_type": 0,
+                        "created_at": 1730000000,
+                        "conversation_id": 100,
+                    }
+                ],
+                "custom_attributes": {},  # Empty - no atencion_automatica
+            },
+            "sender": {"phone_number": "612345678", "name": "María García"},
+            "created_at": "2025-10-27T10:00:00Z",
+        }
+
+        body = json.dumps(payload).encode()
+        token = "chatwoot_webhook_token_placeholder"
+
+        with patch("api.routes.chatwoot.publish_to_channel") as mock_publish:
+            with patch("api.routes.chatwoot.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = AsyncMock()
+                mock_chatwoot.update_conversation_attributes = AsyncMock(return_value=True)
+                mock_chatwoot_class.return_value = mock_chatwoot
+                mock_publish.return_value = AsyncMock()
+
+                response = client.post(
+                    f"/webhook/chatwoot/{token}",
+                    content=body,
+                    headers={"Content-Type": "application/json"},
+                )
+
+                assert response.status_code == 200
+                assert response.json()["status"] == "received"
+
+                # Should update conversation attributes
+                mock_chatwoot.update_conversation_attributes.assert_called_once_with(
+                    conversation_id=100,
+                    attributes={"atencion_automatica": True}
+                )
+
+                # Message should be published to Redis
+                mock_publish.assert_called_once()
 
 
 class TestRateLimiting:

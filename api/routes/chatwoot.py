@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from groq import RateLimitError, APIError
 
+from agent.tools.notification_tools import ChatwootClient
 from api.models.chatwoot_webhook import (
     ChatwootMessageEvent,
     ChatwootWebhookPayload,
@@ -98,6 +99,67 @@ async def receive_chatwoot_webhook(
     if not payload.sender.phone_number:
         logger.warning(f"Message {last_message.id} has no phone number, ignoring")
         return JSONResponse(status_code=200, content={"status": "ignored"})
+
+    # Filter: Check atencion_automatica custom attribute
+    # This allows toggling AI bot on/off per conversation
+    atencion_automatica = payload.conversation.custom_attributes.get("atencion_automatica")
+
+    if atencion_automatica is False:
+        # Bot is disabled for this conversation - ignore message
+        logger.info(
+            f"Ignoring message for conversation {payload.conversation.id}: "
+            f"atencion_automatica=false (bot disabled)",
+            extra={
+                "conversation_id": str(payload.conversation.id),
+                "customer_phone": payload.sender.phone_number,
+            }
+        )
+        return JSONResponse(
+            status_code=200,
+            content={"status": "ignored_auto_attention_disabled"}
+        )
+
+    elif atencion_automatica is None:
+        # First message from this customer - enable bot and continue processing
+        logger.info(
+            f"First message for conversation {payload.conversation.id}: "
+            f"setting atencion_automatica=true",
+            extra={
+                "conversation_id": str(payload.conversation.id),
+                "customer_phone": payload.sender.phone_number,
+            }
+        )
+
+        # Update conversation to enable bot
+        try:
+            chatwoot_client = ChatwootClient()
+            await chatwoot_client.update_conversation_attributes(
+                conversation_id=payload.conversation.id,
+                attributes={"atencion_automatica": True}
+            )
+            logger.info(
+                f"Successfully enabled bot for conversation {payload.conversation.id}"
+            )
+        except Exception as e:
+            # Log warning but continue processing - don't block first message
+            logger.warning(
+                f"Failed to set atencion_automatica for conversation {payload.conversation.id}: {e}",
+                extra={
+                    "conversation_id": str(payload.conversation.id),
+                    "error": str(e),
+                },
+                exc_info=True,
+            )
+
+    # If atencion_automatica is True or was just set, continue processing normally
+    logger.debug(
+        f"Processing message for conversation {payload.conversation.id}: "
+        f"atencion_automatica={atencion_automatica}",
+        extra={
+            "conversation_id": str(payload.conversation.id),
+            "atencion_automatica": atencion_automatica,
+        }
+    )
 
     # Initialize message text and audio tracking fields
     message_text = last_message.content or ""

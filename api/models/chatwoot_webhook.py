@@ -42,6 +42,7 @@ class ChatwootConversation(BaseModel):
     id: int  # conversation_id
     inbox_id: int
     messages: list[ChatwootMessage]
+    custom_attributes: dict[str, bool | str | int | float | None] = {}
 
 
 class ChatwootWebhookPayload(BaseModel):
