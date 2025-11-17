@@ -6,6 +6,7 @@ All database operations should use get_async_session() context manager.
 """
 
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -38,6 +39,7 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+@asynccontextmanager
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Async context manager for database sessions.

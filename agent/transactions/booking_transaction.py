@@ -53,7 +53,10 @@ class BookingTransaction:
         customer_id: UUID,
         service_ids: list[UUID],
         stylist_id: UUID,
-        start_time: datetime
+        start_time: datetime,
+        first_name: str,
+        last_name: str | None,
+        notes: str | None
     ) -> dict[str, Any]:
         """
         Execute atomic booking transaction.
@@ -66,6 +69,9 @@ class BookingTransaction:
             service_ids: List of Service UUIDs
             stylist_id: Stylist UUID
             start_time: Appointment start time (timezone-aware)
+            first_name: Customer's first name for this appointment
+            last_name: Customer's last name (optional)
+            notes: Appointment-specific notes (optional)
 
         Returns:
             Dict with booking result. Structure:
@@ -148,7 +154,7 @@ class BookingTransaction:
                 }
 
             # Step 3: Start database transaction with SERIALIZABLE isolation
-            async for session in get_async_session():
+            async with get_async_session() as session:
                 try:
                     # Set SERIALIZABLE isolation for this transaction
                     await session.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
@@ -216,23 +222,9 @@ class BookingTransaction:
                     # Step 4: Create Google Calendar event
                     service_names = ", ".join(s.name for s in services)
 
-                    # Get customer name from database
-                    from database.models import Customer
-                    stmt = select(Customer).where(Customer.id == customer_id)
-                    result = await session.execute(stmt)
-                    customer = result.scalar_one_or_none()
-
-                    if not customer:
-                        logger.error(f"[{trace_id}] Customer not found: {customer_id}")
-                        await session.rollback()
-                        return {
-                            "success": False,
-                            "error_code": "CUSTOMER_NOT_FOUND",
-                            "error_message": "Cliente no encontrado",
-                            "details": {"customer_id": str(customer_id)}
-                        }
-
-                    customer_name = f"{customer.first_name} {customer.last_name or ''}".strip()
+                    # Use customer name from parameters (not database)
+                    # This ensures consistency with appointment data
+                    customer_name = f"{first_name} {last_name or ''}".strip()
 
                     logger.info(
                         f"[{trace_id}] Creating Google Calendar event",
@@ -284,6 +276,9 @@ class BookingTransaction:
                         duration_minutes=total_duration,
                         status=AppointmentStatus.CONFIRMED,  # Auto-confirm all appointments
                         google_calendar_event_id=google_event_id,
+                        first_name=first_name,
+                        last_name=last_name,
+                        notes=notes
                     )
 
                     session.add(new_appointment)
@@ -399,7 +394,6 @@ class BookingTransaction:
 
                 finally:
                     # Exit async for loop
-                    break
 
         except Exception as e:
             logger.error(

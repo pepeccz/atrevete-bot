@@ -334,6 +334,8 @@ async def find_next_available(
     multiple dates automatically and returns slots from the first 2-3 dates that have
     availability.
 
+    **v3.2 Optimization**: Returns maximum 5 slots per stylist to reduce token usage.
+
     WHEN TO USE:
     - Customer asks for "próxima disponibilidad" / "next available"
     - check_availability returned empty for a specific date
@@ -431,6 +433,12 @@ async def find_next_available(
         # Start searching from the earliest valid date (3 days from now)
         now = datetime.now(MADRID_TZ)
         earliest_valid = now + timedelta(days=3)
+
+        # Skip closed days (weekends: Saturday=5, Sunday=6)
+        # If earliest_valid falls on weekend, move to next Monday
+        while earliest_valid.weekday() in [5, 6]:  # 5=Saturday, 6=Sunday
+            earliest_valid += timedelta(days=1)
+
         search_start = earliest_valid.replace(hour=0, minute=0, second=0, microsecond=0)
 
         calendar_client = get_calendar_client()
@@ -455,7 +463,11 @@ async def find_next_available(
             # Check if we have enough slots for all stylists (2 per stylist)
             if all(len(slots) >= MAX_SLOTS_PER_STYLIST for slots in all_slots_by_stylist.values()):
                 logger.info(f"Found {MAX_SLOTS_PER_STYLIST} slots for all stylists, stopping search")
-                break
+
+            # Skip closed days (weekends: Saturday=5, Sunday=6)
+            if current_date.weekday() in [5, 6]:
+                logger.info(f"Skipping closed day (weekend): {current_date.date()} ({day_names_es[current_date.weekday()]})")
+                continue
 
             # Check for holidays
             is_holiday = await check_holiday_closure(

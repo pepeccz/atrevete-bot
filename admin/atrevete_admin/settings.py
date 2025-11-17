@@ -127,9 +127,7 @@ else:
     }
 
 # Database Router - CRITICAL: Prevents Django migrations for core app
-# Temporarily commented out to debug
-# DATABASE_ROUTERS = ['atrevete_admin.router.UnmanagedRouter']
-DATABASE_ROUTERS = []
+DATABASE_ROUTERS = ['atrevete_admin.router.UnmanagedRouter']
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [

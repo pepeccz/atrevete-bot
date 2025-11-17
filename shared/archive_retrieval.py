@@ -50,7 +50,7 @@ async def get_archived_conversation(
         ...     print(f"{msg['role']}: {msg['content'][:50]}")
     """
     try:
-        async for session in get_async_session():
+        async with get_async_session() as session:
             # Count total messages
             count_stmt = (
                 select(ConversationHistory)
@@ -153,7 +153,7 @@ async def list_archived_conversations(
         from sqlalchemy import func, distinct
         from database.models import Customer
 
-        async for session in get_async_session():
+        async with get_async_session() as session:
             # Build subquery to get distinct conversation_ids with filtering
             subquery = (
                 select(

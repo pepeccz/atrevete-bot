@@ -201,7 +201,7 @@ async def get_stylists_by_category(category: str) -> list[Stylist]:
         logger.error(f"Invalid service category: {category}")
         return []
 
-    async for session in get_async_session():
+    async with get_async_session() as session:
         try:
             # Query stylists matching category (BOTH category was removed - now stylists are specialized)
             query = select(Stylist).where(
@@ -232,7 +232,7 @@ async def get_stylist_by_id(stylist_id: UUID) -> Stylist | None:
     Returns:
         Stylist model instance or None if not found
     """
-    async for session in get_async_session():
+    async with get_async_session() as session:
         try:
             query = select(Stylist).where(Stylist.id == stylist_id)
             result = await session.execute(query)
@@ -268,7 +268,7 @@ async def get_business_hours_from_db(day_of_week: int) -> dict[str, int] | None:
         >>> # Returns: None
     """
     try:
-        async for session in get_async_session():
+        async with get_async_session() as session:
             result = await session.execute(
                 select(BusinessHours).where(BusinessHours.day_of_week == day_of_week)
             )
@@ -506,12 +506,11 @@ async def check_holiday_closure(
         Example: {"holiday_detected": true, "reason": "Festivo - Navidad"}
     """
     # Query ALL active stylists (regardless of category)
-    async for session in get_async_session():
+    async with get_async_session() as session:
         try:
             query = select(Stylist).where(Stylist.is_active == True)
             result = await session.execute(query)
             all_stylists = list(result.scalars().all())
-            break
 
         except Exception as e:
             logger.error(

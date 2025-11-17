@@ -42,7 +42,6 @@ async def resolve_service_names(
                     {
                         "id": str,
                         "name": str,
-                        "price_euros": float,
                         "duration_minutes": int,
                         "category": str
                     }
@@ -65,9 +64,9 @@ async def resolve_service_names(
             {
                 "query": "corte",
                 "options": [
-                    {"id": "uuid-3", "name": "Corte Bebé", "price_euros": 8.0, ...},
-                    {"id": "uuid-4", "name": "Corte Niño", "price_euros": 12.0, ...},
-                    {"id": "uuid-5", "name": "Corte de Caballero", "price_euros": 15.0, ...}
+                    {"id": "uuid-3", "name": "Corte Bebé", "duration_minutes": 30, ...},
+                    {"id": "uuid-4", "name": "Corte Niño", "duration_minutes": 30, ...},
+                    {"id": "uuid-5", "name": "Corte de Caballero", "duration_minutes": 30, ...}
                 ]
             }
         )
@@ -146,7 +145,6 @@ async def resolve_service_names(
                             {
                                 "id": str(s.id),
                                 "name": s.name,
-                                "price_euros": float(s.price_euros),
                                 "duration_minutes": s.duration_minutes,
                                 "category": s.category.value,
                             }
@@ -160,7 +158,6 @@ async def resolve_service_names(
                     )
 
                     # Stop processing more services - handle one ambiguity at a time
-                    break
 
         except Exception as e:
             logger.error(

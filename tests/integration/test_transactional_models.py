@@ -99,6 +99,9 @@ async def test_create_complete_appointment():
             start_time=start_time,
             duration_minutes=120,
             status=AppointmentStatus.CONFIRMED,
+            first_name="Test",
+            last_name="Customer",
+            notes="Test appointment notes",
         )
         session.add(appointment)
         await session.commit()
@@ -132,6 +135,7 @@ async def test_appointment_invalid_customer_fk():
             service_ids=[service.id],
             start_time=datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1),
             duration_minutes=60,
+            first_name="Test",
         )
         session.add(appointment)
 
@@ -161,6 +165,7 @@ async def test_delete_customer_cascades_to_appointments():
             service_ids=[service.id],
             start_time=datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1),
             duration_minutes=60,
+            first_name="Test",
         )
         session.add(appointment)
         await session.commit()
@@ -205,6 +210,7 @@ async def test_delete_stylist_with_appointments_restricted():
             service_ids=[service.id],
             start_time=datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(days=1),
             duration_minutes=60,
+            first_name="Test",
         )
         session.add(appointment)
         await session.commit()
@@ -372,6 +378,7 @@ async def test_appointment_reminder_pending_conditional_index():
             duration_minutes=60,
             status=AppointmentStatus.CONFIRMED,
             reminder_sent=False,
+            first_name="Test",
         )
         session.add(appointment)
         await session.commit()

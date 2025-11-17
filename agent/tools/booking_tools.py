@@ -31,7 +31,18 @@ class BookSchema(BaseModel):
     """Schema for book tool parameters."""
 
     customer_id: str = Field(
-        description="Customer UUID as string (from manage_customer tool)"
+        description="Customer UUID as string (automatically registered in first interaction)"
+    )
+    first_name: str = Field(
+        description="Customer's first name for this appointment (e.g., 'Pepe')"
+    )
+    last_name: str | None = Field(
+        default=None,
+        description="Customer's last name for this appointment (optional, e.g., 'Cabeza Cruz')"
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Appointment-specific notes (allergies, preferences, special requests)"
     )
     services: list[str] = Field(
         description="List of service names as strings (e.g., ['Corte de Caballero', 'Barba'])"
@@ -52,6 +63,9 @@ class BookSchema(BaseModel):
 @tool(args_schema=BookSchema)
 async def book(
     customer_id: str,
+    first_name: str,
+    last_name: str | None,
+    notes: str | None,
     services: list[str],
     stylist_id: str,
     start_time: str
@@ -67,11 +81,15 @@ async def book(
     - Rollback on any failure (atomic operation)
 
     Prerequisites (must be completed before calling this tool):
-    1. Customer identified/created via manage_customer()
+    1. Customer automatically registered in first interaction
     2. Availability checked and slot selected via check_availability()
+    3. Customer name and notes collected from user
 
     Args:
-        customer_id: Customer UUID as string
+        customer_id: Customer UUID as string (from state, auto-registered)
+        first_name: Customer's first name for this appointment
+        last_name: Customer's last name (optional)
+        notes: Appointment-specific notes (allergies, preferences, etc.)
         services: List of service names as strings (e.g., ["Corte de Caballero", "Barba"])
         stylist_id: Stylist UUID as string
         start_time: Appointment start time (ISO 8601 with timezone)
@@ -109,7 +127,7 @@ async def book(
                 "details": {
                     "query": str,
                     "options": [
-                        {"id": str, "name": str, "price_euros": float, "duration_minutes": int, "category": str}
+                        {"id": str, "name": str, "duration_minutes": int, "category": str}
                     ]
                 }
             }
@@ -203,6 +221,8 @@ async def book(
             f"Booking requested",
             extra={
                 "customer_id": customer_id,
+                "first_name": first_name,
+                "last_name": last_name,
                 "services": services,
                 "service_count": len(service_uuids),
                 "stylist_id": stylist_id,
@@ -217,7 +237,10 @@ async def book(
             customer_id=customer_uuid,
             service_ids=service_uuids,
             stylist_id=stylist_uuid,
-            start_time=start_datetime
+            start_time=start_datetime,
+            first_name=first_name,
+            last_name=last_name,
+            notes=notes
         )
 
         return result
@@ -265,7 +288,7 @@ async def get_service_by_name(
     from rapidfuzz import fuzz, process
     from sqlalchemy import select
 
-    async for session in get_async_session():
+    async with get_async_session() as session:
         try:
             if fuzzy:
                 # Load all active services for fuzzy matching
@@ -321,8 +344,6 @@ async def get_service_by_name(
             )
             return []  # Return empty list on error, never None
 
-        finally:
-            break  # Exit async for loop
 
     # Edge case: If async for loop exits without returning (should never happen)
     logger.warning(

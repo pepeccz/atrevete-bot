@@ -181,15 +181,12 @@ async def test_customer_lifecycle_create_appointment_get_history_verify():
         appointments_data = [
             {
                 "start_time": datetime(2025, 10, 15, 10, 0, 0, tzinfo=ZoneInfo("Europe/Madrid")),
-                "price": Decimal("50.00")
             },
             {
                 "start_time": datetime(2025, 10, 20, 14, 0, 0, tzinfo=ZoneInfo("Europe/Madrid")),
-                "price": Decimal("60.00")
             },
             {
                 "start_time": datetime(2025, 10, 25, 16, 30, 0, tzinfo=ZoneInfo("Europe/Madrid")),
-                "price": Decimal("75.00")
             },
         ]
 
@@ -200,9 +197,9 @@ async def test_customer_lifecycle_create_appointment_get_history_verify():
                 service_ids=[service.id],
                 start_time=apt_data["start_time"],
                 duration_minutes=service.duration_minutes,
-                total_price=apt_data["price"],
-                advance_payment_amount=Decimal("0.00"),
                 status=AppointmentStatus.COMPLETED,
+                first_name="María",
+                last_name="Martín",
             )
             session.add(appointment)
 

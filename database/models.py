@@ -192,6 +192,9 @@ class Customer(Base):
         index=True,
     )
 
+    # Customer notes (allergies, preferences, special requests)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Metadata (JSONB for flexible data like whatsapp_name, referred_by, etc.)
     metadata_: Mapped[dict] = mapped_column(
         "metadata", JSONB, default=dict, nullable=False
@@ -299,6 +302,7 @@ class Appointment(Base):
     Tracks the full appointment lifecycle (confirmed/completed/cancelled).
     Integrates with Google Calendar (scheduling).
     Supports group bookings and third-party bookings.
+    Stores customer-specific data (name, notes) for each appointment.
     """
 
     __tablename__ = "appointments"
@@ -345,6 +349,11 @@ class Appointment(Base):
     google_calendar_event_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )
+
+    # Customer-specific appointment data
+    first_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Operational fields
     reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

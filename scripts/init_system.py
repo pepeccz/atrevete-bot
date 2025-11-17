@@ -41,7 +41,7 @@ async def check_database_connection() -> bool:
     """
     try:
         logger.info("Checking database connection...")
-        async for session in get_async_session():
+        async with get_async_session() as session:
             result = await session.execute(text("SELECT 1"))
             result.scalar()
             logger.info("✓ Database connection successful")
@@ -74,7 +74,7 @@ async def check_tables_exist() -> dict[str, bool]:
 
     try:
         logger.info("Checking table existence...")
-        async for session in get_async_session():
+        async with get_async_session() as session:
             for table in critical_tables:
                 query = text("""
                     SELECT EXISTS (
@@ -108,7 +108,7 @@ async def check_seed_data() -> dict[str, int]:
 
     try:
         logger.info("Checking seed data...")
-        async for session in get_async_session():
+        async with get_async_session() as session:
             for table in seed_tables:
                 query = text(f"SELECT COUNT(*) FROM {table}")
                 result = await session.execute(query)

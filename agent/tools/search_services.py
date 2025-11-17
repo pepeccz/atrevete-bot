@@ -87,9 +87,7 @@ async def search_services(
         {
             "services": [
                 {
-                    "id": str,
                     "name": str,
-                    "price_euros": float,
                     "duration_minutes": int,
                     "category": str,
                     "match_score": int  # 0-100, fuzzy match quality
@@ -98,6 +96,8 @@ async def search_services(
             "count": int,
             "query": str
         }
+
+        Note: v3.2 optimization removed price_euros and id fields to reduce token usage.
 
         If no matches found:
         {
@@ -112,8 +112,8 @@ async def search_services(
         >>> await search_services("corte peinado largo")
         {
             "services": [
-                {"name": "Corte + Peinado (Largo)", "price_euros": 52.20, ...},
-                {"name": "Corte + Tratamiento (Largo)", ...}
+                {"name": "Corte + Peinado (Largo)", "duration_minutes": 60, ...},
+                {"name": "Corte + Tratamiento (Largo)", "duration_minutes": 90, ...}
             ],
             "count": 2,
             "query": "corte peinado largo"
@@ -142,7 +142,7 @@ async def search_services(
         )
 
         # Step 1: Fetch all active services from database
-        async for session in get_async_session():
+        async with get_async_session() as session:
             db_query = select(Service).where(Service.is_active == True)
 
             # Filter by category if provided
@@ -160,7 +160,6 @@ async def search_services(
                 (f" (category: {category})" if category else "")
             )
 
-            break  # Exit async for loop
 
         # Step 2: Fuzzy match using RapidFuzz
         if not services:

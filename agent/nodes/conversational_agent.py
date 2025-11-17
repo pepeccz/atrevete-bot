@@ -8,11 +8,17 @@ Model: openai/gpt-4.1-mini (cost-optimized, automatic prompt caching)
 
 Handles everything:
 - FAQs, greetings, service inquiries → query_info tool
-- Customer identification → manage_customer tool
+- Customer history queries → get_customer_history tool
+- Customer updates (post-booking) → manage_customer tool
 - Availability checking (single date) → check_availability tool
 - Availability search (multi-date) → find_next_available tool (NEW)
-- Booking → book tool (delegates to BookingTransaction)
+- Booking → book tool (delegates to BookingTransaction, requires first_name/last_name/notes)
 - Escalation → escalate_to_human tool
+
+Customer Creation Flow:
+- Customers are auto-created in process_incoming_message (first interaction)
+- Booking flow collects first_name, last_name, notes without calling manage_customer
+- book() tool receives customer_id from state + name/notes from PASO 3 collection
 
 No transitions to transactional nodes. LLM orchestrates entire conversation.
 """
@@ -129,44 +135,39 @@ async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[
     # PRE-EXECUTION VALIDATION
     # ============================================================================
 
-    # Prevent duplicate manage_customer calls
-    if tool_name == "manage_customer":
-        action = tool_args.get("action")
-        if action == "create" and state.get("customer_data_collected"):
+    # Ensure customer exists before booking (auto-created in process_incoming_message)
+    if tool_name == "book":
+        customer_id = state.get("customer_id")
+        if not customer_id:
             error_result = {
-                "error": "DUPLICATE_CALL",
+                "error": "MISSING_CUSTOMER_ID",
                 "message": (
-                    "❌ Ya obtuviste los datos del cliente anteriormente. "
-                    "NO necesitas llamar a manage_customer otra vez. "
-                    f"Usa directamente el customer_id que YA TIENES: {state.get('customer_id')} "
-                    "para llamar a book()."
+                    "❌ No se encontró customer_id en el estado. "
+                    "El cliente debe estar registrado automáticamente en la primera interacción. "
+                    "Esto es un error del sistema."
                 ),
-                "customer_id": str(state.get("customer_id")),
-                "instruction": "Llama a book() con este customer_id ahora."
+                "instruction": "Escala a humano - error de sistema."
             }
-            logger.warning(
-                f"Prevented duplicate manage_customer call (action={action})",
-                extra={
-                    "customer_id": state.get("customer_id"),
-                    "customer_data_collected": state.get("customer_data_collected")
-                }
+            logger.error(
+                "book() called without customer_id - system error",
+                extra={"customer_id": customer_id, "state_keys": list(state.keys())}
             )
             return json.dumps(error_result, ensure_ascii=False, indent=2), state_updates
 
-    # Ensure customer data is collected before booking
-    if tool_name == "book":
-        if not state.get("customer_data_collected"):
+        # Validate book() call includes required customer fields
+        first_name = tool_args.get("first_name")
+        if not first_name:
             error_result = {
-                "error": "MISSING_CUSTOMER_DATA",
+                "error": "MISSING_CUSTOMER_NAME",
                 "message": (
-                    "❌ Debes obtener los datos del cliente primero. "
-                    "Llama a manage_customer(action='get', phone='...') antes de llamar a book()."
+                    "❌ Debes recopilar el nombre del cliente antes de llamar a book(). "
+                    "Pregunta al cliente su nombre y apellido primero (PASO 3)."
                 ),
-                "instruction": "Llama a manage_customer(action='get') ahora."
+                "instruction": "Pregunta: '¿Me confirmas tu nombre y apellido para la reserva?'"
             }
             logger.warning(
-                "Prevented book() call without customer data collection",
-                extra={"customer_data_collected": state.get("customer_data_collected")}
+                "book() called without first_name parameter",
+                extra={"tool_args": tool_args}
             )
             return json.dumps(error_result, ensure_ascii=False, indent=2), state_updates
 
@@ -220,31 +221,15 @@ async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[
         # POST-EXECUTION STATE UPDATES
         # ============================================================================
 
-        # Track successful customer data collection
-        if tool_name == "manage_customer" and isinstance(result, dict) and not result.get("error"):
-            state_updates["customer_data_collected"] = True
-            state_updates["customer_id"] = result.get("id")
+        # Track successful booking creation
+        if tool_name == "book" and isinstance(result, dict) and not result.get("error"):
+            state_updates["appointment_created"] = True
             logger.info(
-                "Customer data collected successfully",
+                "Appointment created successfully",
                 extra={
-                    "customer_id": result.get("id"),
-                    "action": tool_args.get("action")
+                    "appointment_id": result.get("appointment_id"),
+                    "customer_id": tool_args.get("customer_id")
                 }
-            )
-
-            # Add explicit instruction to call book() next (prevents blank responses)
-            result["NEXT_STEP_REQUIRED"] = "BOOKING"
-            result["instruction"] = (
-                "✅ Customer data collected. "
-                f"customer_id={result.get('id')} is now available. "
-                "\n\n⚠️ CRITICAL: You MUST call book() NOW with:\n"
-                f"- customer_id: \"{result.get('id')}\"\n"
-                "- services: [list of service names the user requested]\n"
-                "- stylist_id: UUID of the stylist the user chose\n"
-                "- start_time: ISO timestamp of the slot the user selected\n"
-                "\n🚫 DO NOT send a blank response to the user.\n"
-                "🚫 DO NOT wait for more input.\n"
-                "✅ Execute book() immediately with the booking details from the conversation."
             )
 
         # Convert result to string for LangChain ToolMessage
@@ -271,9 +256,9 @@ async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[
 
 async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     """
-    Main conversational agent node using Claude Haiku 4.5 with 7 consolidated tools.
+    Main conversational agent node using GPT-4.1-mini with 8 consolidated tools.
 
-    This single node handles ALL conversation via Claude's reasoning + tool calling.
+    This single node handles ALL conversation via GPT-4.1-mini's reasoning + tool calling.
     No explicit state transitions, no booking phases, no transactional nodes.
 
     Workflow:
@@ -336,7 +321,15 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
     ]
 
+    # Calculate earliest valid date, skipping closed days (weekends)
+    # Start with 3 days minimum notice
     earliest_valid = now + timedelta(days=3)
+
+    # Skip closed days (weekends: Saturday=5, Sunday=6)
+    # If earliest_valid falls on weekend, move to next Monday
+    while earliest_valid.weekday() in [5, 6]:  # 5=Saturday, 6=Sunday
+        earliest_valid += timedelta(days=1)
+
     temporal_context = f"""CONTEXTO TEMPORAL:
 Hoy es {day_names_es[now.weekday()]} {now.day} de {month_names_es[now.month-1]} de {now.year}.
 Hora actual: {now.strftime('%H:%M')}
@@ -544,7 +537,42 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
                 updated_state["updated_at"] = datetime.now(ZoneInfo("Europe/Madrid"))
                 return updated_state
 
-    # Step 8: Update state with assistant response
+    # Step 8: Detect booking confirmation from user
+    # If in BOOKING_CONFIRMATION state and user gives affirmative response, mark as confirmed
+    from agent.prompts import _detect_booking_state
+    current_state_type = _detect_booking_state(state)
+
+    if current_state_type == "BOOKING_CONFIRMATION":
+        # Read last user message from message history (user_message field is cleared by process_incoming_message node)
+        messages = state.get("messages", [])
+        last_user_message = ""
+        if messages:
+            # Find the last message with role="user"
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    last_user_message = msg.get("content", "")
+
+        user_message = last_user_message.lower()
+
+        # List of affirmative keywords
+        affirmative_keywords = [
+            "sí", "si", "adelante", "confirmo", "perfecto", "ok", "vale", "dale",
+            "correcto", "exacto", "afirmativo", "confirmar", "procede", "proceder"
+        ]
+
+        # Check if user message contains affirmative intent
+        if user_message and any(keyword in user_message for keyword in affirmative_keywords):
+            logger.info(
+                "User confirmed booking",
+                extra={
+                    "conversation_id": conversation_id,
+                    "user_message": user_message[:50]  # Log first 50 chars
+                }
+            )
+            # Update state with confirmation flag BEFORE adding message
+            state["booking_confirmed"] = True
+
+    # Step 9: Update state with assistant response
     updated_state = add_message(state, "assistant", assistant_response)
     updated_state["last_node"] = "conversational_agent"
     updated_state["updated_at"] = datetime.now(ZoneInfo("Europe/Madrid"))

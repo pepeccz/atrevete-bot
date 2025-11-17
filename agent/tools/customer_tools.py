@@ -86,8 +86,8 @@ class ManageCustomerSchema(BaseModel):
         default=None,
         description=(
             "Additional data for the action:\n"
-            "For 'create': {'first_name': str, 'last_name': str (optional)}\n"
-            "For 'update': {'customer_id': str, 'first_name': str, 'last_name': str}"
+            "For 'create': {'first_name': str, 'last_name': str (optional), 'notes': str (optional)}\n"
+            "For 'update': {'customer_id': str, 'first_name': str (optional), 'last_name': str (optional), 'notes': str (optional)}"
         )
     )
 
@@ -123,8 +123,8 @@ async def manage_customer(
             - "update": Update existing customer's name
         phone: Customer phone number (any format, will be normalized to E.164)
         data: Additional data dict for create/update:
-            - For create: {"first_name": str, "last_name": str (optional)}
-            - For update: {"customer_id": str, "first_name": str, "last_name": str}
+            - For create: {"first_name": str, "last_name": str (optional), "notes": str (optional)}
+            - For update: {"customer_id": str, "first_name": str (optional), "last_name": str (optional), "notes": str (optional)}
 
     Returns:
         Dict with customer data or error. Structure varies by action:
@@ -218,7 +218,7 @@ async def _get_customer(phone: str) -> dict[str, Any]:
         return {"error": "Invalid phone number format", "phone": phone}
 
     try:
-        async for session in get_async_session():
+        async with get_async_session() as session:
             result = await session.execute(
                 select(Customer).where(Customer.phone == normalized_phone)
             )
@@ -239,6 +239,7 @@ async def _get_customer(phone: str) -> dict[str, Any]:
                 "phone": customer.phone,
                 "first_name": customer.first_name,
                 "last_name": customer.last_name or "",
+                "notes": customer.notes or "",
                 "total_spent": float(customer.total_spent),
                 "last_service_date": customer.last_service_date.isoformat() if customer.last_service_date else None,
                 "preferred_stylist_id": str(customer.preferred_stylist_id) if customer.preferred_stylist_id else None,
@@ -267,13 +268,15 @@ async def _create_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
         return {"error": "first_name is required", "data": data}
 
     last_name = data.get("last_name", "")
+    notes = data.get("notes")
 
     try:
-        async for session in get_async_session():
+        async with get_async_session() as session:
             new_customer = Customer(
                 phone=normalized_phone,
                 first_name=first_name,
                 last_name=last_name if last_name else None,
+                notes=notes if notes else None,
                 metadata_={},
             )
             session.add(new_customer)
@@ -316,14 +319,16 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
     customer_id_str = data.get("customer_id")
     first_name = data.get("first_name")
     last_name = data.get("last_name")
+    notes = data.get("notes")
 
     if not customer_id_str:
         logger.error("customer_id is required for update")
         return {"error": "customer_id is required", "data": data}
 
-    if not first_name:
-        logger.error("first_name is required for update")
-        return {"error": "first_name is required", "data": data}
+    # At least one field must be provided for update
+    if not any([first_name, last_name, notes]):
+        logger.error("At least one of first_name, last_name, or notes is required for update")
+        return {"error": "At least one field (first_name, last_name, notes) is required for update", "data": data}
 
     try:
         customer_uuid = UUID(customer_id_str)
@@ -332,7 +337,7 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
         return {"error": "Invalid customer_id format", "customer_id": customer_id_str}
 
     try:
-        async for session in get_async_session():
+        async with get_async_session() as session:
             result = await session.execute(
                 select(Customer).where(Customer.id == customer_uuid)
             )
@@ -342,15 +347,20 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
                 logger.warning(f"Customer not found: {customer_id_str}")
                 return {"error": "Customer not found", "customer_id": customer_id_str}
 
-            customer.first_name = first_name
-            customer.last_name = last_name if last_name else None
+            # Update only the fields that were provided
+            if first_name is not None:
+                customer.first_name = first_name
+            if last_name is not None:
+                customer.last_name = last_name if last_name else None
+            if notes is not None:
+                customer.notes = notes if notes else None
 
             await session.commit()
             await session.refresh(customer)
 
             logger.info(
-                f"Customer name updated: {customer_id_str}",
-                extra={"customer_id": customer_id_str, "first_name": first_name, "last_name": last_name}
+                f"Customer updated: {customer_id_str}",
+                extra={"customer_id": customer_id_str, "first_name": first_name, "last_name": last_name, "notes": notes}
             )
 
             return {
@@ -358,6 +368,7 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
                 "customer_id": str(customer.id),
                 "first_name": customer.first_name,
                 "last_name": customer.last_name or "",
+                "notes": customer.notes or "",
             }
 
     except SQLAlchemyError as e:
@@ -416,7 +427,7 @@ async def get_customer_history(customer_id: str, limit: int = 5) -> dict[str, An
         return {"error": "Invalid customer_id format", "customer_id": customer_id}
 
     try:
-        async for session in get_async_session():
+        async with get_async_session() as session:
             result = await session.execute(
                 select(Appointment)
                 .where(Appointment.customer_id == customer_uuid)

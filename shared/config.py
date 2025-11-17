@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     # Application Settings
     TIMEZONE: str = Field(default="Europe/Madrid")
     LOG_LEVEL: str = Field(default="INFO")
+    SALON_ADDRESS: str = Field(
+        default="Calle de la Constitución, 5, 28100 Alcobendas, Madrid",
+        description="Physical address of the beauty salon"
+    )
 
     class Config:
         env_file = ".env"

@@ -87,7 +87,7 @@ async def seed_policies() -> None:
     """
     all_policies = BUSINESS_RULES + FAQ_POLICIES
 
-    async for session in get_async_session():
+    async with get_async_session() as session:
         for policy_data in all_policies:
             # Use PostgreSQL UPSERT: INSERT ... ON CONFLICT (key) DO UPDATE
             stmt = insert(Policy).values(

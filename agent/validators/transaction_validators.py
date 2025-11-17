@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
@@ -65,7 +65,7 @@ async def validate_category_consistency(service_ids: list[UUID]) -> dict:
             "categories_found": []
         }
 
-    async for session in get_async_session():
+    async with get_async_session() as session:
         try:
             # Fetch all services
             stmt = select(Service).where(Service.id.in_(service_ids))
@@ -87,9 +87,9 @@ async def validate_category_consistency(service_ids: list[UUID]) -> dict:
                     "valid": False,
                     "error_code": "CATEGORY_MISMATCH",
                     "error_message": (
-                        f"No se pueden mezclar servicios de diferentes categorías "
+                        f"Lo siento, no puedo agendar servicios de diferentes categorías "
                         f"({', '.join(category_names)}) en la misma cita. "
-                        f"Por favor, agenda los servicios por separado."
+                        f"Por favor, elige servicios de una sola categoría."
                     ),
                     "categories_found": category_names
                 }
@@ -106,8 +106,9 @@ async def validate_category_consistency(service_ids: list[UUID]) -> dict:
                 "categories_found": category_names
             }
 
-        finally:
-            break  # Exit async for loop
+        except Exception as e:
+            logger.error(f"Database error during category validation: {e}", exc_info=True)
+            raise
 
 
 async def validate_slot_availability(
@@ -160,58 +161,29 @@ async def validate_slot_availability(
     end_time = start_time + timedelta(minutes=duration_minutes)
 
     # Query for overlapping appointments with row lock
+    # Note: We calculate appointment end_time dynamically since it's not a column
+    # Formula: start_time + (duration_minutes || ' minutes')::interval
     stmt = (
         select(Appointment)
         .where(Appointment.stylist_id == stylist_id)
         .where(Appointment.status.in_(["provisional", "confirmed"]))
         .where(
             # Check for overlap: existing appointment overlaps with [start_time, end_time]
+            # Appointment starts before our end_time
             (Appointment.start_time < end_time) &
-            (Appointment.end_time > start_time)
+            # Appointment ends after our start_time (calculated dynamically)
+            (text("start_time + (duration_minutes || ' minutes')::interval") > start_time)
         )
         .with_for_update()  # Row lock to prevent concurrent bookings
     )
 
     result = await session.execute(stmt)
-    all_appointments = result.scalars().all()
+    conflicting_appointments = list(result.scalars().all())
 
-    now = datetime.now(MADRID_TZ)
-    conflicting_appointments = []
-
-    for appointment in all_appointments:
-        # Confirmed appointments always count as conflicts
-        if appointment.status == "confirmed":
-            conflicting_appointments.append(appointment)
-            continue
-
-        if appointment.status == "provisional":
-            metadata = appointment.metadata or {}
-
-            if timeout_str:
-                try:
-                    # Parse ISO timestamp from metadata
-                    timeout_dt = datetime.fromisoformat(timeout_str.replace("Z", "+00:00"))
-
-                    # Only count as conflict if timeout hasn't passed
-                    if timeout_dt >= now:
-                        conflicting_appointments.append(appointment)
-                    else:
-                        logger.info(
-                            f"Ignoring expired provisional appointment: {appointment.id} "
-                            f"(timeout: {timeout_str}, now: {now.isoformat()})"
-                        )
-                except (ValueError, AttributeError) as e:
-                    # If we can't parse timeout, be conservative and count as conflict
-                    logger.warning(
-                        f"{timeout_str} | error: {e}. Counting as conflict."
-                    )
-                    conflicting_appointments.append(appointment)
-            else:
-                # No timeout metadata - be conservative and count as conflict
-                logger.warning(
-                    f"Counting as conflict."
-                )
-                conflicting_appointments.append(appointment)
+    # All appointments returned by the query are conflicts
+    # (both 'confirmed' and 'provisional' status)
+    # Note: Payment system removed Nov 10, 2025 - all appointments auto-confirm
+    # so provisional appointments are treated the same as confirmed
 
     if conflicting_appointments:
         conflict = conflicting_appointments[0]

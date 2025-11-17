@@ -413,11 +413,10 @@ async def archive_checkpoint(
     # Step 2: Insert messages to database (with retry)
     for attempt in range(MAX_RETRY_ATTEMPTS):
         try:
-            async for session in get_async_session():
+            async with get_async_session() as session:
                 messages_archived = await insert_messages_to_db(session, state)
                 result['messages_archived'] = messages_archived
                 result['success'] = True
-                break  # Exit async for loop after successful insert
 
             if result['success']:
                 break  # Success, exit retry loop

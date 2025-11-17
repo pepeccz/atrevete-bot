@@ -93,7 +93,7 @@ class CustomerAdmin(ImportExportModelAdmin):
             'fields': ('total_spent_display', 'appointments_count', 'last_service_date'),
         }),
         ('Preferencias', {
-            'fields': ('preferred_stylist',),
+            'fields': ('preferred_stylist', 'notes'),
         }),
         ('Metadata', {
             'fields': ('metadata',),
@@ -166,6 +166,7 @@ class AppointmentAdmin(ImportExportModelAdmin):
     list_display = [
         'start_time_display',
         'customer_link',
+        'appointment_name_display',
         'stylist',
         'status',
         'has_google_event',
@@ -175,6 +176,8 @@ class AppointmentAdmin(ImportExportModelAdmin):
         'customer__first_name',
         'customer__last_name',
         'customer__phone',
+        'first_name',
+        'last_name',
         'google_calendar_event_id',
     ]
     readonly_fields = [
@@ -191,6 +194,10 @@ class AppointmentAdmin(ImportExportModelAdmin):
     fieldsets = (
         ('Información de la Cita', {
             'fields': ('customer', 'stylist', 'start_time', 'duration_minutes')
+        }),
+        ('Datos del Cliente para esta Cita', {
+            'fields': ('first_name', 'last_name', 'notes'),
+            'description': 'Nombre y notas específicas de esta cita (pueden diferir del perfil del cliente).'
         }),
         ('Servicios', {
             'fields': ('service_ids', 'service_list_display'),
@@ -225,6 +232,12 @@ class AppointmentAdmin(ImportExportModelAdmin):
         url = reverse('admin:core_customer_change', args=[obj.customer.id])
         return format_html('<a href="{}">{}</a>', url, obj.customer.full_name)
     customer_link.short_description = 'Cliente'
+
+    def appointment_name_display(self, obj):
+        """Display customer name from appointment data."""
+        full_name = f"{obj.first_name} {obj.last_name or ''}".strip()
+        return full_name
+    appointment_name_display.short_description = 'Nombre en Cita'
 
     def has_google_event(self, obj):
         """Display if appointment has Google Calendar event."""

@@ -33,10 +33,11 @@ class ConversationState(TypedDict, total=False):
     - Escalation state
 
     v3.2 Enhancement: Added service_selected, slot_selected flags to enable
-    5-state detection (GENERAL, SERVICE_SELECTION, AVAILABILITY_CHECK,
-    CUSTOMER_DATA, BOOKING_EXECUTION) for focused prompt loading.
+    7-state detection (GENERAL, SERVICE_SELECTION, AVAILABILITY_CHECK,
+    CUSTOMER_DATA, BOOKING_CONFIRMATION, BOOKING_EXECUTION, POST_BOOKING)
+    for focused prompt loading.
 
-    Fields (18 total):
+    Fields (20 total):
         # Core Metadata (5 fields)
         conversation_id: LangGraph thread_id for checkpointing
         customer_phone: E.164 phone (e.g., +34612345678)
@@ -55,10 +56,12 @@ class ConversationState(TypedDict, total=False):
         escalation_reason: Why escalated (e.g., "medical_consultation")
         error_count: Consecutive errors (for auto-escalation)
 
-        # Tool Execution Tracking - v3.2 Enhanced (3 fields)
+        # Tool Execution Tracking - v3.2 Enhanced (5 fields)
         customer_data_collected: True after manage_customer returns customer_id
         service_selected: Service name selected (e.g., "CORTE LARGO")
         slot_selected: Selected slot dict {stylist_id, start_time, duration}
+        booking_confirmed: True after user confirms booking summary
+        appointment_created: True after book() successfully creates appointment
 
         # Node Tracking (1 field)
         last_node: Last executed node (for debugging)
@@ -95,11 +98,13 @@ class ConversationState(TypedDict, total=False):
     error_count: int
 
     # ============================================================================
-    # Tool Execution Tracking (3 fields) - v3.2 enhanced state detection
+    # Tool Execution Tracking (5 fields) - v3.2 enhanced state detection
     # ============================================================================
     customer_data_collected: bool  # True after manage_customer returns customer_id
     service_selected: str | None  # Service name selected by user
     slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
+    booking_confirmed: bool  # True after user confirms booking summary
+    appointment_created: bool  # True after book() successfully creates appointment
 
     # ============================================================================
     # Node Tracking (1 field)

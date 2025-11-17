@@ -1,12 +1,18 @@
 # Atrévete Bot Fullstack Architecture Document
 
+> **⚠️ DEPRECATION NOTICE:** This document is being replaced by a modular documentation structure.
+> For quick context, see `docs/QUICK-CONTEXT.md`. For current implementation details, see `docs/04-implementation/current-state.md`.
+> This file contains historical architecture information and will be divided into smaller, focused documents.
+
 ## Introduction
 
 This document outlines the complete fullstack architecture for **Atrévete Bot**, including backend systems, frontend implementation, and their integration. It serves as the single source of truth for AI-driven development, ensuring consistency across the entire technology stack.
 
 This unified approach combines what would traditionally be separate backend and frontend architecture documents, streamlining the development process for modern fullstack applications where these concerns are increasingly intertwined.
 
-The system is designed to automate 85%+ of customer reservation conversations via WhatsApp through an AI conversational agent ("Maite") powered by LangGraph + Anthropic Claude, handling the complete reservation lifecycle from initial inquiry through payment processing (via Stripe) to automated reminders—across 18 documented conversational scenarios. The architecture implements intelligent escalation to the human team via WhatsApp group notifications for complex cases, ensuring the bot augments rather than replaces human judgment.
+The system is designed to automate 85%+ of customer reservation conversations via WhatsApp through an AI conversational agent ("Maite") powered by LangGraph + GPT-4.1-mini (via OpenRouter), handling the complete reservation lifecycle from initial inquiry through booking confirmation to automated reminders—across 18 documented conversational scenarios. The architecture implements intelligent escalation to the human team via WhatsApp group notifications for complex cases, ensuring the bot augments rather than replaces human judgment.
+
+**Note:** Payment system (Stripe integration) was completely eliminated in November 2025. All bookings are now auto-confirmed without payment processing.
 
 ### 1.1 Starter Template or Existing Project
 
@@ -57,7 +63,7 @@ Sections 2-15 reflect the **as-implemented** architecture (post-Epic 1). Key dif
 
 ### 2.1 Technical Summary
 
-Atrévete Bot implements a **stateful conversational AI architecture** deployed as a monolithic application across 3 specialized Docker containers. The backend leverages **LangGraph 0.6.7+** for orchestrating complex multi-step conversational flows with automatic checkpointing, integrated with **Anthropic Claude** (Sonnet 4) for natural language understanding and reasoning. The system uses **FastAPI** for async webhook handling (Chatwoot/Stripe), **PostgreSQL** for relational data persistence, and **Redis** for hot-state management and pub/sub messaging. WhatsApp serves as the primary customer interface via **Chatwoot**, while a lightweight **Django Admin** interface enables salon staff to manage business data (services, packs, policies, holidays). The architecture implements atomic transaction-based booking with provisional calendar blocks, Stripe-hosted payment processing, intelligent escalation to human team members, and automated reminder/timeout workers. This design achieves the PRD's 85%+ automation goal by combining LangGraph's stateful orchestration capabilities with defensive concurrency controls, comprehensive error handling, and crash-recovery mechanisms—all while maintaining <5s response times for standard queries and 99.5% uptime.
+Atrévete Bot implements a **stateful conversational AI architecture** deployed as a monolithic application across 4 specialized Docker containers. The backend leverages **LangGraph 0.6.7+** for orchestrating conversational flows with automatic checkpointing, integrated with **GPT-4.1-mini via OpenRouter** for natural language understanding and reasoning. The system uses **FastAPI** for async webhook handling (Chatwoot), **PostgreSQL** for relational data persistence, and **Redis Stack** for hot-state management and pub/sub messaging. WhatsApp serves as the primary customer interface via **Chatwoot**, while a **Django Admin** interface enables salon staff to manage business data (services, policies, business hours). The architecture implements atomic transaction-based booking with auto-confirmation (no payment processing), intelligent escalation to human team members, and automated conversation archival workers. This design achieves the PRD's 85%+ automation goal by combining LangGraph's stateful orchestration capabilities with defensive concurrency controls, comprehensive error handling, and crash-recovery mechanisms—all while maintaining <5s response times for standard queries and 99.5% uptime.
 
 ### 2.2 Platform and Infrastructure Choice
 

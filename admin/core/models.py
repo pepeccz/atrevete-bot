@@ -129,6 +129,12 @@ class Customer(models.Model):
         related_name='preferred_customers',
         verbose_name="Estilista preferido"
     )
+    notes = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Notas",
+        help_text="Alergias, preferencias, peticiones especiales"
+    )
     metadata = models.JSONField(
         default=dict,
         blank=True,
@@ -259,8 +265,28 @@ class Appointment(models.Model):
         null=True,
         blank=True,
         related_name='bookings_made_for_others',
+        db_column='booked_by_customer_id',
         verbose_name="Reservado por",
         help_text="Cliente que realizó la reserva (si es para terceros)"
+    )
+    # Customer-specific appointment data
+    first_name = models.CharField(
+        max_length=100,
+        verbose_name="Nombre",
+        help_text="Nombre del cliente para esta cita"
+    )
+    last_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Apellidos",
+        help_text="Apellidos del cliente para esta cita"
+    )
+    notes = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Notas de la cita",
+        help_text="Notas específicas de esta cita (alergias, preferencias, peticiones especiales)"
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Fecha de creación")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Última actualización")

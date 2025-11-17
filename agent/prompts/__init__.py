@@ -124,7 +124,7 @@ async def load_stylist_context() -> str:
                 "Estética": []
             }
 
-            async for session in get_async_session():
+            async with get_async_session() as session:
                 stmt = (
                     select(Stylist)
                     .where(Stylist.is_active == True)  # noqa: E712
@@ -145,8 +145,6 @@ async def load_stylist_context() -> str:
                         "id": str(stylist.id)
                     })
 
-                break  # Exit async for loop after first iteration
-
             # Count total stylists
             total_count = sum(len(names) for names in stylists_by_category.values())
 
@@ -155,8 +153,8 @@ async def load_stylist_context() -> str:
             context += "**Peluquería:**\n"
             if stylists_by_category["Peluquería"]:
                 for stylist in stylists_by_category["Peluquería"]:
-                    # Include first 8 chars of UUID for readability
-                    context += f"- {stylist['name']} (ID: {stylist['id'][:8]}...)\n"
+                    # Include full UUID for LLM tool calls
+                    context += f"- {stylist['name']} (ID: {stylist['id']})\n"
                 context += "\n"
             else:
                 context += "- (Ninguno activo)\n\n"
@@ -164,7 +162,8 @@ async def load_stylist_context() -> str:
             context += "**Estética:**\n"
             if stylists_by_category["Estética"]:
                 for stylist in stylists_by_category["Estética"]:
-                    context += f"- {stylist['name']} (ID: {stylist['id'][:8]}...)\n"
+                    # Include full UUID for LLM tool calls
+                    context += f"- {stylist['name']} (ID: {stylist['id']})\n"
             else:
                 context += "- (Ninguno activo)"
 
@@ -198,26 +197,30 @@ def _detect_booking_state(state: dict) -> str:
     """
     Detect the exact booking state based on state flags and message history.
 
-    Returns one of 6 booking states:
+    Returns one of 7 booking states:
     - GENERAL: Greetings, FAQs, general inquiries (no booking intent)
     - SERVICE_SELECTION: User wants to book but hasn't selected service yet
     - AVAILABILITY_CHECK: Service selected, needs to check availability
     - CUSTOMER_DATA: Slot selected, needs customer data (name, allergies)
-    - BOOKING_EXECUTION: Customer data collected, ready to execute book()
+    - BOOKING_CONFIRMATION: Customer data collected, waiting for confirmation
+    - BOOKING_EXECUTION: Customer confirmed, ready to execute book()
     - POST_BOOKING: Booking completed, handling confirmations/modifications
 
     Args:
         state: Conversation state dict with flags and message history
 
     Returns:
-        str: One of the 6 booking states
+        str: One of the 7 booking states
     """
     # Check flags in order of booking flow progression
     if state.get("appointment_created"):
         return "POST_BOOKING"
 
-    if state.get("customer_data_collected"):
+    if state.get("booking_confirmed"):
         return "BOOKING_EXECUTION"
+
+    if state.get("customer_data_collected"):
+        return "BOOKING_CONFIRMATION"
 
     if state.get("slot_selected"):
         return "CUSTOMER_DATA"
@@ -256,12 +259,13 @@ def load_contextual_prompt(state: dict) -> str:
     Returns:
         str: Assembled prompt with core + relevant step-specific sections
 
-    Prompt Structure (6 states):
+    Prompt Structure (7 states):
         - core.md: Always loaded (~5KB) - Rules, identity, error handling
         - general.md: GENERAL state - FAQs, greetings, no booking intent
         - step1_service.md: SERVICE_SELECTION state - Help select service
         - step2_availability.md: AVAILABILITY_CHECK state - Check availability
         - step3_customer.md: CUSTOMER_DATA state - Collect customer info
+        - step3_5_confirmation.md: BOOKING_CONFIRMATION state - Wait for user confirmation
         - step4_booking.md: BOOKING_EXECUTION state - Execute book()
         - step5_post_booking.md: POST_BOOKING state - Confirmations, modifications
     """
@@ -288,6 +292,7 @@ def load_contextual_prompt(state: dict) -> str:
         "SERVICE_SELECTION": "step1_service.md",
         "AVAILABILITY_CHECK": "step2_availability.md",
         "CUSTOMER_DATA": "step3_customer.md",
+        "BOOKING_CONFIRMATION": "step3_5_confirmation.md",
         "BOOKING_EXECUTION": "step4_booking.md",
         "POST_BOOKING": "step5_post_booking.md"
     }

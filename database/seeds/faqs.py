@@ -116,7 +116,7 @@ async def seed_faqs() -> None:
     Uses UPSERT logic (INSERT ON CONFLICT UPDATE) to avoid duplicates.
     Each FAQ is stored with key pattern: faq:{faq_id}
     """
-    async for session in get_async_session():
+    async with get_async_session() as session:
         for faq_data in FAQ_POLICIES:
             # Use PostgreSQL UPSERT: INSERT ... ON CONFLICT (key) DO UPDATE
             stmt = insert(Policy).values(

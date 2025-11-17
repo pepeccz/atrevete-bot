@@ -15,16 +15,20 @@ by Claude through tool calling. No explicit state transitions or routing logic n
 
 import logging
 from typing import Any
+from uuid import UUID
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from sqlalchemy import select
 
 from agent.nodes.conversational_agent import conversational_agent
 from agent.nodes.summarization import summarize_conversation
 from agent.prompts import load_maite_system_prompt
 from agent.state.schemas import ConversationState
 from agent.state.helpers import add_message, should_summarize
+from database.connection import get_async_session
+from database.models import Customer
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -51,6 +55,86 @@ def get_maite_system_prompt() -> str:
 
 # For backward compatibility
 MAITE_SYSTEM_PROMPT = get_maite_system_prompt
+
+
+async def ensure_customer_exists(phone: str, whatsapp_name: str) -> UUID:
+    """
+    Ensure customer exists in database. Create if not found using WhatsApp name.
+
+    This function is called at the start of every conversation to guarantee that
+    the customer record exists before any booking flow begins. It uses the WhatsApp
+    display name for initial customer creation and can be updated later by the agent.
+
+    Args:
+        phone: Customer phone number in E.164 format (e.g., +34623226544)
+        whatsapp_name: Display name from WhatsApp (fallback: "Cliente")
+
+    Returns:
+        UUID: Customer ID (existing or newly created)
+
+    Example:
+        >>> customer_id = await ensure_customer_exists("+34612345678", "Pepe Cabeza")
+        >>> # Returns existing customer_id or creates new customer with name "Pepe" "Cabeza"
+    """
+    async with get_async_session() as session:
+        try:
+            # Step 1: Check if customer exists by phone
+            stmt = select(Customer).where(Customer.phone == phone)
+            result = await session.execute(stmt)
+            existing_customer = result.scalar_one_or_none()
+
+            if existing_customer:
+                logger.debug(
+                    f"Customer already exists for phone {phone}",
+                    extra={"customer_id": str(existing_customer.id), "phone": phone}
+                )
+                return existing_customer.id
+
+            # Step 2: Customer doesn't exist - create new one
+            # Parse WhatsApp name into first_name and last_name
+            name_parts = whatsapp_name.strip().split(maxsplit=1)
+            first_name = name_parts[0] if name_parts else "Cliente"
+            last_name = name_parts[1] if len(name_parts) > 1 else None
+
+            logger.info(
+                f"Creating new customer for phone {phone}",
+                extra={
+                    "phone": phone,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "whatsapp_name": whatsapp_name
+                }
+            )
+
+            # Step 3: Create new customer
+            new_customer = Customer(
+                phone=phone,
+                first_name=first_name,
+                last_name=last_name
+            )
+
+            session.add(new_customer)
+            await session.commit()
+            await session.refresh(new_customer)
+
+            logger.info(
+                f"Customer created successfully",
+                extra={
+                    "customer_id": str(new_customer.id),
+                    "phone": phone,
+                    "first_name": first_name
+                }
+            )
+
+            return new_customer.id
+
+        except Exception as e:
+            logger.error(
+                f"Error ensuring customer exists for phone {phone}: {e}",
+                exc_info=True
+            )
+            await session.rollback()
+            raise
 
 
 async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
@@ -88,6 +172,30 @@ async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
 
     # Add user message to conversation history
     updated_state = add_message(state, "user", user_message)
+
+    # Ensure customer exists in database (auto-create if first interaction)
+    customer_phone = state.get("customer_phone")
+    if customer_phone and not state.get("customer_id"):
+        # Extract WhatsApp name from metadata (fallback to "Cliente")
+        whatsapp_name = state.get("metadata", {}).get("whatsapp_name", "Cliente")
+
+        try:
+            customer_id = await ensure_customer_exists(customer_phone, whatsapp_name)
+            updated_state["customer_id"] = customer_id
+            logger.info(
+                f"Customer ensured for conversation {conversation_id}",
+                extra={
+                    "customer_id": str(customer_id),
+                    "phone": customer_phone,
+                    "whatsapp_name": whatsapp_name
+                }
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to ensure customer exists for {customer_phone}: {e}",
+                extra={"conversation_id": conversation_id}
+            )
+            # Continue processing - don't block the conversation
 
     # Clear user_message field after processing
     updated_state["user_message"] = None

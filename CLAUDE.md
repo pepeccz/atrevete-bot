@@ -149,21 +149,18 @@ mypy .
 
 ## Architecture Overview
 
-### Hybrid Two-Tier Architecture (v3.2)
+### Simplified Tool-Based Architecture (v3.2)
 
-The system uses a **hybrid architecture** with two distinct tiers:
+The system uses a **simplified tool-based architecture** with 3 nodes:
 
-**Tier 1: Conversational Agent (GPT-4.1-mini via OpenRouter)**
-- Single `conversational_agent` node handles all informational conversations
-- GPT-4.1-mini with tool access manages: FAQs, greetings, inquiries, customer identification, service information, indecision detection
-- Natural language understanding and dialogue management via LLM reasoning
-- OpenRouter provides automatic prompt caching (>1024 tokens) for cost optimization
-- Transitions to Tier 2 when `booking_intent_confirmed=True`
-
-**Tier 2: Transactional Nodes (Explicit flow)**
-- Deterministic nodes for booking, availability checking
-- Examples: `check_availability`, `validate_booking_request`, `handle_category_choice`
-- Ensures reliable transactional operations with explicit state transitions
+**Main Conversational Flow (3 Nodes)**
+1. **`process_incoming_message`**: Adds user message to conversation history
+2. **`conversational_agent`**: GPT-4.1-mini via OpenRouter with 8 tools handles ALL conversations
+   - Tools available: customer management, FAQs, services (92 individual), availability, booking, escalation
+   - Natural language understanding and dialogue management via LLM reasoning
+   - OpenRouter provides automatic prompt caching (>1024 tokens) for cost optimization
+   - Handles both informational queries AND booking transactions
+3. **`summarize`**: FIFO windowing - keeps recent 10 messages, summarizes older ones
 
 **Model Selection Rationale:**
 - Using `openai/gpt-4.1-mini` for 7-10x cost savings vs Claude Haiku 4.5
@@ -171,7 +168,7 @@ The system uses a **hybrid architecture** with two distinct tiers:
 - Automatic caching via OpenRouter (no configuration needed)
 - Sufficient capability for booking assistant use case
 
-This simplification reduced complexity from 25 nodes to 12 nodes by consolidating conversational logic into the LLM.
+This architecture eliminated the hybrid tier system, consolidating all logic into a single conversational agent with tool access.
 
 ### v3.2 Optimizations: Dynamic Prompt Injection
 
@@ -187,14 +184,15 @@ This simplification reduced complexity from 25 nodes to 12 nodes by consolidatin
      - Content that changes per request (current date/time, customer info)
      - NOT cached, minimizing cache invalidation
 
-2. **Granular State Detection (6 Booking States)**
+2. **Granular State Detection (7 Booking States)** - Updated Nov 13, 2025
    - Function: `_detect_booking_state()` in `agent/prompts/__init__.py`
    - States detected:
      - `GENERAL`: FAQs, greetings, no booking intent
      - `SERVICE_SELECTION`: User wants to book, needs service selection
      - `AVAILABILITY_CHECK`: Service selected, checking availability
      - `CUSTOMER_DATA`: Slot selected, collecting customer info
-     - `BOOKING_EXECUTION`: Ready to execute `book()` tool
+     - `BOOKING_CONFIRMATION`: Customer data collected, waiting for user confirmation (NEW)
+     - `BOOKING_EXECUTION`: User confirmed, ready to execute `book()` tool
      - `POST_BOOKING`: Booking completed, handling confirmations
    - Each state loads focused prompt (2-4KB) instead of monolithic 27KB
 
@@ -256,47 +254,66 @@ This simplification reduced complexity from 25 nodes to 12 nodes by consolidatin
 3. **State Management**
    - Redis: Short-term checkpointing (15 min TTL, RDB snapshots every 15 min)
    - PostgreSQL: Long-term archival via `conversation_archiver` worker
-   - State schema: `agent/state/schemas.py` (50 fields, hybrid architecture)
+   - State schema: `agent/state/schemas.py` (19 fields, v3.2 enhanced)
 
 ### Key Components
 
 **LangGraph Flow (agent/graphs/conversation_flow.py)**
-- Main StateGraph: 12 nodes orchestrating conversation
-- Router function: `should_route_to_booking` determines Tier 1 → Tier 2 transition
+- Main StateGraph: 3 nodes (process_incoming_message → conversational_agent → summarize)
+- Linear flow with conditional edges for conversation summarization
 - Checkpointing: AsyncRedisSaver with Redis Stack (requires RedisSearch/RedisJSON)
-- System prompt: `agent/prompts/maite_system_prompt.md` (31KB Spanish personality)
+- System prompts: Modular architecture with 8 files (core.md + 6 state-specific prompts + summarization)
 
 **Conversational Agent Node (agent/nodes/conversational_agent.py)**
-- Tier 1 workhorse: GPT-4.1-mini via OpenRouter with bound tools
-- Tools available: customer management, FAQs, services (92 individual), availability, consultations, escalation
+- Main workhorse: GPT-4.1-mini via OpenRouter with 8 bound tools
+- Tools available: query_info, search_services, manage_customer, get_customer_history, check_availability, find_next_available, book, escalate_to_human
+- **Customer Creation Flow:** Customers auto-created in `process_incoming_message` (first interaction), NOT during booking
+- **Booking Flow:** PASO 3 collects first_name, last_name, notes from user; PASO 4 calls `book()` with these fields
 - Uses LangChain's `ChatOpenAI` with tool binding (configured for OpenRouter API)
 - Converts state messages to LangChain format (SystemMessage, HumanMessage, AIMessage, ToolMessage)
 - Automatic prompt caching enabled (OpenRouter feature for prompts >1024 tokens)
+- Modular prompt loading: Detects booking state (6 states) and loads only relevant prompt files (core.md + state-specific)
 
 **State Schema (agent/state/schemas.py) - v3.2 Enhanced**
-- `ConversationState` TypedDict: 19 fields (v3.2 adds 3 booking state flags)
+- `ConversationState` TypedDict: 19 fields total
 - Message format: `{"role": "user"|"assistant", "content": str, "timestamp": str}`
 - IMPORTANT: Use `add_message()` helper from `agent/state/helpers.py` for correct format
 - FIFO windowing: Recent 10 messages kept, older messages summarized
-- **New v3.2 fields for granular state detection:**
+- **v3.2 fields for granular state detection (enables 6-state booking flow):**
+  - `customer_data_collected: bool` - Customer identified/created
   - `service_selected: str | None` - Selected service name
   - `slot_selected: dict | None` - Selected slot `{stylist_id, start_time, duration}`
-- These flags enable 6-state detection for focused prompt loading
+  - `appointment_created: bool` - Booking completed
+- These flags enable 6-state detection (GENERAL → SERVICE_SELECTION → AVAILABILITY_CHECK → CUSTOMER_DATA → BOOKING_EXECUTION → POST_BOOKING) for focused prompt loading
 
 **Database Models (database/models.py)**
-- Core tables: `customers`, `stylists`, `services`, `business_hours`
+- Core tables: `customers`, `stylists`, `services`, `business_hours`, `policies`
 - Transactional tables: `appointments`, `conversation_history`
 - All use UUID primary keys, TIMESTAMP WITH TIME ZONE, JSONB metadata
 - Enums: `ServiceCategory`, `AppointmentStatus`, `MessageRole`
+- **IMPORTANT:** System de pagos eliminado completamente (Nov 10, 2025):
+  - `services` table NO tiene campo `price_euros` (servicios sin precio)
+  - `appointments` table NO tiene campos de pago (`stripe_payment_id`, `payment_status`, etc.)
+  - Todas las citas se auto-confirman al crear (status=`CONFIRMED`, sin flujo provisional)
+  - Sin integración con Stripe
+- **IMPORTANT:** Customer management separado del flujo de reserva (Nov 13, 2025):
+  - Customers auto-created in `process_incoming_message` (first interaction)
+  - `appointments` table has appointment-specific fields: `first_name` (required), `last_name` (optional), `notes` (optional)
+  - These fields allow booking-specific customer data without calling `manage_customer`
+  - `customer_id` in appointments remains FK (NOT NULL) linking to `customers` table
+  - Booking flow (PASO 3) collects name/notes directly from user, no database operations until book()
 
-**Tools (agent/tools/) - v3.1 Consolidated (7 tools)**
-- Information: `query_info` (services, FAQs, hours, policies - replaces 4 tools)
-- Customer management: `manage_customer` (get, create, update - replaces 3 tools)
-- Customer history: `get_customer_history` (appointment history)
-- Availability: `check_availability` (single date) and `find_next_available` (multi-date search)
-- Booking: `book` (atomic transaction via BookingTransaction handler)
-- Escalation: `escalate_to_human` (human handoff)
-- Note: Consultation service is offered via `query_info("services", {"name": "consulta gratuita"})`, not a separate tool
+**Tools (agent/tools/) - v3.2 Consolidated (8 tools)**
+1. **`query_info`**: Unified information retrieval (services, FAQs, hours, policies)
+2. **`search_services`**: Fuzzy search across 92 services (handles ambiguous service names)
+3. **`manage_customer`**: Unified customer CRUD (get, create, update)
+4. **`get_customer_history`**: Retrieve appointment history
+5. **`check_availability`**: Check availability for specific date
+6. **`find_next_available`**: Multi-date automatic search for next available slots
+7. **`book`**: Atomic booking transaction (auto-confirms, no payment flow)
+8. **`escalate_to_human`**: Human handoff for complex cases
+
+Note: Consultation service is offered via `query_info("services", {"name": "consulta gratuita"})`, not a separate tool
 
 **Background Workers (agent/workers/)**
 - `conversation_archiver.py`: Archives expired Redis checkpoints to PostgreSQL
@@ -310,7 +327,7 @@ This simplification reduced complexity from 25 nodes to 12 nodes by consolidatin
 ```python
 from shared.config import get_settings
 settings = get_settings()  # Cached via @lru_cache
-api_key = settings.ANTHROPIC_API_KEY
+api_key = settings.OPENROUTER_API_KEY  # OpenRouter unified gateway
 ```
 
 ### State Updates
@@ -390,7 +407,7 @@ endpoint = f"{api_url}/api/v1/accounts/{account_id}/conversations/{conversation_
 - `agent/` - LangGraph orchestrator with graphs, nodes, tools, prompts, workers
 - `database/` - SQLAlchemy models + Alembic migrations + seed data
 - `shared/` - Shared utilities: config, logging, Redis client, Chatwoot client
-- `admin/` - Django Admin interface (deferred to Epic 7, not implemented)
+- `admin/` - Django Admin interface (✅ Implemented Nov 6, 2025 - accessible at http://localhost:8001/admin)
 - `tests/` - Test suite organized by type (unit, integration, mocks)
 - `docker/` - Dockerfiles for API and Agent services
 - `.cursor/rules/bmad/` - BMAD development methodology rules (orchestrator, analyst, architect, dev, qa, pm, po, sm, ux-expert)

@@ -37,12 +37,13 @@ DAY_NAMES = {
 class QueryInfoSchema(BaseModel):
     """Schema for query_info tool parameters."""
 
-    type: Literal["services", "faqs", "hours"] = Field(
+    type: Literal["services", "faqs", "hours", "location"] = Field(
         description=(
             "Type of information to query:\n"
             "- 'services': Get list of available salon services\n"
             "- 'faqs': Get frequently asked questions/answers\n"
             "- 'hours': Get business hours schedule\n"
+            "- 'location': Get salon physical address\n"
         )
     )
 
@@ -92,23 +93,25 @@ class QueryInfoSchema(BaseModel):
 
 @tool(args_schema=QueryInfoSchema)
 async def query_info(
-    type: Literal["services", "faqs", "hours"],
+    type: Literal["services", "faqs", "hours", "location"],
     filters: dict[str, Any] | None = None,
     max_results: int = 10
 ) -> dict[str, Any]:
     """
-    Query salon information (services, FAQs, hours) with truncation.
+    Query salon information (services, FAQs, hours, location) with truncation.
 
     This consolidated tool provides access to all salon information through a single interface.
     Use the 'type' parameter to specify what information you need.
 
     **v3.2 Enhancement**: Added max_results parameter to reduce token usage. Default: 10 items.
+    **v3.2.1 Enhancement**: Added "location" type for salon address information.
 
     Args:
         type: Type of information to query:
             - "services": Available salon services with prices/durations
             - "faqs": Frequently asked questions and answers
             - "hours": Business hours schedule
+            - "location": Physical address of the salon
         filters: Optional filters dict:
             - For services: {"category": "Peluquería" | "Estética"}
             - For faqs: {"keywords": ["hours", "parking"]}
@@ -134,6 +137,12 @@ async def query_info(
                 "formatted": str  # Human-readable summary
             }
 
+        location:
+            {
+                "address": str,  # Full formatted address
+                "formatted": str  # Human-readable address
+            }
+
     Examples:
         Get all services:
         >>> await query_info("services")
@@ -150,6 +159,10 @@ async def query_info(
         Get business hours:
         >>> await query_info("hours")
         {"schedule": [...], "formatted": "Martes a Viernes: 10:00-20:00, ..."}
+
+        Get salon location:
+        >>> await query_info("location")
+        {"address": "Calle de la Constitución, 5, 28100 Alcobendas, Madrid", "formatted": "..."}
     """
     try:
         if type == "services":
@@ -158,6 +171,8 @@ async def query_info(
             return await _get_faqs(filters, max_results)
         elif type == "hours":
             return await _get_business_hours()
+        elif type == "location":
+            return _get_location()
         else:
             logger.error(f"Invalid query type: {type}")
             return {"error": f"Invalid type: {type}"}
@@ -180,7 +195,7 @@ async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -
     Returns:
         Dict with truncated services list, count_shown, and count_total
     """
-    async for session in get_async_session():
+    async with get_async_session() as session:
         query = select(Service).where(Service.is_active == True)
 
         # Filter by category if provided
@@ -224,7 +239,6 @@ async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -
                 if total_count > max_results else None
             )
         }
-        break
 
 
 async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> dict[str, Any]:
@@ -237,7 +251,7 @@ async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> di
         filters: Optional keyword filters
         max_results: Maximum results to return (default: 10)
     """
-    async for session in get_async_session():
+    async with get_async_session() as session:
         # Filter only FAQ policies (keys starting with 'faq_')
         query = select(Policy).where(Policy.key.like('faq_%'))
 
@@ -283,7 +297,6 @@ async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> di
                 if total_count > max_results else None
             )
         }
-        break
 
 
 async def _get_business_hours() -> dict[str, Any]:
@@ -292,7 +305,7 @@ async def _get_business_hours() -> dict[str, Any]:
 
     Internal function called by query_info(type="hours").
     """
-    async for session in get_async_session():
+    async with get_async_session() as session:
         # Query all days ordered by day_of_week
         query = select(BusinessHours).order_by(BusinessHours.day_of_week)
         result = await session.execute(query)
@@ -341,7 +354,6 @@ async def _get_business_hours() -> dict[str, Any]:
             "schedule": schedule,
             "formatted": formatted,
         }
-        break
 
 
 def _format_schedule_summary(schedule: list[dict]) -> str:
@@ -390,3 +402,29 @@ def _format_schedule_summary(schedule: list[dict]) -> str:
         formatted_parts.append(f"{day_str}: {group['hours']}")
 
     return ", ".join(formatted_parts)
+
+
+def _get_location() -> dict[str, Any]:
+    """
+    Get salon physical address from configuration.
+
+    Internal function called by query_info(type="location").
+
+    Returns:
+        Dict with salon address:
+            {
+                "address": str,  # Full address
+                "formatted": str  # Same as address (human-readable)
+            }
+    """
+    from shared.config import get_settings
+
+    settings = get_settings()
+    address = settings.SALON_ADDRESS
+
+    logger.info("Retrieved salon location from config")
+
+    return {
+        "address": address,
+        "formatted": address,
+    }
