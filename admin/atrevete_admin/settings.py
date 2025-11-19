@@ -189,6 +189,9 @@ UNFOLD = {
     "SITE_SUBHEADER": "Salón de Belleza",
     "SITE_URL": "/admin/",
 
+    # Dashboard callback for metrics
+    "DASHBOARD_CALLBACK": "core.views.dashboard_callback",
+
     # UI behavior
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": False,
