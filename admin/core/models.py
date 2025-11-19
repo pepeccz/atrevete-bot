@@ -20,8 +20,9 @@ from django.db import models
 
 class ServiceCategory(models.TextChoices):
     """Service category enumeration."""
-    HAIRDRESSING = "Peluquería", "Peluquería"
-    AESTHETICS = "Estética", "Estética"
+    HAIRDRESSING = "HAIRDRESSING", "Peluquería"
+    AESTHETICS = "AESTHETICS", "Estética"
+    BOTH = "BOTH", "Ambos"
 
 
 class AppointmentStatus(models.TextChoices):

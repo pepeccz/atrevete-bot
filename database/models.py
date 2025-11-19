@@ -60,8 +60,9 @@ class Base(DeclarativeBase):
 class ServiceCategory(str, PyEnum):
     """Service category enumeration."""
 
-    HAIRDRESSING = "Peluquería"
-    AESTHETICS = "Estética"
+    HAIRDRESSING = "HAIRDRESSING"
+    AESTHETICS = "AESTHETICS"
+    BOTH = "BOTH"
 
 
 class AppointmentStatus(PyEnum):

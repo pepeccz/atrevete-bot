@@ -132,7 +132,10 @@ class TestChatwootWebhook:
         }
 
         body = json.dumps(payload).encode()
-        token = "chatwoot_webhook_token_placeholder"
+
+        from shared.config import get_settings
+        settings = get_settings()
+        token = settings.CHATWOOT_WEBHOOK_TOKEN
 
         with patch("api.routes.chatwoot.publish_to_channel") as mock_publish:
             response = client.post(
@@ -173,7 +176,10 @@ class TestChatwootWebhook:
         }
 
         body = json.dumps(payload).encode()
-        token = "chatwoot_webhook_token_placeholder"
+
+        from shared.config import get_settings
+        settings = get_settings()
+        token = settings.CHATWOOT_WEBHOOK_TOKEN
 
         with patch("api.routes.chatwoot.publish_to_channel") as mock_publish:
             mock_publish.return_value = AsyncMock()
@@ -216,7 +222,10 @@ class TestChatwootWebhook:
         }
 
         body = json.dumps(payload).encode()
-        token = "chatwoot_webhook_token_placeholder"
+
+        from shared.config import get_settings
+        settings = get_settings()
+        token = settings.CHATWOOT_WEBHOOK_TOKEN
 
         with patch("api.routes.chatwoot.publish_to_channel") as mock_publish:
             response = client.post(
@@ -257,7 +266,10 @@ class TestChatwootWebhook:
         }
 
         body = json.dumps(payload).encode()
-        token = "chatwoot_webhook_token_placeholder"
+
+        from shared.config import get_settings
+        settings = get_settings()
+        token = settings.CHATWOOT_WEBHOOK_TOKEN
 
         with patch("api.routes.chatwoot.publish_to_channel") as mock_publish:
             with patch("api.routes.chatwoot.ChatwootClient") as mock_chatwoot_class:
