@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from groq import RateLimitError, APIError
 
-from agent.tools.notification_tools import ChatwootClient
+from shared.chatwoot_client import ChatwootClient
 from api.models.chatwoot_webhook import (
     ChatwootMessageEvent,
     ChatwootWebhookPayload,
