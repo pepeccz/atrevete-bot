@@ -64,3 +64,6 @@ htmlcov/
 
 # Redis dumps
 dump.rdb
+
+# Bmad Method
+.bmad-core-old
