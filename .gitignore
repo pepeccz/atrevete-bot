@@ -67,3 +67,6 @@ dump.rdb
 
 # Bmad Method
 .bmad-core-old
+.bmad-core
+.claude
+CLAUDE.md
