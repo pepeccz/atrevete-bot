@@ -1,0 +1,37 @@
+{
+  "workflow_version": "1.2.0",
+  "timestamps": {
+    "started": "2025-11-19T18:00:00+01:00",
+    "last_updated": "2025-11-19T18:00:00+01:00"
+  },
+  "mode": "initial_scan",
+  "scan_level": "exhaustive",
+  "project_root": "/home/pepe/atrevete-bot",
+  "output_folder": "/home/pepe/atrevete-bot/docs",
+  "completed_steps": [
+    {
+      "step": "step_1",
+      "status": "completed",
+      "timestamp": "2025-11-19T18:00:00+01:00",
+      "summary": "Classified as monolith with 1 part - Backend Python (LangGraph agent)"
+    }
+  ],
+  "current_step": "step_2",
+  "project_types": [
+    {
+      "part_id": "main",
+      "project_type_id": "backend",
+      "display_name": "Backend API with AI Agent"
+    }
+  ],
+  "findings": {
+    "project_classification": {
+      "repository_type": "monolith",
+      "parts_count": 1,
+      "primary_language": "Python 3.11+",
+      "architecture_pattern": "Service/API-centric with LangGraph"
+    }
+  },
+  "outputs_generated": ["project-scan-report.json"],
+  "resume_instructions": "Continue from step 2 - Discover existing documentation"
+}
