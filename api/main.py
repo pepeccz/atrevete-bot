@@ -85,10 +85,9 @@ async def health_check() -> JSONResponse:
 
     # Check PostgreSQL connectivity
     try:
-        async for session in get_async_session():
+        async with get_async_session() as session:
             await session.execute(text("SELECT 1"))
             health_status["postgres"] = "connected"
-            break
     except Exception:
         health_status["postgres"] = "disconnected"
         health_status["status"] = "degraded"

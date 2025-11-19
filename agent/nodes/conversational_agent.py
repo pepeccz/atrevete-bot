@@ -518,21 +518,50 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
         )
 
     # Step 7: Check for escalation trigger
-    # If escalate_to_human was called, mark escalation in state
+    # If escalate_to_human was called, mark escalation in state and disable bot in Chatwoot
     if response.tool_calls:
         for tool_call in response.tool_calls:
             if tool_call["name"] == "escalate_to_human":
+                escalation_reason = tool_call["args"].get("reason")
                 logger.info(
                     f"Escalation detected in tool calls",
                     extra={
                         "conversation_id": conversation_id,
-                        "reason": tool_call["args"].get("reason"),
+                        "reason": escalation_reason,
                     }
                 )
+
+                # Disable bot in Chatwoot so human team can take over
+                try:
+                    from shared.chatwoot_client import ChatwootClient
+
+                    chatwoot = ChatwootClient()
+                    await chatwoot.update_conversation_attributes(
+                        conversation_id=int(conversation_id),
+                        attributes={"atencion_automatica": False}
+                    )
+                    logger.info(
+                        f"Bot disabled for conversation {conversation_id} (escalated to human)",
+                        extra={
+                            "conversation_id": conversation_id,
+                            "reason": escalation_reason,
+                        }
+                    )
+                except Exception as e:
+                    # Log error but don't block - the escalation message should still be sent
+                    logger.error(
+                        f"Failed to disable bot in Chatwoot for conversation {conversation_id}: {e}",
+                        extra={
+                            "conversation_id": conversation_id,
+                            "error": str(e),
+                        },
+                        exc_info=True,
+                    )
+
                 # Mark escalation in state
                 updated_state = add_message(state, "assistant", assistant_response)
                 updated_state["escalation_triggered"] = True
-                updated_state["escalation_reason"] = tool_call["args"].get("reason")
+                updated_state["escalation_reason"] = escalation_reason
                 updated_state["last_node"] = "conversational_agent"
                 updated_state["updated_at"] = datetime.now(ZoneInfo("Europe/Madrid"))
                 return updated_state
