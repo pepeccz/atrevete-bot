@@ -49,7 +49,7 @@ INSTALLED_APPS = [
     'django_extensions',
     'import_export',
     # Project apps
-    'core',
+    'admin.core',
 ]
 
 MIDDLEWARE = [
@@ -309,6 +309,12 @@ UNFOLD = {
                 "separator": True,
                 "collapsible": True,
                 "items": [
+                    {
+                        "title": _("Estado"),
+                        "icon": "monitor_heart",
+                        "link": reverse_lazy("admin_status"),
+                        "permission": lambda request: request.user.is_staff,
+                    },
                     {
                         "title": _("Usuarios"),
                         "icon": "admin_panel_settings",

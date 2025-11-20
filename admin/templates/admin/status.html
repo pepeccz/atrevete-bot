@@ -1,0 +1,293 @@
+{% extends 'unfold/layouts/base_simple.html' %}
+{% load i18n %}
+
+{% block breadcrumbs %}{% endblock %}
+
+{% block title %}
+    {% trans 'Estado del Sistema' %} | {{ site_title|default:_('Django site admin') }}
+{% endblock %}
+
+{% block content %}
+<div class="p-6 space-y-6">
+    <!-- Page Header -->
+    <div class="mb-6">
+        <h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+            {% trans 'Estado del Sistema' %}
+        </h1>
+        <p class="text-gray-600 dark:text-gray-400 mt-2">
+            {% trans 'Monitoreo de infraestructura y servicios' %}
+        </p>
+        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
+            {% trans 'Última actualización' %}: {{ timestamp|date:"H:i:s" }}
+        </p>
+    </div>
+
+    <!-- System Status Alert -->
+    <div class="rounded-lg border {% if system_status == 'healthy' %}bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800{% elif system_status == 'degraded' %}bg-yellow-50 border-yellow-200 dark:bg-yellow-900/20 dark:border-yellow-800{% else %}bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800{% endif %} p-6">
+        <div class="flex items-center space-x-3">
+            <span class="text-3xl">{{ system_status_icon }}</span>
+            <div>
+                <h3 class="font-semibold {% if system_status == 'healthy' %}text-green-900 dark:text-green-100{% elif system_status == 'degraded' %}text-yellow-900 dark:text-yellow-100{% else %}text-red-900 dark:text-red-100{% endif %}">
+                    {% if system_status == 'healthy' %}
+                        {% trans 'Sistema Saludable' %}
+                    {% elif system_status == 'degraded' %}
+                        {% trans 'Sistema Degradado' %}
+                    {% else %}
+                        {% trans 'Sistema Crítico' %}
+                    {% endif %}
+                </h3>
+                <p class="text-sm {% if system_status == 'healthy' %}text-green-800 dark:text-green-200{% elif system_status == 'degraded' %}text-yellow-800 dark:text-yellow-200{% else %}text-red-800 dark:text-red-200{% endif %}">
+                    {% if system_status == 'healthy' %}
+                        {% trans 'Todos los servicios operativos' %}
+                    {% elif system_status == 'degraded' %}
+                        {% trans 'Algunos servicios tienen problemas' %}
+                    {% else %}
+                        {% trans 'Servicios críticos no disponibles' %}
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Service Status Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Redis -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+            <div class="flex items-start justify-between mb-4">
+                <div>
+                    <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">Redis</p>
+                    <p class="text-lg font-semibold text-gray-900 dark:text-white mt-1">{{ redis_icon }} Cache & Pub/Sub</p>
+                </div>
+            </div>
+            {% if redis_health.status == 'connected' %}
+                <div class="space-y-2 text-sm">
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Estatus' %}:</span> <span class="text-green-600 dark:text-green-400 font-medium">✓ {% trans 'Conectado' %}</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Uptime' %}:</span> <span class="text-gray-900 dark:text-white">{{ redis_health.uptime_seconds|floatformat:0 }}s</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Clientes' %}:</span> <span class="text-gray-900 dark:text-white">{{ redis_health.connected_clients }}</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Memoria' %}:</span> <span class="text-gray-900 dark:text-white">{{ redis_health.used_memory_human }}</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Keys' %}:</span> <span class="text-gray-900 dark:text-white">{{ redis_health.total_keys }}</span></p>
+                </div>
+            {% else %}
+                <p class="text-red-600 dark:text-red-400 font-medium">✗ {% trans 'Desconectado' %}</p>
+                {% if redis_health.error %}<p class="text-sm text-red-500">{{ redis_health.error }}</p>{% endif %}
+            {% endif %}
+        </div>
+
+        <!-- PostgreSQL -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+            <div class="flex items-start justify-between mb-4">
+                <div>
+                    <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">PostgreSQL</p>
+                    <p class="text-lg font-semibold text-gray-900 dark:text-white mt-1">{{ postgres_icon }} Base de Datos</p>
+                </div>
+            </div>
+            {% if postgres_health.status == 'connected' %}
+                <div class="space-y-2 text-sm">
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Estatus' %}:</span> <span class="text-green-600 dark:text-green-400 font-medium">✓ {% trans 'Conectado' %}</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Versión' %}:</span> <span class="text-gray-900 dark:text-white">{{ postgres_health.version }}</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Tamaño BD' %}:</span> <span class="text-gray-900 dark:text-white">{{ postgres_health.database_size_mb }} MB</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Conexiones' %}:</span> <span class="text-gray-900 dark:text-white">{{ postgres_health.active_connections }}</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Tablas' %}:</span> <span class="text-gray-900 dark:text-white">{{ postgres_health.table_count }}</span></p>
+                </div>
+            {% else %}
+                <p class="text-red-600 dark:text-red-400 font-medium">✗ {% trans 'Desconectado' %}</p>
+                {% if postgres_health.error %}<p class="text-sm text-red-500">{{ postgres_health.error }}</p>{% endif %}
+            {% endif %}
+        </div>
+
+        <!-- Archiver Worker -->
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+            <div class="flex items-start justify-between mb-4">
+                <div>
+                    <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">{% trans 'Worker' %}</p>
+                    <p class="text-lg font-semibold text-gray-900 dark:text-white mt-1">{{ archiver_icon }} Archivador</p>
+                </div>
+            </div>
+            {% if archiver_health.status == 'healthy' %}
+                <div class="space-y-2 text-sm">
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Estatus' %}:</span> <span class="text-green-600 dark:text-green-400 font-medium">✓ {% trans 'Saludable' %}</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Última ejecución' %}:</span> <span class="text-gray-900 dark:text-white">{{ archiver_health.last_run }}</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Hace' %}:</span> <span class="text-gray-900 dark:text-white">{{ archiver_health.time_since_last_run_seconds }}s</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Archivados' %}:</span> <span class="text-gray-900 dark:text-white">{{ archiver_health.checkpoints_archived }} checkpoints</span></p>
+                    <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Errores' %}:</span> <span class="text-gray-900 dark:text-white">{{ archiver_health.errors }}</span></p>
+                </div>
+            {% elif archiver_health.status == 'unknown' %}
+                <p class="text-gray-600 dark:text-gray-400 font-medium">⚪ {% trans 'Estado desconocido' %}</p>
+                {% if archiver_health.error %}<p class="text-sm text-gray-500">{{ archiver_health.error }}</p>{% endif %}
+            {% else %}
+                <p class="text-red-600 dark:text-red-400 font-medium">✗ {% trans 'Error' %}</p>
+                {% if archiver_health.error %}<p class="text-sm text-red-500">{{ archiver_health.error }}</p>{% endif %}
+            {% endif %}
+        </div>
+
+        <!-- API Service -->
+        {% if api_service %}
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+            <div class="flex items-start justify-between mb-4">
+                <div>
+                    <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">API</p>
+                    <p class="text-lg font-semibold text-gray-900 dark:text-white mt-1">{{ api_icon }} FastAPI</p>
+                </div>
+            </div>
+            <div class="space-y-2 text-sm">
+                <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Contenedor' %}:</span> <span class="text-gray-900 dark:text-white">{{ api_service.name }}</span></p>
+                <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Estado' %}:</span>
+                    {% if api_service.health == 'healthy' %}
+                        <span class="text-green-600 dark:text-green-400 font-medium">✓ {% trans 'Saludable' %}</span>
+                    {% elif api_service.health == 'running' %}
+                        <span class="text-green-600 dark:text-green-400 font-medium">✓ {% trans 'En ejecución' %}</span>
+                    {% else %}
+                        <span class="text-red-600 dark:text-red-400 font-medium">✗ {{ api_service.health }}</span>
+                    {% endif %}
+                </p>
+                <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Contenedor' %}:</span> <span class="text-gray-900 dark:text-white">{{ api_service.state }}</span></p>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Agent Service -->
+        {% if agent_service %}
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+            <div class="flex items-start justify-between mb-4">
+                <div>
+                    <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">{% trans 'Agente' %}</p>
+                    <p class="text-lg font-semibold text-gray-900 dark:text-white mt-1">{{ agent_icon }} LangGraph</p>
+                </div>
+            </div>
+            <div class="space-y-2 text-sm">
+                <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Contenedor' %}:</span> <span class="text-gray-900 dark:text-white">{{ agent_service.name }}</span></p>
+                <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Estado' %}:</span>
+                    {% if agent_service.health == 'healthy' %}
+                        <span class="text-green-600 dark:text-green-400 font-medium">✓ {% trans 'Saludable' %}</span>
+                    {% elif agent_service.health == 'running' %}
+                        <span class="text-green-600 dark:text-green-400 font-medium">✓ {% trans 'En ejecución' %}</span>
+                    {% else %}
+                        <span class="text-red-600 dark:text-red-400 font-medium">✗ {{ agent_service.health }}</span>
+                    {% endif %}
+                </p>
+                <p><span class="text-gray-600 dark:text-gray-400">{% trans 'Contenedor' %}:</span> <span class="text-gray-900 dark:text-white">{{ agent_service.state }}</span></p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- All Services Table -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {% trans 'Todos los Servicios Docker' %}
+            </h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
+                    <tr>
+                        <th class="px-6 py-3 text-left font-semibold text-gray-900 dark:text-white">{% trans 'Contenedor' %}</th>
+                        <th class="px-6 py-3 text-left font-semibold text-gray-900 dark:text-white">{% trans 'Imagen' %}</th>
+                        <th class="px-6 py-3 text-left font-semibold text-gray-900 dark:text-white">{% trans 'Estado' %}</th>
+                        <th class="px-6 py-3 text-left font-semibold text-gray-900 dark:text-white">{% trans 'Health Check' %}</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                    {% for service in all_services %}
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+                        <td class="px-6 py-4 text-gray-900 dark:text-white font-medium">{{ service.name }}</td>
+                        <td class="px-6 py-4 text-gray-600 dark:text-gray-400 text-xs">{{ service.image }}</td>
+                        <td class="px-6 py-4">
+                            <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium
+                                {% if service.health == 'healthy' or service.health == 'running' %}
+                                    bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200
+                                {% elif service.health == 'stopped' %}
+                                    bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200
+                                {% else %}
+                                    bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200
+                                {% endif %}">
+                                {{ service.state }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4">
+                            <span class="inline-flex items-center space-x-1">
+                                {% if service.health == 'healthy' %}
+                                    <span class="text-green-600 dark:text-green-400">✓</span>
+                                    <span class="text-gray-900 dark:text-white">{% trans 'Saludable' %}</span>
+                                {% elif service.health == 'running' %}
+                                    <span class="text-green-600 dark:text-green-400">✓</span>
+                                    <span class="text-gray-900 dark:text-white">{% trans 'En ejecución' %}</span>
+                                {% elif service.health == 'unhealthy' %}
+                                    <span class="text-red-600 dark:text-red-400">✗</span>
+                                    <span class="text-red-600 dark:text-red-400">{% trans 'No saludable' %}</span>
+                                {% elif service.health == 'stopped' %}
+                                    <span class="text-red-600 dark:text-red-400">✗</span>
+                                    <span class="text-red-600 dark:text-red-400">{% trans 'Parado' %}</span>
+                                {% else %}
+                                    <span class="text-gray-600 dark:text-gray-400">⚪</span>
+                                    <span class="text-gray-600 dark:text-gray-400">{% trans 'Desconocido' %}</span>
+                                {% endif %}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-6">
+            {% trans 'Actividad Reciente (Últimas 24 horas)' %}
+        </h3>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-900/10 rounded-lg p-4">
+                <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">{% trans 'Conversaciones' %}</p>
+                <p class="text-3xl font-bold text-blue-600 dark:text-blue-400 mt-2">
+                    {{ recent_activity.conversations_24h|default:0 }}
+                </p>
+            </div>
+            <div class="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-900/10 rounded-lg p-4">
+                <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">{% trans 'Mensajes' %}</p>
+                <p class="text-3xl font-bold text-purple-600 dark:text-purple-400 mt-2">
+                    {{ recent_activity.messages_24h|default:0 }}
+                </p>
+            </div>
+            <div class="bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-900/20 dark:to-emerald-900/10 rounded-lg p-4">
+                <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">{% trans 'Nuevas Citas' %}</p>
+                <p class="text-3xl font-bold text-emerald-600 dark:text-emerald-400 mt-2">
+                    {{ recent_activity.bookings_24h|default:0 }}
+                </p>
+            </div>
+            <div class="bg-gradient-to-br from-rose-50 to-rose-100 dark:from-rose-900/20 dark:to-rose-900/10 rounded-lg p-4">
+                <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">{% trans 'Nuevos Clientes' %}</p>
+                <p class="text-3xl font-bold text-rose-600 dark:text-rose-400 mt-2">
+                    {{ recent_activity.new_customers_24h|default:0 }}
+                </p>
+            </div>
+        </div>
+
+        <!-- Additional Metrics -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+            <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+                <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">{% trans 'Conversaciones Activas (última hora)' %}</p>
+                <p class="text-2xl font-bold text-gray-900 dark:text-white mt-2">{{ recent_activity.active_conversations|default:0 }}</p>
+            </div>
+            <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+                <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">{% trans 'Total de Clientes' %}</p>
+                <p class="text-2xl font-bold text-gray-900 dark:text-white mt-2">{{ recent_activity.total_customers|default:0 }}</p>
+            </div>
+            <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+                <p class="text-gray-600 dark:text-gray-400 text-sm font-medium">{% trans 'Promedio de mensajes por conversación' %}</p>
+                <p class="text-2xl font-bold text-gray-900 dark:text-white mt-2">{{ recent_activity.avg_messages_per_conversation|default:0 }}</p>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // Auto-refresh page every 30 seconds
+    setTimeout(function() {
+        location.reload();
+    }, 30000);
+</script>
+
+{% endblock %}

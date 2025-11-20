@@ -1,5 +1,5 @@
 """
-Dashboard callback for Unfold admin dashboard.
+Dashboard callback and views for Unfold admin dashboard.
 
 Retrieves metrics from database and formats them for Chart.js rendering.
 """
@@ -8,11 +8,23 @@ import json
 from datetime import timedelta
 from typing import Any
 
+from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Avg, Count, Sum
 from django.db.models.functions import TruncDate, TruncMonth
+from django.shortcuts import render
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
+from .health_utils import (
+    get_archiver_health,
+    get_docker_status,
+    get_postgres_health,
+    get_recent_activity,
+    get_redis_health,
+    get_status_color,
+    get_status_icon,
+    get_system_status,
+)
 from .models import Appointment, Customer, Service, Stylist
 
 
@@ -255,3 +267,75 @@ def dashboard_callback(request, context: dict[str, Any]) -> dict[str, Any]:
     })
 
     return context
+
+
+# ============================================================================
+# Infrastructure Status View
+# ============================================================================
+
+
+@staff_member_required
+def status_view(request):
+    """
+    Infrastructure status dashboard.
+
+    Displays health and status of all services:
+    - Docker containers
+    - Redis
+    - PostgreSQL
+    - Archiver worker
+    - Recent activity metrics
+
+    Only accessible to staff members.
+    """
+    # Gather health data from all services
+    redis_health = get_redis_health()
+    postgres_health = get_postgres_health()
+    archiver_health = get_archiver_health()
+    docker_services = get_docker_status()
+    recent_activity = get_recent_activity()
+
+    # Calculate overall system status
+    system_status = get_system_status(redis_health, postgres_health, archiver_health)
+
+    # Filter key services from Docker list
+    key_services = {
+        "atrevete-api": None,
+        "atrevete-agent": None,
+        "atrevete-postgres": None,
+        "atrevete-redis": None,
+        "atrevete-admin": None,
+        "atrevete-archiver": None,
+    }
+
+    for service in docker_services:
+        name = service.get("name", "")
+        if name in key_services:
+            key_services[name] = service
+
+    # Prepare context
+    context = {
+        "title": _("Estado del Sistema"),
+        "system_status": system_status,
+        "system_status_icon": get_status_icon(system_status),
+        "system_status_color": get_status_color(system_status),
+        "redis_health": redis_health,
+        "redis_icon": get_status_icon(redis_health.get("status", "unknown")),
+        "postgres_health": postgres_health,
+        "postgres_icon": get_status_icon(postgres_health.get("status", "unknown")),
+        "archiver_health": archiver_health,
+        "archiver_icon": get_status_icon(archiver_health.get("status", "unknown")),
+        "api_service": key_services.get("atrevete-api"),
+        "api_icon": get_status_icon(
+            key_services.get("atrevete-api", {}).get("health", "unknown")
+        ),
+        "agent_service": key_services.get("atrevete-agent"),
+        "agent_icon": get_status_icon(
+            key_services.get("atrevete-agent", {}).get("health", "unknown")
+        ),
+        "all_services": docker_services,
+        "recent_activity": recent_activity,
+        "timestamp": timezone.now(),
+    }
+
+    return render(request, "admin/status.html", context)
