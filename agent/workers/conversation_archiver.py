@@ -481,8 +481,8 @@ async def update_health_check(
     }
 
     # Write health check file atomically (temp file + rename)
-    health_file = Path('/tmp/archiver_health.json')  # Use /tmp for Docker compatibility
-    temp_file = Path(f'/tmp/archiver_health.{int(time.time())}.tmp')
+    health_file = Path('/var/health/archiver_health.json')  # Shared volume for Docker
+    temp_file = Path(f'/var/health/archiver_health.{int(time.time())}.tmp')
 
     try:
         temp_file.write_text(json.dumps(health_data, indent=2))
@@ -621,6 +621,18 @@ def run_archival_worker() -> None:
 
     logger.info("Conversation archiver worker starting...")
     logger.info(f"Configuration: CUTOFF_HOURS={CUTOFF_HOURS}, TIMEZONE={TIMEZONE}")
+
+    # Write initial health check file
+    asyncio.run(
+        update_health_check(
+            last_run=datetime.now(TIMEZONE),
+            status="healthy",
+            checkpoints_archived=0,
+            messages_archived=0,
+            errors=0,
+        )
+    )
+    logger.info("Initial health check file written")
 
     # Schedule hourly execution at :00
     schedule.every().hour.at(":00").do(

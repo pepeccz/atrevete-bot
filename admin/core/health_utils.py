@@ -193,7 +193,7 @@ def get_archiver_health() -> dict[str, Any]:
     Returns:
         Dict with last run time, status, archived counts, and staleness indicator.
     """
-    health_file = Path("/tmp/archiver_health.json")
+    health_file = Path("/var/health/archiver_health.json")
 
     try:
         if not health_file.exists():

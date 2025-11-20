@@ -97,6 +97,9 @@ services:
     env_file: .env
     ports:
       - "8001:8001"
+    volumes:
+      - health_data:/var/health:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,6 +147,8 @@ services:
     container_name: atrevete-archiver
     command: python -m agent.workers.conversation_archiver
     env_file: .env
+    volumes:
+      - health_data:/var/health:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -167,3 +172,4 @@ volumes:
   postgres_data:
   pgadmin_data:
   redis_data:
+  health_data:

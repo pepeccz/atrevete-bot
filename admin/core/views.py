@@ -8,6 +8,7 @@ import json
 from datetime import timedelta
 from typing import Any
 
+from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Avg, Count, Sum
 from django.db.models.functions import TruncDate, TruncMonth
@@ -315,6 +316,7 @@ def status_view(request):
 
     # Prepare context
     context = {
+        **admin.site.each_context(request),  # Adds sidebar_navigation, available_apps, theme vars
         "title": _("Estado del Sistema"),
         "system_status": system_status,
         "system_status_icon": get_status_icon(system_status),
@@ -327,15 +329,18 @@ def status_view(request):
         "archiver_icon": get_status_icon(archiver_health.get("status", "unknown")),
         "api_service": key_services.get("atrevete-api"),
         "api_icon": get_status_icon(
-            key_services.get("atrevete-api", {}).get("health", "unknown")
+            (key_services.get("atrevete-api") or {}).get("health", "unknown")
         ),
         "agent_service": key_services.get("atrevete-agent"),
         "agent_icon": get_status_icon(
-            key_services.get("atrevete-agent", {}).get("health", "unknown")
+            (key_services.get("atrevete-agent") or {}).get("health", "unknown")
         ),
         "all_services": docker_services,
         "recent_activity": recent_activity,
         "timestamp": timezone.now(),
+        # Navigation context for Unfold sidebar
+        "is_nav_sidebar_enabled": True,
+        "is_popup": False,
     }
 
     return render(request, "admin/status.html", context)

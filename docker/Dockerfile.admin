@@ -10,7 +10,15 @@ RUN apt-get update && \
     libpq-dev \
     gcc \
     curl \
+    wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI from official Docker repository
+# Using static binary to avoid dependency issues
+RUN wget -q https://download.docker.com/linux/static/stable/x86_64/docker-27.4.1.tgz && \
+    tar xzvf docker-27.4.1.tgz --strip 1 -C /usr/local/bin docker/docker && \
+    rm docker-27.4.1.tgz && \
+    chmod +x /usr/local/bin/docker
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
