@@ -27,10 +27,11 @@ class ServiceCategory(models.TextChoices):
 
 class AppointmentStatus(models.TextChoices):
     """Appointment lifecycle status."""
-    PROVISIONAL = "provisional", "Provisional"
+    PENDING = "pending", "Pendiente"
     CONFIRMED = "confirmed", "Confirmada"
     COMPLETED = "completed", "Completada"
     CANCELLED = "cancelled", "Cancelada"
+    NO_SHOW = "no_show", "No Asistió"
     EXPIRED = "expired", "Expirada"
 
 
@@ -240,7 +241,7 @@ class Appointment(models.Model):
     status = models.CharField(
         max_length=20,
         choices=AppointmentStatus.choices,
-        default=AppointmentStatus.PROVISIONAL,
+        default=AppointmentStatus.PENDING,
         verbose_name="Estado de la cita"
     )
     google_calendar_event_id = models.CharField(

@@ -275,10 +275,11 @@ class AppointmentAdmin(ModelAdmin):
     @display(
         description="Estado",
         label={
+            "pending": "warning",
             "confirmed": "success",
             "completed": "info",
             "cancelled": "danger",
-            "provisional": "warning",
+            "no_show": "danger",
             "expired": "danger",
         }
     )
