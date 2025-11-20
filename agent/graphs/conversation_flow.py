@@ -176,8 +176,8 @@ async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
     # Ensure customer exists in database (auto-create if first interaction)
     customer_phone = state.get("customer_phone")
     if customer_phone and not state.get("customer_id"):
-        # Extract WhatsApp name from metadata (fallback to "Cliente")
-        whatsapp_name = state.get("metadata", {}).get("whatsapp_name", "Cliente")
+        # Extract WhatsApp name from state (set by agent/main.py from Chatwoot webhook)
+        whatsapp_name = state.get("customer_name", "Cliente")
 
         try:
             customer_id = await ensure_customer_exists(customer_phone, whatsapp_name)
