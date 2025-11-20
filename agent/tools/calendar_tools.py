@@ -60,8 +60,9 @@ HOLIDAY_KEYWORDS = ["Festivo", "Cerrado", "Vacaciones"]
 
 # Event color codes
 EVENT_COLORS = {
-    "provisional": "5",  # Yellow
-    "confirmed": "10",   # Green
+    "pending": "5",      # Yellow (🟡) - awaiting 48h confirmation
+    "confirmed": "10",   # Green (🟢) - customer confirmed
+    "provisional": "5",  # Yellow (legacy support)
 }
 
 
@@ -856,9 +857,14 @@ async def create_calendar_event(
         # Calculate end time
         end_dt = start_dt + timedelta(minutes=duration_minutes)
 
-        # Build event summary based on status
-        if status == "provisional":
-            summary = f"[PROVISIONAL] {customer_name} - {service_names}"
+        # Build event summary based on status with emoji
+        if status == "pending":
+            summary = f"🟡 {customer_name} - {service_names}"
+        elif status == "confirmed":
+            summary = f"🟢 {customer_name} - {service_names}"
+        elif status == "provisional":
+            # Legacy support for provisional status
+            summary = f"🟡 {customer_name} - {service_names}"
         else:
             summary = f"{customer_name} - {service_names}"
 
@@ -898,9 +904,9 @@ async def create_calendar_event(
         calendar_client = get_calendar_client()
         service = calendar_client.get_service()
 
-        # Create event with retry logic
+        # Create event with retry logic (NFR3: timeout 3s, retry 1x = 2 attempts total)
         @retry(
-            stop=stop_after_attempt(3),
+            stop=stop_after_attempt(2),  # M2: Corrected to 2 attempts (1 retry)
             wait=wait_exponential(multiplier=1, min=1, max=4),
             retry=retry_if_exception_type(HttpError),
         )
@@ -911,7 +917,21 @@ async def create_calendar_event(
             ).execute()
 
         try:
-            created_event = create_event()
+            # M1: Add timeout of 3 seconds (NFR3)
+            import asyncio
+            created_event = await asyncio.wait_for(
+                asyncio.to_thread(create_event),
+                timeout=3.0
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Calendar API timeout (3s) creating event | "
+                f"conversation_id={conversation_id}"
+            )
+            return {
+                "success": False,
+                "error": "Calendar API timeout (3s). Please try again."
+            }
         except RetryError as e:
             # Check the cause of the retry error
             if e.last_attempt.exception():

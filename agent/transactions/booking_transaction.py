@@ -56,7 +56,8 @@ class BookingTransaction:
         start_time: datetime,
         first_name: str,
         last_name: str | None,
-        notes: str | None
+        notes: str | None,
+        conversation_id: str | None = None
     ) -> dict[str, Any]:
         """
         Execute atomic booking transaction.
@@ -219,17 +220,54 @@ class BookingTransaction:
                             }
                         }
 
-                    # Step 4: Create Google Calendar event
-                    service_names = ", ".join(s.name for s in services)
+                    # Step 4: Create database appointment record with PENDING status
+                    # (DB first, Calendar second for proper rollback)
+                    end_time = start_time + timedelta(minutes=total_duration)
 
-                    # Use customer name from parameters (not database)
-                    # This ensures consistency with appointment data
-                    customer_name = f"{first_name} {last_name or ''}".strip()
+                    new_appointment = Appointment(
+                        customer_id=customer_id,
+                        stylist_id=stylist_id,
+                        service_ids=service_ids,
+                        start_time=start_time,
+                        duration_minutes=total_duration,
+                        status=AppointmentStatus.PENDING,  # Start as PENDING (awaiting 48h confirmation)
+                        first_name=first_name,
+                        last_name=last_name,
+                        notes=notes
+                    )
+
+                    session.add(new_appointment)
+                    await session.flush()  # Flush to get ID, but don't commit yet
 
                     logger.info(
-                        f"[{trace_id}] Creating Google Calendar event",
+                        f"[{trace_id}] Appointment record created in DB (PENDING status)",
                         extra={
-                            "customer_name": customer_name,
+                            "appointment_id": str(new_appointment.id),
+                            "duration_minutes": total_duration
+                        }
+                    )
+
+                    # Update customer's chatwoot_conversation_id if provided
+                    if conversation_id:
+                        from database.models import Customer
+                        customer_stmt = select(Customer).where(Customer.id == customer_id)
+                        customer_result = await session.execute(customer_stmt)
+                        customer = customer_result.scalar_one_or_none()
+
+                        if customer and not customer.chatwoot_conversation_id:
+                            customer.chatwoot_conversation_id = conversation_id
+                            logger.info(
+                                f"[{trace_id}] Updated customer chatwoot_conversation_id",
+                                extra={"conversation_id": conversation_id}
+                            )
+
+                    # Step 5: Create Google Calendar event with emoji 🟡
+                    service_names = ", ".join(s.name for s in services)
+
+                    logger.info(
+                        f"[{trace_id}] Creating Google Calendar event with emoji 🟡",
+                        extra={
+                            "customer_name": first_name,
                             "services": service_names,
                             "duration": duration_with_buffer
                         }
@@ -239,9 +277,9 @@ class BookingTransaction:
                         stylist_id=str(stylist_id),
                         start_time=start_time.isoformat(),
                         duration_minutes=duration_with_buffer,
-                        customer_name=customer_name,
+                        customer_name=first_name,  # Use first_name only for emoji format
                         service_names=service_names,
-                        status="provisional",  # Always start as provisional
+                        status="pending",  # Use pending status for emoji 🟡
                         customer_id=str(customer_id),
                         conversation_id=trace_id
                     )
@@ -251,66 +289,51 @@ class BookingTransaction:
                             f"[{trace_id}] Failed to create Google Calendar event",
                             extra={"error": calendar_result.get("error")}
                         )
-                        await session.rollback()
+                        # Rollback is automatic when exiting context manager without commit
                         return {
                             "success": False,
                             "error_code": "CALENDAR_EVENT_FAILED",
-                            "error_message": "Error al crear el evento en el calendario",
+                            "error_message": "No pudimos completar tu reserva. Por favor, intenta de nuevo o contacta con el salón.",
                             "details": {"calendar_error": calendar_result.get("error")}
                         }
 
                     google_event_id = calendar_result["event_id"]
-                    logger.info(
-                        f"[{trace_id}] Google Calendar event created",
-                        extra={"event_id": google_event_id}
-                    )
 
-                    # Step 5: Create database appointment record (auto-confirmed)
-                    end_time = start_time + timedelta(minutes=total_duration)
+                    # Step 6: Save google_calendar_event_id to appointment
+                    new_appointment.google_calendar_event_id = google_event_id
 
-                    new_appointment = Appointment(
-                        customer_id=customer_id,
-                        stylist_id=stylist_id,
-                        service_ids=service_ids,
-                        start_time=start_time,
-                        duration_minutes=total_duration,
-                        status=AppointmentStatus.CONFIRMED,  # Auto-confirm all appointments
-                        google_calendar_event_id=google_event_id,
-                        first_name=first_name,
-                        last_name=last_name,
-                        notes=notes
-                    )
-
-                    session.add(new_appointment)
+                    # Step 7: Commit transaction (if we reach here, both DB and Calendar succeeded)
                     await session.commit()
                     await session.refresh(new_appointment)
 
                     logger.info(
-                        f"[{trace_id}] Appointment created and auto-confirmed",
+                        f"[{trace_id}] Appointment created successfully with Calendar event 🟡",
                         extra={
                             "appointment_id": str(new_appointment.id),
                             "google_event_id": google_event_id,
-                            "duration_minutes": total_duration
+                            "status": "PENDING"
                         }
                     )
 
-                    # Update calendar event to confirmed (green)
-                    try:
-                        from agent.tools.calendar_tools import update_calendar_event_status
-                        await update_calendar_event_status(
-                            stylist_id=str(stylist_id),
-                            event_id=google_event_id,
-                            status="confirmed"
-                        )
-                    except Exception as calendar_error:
-                        logger.warning(
-                            f"[{trace_id}] Failed to update calendar event to confirmed",
-                            extra={"error": str(calendar_error)}
-                        )
+                    # Format friendly date and time for confirmation message
+                    # Example: "viernes 22 de noviembre a las 10:00"
+                    day_names = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+                    month_names = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+                                   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
 
-                    logger.info(
-                        f"[{trace_id}] Appointment fully confirmed",
-                        extra={"appointment_id": str(new_appointment.id)}
+                    weekday = day_names[start_time.weekday()]
+                    day = start_time.day
+                    month = month_names[start_time.month - 1]
+                    time_str = start_time.strftime("%H:%M")
+
+                    friendly_date = f"{weekday} {day} de {month} a las {time_str}"
+
+                    # Build confirmation message
+                    confirmation_message = (
+                        f"¡Cita confirmada! 🎉 Te enviaremos un mensaje 48 horas antes para confirmar tu asistencia.\n\n"
+                        f"📅 Fecha: {friendly_date}\n"
+                        f"💇 Estilista: {stylist.name}\n"
+                        f"✨ Servicios: {service_names}"
                     )
 
                     # Return success
@@ -322,12 +345,13 @@ class BookingTransaction:
                         "end_time": end_time.isoformat(),
                         "duration_minutes": total_duration,
                         "customer_id": str(customer_id),
-                        "customer_name": customer_name,
+                        "customer_name": first_name,
                         "stylist_id": str(stylist_id),
                         "stylist_name": stylist.name,
                         "service_ids": [str(sid) for sid in service_ids],
                         "service_names": service_names,
-                        "status": "confirmed"
+                        "status": "pending",  # Status is PENDING until 48h confirmation
+                        "message": confirmation_message  # AC5: User-friendly confirmation message
                     }
 
                 except IntegrityError as e:
@@ -394,6 +418,7 @@ class BookingTransaction:
 
                 finally:
                     # Exit async for loop
+                    pass
 
         except Exception as e:
             logger.error(

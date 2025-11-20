@@ -53,6 +53,10 @@ class BookSchema(BaseModel):
     start_time: str = Field(
         description="Appointment start time in ISO 8601 format with timezone (e.g., '2025-11-08T10:00:00+01:00')"
     )
+    conversation_id: str | None = Field(
+        default=None,
+        description="Chatwoot conversation ID for this customer (from conversation state)"
+    )
 
 
 # ============================================================================
@@ -68,7 +72,8 @@ async def book(
     notes: str | None,
     services: list[str],
     stylist_id: str,
-    start_time: str
+    start_time: str,
+    conversation_id: str | None = None
 ) -> dict[str, Any]:
     """
     Create a new appointment booking (atomic transaction).
@@ -240,7 +245,8 @@ async def book(
             start_time=start_datetime,
             first_name=first_name,
             last_name=last_name,
-            notes=notes
+            notes=notes,
+            conversation_id=conversation_id
         )
 
         return result

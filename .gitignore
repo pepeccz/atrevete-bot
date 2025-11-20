@@ -70,5 +70,6 @@ dump.rdb
 .bmad-core
 .claude
 CLAUDE.md
-.docs_old
+.docs_old2/
 .docs_old*
+v4-backup/
