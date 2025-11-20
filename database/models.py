@@ -68,11 +68,11 @@ class ServiceCategory(str, PyEnum):
 class AppointmentStatus(PyEnum):
     """Appointment lifecycle status."""
 
-    PROVISIONAL = "provisional"
-    CONFIRMED = "confirmed"
+    PENDING = "pending"        # Cita agendada, esperando confirmación del cliente
+    CONFIRMED = "confirmed"    # Cliente confirmó asistencia
     COMPLETED = "completed"
     CANCELLED = "cancelled"
-    EXPIRED = "expired"
+    NO_SHOW = "no_show"
 
     def __str__(self):
         return self.value
@@ -195,6 +195,11 @@ class Customer(Base):
 
     # Customer notes (allergies, preferences, special requests)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # External integration IDs
+    chatwoot_conversation_id: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
 
     # Metadata (JSONB for flexible data like whatsapp_name, referred_by, etc.)
     metadata_: Mapped[dict] = mapped_column(
@@ -341,7 +346,7 @@ class Appointment(Base):
     # Status tracking
     status: Mapped[AppointmentStatus] = mapped_column(
         SQLEnum(AppointmentStatus, name="appointment_status", create_type=False),
-        default=AppointmentStatus.PROVISIONAL,
+        default=AppointmentStatus.PENDING,
         nullable=False,
         index=True,
     )
@@ -358,6 +363,20 @@ class Appointment(Base):
 
     # Operational fields
     reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Confirmation/reminder tracking (Epic 2 support)
+    confirmation_sent_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    cancelled_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    notification_failed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
 
     # Group booking support
     group_booking_id: Mapped[UUID | None] = mapped_column(

@@ -73,10 +73,11 @@ workflow_status:
       purpose: "Create integration architecture for this project"
       completed: "2025-11-19"
     create-epics-and-stories:
-      status: required
+      status: "docs/epics.md"
       agent: pm
       command: "/bmad:bmm:workflows:create-epics-and-stories"
       purpose: "Break down PRD into implementable epics and stories"
+      completed: "2025-11-19"
     test-design:
       status: recommended
       agent: tea
@@ -87,10 +88,11 @@ workflow_status:
       agent: architect
       command: "/bmad:bmm:workflows:validate-architecture"
     implementation-readiness:
-      status: required
+      status: "docs/implementation-readiness-report-2025-11-19.md"
       agent: architect
       command: "/bmad:bmm:workflows:implementation-readiness"
       purpose: "Validate PRD + UX + Architecture + Epics cohesion"
+      completed: "2025-11-19"
 
   # Phase 3 - Implementation
   phase_3_implementation:
