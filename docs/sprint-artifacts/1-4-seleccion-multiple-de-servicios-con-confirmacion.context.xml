@@ -1,0 +1,436 @@
+<story-context id=".bmad/bmm/workflows/4-implementation/story-context/template" v="1.0">
+  <metadata>
+    <epicId>1</epicId>
+    <storyId>4</storyId>
+    <title>Selección Múltiple de Servicios con Confirmación</title>
+    <status>drafted</status>
+    <generatedAt>2025-11-20</generatedAt>
+    <generator>BMAD Story Context Workflow</generator>
+    <sourceStoryPath>docs/sprint-artifacts/1-4-seleccion-multiple-de-servicios-con-confirmacion.md</sourceStoryPath>
+  </metadata>
+
+  <story>
+    <asA>cliente</asA>
+    <iWant>poder seleccionar varios servicios para una misma cita</iWant>
+    <soThat>pueda hacerme corte y tinte en la misma visita</soThat>
+    <tasks>
+- [ ] Task 1: Actualizar prompts para flujo de selección múltiple (AC: 1, 2, 3)
+  - [ ] 1.1 Leer `agent/prompts/step1_service.md` completamente
+  - [ ] 1.2 Identificar sección donde se confirma selección de servicio
+  - [ ] 1.3 Agregar instrucción para preguntar "¿Deseas agregar otro servicio?"
+  - [ ] 1.4 Agregar instrucción para mostrar desglose después de cada selección
+  - [ ] 1.5 Agregar instrucción para límite de 5 servicios máximo
+  - [ ] 1.6 Agregar ejemplo de diálogo con selección múltiple
+
+- [ ] Task 2: Implementar tracking de servicios seleccionados en estado (AC: 1, 2)
+  - [ ] 2.1 Revisar `agent/state/schemas.py` y el campo `service_selected`
+  - [ ] 2.2 Determinar estrategia: ¿lista de servicios o string con IDs separados?
+  - [ ] 2.3 Actualizar documentación de campo si es necesario
+  - [ ] 2.4 Verificar que campo soporta múltiples servicios
+
+- [ ] Task 3: Actualizar prompts para resumen de servicios (AC: 2)
+  - [ ] 3.1 Agregar instrucción para generar resumen de servicios al finalizar selección
+  - [ ] 3.2 Especificar formato: lista + duración total
+  - [ ] 3.3 Ejemplo: "Has seleccionado: 1) Corte (30 min), 2) Tinte (90 min). Total: 120 minutos."
+  - [ ] 3.4 Incluir transición clara al siguiente paso (estilista)
+
+- [ ] Task 4: Validar integración con tool book() (AC: 2)
+  - [ ] 4.1 Revisar firma de `book()` en `agent/tools/booking_tools.py`
+  - [ ] 4.2 Confirmar que parámetro `service_ids` es `list[str]` (soporta múltiples)
+  - [ ] 4.3 Verificar que lógica de cálculo de duración total existe
+  - [ ] 4.4 Si falta lógica de duración, agregar suma de `duration_minutes` de cada servicio
+
+- [ ] Task 5: Testing de selección múltiple (AC: 1, 2, 3)
+  - [ ] 5.1 Test manual: Seleccionar 1 servicio, confirmar pregunta "¿agregar más?"
+  - [ ] 5.2 Test manual: Seleccionar 2 servicios, verificar resumen con duración total
+  - [ ] 5.3 Test manual: Seleccionar 5 servicios, verificar límite aplicado correctamente
+  - [ ] 5.4 Test manual: Intentar agregar 6to servicio, verificar mensaje amigable
+  - [ ] 5.5 Test manual: Verificar que servicios múltiples se pasan correctamente a book()
+
+- [ ] Task 6: Actualizar Dev Notes con estrategia de implementación (AC: 1, 2, 3)
+  - [ ] 6.1 Documentar estrategia de tracking de servicios en estado
+  - [ ] 6.2 Documentar formato de resumen
+  - [ ] 6.3 Agregar referencias a FRs (FR2, FR3)
+  - [ ] 6.4 Citar Tech-Spec y Architecture
+    </tasks>
+  </story>
+
+  <acceptanceCriteria>
+1. **AC1**: El sistema pregunta si desea agregar más servicios después de cada selección
+   - Given el cliente selecciona un servicio
+   - When el sistema confirma la selección
+   - Then muestra desglose del servicio seleccionado
+   - And pregunta "¿Deseas agregar otro servicio?"
+   - And espera respuesta del cliente
+
+2. **AC2**: El sistema muestra resumen con duración total combinada
+   - Given el cliente ha seleccionado uno o más servicios
+   - When el cliente confirma que no quiere agregar más
+   - Then muestra resumen con lista de todos los servicios seleccionados
+   - And calcula y muestra duración total combinada
+   - And procede al siguiente paso (selección de estilista)
+
+3. **AC3**: El sistema permite hasta 5 servicios por cita
+   - Given el cliente ha seleccionado 5 servicios
+   - When intenta agregar un sexto servicio
+   - Then informa límite alcanzado de forma amigable
+   - And procede automáticamente con los 5 servicios seleccionados
+  </acceptanceCriteria>
+
+  <artifacts>
+    <docs>
+      <!-- Tech-Spec Epic 1: Comprehensive technical context for this epic -->
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-1.md</path>
+        <title>Epic Technical Specification: Corrección del Flujo de Agendamiento</title>
+        <section>Data Models and Contracts</section>
+        <snippet>AppointmentStatus Enum + book() tool contract: Múltiples service_ids soportados desde Story 1.2. Tool `book()` ya acepta `service_ids: list[str]`</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-1.md</path>
+        <title>Epic Technical Specification: Corrección del Flujo de Agendamiento</title>
+        <section>Workflows and Sequencing</section>
+        <snippet>Flujo de agendamiento completo: search_services → "¿Agregar más?" loop → resumen con duración total → estilistas → book()</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-1.md</path>
+        <title>Epic Technical Specification: Corrección del Flujo de Agendamiento</title>
+        <section>Non-Functional Requirements</section>
+        <snippet>NFR1: Respuesta <5s (límite de 5 servicios controla tokens). NFR10: No aplica a prompts (testing manual)</snippet>
+      </doc>
+
+      <!-- Architecture: Implementation patterns and tool response formats -->
+      <doc>
+        <path>docs/architecture.md</path>
+        <title>Architecture</title>
+        <section>Implementation Patterns - Tool Response Format</section>
+        <snippet>Success: {"status": "success", "message": str, "data": dict}. Error: {"status": "error", "message": str, "error_code": str}</snippet>
+      </doc>
+      <doc>
+        <path>docs/architecture.md</path>
+        <title>Architecture</title>
+        <section>Novel Pattern: Async Confirmation Loop</section>
+        <snippet>Estados de booking en state.py incluyen service_selected: str | None (actualmente), puede necesitar cambio a list[str] para múltiples</snippet>
+      </doc>
+
+      <!-- Story 1.3 learnings: Numbered lists already implemented -->
+      <doc>
+        <path>docs/sprint-artifacts/1-3-presentacion-de-servicios-en-lista-numerada.md</path>
+        <title>Story 1.3: Presentación de Servicios en Lista Numerada</title>
+        <section>Dev Agent Record - Learnings</section>
+        <snippet>Lista numerada ya implementada con formato "{número}. {Servicio} ({duración} min)". Parsing flexible (número o texto). Prompts-first strategy (no código Python modificado)</snippet>
+      </doc>
+    </docs>
+    <code>
+      <!-- Primary modification target: step1_service.md prompt -->
+      <artifact>
+        <path>agent/prompts/step1_service.md</path>
+        <kind>prompt</kind>
+        <symbol>PASO 1: Recolectar el Servicio</symbol>
+        <lines>1-71</lines>
+        <reason>PRINCIPAL: Este prompt define el flujo de selección de servicios. Requiere modificación para agregar loop "¿Agregar más?" y desglose con duración total. Actualmente pregunta "¿Solo quieres este/estos servicio/s o algo más?" (línea 25) pero no tiene lógica de límite de 5 servicios ni resumen con duración total.</reason>
+      </artifact>
+
+      <!-- State schema: Verify service_selected field supports multiple services -->
+      <artifact>
+        <path>agent/state/schemas.py</path>
+        <kind>schema</kind>
+        <symbol>ConversationState - service_selected field</symbol>
+        <lines>104</lines>
+        <reason>VERIFICAR: Actualmente `service_selected: str | None`. Necesita revisión para determinar si se cambia a `list[str]` o si se mantiene como string con IDs separados por coma. Opción 2 (lista) es más clara y alineada con book(services=list[str]).</reason>
+      </artifact>
+
+      <!-- Booking tool: Already supports multiple services -->
+      <artifact>
+        <path>agent/tools/booking_tools.py</path>
+        <kind>tool</kind>
+        <symbol>book() function</symbol>
+        <lines>48-49, 68-77</lines>
+        <reason>VALIDAR: Tool `book()` ya acepta `services: list[str]` en schema (línea 48-49) y parámetros (línea 73). Confirmar que BookingTransaction calcula duración total correctamente sumando duration_minutes de todos los servicios.</reason>
+      </artifact>
+
+      <!-- BookingTransaction: Atomic booking with duration calculation -->
+      <artifact>
+        <path>agent/transactions/booking_transaction.py</path>
+        <kind>transaction</kind>
+        <symbol>BookingTransaction.execute()</symbol>
+        <lines>N/A</lines>
+        <reason>VALIDAR: Verificar que esta clase calcula correctamente la duración total cuando se pasan múltiples service_ids. Debe sumar duration_minutes de cada servicio y calcular end_time = start_time + total_duration.</reason>
+      </artifact>
+
+      <!-- Service resolver: Resolves service names to UUIDs -->
+      <artifact>
+        <path>agent/utils/service_resolver.py</path>
+        <kind>utility</kind>
+        <symbol>resolve_service_names()</symbol>
+        <lines>N/A</lines>
+        <reason>REFERENCIA: Esta función resuelve nombres de servicios a UUIDs. Usado por book() internamente. No requiere modificación para esta story.</reason>
+      </artifact>
+    </code>
+    <dependencies>
+      <!-- Python 3.11+ runtime -->
+      <python version="3.11+">
+        <!-- Agent & LLM -->
+        <package name="langgraph" version=">=0.6.7" usage="StateGraph orchestration for conversation flow"/>
+        <package name="langchain" version=">=0.3.0" usage="Tool definitions and LLM abstraction"/>
+        <package name="langchain-openai" version=">=0.3.0" usage="GPT-4.1-mini via OpenRouter for conversational agent"/>
+
+        <!-- API & Web Framework (not directly used in this story) -->
+        <package name="fastapi" version="0.116.1" usage="API framework (unchanged for this story)"/>
+
+        <!-- Database & ORM (validation only, no schema changes) -->
+        <package name="sqlalchemy" version=">=2.0.0" usage="ORM for database queries (verify service duration calculation)"/>
+
+        <!-- Data Validation -->
+        <package name="pydantic" version=">=2.9.0" usage="Schema validation for tool inputs/outputs"/>
+
+        <!-- Testing (manual testing for prompts, no unit tests required) -->
+        <package name="pytest" version=">=8.3.0" usage="Manual testing framework (not applicable for prompt changes)"/>
+      </python>
+    </dependencies>
+  </artifacts>
+
+  <constraints>
+    <!-- From Architecture: Implementation Patterns -->
+    <constraint id="ARCH-001">
+      <source>docs/architecture.md - Implementation Patterns</source>
+      <rule>Prompts-First Strategy: Implementar lógica conversacional en prompts (agent/prompts/*.md) antes que en código Python</rule>
+      <rationale>Aprovecha capacidad natural del LLM GPT-4.1-mini para manejar conversación de selección múltiple sin código adicional</rationale>
+    </constraint>
+
+    <constraint id="ARCH-002">
+      <source>docs/architecture.md - Tool Response Format</source>
+      <rule>Tool responses must follow format: {"status": "success"|"error", "message": str, "data": dict|null}</rule>
+      <rationale>Consistencia en formato de respuestas de herramientas para que el LLM interprete correctamente</rationale>
+    </constraint>
+
+    <!-- From Tech-Spec: Non-Functional Requirements -->
+    <constraint id="NFR-001">
+      <source>docs/sprint-artifacts/tech-spec-epic-1.md - NFR1</source>
+      <rule>Respuesta total del bot debe ser <5 segundos</rule>
+      <rationale>Límite de 5 servicios por cita controla tokens y latencia. Evitar loops infinitos en selección múltiple</rationale>
+    </constraint>
+
+    <constraint id="NFR-010">
+      <source>docs/sprint-artifacts/tech-spec-epic-1.md - NFR10</source>
+      <rule>Cobertura de tests 85% mínimo NO aplica a cambios de prompts</rule>
+      <rationale>Prompts requieren testing manual conversacional vía WhatsApp, no unit tests automatizados</rationale>
+    </constraint>
+
+    <!-- From Story Dev Notes: Pattern decisions -->
+    <constraint id="STORY-001">
+      <source>Story Dev Notes - State Management Strategy</source>
+      <rule>Si se modifica service_selected field: preferir list[str] sobre string con IDs separados</rule>
+      <rationale>Opción 2 (lista) es más clara y directamente compatible con book(services=list[str])</rationale>
+    </constraint>
+
+    <constraint id="STORY-002">
+      <source>Story Dev Notes - Prompt Design Guidelines</source>
+      <rule>Formato de lista numerada: "{número}. {nombre del servicio} ({duración} min)"</rule>
+      <rationale>Patrón establecido en Story 1.3, mantener consistencia visual</rationale>
+    </constraint>
+
+    <constraint id="STORY-003">
+      <source>Story AC3</source>
+      <rule>Límite de 5 servicios por cita (hard limit)</rule>
+      <rationale>Control de tokens, latencia y complejidad operativa. Mensaje amigable al alcanzar límite</rationale>
+    </constraint>
+
+    <!-- From Architecture: Core.md critical rules -->
+    <constraint id="CORE-004">
+      <source>agent/prompts/core.md - Regla crítica #4</source>
+      <rule>No mezclar categorías: todos los servicios deben ser Peluquería O Estética, nunca ambas</rule>
+      <rationale>Estilistas están especializados por categoría, mezclar causaría error en book()</rationale>
+    </constraint>
+  </constraints>
+
+  <interfaces>
+    <!-- Tool: book() - Already supports multiple services -->
+    <interface>
+      <name>book() tool</name>
+      <kind>LangChain Tool</kind>
+      <signature>
+async def book(
+    customer_id: str,
+    first_name: str,
+    last_name: str | None,
+    notes: str | None,
+    services: list[str],  # List of service NAMES (not UUIDs)
+    stylist_id: str,
+    start_time: str,  # ISO 8601 with timezone
+    conversation_id: str | None = None
+) -> dict[str, Any]
+      </signature>
+      <path>agent/tools/booking_tools.py</path>
+      <notes>Tool ya acepta múltiples servicios (services: list[str]). Internamente resuelve nombres a UUIDs con resolve_service_names(). Valida categoría consistente y disponibilidad de slot.</notes>
+    </interface>
+
+    <!-- Tool: search_services - Used for finding services -->
+    <interface>
+      <name>search_services() tool</name>
+      <kind>LangChain Tool</kind>
+      <signature>
+async def search_services(
+    query: str,
+    category: str | None = None,
+    max_results: int = 5
+) -> list[dict]
+      </signature>
+      <path>agent/tools/search_services.py</path>
+      <notes>Búsqueda fuzzy de servicios con RapidFuzz. Max 5 resultados configurado. Retorna: [{"name": str, "duration_minutes": int, "category": str}]</notes>
+    </interface>
+
+    <!-- State: ConversationState schema -->
+    <interface>
+      <name>ConversationState TypedDict</name>
+      <kind>LangGraph State Schema</kind>
+      <signature>
+class ConversationState(TypedDict):
+    # ... otros campos ...
+    service_selected: str | None  # ACTUAL: String simple
+    # POSIBLE CAMBIO: list[str] | None para múltiples servicios
+      </signature>
+      <path>agent/state/schemas.py</path>
+      <notes>Campo actualmente str | None. Dev debe decidir si cambiar a list[str] para tracking explícito de múltiples servicios. Opción 2 (lista) recomendada en Dev Notes.</notes>
+    </interface>
+
+    <!-- BookingTransaction: Atomic booking logic -->
+    <interface>
+      <name>BookingTransaction.execute()</name>
+      <kind>Atomic Transaction Handler</kind>
+      <signature>
+@staticmethod
+async def execute(
+    customer_id: UUID,
+    service_ids: list[UUID],  # Multiple service UUIDs
+    stylist_id: UUID,
+    start_time: datetime,
+    first_name: str,
+    last_name: str | None,
+    notes: str | None,
+    conversation_id: str | None
+) -> dict[str, Any]
+      </signature>
+      <path>agent/transactions/booking_transaction.py</path>
+      <notes>Debe calcular duración total sumando duration_minutes de todos los servicios. Crear evento Calendar con duración total. Validar disponibilidad del slot para duración combinada.</notes>
+    </interface>
+  </interfaces>
+  <tests>
+    <standards>
+Esta story modifica principalmente prompts (agent/prompts/step1_service.md), por lo tanto:
+- Testing manual conversacional vía WhatsApp es el método principal
+- NO se requieren unit tests automatizados para cambios de prompts (NFR10 no aplica)
+- Si se modifica código Python (schemas.py, booking_transaction.py), entonces sí aplicar testing con cobertura 85%+
+- Frameworks disponibles: pytest 8.3.0+, pytest-asyncio 0.24.0+, asyncio_mode=auto
+- Patrón de tests: tests/unit/ para funciones aisladas, tests/integration/ para flujos completos
+    </standards>
+
+    <locations>
+- tests/unit/test_booking_tools.py - Si se modifican funciones Python relacionadas con booking
+- tests/integration/test_booking_flow.py - Flujo completo de agendamiento (posible extensión para múltiples servicios)
+- Manual testing via WhatsApp - PRINCIPAL método para esta story (cambios de prompts)
+- docker-compose restart agent - Requerido después de modificar prompts para aplicar cambios
+    </locations>
+
+    <ideas>
+<!-- Testing ideas mapped to Acceptance Criteria -->
+
+<!-- AC1: Pregunta "¿Deseas agregar otro servicio?" después de cada selección -->
+<test id="T1-AC1" criteria="AC1" type="manual">
+  <description>Verificar que después de seleccionar UN servicio, el agente pregunta si quiere agregar más</description>
+  <steps>
+    1. Enviar vía WhatsApp: "Quiero corte"
+    2. Esperar respuesta con lista numerada de servicios
+    3. Responder: "1" o "corte de caballero"
+    4. Verificar respuesta contiene: desglose del servicio + pregunta "¿Deseas agregar otro servicio?"
+  </steps>
+  <expected>Agente confirma "Corte de Caballero (30 min)" y pregunta "¿Deseas agregar otro servicio? (máximo 5 servicios por cita)"</expected>
+</test>
+
+<test id="T2-AC1-AC2" criteria="AC1, AC2" type="manual">
+  <description>Verificar flujo de selección de 2 servicios con resumen de duración total</description>
+  <steps>
+    1. Enviar: "Quiero corte"
+    2. Responder: "1"
+    3. Esperar pregunta "¿agregar otro?"
+    4. Responder: "Sí, también tinte"
+    5. Esperar lista de servicios tinte
+    6. Responder: "2" (Tinte Completo)
+    7. Esperar pregunta "¿agregar otro?"
+    8. Responder: "No, con eso está bien"
+  </steps>
+  <expected>Resumen final: "Has seleccionado: 1) Corte de Caballero (30 min), 2) Tinte Completo (90 min). Duración total: 120 minutos. Ahora vamos a elegir estilista..."</expected>
+</test>
+
+<test id="T3-AC3" criteria="AC3" type="manual">
+  <description>Verificar límite de 5 servicios por cita</description>
+  <steps>
+    1. Seleccionar 5 servicios consecutivamente respondiendo "sí" a "¿agregar otro?"
+    2. Después del 5to servicio, verificar que NO pregunta "¿agregar otro?"
+    3. Verificar mensaje de límite alcanzado
+  </steps>
+  <expected>Mensaje: "Has alcanzado el límite de 5 servicios por cita. Tus servicios seleccionados son: [lista]. Duración total: X min. Ahora vamos a elegir estilista..."</expected>
+</test>
+
+<test id="T4-AC2" criteria="AC2" type="manual">
+  <description>Verificar cliente dice "no" después de 1 servicio (caso más simple)</description>
+  <steps>
+    1. Seleccionar 1 servicio
+    2. Responder "No" a "¿agregar otro?"
+  </steps>
+  <expected>Resumen con 1 solo servicio, transición suave a estilista (no error, no loop)</expected>
+</test>
+
+<test id="T5-INTEGRATION" criteria="AC1, AC2, AC3" type="manual">
+  <description>Verificar integración completa: 3 servicios hasta book()</description>
+  <steps>
+    1. Seleccionar 3 servicios en loop
+    2. Completar flujo hasta book() (estilista, slot, nombre, confirmación)
+    3. Verificar cita creada correctamente en DB
+    4. Verificar evento Google Calendar con duración total correcta
+  </steps>
+  <expected>Cita en DB con 3 service_ids asociados. Evento Calendar con duración = suma de 3 servicios. Estado=PENDING, google_calendar_event_id presente</expected>
+  <validation>
+    - Query DB: SELECT * FROM appointments WHERE id = '{appointment_id}'
+    - Verificar appointment_services table tiene 3 registros
+    - Verificar duración en Calendar event_id
+  </validation>
+</test>
+
+<test id="T6-EDGE-CASE" criteria="AC1, AC3" type="manual">
+  <description>Edge case: Cliente intenta agregar servicio de categoría diferente</description>
+  <steps>
+    1. Seleccionar servicio de Peluquería (ej. Corte)
+    2. Responder "Sí" a "¿agregar otro?"
+    3. Solicitar servicio de Estética (ej. Manicura)
+  </steps>
+  <expected>Agente rechaza con mensaje: "Lo siento, no puedo mezclar servicios de Peluquería y Estética en la misma cita. Debes agendar citas separadas para cada categoría."</expected>
+  <reference>Constraint CORE-004 (core.md regla crítica #4)</reference>
+</test>
+
+<!-- Testing command reference -->
+<commands>
+# Verificar cambios en prompts
+cat agent/prompts/step1_service.md | grep -A 20 "múltiple\|agregar otro"
+
+# Verificar schema si modificado
+cat agent/state/schemas.py | grep -A 3 "service_selected"
+
+# Verificar book() tool
+cat agent/tools/booking_tools.py | grep -A 10 "services: list"
+
+# Reiniciar agent para aplicar cambios de prompts
+docker-compose restart agent
+
+# Verificar logs en tiempo real
+docker-compose logs -f agent
+
+# Query DB para verificar cita después de test
+PGPASSWORD="changeme_min16chars_secure_password" psql -h localhost -U atrevete -d atrevete_db -c "SELECT id, customer_id, stylist_id, start_time, end_time, status, google_calendar_event_id FROM appointments ORDER BY created_at DESC LIMIT 1;"
+
+# Verificar appointment_services (relación many-to-many)
+PGPASSWORD="changeme_min16chars_secure_password" psql -h localhost -U atrevete -d atrevete_db -c "SELECT * FROM appointment_services WHERE appointment_id = '{appointment_id}';"
+</commands>
+    </ideas>
+  </tests>
+</story-context>

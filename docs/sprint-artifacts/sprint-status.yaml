@@ -40,8 +40,8 @@ development_status:
   epic-1: contexted
   1-1-migracion-de-estados-y-campos-de-tracking: done
   1-2-correccion-de-herramienta-book-con-emoji-calendar: done
-  1-3-presentacion-de-servicios-en-lista-numerada: ready-for-dev
-  1-4-seleccion-multiple-de-servicios-con-confirmacion: backlog
+  1-3-presentacion-de-servicios-en-lista-numerada: done
+  1-4-seleccion-multiple-de-servicios-con-confirmacion: done
   1-5-presentacion-de-estilistas-y-disponibilidad: backlog
   1-6-recopilacion-de-datos-del-cliente: backlog
   1-7-actualizacion-de-prompts-para-flujo-completo: backlog

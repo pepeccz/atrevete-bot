@@ -58,7 +58,7 @@ class ConversationState(TypedDict, total=False):
 
         # Tool Execution Tracking - v3.2 Enhanced (5 fields)
         customer_data_collected: True after manage_customer returns customer_id
-        service_selected: Service name selected (e.g., "CORTE LARGO")
+        service_selected: List of service names selected (e.g., ["CORTE LARGO", "TINTE COMPLETO"])
         slot_selected: Selected slot dict {stylist_id, start_time, duration}
         booking_confirmed: True after user confirms booking summary
         appointment_created: True after book() successfully creates appointment
@@ -101,7 +101,7 @@ class ConversationState(TypedDict, total=False):
     # Tool Execution Tracking (5 fields) - v3.2 enhanced state detection
     # ============================================================================
     customer_data_collected: bool  # True after manage_customer returns customer_id
-    service_selected: str | None  # Service name selected by user
+    service_selected: list[str] | None  # List of service names selected by user (supports multi-service booking)
     slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
     booking_confirmed: bool  # True after user confirms booking summary
     appointment_created: bool  # True after book() successfully creates appointment
