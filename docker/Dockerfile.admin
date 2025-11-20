@@ -4,11 +4,12 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for PostgreSQL
+# Install system dependencies for PostgreSQL and health checks
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
@@ -26,8 +27,12 @@ WORKDIR /app/admin
 # Collect static files during build
 RUN python manage.py collectstatic --noinput --clear
 
+# Copy and setup entrypoint script
+COPY docker/entrypoint-admin.sh /app/entrypoint-admin.sh
+RUN chmod +x /app/entrypoint-admin.sh
+
 # Expose Django Admin port
 EXPOSE 8001
 
-# Run Django with gunicorn for production
-CMD ["gunicorn", "--bind", "0.0.0.0:8001", "--workers", "2", "--timeout", "120", "atrevete_admin.wsgi:application"]
+# Use entrypoint script to run migrations before starting gunicorn
+ENTRYPOINT ["/app/entrypoint-admin.sh"]

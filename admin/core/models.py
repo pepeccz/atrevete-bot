@@ -81,7 +81,7 @@ class Stylist(models.Model):
     class Meta:
         managed = False
         db_table = 'stylists'
-        app_label = 'core'
+        app_label = 'admin_core'
         verbose_name = 'Estilista'
         verbose_name_plural = 'Estilistas'
         ordering = ['name']
@@ -148,7 +148,7 @@ class Customer(models.Model):
     class Meta:
         managed = False
         db_table = 'customers'
-        app_label = 'core'
+        app_label = 'admin_core'
         verbose_name = 'Cliente'
         verbose_name_plural = 'Clientes'
         ordering = ['-last_service_date']
@@ -199,7 +199,7 @@ class Service(models.Model):
     class Meta:
         managed = False
         db_table = 'services'
-        app_label = 'core'
+        app_label = 'admin_core'
         verbose_name = 'Servicio'
         verbose_name_plural = 'Servicios'
         ordering = ['category', 'name']
@@ -299,7 +299,7 @@ class Appointment(models.Model):
     class Meta:
         managed = False
         db_table = 'appointments'
-        app_label = 'core'
+        app_label = 'admin_core'
         verbose_name = 'Cita'
         verbose_name_plural = 'Citas'
         ordering = ['-start_time']
@@ -338,7 +338,7 @@ class Policy(models.Model):
     class Meta:
         managed = False
         db_table = 'policies'
-        app_label = 'core'
+        app_label = 'admin_core'
         verbose_name = 'Política/FAQ'
         verbose_name_plural = 'Políticas/FAQs'
         ordering = ['key']
@@ -386,7 +386,7 @@ class ConversationHistory(models.Model):
     class Meta:
         managed = False
         db_table = 'conversation_history'
-        app_label = 'core'
+        app_label = 'admin_core'
         verbose_name = 'Mensaje de Conversación'
         verbose_name_plural = 'Historial de Conversaciones'
         ordering = ['-timestamp']
@@ -452,7 +452,7 @@ class BusinessHours(models.Model):
     class Meta:
         managed = False
         db_table = 'business_hours'
-        app_label = 'core'
+        app_label = 'admin_core'
         verbose_name = 'Horario del Negocio'
         verbose_name_plural = 'Horarios del Negocio'
         ordering = ['day_of_week']

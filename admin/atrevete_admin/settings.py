@@ -190,7 +190,7 @@ UNFOLD = {
     "SITE_URL": "/admin/",
 
     # Dashboard callback for metrics
-    "DASHBOARD_CALLBACK": "core.views.dashboard_callback",
+    "DASHBOARD_CALLBACK": "admin.core.views.dashboard_callback",
 
     # UI behavior
     "SHOW_HISTORY": True,
@@ -263,22 +263,22 @@ UNFOLD = {
                     {
                         "title": _("Citas"),
                         "icon": "event",
-                        "link": reverse_lazy("admin:core_appointment_changelist"),
+                        "link": reverse_lazy("admin:admin_core_appointment_changelist"),
                     },
                     {
                         "title": _("Clientes"),
                         "icon": "people",
-                        "link": reverse_lazy("admin:core_customer_changelist"),
+                        "link": reverse_lazy("admin:admin_core_customer_changelist"),
                     },
                     {
                         "title": _("Estilistas"),
                         "icon": "person",
-                        "link": reverse_lazy("admin:core_stylist_changelist"),
+                        "link": reverse_lazy("admin:admin_core_stylist_changelist"),
                     },
                     {
                         "title": _("Servicios"),
                         "icon": "spa",
-                        "link": reverse_lazy("admin:core_service_changelist"),
+                        "link": reverse_lazy("admin:admin_core_service_changelist"),
                     },
                 ],
             },
@@ -290,17 +290,17 @@ UNFOLD = {
                     {
                         "title": _("Horarios"),
                         "icon": "schedule",
-                        "link": reverse_lazy("admin:core_businesshours_changelist"),
+                        "link": reverse_lazy("admin:admin_core_businesshours_changelist"),
                     },
                     {
                         "title": _("Políticas/FAQs"),
                         "icon": "policy",
-                        "link": reverse_lazy("admin:core_policy_changelist"),
+                        "link": reverse_lazy("admin:admin_core_policy_changelist"),
                     },
                     {
                         "title": _("Historial Conversaciones"),
                         "icon": "chat",
-                        "link": reverse_lazy("admin:core_conversationhistory_changelist"),
+                        "link": reverse_lazy("admin:admin_core_conversationhistory_changelist"),
                     },
                 ],
             },

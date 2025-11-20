@@ -135,7 +135,7 @@ class CustomerAdmin(ModelAdmin):
         count = obj.appointments.count()
         return format_html(
             '<a href="{}?customer__id__exact={}">{} citas</a>',
-            reverse('admin:core_appointment_changelist'),
+            reverse('admin:admin_core_appointment_changelist'),
             obj.id,
             count
         )
@@ -262,7 +262,7 @@ class AppointmentAdmin(ModelAdmin):
 
     def customer_link(self, obj):
         """Display customer as clickable link."""
-        url = reverse('admin:core_customer_change', args=[obj.customer.id])
+        url = reverse('admin:admin_core_customer_change', args=[obj.customer.id])
         return format_html('<a href="{}">{}</a>', url, obj.customer.full_name)
     customer_link.short_description = 'Cliente'
 
@@ -385,7 +385,7 @@ class ConversationHistoryAdmin(ModelAdmin):
         """Display customer as clickable link."""
         if not obj.customer:
             return "Cliente no identificado"
-        url = reverse('admin:core_customer_change', args=[obj.customer.id])
+        url = reverse('admin:admin_core_customer_change', args=[obj.customer.id])
         return format_html('<a href="{}">{}</a>', url, obj.customer.full_name)
     customer_link.short_description = 'Cliente'
 

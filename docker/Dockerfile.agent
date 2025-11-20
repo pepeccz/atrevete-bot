@@ -4,12 +4,13 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for PostgreSQL and initialization scripts
+# Install system dependencies for PostgreSQL, initialization scripts, and health checks
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
     postgresql-client \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
