@@ -1,6 +1,6 @@
 # Story 1.2: Corrección de Herramienta book() con Emoji Calendar
 
-Status: drafted
+Status: ready-for-dev
 
 ## Story
 
@@ -337,7 +337,7 @@ docker exec atrevete-agent python -c "from google.oauth2 import service_account;
 
 ### Context Reference
 
-<!-- Path(s) to story context XML will be added here by context workflow -->
+- docs/sprint-artifacts/1-2-correccion-de-herramienta-book-con-emoji-calendar.context.xml
 
 ### Agent Model Used
 

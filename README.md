@@ -6,7 +6,7 @@ AI-powered WhatsApp booking assistant for a beauty salon, built with LangGraph, 
 
 ## Overview
 
-This bot handles customer bookings via WhatsApp through Chatwoot, managing appointments across 5 stylists using Google Calendar, processing payments via Stripe, and escalating to staff when needed. The agent uses LangGraph for stateful conversation orchestration and Claude Sonnet 4 for natural language understanding in Spanish.
+This bot handles customer bookings via WhatsApp through Chatwoot, managing appointments across 5 stylists using Google Calendar and escalating to staff when needed. The agent uses LangGraph for stateful conversation orchestration and Claude Sonnet 4 for natural language understanding in Spanish.
 
 ## Prerequisites
 
@@ -14,7 +14,6 @@ This bot handles customer bookings via WhatsApp through Chatwoot, managing appoi
 - **Docker & Docker Compose** - For running PostgreSQL, Redis, and containerized services
 - **External Service Accounts** - API keys and credentials for:
   - Google Calendar API (service account)
-  - Stripe API (test/live keys)
   - Chatwoot API (self-hosted or cloud)
   - Anthropic Claude API
 
@@ -40,7 +39,6 @@ Edit `.env` with your actual credentials. For detailed instructions on obtaining
 **Required Variables:**
 - `GOOGLE_SERVICE_ACCOUNT_JSON` - Path to Google service account JSON key
 - `GOOGLE_CALENDAR_IDS` - Comma-separated calendar IDs for 5 stylists
-- `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `CHATWOOT_API_URL`, `CHATWOOT_API_TOKEN`, `CHATWOOT_ACCOUNT_ID`, `CHATWOOT_INBOX_ID`
 - `ANTHROPIC_API_KEY` - Claude API key
 - `DATABASE_URL` - PostgreSQL connection string
@@ -153,7 +151,7 @@ For detailed instructions on setting up external service accounts and obtaining 
 - **Cache:** Redis 7.0+
 - **Admin:** Django 5.0+
 - **Testing:** pytest 8.3.0+, pytest-asyncio 0.24.0+
-- **External APIs:** Google Calendar API, Stripe API, Chatwoot API
+- **External APIs:** Google Calendar API, Chatwoot API
 
 ## License
 
