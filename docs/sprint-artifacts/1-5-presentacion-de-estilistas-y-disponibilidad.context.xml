@@ -1,0 +1,252 @@
+<story-context id=".bmad/bmm/workflows/4-implementation/story-context/template" v="1.0">
+  <metadata>
+    <epicId>1</epicId>
+    <storyId>5</storyId>
+    <title>Presentación de Estilistas y Disponibilidad</title>
+    <status>drafted</status>
+    <generatedAt>2025-11-20</generatedAt>
+    <generator>BMAD Story Context Workflow</generator>
+    <sourceStoryPath>docs/sprint-artifacts/1-5-presentacion-de-estilistas-y-disponibilidad.md</sourceStoryPath>
+  </metadata>
+
+  <story>
+    <asA>cliente</asA>
+    <iWant>ver qué estilistas están disponibles y sus próximos horarios</iWant>
+    <soThat>pueda elegir con quién quiero mi cita y cuándo me conviene</soThat>
+    <tasks>
+- Task 1: Actualizar prompts para presentación de estilistas en lista numerada (AC: 1)
+  - 1.1 Leer `agent/prompts/step2_availability.md` completamente
+  - 1.2 Identificar sección donde se presenta la selección de estilista
+  - 1.3 Modificar para mostrar estilistas en formato lista numerada
+  - 1.4 Incluir información del estilista (nombre, especialidades si aplica)
+  - 1.5 Agregar instrucción para aceptar selección por número o nombre
+  - 1.6 Agregar ejemplo de diálogo con lista numerada de estilistas
+
+- Task 2: Actualizar prompts para presentación de horarios disponibles (AC: 2, 3)
+  - 2.1 Revisar cómo se presentan actualmente los resultados de `find_next_available()`
+  - 2.2 Modificar formato para lista numerada de horarios
+  - 2.3 Especificar formato en español: "N. Día DD de mes - HH:MM"
+  - 2.4 Limitar a máximo 5 horarios por estilista
+  - 2.5 Agregar validación de horarios futuros (no pasados)
+  - 2.6 Agregar ejemplos de diálogo con horarios en lista numerada
+
+- Task 3: Verificar integración con herramienta find_next_available() (AC: 2)
+  - 3.1 Revisar firma de `find_next_available()` en `agent/tools/availability_tools.py`
+  - 3.2 Confirmar que acepta lista de servicios y calcula duración total
+  - 3.3 Verificar que retorna máximo 5 slots por estilista
+  - 3.4 Confirmar formato de respuesta (lista de slots con fecha/hora)
+
+- Task 4: Actualizar formato de transición entre pasos del flujo (AC: 1, 2)
+  - 4.1 Revisar transición de PASO 1 (servicios) → PASO 2 (estilistas/disponibilidad)
+  - 4.2 Asegurar que resumen de servicios incluye info necesaria para búsqueda
+  - 4.3 Verificar que duración total se pasa correctamente a `find_next_available()`
+  - 4.4 Agregar instrucción de transición clara en prompts
+
+- Task 5: Testing manual de presentación de estilistas y disponibilidad (AC: 1, 2, 3)
+  - 5.1 Test: Seleccionar servicios y ver lista numerada de estilistas
+  - 5.2 Test: Seleccionar estilista por número
+  - 5.3 Test: Seleccionar estilista por nombre
+  - 5.4 Test: Ver horarios disponibles en lista numerada (formato español)
+  - 5.5 Test: Verificar que solo muestra max 5 horarios
+  - 5.6 Test: Completar flujo hasta llegar a selección de horario
+
+- Task 6: Actualizar Dev Notes con estrategia de implementación (AC: 1, 2, 3)
+  - 6.1 Documentar estrategia de presentación de estilistas
+  - 6.2 Documentar formato de horarios en español
+  - 6.3 Agregar referencias a FRs (FR4, FR5)
+  - 6.4 Citar Tech-Spec, Architecture, y story anterior
+</tasks>
+  </story>
+
+  <acceptanceCriteria>
+1. **AC1**: El sistema presenta estilistas disponibles en lista numerada
+   - Given el cliente ha confirmado los servicios a agendar
+   - When el agente presenta las opciones de estilistas
+   - Then muestra lista numerada con nombre del estilista
+   - And incluye información relevante (especialidades, disponibilidad general)
+   - And el cliente puede seleccionar por número o nombre
+
+2. **AC2**: El sistema muestra disponibilidad del estilista seleccionado
+   - Given el cliente selecciona un estilista (por número o nombre)
+   - When el sistema busca disponibilidad
+   - Then utiliza la herramienta `find_next_available()` con los servicios seleccionados
+   - And calcula la duración total de los servicios para buscar slots
+   - And muestra los próximos 5 horarios disponibles en lista numerada
+
+3. **AC3**: Los horarios se presentan en formato claro y amigable
+   - Given el sistema muestra horarios disponibles
+   - When el cliente ve la lista
+   - Then cada horario incluye: número, día de la semana, fecha, hora de inicio
+   - And el formato es legible en español: "1. Martes 21 de noviembre - 10:00"
+   - And solo muestra horarios futuros (no pasados)
+   - And respeta horarios de atención del negocio
+</acceptanceCriteria>
+
+  <artifacts>
+    <docs>
+      <doc>
+        <path>docs/prd.md</path>
+        <title>Product Requirements Document</title>
+        <section>FR4-FR5: Presentación de estilistas y disponibilidad</section>
+        <snippet>Lista numerada de estilistas con información relevante. Máximo 5 horarios en formato español legible.</snippet>
+      </doc>
+      <doc>
+        <path>docs/architecture.md</path>
+        <title>Architecture Document</title>
+        <section>Tool Response Format</section>
+        <snippet>Herramientas retornan formato estándar: {status, message, data}. Consistencia en presentación de listas numeradas.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-1.md</path>
+        <title>Epic 1 Technical Specification</title>
+        <section>Workflows - Flujo de Agendamiento</section>
+        <snippet>PASO 2: Estilistas y disponibilidad. Usar find_next_available() con servicios seleccionados. Limitar a 5 horarios.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/1-4-seleccion-multiple-de-servicios-con-confirmacion.md</path>
+        <title>Story 1.4: Selección múltiple de servicios</title>
+        <section>Dev Agent Record</section>
+        <snippet>service_selected: list[str] contiene servicios confirmados. Duración total calculada. Listas numeradas funcionando correctamente.</snippet>
+      </doc>
+    </docs>
+    <code>
+      <artifact>
+        <path>agent/prompts/step2_availability.md</path>
+        <kind>prompt</kind>
+        <symbol>PASO 2</symbol>
+        <lines>all</lines>
+        <reason>Archivo principal a modificar - contiene instrucciones para presentación de estilistas y disponibilidad</reason>
+      </artifact>
+      <artifact>
+        <path>agent/tools/availability_tools.py</path>
+        <kind>tool</kind>
+        <symbol>find_next_available</symbol>
+        <lines>322-618</lines>
+        <reason>Herramienta que busca próximos horarios disponibles - verificar formato de output y límite de resultados</reason>
+      </artifact>
+      <artifact>
+        <path>agent/tools/availability_tools.py</path>
+        <kind>tool</kind>
+        <symbol>check_availability</symbol>
+        <lines>70-299</lines>
+        <reason>Herramienta de disponibilidad para fecha específica - formato de output debe ser consistente</reason>
+      </artifact>
+      <artifact>
+        <path>agent/state/schemas.py</path>
+        <kind>model</kind>
+        <symbol>ConversationState</symbol>
+        <lines>104-107</lines>
+        <reason>service_selected (lista) y slot_selected (dict) - campos de estado para tracking de selecciones</reason>
+      </artifact>
+      <artifact>
+        <path>agent/prompts/step1_service.md</path>
+        <kind>prompt</kind>
+        <symbol>PASO 1</symbol>
+        <lines>all</lines>
+        <reason>Paso previo - verificar transición correcta a PASO 2 con duración total calculada</reason>
+      </artifact>
+    </code>
+    <dependencies>
+      <python>
+        <langchain>^0.3.0</langchain>
+        <langchain-openai>^0.3.0</langchain-openai>
+        <langgraph>^0.6.7</langgraph>
+        <sqlalchemy>^2.0.0</sqlalchemy>
+        <pydantic>^2.9.0</pydantic>
+        <google-api-python-client>^2.150</google-api-python-client>
+        <tenacity>latest</tenacity>
+      </python>
+    </dependencies>
+  </artifacts>
+
+  <constraints>
+    <constraint>Estrategia prompts-first: Implementar lógica principalmente en prompts, minimizar cambios de código Python</constraint>
+    <constraint>Formato de listas numeradas debe ser consistente con Stories 1.3 y 1.4 (patrón establecido)</constraint>
+    <constraint>Aceptar selección por número O por texto descriptivo (flexibilidad conversacional)</constraint>
+    <constraint>Máximo 5 horarios por estilista para controlar tokens y latencia (NFR1: &lt;5s respuesta)</constraint>
+    <constraint>Herramientas deben retornar formato estándar: {status, message, data}</constraint>
+    <constraint>Duración total de servicios debe calcularse y pasarse a find_next_available()</constraint>
+    <constraint>Formato en español legible: "Día DD de mes - HH:MM"</constraint>
+    <constraint>Solo mostrar horarios futuros (no pasados), respetando horarios de atención</constraint>
+    <constraint>Testing manual conversacional (no unit tests para cambios de prompts)</constraint>
+    <constraint>Reiniciar agent service después de modificar prompts: docker-compose restart agent</constraint>
+  </constraints>
+
+  <interfaces>
+    <interface>
+      <name>find_next_available()</name>
+      <kind>LangChain tool</kind>
+      <signature>find_next_available(service_category: str, time_range: str | None, stylist_id: str | None, max_days_to_search: int) -&gt; dict</signature>
+      <path>agent/tools/availability_tools.py:322-618</path>
+      <returns>
+        {
+          "available_stylists": [
+            {
+              "stylist_name": str,
+              "stylist_id": str,
+              "slots": [
+                {"time": "HH:MM", "date": "YYYY-MM-DD", "day_name": "día", "full_datetime": "ISO8601"}
+              ],
+              "slots_shown": int,
+              "slots_total": int
+            }
+          ],
+          "total_slots_found": int,
+          "dates_searched": int
+        }
+      </returns>
+    </interface>
+    <interface>
+      <name>check_availability()</name>
+      <kind>LangChain tool</kind>
+      <signature>check_availability(service_category: str, date: str, time_range: str | None, stylist_id: str | None) -&gt; dict</signature>
+      <path>agent/tools/availability_tools.py:70-299</path>
+      <returns>
+        {
+          "available_slots": [
+            {"time": "HH:MM", "end_time": "HH:MM", "stylist": str, "stylist_id": str, "date": "YYYY-MM-DD", "full_datetime": "ISO8601"}
+          ],
+          "is_same_day": bool,
+          "holiday_detected": bool,
+          "date_too_soon": bool
+        }
+      </returns>
+    </interface>
+    <interface>
+      <name>ConversationState.service_selected</name>
+      <kind>State field</kind>
+      <signature>service_selected: list[str] | None</signature>
+      <path>agent/state/schemas.py:104</path>
+      <description>Lista de nombres de servicios seleccionados y confirmados por el cliente en PASO 1</description>
+    </interface>
+    <interface>
+      <name>ConversationState.slot_selected</name>
+      <kind>State field</kind>
+      <signature>slot_selected: dict[str, Any] | None</signature>
+      <path>agent/state/schemas.py:105</path>
+      <description>Slot seleccionado: {stylist_id, start_time, duration} - se actualiza cuando cliente elige horario en PASO 2</description>
+    </interface>
+  </interfaces>
+
+  <tests>
+    <standards>Testing manual conversacional via WhatsApp. Esta story modifica principalmente prompts (no código Python), por lo tanto NO requiere unit tests automatizados. NFR10 (85% cobertura) no aplica a cambios de prompts. Si se modifica código Python en tools (availability_tools.py), aplicar patrón pytest con pytest-asyncio, mocks de Google Calendar API, y fixture de database session async.</standards>
+    <locations>
+      <location>tests/unit/</location>
+      <location>tests/integration/</location>
+      <location>tests/mocks/</location>
+    </locations>
+    <ideas>
+      <test id="AC1" idea="Test manual: Completar PASO 1 (servicios) → Ver lista numerada de estilistas con nombres. Verificar formato correcto y tono amigable."/>
+      <test id="AC1" idea="Test manual: Seleccionar estilista por número (ej: '1', 'La 1') → Confirmar estilista correcto identificado."/>
+      <test id="AC1" idea="Test manual: Seleccionar estilista por nombre (ej: 'Ana', 'Quiero con Ana') → Confirmar estilista correcto identificado."/>
+      <test id="AC2" idea="Test manual: Después de seleccionar estilista → Verificar que se llama find_next_available() con servicios seleccionados."/>
+      <test id="AC2" idea="Test manual: Verificar que duración total de servicios se pasa correctamente a find_next_available()."/>
+      <test id="AC3" idea="Test manual: Ver horarios en lista numerada (max 5) con formato español: 'N. Día DD de mes - HH:MM'."/>
+      <test id="AC3" idea="Test manual: Seleccionar horario por número (ej: '2', 'El 2') → Confirmar horario correcto."/>
+      <test id="AC3" idea="Test manual: Seleccionar horario por descripción (ej: 'El martes a las 10') → LLM interpreta correctamente."/>
+      <test id="AC3" idea="Test manual: Verificar que solo se muestran horarios futuros (no pasados)."/>
+      <test id="integration" idea="Test: Flujo completo de servicios → estilistas → horarios → datos cliente → booking."/>
+      <test id="unit-if-code-change" idea="Si se modifica availability_tools.py: Unit test de find_next_available() para verificar formato output y límite de 5 slots."/>
+    </ideas>
+  </tests>
+</story-context>
