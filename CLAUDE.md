@@ -149,9 +149,44 @@ mypy .
 
 ## Architecture Overview
 
-### Simplified Tool-Based Architecture (v3.2)
+> ⚠️ **ARCHITECTURAL CHANGE IN PROGRESS (2025-11-21):** El sistema está migrando de arquitectura LLM-driven (v3.2) a **FSM Híbrida (v4.0)**. Epic 5 implementa esta migración. Ver `docs/sprint-change-proposal-2025-11-21.md` y `docs/epics/epic-5-rediseño-fsm-hibrida.md`.
 
-The system uses a **simplified tool-based architecture** with 3 nodes:
+### FSM Hybrid Architecture (v4.0) - IN DEVELOPMENT
+
+**Problema con v3.2:** La arquitectura LLM-driven producía bugs sistemáticos porque el LLM controlaba flujo además de NLU (bugs descubiertos en Epic 1 Story 1-5).
+
+**Solución v4.0:** FSM híbrida donde LLM solo maneja NLU y generación de lenguaje, mientras FSM controla flujo de conversación.
+
+```
+┌──────────────┐
+│ LLM (NLU)    │ ← Interpreta INTENCIÓN + Genera LENGUAJE
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│ FSM Control  │ ← Controla FLUJO + Valida PROGRESO + Decide TOOLS
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│ Tool Calls   │ ← Ejecuta ACCIONES validadas
+└──────────────┘
+```
+
+**Nuevos componentes (Epic 5):**
+- `agent/fsm/booking_fsm.py` - FSM Controller con estados y transiciones
+- `agent/fsm/intent_extractor.py` - Extracción de intención estructurada
+
+**Estados del Booking FSM:**
+- IDLE → SERVICE_SELECTION → STYLIST_SELECTION → SLOT_SELECTION → CUSTOMER_DATA → CONFIRMATION → BOOKED
+
+**Beneficios:**
+- ✅ Transiciones deterministas y testeables
+- ✅ Estado siempre claro y debuggeable
+- ✅ LLM enfocado en lenguaje natural
+- ✅ Validación explícita antes de tool calls
+
+### Legacy: Tool-Based Architecture (v3.2)
+
+The system currently uses a **simplified tool-based architecture** with 3 nodes (being replaced by FSM):
 
 **Main Conversational Flow (3 Nodes)**
 1. **`process_incoming_message`**: Adds user message to conversation history

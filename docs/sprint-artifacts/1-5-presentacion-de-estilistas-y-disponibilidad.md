@@ -420,6 +420,7 @@ Esta story implementa:
 | 2025-11-20 | Story drafted from epics, tech-spec, architecture, and previous story learnings | SM Agent (create-story workflow) |
 | 2025-11-20 | Implementación completada: Actualizado `step2_availability.md` con listas numeradas de estilistas (FR4) y horarios (FR5). Flujo de 2 pasos implementado. Sin cambios de código Python (prompts-first). | Dev Agent (dev-story workflow) |
 | 2025-11-20 | **FIX**: Actualizado `general.md` con flujo nuevo (Stories 1.4 y 1.5). Limpiado caché de Python (`__pycache__`). Agent reiniciado. | Dev Agent (dev-story workflow) |
+| 2025-11-21 | **SENIOR REVIEW**: Changes Requested - Todos los ACs implementados correctamente (3/3), 5/6 tasks verificados. Finding crítico: Testing manual no ejecutado (Task 5). Requiere testing manual completo vía WhatsApp antes de aprobar. 1 MEDIUM finding, 2 LOW/advisory notes. | Senior Developer Review (code-review workflow) |
 
 ## Dev Agent Record
 
@@ -478,4 +479,288 @@ Claude Sonnet 4.5 (model ID: claude-sonnet-4-5-20250929)
 
 - `agent/prompts/step2_availability.md` (Modified - Story 1.5)
 - `agent/prompts/general.md` (Modified - FIX: Actualizado con flujo de Stories 1.4 y 1.5)
+
+---
+
+## Senior Developer Review (AI)
+
+**Reviewer**: Pepe
+**Date**: 2025-11-21
+**Model**: Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
+
+### Outcome
+
+**🟡 CHANGES REQUESTED**
+
+**Justification**:
+- ✅ Todos los 3 Acceptance Criteria están implementados correctamente con evidencia verificable
+- ✅ El código cumple con arquitectura, estándares y mejores prácticas del proyecto
+- ✅ Sin issues de seguridad, performance o calidad de código
+- ⚠️ **PERO**: Task 5 (testing manual) está marcado como completado `[x]` pero NO hay evidencia de ejecución real del testing manual vía WhatsApp
+- ⚠️ Esta es principalmente una story de prompts - el testing manual es la **única validación real** de que el flujo conversacional funciona correctamente en producción/staging
+
+**Decision**: Se requieren cambios (ejecutar testing manual completo) antes de aprobar la story como "done".
+
+---
+
+### Summary
+
+Esta story implementa exitosamente la presentación de estilistas y disponibilidad en listas numeradas (FR4 y FR5) usando una estrategia prompts-first. La implementación es técnicamente correcta y sigue todos los patrones arquitectónicos establecidos.
+
+**Puntos Fuertes:**
+- Estrategia prompts-first aplicada exitosamente (sin cambios de código Python innecesarios)
+- Flujo de 2 pasos (estilista → horarios) mejora UX y reduce tokens vs formato anterior
+- Integración correcta con `find_next_available()` (límite de 5 slots configurado)
+- Formato español legible ("Día DD de mes - HH:MM") implementado correctamente
+- Transición PASO 1 → PASO 2 clara y bien documentada
+- Prompt `general.md` actualizado coherentemente con el nuevo flujo
+
+**Área de Preocupación:**
+- **Testing manual NO ejecutado**: Las subtasks 5.1-5.6 dicen "Listo para testing manual" pero están marcadas como completadas. Dado que esta story modifica principalmente prompts conversacionales, el testing manual vía WhatsApp es crítico para validar que el flujo funciona correctamente con usuarios reales.
+
+---
+
+### Key Findings
+
+#### 🟡 MEDIUM Severity (1)
+
+**M1: Testing Manual No Ejecutado (Task 5)**
+- **Description**: Task 5 y subtasks 5.1-5.6 marcados `[x]` completed, pero contenido dice "(Listo para testing manual)" - el testing manual real NO fue ejecutado
+- **Evidence**: Story líneas 65-71 - Todas las subtasks indican "Listo para testing manual"
+- **Impact**: No tenemos evidencia de que el flujo conversacional funciona correctamente en producción/staging. Dado que esta story es principalmente cambios de prompts, el testing manual es la ÚNICA forma de validar que la implementación funciona.
+- **Recommendation**: Ejecutar testing manual completo vía WhatsApp cubriendo:
+  - Selección de estilista por número
+  - Selección de estilista por nombre
+  - Verificar lista numerada de horarios (formato español)
+  - Selección de horario por número y por descripción
+  - Verificar límite de 5 horarios por estilista
+  - Completar flujo end-to-end hasta PASO 3
+- **AC Affected**: AC1, AC2, AC3 (todos requieren validación conversacional real)
+
+#### 🔵 LOW/ADVISORY (2)
+
+**L1: Tech-Spec Workflow Diagram Desactualizado**
+- **Description**: El diagrama de flujo en `tech-spec-epic-1.md:197` muestra "Estilistas+Slots" juntos, pero la implementación usa flujo de 2 pasos separados (estilista primero, luego horarios del estilista seleccionado)
+- **Evidence**:
+  - Tech-spec línea 197: "│ Estilistas+Slots  │"
+  - Implementación: `step2_availability.md` líneas 7-38 (Parte A: Seleccionar Estilista, Parte B: Mostrar Disponibilidad)
+- **Note**: La story documenta esto como **mejora intencional** (Dev Notes líneas 451-454): "Beneficio: Más claro para el cliente, reduce tokens al mostrar solo horarios del estilista elegido"
+- **Impact**: Discrepancia menor entre documentación técnica y código (el código es correcto, la documentación está desactualizada)
+- **Recommendation**: Actualizar diagrama de flujo en tech-spec en próxima revisión de épica (no bloqueante para esta story)
+
+**L2: Python Cache Cleanup No Automatizado**
+- **Description**: Durante implementación se detectó problema con bytecode cacheado (`__pycache__`) que no reflejaba cambios recientes en prompts, requiriendo limpieza manual
+- **Evidence**: Story Dev Notes líneas 465-475 - "Limpiado caché de Python: `rm -rf **/__pycache__/`"
+- **Impact**: Puede causar confusión durante testing si el cache no se limpia después de cambios en prompts. El agente mostró comportamiento antiguo hasta limpieza manual.
+- **Recommendation**: Considerar una de estas opciones:
+  - Agregar paso automático de cache cleanup en `docker-compose restart agent`
+  - Documentar explícitamente en CLAUDE.md la necesidad de limpiar cache después de cambios en prompts
+  - Agregar script helper para desarrollo (ej: `./scripts/restart-agent-clean.sh`)
+
+---
+
+### Acceptance Criteria Coverage
+
+#### **AC1: El sistema presenta estilistas disponibles en lista numerada**
+
+| Requirement | Status | Evidence |
+|-------------|--------|----------|
+| Muestra lista numerada con nombre del estilista | ✅ **IMPLEMENTED** | `agent/prompts/step2_availability.md:15-26` - Lista numerada con formato "1. Ana - Especialista..." |
+| Incluye información relevante (especialidades) | ✅ **IMPLEMENTED** | Mismo archivo líneas 21-23 - Incluye especialidades ("Especialista en cortes y color") |
+| Cliente puede seleccionar por número o nombre | ✅ **IMPLEMENTED** | `step2_availability.md:28-31` - Acepta "1", "la 2", "Ana", "Quiero con Ana" |
+| Prompt general actualizado coherentemente | ✅ **IMPLEMENTED** | `agent/prompts/general.md:32-42` - Mismo formato de lista numerada |
+
+**Status**: ✅ **FULLY IMPLEMENTED**
+
+**Testing**: ⚠️ **Requiere testing manual** (ver Finding M1)
+
+---
+
+#### **AC2: El sistema muestra disponibilidad del estilista seleccionado**
+
+| Requirement | Status | Evidence |
+|-------------|--------|----------|
+| Utiliza herramienta `find_next_available()` | ✅ **IMPLEMENTED** | `step2_availability.md:43` - Instrucción clara de cuándo usar esta tool |
+| Con los servicios seleccionados | ✅ **IMPLEMENTED** | Línea 43: `service_category="..."` pasado a tool |
+| Calcula duración total de servicios | ✅ **IMPLEMENTED** | `availability_tools.py:566` - Tool calcula duración usando `CONSERVATIVE_SERVICE_DURATION_MINUTES` |
+| Muestra próximos 5 horarios en lista numerada | ✅ **IMPLEMENTED** | `availability_tools.py:566,572` - `max_slots_per_stylist = 5`, trunca slots a 5 |
+| Filtra por stylist_id seleccionado | ✅ **IMPLEMENTED** | `availability_tools.py:326,420-421` - Parámetro `stylist_id` implementado |
+
+**Status**: ✅ **FULLY IMPLEMENTED**
+
+**Testing**: ⚠️ **Requiere testing manual** (ver Finding M1)
+
+---
+
+#### **AC3: Los horarios se presentan en formato claro y amigable**
+
+| Requirement | Status | Evidence |
+|-------------|--------|----------|
+| Incluye número, día, fecha, hora | ✅ **IMPLEMENTED** | `step2_availability.md:51-55` - Ejemplo muestra todos los elementos |
+| Formato español legible: "1. Martes 21 de noviembre - 10:00" | ✅ **IMPLEMENTED** | `step2_availability.md:61-62` - Formato explícito: "{número}. {Día de la semana} {DD} de {mes} - {HH:MM}" |
+| Solo horarios futuros (no pasados) | ✅ **IMPLEMENTED** | `step2_availability.md:63` - Instrucción explícita: "Solo mostrar horarios futuros (no pasados)" |
+| Respeta horarios de atención del negocio | ✅ **IMPLEMENTED** | `availability_tools.py` usa business_hours de la base de datos para filtrar slots |
+| Máximo 5 horarios por estilista | ✅ **IMPLEMENTED** | `step2_availability.md:64` + `availability_tools.py:566` |
+
+**Status**: ✅ **FULLY IMPLEMENTED**
+
+**Testing**: ⚠️ **Requiere testing manual** (ver Finding M1)
+
+---
+
+**Summary**: **3 of 3 acceptance criteria fully implemented** ✅
+
+---
+
+### Task Completion Validation
+
+| Task | Marked | Verified | Evidence | Notes |
+|------|--------|----------|----------|-------|
+| **Task 1**: Actualizar prompts estilistas en lista numerada (6 subtasks) | [x] | ✅ **VERIFIED** | `step2_availability.md:15-26` - Lista numerada con especialidades, aceptando selección por número o nombre | Completado correctamente |
+| **Task 2**: Actualizar prompts horarios disponibles (6 subtasks) | [x] | ✅ **VERIFIED** | `step2_availability.md:45-64` - Lista numerada de horarios con formato español "Día DD de mes - HH:MM", máximo 5 horarios | Completado correctamente |
+| **Task 3**: Verificar integración find_next_available() (4 subtasks) | [x] | ✅ **VERIFIED** | `availability_tools.py:326,566,572` - Acepta `stylist_id`, limita a 5 slots, retorna formato correcto | Verificación completa |
+| **Task 4**: Actualizar transición PASO 1→PASO 2 (4 subtasks) | [x] | ✅ **VERIFIED** | `step1_service.md:41,55,145` - Transición clara con duración total y mensaje "Ahora vamos a elegir estilista..." | Completado correctamente |
+| **Task 5**: Testing manual de presentación (6 subtasks) | [x] | ⚠️ **QUESTIONABLE** | Subtasks 5.1-5.6 dicen "Listo para testing manual" pero **NO hay evidencia** de ejecución real vía WhatsApp | **Ver Finding M1** - Testing manual NO ejecutado |
+| **Task 6**: Actualizar Dev Notes (4 subtasks) | [x] | ✅ **VERIFIED** | Story líneas 180-415 - Estrategia documentada, formato de horarios, referencias FRs (FR4, FR5), citas a Tech-Spec y Architecture | Completado correctamente |
+
+**Summary**: **5 of 6 tasks fully verified, 1 questionable**
+- Task 5 está marcado como completo pero el testing manual real NO fue ejecutado (crítico para validación de prompts)
+
+---
+
+### Test Coverage and Gaps
+
+**Current Coverage:**
+- ✅ Prompts actualizados con ejemplos de diálogo completos
+- ✅ Formato de listas numeradas implementado y documentado
+- ✅ Integración con `find_next_available()` verificada en código
+- ✅ Transición entre pasos documentada y coherente
+
+**Testing Gaps:**
+- ❌ **Testing manual conversacional NO ejecutado** (crítico)
+  - No hay evidencia de testing real vía WhatsApp
+  - Story 1.5 es principalmente cambios de prompts - testing manual es la única forma de validar correctamente
+  - Subtasks 5.1-5.6 dicen "Listo para testing manual" pero están marcadas `[x]` completed sin ejecución
+
+**Test Cases Faltantes (deben ejecutarse):**
+1. Seleccionar estilista por número (ej: "1", "la 2")
+2. Seleccionar estilista por nombre (ej: "Ana", "Quiero con María")
+3. Verificar lista numerada de horarios en formato español
+4. Seleccionar horario por número (ej: "2", "el 3")
+5. Seleccionar horario por descripción (ej: "el martes a las 10")
+6. Verificar límite de 5 horarios por estilista
+7. Completar flujo end-to-end desde servicios hasta PASO 3
+8. Verificar comportamiento con clientes recurrentes (sugiere estilista anterior)
+
+**Recommendation**: Ejecutar todos los test cases manuales antes de marcar story como "done".
+
+---
+
+### Architectural Alignment
+
+✅ **EXCELLENT ALIGNMENT** - La implementación sigue todos los patrones arquitectónicos establecidos:
+
+#### Prompts-First Strategy
+- ✅ Lógica implementada principalmente en prompts (step2_availability.md)
+- ✅ Cambios mínimos de código Python (ninguno en esta story)
+- ✅ Aprovecha capacidad natural del LLM para formatear listas en español
+- **Evidence**: Architecture doc "Implementation Patterns" + Story Dev Notes líneas 136-142
+
+#### Tool Response Format
+- ✅ `find_next_available()` retorna formato estándar `{status, message, data}`
+- ✅ Simplificación de output en v3.2 (remove redundant fields)
+- **Evidence**: `availability_tools.py:574-591` - Simplified slot output
+
+#### State Management
+- ✅ Usa campos existentes: `service_selected: list[str]`, `slot_selected: dict | None`
+- ✅ Sin cambios de schema requeridos (campos ya existían de Story 1.4)
+- **Evidence**: Story Dev Notes líneas 300-326
+
+#### Performance Optimization (v3.2)
+- ✅ Límite de 5 horarios por estilista reduce tokens
+- ✅ Formato de 2 pasos (estilista → horarios) reduce tokens vs mostrar todo junto
+- **Evidence**: `availability_tools.py:566` - `max_slots_per_stylist = 5`
+
+#### Naming Conventions
+- ✅ Tool names en snake_case inglés: `find_next_available`, `check_availability`
+- ✅ Docstrings en español para que LLM responda en español
+- **Evidence**: Architecture doc "Implementation Patterns - Naming Conventions"
+
+**Deviations from Tech-Spec**:
+- ⚠️ Minor: Diagrama de flujo en tech-spec muestra "Estilistas+Slots" juntos, pero implementación usa 2 pasos separados (ver Finding L1)
+- ✅ Esta desviación es una **mejora intencional** documentada en la story
+
+---
+
+### Security Notes
+
+✅ **NO SECURITY ISSUES FOUND**
+
+**Security Review:**
+- ✅ No hay inputs de usuario procesados directamente en código Python (solo en prompts)
+- ✅ Herramientas usan validación de inputs existente (service_category enum, stylist_id UUID)
+- ✅ Sin exposición de datos sensibles en prompts (nombres de estilistas son públicos)
+- ✅ Sin riesgo de injection (cambios solo en archivos markdown)
+- ✅ Sin nuevas dependencias externas
+
+**Architecture Security Constraints Respected:**
+- ✅ NFR: Validación de propiedad (customer_phone matching) - No aplica a esta story
+- ✅ NFR: Credenciales Calendar montadas read-only - No cambios en esta story
+- ✅ NFR: Phone numbers en E.164, no logs de datos completos - No aplica a esta story
+
+---
+
+### Best-Practices and References
+
+**Tech Stack Detected:**
+- Python 3.11+ (pyproject.toml)
+- LangGraph 0.6.7+ (agent orchestration)
+- LangChain 0.3.0+ (tool definitions)
+- FastAPI 0.116.1 (API framework)
+- OpenRouter API (LLM gateway - GPT-4.1-mini)
+- Google Calendar API v3 (availability data)
+
+**Code Quality Standards Applied:**
+- ✅ Black formatting (line length 100) - No aplica (solo prompts markdown)
+- ✅ Ruff linting - No aplica (solo prompts markdown)
+- ✅ Mypy type checking - No aplica (solo prompts markdown)
+- ✅ Pytest coverage 85% - No aplica a cambios de prompts (ver NFR10 en tech-spec)
+
+**Best Practices Followed:**
+1. ✅ **Prompts-first approach**: Minimiza complejidad de código, aprovecha capacidad del LLM
+2. ✅ **Consistent UX patterns**: Reutiliza formato de listas numeradas de Stories 1.3 y 1.4
+3. ✅ **Token optimization**: Límite de 5 horarios, flujo de 2 pasos reduce tokens
+4. ✅ **Clear documentation**: Ejemplos de diálogo completos en prompts
+5. ✅ **Flexible parsing**: Acepta respuestas por número O texto (capacidad conversacional)
+
+**References:**
+- [LangGraph Best Practices](https://langchain-ai.github.io/langgraph/concepts/) - State management patterns
+- [OpenRouter Caching](https://openrouter.ai/docs#prompt-caching) - Automatic caching for prompts >1024 tokens
+- [Google Calendar API](https://developers.google.com/calendar/api/guides/overview) - Availability queries
+- Architecture doc: `docs/architecture.md` - Implementation Patterns section
+- Tech-Spec: `docs/sprint-artifacts/tech-spec-epic-1.md` - Booking workflow
+
+---
+
+### Action Items
+
+#### **Code Changes Required:**
+
+- [ ] **[CRITICAL]** Ejecutar testing manual completo vía WhatsApp (Finding M1) [story: 1.5]
+  - Test selección de estilista por número
+  - Test selección de estilista por nombre
+  - Test visualización de horarios en lista numerada (formato español)
+  - Test selección de horario por número
+  - Test selección de horario por descripción
+  - Test límite de 5 horarios por estilista
+  - Test flujo end-to-end completo (servicios → estilistas → horarios → datos cliente)
+  - Test con cliente recurrente (sugiere estilista anterior)
+  - **Owner**: Dev Agent
+  - **Files**: N/A (manual testing via WhatsApp)
+
+#### **Advisory Notes:**
+
+- **Note**: Considerar actualizar diagrama de flujo en tech-spec-epic-1.md línea 197 para reflejar flujo de 2 pasos (Finding L1) - no bloqueante, puede hacerse en retrospectiva de épica
+- **Note**: Evaluar automatización de cache cleanup en `docker-compose restart agent` o documentar en CLAUDE.md (Finding L2) - mejora de proceso, no crítico
+- **Note**: La mejora de UX (flujo de 2 pasos vs formato anterior) es una decisión correcta y está bien documentada - mantener este patrón para futuras stories
 

@@ -1,0 +1,70 @@
+ID,Nombre,Categoría,Descripcion,Duracion,Disponible
+1,Tratamiento + Peinado Largo,Peluquería,"Tratamientos personalizado, lavado dermocapila, ritual facial y peinado",60,Si
+2,Tratamiento + Peinado Extra,Peluquería,"Tratamientos personalizado, lavado dermocapilar,ritual facial y peinado",90,Si
+3, Tratamiento + Peinado corto/medio,Peluquería,"tratamientos personalizado, lavado dermocapilar,ritual facial y peinado",60,Si
+4,Peinado Largo,Peluquería,"Lavado dermo capilar,ritual facial y peinado",60,Si
+5,Peinado Extra,Peluquería,"Lavado dermo capilar,ritual facial y peinado",90,Si
+6,Peinado Corto – Medio,Peluquería,"Lavado dermo capilar,ritual facial y peinado",60,Si
+7,Pack Óleo Pigmento + Peinado Largo,Peluquería,"Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado ",120,Si
+8,Pack Óleo Pigmento + Peinado Extra,Peluquería,"regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado ",150,Si
+9,Pack Óleo Pigmento + Peinado Corto – Medio,Peluquería,"regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado ",120,Si
+10,Pack Moldeado Largo,Peluquería,"regulador de la porosidad, servicio de moldeado, equibrador del Ph, ritual facial y peinado ",150,Si
+11,Pack Moldeado Extra,Peluquería,"regulador de la porosidad, servicio de moldeado, equibrador del Ph, ritual facial y peinado",150,Si
+12,Pack Moldeado Corto - Medio,Peluquería,"regulador de la porosidad, servicio de moldeado, equibrador del Ph, ritual facial y peinado",120,Si
+13,Pack Mechas Largo,Peluquería,"regulador de la porosidad, servicio de mechas, equibrador del Ph, ritual facial y peinado",180,Si
+14,Pack Mechas Extra,Peluquería,"regulador de la porosidad, servicio de mechas, equibrador del Ph, ritual facial y peinado",210,Si
+15,Pack Mechas Corto – Medio,Peluquería,"regulador de la porosidad, servicio de mechas, equibrador del Ph, ritual facial y peinado",180,Si
+16,Pack Dual: Mechas + Color Largo,Peluquería,"regulador de la porosidad, servicio dual, equibrador del Ph, ritual facial y peinado",180,Si
+17,Pack Dual: Mechas + Color Extra,Peluquería,"regulador de la porosidad, servicio dual, equibrador del Ph, ritual facial y peinado",210,Si
+18,Pack Dual: Mechas + Color Corto – Medio,Peluquería,"regulador de la porosidad, servicio dual, equibrador del Ph, ritual facial y peinado",180,Si
+19,Pack cultura de Color Largo,Peluquería,"Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado ",120,Si
+20,Pack Cultura de Color Extra,Peluquería,"Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado ",150,Si
+21,Pack cultura de Color Corto – Medio,Peluquería,"Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado ",120,Si
+22,Pack Barro Gold Largo,Peluquería,"Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado ",120,Si
+23,Pack Barro Gold Extra,Peluquería,"Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado ",150,Si
+24,Pack Barro Gold Corto | Medio,Peluquería,"Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado ",120,Si
+25,Corte + Peinado Largo,Peluquería,"Lavado dermo capilar, ritual facial  corte y peinado",60,Si
+26,Corte + Peinado Extra,Peluquería,"Lavado dermo capilar, ritual facial corte y peinado ",120,Si
+27,Corte + Peinado Corto – Medio,Peluquería,"Lavado dermo capilar, ritual facial y cortar peinado",60,Si
+28,Tinte de Pestañas,Estética,,60,Si
+29,Tinte + Permanente de Pestañas,Estética,,150,Si
+30,Permanente de Pestañas,Estética,,60,Si
+31,Peeling Corporal,Estética,,60,Si
+32,Pedicura Permanente + Bioterapia,Estética,,90,Si
+33,Masaje 60 min,Estética,,60,Si
+34,Masaje 30 min,Estética,,30,Si
+35,Maquillaje,Estética,,60,Si
+36,Manicura Permanente + Bioterapia de Manos,Estética,,60,Si
+37,Limar + Pintar Uñas de los Pies Permanente,Estética,,60,Si
+38,Limar + Pintar Uñas de los Pies,Estética,,30,Si
+39,Limar + Pintar Uñas de las Manos Permanente,Estética,,60,Si
+40,Limar + Pintar Uñas de las Manos,Estética,,30,Si
+41,Higiene de Espalda,Estética,,60,Si
+42,Depilación Pubis Completo,Estética,,30,Si
+43,Depilación Piernas Enteras,Estética,,60,Si
+44,Depilación Pecho,Estética,,30,Si
+45,Depilación Muslos,Estética,,30,Si
+46,Depilación Medias Piernas,Estética,,30,Si
+47,Depilación Lumbar,Estética,,30,Si
+48,Depilación Labios,Estética,,30,Si
+49,Depilación Ingles Brasileñas,Estética,,30,Si
+50,Depilación Ingles,Estética,,30,Si
+51,Depilación Glúteos,Estética,,30,Si
+52,Depilación Espalda,Estética,,30,Si
+53,Depilación Cejas,Estética,,30,Si
+54,Depilación Brazos Completos,Estética,,30,Si
+55,Depilación Brazo Medio,Estética,,30,Si
+56,Depilación Axilas,Estética,,30,Si
+57,Depilación Abdomen,Estética,,30,Si
+58,Bioterapia Vitalizadora,Estética,,60,Si
+59,Bioterapia Sensitiva,Estética,,60,Si
+60,Bioterapia Sculptor Completo,Estética,,60,Si
+61,Bioterapia Sculptor + Radiofrecuencia 30 min,Estética,,90,Si
+62,Bioterapia Podal,Estética,,60,Si
+63,Bioterapia Piernas Perfectas + Presoterapia,Estética,,90,Si
+64,Bioterapia Iluminante,Estética,,60,Si
+65,Bioterapia Detox,Estética,,60,Si
+66,Bioterapia de Senos,Estética,,60,Si
+67,Bioterapia de Manos,Estética,,30,Si
+68,Bioterapia + Radiofrecuencia 30 min,Estética,  ,90,Si
+69,Bioterapia + Radiofrecuencia 15 min,Estética,,90,Si

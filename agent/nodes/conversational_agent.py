@@ -232,6 +232,38 @@ async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[
                 }
             )
 
+        # Track service selection when search_services returns results
+        if tool_name == "search_services" and isinstance(result, dict) and not result.get("error"):
+            services_found = result.get("count", 0)
+            if services_found > 0:
+                state_updates["service_selected"] = True
+                logger.info(
+                    f"Service search successful ({services_found} results)",
+                    extra={"services_count": services_found}
+                )
+
+        # Track slot selection when availability tools return results
+        if tool_name in ["find_next_available", "check_availability"]:
+            if isinstance(result, dict) and not result.get("error"):
+                # Check if any slots were found
+                slots_found = result.get("slots", [])
+                if slots_found:
+                    state_updates["slot_selected"] = True
+                    logger.info(
+                        f"Availability found ({len(slots_found)} slots)",
+                        extra={"tool": tool_name, "slots_count": len(slots_found)}
+                    )
+
+        # Track customer data collection when manage_customer succeeds
+        if tool_name == "manage_customer" and isinstance(result, dict) and not result.get("error"):
+            # Check if customer was created or updated successfully
+            if result.get("id") or result.get("success"):
+                state_updates["customer_data_collected"] = True
+                logger.info(
+                    "Customer data collected/updated successfully",
+                    extra={"customer_id": result.get("id")}
+                )
+
         # Convert result to string for LangChain ToolMessage
         if isinstance(result, dict):
             result_str = json.dumps(result, ensure_ascii=False, indent=2)
@@ -345,7 +377,7 @@ Fecha más cercana válida: {day_names_es[earliest_valid.weekday()]} {earliest_v
     customer_context = f"""DATOS DEL CLIENTE:
 - Teléfono: {customer_phone}
 - Nombre registrado: {customer_name if customer_name else "No disponible"}
-- ID de cliente: {customer_id if customer_id else "No registrado aún"}
+- ID de cliente: {str(customer_id) if customer_id else "No registrado aún"}
 
 ⚠️ CRÍTICO: El teléfono ({customer_phone}) ya está disponible del WhatsApp.
 NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a manage_customer."""

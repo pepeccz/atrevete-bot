@@ -15,14 +15,17 @@ Este documento proporciona el desglose completo de épicas e historias para atre
 
 ### Resumen de Épicas
 
-| Épica | Título | Valor para el Usuario | Stories |
-|-------|--------|----------------------|---------|
-| **1** | Corrección del Flujo de Agendamiento | Cliente puede completar reservas sin errores | 7 |
-| **2** | Sistema de Confirmación y Recordatorios | Cliente recibe confirmaciones 48h y recordatorios 24h automáticos | 6 |
-| **3** | Cancelación y Reagendamiento | Cliente puede cancelar y reagendar sus citas por WhatsApp | 5 |
-| **4** | Mejoras de Consultas y Escalamiento | Cliente recibe respuestas personalizadas y escalamiento inteligente | 6 |
+| Épica | Título | Valor para el Usuario | Stories | Estado |
+|-------|--------|----------------------|---------|--------|
+| **5** | **FSM Híbrida (FOUNDATION)** | Sistema robusto, testeable y escalable | 6 | 🔴 PRIORIDAD |
+| **1** | Corrección del Flujo de Agendamiento | Cliente puede completar reservas sin errores | 7 | ⏸️ Pausada (4/7 done) |
+| **2** | Sistema de Confirmación y Recordatorios | Cliente recibe confirmaciones 48h y recordatorios 24h automáticos | 6 | 🔒 Bloqueada |
+| **3** | Cancelación y Reagendamiento | Cliente puede cancelar y reagendar sus citas por WhatsApp | 5 | 🔒 Bloqueada |
+| **4** | Mejoras de Consultas y Escalamiento | Cliente recibe respuestas personalizadas y escalamiento inteligente | 6 | 🔒 Bloqueada |
 
-**Total: 4 Épicas, 24 Stories, 42 FRs**
+**Total: 5 Épicas, 30 Stories, 42 FRs**
+
+> ⚠️ **CAMBIO DE PRIORIDAD (2025-11-21):** Epic 5 (FSM Híbrida) se ejecuta primero como trabajo foundational. Ver [Sprint Change Proposal](./sprint-change-proposal-2025-11-21.md) para detalles.
 
 ---
 
@@ -770,12 +773,15 @@ Este documento proporciona el desglose completo de épicas e historias para atre
 | 4 | Mejoras de Consultas y Escalamiento | 6 | 9 |
 | **Total** | | **24 Stories** | **42 FRs** |
 
-### Secuencia de Implementación
+### Secuencia de Implementación (Actualizada 2025-11-21)
 
-1. **Épica 1** - Base del sistema: migración, book(), flujo completo
-2. **Épica 2** - Ciclo de confirmación: worker, templates, detección
-3. **Épica 3** - Autonomía cliente: cancelar, reagendar
-4. **Épica 4** - Mejoras UX: personalización, escalamiento
+1. **Épica 5** - **FSM Híbrida (FOUNDATION)**: Arquitectura robusta LLM+FSM
+2. **Épica 1** - Completar flujo de agendamiento con FSM (stories 1-5, 1-6, 1-7)
+3. **Épica 2** - Ciclo de confirmación: worker, templates, detección
+4. **Épica 3** - Autonomía cliente: cancelar, reagendar
+5. **Épica 4** - Mejoras UX: personalización, escalamiento
+
+> **Nota:** Epic 5 es trabajo foundational que desbloquea las demás épicas. Ver [docs/epics/epic-5-rediseño-fsm-hibrida.md](./epics/epic-5-rediseño-fsm-hibrida.md) para especificación completa.
 
 ### Componentes Nuevos a Crear
 

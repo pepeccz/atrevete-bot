@@ -88,7 +88,7 @@ async def ensure_customer_exists(phone: str, whatsapp_name: str) -> UUID:
                     f"Customer already exists for phone {phone}",
                     extra={"customer_id": str(existing_customer.id), "phone": phone}
                 )
-                return existing_customer.id
+                return str(existing_customer.id)
 
             # Step 2: Customer doesn't exist - create new one
             # Parse WhatsApp name into first_name and last_name
@@ -126,7 +126,7 @@ async def ensure_customer_exists(phone: str, whatsapp_name: str) -> UUID:
                 }
             )
 
-            return new_customer.id
+            return str(new_customer.id)
 
         except Exception as e:
             logger.error(
