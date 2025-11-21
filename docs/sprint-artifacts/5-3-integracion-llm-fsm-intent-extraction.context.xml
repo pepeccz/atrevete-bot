@@ -1,0 +1,230 @@
+<story-context id=".bmad/bmm/workflows/4-implementation/story-context/template" v="1.0">
+  <metadata>
+    <epicId>5</epicId>
+    <storyId>3</storyId>
+    <title>Integración LLM + FSM Intent Extraction</title>
+    <status>drafted</status>
+    <generatedAt>2025-11-21</generatedAt>
+    <generator>BMAD Story Context Workflow</generator>
+    <sourceStoryPath>docs/sprint-artifacts/5-3-integracion-llm-fsm-intent-extraction.md</sourceStoryPath>
+  </metadata>
+
+  <story>
+    <asA>cliente de Atrévete Peluquería</asA>
+    <iWant>que el bot entienda mi intención de forma natural usando el LLM y controle el flujo de conversación con la FSM</iWant>
+    <soThat>pueda completar reservas hablando naturalmente sin comandos rígidos, pero con un flujo predecible y sin errores</soThat>
+    <tasks>
+      <task id="1" name="Implementar IntentExtractor base" ac="1,5,6">
+        <subtask id="1.1">Crear agent/fsm/intent_extractor.py con función extract_intent()</subtask>
+        <subtask id="1.2">Definir prompt template para extracción de intención con context injection</subtask>
+        <subtask id="1.3">Implementar llamada a LLM (GPT-4.1-mini via OpenRouter) con parsing de respuesta JSON</subtask>
+        <subtask id="1.4">Implementar fallback a IntentType.UNKNOWN en caso de error LLM</subtask>
+        <subtask id="1.5">Agregar logging de latencia y confidence de intent extraction</subtask>
+      </task>
+      <task id="2" name="Implementar disambiguation por estado" ac="2,3,4">
+        <subtask id="2.1">Crear función _build_state_context() que genera contexto específico por estado FSM</subtask>
+        <subtask id="2.2">Implementar detección de START_BOOKING intent</subtask>
+        <subtask id="2.3">Implementar detección de SELECT_SERVICE con soporte número y texto</subtask>
+        <subtask id="2.4">Implementar detección de otros intents: CONFIRM_SERVICES, SELECT_STYLIST, SELECT_SLOT, PROVIDE_CUSTOMER_DATA, CONFIRM_BOOKING, CANCEL_BOOKING</subtask>
+        <subtask id="2.5">Implementar extracción de entities según intent type</subtask>
+      </task>
+      <task id="3" name="Implementar manejo de intents no-booking" ac="7">
+        <subtask id="3.1">Implementar detección de FAQ intent</subtask>
+        <subtask id="3.2">Implementar detección de GREETING intent</subtask>
+        <subtask id="3.3">Implementar detección de ESCALATE intent</subtask>
+        <subtask id="3.4">Verificar que intents no-booking no afectan estado FSM</subtask>
+      </task>
+      <task id="4" name="Integrar con conversational_agent.py" ac="8,9,10">
+        <subtask id="4.1">Modificar agent/nodes/conversational_agent.py para cargar FSM al inicio</subtask>
+        <subtask id="4.2">Agregar llamada a extract_intent() después de recibir mensaje</subtask>
+        <subtask id="4.3">Agregar validación de transición con fsm.can_transition(intent)</subtask>
+        <subtask id="4.4">Modificar generación de respuesta para usar contexto FSM</subtask>
+        <subtask id="4.5">Implementar mensajes de redirección amigables para transiciones inválidas</subtask>
+        <subtask id="4.6">Agregar persistencia FSM después de transición exitosa</subtask>
+      </task>
+      <task id="5" name="Optimización de prompts para naturalidad" ac="9,10">
+        <subtask id="5.1">Crear/modificar prompts para cada estado FSM con instrucciones de tono</subtask>
+        <subtask id="5.2">Agregar ejemplos de respuestas naturales en español</subtask>
+        <subtask id="5.3">Probar y ajustar prompts con conversaciones de prueba</subtask>
+      </task>
+      <task id="6" name="Unit tests para IntentExtractor" ac="11">
+        <subtask id="6.1">Crear tests/unit/test_intent_extractor.py</subtask>
+        <subtask id="6.2">Tests con mock de LLM para cada tipo de intent</subtask>
+        <subtask id="6.3">Tests de disambiguation por estado</subtask>
+        <subtask id="6.4">Tests de fallback a UNKNOWN en error</subtask>
+        <subtask id="6.5">Tests de extracción de entities</subtask>
+      </task>
+      <task id="7" name="Integration tests" ac="11">
+        <subtask id="7.1">Crear tests/integration/test_fsm_llm_integration.py</subtask>
+        <subtask id="7.2">Test de flujo completo happy path con LLM real</subtask>
+        <subtask id="7.3">Test de FAQ mid-flow sin romper booking</subtask>
+        <subtask id="7.4">Test de transiciones inválidas con redirección amigable</subtask>
+        <subtask id="7.5">Verificar coverage mayor a 85%</subtask>
+      </task>
+    </tasks>
+  </story>
+
+  <acceptanceCriteria>
+    <ac id="1">Given módulo FSM (Story 5-2), When se importa agent/fsm/intent_extractor.py, Then existe función extract_intent() que retorna objeto Intent</ac>
+    <ac id="2">Given mensaje "Quiero pedir cita" con estado IDLE, When extract_intent(), Then retorna Intent type=START_BOOKING confidence>=0.8</ac>
+    <ac id="3">Given mensaje "Corte largo" o "1" con estado SERVICE_SELECTION, When extract_intent(), Then retorna Intent type=SELECT_SERVICE con entities correctas</ac>
+    <ac id="4">Given mensaje ambiguo "1" con diferentes estados FSM, When extract_intent(), Then interpretación correcta según contexto del estado (STATE-AWARE)</ac>
+    <ac id="5">Given error en llamada LLM, When extract_intent(), Then retorna Intent type=UNKNOWN confidence=0.0 sin excepción</ac>
+    <ac id="6">Given prompt de intent extraction, When se analiza, Then incluye contexto FSM, datos recopilados, ejemplos válidos</ac>
+    <ac id="7">Given booking en progreso y FAQ mid-flow, When extract_intent(), Then retorna IntentType.FAQ sin romper estado booking</ac>
+    <ac id="8">Given IntentExtractor integrado, When mensaje procesado, Then agente: carga FSM, extrae intención, valida transición, genera respuesta</ac>
+    <ac id="9">Given transición FSM válida, When genera respuesta, Then mensaje natural, personalizado, español, guía siguiente paso</ac>
+    <ac id="10">Given transición FSM inválida, When genera respuesta, Then redirige amigablemente explicando qué falta</ac>
+    <ac id="11">Given código intent_extractor.py, When tests, Then unit tests con mocks + integration tests, coverage mayor a 85%</ac>
+  </acceptanceCriteria>
+
+  <artifacts>
+    <docs>
+      <doc path="docs/sprint-artifacts/tech-spec-epic-5.md" title="Epic 5 Technical Specification" section="AC3, AC4, Intent Extractor Interface">
+        Define la interfaz extract_intent(), prompts state-aware, integración LLM+FSM, performance targets (<2s latencia), test strategy con mocks y conversaciones reales.
+      </doc>
+      <doc path="docs/architecture.md" title="Architecture Document" section="ADR-006 FSM Híbrida">
+        Decisión arquitectónica que separa LLM (NLU) de FSM (flujo). Define estados: IDLE, SERVICE_SELECTION, STYLIST_SELECTION, SLOT_SELECTION, CUSTOMER_DATA, CONFIRMATION, BOOKED.
+      </doc>
+      <doc path="docs/epics/epic-5-rediseño-fsm-hibrida.md" title="Epic 5 Definition" section="Story 5-3">
+        Especifica objetivos de integración LLM+FSM: >90% accuracy, naturalidad conversacional, manejo de intenciones out-of-order.
+      </doc>
+      <doc path="docs/sprint-artifacts/5-2-implementacion-fsm-controller-base.md" title="Story 5-2 Completed" section="Dev Agent Record">
+        Documenta BookingFSM, BookingState, Intent, IntentType ya implementados. Key patterns: fsm:{conversation_id}, TTL 900s. 45 tests, 97.46% coverage.
+      </doc>
+      <doc path="CLAUDE.md" title="Project Instructions" section="Architecture Overview FSM v4.0">
+        Contexto de arquitectura en desarrollo, estados FSM, separación de responsabilidades, modelo GPT-4.1-mini via OpenRouter.
+      </doc>
+    </docs>
+    <code>
+      <!-- Archivos a crear -->
+      <file path="agent/fsm/intent_extractor.py" kind="module" symbol="extract_intent" lines="NEW" reason="Función principal de extracción de intención via LLM - core de esta story"/>
+
+      <!-- Archivos existentes del módulo FSM (Story 5-2) -->
+      <file path="agent/fsm/models.py" kind="models" symbol="IntentType, Intent, BookingState, FSMResult, CollectedData" lines="1-112" reason="Modelos ya implementados: IntentType(13 tipos), Intent dataclass con type/entities/confidence, BookingState enum con 7 estados"/>
+      <file path="agent/fsm/booking_fsm.py" kind="controller" symbol="BookingFSM.can_transition, BookingFSM.transition, BookingFSM.load, BookingFSM.persist" lines="29-375" reason="FSM Controller con transiciones, validación, persistencia Redis. Usar métodos existentes."/>
+      <file path="agent/fsm/__init__.py" kind="module" symbol="exports" lines="1-36" reason="Agregar export de extract_intent aquí"/>
+
+      <!-- Archivo a modificar para integración -->
+      <file path="agent/nodes/conversational_agent.py" kind="orchestrator" symbol="conversational_agent, execute_tool_call" lines="289-650" reason="Integrar FSM: (1) load FSM, (2) extract intent, (3) validate transition, (4) generate response. Actualmente LLM-driven sin FSM."/>
+
+      <!-- Prompts existentes -->
+      <file path="agent/prompts/__init__.py" kind="prompts" symbol="load_contextual_prompt, _detect_booking_state" reason="Funciones de carga de prompts - ajustar para FSM state-aware"/>
+
+      <!-- Tests existentes -->
+      <file path="tests/unit/test_booking_fsm.py" kind="test" symbol="45 tests, 97.46% coverage" reason="Patrón de tests a seguir: mocks de redis, fixtures de fsm, assertions de transiciones"/>
+    </code>
+    <dependencies>
+      <python>
+        <!-- LLM & Agent - core dependencies for this story -->
+        <package name="langchain" version=">=0.3.0" usage="LLM abstraction, ChatOpenAI client"/>
+        <package name="langchain-openai" version=">=0.3.0" usage="OpenRouter integration for GPT-4.1-mini"/>
+        <package name="langgraph" version=">=0.6.7" usage="Agent orchestration (not directly modified)"/>
+
+        <!-- Data validation -->
+        <package name="pydantic" version=">=2.9.0" usage="Intent/FSMResult validation"/>
+
+        <!-- Cache -->
+        <package name="redis" version=">=5.0.0" usage="FSM state persistence"/>
+
+        <!-- Testing -->
+        <package name="pytest" version=">=8.3.0" usage="Unit and integration tests"/>
+        <package name="pytest-asyncio" version=">=0.24.0" usage="Async test support"/>
+      </python>
+      <external>
+        <service name="OpenRouter" purpose="LLM API gateway" model="openai/gpt-4.1-mini"/>
+        <service name="Redis Stack" purpose="FSM state persistence" key="fsm:{conversation_id}" ttl="900s"/>
+      </external>
+    </dependencies>
+  </artifacts>
+
+  <constraints>
+    <constraint source="ADR-006">LLM solo maneja NLU y generación de lenguaje; FSM controla flujo</constraint>
+    <constraint source="CLAUDE.md">Usar shared/config.py para settings, nunca os.getenv() directo</constraint>
+    <constraint source="tech-spec">Latencia intent extraction menor a 2 segundos</constraint>
+    <constraint source="tech-spec">Confidence mínimo aceptable: 0.7, fallback a UNKNOWN si menor</constraint>
+    <constraint source="Story 5-2">Reusar IntentType enum existente (13 tipos ya definidos)</constraint>
+    <constraint source="Story 5-2">Reusar Intent dataclass existente (type, entities, confidence, raw_message)</constraint>
+    <constraint source="Project">Mensajes en español, naturalidad conversacional obligatoria</constraint>
+    <constraint source="Project">mypy strict typing requerido para código nuevo</constraint>
+    <constraint source="Project">Coverage mayor a 85% para código nuevo</constraint>
+    <constraint source="Architecture">FSM state persiste en Redis con TTL 900s (15 min)</constraint>
+    <constraint source="Architecture">Prompts deben ser state-aware para disambiguation contextual</constraint>
+  </constraints>
+
+  <interfaces>
+    <interface name="extract_intent" kind="async function">
+      <signature>async def extract_intent(message: str, current_state: BookingState, collected_data: dict[str, Any], conversation_history: list[dict]) -> Intent</signature>
+      <path>agent/fsm/intent_extractor.py</path>
+      <description>Extrae intención estructurada del mensaje usando LLM con contexto de estado FSM</description>
+    </interface>
+    <interface name="BookingFSM.can_transition" kind="method">
+      <signature>def can_transition(self, intent: Intent) -> bool</signature>
+      <path>agent/fsm/booking_fsm.py:115-146</path>
+      <description>Valida si transición es permitida desde estado actual</description>
+    </interface>
+    <interface name="BookingFSM.transition" kind="method">
+      <signature>def transition(self, intent: Intent) -> FSMResult</signature>
+      <path>agent/fsm/booking_fsm.py:148-229</path>
+      <description>Ejecuta transición si válida, retorna resultado con nuevo estado</description>
+    </interface>
+    <interface name="BookingFSM.load" kind="classmethod">
+      <signature>async def load(cls, conversation_id: str) -> BookingFSM</signature>
+      <path>agent/fsm/booking_fsm.py:270-319</path>
+      <description>Carga estado desde Redis o crea nuevo en IDLE</description>
+    </interface>
+    <interface name="BookingFSM.persist" kind="method">
+      <signature>async def persist(self) -> None</signature>
+      <path>agent/fsm/booking_fsm.py:245-268</path>
+      <description>Persiste estado en Redis con TTL 900s</description>
+    </interface>
+    <interface name="ChatOpenAI" kind="class">
+      <signature>ChatOpenAI(model, api_key, base_url, temperature)</signature>
+      <path>langchain_openai</path>
+      <description>Cliente LLM para OpenRouter - usar para intent extraction</description>
+    </interface>
+  </interfaces>
+  <tests>
+    <standards>
+      Framework: pytest con pytest-asyncio (asyncio_mode=auto). Coverage mínimo 85% para código nuevo.
+      Unit tests usan mocks de LLM (patch ChatOpenAI) para determinismo.
+      Integration tests pueden usar LLM real pero con mocks de DB/Calendar.
+      Patrón de Story 5-2: fixtures de FSM, mocks de redis_client, assertions de transiciones.
+      Tests en español cuando validan mensajes de usuario.
+    </standards>
+    <locations>
+      <location>tests/unit/test_intent_extractor.py</location>
+      <location>tests/integration/test_fsm_llm_integration.py</location>
+      <location>tests/unit/test_booking_fsm.py (existente - 45 tests, 97.46% coverage)</location>
+    </locations>
+    <ideas>
+      <!-- Unit tests - AC #1, #5, #6 -->
+      <idea ac="1">test_extract_intent_returns_intent_object: Verifica que extract_intent retorna objeto Intent válido</idea>
+      <idea ac="5">test_extract_intent_fallback_on_llm_error: Mock LLM raise Exception, verifica Intent type=UNKNOWN confidence=0.0</idea>
+      <idea ac="6">test_prompt_includes_fsm_context: Verifica que prompt generado incluye estado FSM actual y datos recopilados</idea>
+
+      <!-- Unit tests - AC #2, #3, #4 -->
+      <idea ac="2">test_extract_start_booking_intent: Mensaje "Quiero cita" en IDLE retorna START_BOOKING con confidence>=0.8</idea>
+      <idea ac="3">test_extract_select_service_by_name: Mensaje "Corte largo" en SERVICE_SELECTION retorna SELECT_SERVICE con entity service_name</idea>
+      <idea ac="3">test_extract_select_service_by_number: Mensaje "1" en SERVICE_SELECTION retorna SELECT_SERVICE con entity selection_number</idea>
+      <idea ac="4">test_disambiguation_number_by_state: Mismo mensaje "1" en diferentes estados FSM produce intents diferentes</idea>
+
+      <!-- Unit tests - AC #7 -->
+      <idea ac="7">test_faq_intent_mid_booking: Mensaje "¿cuál es el horario?" en SERVICE_SELECTION retorna FAQ sin cambiar estado</idea>
+      <idea ac="7">test_greeting_intent: Mensaje "Hola" en IDLE retorna GREETING</idea>
+      <idea ac="7">test_escalate_intent: Mensaje "quiero hablar con alguien" retorna ESCALATE</idea>
+
+      <!-- Integration tests - AC #8 -->
+      <idea ac="8">test_full_integration_fsm_load_extract_validate: Test completo: load FSM, extract intent, can_transition, transition, persist</idea>
+      <idea ac="8">test_conversational_agent_uses_fsm: Verifica que conversational_agent carga FSM y usa extract_intent</idea>
+
+      <!-- Integration tests - AC #9, #10 -->
+      <idea ac="9">test_valid_transition_generates_natural_response: Transición válida genera mensaje en español guiando al siguiente paso</idea>
+      <idea ac="10">test_invalid_transition_redirects_amicably: Transición inválida genera redirección amigable explicando qué falta</idea>
+
+      <!-- E2E tests - AC #11 -->
+      <idea ac="11">test_full_booking_flow_happy_path: Flujo completo IDLE → SERVICE_SELECTION → ... → BOOKED</idea>
+      <idea ac="11">test_faq_mid_flow_preserves_state: FAQ durante booking no rompe estado FSM</idea>
+    </ideas>
+  </tests>
+</story-context>

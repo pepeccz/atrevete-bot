@@ -1,26 +1,27 @@
 """
-Conversational Agent Node - v3.2 Architecture.
+Conversational Agent Node - v4.0 FSM Hybrid Architecture.
 
-This is the single node that handles ALL conversations using GPT-4.1-mini via OpenRouter
-with 8 consolidated tools. Replaces the hybrid Tier 1/Tier 2 architecture.
+This node integrates FSM (Finite State Machine) control with LLM intent extraction.
+The FSM controls conversation flow while LLM handles NLU and response generation.
 
-Model: openai/gpt-4.1-mini (cost-optimized, automatic prompt caching)
+Model: openai/gpt-4.1-mini via OpenRouter (cost-optimized, automatic prompt caching)
 
-Handles everything:
-- FAQs, greetings, service inquiries → query_info tool
-- Customer history queries → get_customer_history tool
-- Customer updates (post-booking) → manage_customer tool
-- Availability checking (single date) → check_availability tool
-- Availability search (multi-date) → find_next_available tool (NEW)
-- Booking → book tool (delegates to BookingTransaction, requires first_name/last_name/notes)
-- Escalation → escalate_to_human tool
+Architecture (ADR-006):
+    LLM (NLU)      → Interpreta INTENCIÓN + Genera LENGUAJE
+    FSM Control    → Controla FLUJO + Valida PROGRESO + Decide TOOLS
+    Tool Calls     → Ejecuta ACCIONES validadas
 
-Customer Creation Flow:
-- Customers are auto-created in process_incoming_message (first interaction)
-- Booking flow collects first_name, last_name, notes without calling manage_customer
-- book() tool receives customer_id from state + name/notes from PASO 3 collection
+Flow:
+1. Load FSM state from Redis
+2. Extract intent using LLM (state-aware disambiguation)
+3. Validate transition with FSM
+4. Execute tools if FSM approves
+5. Generate response based on FSM state
+6. Persist FSM state
 
-No transitions to transactional nodes. LLM orchestrates entire conversation.
+Tools available (8 consolidated):
+- query_info, search_services, manage_customer, get_customer_history
+- check_availability, find_next_available, book, escalate_to_human
 """
 
 import logging
@@ -28,17 +29,25 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_openai import ChatOpenAI
 
+from agent.fsm import (
+    BookingFSM,
+    IntentType,
+    ToolExecutionError,
+    extract_intent,
+    log_tool_execution,
+    validate_tool_call,
+)
 from agent.prompts import load_contextual_prompt, load_stylist_context
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
 from agent.tools import (
-    check_availability,
-    find_next_available,
     book,
+    check_availability,
     escalate_to_human,
+    find_next_available,
     get_customer_history,
     manage_customer,
     query_info,
@@ -96,21 +105,29 @@ def get_llm_with_tools() -> ChatOpenAI:
 
     llm_with_tools = llm.bind_tools(tools)
 
-    logger.info(f"GPT-4.1-mini LLM initialized with 8 consolidated tools (v3.2) via OpenRouter")
+    logger.info("GPT-4.1-mini LLM initialized with 8 consolidated tools (v3.2) via OpenRouter")
 
     return llm_with_tools
 
 
-async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[str, dict[str, Any]]:
+async def execute_tool_call(
+    tool_call: dict,
+    state: ConversationState,
+    fsm: BookingFSM | None = None,
+) -> tuple[str, dict[str, Any]]:
     """
-    Execute a single tool call with state-aware validation and return result plus state updates.
+    Execute a single tool call with FSM-aware validation and return result plus state updates.
 
-    This function implements deterministic validation to prevent duplicate tool calls
-    (e.g., calling manage_customer twice) by tracking execution state.
+    This function implements FSM validation (Story 5-4) to ensure tools only execute
+    when the FSM state permits. Validation includes:
+    1. FSM state permission check
+    2. Required data availability check
+    3. Legacy state validation (customer_id, first_name for book())
 
     Args:
         tool_call: Tool call dict with 'name', 'args', and 'id' keys
         state: Current conversation state for validation
+        fsm: Optional BookingFSM instance for FSM-aware validation
 
     Returns:
         Tuple of (result_string, state_updates_dict)
@@ -128,8 +145,39 @@ async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[
         extra={
             "tool_name": tool_name,
             "tool_args": tool_args,
+            "fsm_state": fsm.state.value if fsm else "no_fsm",
         }
     )
+
+    # ============================================================================
+    # FSM VALIDATION (Story 5-4)
+    # ============================================================================
+    if fsm is not None:
+        validation = validate_tool_call(tool_name, fsm)
+        if not validation.allowed:
+            # Tool call rejected by FSM
+            error_result = {
+                "error": validation.error_code,
+                "message": validation.error_message,
+                "redirect": validation.redirect_message,
+                "fsm_state": fsm.state.value,
+                "instruction": (
+                    f"⚠️ La herramienta '{tool_name}' no está disponible ahora. "
+                    f"{validation.redirect_message}"
+                ),
+            }
+            logger.warning(
+                f"Tool call rejected by FSM | tool={tool_name} | state={fsm.state.value}",
+                extra={
+                    "tool_name": tool_name,
+                    "fsm_state": fsm.state.value,
+                    "error_code": validation.error_code,
+                    "conversation_id": fsm.conversation_id,
+                }
+            )
+            # Log the rejection
+            log_tool_execution(tool_name, fsm, error_result, success=False, error=validation.error_code)
+            return json.dumps(error_result, ensure_ascii=False, indent=2), state_updates
 
     # ============================================================================
     # PRE-EXECUTION VALIDATION
@@ -270,6 +318,10 @@ async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[
         else:
             result_str = str(result)
 
+        # Log successful tool execution with FSM context (Story 5-4 AC #6)
+        if fsm is not None:
+            log_tool_execution(tool_name, fsm, result, success=True)
+
         return result_str, state_updates
 
     except Exception as e:
@@ -280,26 +332,29 @@ async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[
                 "tool_name": tool_name,
                 "tool_args": tool_args,
                 "error": str(e),
+                "fsm_state": fsm.state.value if fsm else "no_fsm",
             },
             exc_info=True
         )
+
+        # Log failed tool execution with FSM context (Story 5-4 AC #5, #6)
+        if fsm is not None:
+            log_tool_execution(tool_name, fsm, {}, success=False, error=str(e))
+
         return error_msg, state_updates
 
 
 async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     """
-    Main conversational agent node using GPT-4.1-mini with 8 consolidated tools.
+    Main conversational agent node with FSM hybrid architecture (v4.0).
 
-    This single node handles ALL conversation via GPT-4.1-mini's reasoning + tool calling.
-    No explicit state transitions, no booking phases, no transactional nodes.
-
-    Workflow:
-    1. Build LangChain message history from state
-    2. Add system prompt with Maite personality + stylist context
-    3. Invoke Claude LLM with tools
-    4. Execute tool calls if any
-    5. Get final response from Claude
-    6. Update state with assistant message
+    Integrates FSM control with LLM intent extraction:
+    1. Load FSM state from Redis
+    2. Extract intent using LLM (state-aware disambiguation)
+    3. Validate transition with FSM
+    4. Execute tools if FSM approves OR handle non-booking intents
+    5. Generate response based on FSM state and transition result
+    6. Persist FSM state to Redis
 
     Args:
         state: Current conversation state
@@ -311,12 +366,106 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     messages_history = state.get("messages", [])
 
     logger.info(
-        f"Conversational agent (v3.0) invoked",
+        "Conversational agent (v4.0 FSM) invoked",
         extra={
             "conversation_id": conversation_id,
             "messages_count": len(messages_history),
         }
     )
+
+    # =========================================================================
+    # STEP 0: Load FSM state from Redis
+    # =========================================================================
+    fsm = await BookingFSM.load(conversation_id)
+    logger.info(
+        f"FSM loaded | state={fsm.state.value} | collected_data={list(fsm.collected_data.keys())}",
+        extra={"conversation_id": conversation_id, "fsm_state": fsm.state.value}
+    )
+
+    # =========================================================================
+    # STEP 1: Extract intent using LLM (state-aware disambiguation)
+    # =========================================================================
+    # Get the last user message for intent extraction
+    last_user_message = ""
+    for msg in reversed(messages_history):
+        if msg.get("role") == "user":
+            last_user_message = msg.get("content", "")
+            break
+
+    if last_user_message:
+        intent = await extract_intent(
+            message=last_user_message,
+            current_state=fsm.state,
+            collected_data=fsm.collected_data,
+            conversation_history=messages_history,
+        )
+        logger.info(
+            f"Intent extracted | type={intent.type.value} | confidence={intent.confidence:.2f}",
+            extra={
+                "conversation_id": conversation_id,
+                "intent_type": intent.type.value,
+                "entities": list(intent.entities.keys()),
+            }
+        )
+    else:
+        # No user message to process - shouldn't happen but handle gracefully
+        intent = None
+        logger.warning(
+            "No user message found for intent extraction",
+            extra={"conversation_id": conversation_id}
+        )
+
+    # =========================================================================
+    # STEP 2: FSM validates and handles transition
+    # =========================================================================
+    fsm_result = None
+    fsm_context_for_llm = ""
+
+    if intent:
+        # Check if this is a non-booking intent (FAQ, GREETING, ESCALATE)
+        non_booking_intents = {IntentType.FAQ, IntentType.GREETING, IntentType.ESCALATE, IntentType.UNKNOWN}
+
+        if intent.type in non_booking_intents:
+            # Non-booking intents don't affect FSM state
+            logger.info(
+                f"Non-booking intent ({intent.type.value}) - FSM state unchanged",
+                extra={"conversation_id": conversation_id, "fsm_state": fsm.state.value}
+            )
+            fsm_context_for_llm = f"[FSM: {fsm.state.value}] Intent: {intent.type.value} (no transition)"
+        else:
+            # Booking intent - validate with FSM
+            if fsm.can_transition(intent):
+                fsm_result = fsm.transition(intent)
+                await fsm.persist()
+                logger.info(
+                    f"FSM transition SUCCESS | new_state={fsm_result.new_state.value}",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "new_state": fsm_result.new_state.value,
+                        "next_action": fsm_result.next_action,
+                    }
+                )
+                fsm_context_for_llm = (
+                    f"[FSM TRANSICIÓN EXITOSA] Estado: {fsm_result.new_state.value}\n"
+                    f"Siguiente acción: {fsm_result.next_action}\n"
+                    f"Datos recopilados: {fsm_result.collected_data}"
+                )
+            else:
+                # Invalid transition - FSM explains what's missing
+                fsm_result = fsm.transition(intent)  # This returns failure details
+                logger.warning(
+                    f"FSM transition REJECTED | errors={fsm_result.validation_errors}",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "errors": fsm_result.validation_errors,
+                    }
+                )
+                fsm_context_for_llm = (
+                    f"[FSM TRANSICIÓN RECHAZADA] Estado actual: {fsm.state.value}\n"
+                    f"Intent intentado: {intent.type.value}\n"
+                    f"Errores: {', '.join(fsm_result.validation_errors)}\n"
+                    f"Guía al usuario amigablemente explicando qué falta."
+                )
 
     # Step 1: Build LangChain message history from state
     langchain_messages = []
@@ -382,8 +531,14 @@ Fecha más cercana válida: {day_names_es[earliest_valid.weekday()]} {earliest_v
 ⚠️ CRÍTICO: El teléfono ({customer_phone}) ya está disponible del WhatsApp.
 NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a manage_customer."""
 
+    # Add FSM context for state-aware response generation
+    fsm_state_context = f"""ESTADO FSM:
+- Estado actual: {fsm.state.value}
+- Datos recopilados: {fsm.collected_data if fsm.collected_data else "Ninguno"}
+{fsm_context_for_llm if fsm_context_for_llm else ""}"""
+
     # Combine dynamic contexts
-    dynamic_context = f"{temporal_context}\n\n{customer_context}"
+    dynamic_context = f"{temporal_context}\n\n{customer_context}\n\n{fsm_state_context}"
 
     # Measure dynamic context size
     dynamic_size_chars = len(dynamic_context)
@@ -441,7 +596,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
         response = await llm_with_tools.ainvoke(langchain_messages)
 
         logger.info(
-            f"Claude response received",
+            "Claude response received",
             extra={
                 "conversation_id": conversation_id,
                 "has_tool_calls": bool(response.tool_calls),
@@ -451,7 +606,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
 
     except Exception as e:
         logger.error(
-            f"Error invoking Claude LLM",
+            "Error invoking Claude LLM",
             extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
@@ -481,7 +636,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
 
         # Execute each tool call with state-aware validation
         for tool_call in response.tool_calls:
-            tool_result, state_updates = await execute_tool_call(tool_call, state)
+            tool_result, state_updates = await execute_tool_call(tool_call, state, fsm)
 
             # Apply state updates immediately
             for key, value in state_updates.items():
@@ -504,7 +659,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
             final_response = await llm_with_tools.ainvoke(langchain_messages)
 
             logger.info(
-                f"Claude final response received after tool execution",
+                "Claude final response received after tool execution",
                 extra={
                     "conversation_id": conversation_id,
                     "response_preview": final_response.content[:100],
@@ -513,7 +668,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
 
         except Exception as e:
             logger.error(
-                f"Error invoking Claude LLM for final response",
+                "Error invoking Claude LLM for final response",
                 extra={
                     "conversation_id": conversation_id,
                     "error": str(e),
@@ -537,7 +692,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
     # Step 6: Validate response is not blank/whitespace-only
     if not assistant_response or assistant_response.strip() == "":
         logger.error(
-            f"Blank response detected from Claude",
+            "Blank response detected from Claude",
             extra={
                 "conversation_id": conversation_id,
                 "response_content": repr(assistant_response),
@@ -556,7 +711,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
             if tool_call["name"] == "escalate_to_human":
                 escalation_reason = tool_call["args"].get("reason")
                 logger.info(
-                    f"Escalation detected in tool calls",
+                    "Escalation detected in tool calls",
                     extra={
                         "conversation_id": conversation_id,
                         "reason": escalation_reason,
@@ -639,7 +794,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
     updated_state["updated_at"] = datetime.now(ZoneInfo("Europe/Madrid"))
 
     logger.info(
-        f"Conversational agent completed",
+        "Conversational agent completed",
         extra={
             "conversation_id": conversation_id,
             "response_preview": assistant_response[:100],

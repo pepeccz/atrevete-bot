@@ -52,11 +52,11 @@ development_status:
   # Architectural foundation that unblocks all other epics
   # See: docs/epics/epic-5-rediseno-fsm-hibrida.md
   epic-5: contexted
-  5-1-diseno-fsm-states-transiciones: backlog
-  5-2-implementacion-fsm-controller-base: backlog
-  5-3-integracion-llm-fsm-intent-extraction: backlog
-  5-4-refactorizacion-tools-fsm-validation: backlog
-  5-5-testing-end-to-end-fsm: backlog
+  5-1-diseno-fsm-states-transiciones: done
+  5-2-implementacion-fsm-controller-base: done
+  5-3-integracion-llm-fsm-intent-extraction: done
+  5-4-refactorizacion-tools-fsm-validation: done
+  5-5-testing-end-to-end-fsm: review
   5-6-migracion-epic-1-stories-fsm: backlog
   epic-5-retrospective: optional
 

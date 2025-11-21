@@ -1,0 +1,192 @@
+<story-context id=".bmad/bmm/workflows/4-implementation/story-context/template" v="1.0">
+  <metadata>
+    <epicId>5</epicId>
+    <storyId>5</storyId>
+    <title>Testing End-to-End con FSM</title>
+    <status>drafted</status>
+    <generatedAt>2025-11-21</generatedAt>
+    <generator>BMAD Story Context Workflow</generator>
+    <sourceStoryPath>docs/sprint-artifacts/5-5-testing-end-to-end-fsm.md</sourceStoryPath>
+  </metadata>
+
+  <story>
+    <asA>QA/Developer</asA>
+    <iWant>testear el flujo completo de booking con FSM</iWant>
+    <soThat>tengamos confianza de que el sistema funciona correctamente antes de migrar Epic 1</soThat>
+    <tasks>
+      <task id="1" status="pending">Crear tests end-to-end de flujo completo - happy path (AC: #1, #7)
+        <subtask id="1.1">Crear `tests/integration/test_booking_e2e.py` con test de flujo completo</subtask>
+        <subtask id="1.2">Test `test_complete_booking_single_service()`: Un servicio, un estilista, happy path</subtask>
+        <subtask id="1.3">Test `test_complete_booking_multiple_services()`: Múltiples servicios con duración combinada</subtask>
+        <subtask id="1.4">Test `test_booking_with_returning_customer()`: Cliente existente con historial</subtask>
+        <subtask id="1.5">Test `test_booking_with_new_customer()`: Cliente nuevo primera vez</subtask>
+      </task>
+      <task id="2" status="pending">Crear tests de validación de transiciones inválidas (AC: #2, #4)
+        <subtask id="2.1">Test `test_cannot_confirm_from_idle()`: Intent confirm_booking desde IDLE</subtask>
+        <subtask id="2.2">Test `test_cannot_select_slot_without_stylist()`: Saltar STYLIST_SELECTION</subtask>
+        <subtask id="2.3">Test `test_cannot_book_without_customer_data()`: Ir a CONFIRMATION sin nombre</subtask>
+        <subtask id="2.4">Test `test_redirect_messages_are_natural()`: Verificar mensajes de redirección son amigables</subtask>
+        <subtask id="2.5">Test `test_user_guided_to_correct_step()`: FSM guía al paso correcto</subtask>
+      </task>
+      <task id="3" status="pending">Crear tests de recovery de errores (AC: #3)
+        <subtask id="3.1">Test `test_google_calendar_api_failure_recovery()`: FSM mantiene estado en error de Calendar</subtask>
+        <subtask id="3.2">Test `test_database_error_recovery()`: FSM mantiene estado en error de DB</subtask>
+        <subtask id="3.3">Test `test_llm_intent_extraction_failure_recovery()`: Intent UNKNOWN no corrompe FSM</subtask>
+        <subtask id="3.4">Test `test_tool_execution_error_preserves_fsm_state()`: Error en tool no rompe estado</subtask>
+      </task>
+      <task id="4" status="pending">Crear tests de conversaciones out of order (AC: #4)
+        <subtask id="4.1">Test `test_out_of_order_confirm_before_services()`: Usuario confirma sin servicios</subtask>
+        <subtask id="4.2">Test `test_out_of_order_select_slot_before_stylist()`: Usuario da horario sin estilista</subtask>
+        <subtask id="4.3">Test `test_out_of_order_provide_name_at_service_selection()`: Nombre dado demasiado pronto</subtask>
+        <subtask id="4.4">Test `test_faq_during_booking_flow()`: Preguntar FAQ sin interrumpir flujo</subtask>
+      </task>
+      <task id="5" status="pending">Ejecutar manual testing via WhatsApp - 8 casos (AC: #5)
+        <subtask id="5.1">Caso M1: Happy path simple (saludar → cita → servicio → estilista → horario → nombre → confirmar)</subtask>
+        <subtask id="5.2">Caso M2: Múltiples servicios (seleccionar 2+ servicios antes de confirmar)</subtask>
+        <subtask id="5.3">Caso M3: Cancelar mid-flow (iniciar booking → cancelar antes de confirmar)</subtask>
+        <subtask id="5.4">Caso M4: Out of order (intentar confirmar sin servicios seleccionados)</subtask>
+        <subtask id="5.5">Caso M5: Cambiar de opinión (seleccionar servicio → querer cambiarlo)</subtask>
+        <subtask id="5.6">Caso M6: FAQ durante booking (preguntar horarios durante flujo)</subtask>
+        <subtask id="5.7">Caso M7: Respuesta numérica (usar números para seleccionar opciones)</subtask>
+        <subtask id="5.8">Caso M8: Respuesta texto (usar texto para seleccionar opciones)</subtask>
+        <subtask id="5.9">Documentar resultados con screenshots/logs</subtask>
+      </task>
+      <task id="6" status="pending">Verificar bugs de Epic 1 Story 1-5 resueltos (AC: #6)
+        <subtask id="6.1">Test `test_uuid_serialization_bug_resolved()`: ensure_customer_exists retorna strings</subtask>
+        <subtask id="6.2">Test `test_state_flags_progression_bug_resolved()`: FSM progresa correctamente entre estados</subtask>
+        <subtask id="6.3">Test `test_booking_execution_state_reachable()`: Estado CONFIRMATION/BOOKED es alcanzable</subtask>
+        <subtask id="6.4">Verificar que book() se ejecuta con datos completos (no INVALID_UUID)</subtask>
+      </task>
+      <task id="7" status="pending">Ejecutar suite completa y verificar coverage (AC: #7)
+        <subtask id="7.1">Ejecutar unit tests: `pytest tests/unit/test_booking_fsm.py tests/unit/test_intent_extractor.py tests/unit/test_tool_validation.py`</subtask>
+        <subtask id="7.2">Ejecutar integration tests: `pytest tests/integration/test_fsm_llm_integration.py tests/integration/test_tools_fsm_validation.py tests/integration/test_booking_e2e.py`</subtask>
+        <subtask id="7.3">Ejecutar coverage report: `pytest --cov=agent/fsm --cov-fail-under=85`</subtask>
+        <subtask id="7.4">Documentar total de tests y coverage por módulo</subtask>
+      </task>
+      <task id="8" status="pending">Documentar test cases y resultados (AC: #8)
+        <subtask id="8.1">Crear sección "Test Results" en este story file</subtask>
+        <subtask id="8.2">Documentar resultados de tests automatizados</subtask>
+        <subtask id="8.3">Documentar resultados de manual testing con evidencia</subtask>
+        <subtask id="8.4">Crear resumen de bugs encontrados y resueltos</subtask>
+      </task>
+    </tasks>
+  </story>
+
+  <acceptanceCriteria>
+    <criterion id="AC1">Given el flujo completo de booking (IDLE → SERVICE_SELECTION → STYLIST_SELECTION → SLOT_SELECTION → CUSTOMER_DATA → CONFIRMATION → BOOKED) When se ejecutan los tests end-to-end Then todos los tests pasan sin errores y el booking se completa exitosamente</criterion>
+    <criterion id="AC2">Given una transición inválida (ej: IDLE → CONFIRMATION sin datos) When el usuario intenta ejecutar esa transición Then el sistema rechaza la transición con un mensaje amigable y redirige al paso correcto</criterion>
+    <criterion id="AC3">Given un error durante la ejecución de una tool (ej: Google Calendar API falla) When ocurre el error Then la FSM mantiene su estado anterior (recovery) y el usuario recibe mensaje explicativo sin corrupción de estado</criterion>
+    <criterion id="AC4">Given conversaciones "out of order" (ej: usuario intenta confirmar sin seleccionar servicio) When se detecta el intent fuera de orden Then el sistema guía al usuario al paso correcto manteniendo naturalidad conversacional</criterion>
+    <criterion id="AC5">Given los tests manuales via WhatsApp (8 casos de uso definidos) When se ejecutan todos los casos Then todos pasan confirmando naturalidad conversacional y correcto funcionamiento del flujo</criterion>
+    <criterion id="AC6">Given los bugs críticos de Epic 1 Story 1-5 (UUID serialization, state flags never updated) When se ejecutan escenarios que antes causaban esos bugs Then los bugs están resueltos y el sistema funciona correctamente</criterion>
+    <criterion id="AC7">Given todos los tests del Epic 5 (unit, integration, e2e) When se ejecuta la suite completa Then 100% de tests pasan con coverage >85% para código nuevo de FSM</criterion>
+    <criterion id="AC8">Given la documentación de test cases When se revisa la documentación Then incluye todos los casos de prueba, resultados, y evidencia de manual testing</criterion>
+  </acceptanceCriteria>
+
+  <artifacts>
+    <docs>
+      <doc path="docs/architecture.md" title="Architecture" section="ADR-006 FSM Híbrida" snippet="Implementa FSM híbrida donde LLM solo maneja NLU y generación de lenguaje, mientras FSM controla flujo de conversación."/>
+      <doc path="docs/architecture/fsm-booking-flow.md" title="FSM Booking Flow Spec" section="Full Specification" snippet="Especificación completa de estados (7), transiciones válidas, tipos de intención (13), validaciones y flujos de ejemplo."/>
+      <doc path="docs/epics/epic-5-rediseño-fsm-hibrida.md" title="Epic 5 Definition" section="Story 5-5" snippet="Story de testing E2E, definición de DoD, test strategy con 4 niveles (unit, integration, e2e, manual)."/>
+      <doc path="docs/sprint-artifacts/tech-spec-epic-5.md" title="Tech Spec Epic 5" section="Test Strategy Summary" snippet="Unit tests 90% coverage, Integration 85%, E2E 80%, Manual 8 casos WhatsApp. AC1-AC8 con traceability mapping."/>
+      <doc path="CLAUDE.md" title="Project Guidelines" section="Testing" snippet="Comandos pytest con DATABASE_URL, coverage mínimo 85%, exclusiones admin/* y migrations."/>
+    </docs>
+    <code>
+      <file path="agent/fsm/__init__.py" kind="module" symbol="exports" reason="Public exports del módulo FSM: BookingFSM, BookingState, Intent, IntentType, FSMResult, CollectedData, SlotData, extract_intent, tool validation functions"/>
+      <file path="agent/fsm/models.py" kind="models" symbol="IntentType, BookingState, Intent, FSMResult, CollectedData, SlotData" lines="1-112" reason="Data models para FSM: 7 estados, 13 tipos de intent, estructuras de datos"/>
+      <file path="agent/fsm/booking_fsm.py" kind="controller" symbol="BookingFSM" lines="1-375" reason="FSM Controller principal: TRANSITIONS matrix, TRANSITION_REQUIREMENTS, can_transition(), transition(), persist(), load()"/>
+      <file path="agent/fsm/intent_extractor.py" kind="service" symbol="extract_intent" lines="1-398" reason="LLM-based intent extraction: state-aware disambiguation, confidence threshold 0.7, structured JSON parsing"/>
+      <file path="agent/fsm/tool_validation.py" kind="validation" symbol="validate_tool_call, TOOL_STATE_PERMISSIONS, TOOL_DATA_REQUIREMENTS" lines="1-436" reason="Tool validation: state permissions matrix, data requirements, ToolValidationResult, log_tool_execution()"/>
+      <file path="tests/unit/test_booking_fsm.py" kind="test" symbol="TestBookingFSMInitialization, TestTransitions" reason="45+ unit tests de FSM: estados, transiciones válidas/inválidas, cancel, persistence"/>
+      <file path="tests/unit/test_intent_extractor.py" kind="test" symbol="TestExtractIntent" reason="30+ tests de intent extraction: state-aware disambiguation, entity extraction"/>
+      <file path="tests/unit/test_tool_validation.py" kind="test" symbol="TestToolValidation" reason="34 unit tests: state permissions, data requirements, redirect messages"/>
+      <file path="tests/integration/test_fsm_llm_integration.py" kind="integration-test" symbol="TestFSMIntentExtractorIntegration" reason="Integration tests LLM + FSM: full flow, service selection, transitions"/>
+      <file path="tests/integration/test_tools_fsm_validation.py" kind="integration-test" symbol="TestToolStatePermissionIntegration" reason="21 integration tests: tool permissions, FSM blocking, error recovery"/>
+    </code>
+    <dependencies>
+      <python>
+        <package name="pytest" version=">=8.3.0" purpose="Testing framework"/>
+        <package name="pytest-asyncio" version=">=0.24.0" purpose="Async test support"/>
+        <package name="langgraph" version=">=0.6.7" purpose="Agent orchestration"/>
+        <package name="langchain" version=">=0.3.0" purpose="LLM integration"/>
+        <package name="langchain-openai" version=">=0.3.0" purpose="OpenRouter client"/>
+        <package name="redis" version=">=5.0.0" purpose="FSM state persistence"/>
+        <package name="pydantic" version=">=2.9.0" purpose="Data validation"/>
+      </python>
+    </dependencies>
+  </artifacts>
+
+  <constraints>
+    <constraint type="coverage">Coverage mínimo 85% para código FSM según pyproject.toml y DoD</constraint>
+    <constraint type="testing-framework">pytest + pytest-asyncio, asyncio_mode=auto</constraint>
+    <constraint type="database">DATABASE_URL con postgresql+asyncpg para tests async</constraint>
+    <constraint type="mocking">Mock external APIs (Google Calendar, Chatwoot, Redis) para deterministic tests</constraint>
+    <constraint type="state-isolation">Usar BookingFSM("test-conv-id") para instancias aisladas en tests</constraint>
+    <constraint type="coding-standards">Black (line-length=100), ruff, mypy strict para shared/database/</constraint>
+    <constraint type="slow-tests">Marcar E2E tests con @pytest.mark.slow para selective execution</constraint>
+    <constraint type="error-recovery">FSM no debe corromperse si tool/LLM falla - test recovery patterns</constraint>
+  </constraints>
+
+  <interfaces>
+    <interface name="BookingFSM" kind="class">
+      <signature>class BookingFSM(conversation_id: str)</signature>
+      <methods>
+        <method>state: BookingState (property)</method>
+        <method>collected_data: dict[str, Any] (property)</method>
+        <method>can_transition(intent: Intent) -> bool</method>
+        <method>transition(intent: Intent) -> FSMResult</method>
+        <method>reset() -> None</method>
+        <method>async persist() -> None</method>
+        <method>@classmethod async load(conversation_id: str) -> BookingFSM</method>
+      </methods>
+      <path>agent/fsm/booking_fsm.py</path>
+    </interface>
+    <interface name="extract_intent" kind="function">
+      <signature>async def extract_intent(message: str, current_state: BookingState, collected_data: dict[str, Any], conversation_history: list[dict]) -> Intent</signature>
+      <path>agent/fsm/intent_extractor.py</path>
+    </interface>
+    <interface name="validate_tool_call" kind="function">
+      <signature>def validate_tool_call(tool_name: str, fsm: BookingFSM) -> ToolValidationResult</signature>
+      <path>agent/fsm/tool_validation.py</path>
+    </interface>
+    <interface name="Intent" kind="dataclass">
+      <signature>@dataclass Intent(type: IntentType, entities: dict[str, Any], confidence: float, raw_message: str, requires_tool: bool, tool_name: str | None)</signature>
+      <path>agent/fsm/models.py</path>
+    </interface>
+    <interface name="FSMResult" kind="dataclass">
+      <signature>@dataclass FSMResult(success: bool, new_state: BookingState, collected_data: dict[str, Any], next_action: str, validation_errors: list[str])</signature>
+      <path>agent/fsm/models.py</path>
+    </interface>
+  </interfaces>
+
+  <tests>
+    <standards>
+      pytest con pytest-asyncio (asyncio_mode=auto). Unit tests aislados con mocks.
+      Integration tests con mocked external services (Redis, LLM, Calendar).
+      E2E tests simulan flujo completo de booking.
+      Manual tests via WhatsApp para validar naturalidad conversacional.
+      Coverage report con pytest-cov, fail-under=85 para agent/fsm/.
+    </standards>
+    <locations>
+      <location>tests/unit/test_booking_fsm.py</location>
+      <location>tests/unit/test_intent_extractor.py</location>
+      <location>tests/unit/test_tool_validation.py</location>
+      <location>tests/integration/test_fsm_llm_integration.py</location>
+      <location>tests/integration/test_tools_fsm_validation.py</location>
+      <location>tests/integration/test_booking_e2e.py (A CREAR)</location>
+    </locations>
+    <ideas>
+      <idea ac="AC1">test_complete_booking_single_service - Happy path completo IDLE → BOOKED</idea>
+      <idea ac="AC1">test_complete_booking_multiple_services - Múltiples servicios con duración combinada</idea>
+      <idea ac="AC2">test_cannot_confirm_from_idle - Rechazo transición inválida con mensaje amigable</idea>
+      <idea ac="AC2">test_cannot_select_slot_without_stylist - Validar requisitos de datos</idea>
+      <idea ac="AC3">test_google_calendar_api_failure_recovery - FSM mantiene estado en error</idea>
+      <idea ac="AC3">test_llm_intent_extraction_failure_recovery - UNKNOWN no corrompe FSM</idea>
+      <idea ac="AC4">test_out_of_order_confirm_before_services - Redirección natural</idea>
+      <idea ac="AC4">test_faq_during_booking_flow - FAQ no interrumpe flujo</idea>
+      <idea ac="AC6">test_uuid_serialization_bug_resolved - customer_id siempre string</idea>
+      <idea ac="AC6">test_state_flags_progression_bug_resolved - FSM progresa correctamente</idea>
+      <idea ac="AC7">coverage_report - pytest --cov=agent/fsm --cov-fail-under=85</idea>
+    </ideas>
+  </tests>
+</story-context>

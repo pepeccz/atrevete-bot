@@ -1,0 +1,308 @@
+<story-context id=".bmad/bmm/workflows/4-implementation/story-context/template" v="1.0">
+  <metadata>
+    <epicId>5</epicId>
+    <storyId>4</storyId>
+    <title>Refactorizacion de Tools con FSM Validation</title>
+    <status>drafted</status>
+    <generatedAt>2025-11-21</generatedAt>
+    <generator>BMAD Story Context Workflow</generator>
+    <sourceStoryPath>docs/sprint-artifacts/5-4-refactorizacion-tools-fsm-validation.md</sourceStoryPath>
+  </metadata>
+
+  <story>
+    <asA>developer</asA>
+    <iWant>refactorizar las tools existentes para que trabajen con validacion FSM</iWant>
+    <soThat>las tools solo se ejecuten cuando el estado FSM lo permita, garantizando un flujo de booking robusto y predecible</soThat>
+    <tasks>
+      <task id="1" title="Crear decorador/wrapper de validacion FSM para tools">
+        <subtask id="1.1">Crear agent/fsm/tool_validation.py con funcion validate_tool_call(tool_name, fsm_state)</subtask>
+        <subtask id="1.2">Definir mapeo de tools a estados FSM permitidos en TOOL_STATE_PERMISSIONS</subtask>
+        <subtask id="1.3">Implementar logging estructurado de tool calls con contexto FSM</subtask>
+        <subtask id="1.4">Integrar validacion en conversational_agent.py antes de ejecutar tools</subtask>
+        <ac refs="#1, #2, #6"/>
+      </task>
+      <task id="2" title="Refactorizar search_services para FSM">
+        <subtask id="2.1">Permitir en estados: IDLE, SERVICE_SELECTION</subtask>
+        <subtask id="2.2">Retornar estructura: {"services": [...], "for_fsm": True}</subtask>
+        <subtask id="2.3">Tests unitarios con mock FSM</subtask>
+        <ac refs="#1, #3"/>
+      </task>
+      <task id="3" title="Refactorizar check_availability y find_next_available para FSM">
+        <subtask id="3.1">Permitir solo en estados: STYLIST_SELECTION, SLOT_SELECTION</subtask>
+        <subtask id="3.2">Retornar estructura con slots formateados para FSM</subtask>
+        <subtask id="3.3">Tests unitarios con mock FSM</subtask>
+        <ac refs="#1, #3, #7"/>
+      </task>
+      <task id="4" title="Refactorizar book() tool con validacion estricta">
+        <subtask id="4.1">Validar estado FSM == CONFIRMATION antes de ejecutar</subtask>
+        <subtask id="4.2">Validar datos completos en FSM.collected_data</subtask>
+        <subtask id="4.3">Implementar rollback de FSM si falla booking</subtask>
+        <subtask id="4.4">Retornar appointment_id estructurado para transicion a BOOKED</subtask>
+        <subtask id="4.5">Tests unitarios con mocks de DB y Calendar</subtask>
+        <ac refs="#4, #5"/>
+      </task>
+      <task id="5" title="Implementar error handling robusto">
+        <subtask id="5.1">Crear clase ToolExecutionError con contexto FSM</subtask>
+        <subtask id="5.2">Implementar recovery automatico: si tool falla, FSM mantiene estado anterior</subtask>
+        <subtask id="5.3">Logging de errores con stack trace + estado FSM</subtask>
+        <subtask id="5.4">Tests de casos de error</subtask>
+        <ac refs="#5, #6"/>
+      </task>
+      <task id="6" title="Integrar validacion en flujo del agente">
+        <subtask id="6.1">Modificar conversational_agent.py para validar tools antes de ejecutar</subtask>
+        <subtask id="6.2">Generar mensajes de redireccion naturales cuando FSM rechaza tool</subtask>
+        <subtask id="6.3">Actualizar prompts para informar al LLM sobre restricciones</subtask>
+        <subtask id="6.4">Tests de integracion agente + tools + FSM</subtask>
+        <ac refs="#1, #2, #6"/>
+      </task>
+      <task id="7" title="Tests de integracion tools + FSM">
+        <subtask id="7.1">Crear tests/integration/test_tools_fsm_validation.py</subtask>
+        <subtask id="7.2">Test happy path: SERVICE_SELECTION a BOOKED</subtask>
+        <subtask id="7.3">Test de rechazo: tool en estado incorrecto</subtask>
+        <subtask id="7.4">Test de recovery: error no corrompe FSM</subtask>
+        <subtask id="7.5">Test de logging estructurado</subtask>
+        <subtask id="7.6">Verificar coverage mayor a 85%</subtask>
+        <ac refs="#8"/>
+      </task>
+    </tasks>
+  </story>
+
+  <acceptanceCriteria>
+    <criterion id="1">
+      <given>una llamada a cualquier tool de booking (search_services, check_availability, find_next_available, book)</given>
+      <when>el FSM Controller evalua la llamada</when>
+      <then>la tool solo se ejecuta si el estado FSM actual permite esa operacion</then>
+    </criterion>
+    <criterion id="2">
+      <given>el agente en estado SERVICE_SELECTION</given>
+      <when>intenta llamar a book() (requiere estado CONFIRMATION)</when>
+      <then>la FSM rechaza la llamada y el agente redirige amablemente al usuario al paso correcto</then>
+    </criterion>
+    <criterion id="3">
+      <given>una tool ejecutada exitosamente</given>
+      <when>retorna resultado</when>
+      <then>retorna datos estructurados que la FSM puede procesar para actualizar collected_data</then>
+    </criterion>
+    <criterion id="4">
+      <given>la tool book() especificamente</given>
+      <when>se llama</when>
+      <then>valida que FSM esta en estado CONFIRMATION con todos los datos requeridos (services, stylist_id, slot, customer_data)</then>
+    </criterion>
+    <criterion id="5">
+      <given>un error en la ejecucion de una tool</given>
+      <when>ocurre excepcion o error de API externa</when>
+      <then>el error no corrompe el estado FSM (recovery automatico al estado anterior)</then>
+    </criterion>
+    <criterion id="6">
+      <given>cualquier llamada a tool</given>
+      <when>se ejecuta</when>
+      <then>los logs muestran: estado FSM actual, tool llamada, resultado, nuevo estado FSM</then>
+    </criterion>
+    <criterion id="7">
+      <given>las tools check_availability y find_next_available</given>
+      <when>se ejecutan</when>
+      <then>solo funcionan en estados FSM que requieren disponibilidad (STYLIST_SELECTION, SLOT_SELECTION)</then>
+    </criterion>
+    <criterion id="8">
+      <given>las tools refactorizadas</given>
+      <when>se ejecutan todos los tests</when>
+      <then>hay tests de integracion tools + FSM cubriendo casos de exito y error, con coverage mayor a 85%</then>
+    </criterion>
+  </acceptanceCriteria>
+
+  <artifacts>
+    <docs>
+      <doc>
+        <path>docs/architecture.md</path>
+        <title>Architecture Document</title>
+        <section>ADR-006: FSM Hibrida para Control de Flujo</section>
+        <snippet>Implementar FSM hibrida donde LLM solo maneja NLU y generacion de lenguaje, mientras FSM controla flujo de conversacion. Transiciones deterministas y testeables.</snippet>
+      </doc>
+      <doc>
+        <path>docs/architecture/fsm-booking-flow.md</path>
+        <title>FSM Booking Flow Specification</title>
+        <section>Estados FSM y Transiciones Validas</section>
+        <snippet>7 estados: IDLE, SERVICE_SELECTION, STYLIST_SELECTION, SLOT_SELECTION, CUSTOMER_DATA, CONFIRMATION, BOOKED. Matriz completa de transiciones con validaciones por estado.</snippet>
+      </doc>
+      <doc>
+        <path>docs/epics/epic-5-rediseno-fsm-hibrida.md</path>
+        <title>Epic 5 Definition</title>
+        <section>Story 5-4: Refactorizacion de Tools con FSM Validation</section>
+        <snippet>Modificar execute_tool_call() para validar estado FSM. Cada tool retorna datos estructurados para FSM. Implementar error handling robusto con recovery automatico.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-5.md</path>
+        <title>Epic 5 Technical Specification</title>
+        <section>AC5: Tools Refactorizadas con FSM Validation</section>
+        <snippet>Decorator @requires_fsm_state implementado. book() solo ejecutable en CONFIRMATION. Errors no rompen FSM (recovery automatico). Logs con estado FSM en cada tool call.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/5-3-integracion-llm-fsm-intent-extraction.md</path>
+        <title>Story 5-3 (Previous Story)</title>
+        <section>Dev Agent Record - Learnings</section>
+        <snippet>FSM + IntentExtractor integrados en conversational_agent.py. Metodos disponibles: can_transition(), transition(), persist(), load(). 84 tests pasando con coverage mayor a 85%.</snippet>
+      </doc>
+      <doc>
+        <path>CLAUDE.md</path>
+        <title>Project Overview</title>
+        <section>Architecture Overview</section>
+        <snippet>LLM (NLU) interpreta INTENCION. FSM Control controla FLUJO + Valida PROGRESO + Decide TOOLS. Tool Calls ejecuta ACCIONES validadas.</snippet>
+      </doc>
+    </docs>
+    <code>
+      <file>
+        <path>agent/fsm/booking_fsm.py</path>
+        <kind>controller</kind>
+        <symbol>BookingFSM</symbol>
+        <lines>1-375</lines>
+        <reason>FSM Controller base con estados, transiciones, can_transition(), transition(), persist(), load(). REUSAR directamente para validacion de tools.</reason>
+      </file>
+      <file>
+        <path>agent/fsm/models.py</path>
+        <kind>models</kind>
+        <symbol>BookingState, IntentType, Intent, FSMResult, CollectedData</symbol>
+        <lines>1-112</lines>
+        <reason>Data models para FSM. BookingState enum con 7 estados. IntentType con 13 tipos. REUSAR para TOOL_STATE_PERMISSIONS mapping.</reason>
+      </file>
+      <file>
+        <path>agent/fsm/intent_extractor.py</path>
+        <kind>service</kind>
+        <symbol>extract_intent</symbol>
+        <reason>Extractor de intencion ya integrado. Story 5-3 implemento integracion con conversational_agent. NO modificar.</reason>
+      </file>
+      <file>
+        <path>agent/fsm/__init__.py</path>
+        <kind>module</kind>
+        <symbol>exports</symbol>
+        <lines>1-40</lines>
+        <reason>Exporta BookingFSM, BookingState, Intent, IntentType, FSMResult, extract_intent. AGREGAR nuevas funciones de tool validation aqui.</reason>
+      </file>
+      <file>
+        <path>agent/nodes/conversational_agent.py</path>
+        <kind>controller</kind>
+        <symbol>execute_tool_call, get_llm_with_tools</symbol>
+        <lines>106-200</lines>
+        <reason>Punto de integracion clave. execute_tool_call() ya valida customer_id y first_name. EXTENDER para validar estado FSM antes de ejecutar tools.</reason>
+      </file>
+      <file>
+        <path>agent/tools/booking_tools.py</path>
+        <kind>tool</kind>
+        <symbol>book</symbol>
+        <lines>67-262</lines>
+        <reason>Tool book() actual. Valida UUIDs, resuelve servicios, ejecuta BookingTransaction. MODIFICAR para validar estado FSM == CONFIRMATION.</reason>
+      </file>
+      <file>
+        <path>agent/tools/search_services.py</path>
+        <kind>tool</kind>
+        <symbol>search_services</symbol>
+        <lines>57-239</lines>
+        <reason>Tool de busqueda de servicios con fuzzy matching. MODIFICAR para retornar estructura FSM-compatible y validar estados permitidos.</reason>
+      </file>
+      <file>
+        <path>agent/tools/availability_tools.py</path>
+        <kind>tool</kind>
+        <symbol>check_availability, find_next_available</symbol>
+        <lines>70-699</lines>
+        <reason>Tools de disponibilidad. MODIFICAR para validar estados FSM permitidos (STYLIST_SELECTION, SLOT_SELECTION) y retornar estructura FSM-compatible.</reason>
+      </file>
+    </code>
+    <dependencies>
+      <python>
+        <package name="langgraph" version=">=0.6.7">Agent orchestration</package>
+        <package name="langchain" version=">=0.3.0">LLM integration</package>
+        <package name="langchain-openai" version=">=0.3.0">OpenRouter API client</package>
+        <package name="redis" version=">=5.0.0">FSM state persistence</package>
+        <package name="pydantic" version=">=2.9.0">Data validation</package>
+        <package name="pytest" version=">=8.3.0">Testing framework</package>
+        <package name="pytest-asyncio" version=">=0.24.0">Async test support</package>
+        <package name="rapidfuzz" version=">=3.0.0">Fuzzy string matching</package>
+      </python>
+    </dependencies>
+  </artifacts>
+
+  <constraints>
+    <constraint source="ADR-006">LLM solo maneja NLU y generacion de lenguaje. FSM controla flujo y valida tools.</constraint>
+    <constraint source="Tech-Spec-Epic-5">Tool validation overhead menor a 10ms (lookup en dict, sin I/O).</constraint>
+    <constraint source="Tech-Spec-Epic-5">Recovery rollback menor a 50ms (snapshot en memoria).</constraint>
+    <constraint source="Story-5-3">NO modificar agent/fsm/booking_fsm.py ni agent/fsm/models.py - reusar directamente.</constraint>
+    <constraint source="Story-5-3">Mantener compatibilidad con 84 tests existentes de FSM.</constraint>
+    <constraint source="CLAUDE.md">Coverage objetivo mayor a 85% para codigo nuevo.</constraint>
+    <constraint source="Architecture">Tools solo ejecutables si FSM autoriza via can_transition() o nuevo metodo can_execute_tool().</constraint>
+    <constraint source="Architecture">Logging estructurado con JSON y campos: conversation_id, fsm_state, tool_name, result, error.</constraint>
+  </constraints>
+
+  <interfaces>
+    <interface>
+      <name>BookingFSM.can_transition(intent)</name>
+      <kind>method</kind>
+      <signature>def can_transition(self, intent: Intent) -> bool</signature>
+      <path>agent/fsm/booking_fsm.py:115-146</path>
+    </interface>
+    <interface>
+      <name>BookingFSM.transition(intent)</name>
+      <kind>method</kind>
+      <signature>def transition(self, intent: Intent) -> FSMResult</signature>
+      <path>agent/fsm/booking_fsm.py:148-229</path>
+    </interface>
+    <interface>
+      <name>BookingFSM.persist()</name>
+      <kind>async method</kind>
+      <signature>async def persist(self) -> None</signature>
+      <path>agent/fsm/booking_fsm.py:245-268</path>
+    </interface>
+    <interface>
+      <name>BookingFSM.load(conversation_id)</name>
+      <kind>async classmethod</kind>
+      <signature>async def load(cls, conversation_id: str) -> BookingFSM</signature>
+      <path>agent/fsm/booking_fsm.py:270-319</path>
+    </interface>
+    <interface>
+      <name>execute_tool_call(tool_call, state)</name>
+      <kind>async function</kind>
+      <signature>async def execute_tool_call(tool_call: dict, state: ConversationState) -> tuple[str, dict[str, Any]]</signature>
+      <path>agent/nodes/conversational_agent.py:106-198</path>
+    </interface>
+    <interface>
+      <name>TOOL_STATE_PERMISSIONS (NEW)</name>
+      <kind>constant dict</kind>
+      <signature>TOOL_STATE_PERMISSIONS: dict[str, list[BookingState]]</signature>
+      <path>agent/fsm/tool_validation.py (to be created)</path>
+    </interface>
+    <interface>
+      <name>validate_tool_call (NEW)</name>
+      <kind>function</kind>
+      <signature>def validate_tool_call(tool_name: str, fsm: BookingFSM) -> tuple[bool, str | None]</signature>
+      <path>agent/fsm/tool_validation.py (to be created)</path>
+    </interface>
+  </interfaces>
+
+  <tests>
+    <standards>
+      Testing uses pytest with pytest-asyncio for async support. Unit tests mock LLM and external services (Redis, DB, Calendar). Integration tests use real FSM with mocked DB. Coverage minimum 85% required. Use @pytest.mark.asyncio for async tests. Follow existing patterns from tests/unit/test_booking_fsm.py and tests/unit/test_intent_extractor.py (84 tests passing per Story 5-3).
+    </standards>
+    <locations>
+      <location>tests/unit/test_booking_fsm.py</location>
+      <location>tests/unit/test_intent_extractor.py</location>
+      <location>tests/integration/test_fsm_llm_integration.py</location>
+      <location>tests/integration/test_tools_fsm_validation.py (to be created)</location>
+    </locations>
+    <ideas>
+      <idea ac="#1">test_tool_validation_allows_search_services_in_idle_state</idea>
+      <idea ac="#1">test_tool_validation_allows_search_services_in_service_selection</idea>
+      <idea ac="#2">test_tool_validation_rejects_book_in_service_selection_state</idea>
+      <idea ac="#2">test_tool_validation_rejects_book_in_slot_selection_state</idea>
+      <idea ac="#3">test_search_services_returns_fsm_compatible_structure</idea>
+      <idea ac="#3">test_find_next_available_returns_fsm_compatible_slots</idea>
+      <idea ac="#4">test_book_tool_requires_confirmation_state</idea>
+      <idea ac="#4">test_book_tool_validates_all_collected_data_present</idea>
+      <idea ac="#5">test_tool_error_does_not_corrupt_fsm_state</idea>
+      <idea ac="#5">test_fsm_rollback_on_booking_failure</idea>
+      <idea ac="#6">test_tool_execution_logs_fsm_context</idea>
+      <idea ac="#6">test_tool_rejection_logs_fsm_state_and_reason</idea>
+      <idea ac="#7">test_check_availability_only_in_stylist_or_slot_selection</idea>
+      <idea ac="#7">test_find_next_available_only_in_stylist_or_slot_selection</idea>
+      <idea ac="#8">test_integration_full_booking_flow_with_tool_validation</idea>
+      <idea ac="#8">test_integration_rejected_tool_flow_with_redirect</idea>
+    </ideas>
+  </tests>
+</story-context>

@@ -1,0 +1,355 @@
+<story-context id="atrevete-bot/5-2-implementacion-fsm-controller-base" v="1.0">
+  <metadata>
+    <epicId>5</epicId>
+    <storyId>2</storyId>
+    <title>Implementación de FSM Controller Base</title>
+    <status>drafted</status>
+    <generatedAt>2025-11-21</generatedAt>
+    <generator>BMAD Story Context Workflow</generator>
+    <sourceStoryPath>docs/sprint-artifacts/5-2-implementacion-fsm-controller-base.md</sourceStoryPath>
+  </metadata>
+
+  <story>
+    <asA>desarrollador</asA>
+    <iWant>implementar la clase BookingFSM que controla estados y transiciones del flujo de booking</iWant>
+    <soThat>tengamos un controlador robusto que valide el flujo de conversación de manera determinista y testeable</soThat>
+    <tasks>
+      <task id="1" title="Crear estructura del módulo FSM" ac="1">
+        <subtask>1.1 Crear directorio agent/fsm/</subtask>
+        <subtask>1.2 Crear agent/fsm/__init__.py con exports públicos</subtask>
+        <subtask>1.3 Crear agent/fsm/booking_fsm.py con esqueleto de clase</subtask>
+        <subtask>1.4 Implementar BookingState enum con 7 estados</subtask>
+      </task>
+      <task id="2" title="Implementar modelos de datos" ac="1">
+        <subtask>2.1 Crear agent/fsm/models.py con Intent, IntentType, FSMResult dataclasses</subtask>
+        <subtask>2.2 Definir tipos estrictos con TypedDict para collected_data</subtask>
+        <subtask>2.3 Validar modelos con mypy</subtask>
+      </task>
+      <task id="3" title="Implementar lógica de transiciones" ac="2,3">
+        <subtask>3.1 Definir matriz de transiciones válidas como constante</subtask>
+        <subtask>3.2 Implementar can_transition(intent) con validación de estado origen y datos requeridos</subtask>
+        <subtask>3.3 Implementar transition(intent) con actualización de estado y collected_data</subtask>
+        <subtask>3.4 Implementar transición especial cancel_booking (ANY → IDLE)</subtask>
+        <subtask>3.5 Implementar reset() para limpiar estado</subtask>
+      </task>
+      <task id="4" title="Implementar persistencia Redis" ac="4,5,6">
+        <subtask>4.1 Implementar persist() con serialización JSON a Redis</subtask>
+        <subtask>4.2 Implementar load() classmethod con deserialización</subtask>
+        <subtask>4.3 Configurar TTL de 900 segundos (15 min)</subtask>
+        <subtask>4.4 Manejar caso de key no existente (crear nuevo en IDLE)</subtask>
+      </task>
+      <task id="5" title="Implementar logging" ac="7">
+        <subtask>5.1 Agregar logging INFO en cada transición exitosa</subtask>
+        <subtask>5.2 Agregar logging WARNING en transiciones rechazadas</subtask>
+        <subtask>5.3 Incluir conversation_id, from_state, to_state, intent_type en logs</subtask>
+      </task>
+      <task id="6" title="Unit tests" ac="8">
+        <subtask>6.1 Crear tests/unit/test_booking_fsm.py</subtask>
+        <subtask>6.2 Tests para cada transición válida (6 transiciones del happy path)</subtask>
+        <subtask>6.3 Tests para transición cancel_booking desde cada estado</subtask>
+        <subtask>6.4 Tests para transiciones inválidas (rechazos)</subtask>
+        <subtask>6.5 Tests para persist() y load() con Redis mock</subtask>
+        <subtask>6.6 Tests para load() con key no existente</subtask>
+        <subtask>6.7 Verificar coverage >90% con pytest --cov=agent/fsm</subtask>
+      </task>
+      <task id="7" title="Type checking y validación final" ac="9">
+        <subtask>7.1 Ejecutar mypy --strict agent/fsm/</subtask>
+        <subtask>7.2 Corregir errores de tipos si los hay</subtask>
+        <subtask>7.3 Agregar docstrings a todas las funciones públicas</subtask>
+      </task>
+    </tasks>
+  </story>
+
+  <acceptanceCriteria>
+    <ac id="1" critical="true">
+      <given>el módulo FSM</given>
+      <when>se importa agent/fsm/booking_fsm.py</when>
+      <then>existe la clase BookingFSM con enum BookingState de 7 estados: IDLE, SERVICE_SELECTION, STYLIST_SELECTION, SLOT_SELECTION, CUSTOMER_DATA, CONFIRMATION, BOOKED</then>
+    </ac>
+    <ac id="2" critical="true">
+      <given>una instancia de BookingFSM</given>
+      <when>se llama can_transition(intent) con una transición válida</when>
+      <then>retorna True y cuando se llama con una transición inválida retorna False</then>
+    </ac>
+    <ac id="3" critical="true">
+      <given>una instancia de BookingFSM</given>
+      <when>se llama transition(intent) con transición válida</when>
+      <then>actualiza el estado interno, acumula datos en collected_data, y retorna FSMResult con success=True</then>
+    </ac>
+    <ac id="4" critical="true">
+      <given>una instancia de BookingFSM con estado en progreso</given>
+      <when>se llama persist()</when>
+      <then>el estado se guarda en Redis con key fsm:{conversation_id} y TTL de 900 segundos (15 min)</then>
+    </ac>
+    <ac id="5" critical="true">
+      <given>un conversation_id con estado FSM guardado en Redis</given>
+      <when>se llama BookingFSM.load(conversation_id)</when>
+      <then>retorna una instancia con el estado y collected_data restaurados</then>
+    </ac>
+    <ac id="6" critical="true">
+      <given>un conversation_id sin estado FSM en Redis</given>
+      <when>se llama BookingFSM.load(conversation_id)</when>
+      <then>retorna una nueva instancia en estado IDLE con collected_data vacío</then>
+    </ac>
+    <ac id="7">
+      <given>cualquier transición de estado (válida o inválida)</given>
+      <when>se ejecuta</when>
+      <then>se registra un log INFO con conversation_id, estado origen, estado destino, y tipo de intent</then>
+    </ac>
+    <ac id="8" critical="true">
+      <given>el código implementado</given>
+      <when>se ejecutan los unit tests</when>
+      <then>hay tests para todas las transiciones válidas (6) + transición cancel universal + casos de error (transiciones inválidas) con coverage >90%</then>
+    </ac>
+    <ac id="9">
+      <given>el código implementado</given>
+      <when>se ejecuta mypy --strict agent/fsm/</when>
+      <then>no hay errores de tipos (código con typing estricto)</then>
+    </ac>
+  </acceptanceCriteria>
+
+  <artifacts>
+    <docs>
+      <doc>
+        <path>docs/architecture/fsm-booking-flow.md</path>
+        <title>FSM Booking Flow - Especificación Completa</title>
+        <section>Estados FSM, Transiciones, Validaciones</section>
+        <snippet>Especificación autoritativa de 7 estados (IDLE→SERVICE_SELECTION→STYLIST_SELECTION→SLOT_SELECTION→CUSTOMER_DATA→CONFIRMATION→BOOKED), 13 IntentTypes, matriz de transiciones válidas con datos requeridos, y diagrama Mermaid visual.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-5.md</path>
+        <title>Epic Technical Specification: Rediseño FSM Híbrida</title>
+        <section>Detailed Design, Data Models, APIs</section>
+        <snippet>Define BookingFSM class interface con métodos can_transition(), transition(), persist(), load(). Incluye BookingState enum, Intent model, IntentType enum, FSMResult model, y Redis schema fsm:{conversation_id} con TTL 900s.</snippet>
+      </doc>
+      <doc>
+        <path>docs/architecture.md</path>
+        <title>Architecture - ADR-006</title>
+        <section>ADR-006: FSM Híbrida para Control de Flujo</section>
+        <snippet>Decisión arquitectónica que separa responsabilidades: LLM para NLU y lenguaje, FSM para control de flujo. Resuelve bugs de v3.2 donde state flags no se actualizaban.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/5-1-diseno-fsm-states-transiciones.md</path>
+        <title>Story 5-1 Output - Diseño FSM</title>
+        <section>Dev Agent Record</section>
+        <snippet>Story completada (done) que produjo fsm-booking-flow.md. Learnings: documento es referencia autoritativa, 7 estados, 13 IntentTypes, validaciones por estado documentadas.</snippet>
+      </doc>
+      <doc>
+        <path>CLAUDE.md</path>
+        <title>Project Instructions</title>
+        <section>FSM Hybrid Architecture (v4.0), Testing Commands</section>
+        <snippet>Describe arquitectura FSM en desarrollo, comandos de testing pytest con DATABASE_URL, y patrones de código del proyecto.</snippet>
+      </doc>
+    </docs>
+
+    <code>
+      <file>
+        <path>shared/redis_client.py</path>
+        <kind>utility</kind>
+        <symbol>get_redis_client, publish_to_channel</symbol>
+        <lines>all</lines>
+        <reason>Singleton Redis client con connection pooling. BookingFSM.persist() y BookingFSM.load() deben usar este cliente para JSON get/set con TTL.</reason>
+      </file>
+      <file>
+        <path>agent/state/schemas.py</path>
+        <kind>schema</kind>
+        <symbol>ConversationState</symbol>
+        <lines>all</lines>
+        <reason>TypedDict del estado de conversación v3.2. FSM debe coexistir con este schema - los campos service_selected, slot_selected serán manejados por FSM en v4.0.</reason>
+      </file>
+      <file>
+        <path>shared/config.py</path>
+        <kind>config</kind>
+        <symbol>get_settings, Settings</symbol>
+        <lines>all</lines>
+        <reason>Patrón obligatorio: usar get_settings() para obtener REDIS_URL y otras configuraciones. NUNCA usar os.getenv() directamente.</reason>
+      </file>
+      <file>
+        <path>tests/unit/test_booking_tools.py</path>
+        <kind>test</kind>
+        <symbol>setup_database fixture</symbol>
+        <lines>20-47</lines>
+        <reason>Patrón de testing: fixture async para setup/teardown de DB. Usar patrón similar para test_booking_fsm.py con Redis mock.</reason>
+      </file>
+      <file>
+        <path>agent/state/helpers.py</path>
+        <kind>utility</kind>
+        <symbol>add_message</symbol>
+        <lines>all</lines>
+        <reason>Helper para agregar mensajes al estado. Patrón de state inmutability - FSM debe seguir mismo patrón retornando nuevos dicts.</reason>
+      </file>
+    </code>
+
+    <dependencies>
+      <python>
+        <package name="redis" version=">=5.0.0" purpose="Redis async client para persistencia FSM" />
+        <package name="pydantic" version=">=2.9.0" purpose="Validación de modelos Intent, FSMResult" />
+        <package name="langgraph" version=">=0.6.7" purpose="Orquestación (FSM se integra en nodo)" />
+        <package name="pytest" version=">=8.3.0" purpose="Unit tests" />
+        <package name="pytest-asyncio" version=">=0.24.0" purpose="Tests async para Redis" />
+      </python>
+      <stdlib>
+        <module name="enum" purpose="BookingState, IntentType enums (str, Enum)" />
+        <module name="dataclasses" purpose="Intent, FSMResult, CollectedData dataclasses" />
+        <module name="logging" purpose="Structured logging de transiciones" />
+        <module name="json" purpose="Serialización para Redis" />
+        <module name="datetime" purpose="Timestamps en FSM state" />
+        <module name="typing" purpose="TypedDict, Any, Literal para tipos estrictos" />
+      </stdlib>
+    </dependencies>
+  </artifacts>
+
+  <constraints>
+    <constraint source="architecture" critical="true">
+      <rule>FSM state se persiste en Redis con key pattern fsm:{conversation_id}</rule>
+      <rationale>Separado del namespace de checkpoints LangGraph (langgraph:checkpoint:*)</rationale>
+    </constraint>
+    <constraint source="architecture" critical="true">
+      <rule>TTL de FSM state debe ser 900 segundos (15 min), igual que checkpoints</rule>
+      <rationale>Consistencia con política de expiración de conversaciones</rationale>
+    </constraint>
+    <constraint source="dev-notes">
+      <rule>Usar shared/redis_client.py get_redis_client() para conexión Redis</rule>
+      <rationale>Singleton con connection pooling, retry logic, health checks</rationale>
+    </constraint>
+    <constraint source="dev-notes">
+      <rule>Usar shared/config.py get_settings() para configuración</rule>
+      <rationale>Patrón establecido en todo el proyecto - NUNCA os.getenv() directamente</rationale>
+    </constraint>
+    <constraint source="tech-spec">
+      <rule>7 estados exactos: IDLE, SERVICE_SELECTION, STYLIST_SELECTION, SLOT_SELECTION, CUSTOMER_DATA, CONFIRMATION, BOOKED</rule>
+      <rationale>Definido en fsm-booking-flow.md como especificación autoritativa</rationale>
+    </constraint>
+    <constraint source="tech-spec">
+      <rule>Transición cancel_booking permitida desde cualquier estado → IDLE</rule>
+      <rationale>Usuario siempre puede cancelar booking en progreso</rationale>
+    </constraint>
+    <constraint source="testing">
+      <rule>Coverage mínimo >90% para agent/fsm/</rule>
+      <rationale>Código nuevo crítico requiere cobertura alta</rationale>
+    </constraint>
+    <constraint source="typing">
+      <rule>Código debe pasar mypy --strict agent/fsm/</rule>
+      <rationale>Tipos estrictos para detectar bugs en compile time</rationale>
+    </constraint>
+  </constraints>
+
+  <interfaces>
+    <interface>
+      <name>BookingFSM</name>
+      <kind>class</kind>
+      <signature>
+class BookingFSM:
+    def __init__(self, conversation_id: str) -> None: ...
+    @property
+    def state(self) -> BookingState: ...
+    @property
+    def collected_data(self) -> dict[str, Any]: ...
+    def can_transition(self, intent: Intent) -> bool: ...
+    def transition(self, intent: Intent) -> FSMResult: ...
+    def reset(self) -> None: ...
+    async def persist(self) -> None: ...
+    @classmethod
+    async def load(cls, conversation_id: str) -> "BookingFSM": ...
+      </signature>
+      <path>agent/fsm/booking_fsm.py</path>
+    </interface>
+    <interface>
+      <name>BookingState</name>
+      <kind>enum</kind>
+      <signature>
+class BookingState(str, Enum):
+    IDLE = "idle"
+    SERVICE_SELECTION = "service_selection"
+    STYLIST_SELECTION = "stylist_selection"
+    SLOT_SELECTION = "slot_selection"
+    CUSTOMER_DATA = "customer_data"
+    CONFIRMATION = "confirmation"
+    BOOKED = "booked"
+      </signature>
+      <path>agent/fsm/booking_fsm.py</path>
+    </interface>
+    <interface>
+      <name>Intent</name>
+      <kind>dataclass</kind>
+      <signature>
+@dataclass
+class Intent:
+    type: IntentType
+    entities: dict[str, Any]
+    confidence: float
+    raw_message: str
+    requires_tool: bool
+    tool_name: str | None
+      </signature>
+      <path>agent/fsm/models.py</path>
+    </interface>
+    <interface>
+      <name>IntentType</name>
+      <kind>enum</kind>
+      <signature>
+class IntentType(str, Enum):
+    START_BOOKING = "start_booking"
+    SELECT_SERVICE = "select_service"
+    CONFIRM_SERVICES = "confirm_services"
+    SELECT_STYLIST = "select_stylist"
+    SELECT_SLOT = "select_slot"
+    PROVIDE_CUSTOMER_DATA = "provide_customer_data"
+    CONFIRM_BOOKING = "confirm_booking"
+    CANCEL_BOOKING = "cancel_booking"
+    GREETING = "greeting"
+    FAQ = "faq"
+    CHECK_AVAILABILITY = "check_availability"
+    ESCALATE = "escalate"
+    UNKNOWN = "unknown"
+      </signature>
+      <path>agent/fsm/models.py</path>
+    </interface>
+    <interface>
+      <name>FSMResult</name>
+      <kind>dataclass</kind>
+      <signature>
+@dataclass
+class FSMResult:
+    success: bool
+    new_state: BookingState
+    collected_data: dict[str, Any]
+    next_action: str
+    validation_errors: list[str]
+      </signature>
+      <path>agent/fsm/models.py</path>
+    </interface>
+    <interface>
+      <name>Redis Client</name>
+      <kind>function</kind>
+      <signature>def get_redis_client() -> redis.Redis</signature>
+      <path>shared/redis_client.py</path>
+    </interface>
+  </interfaces>
+
+  <tests>
+    <standards>
+      <paragraph>Framework pytest con pytest-asyncio para tests async. Mocks para Redis usando unittest.mock o fakeredis. Coverage mínimo 90% para código nuevo (agent/fsm/). Tests organizados en tests/unit/. Usar fixtures para setup/teardown. Patrones existentes en test_booking_tools.py como referencia.</paragraph>
+    </standards>
+    <locations>
+      <location>tests/unit/test_booking_fsm.py</location>
+      <location>tests/unit/</location>
+    </locations>
+    <ideas>
+      <idea ac="1">Test que BookingState enum tiene exactamente 7 valores</idea>
+      <idea ac="1">Test que BookingFSM se inicializa en estado IDLE</idea>
+      <idea ac="2">Test can_transition(start_booking) desde IDLE retorna True</idea>
+      <idea ac="2">Test can_transition(confirm_booking) desde IDLE retorna False</idea>
+      <idea ac="3">Test transition happy path IDLE→SERVICE_SELECTION→...→BOOKED</idea>
+      <idea ac="3">Test transition acumula datos en collected_data correctamente</idea>
+      <idea ac="4">Test persist() escribe JSON a Redis con key fsm:{conv_id}</idea>
+      <idea ac="4">Test persist() configura TTL 900 segundos</idea>
+      <idea ac="5">Test load() restaura estado y collected_data desde Redis</idea>
+      <idea ac="6">Test load() crea nuevo FSM en IDLE si key no existe</idea>
+      <idea ac="7">Test logging INFO en transición exitosa</idea>
+      <idea ac="7">Test logging WARNING en transición rechazada</idea>
+      <idea ac="8">Test cancel_booking desde cada estado (6 casos) → IDLE</idea>
+      <idea ac="8">Test transiciones inválidas retornan FSMResult con success=False</idea>
+    </ideas>
+  </tests>
+</story-context>

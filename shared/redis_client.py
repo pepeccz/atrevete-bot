@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 @lru_cache
-def get_redis_client() -> redis.Redis:
+def get_redis_client() -> "redis.Redis[str]":
     """
     Get cached Redis client instance with production-ready configuration.
 

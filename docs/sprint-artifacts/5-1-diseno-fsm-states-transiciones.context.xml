@@ -1,0 +1,212 @@
+<story-context id=".bmad/bmm/workflows/4-implementation/story-context/template" v="1.0">
+  <metadata>
+    <epicId>5</epicId>
+    <storyId>1</storyId>
+    <title>Diseño de FSM States y Transiciones</title>
+    <status>drafted</status>
+    <generatedAt>2025-11-21</generatedAt>
+    <generator>BMAD Story Context Workflow</generator>
+    <sourceStoryPath>docs/sprint-artifacts/5-1-diseno-fsm-states-transiciones.md</sourceStoryPath>
+  </metadata>
+
+  <story>
+    <asA>desarrollador</asA>
+    <iWant>una especificación completa de estados y transiciones FSM documentada</iWant>
+    <soThat>todos los agentes de desarrollo tengan una referencia clara para implementar el BookingFSM</soThat>
+    <tasks>
+      <task id="1" name="Crear estructura del documento FSM">
+        <subtask id="1.1">Crear directorio docs/architecture/ si no existe</subtask>
+        <subtask id="1.2">Crear archivo fsm-booking-flow.md con estructura base</subtask>
+      </task>
+      <task id="2" name="Documentar estados FSM">
+        <subtask id="2.1">Definir enum BookingState con 7 estados</subtask>
+        <subtask id="2.2">Para cada estado documentar: descripción, datos requeridos, datos producidos</subtask>
+        <subtask id="2.3">Documentar IntentType enum con todos los tipos de intención</subtask>
+      </task>
+      <task id="3" name="Documentar transiciones válidas">
+        <subtask id="3.1">Crear matriz de transiciones (estado origen → estado destino)</subtask>
+        <subtask id="3.2">Para cada transición: intent requerido, datos requeridos, validaciones</subtask>
+        <subtask id="3.3">Documentar transición especial ANY → IDLE (cancel_booking)</subtask>
+      </task>
+      <task id="4" name="Crear diagrama visual">
+        <subtask id="4.1">Crear diagrama de estados en formato Mermaid</subtask>
+        <subtask id="4.2">Incluir condiciones de transición en el diagrama</subtask>
+        <subtask id="4.3">Agregar leyenda de colores/estilos</subtask>
+      </task>
+      <task id="5" name="Documentar flujos de ejemplo">
+        <subtask id="5.1">Happy path: booking completo de inicio a fin</subtask>
+        <subtask id="5.2">Cancelación mid-flow: usuario cancela durante SERVICE_SELECTION</subtask>
+        <subtask id="5.3">Tabla paso a paso con estado, mensaje, intent, respuesta</subtask>
+      </task>
+      <task id="6" name="Validación y referencias cruzadas">
+        <subtask id="6.1">Verificar alineación con Tech Spec Epic 5 section "Data Models"</subtask>
+        <subtask id="6.2">Agregar referencias a ADR-006 en architecture.md</subtask>
+        <subtask id="6.3">Review final del documento</subtask>
+      </task>
+    </tasks>
+  </story>
+
+  <acceptanceCriteria>
+    <criterion id="AC1">
+      <given>la necesidad de documentar la FSM</given>
+      <when>se ejecuta esta story</when>
+      <then>existe el archivo docs/architecture/fsm-booking-flow.md con especificación completa</then>
+    </criterion>
+    <criterion id="AC2">
+      <given>el documento de FSM</given>
+      <when>se revisa su contenido</when>
+      <then>contiene diagrama visual de estados y transiciones en formato Mermaid</then>
+    </criterion>
+    <criterion id="AC3">
+      <given>cada transición definida</given>
+      <when>se documenta</when>
+      <then>tiene condiciones de validación explícitas (datos requeridos, estado origen permitido)</then>
+    </criterion>
+    <criterion id="AC4">
+      <given>cada estado FSM</given>
+      <when>se documenta</when>
+      <then>tiene descripción, datos requeridos para entrar/salir, y acciones permitidas</then>
+    </criterion>
+    <criterion id="AC5">
+      <given>el documento completo</given>
+      <when>se valida contra el Tech Spec Epic 5</when>
+      <then>cubre los 7 estados definidos: IDLE, SERVICE_SELECTION, STYLIST_SELECTION, SLOT_SELECTION, CUSTOMER_DATA, CONFIRMATION, BOOKED</then>
+    </criterion>
+    <criterion id="AC6">
+      <given>el documento</given>
+      <when>se incluyen ejemplos</when>
+      <then>hay al menos 2 flujos de ejemplo: happy path y cancelación mid-flow</then>
+    </criterion>
+  </acceptanceCriteria>
+
+  <artifacts>
+    <docs>
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-5.md</path>
+        <title>Epic 5 Technical Specification</title>
+        <section>Detailed Design > Data Models and Contracts</section>
+        <snippet>Define BookingState enum (7 estados), IntentType enum, Intent/FSMResult models, y transiciones válidas con validaciones.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-5.md</path>
+        <title>Epic 5 Technical Specification</title>
+        <section>Workflows and Sequencing > Transiciones de Estado Válidas</section>
+        <snippet>Especifica las transiciones: IDLE→SERVICE_SELECTION, SERVICE_SELECTION→STYLIST_SELECTION, etc. con condiciones requeridas.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-5.md</path>
+        <title>Epic 5 Technical Specification</title>
+        <section>Workflows and Sequencing > Ejemplo: Happy Path Booking</section>
+        <snippet>Tabla detallada con 8 pasos: estado FSM, mensaje usuario, intent detectado, tool ejecutado, respuesta bot.</snippet>
+      </doc>
+      <doc>
+        <path>docs/architecture.md</path>
+        <title>Architecture Document</title>
+        <section>ADR-006: FSM Híbrida para Control de Flujo</section>
+        <snippet>Decisión arquitectónica que establece separación LLM (NLU) vs FSM (flujo). Define los 7 estados y transiciones válidas a alto nivel.</snippet>
+      </doc>
+      <doc>
+        <path>docs/epics/epic-5-rediseño-fsm-hibrida.md</path>
+        <title>Epic 5: Rediseño FSM Híbrida</title>
+        <section>Notas Técnicas > Arquitectura FSM Propuesta</section>
+        <snippet>Código ejemplo de BookingState enum, FSMTransition class, y BookingFSM class con métodos can_transition(), transition(), persist().</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-change-proposal-2025-11-21.md</path>
+        <title>Sprint Change Proposal</title>
+        <section>Motivación</section>
+        <snippet>Documenta los 2 bugs críticos (UUID serialization, state flags never updated) que motivaron el rediseño FSM.</snippet>
+      </doc>
+    </docs>
+    <code>
+      <file>
+        <path>agent/state/schemas.py</path>
+        <kind>schema</kind>
+        <symbol>ConversationState</symbol>
+        <lines>21-125</lines>
+        <reason>Schema actual v3.2 con flags de estado (service_selected, slot_selected, etc.) que serán reemplazados por FSM. Referencia para entender estado actual.</reason>
+      </file>
+    </code>
+    <dependencies>
+      <python>
+        <package name="langgraph" version=">=0.6.7">Agent orchestration framework</package>
+        <package name="langchain" version=">=0.3.0">LLM integration</package>
+        <package name="langchain-openai" version=">=0.3.0">OpenRouter API client</package>
+        <package name="redis" version=">=5.0.0">FSM state persistence</package>
+        <package name="pydantic" version=">=2.9.0">Model validation (Intent, FSMResult)</package>
+      </python>
+    </dependencies>
+  </artifacts>
+
+  <constraints>
+    <constraint type="documentation">Esta story es SOLO documentación - no requiere código ejecutable ni tests automatizados</constraint>
+    <constraint type="output">Archivo único de salida: docs/architecture/fsm-booking-flow.md</constraint>
+    <constraint type="format">Diagrama de estados en formato Mermaid (stateDiagram-v2)</constraint>
+    <constraint type="alignment">MUST alinearse con Tech Spec Epic 5 section "Data Models and Contracts"</constraint>
+    <constraint type="language">Documento en español (document_output_language: Spanish)</constraint>
+    <constraint type="states">Exactamente 7 estados: IDLE, SERVICE_SELECTION, STYLIST_SELECTION, SLOT_SELECTION, CUSTOMER_DATA, CONFIRMATION, BOOKED</constraint>
+    <constraint type="intents">IntentType enum debe incluir: start_booking, select_service, confirm_services, select_stylist, select_slot, provide_customer_data, confirm_booking, cancel_booking, greeting, faq, check_availability, escalate, unknown</constraint>
+    <constraint type="transitions">Transición especial ANY → IDLE para cancel_booking debe estar documentada</constraint>
+    <constraint type="references">Incluir referencias cruzadas a: Tech Spec Epic 5, ADR-006 en architecture.md, Sprint Change Proposal</constraint>
+  </constraints>
+
+  <interfaces>
+    <interface name="BookingState" kind="enum">
+      <signature>
+class BookingState(str, Enum):
+    IDLE = "idle"
+    SERVICE_SELECTION = "service_selection"
+    STYLIST_SELECTION = "stylist_selection"
+    SLOT_SELECTION = "slot_selection"
+    CUSTOMER_DATA = "customer_data"
+    CONFIRMATION = "confirmation"
+    BOOKED = "booked"
+      </signature>
+      <path>docs/sprint-artifacts/tech-spec-epic-5.md (línea 103-112)</path>
+    </interface>
+    <interface name="IntentType" kind="enum">
+      <signature>
+class IntentType(str, Enum):
+    START_BOOKING = "start_booking"
+    SELECT_SERVICE = "select_service"
+    CONFIRM_SERVICES = "confirm_services"
+    SELECT_STYLIST = "select_stylist"
+    SELECT_SLOT = "select_slot"
+    PROVIDE_CUSTOMER_DATA = "provide_customer_data"
+    CONFIRM_BOOKING = "confirm_booking"
+    CANCEL_BOOKING = "cancel_booking"
+    GREETING = "greeting"
+    FAQ = "faq"
+    CHECK_AVAILABILITY = "check_availability"
+    ESCALATE = "escalate"
+    UNKNOWN = "unknown"
+      </signature>
+      <path>docs/sprint-artifacts/tech-spec-epic-5.md (línea 131-149)</path>
+    </interface>
+    <interface name="ValidTransitions" kind="state-machine">
+      <signature>
+IDLE → SERVICE_SELECTION (intent: start_booking)
+SERVICE_SELECTION → STYLIST_SELECTION (intent: confirm_services, services[] not empty)
+STYLIST_SELECTION → SLOT_SELECTION (intent: select_stylist, stylist_id set)
+SLOT_SELECTION → CUSTOMER_DATA (intent: select_slot, slot set)
+CUSTOMER_DATA → CONFIRMATION (intent: provide_customer_data, first_name set)
+CONFIRMATION → BOOKED (intent: confirm_booking, all data valid)
+ANY → IDLE (intent: cancel_booking)
+      </signature>
+      <path>docs/sprint-artifacts/tech-spec-epic-5.md (línea 302-325)</path>
+    </interface>
+  </interfaces>
+
+  <tests>
+    <standards>Esta story es de documentación solamente. La validación es por REVIEW del documento contra el Tech Spec Epic 5. No requiere tests automatizados. El documento debe ser revisado manualmente para verificar completitud y alineación con la especificación técnica.</standards>
+    <locations>N/A - Story de documentación, sin código ejecutable</locations>
+    <ideas>
+      <idea acRef="AC1">Verificar que docs/architecture/fsm-booking-flow.md existe y tiene estructura completa</idea>
+      <idea acRef="AC2">Verificar que el diagrama Mermaid renderiza correctamente y muestra los 7 estados</idea>
+      <idea acRef="AC3">Verificar que cada transición tiene: estado origen, estado destino, intent requerido, datos requeridos</idea>
+      <idea acRef="AC4">Verificar que cada estado tiene: descripción, datos de entrada, datos de salida, acciones permitidas</idea>
+      <idea acRef="AC5">Cross-reference con Tech Spec Epic 5 para verificar que todos los estados están cubiertos</idea>
+      <idea acRef="AC6">Verificar presencia de: tabla happy path (8 pasos), tabla cancelación mid-flow</idea>
+    </ideas>
+  </tests>
+</story-context>
