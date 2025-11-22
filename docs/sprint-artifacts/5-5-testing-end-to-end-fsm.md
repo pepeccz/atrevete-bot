@@ -337,7 +337,56 @@ The following 8 test cases require manual testing via WhatsApp:
 |-----|-------------|--------|--------------|
 | Epic 1 Story 1-5 Bug #1 | UUID serialization - `ensure_customer_exists()` returned UUID objects | ✅ Verified Fixed | FSM stores all IDs as strings |
 | Epic 1 Story 1-5 Bug #2 | State flags never updated | ✅ Verified Fixed | FSM state transitions are deterministic |
-| N/A | No new bugs found during E2E testing | N/A | - |
+| **Manual Testing Bug #1** | SELECT_SERVICE transition missing - services not accumulated | ✅ **HOTFIXED** | `agent/fsm/booking_fsm.py:59` |
+
+### Bug Found During Manual Testing (2025-11-21)
+
+**Bug #1: SELECT_SERVICE Intent Not in FSM Transitions**
+
+**Discovered:** Durante manual testing caso M1 (Happy path)
+
+**Síntoma:** El bot "olvidaba" los servicios seleccionados. Cuando el usuario seleccionaba servicios, el bot volvía a preguntar qué servicios deseaba.
+
+**Evidencia en logs:**
+```
+FSM transition rejected: service_selection -> ? | intent=select_service |
+errors=["Transition 'select_service' not allowed from state 'service_selection'"]
+```
+
+**Root Cause Analysis:**
+El diccionario `TRANSITIONS` en `BookingFSM` no incluía `SELECT_SERVICE` como transición válida desde `SERVICE_SELECTION`. Solo tenía:
+```python
+BookingState.SERVICE_SELECTION: {
+    IntentType.CONFIRM_SERVICES: BookingState.STYLIST_SELECTION,
+}
+```
+
+Cuando el intent extractor retornaba `SELECT_SERVICE` (correcto), la FSM rechazaba la transición porque no estaba definida. Esto causaba que:
+1. La transición fallara
+2. Los datos (servicios) nunca se acumularan en `collected_data`
+3. La lista de servicios permanecía vacía
+
+**Hotfix Aplicado:**
+```python
+# agent/fsm/booking_fsm.py:57-61
+BookingState.SERVICE_SELECTION: {
+    IntentType.SELECT_SERVICE: BookingState.SERVICE_SELECTION,  # Self-loop to accumulate
+    IntentType.CONFIRM_SERVICES: BookingState.STYLIST_SELECTION,
+},
+```
+
+**Por qué es un self-loop:** `SELECT_SERVICE` es un intent de "acumulación de datos" - el usuario puede seleccionar múltiples servicios antes de confirmar. La FSM permanece en `SERVICE_SELECTION` pero acumula los servicios en `collected_data["services"]`.
+
+**Tests Automatizados que NO detectaron este bug:**
+Los tests unitarios de FSM pasaban porque testeaban transiciones individuales con datos pre-cargados, no el flujo real donde el intent extractor genera `SELECT_SERVICE`.
+
+**Lección Aprendida:**
+Los tests E2E con mocks no capturan todos los bugs de integración real. El manual testing via WhatsApp es crítico para validar el flujo end-to-end completo.
+
+**Verificación Post-Fix:**
+- ✅ Tests unitarios de FSM siguen pasando (45/45)
+- ✅ Agent rebuildeado y deployado
+- ⏳ Re-test manual M1 pendiente
 
 ## Dev Agent Record
 
@@ -368,8 +417,9 @@ Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
 - `tests/integration/test_booking_e2e.py` - 31 E2E tests for booking flow
 
 **Modified Files:**
-- `docs/sprint-artifacts/sprint-status.yaml` - Status: ready-for-dev → in-progress
+- `docs/sprint-artifacts/sprint-status.yaml` - Status: ready-for-dev → in-progress → review
 - `docs/sprint-artifacts/5-5-testing-end-to-end-fsm.md` - Test results documented
+- `agent/fsm/booking_fsm.py` - **HOTFIX:** Added SELECT_SERVICE self-loop transition (line 59)
 
 ### Change Log
 
@@ -379,3 +429,7 @@ Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
 - **2025-11-21:** Task 6 completed: Bug verification tests passing
 - **2025-11-21:** Task 7 completed: 170 tests passing, FSM coverage 95.9%
 - **2025-11-21:** Task 8 completed: Test results documented in story file
+- **2025-11-21:** Manual testing M1 revealed critical bug: SELECT_SERVICE not in FSM transitions
+- **2025-11-21:** **HOTFIX** applied to `booking_fsm.py` - added SELECT_SERVICE self-loop
+- **2025-11-21:** Agent rebuilt and redeployed with fix
+- **2025-11-21:** Bug documented retroactively (should have followed BMAD process)

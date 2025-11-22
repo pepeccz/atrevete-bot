@@ -49,11 +49,14 @@ class BookingFSM:
     """
 
     # Valid state transitions: from_state -> {intent_type: to_state}
+    # Note: Some intents stay in same state (self-loop) to accumulate data
     TRANSITIONS: ClassVar[dict[BookingState, dict[IntentType, BookingState]]] = {
         BookingState.IDLE: {
             IntentType.START_BOOKING: BookingState.SERVICE_SELECTION,
         },
         BookingState.SERVICE_SELECTION: {
+            # SELECT_SERVICE stays in same state but accumulates services
+            IntentType.SELECT_SERVICE: BookingState.SERVICE_SELECTION,
             IntentType.CONFIRM_SERVICES: BookingState.STYLIST_SELECTION,
         },
         BookingState.STYLIST_SELECTION: {
@@ -69,6 +72,12 @@ class BookingFSM:
             IntentType.CONFIRM_BOOKING: BookingState.BOOKED,
         },
         BookingState.BOOKED: {},  # Terminal state, auto-resets to IDLE
+    }
+
+    # Intents that accumulate data without requiring validation
+    # These are "stay-in-state" intents that just add data
+    DATA_ACCUMULATION_INTENTS: ClassVar[set[IntentType]] = {
+        IntentType.SELECT_SERVICE,  # Adds to services[] list
     }
 
     # Data validation requirements for each transition
