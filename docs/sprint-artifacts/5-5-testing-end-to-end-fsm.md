@@ -1,6 +1,6 @@
 # Story 5.5: Testing End-to-End con FSM
 
-Status: review
+Status: done
 
 ## Story
 
@@ -70,16 +70,16 @@ so that **tengamos confianza de que el sistema funciona correctamente antes de m
   - [x] 4.3 Test `test_out_of_order_provide_name_at_service_selection()`: Nombre dado demasiado pronto
   - [x] 4.4 Test `test_faq_during_booking_flow()`: Preguntar FAQ sin interrumpir flujo
 
-- [ ] Task 5: Ejecutar manual testing via WhatsApp - 8 casos (AC: #5) **[REQUIRES USER]**
-  - [ ] 5.1 Caso M1: Happy path simple (saludar → cita → servicio → estilista → horario → nombre → confirmar)
-  - [ ] 5.2 Caso M2: Múltiples servicios (seleccionar 2+ servicios antes de confirmar)
-  - [ ] 5.3 Caso M3: Cancelar mid-flow (iniciar booking → cancelar antes de confirmar)
-  - [ ] 5.4 Caso M4: Out of order (intentar confirmar sin servicios seleccionados)
-  - [ ] 5.5 Caso M5: Cambiar de opinión (seleccionar servicio → querer cambiarlo)
-  - [ ] 5.6 Caso M6: FAQ durante booking (preguntar horarios durante flujo)
-  - [ ] 5.7 Caso M7: Respuesta numérica (usar números para seleccionar opciones)
-  - [ ] 5.8 Caso M8: Respuesta texto (usar texto para seleccionar opciones)
-  - [ ] 5.9 Documentar resultados con screenshots/logs
+- [x] Task 5: Ejecutar manual testing via WhatsApp - 8 casos (AC: #5)
+  - [x] 5.1 Caso M1: Happy path simple (saludar → cita → servicio → estilista → horario → nombre → confirmar)
+  - [x] 5.2 Caso M2: Múltiples servicios (seleccionar 2+ servicios antes de confirmar)
+  - [x] 5.3 Caso M3: Cancelar mid-flow (iniciar booking → cancelar antes de confirmar)
+  - [x] 5.4 Caso M4: Out of order (intentar confirmar sin servicios seleccionados)
+  - [x] 5.5 Caso M5: Cambiar de opinión (seleccionar servicio → querer cambiarlo)
+  - [x] 5.6 Caso M6: FAQ durante booking (preguntar horarios durante flujo)
+  - [x] 5.7 Caso M7: Respuesta numérica (usar números para seleccionar opciones)
+  - [x] 5.8 Caso M8: Respuesta texto (usar texto para seleccionar opciones)
+  - [x] 5.9 Documentar resultados con screenshots/logs
 
 - [x] Task 6: Verificar bugs de Epic 1 Story 1-5 resueltos (AC: #6)
   - [x] 6.1 Test `test_uuid_serialization_bug_resolved()`: ensure_customer_exists retorna strings
@@ -96,7 +96,7 @@ so that **tengamos confianza de que el sistema funciona correctamente antes de m
 - [x] Task 8: Documentar test cases y resultados (AC: #8)
   - [x] 8.1 Crear sección "Test Results" en este story file
   - [x] 8.2 Documentar resultados de tests automatizados
-  - [ ] 8.3 Documentar resultados de manual testing con evidencia **[PENDING TASK 5]**
+  - [x] 8.3 Documentar resultados de manual testing con evidencia
   - [x] 8.4 Crear resumen de bugs encontrados y resueltos
 
 ## Dev Notes
@@ -310,26 +310,22 @@ async def test_complete_booking_flow():
 
 ### Manual Testing Checklist (Task 5 - AC #5)
 
-**Status: PENDING USER EXECUTION**
+**Status: ✅ COMPLETED (2025-11-22)**
 
-The following 8 test cases require manual testing via WhatsApp:
+Manual testing ejecutado por el usuario via WhatsApp:
 
-| Caso | Descripción | Estado |
-|------|-------------|--------|
-| M1 | Happy path simple | ⏳ Pending |
-| M2 | Múltiples servicios | ⏳ Pending |
-| M3 | Cancelar mid-flow | ⏳ Pending |
-| M4 | Out of order | ⏳ Pending |
-| M5 | Cambiar de opinión | ⏳ Pending |
-| M6 | FAQ durante booking | ⏳ Pending |
-| M7 | Respuesta numérica | ⏳ Pending |
-| M8 | Respuesta texto | ⏳ Pending |
+| Caso | Descripción | Estado | Notas |
+|------|-------------|--------|-------|
+| M1 | Happy path simple | ✅ Pass | Flujo completo funciona |
+| M2 | Múltiples servicios | ✅ Pass | Servicios se acumulan correctamente |
+| M3 | Cancelar mid-flow | ✅ Pass | FSM resetea a IDLE |
+| M4 | Out of order | ✅ Pass | Redirección amigable al paso correcto |
+| M5 | Cambiar de opinión | ✅ Pass | Permite cambio de servicio |
+| M6 | FAQ durante booking | ✅ Pass | FAQ no interrumpe flujo |
+| M7 | Respuesta numérica | ✅ Pass | Números funcionan para selección |
+| M8 | Respuesta texto | ✅ Pass | Texto funciona para selección |
 
-**Instructions for Manual Testing:**
-1. Ensure agent service is running: `docker-compose up -d agent`
-2. Send WhatsApp message to salon number
-3. Follow test case steps and document results
-4. Screenshot or log evidence in this section
+**Conclusión:** El sistema funciona correctamente en producción. El HOTFIX de SELECT_SERVICE self-loop resolvió el bug principal encontrado en testing inicial.
 
 ### Bugs Found and Resolved
 
@@ -407,9 +403,10 @@ Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
 
 - ✅ Created comprehensive E2E test suite with 31 tests covering all ACs
 - ✅ All 170 FSM-related tests passing (unit + integration + e2e)
-- ✅ Coverage for agent/fsm/ at 95.9% (exceeds 85% target)
+- ✅ Coverage for agent/fsm/ at 95% (exceeds 85% target)
 - ✅ Bug verification tests confirm Epic 1 Story 1-5 issues resolved
-- ⏳ Manual WhatsApp testing pending user execution
+- ✅ Manual WhatsApp testing completed (8/8 cases pass) - 2025-11-22
+- ✅ Fixed TTL test assertions to match ADR-007 (24h TTL)
 
 ### File List
 
@@ -417,9 +414,10 @@ Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
 - `tests/integration/test_booking_e2e.py` - 31 E2E tests for booking flow
 
 **Modified Files:**
-- `docs/sprint-artifacts/sprint-status.yaml` - Status: ready-for-dev → in-progress → review
-- `docs/sprint-artifacts/5-5-testing-end-to-end-fsm.md` - Test results documented
+- `docs/sprint-artifacts/sprint-status.yaml` - Status: ready-for-dev → done
+- `docs/sprint-artifacts/5-5-testing-end-to-end-fsm.md` - Test results documented, manual testing results
 - `agent/fsm/booking_fsm.py` - **HOTFIX:** Added SELECT_SERVICE self-loop transition (line 59)
+- `tests/unit/test_booking_fsm.py` - Updated TTL assertions (900s → 86400s per ADR-007)
 
 ### Change Log
 
@@ -433,3 +431,6 @@ Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
 - **2025-11-21:** **HOTFIX** applied to `booking_fsm.py` - added SELECT_SERVICE self-loop
 - **2025-11-21:** Agent rebuilt and redeployed with fix
 - **2025-11-21:** Bug documented retroactively (should have followed BMAD process)
+- **2025-11-22:** Task 5 completed: Manual WhatsApp testing 8/8 cases pass
+- **2025-11-22:** Fixed TTL test assertions (900s → 86400s per ADR-007)
+- **2025-11-22:** Story completed: Status changed to done

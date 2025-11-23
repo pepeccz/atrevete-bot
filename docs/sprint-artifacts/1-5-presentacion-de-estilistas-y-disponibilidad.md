@@ -1,6 +1,6 @@
 # Story 1.5: Presentación de Estilistas y Disponibilidad
 
-Status: review
+Status: done
 
 ## Story
 

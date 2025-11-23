@@ -109,3 +109,62 @@ class FSMResult:
     collected_data: dict[str, Any] = field(default_factory=dict)
     next_action: str = ""
     validation_errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ResponseGuidance:
+    """
+    Proactive guidance for LLM response generation (Story 5-7b).
+
+    Used by BookingFSM.get_response_guidance() to provide FSM-aware directives
+    to the LLM before generating responses. This enables proactive guidance
+    that prevents incoherent responses instead of just validating them post-hoc.
+
+    Attributes:
+        must_show: Elements the LLM MUST include in the response (e.g., ["lista de estilistas"])
+        must_ask: Question the LLM MUST ask the user (e.g., "¿Con quién te gustaría la cita?")
+        forbidden: Elements the LLM MUST NOT mention (e.g., ["horarios", "confirmación"])
+        context_hint: Brief context hint for the LLM about current state
+
+    Example:
+        >>> guidance = ResponseGuidance(
+        ...     must_show=["lista de estilistas disponibles"],
+        ...     must_ask="¿Con quién te gustaría la cita?",
+        ...     forbidden=["horarios específicos", "datos del cliente"],
+        ...     context_hint="Usuario debe elegir estilista. NO mostrar horarios aún."
+        ... )
+    """
+
+    must_show: list[str] = field(default_factory=list)
+    must_ask: str | None = None
+    forbidden: list[str] = field(default_factory=list)
+    context_hint: str = ""
+
+
+@dataclass
+class CoherenceResult:
+    """
+    Result of response coherence validation (Story 5-7a).
+
+    Used by ResponseValidator to indicate whether an LLM response
+    is coherent with the current FSM state before sending to user.
+
+    Attributes:
+        is_coherent: Whether the response is coherent with FSM state
+        violations: List of detected violations (e.g., "Menciona estilistas en SERVICE_SELECTION")
+        correction_hint: Suggested hint for LLM to regenerate coherent response
+        confidence: Confidence score 0.0-1.0 in the validation result
+
+    Example:
+        >>> result = CoherenceResult(
+        ...     is_coherent=False,
+        ...     violations=["Menciona nombres de estilistas en SERVICE_SELECTION"],
+        ...     correction_hint="NO menciones estilistas. Solo pregunta sobre servicios.",
+        ...     confidence=0.95
+        ... )
+    """
+
+    is_coherent: bool
+    violations: list[str] = field(default_factory=list)
+    correction_hint: str | None = None
+    confidence: float = 1.0

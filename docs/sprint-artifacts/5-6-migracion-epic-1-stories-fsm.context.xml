@@ -1,0 +1,183 @@
+<story-context id="bmm/workflows/4-implementation/story-context/template" v="1.0">
+  <metadata>
+    <epicId>5</epicId>
+    <storyId>6</storyId>
+    <title>Migración de Epic 1 Stories a Nueva Arquitectura FSM</title>
+    <status>drafted</status>
+    <generatedAt>2025-11-22</generatedAt>
+    <generator>BMAD Story Context Workflow</generator>
+    <sourceStoryPath>docs/sprint-artifacts/5-6-migracion-epic-1-stories-fsm.md</sourceStoryPath>
+  </metadata>
+
+  <story>
+    <asA>developer</asA>
+    <iWant>migrar las stories pendientes de Epic 1 (1-5, 1-6, 1-7) a la nueva arquitectura FSM</iWant>
+    <soThat>podamos completar Epic 1 con el sistema robusto y testeable, resolviendo los bugs críticos encontrados</soThat>
+    <tasks>
+      <task id="1" title="Completar manual testing de Story 5-5" blocker="true">
+        <subtask id="1.1">Ejecutar caso M1: Happy path simple</subtask>
+        <subtask id="1.2">Ejecutar caso M2: Múltiples servicios</subtask>
+        <subtask id="1.3">Ejecutar caso M3: Cancelar mid-flow</subtask>
+        <subtask id="1.4">Ejecutar caso M4: Out of order</subtask>
+        <subtask id="1.5">Ejecutar caso M5: Cambiar de opinión</subtask>
+        <subtask id="1.6">Ejecutar caso M6: FAQ durante booking</subtask>
+        <subtask id="1.7">Ejecutar caso M7: Respuesta numérica</subtask>
+        <subtask id="1.8">Ejecutar caso M8: Respuesta texto</subtask>
+        <subtask id="1.9">Documentar resultados con screenshots/logs</subtask>
+        <subtask id="1.10">Reportar bugs encontrados</subtask>
+      </task>
+      <task id="2" title="Migrar Story 1-5 a FSM - Presentación de Estilistas y Disponibilidad">
+        <subtask id="2.1">Verificar STYLIST_SELECTION state</subtask>
+        <subtask id="2.2">Verificar SELECT_STYLIST intent</subtask>
+        <subtask id="2.3">Verificar find_next_available permisos</subtask>
+        <subtask id="2.4">Verificar SLOT_SELECTION lista numerada</subtask>
+        <subtask id="2.5">Verificar transición STYLIST_SELECTION → SLOT_SELECTION</subtask>
+        <subtask id="2.6">Tests de regresión UUID serialization</subtask>
+        <subtask id="2.7">Actualizar Story 1-5 status</subtask>
+      </task>
+      <task id="3" title="Migrar Story 1-6 a FSM - Recopilación de Datos del Cliente">
+        <subtask id="3.1">Verificar CUSTOMER_DATA solicita first_name</subtask>
+        <subtask id="3.2">Verificar last_name opcional</subtask>
+        <subtask id="3.3">Verificar notes opcional</subtask>
+        <subtask id="3.4">Verificar PROVIDE_CUSTOMER_DATA intent</subtask>
+        <subtask id="3.5">Verificar transición CUSTOMER_DATA → CONFIRMATION</subtask>
+        <subtask id="3.6">Tests unitarios customer_data extraction</subtask>
+        <subtask id="3.7">Actualizar Story 1-6 status</subtask>
+      </task>
+      <task id="4" title="Migrar Story 1-7 a FSM - Actualización de Prompts">
+        <subtask id="4.1">Revisar prompts actuales</subtask>
+        <subtask id="4.2">Actualizar prompts para FSM states</subtask>
+        <subtask id="4.3">Asegurar español amigable</subtask>
+        <subtask id="4.4">Mantener contexto de conversación</subtask>
+        <subtask id="4.5">Listas numeradas consistentes (FR38)</subtask>
+        <subtask id="4.6">Aceptar número o texto (FR39)</subtask>
+        <subtask id="4.7">Tests de integración prompts</subtask>
+        <subtask id="4.8">Actualizar Story 1-7 status</subtask>
+      </task>
+      <task id="5" title="Ejecutar tests completos - no regresiones">
+        <subtask id="5.1">pytest unit tests FSM</subtask>
+        <subtask id="5.2">pytest integration tests</subtask>
+        <subtask id="5.3">Verificar coverage >85%</subtask>
+        <subtask id="5.4">Corregir tests que fallen</subtask>
+      </task>
+      <task id="6" title="Actualizar documentación y sprint status">
+        <subtask id="6.1">Stories 1-5, 1-6, 1-7 → done</subtask>
+        <subtask id="6.2">Story 5-5 → done</subtask>
+        <subtask id="6.3">Epic 1 → done</subtask>
+        <subtask id="6.4">Story 5-6 → done</subtask>
+        <subtask id="6.5">Documentar migración</subtask>
+        <subtask id="6.6">Actualizar CLAUDE.md</subtask>
+      </task>
+    </tasks>
+  </story>
+
+  <acceptanceCriteria>
+    <criterion id="AC1" given="Story 1-5 (Presentación de Estilistas y Disponibilidad) que estaba pausada con bugs" when="se ejecuta con la nueva arquitectura FSM" then="la selección de estilista y disponibilidad funciona sin errores, progresando correctamente de STYLIST_SELECTION → SLOT_SELECTION"/>
+    <criterion id="AC2" given="Story 1-6 (Recopilación de Datos del Cliente) que estaba pendiente" when="se adapta para trabajar con FSM" then="el estado CUSTOMER_DATA recopila first_name, last_name (opcional), y notes (opcional) correctamente"/>
+    <criterion id="AC3" given="Story 1-7 (Actualización de Prompts para Flujo Completo) que estaba pendiente" when="se actualizan los prompts para FSM" then="los prompts guían al usuario de forma natural en cada estado FSM, manteniendo contexto y tono amigable en español"/>
+    <criterion id="AC4" given="los bugs críticos de Epic 1 Story 1-5 (UUID serialization, state flags)" when="se ejecuta el flujo completo de booking con FSM" then="los bugs están resueltos: FSM controla estado (no flags), IDs son strings válidos"/>
+    <criterion id="AC5" given="los tests E2E existentes (170 tests de Story 5-5)" when="se ejecutan después de la migración" then="todos los tests siguen pasando (no regresiones)"/>
+    <criterion id="AC6" given="manual testing via WhatsApp pendiente de Story 5-5" when="se ejecutan los 8 casos de prueba" then="el flujo completo funciona con naturalidad conversacional (prerequisito para completar migración)"/>
+    <criterion id="AC7" given="la documentación de Epic 1" when="se completa la migración" then="los stories 1-5, 1-6, 1-7 están marcados como done en sprint-status.yaml y Epic 1 puede cerrarse"/>
+    <criterion id="AC8" given="el código migrado" when="se revisa" then="sigue los patrones establecidos en Epic 5 (FSM states, intent extraction, tool validation)"/>
+  </acceptanceCriteria>
+
+  <artifacts>
+    <docs>
+      <doc path="docs/architecture.md" title="Architecture Document" section="ADR-006, ADR-007" snippet="FSM Híbrida architecture (ADR-006): LLM handles NLU + language generation, FSM controls flow + validates progress. ADR-007: FSM TTL synchronized with checkpoint TTL (24h) to prevent state desync."/>
+      <doc path="docs/sprint-artifacts/tech-spec-epic-5.md" title="Epic 5 Technical Specification" section="Full Document" snippet="Comprehensive spec for FSM implementation: BookingState enum (7 states), Intent/IntentType models, FSMResult, BookingFSM class interface, transition workflows, test strategy."/>
+      <doc path="docs/epics/epic-5-rediseño-fsm-hibrida.md" title="Epic 5 Definition" section="Story 5-6" snippet="Story definition and context. Objectives: implement FSM, integrate LLM+FSM, refactor tools, migrate Epic 1 stories 1-5/1-6/1-7, resolve bugs."/>
+      <doc path="docs/epics.md" title="Epic Breakdown" section="Epic 1 Stories" snippet="Stories 1-5 (Presentación Estilistas), 1-6 (Datos Cliente), 1-7 (Actualización Prompts) are paused waiting for Epic 5 FSM foundation."/>
+      <doc path="docs/sprint-artifacts/5-5-testing-end-to-end-fsm.md" title="Story 5-5 Test Results" section="Test Results, Bugs Found" snippet="170 tests passing, 95.9% FSM coverage. HOTFIX applied: SELECT_SERVICE self-loop added. Manual testing (8 cases) pending user execution."/>
+      <doc path="docs/sprint-artifacts/sprint-status.yaml" title="Sprint Status" section="development_status" snippet="Epic 5 status: 5-1 to 5-4 done, 5-5 ready-for-dev (manual testing pending), 5-6 drafted. Epic 1 stories 1-5/1-6/1-7 paused."/>
+      <doc path="CLAUDE.md" title="Project Guidelines" section="FSM Architecture, Testing" snippet="FSM Hybrid Architecture v4.0 in development. Testing commands: pytest with DATABASE_URL. Coverage requirement 85%."/>
+    </docs>
+    <code>
+      <file path="agent/fsm/__init__.py" kind="module" symbol="FSM exports" reason="Public API: BookingFSM, BookingState, Intent, IntentType, FSMResult, extract_intent, validate_tool_call, ResponseValidator"/>
+      <file path="agent/fsm/models.py" kind="models" symbol="IntentType, BookingState, Intent, FSMResult, CollectedData, CoherenceResult" reason="Core data structures for FSM - 7 states, 13 intent types, TypedDicts"/>
+      <file path="agent/fsm/booking_fsm.py" kind="controller" symbol="BookingFSM class" lines="54-101" reason="TRANSITIONS dict, TRANSITION_REQUIREMENTS - validates state transitions. HOTFIX at line 60: SELECT_SERVICE self-loop"/>
+      <file path="agent/fsm/intent_extractor.py" kind="service" symbol="extract_intent()" reason="LLM-based intent extraction with state-aware disambiguation"/>
+      <file path="agent/fsm/tool_validation.py" kind="validation" symbol="validate_tool_call, TOOL_STATE_PERMISSIONS" reason="Validates tools can execute in current FSM state"/>
+      <file path="agent/fsm/response_validator.py" kind="validation" symbol="ResponseValidator, FORBIDDEN_PATTERNS" reason="Story 5-7a - validates LLM responses are coherent with FSM state"/>
+      <file path="agent/prompts/step3_customer.md" kind="prompt" symbol="CUSTOMER_DATA state prompt" reason="Story 1-6: collects first_name (required), last_name (optional), notes (optional). Shows confirmation summary."/>
+      <file path="agent/prompts/step2_availability.md" kind="prompt" symbol="STYLIST_SELECTION/SLOT_SELECTION prompts" reason="Story 1-5: shows stylists and availability in numbered lists"/>
+      <file path="agent/prompts/core.md" kind="prompt" symbol="Core system prompt" reason="Story 1-7: base prompt with FSM state detection and Spanish friendly tone"/>
+      <file path="agent/nodes/conversational_agent.py" kind="node" symbol="conversational_agent()" reason="Main orchestration: loads FSM, extracts intent, validates transitions, generates response"/>
+      <file path="agent/tools/booking_tools.py" kind="tool" symbol="book()" reason="Final booking tool - only callable in CONFIRMATION state with all data"/>
+      <file path="agent/tools/availability_tools.py" kind="tool" symbol="find_next_available()" reason="Story 1-5: shows available slots for selected stylist"/>
+      <file path="tests/integration/test_booking_e2e.py" kind="test" symbol="31 E2E tests" reason="Tests to verify no regressions: happy paths, invalid transitions, error recovery, out-of-order"/>
+      <file path="tests/unit/test_booking_fsm.py" kind="test" symbol="45 unit tests" reason="All FSM transitions covered"/>
+      <file path="tests/unit/test_intent_extractor.py" kind="test" symbol="30 unit tests" reason="Intent extraction accuracy tests"/>
+    </code>
+    <dependencies>
+      <ecosystem name="python" version="3.11+">
+        <package name="langgraph" version=">=0.6.7" usage="Agent orchestration, StateGraph"/>
+        <package name="langgraph-checkpoint-redis" usage="AsyncRedisSaver for state persistence"/>
+        <package name="langchain" version=">=0.3.0" usage="LLM integration, ChatOpenAI"/>
+        <package name="langchain-openai" version=">=0.3.0" usage="OpenRouter API client"/>
+        <package name="redis" version=">=5.0.0" usage="FSM state persistence, pub/sub"/>
+        <package name="pydantic" version=">=2.9.0" usage="Data validation, Intent/FSMResult models"/>
+        <package name="pytest" version=">=8.3.0" usage="Test framework"/>
+        <package name="pytest-asyncio" version=">=0.24.0" usage="Async test support"/>
+      </ecosystem>
+      <external name="OpenRouter" usage="LLM gateway (GPT-4.1-mini) for intent extraction and response generation"/>
+      <external name="Redis Stack" usage="FSM state + checkpoint persistence with 24h TTL"/>
+      <external name="Google Calendar API" usage="Stylist availability and booking creation"/>
+    </dependencies>
+  </artifacts>
+
+  <constraints>
+    <constraint type="architecture" source="ADR-006">FSM Híbrida: LLM solo maneja NLU y lenguaje, FSM controla flujo. NO modificar esta separación.</constraint>
+    <constraint type="architecture" source="ADR-007">FSM TTL = 24h (synchronized with checkpoint TTL). NO reducir TTL.</constraint>
+    <constraint type="pattern" source="booking_fsm.py">TRANSITIONS dict define todas las transiciones válidas. Agregar nuevas requiere también actualizar TRANSITION_REQUIREMENTS.</constraint>
+    <constraint type="pattern" source="tool_validation.py">Tools solo ejecutables si TOOL_STATE_PERMISSIONS lo permite. book() solo en CONFIRMATION state.</constraint>
+    <constraint type="data" source="models.py">CollectedData fields: services[], stylist_id, slot{start_time, duration_minutes}, first_name (required), last_name (optional), notes (optional)</constraint>
+    <constraint type="testing" source="CLAUDE.md">Coverage mínimo 85%. Tests deben pasar antes de marcar story done.</constraint>
+    <constraint type="language" source="config.yaml">Comunicación en Español. Prompts en español amigable con emojis.</constraint>
+    <constraint type="ux" source="FR38-FR39">Listas numeradas para selecciones. Aceptar número O texto como respuesta.</constraint>
+  </constraints>
+  <interfaces>
+    <interface name="BookingFSM" kind="class" signature="BookingFSM(conversation_id: str)" path="agent/fsm/booking_fsm.py">
+      <method name="can_transition" signature="can_transition(intent: Intent) -> bool"/>
+      <method name="transition" signature="transition(intent: Intent) -> FSMResult"/>
+      <method name="reset" signature="reset() -> None"/>
+      <method name="persist" signature="async persist() -> None"/>
+      <method name="load" signature="@classmethod async load(cls, conversation_id: str) -> BookingFSM"/>
+    </interface>
+    <interface name="extract_intent" kind="function" signature="async extract_intent(message: str, current_state: BookingState, collected_data: dict, conversation_history: list) -> Intent" path="agent/fsm/intent_extractor.py"/>
+    <interface name="validate_tool_call" kind="function" signature="validate_tool_call(tool_name: str, fsm: BookingFSM) -> ToolValidationResult" path="agent/fsm/tool_validation.py"/>
+    <interface name="book" kind="tool" signature="book(stylist_id: str, start_time: str, services: list[str], customer_phone: str, first_name: str, last_name: str | None, notes: str | None) -> dict" path="agent/tools/booking_tools.py"/>
+    <interface name="find_next_available" kind="tool" signature="find_next_available(stylist_id: str, services: list[str], num_days: int = 7) -> dict" path="agent/tools/availability_tools.py"/>
+  </interfaces>
+  <tests>
+    <standards>
+      Pytest con pytest-asyncio (asyncio_mode=auto). Coverage mínimo 85% para código FSM.
+      Tests usan DATABASE_URL con asyncpg driver. Mocks para APIs externas (Google Calendar, Chatwoot, OpenRouter).
+      Patrón: BookingFSM("test-conv-id") para instancias aisladas. Assert en transiciones FSM, no solo valores retorno.
+      Tests E2E marcados @pytest.mark.slow para ejecución selectiva.
+      Manual testing via WhatsApp: 8 casos definidos en tech-spec (M1-M8).
+    </standards>
+    <locations>
+      <location pattern="tests/unit/test_booking_fsm.py" description="45 unit tests - FSM transitions"/>
+      <location pattern="tests/unit/test_intent_extractor.py" description="30 unit tests - intent extraction"/>
+      <location pattern="tests/unit/test_tool_validation.py" description="34 unit tests - tool permissions"/>
+      <location pattern="tests/integration/test_fsm_llm_integration.py" description="9 integration tests - LLM+FSM"/>
+      <location pattern="tests/integration/test_tools_fsm_validation.py" description="21 integration tests - tools+FSM"/>
+      <location pattern="tests/integration/test_booking_e2e.py" description="31 E2E tests - full booking flow"/>
+    </locations>
+    <ideas>
+      <idea ac="AC1" description="Verify STYLIST_SELECTION → SLOT_SELECTION transition works with find_next_available tool"/>
+      <idea ac="AC1" description="Test numbered list presentation for stylists matches FR38"/>
+      <idea ac="AC2" description="Test CUSTOMER_DATA state collects first_name (required), last_name and notes (optional)"/>
+      <idea ac="AC2" description="Test PROVIDE_CUSTOMER_DATA intent extraction with full name, partial name, name+notes"/>
+      <idea ac="AC3" description="Verify prompts reference FSM states correctly, not deprecated state flags"/>
+      <idea ac="AC3" description="Test Spanish friendly tone in all prompts with appropriate emojis"/>
+      <idea ac="AC4" description="Regression test: UUID serialization bug - verify all IDs stored as strings"/>
+      <idea ac="AC4" description="Regression test: State progression - verify FSM visits all 7 states in order"/>
+      <idea ac="AC5" description="Run full test suite (170 tests) after any changes - no regressions"/>
+      <idea ac="AC6" description="Manual WhatsApp tests M1-M8 with documented results and screenshots"/>
+      <idea ac="AC7" description="Verify sprint-status.yaml updates: 1-5, 1-6, 1-7, 5-5, 5-6 → done, Epic 1 → done"/>
+      <idea ac="AC8" description="Code review checklist: uses FSM patterns, follows TRANSITIONS dict, proper logging"/>
+    </ideas>
+  </tests>
+</story-context>

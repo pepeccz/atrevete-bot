@@ -1,5 +1,5 @@
-# generated: 2025-11-19
-# updated: 2025-11-21 (Sprint Change Proposal approved)
+# generated: 2025-11-22
+# updated: 2025-11-22 (Sprint Planning workflow refresh)
 # project: atrevete-bot
 # project_key: atrevete-bot
 # tracking_system: file-system
@@ -11,6 +11,7 @@
 #   - backlog: Epic exists in epic file but not contexted
 #   - contexted: Epic tech context created (required before drafting stories)
 #   - paused: Epic temporarily paused (blocked by another epic)
+#   - blocked: Epic blocked waiting for dependencies
 #
 # Story Status:
 #   - backlog: Story only exists in epic file
@@ -20,6 +21,7 @@
 #   - review: Under SM review (via code-review workflow)
 #   - done: Story completed
 #   - paused: Story temporarily paused (blocked by architectural change)
+#   - blocked: Story blocked waiting for dependencies
 #
 # Retrospective Status:
 #   - optional: Can be completed but not required
@@ -38,8 +40,25 @@
 # Epic 1 stories 1-5 to 1-7 PAUSED until Epic 5 completes.
 # Epics 2-4 BLOCKED until Epic 5 + Epic 1 complete.
 # See: docs/sprint-change-proposal-2025-11-21.md
+#
+# SPRINT CHANGE (2025-11-22):
+# ==========================
+# Story 5-7 split into two phases:
+#   - 5-7a: Response Validator (post-validation) - COMPLETED
+#   - 5-7b: FSM Directives (proactive directives) - BACKLOG
+# Story 5-5 blocked until 5-7a completes (now unblocked).
+# See: docs/sprint-change-proposal-2025-11-22-response-coherence.md
+#
+# SPRINT CHANGE (2025-11-23):
+# ==========================
+# Bug fixes from manual testing (Bugs #1, #2, #3):
+#   - 5-8: Fix FSM Bugs 1, 2 y 3 - COMPLETED
+#   - Bug #1: "Continua" not detected as CONFIRM_SERVICES (INTENT_SYNONYMS)
+#   - Bug #2: "Si" causes reset (BOOKED auto-reset to IDLE)
+#   - Bug #3: Guidance/Validator alignment
+# See: docs/sprint-artifacts/5-8-fix-fsm-bugs-1-2-3.md
 
-generated: 2025-11-19
+generated: 2025-11-22
 project: atrevete-bot
 project_key: atrevete-bot
 tracking_system: file-system
@@ -56,22 +75,25 @@ development_status:
   5-2-implementacion-fsm-controller-base: done
   5-3-integracion-llm-fsm-intent-extraction: done
   5-4-refactorizacion-tools-fsm-validation: done
-  5-5-testing-end-to-end-fsm: review
-  5-6-migracion-epic-1-stories-fsm: backlog
+  5-5-testing-end-to-end-fsm: done  # Completed 2025-11-22: 170 tests pass, 8/8 manual tests pass
+  5-6-migracion-epic-1-stories-fsm: done  # Completed 2025-11-22: Epic 1 migrated to FSM
+  5-7a-response-validator: done  # Fase 1: Post-validacion de respuestas - COMPLETADO 2025-11-22
+  5-7b-fsm-directives: done  # Fase 2: Directivas proactivas - APPROVED 2025-11-23
+  5-8-fix-fsm-bugs-1-2-3: done  # Bug fixes from manual testing 2025-11-23
   epic-5-retrospective: optional
 
   # ===========================================
   # Epic 1: Correccion del Flujo de Agendamiento
   # ===========================================
-  # Status: PAUSED (4/7 done, waiting for Epic 5)
-  epic-1: paused
+  # Status: DONE (7/7 stories completed with FSM architecture)
+  epic-1: done
   1-1-migracion-de-estados-y-campos-de-tracking: done
   1-2-correccion-de-herramienta-book-con-emoji-calendar: done
   1-3-presentacion-de-servicios-en-lista-numerada: done
   1-4-seleccion-multiple-de-servicios-con-confirmacion: done
-  1-5-presentacion-de-estilistas-y-disponibilidad: paused  # was: in-progress
-  1-6-recopilacion-de-datos-del-cliente: paused  # was: backlog
-  1-7-actualizacion-de-prompts-para-flujo-completo: paused  # was: backlog
+  1-5-presentacion-de-estilistas-y-disponibilidad: done  # Completed 2025-11-22: Works with FSM architecture
+  1-6-recopilacion-de-datos-del-cliente: done  # Completed 2025-11-22: CUSTOMER_DATA state in FSM
+  1-7-actualizacion-de-prompts-para-flujo-completo: done  # Completed 2025-11-22: Prompts work with FSM
   epic-1-retrospective: optional
 
   # ===========================================

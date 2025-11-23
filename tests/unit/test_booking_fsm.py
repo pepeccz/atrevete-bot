@@ -206,7 +206,7 @@ class TestTransition:
         assert "Tinte" in result.collected_data["services"]
 
     def test_transition_happy_path_complete(self):
-        """Complete happy path from IDLE to BOOKED."""
+        """Complete happy path from IDLE to BOOKED with auto-reset (Bug #2 fix)."""
         fsm = BookingFSM("test-conv")
 
         # Step 1: IDLE -> SERVICE_SELECTION
@@ -254,16 +254,13 @@ class TestTransition:
         assert result.success is True
         assert fsm.state == BookingState.CONFIRMATION
 
-        # Step 6: CONFIRMATION -> BOOKED
+        # Step 6: CONFIRMATION -> BOOKED (then auto-reset to IDLE)
         result = fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
         assert result.success is True
-        assert fsm.state == BookingState.BOOKED
-
-        # Verify all data accumulated
-        assert fsm.collected_data["services"] == ["Corte largo"]
-        assert fsm.collected_data["stylist_id"] == "stylist-uuid"
-        assert fsm.collected_data["first_name"] == "María"
-        assert fsm.collected_data["last_name"] == "García"
+        # Bug #2 fix: FSM auto-resets to IDLE after BOOKED
+        assert fsm.state == BookingState.IDLE
+        # collected_data is cleared after auto-reset
+        assert fsm.collected_data == {}
 
     def test_transition_invalid_returns_failure(self):
         """Invalid transition returns FSMResult with success=False."""
@@ -400,18 +397,18 @@ class TestPersistence:
             assert key == "fsm:test-conv-123"
             assert data["state"] == "service_selection"
             assert data["collected_data"] == {"services": ["Corte largo"]}
-            assert ttl == 900  # 15 minutes
+            assert ttl == 86400  # 24 hours (ADR-007: FSM TTL synced with checkpoint TTL)
 
     @pytest.mark.asyncio
-    async def test_persist_uses_900_second_ttl(self):
-        """persist() sets TTL to 900 seconds (AC #4)."""
+    async def test_persist_uses_24h_ttl(self):
+        """persist() sets TTL to 86400 seconds (24h per ADR-007)."""
         mock_redis = AsyncMock()
         with patch("agent.fsm.booking_fsm.get_redis_client", return_value=mock_redis):
             fsm = BookingFSM("test-conv")
             await fsm.persist()
 
             call_args = mock_redis.set.call_args
-            assert call_args[1]["ex"] == 900
+            assert call_args[1]["ex"] == 86400  # 24 hours (ADR-007)
 
     @pytest.mark.asyncio
     async def test_load_restores_state(self):
@@ -554,6 +551,87 @@ class TestNextAction:
         result = fsm.transition(Intent(type=IntentType.CANCEL_BOOKING))
 
         assert result.next_action == "booking_cancelled"
+
+
+class TestBookedAutoReset:
+    """Tests for BOOKED state auto-reset behavior (Bug #2 fix)."""
+
+    def test_booked_auto_resets_to_idle(self):
+        """Transition to BOOKED immediately resets to IDLE (Bug #2 fix)."""
+        fsm = BookingFSM("test-conv")
+        # Setup: get to CONFIRMATION state with all required data
+        fsm._state = BookingState.CONFIRMATION
+        fsm._collected_data = {
+            "services": ["Corte largo"],
+            "stylist_id": "stylist-uuid",
+            "slot": {"start_time": "2024-12-01T10:00:00"},
+            "first_name": "María",
+        }
+
+        # Transition to BOOKED
+        result = fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
+
+        assert result.success is True
+        # FSM should be back to IDLE after auto-reset
+        assert fsm.state == BookingState.IDLE
+        # collected_data should be cleared
+        assert fsm.collected_data == {}
+
+    def test_booked_auto_reset_clears_collected_data(self):
+        """Auto-reset from BOOKED clears all accumulated data (Bug #2 fix)."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.CONFIRMATION
+        fsm._collected_data = {
+            "services": ["Corte largo", "Tinte"],
+            "stylist_id": "stylist-uuid",
+            "slot": {"start_time": "2024-12-01T10:00:00", "duration_minutes": 60},
+            "first_name": "María",
+            "last_name": "García",
+            "notes": "Primera visita",
+        }
+
+        fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
+
+        assert fsm.collected_data == {}
+
+    def test_booked_auto_reset_allows_new_booking(self):
+        """After auto-reset from BOOKED, new booking can start immediately."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.CONFIRMATION
+        fsm._collected_data = {
+            "services": ["Corte"],
+            "stylist_id": "uuid",
+            "slot": {},
+            "first_name": "María",
+        }
+
+        # Complete booking (triggers auto-reset)
+        fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
+        assert fsm.state == BookingState.IDLE
+
+        # Start new booking immediately
+        result = fsm.transition(Intent(type=IntentType.START_BOOKING))
+        assert result.success is True
+        assert fsm.state == BookingState.SERVICE_SELECTION
+
+    def test_booked_auto_reset_logs_correctly(self, caplog):
+        """Auto-reset from BOOKED logs INFO message (Bug #2 fix)."""
+        with caplog.at_level(logging.INFO, logger="agent.fsm.booking_fsm"):
+            fsm = BookingFSM("test-conv-auto-reset")
+            fsm._state = BookingState.CONFIRMATION
+            fsm._collected_data = {
+                "services": ["Corte"],
+                "stylist_id": "uuid",
+                "slot": {},
+                "first_name": "María",
+            }
+
+            fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
+
+        # Should log the auto-reset
+        log_messages = [r.message for r in caplog.records]
+        assert any("auto-reset" in msg.lower() for msg in log_messages)
+        assert any("booked" in msg.lower() and "idle" in msg.lower() for msg in log_messages)
 
 
 class TestValidationErrors:

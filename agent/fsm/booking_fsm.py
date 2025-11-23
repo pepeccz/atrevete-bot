@@ -17,13 +17,14 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
-from agent.fsm.models import BookingState, FSMResult, Intent, IntentType
+from agent.fsm.models import BookingState, FSMResult, Intent, IntentType, ResponseGuidance
 from shared.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
-# TTL for FSM state in Redis (15 minutes)
-FSM_TTL_SECONDS: int = 900
+# TTL for FSM state in Redis (24 hours - synchronized with AsyncRedisSaver checkpoint TTL)
+# See: docs/sprint-change-proposal-2025-11-22-fsm-ttl-fix.md (ADR-007)
+FSM_TTL_SECONDS: int = 86400
 
 
 class BookingFSM:
@@ -58,6 +59,9 @@ class BookingFSM:
             # SELECT_SERVICE stays in same state but accumulates services
             IntentType.SELECT_SERVICE: BookingState.SERVICE_SELECTION,
             IntentType.CONFIRM_SERVICES: BookingState.STYLIST_SELECTION,
+            # SELECT_STYLIST allows skipping explicit confirmation when LLM shows stylists
+            # Requires at least 1 service in collected_data (validated in TRANSITION_REQUIREMENTS)
+            IntentType.SELECT_STYLIST: BookingState.STYLIST_SELECTION,
         },
         BookingState.STYLIST_SELECTION: {
             IntentType.SELECT_STYLIST: BookingState.SLOT_SELECTION,
@@ -83,6 +87,8 @@ class BookingFSM:
     # Data validation requirements for each transition
     TRANSITION_REQUIREMENTS: ClassVar[dict[tuple[BookingState, IntentType], list[str]]] = {
         (BookingState.SERVICE_SELECTION, IntentType.CONFIRM_SERVICES): ["services"],
+        # SELECT_STYLIST from SERVICE_SELECTION requires at least 1 service selected
+        (BookingState.SERVICE_SELECTION, IntentType.SELECT_STYLIST): ["services", "stylist_id"],
         (BookingState.STYLIST_SELECTION, IntentType.SELECT_STYLIST): ["stylist_id"],
         (BookingState.SLOT_SELECTION, IntentType.SELECT_SLOT): ["slot"],
         (BookingState.CUSTOMER_DATA, IntentType.PROVIDE_CUSTOMER_DATA): ["first_name"],
@@ -217,6 +223,19 @@ class BookingFSM:
         # Update state
         self._state = to_state
         self._last_updated = datetime.now(UTC)
+
+        # AUTO-RESET: BOOKED → IDLE after successful booking (Bug #2 fix)
+        # The booking is complete, confirmation message will be sent, then FSM resets
+        # This prevents the FSM from being "stuck" in BOOKED state
+        if to_state == BookingState.BOOKED:
+            logger.info(
+                "FSM auto-reset: BOOKED -> IDLE | conversation_id=%s",
+                self._conversation_id,
+            )
+            # Keep collected_data briefly for the confirmation message context
+            # but reset state to IDLE so next message starts fresh
+            self._state = BookingState.IDLE
+            self._collected_data = {}
 
         # Determine next action
         next_action = self._get_next_action()
@@ -381,3 +400,155 @@ class BookingFSM:
             BookingState.BOOKED: "confirm_booking_created",
         }
         return next_actions.get(self._state, "unknown_action")
+
+    def get_response_guidance(self) -> ResponseGuidance:
+        """
+        Generate proactive guidance for LLM based on current FSM state (Story 5-7b).
+
+        Returns guidance that instructs the LLM what it MUST show, MUST ask,
+        and MUST NOT mention based on the current booking flow state.
+
+        Returns:
+            ResponseGuidance with must_show, must_ask, forbidden, and context_hint
+
+        Example:
+            >>> fsm = BookingFSM("conv-123")
+            >>> fsm._state = BookingState.SERVICE_SELECTION
+            >>> guidance = fsm.get_response_guidance()
+            >>> "estilistas" in guidance.forbidden
+            True
+        """
+        import time
+        start_time = time.perf_counter()
+
+        guidance = self._GUIDANCE_MAP.get(self._state, self._DEFAULT_GUIDANCE)
+
+        # For SERVICE_SELECTION, customize must_show based on whether services are selected
+        if self._state == BookingState.SERVICE_SELECTION:
+            services = self._collected_data.get("services", [])
+            if services:
+                # Services already selected - ask about adding more or confirming
+                # Bug #3 fix: Explicit forbidden list to prevent showing stylists
+                guidance = ResponseGuidance(
+                    must_show=[f"servicios seleccionados: {', '.join(services)}"],
+                    must_ask="¿Deseas agregar otro servicio o continuamos con estos?",
+                    forbidden=[
+                        "estilistas", "Ana", "María", "Carlos", "Pilar", "Laura",
+                        "horarios", "disponibilidad", "hora",
+                        "confirmación de cita", "reserva confirmada",
+                    ],
+                    context_hint=(
+                        "Usuario tiene servicios seleccionados. "
+                        "Pregunta si quiere agregar más o confirmar. "
+                        "NO muestres estilistas hasta que confirme servicios."
+                    ),
+                )
+            else:
+                # No services yet - show service list
+                guidance = ResponseGuidance(
+                    must_show=["lista de servicios disponibles"],
+                    must_ask="¿Qué servicio te gustaría?",
+                    forbidden=[
+                        "estilistas", "Ana", "María", "Carlos", "Pilar", "Laura",
+                        "horarios", "disponibilidad", "hora",
+                        "confirmación de cita", "reserva confirmada",
+                    ],
+                    context_hint="Usuario está seleccionando servicios. NO mostrar estilistas aún.",
+                )
+
+        # Log guidance generation metrics (AC #8)
+        generation_time_ms = (time.perf_counter() - start_time) * 1000
+        self._log_guidance_generated(guidance, generation_time_ms)
+
+        return guidance
+
+    def _log_guidance_generated(
+        self,
+        guidance: ResponseGuidance,
+        generation_time_ms: float,
+    ) -> None:
+        """
+        Log guidance generation with FSM context (AC #8).
+
+        Args:
+            guidance: Generated ResponseGuidance
+            generation_time_ms: Time taken to generate guidance
+        """
+        logger.info(
+            "Guidance generated | state=%s | forbidden=%s | must_ask=%s | time=%.2fms",
+            self._state.value,
+            guidance.forbidden[:3] if guidance.forbidden else [],
+            guidance.must_ask[:50] if guidance.must_ask else None,
+            generation_time_ms,
+            extra={
+                "fsm_state": self._state.value,
+                "conversation_id": self._conversation_id,
+                "forbidden_count": len(guidance.forbidden),
+                "must_show_count": len(guidance.must_show),
+                "has_must_ask": guidance.must_ask is not None,
+                "generation_time_ms": round(generation_time_ms, 2),
+            }
+        )
+
+    # ============================================================================
+    # GUIDANCE MAP BY STATE (Story 5-7b)
+    # ============================================================================
+    # Static mapping of FSM states to ResponseGuidance.
+    # Aligns with FORBIDDEN_PATTERNS from ResponseValidator (Story 5-7a).
+
+    _DEFAULT_GUIDANCE: ClassVar[ResponseGuidance] = ResponseGuidance(
+        must_show=[],
+        must_ask=None,
+        forbidden=[],
+        context_hint="Sin booking activo.",
+    )
+
+    _GUIDANCE_MAP: ClassVar[dict[BookingState, ResponseGuidance]] = {
+        BookingState.IDLE: ResponseGuidance(
+            must_show=[],
+            must_ask=None,
+            forbidden=[],
+            context_hint="Sin booking activo. Responde a consultas generales o inicia booking.",
+        ),
+        BookingState.SERVICE_SELECTION: ResponseGuidance(
+            # Customized dynamically in get_response_guidance()
+            must_show=["lista de servicios disponibles"],
+            must_ask="¿Qué servicio te gustaría?",
+            forbidden=[
+                "estilistas", "Ana", "María", "Carlos", "Pilar", "Laura",  # Stylist names
+                "horarios", "disponibilidad", "hora", "10:00", "11:00",  # Time slots
+                "confirmación de cita", "reserva confirmada",
+            ],
+            context_hint="Usuario está seleccionando servicios. NO mostrar estilistas ni horarios.",
+        ),
+        BookingState.STYLIST_SELECTION: ResponseGuidance(
+            must_show=["lista de estilistas disponibles"],
+            must_ask="¿Con quién te gustaría la cita?",
+            forbidden=["horarios específicos", "datos del cliente", "confirmación de cita"],
+            context_hint="Usuario debe elegir estilista. NO mostrar horarios aún.",
+        ),
+        BookingState.SLOT_SELECTION: ResponseGuidance(
+            must_show=["horarios disponibles del estilista"],
+            must_ask="¿Qué horario te viene mejor?",
+            forbidden=["confirmación de cita", "solicitud de datos adicionales"],
+            context_hint="Usuario debe elegir horario. NO confirmar cita aún.",
+        ),
+        BookingState.CUSTOMER_DATA: ResponseGuidance(
+            must_show=[],
+            must_ask="¿Me puedes dar tu nombre para la reserva?",
+            forbidden=["confirmación de cita sin datos"],
+            context_hint="Recopilar datos del cliente antes de confirmar.",
+        ),
+        BookingState.CONFIRMATION: ResponseGuidance(
+            must_show=["resumen de la cita"],
+            must_ask="¿Confirmas la reserva?",
+            forbidden=[],
+            context_hint="Mostrar resumen y esperar confirmación del usuario.",
+        ),
+        BookingState.BOOKED: ResponseGuidance(
+            must_show=["confirmación de cita creada"],
+            must_ask=None,
+            forbidden=[],
+            context_hint="Booking completado. Confirmar cita y ofrecer ayuda adicional.",
+        ),
+    }

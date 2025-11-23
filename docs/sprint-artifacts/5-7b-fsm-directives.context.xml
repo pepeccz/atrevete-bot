@@ -1,0 +1,267 @@
+<story-context id=".bmad/bmm/workflows/4-implementation/story-context/template" v="1.0">
+  <metadata>
+    <epicId>5</epicId>
+    <storyId>5-7b</storyId>
+    <title>FSM Directives (Directivas Proactivas)</title>
+    <status>drafted</status>
+    <generatedAt>2025-11-22</generatedAt>
+    <generator>BMAD Story Context Workflow</generator>
+    <sourceStoryPath>docs/sprint-artifacts/5-7b-fsm-directives.md</sourceStoryPath>
+  </metadata>
+
+  <story>
+    <asA>sistema FSM híbrido</asA>
+    <iWant>inyectar directivas proactivas al LLM basadas en el estado actual de la FSM antes de generar respuestas</iWant>
+    <soThat>el LLM sea guiado de forma preventiva sobre qué debe/no debe mostrar, reduciendo la necesidad de regeneraciones y mejorando la coherencia desde la primera respuesta</soThat>
+    <tasks>
+      <task id="1" description="Crear modelo ResponseGuidance">
+        <subtask id="1.1">Agregar ResponseGuidance dataclass en agent/fsm/models.py</subtask>
+        <subtask id="1.2">Campos: must_show: list[str], must_ask: str | None, forbidden: list[str], context_hint: str</subtask>
+        <subtask id="1.3">Unit tests para ResponseGuidance dataclass</subtask>
+      </task>
+      <task id="2" description="Implementar guidance por estado SERVICE_SELECTION">
+        <subtask id="2.1">En BookingFSM, agregar método get_response_guidance() -> ResponseGuidance</subtask>
+        <subtask id="2.2">Implementar guidance para SERVICE_SELECTION con must_show, must_ask, forbidden, context_hint</subtask>
+        <subtask id="2.3">Unit tests para SERVICE_SELECTION guidance</subtask>
+      </task>
+      <task id="3" description="Implementar guidance por estado STYLIST_SELECTION">
+        <subtask id="3.1">Agregar guidance para STYLIST_SELECTION</subtask>
+        <subtask id="3.2">Unit tests para STYLIST_SELECTION guidance</subtask>
+      </task>
+      <task id="4" description="Implementar guidance por estado SLOT_SELECTION">
+        <subtask id="4.1">Agregar guidance para SLOT_SELECTION</subtask>
+        <subtask id="4.2">Unit tests para SLOT_SELECTION guidance</subtask>
+      </task>
+      <task id="5" description="Implementar guidance por estado CUSTOMER_DATA">
+        <subtask id="5.1">Agregar guidance para CUSTOMER_DATA</subtask>
+        <subtask id="5.2">Unit tests para CUSTOMER_DATA guidance</subtask>
+      </task>
+      <task id="6" description="Implementar guidance para estados restantes">
+        <subtask id="6.1">IDLE guidance (estado inicial)</subtask>
+        <subtask id="6.2">CONFIRMATION guidance (permitir confirmación)</subtask>
+        <subtask id="6.3">BOOKED guidance (post-booking)</subtask>
+        <subtask id="6.4">Unit tests para todos los estados</subtask>
+      </task>
+      <task id="7" description="Inyección de guidance en prompt del LLM">
+        <subtask id="7.1">En conversational_agent.py, llamar fsm.get_response_guidance() después de cargar FSM</subtask>
+        <subtask id="7.2">Crear formato de prompt para guidance (DIRECTIVA FSM)</subtask>
+        <subtask id="7.3">Inyectar como SystemMessage antes de invocar LLM</subtask>
+        <subtask id="7.4">Integration tests de inyección en prompt</subtask>
+      </task>
+      <task id="8" description="Métricas de coherencia con guidance">
+        <subtask id="8.1">Agregar logging de tasa de coherencia en primera generación</subtask>
+        <subtask id="8.2">Comparar con baseline sin guidance (Story 5-7a)</subtask>
+        <subtask id="8.3">Tests que verifican >95% coherencia en primera generación</subtask>
+      </task>
+      <task id="9" description="Logging estructurado">
+        <subtask id="9.1">Agregar logs en get_response_guidance() con FSM context</subtask>
+        <subtask id="9.2">Log de guidance generado (truncado para debugging)</subtask>
+        <subtask id="9.3">Métricas: tiempo de generación de guidance, uso por estado</subtask>
+        <subtask id="9.4">Tests que verifican estructura de logs</subtask>
+      </task>
+      <task id="10" description="Testing comprehensivo">
+        <subtask id="10.1">Crear tests/unit/test_response_guidance.py</subtask>
+        <subtask id="10.2">Tests para cada estado FSM con guidance correcto</subtask>
+        <subtask id="10.3">Tests de integración guidance + validator</subtask>
+        <subtask id="10.4">Tests end-to-end de flujo completo con guidance</subtask>
+        <subtask id="10.5">Coverage >85% para código nuevo</subtask>
+      </task>
+    </tasks>
+  </story>
+
+  <acceptanceCriteria>
+    <criterion id="1">Given la FSM está en cualquier estado del booking flow, When se solicita guidance al FSM, Then retorna un ResponseGuidance con campos: must_show, must_ask, forbidden, context_hint</criterion>
+    <criterion id="2">Given la FSM está en estado SERVICE_SELECTION, When se genera ResponseGuidance, Then forbidden incluye ["estilistas", "horarios", "confirmación"] y must_ask incluye pregunta sobre servicios adicionales</criterion>
+    <criterion id="3">Given la FSM está en estado STYLIST_SELECTION, When se genera ResponseGuidance, Then must_show incluye lista de estilistas y forbidden incluye ["horarios específicos", "datos del cliente"]</criterion>
+    <criterion id="4">Given la FSM está en estado SLOT_SELECTION, When se genera ResponseGuidance, Then must_show incluye horarios disponibles y forbidden incluye ["confirmación de cita", "solicitud de datos adicionales"]</criterion>
+    <criterion id="5">Given la FSM está en estado CUSTOMER_DATA, When se genera ResponseGuidance, Then must_ask incluye solicitud de nombre/datos y forbidden incluye ["confirmación de cita sin datos"]</criterion>
+    <criterion id="6">Given cualquier estado FSM con ResponseGuidance generado, When se inyecta en el prompt del LLM, Then el formato de inyección incluye estado actual, elementos obligatorios, pregunta requerida, elementos prohibidos y contexto</criterion>
+    <criterion id="7">Given ResponseGuidance inyectado en prompt, When el LLM genera respuesta, Then el ResponseValidator (de Story 5-7a) reporta tasa de coherencia >95% en primera generación</criterion>
+    <criterion id="8">Given cualquier generación de ResponseGuidance, When se ejecuta, Then los logs muestran: estado FSM, guidance generado, y métricas de uso</criterion>
+  </acceptanceCriteria>
+
+  <artifacts>
+    <docs>
+      <doc>
+        <path>docs/sprint-change-proposal-2025-11-22-response-coherence.md</path>
+        <title>Response Coherence Layer Sprint Change Proposal</title>
+        <section>Sección 3.3 - FSM Directives</section>
+        <snippet>Implementar FSM Directives (Story 5-7b) con ResponseGuidance dataclass que genera directivas proactivas por estado FSM para guiar al LLM antes de generar respuestas.</snippet>
+      </doc>
+      <doc>
+        <path>docs/architecture.md</path>
+        <title>Architecture Document</title>
+        <section>ADR-006: FSM Híbrida para Control de Flujo</section>
+        <snippet>FSM controla flujo de conversación mientras LLM solo maneja NLU y generación de lenguaje. Transiciones deterministas y testeables con 7 estados del booking flow.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/tech-spec-epic-5.md</path>
+        <title>Epic 5 Technical Specification</title>
+        <section>Detailed Design - Data Models and Contracts</section>
+        <snippet>BookingFSM class interface con métodos can_transition(), transition(), persist(), load(). Estados: IDLE, SERVICE_SELECTION, STYLIST_SELECTION, SLOT_SELECTION, CUSTOMER_DATA, CONFIRMATION, BOOKED.</snippet>
+      </doc>
+      <doc>
+        <path>docs/sprint-artifacts/5-7a-response-validator.md</path>
+        <title>Story 5-7a Response Validator</title>
+        <section>Dev Agent Record</section>
+        <snippet>Fase 1 implementada: ResponseValidator valida respuestas post-generación con FORBIDDEN_PATTERNS por estado. CoherenceResult dataclass pattern ya establecido.</snippet>
+      </doc>
+      <doc>
+        <path>CLAUDE.md</path>
+        <title>Project Development Guide</title>
+        <section>Testing</section>
+        <snippet>pytest 8.3.0+, pytest-asyncio 0.24.0+, asyncio_mode=auto. Coverage requirement 85% minimum. DATABASE_URL for async tests.</snippet>
+      </doc>
+    </docs>
+
+    <code>
+      <artifact>
+        <path>agent/fsm/models.py</path>
+        <kind>models</kind>
+        <symbol>CoherenceResult</symbol>
+        <lines>114-141</lines>
+        <reason>Dataclass pattern a reutilizar para ResponseGuidance. CoherenceResult tiene campos descriptivos y documentación clara.</reason>
+      </artifact>
+      <artifact>
+        <path>agent/fsm/models.py</path>
+        <kind>models</kind>
+        <symbol>BookingState</symbol>
+        <lines>37-47</lines>
+        <reason>Enum de estados FSM que serán keys en el guidance map (IDLE, SERVICE_SELECTION, STYLIST_SELECTION, etc.)</reason>
+      </artifact>
+      <artifact>
+        <path>agent/fsm/booking_fsm.py</path>
+        <kind>controller</kind>
+        <symbol>BookingFSM</symbol>
+        <lines>30-390</lines>
+        <reason>Clase donde se agregará el método get_response_guidance(). Ver TRANSITIONS y _get_next_action() como referencia de patterns.</reason>
+      </artifact>
+      <artifact>
+        <path>agent/fsm/response_validator.py</path>
+        <kind>validator</kind>
+        <symbol>FORBIDDEN_PATTERNS</symbol>
+        <lines>45-109</lines>
+        <reason>Mapeo estado->reglas ya probado. ResponseGuidance.forbidden debería alinearse con estos patterns para sinergia.</reason>
+      </artifact>
+      <artifact>
+        <path>agent/fsm/response_validator.py</path>
+        <kind>validator</kind>
+        <symbol>CORRECTION_HINTS</symbol>
+        <lines>117-144</lines>
+        <reason>Templates de corrección por estado. ResponseGuidance.context_hint puede basarse en estos mensajes.</reason>
+      </artifact>
+      <artifact>
+        <path>agent/fsm/__init__.py</path>
+        <kind>module</kind>
+        <symbol>__all__</symbol>
+        <lines>63-89</lines>
+        <reason>Patrón de exports públicos. Agregar ResponseGuidance a exports cuando se implemente.</reason>
+      </artifact>
+      <artifact>
+        <path>agent/nodes/conversational_agent.py</path>
+        <kind>node</kind>
+        <symbol>conversational_agent</symbol>
+        <lines>351-885</lines>
+        <reason>Función principal donde se inyectará el guidance. Ver línea 538-542 donde se construye fsm_state_context.</reason>
+      </artifact>
+      <artifact>
+        <path>agent/nodes/conversational_agent.py</path>
+        <kind>node</kind>
+        <symbol>dynamic_context</symbol>
+        <lines>544-555</lines>
+        <reason>Punto de inyección: guidance se agregará al dynamic_context antes de enviarlo al LLM.</reason>
+      </artifact>
+      <artifact>
+        <path>tests/unit/test_response_validator.py</path>
+        <kind>test</kind>
+        <symbol>test_*</symbol>
+        <lines>all</lines>
+        <reason>Patrón de tests por estado FSM. Reutilizar estructura para test_response_guidance.py.</reason>
+      </artifact>
+      <artifact>
+        <path>tests/unit/test_booking_fsm.py</path>
+        <kind>test</kind>
+        <symbol>test_*</symbol>
+        <lines>all</lines>
+        <reason>Tests de BookingFSM. Patrón de setup de FSM con _state y _collected_data para tests de guidance.</reason>
+      </artifact>
+    </code>
+
+    <dependencies>
+      <python>
+        <package name="langgraph" version=">=0.6.7">Agent orchestration framework</package>
+        <package name="langchain" version=">=0.3.0">LLM integration for intent extraction</package>
+        <package name="langchain-openai" version=">=0.3.0">OpenRouter API client</package>
+        <package name="redis" version=">=5.0.0">FSM state persistence</package>
+        <package name="pydantic" version=">=2.9.0">Model validation (dataclass alternative)</package>
+        <package name="pytest" version=">=8.3.0">Testing framework</package>
+        <package name="pytest-asyncio" version=">=0.24.0">Async test support</package>
+      </python>
+    </dependencies>
+  </artifacts>
+
+  <constraints>
+    <constraint source="architecture">FSM state se persiste en Redis con TTL 24h (sincronizado con checkpoint)</constraint>
+    <constraint source="architecture">LLM solo maneja NLU y generación de lenguaje, FSM controla flujo</constraint>
+    <constraint source="performance">Generación de guidance debe ser <5ms (dict lookup estático, sin I/O)</constraint>
+    <constraint source="performance">Inyección prompt debe ser <1ms (string formatting simple)</constraint>
+    <constraint source="performance">Overhead total <10ms (insignificante vs LLM latency ~2s)</constraint>
+    <constraint source="code-style">Usar snake_case para funciones/métodos, PascalCase para clases</constraint>
+    <constraint source="code-style">Line length: 100 chars (black formatter)</constraint>
+    <constraint source="testing">Coverage >85% para código nuevo en agent/fsm/</constraint>
+    <constraint source="dev-notes">ResponseGuidance debe alinearse con FORBIDDEN_PATTERNS de Story 5-7a para sinergia</constraint>
+    <constraint source="dev-notes">Logging estructurado con formato JSON compatible con Langfuse</constraint>
+  </constraints>
+
+  <interfaces>
+    <interface>
+      <name>ResponseGuidance</name>
+      <kind>dataclass</kind>
+      <signature>@dataclass class ResponseGuidance: must_show: list[str]; must_ask: str | None; forbidden: list[str]; context_hint: str</signature>
+      <path>agent/fsm/models.py</path>
+    </interface>
+    <interface>
+      <name>BookingFSM.get_response_guidance</name>
+      <kind>method</kind>
+      <signature>def get_response_guidance(self) -> ResponseGuidance</signature>
+      <path>agent/fsm/booking_fsm.py</path>
+    </interface>
+    <interface>
+      <name>format_guidance_prompt</name>
+      <kind>function</kind>
+      <signature>def format_guidance_prompt(guidance: ResponseGuidance, state: BookingState) -> str</signature>
+      <path>agent/nodes/conversational_agent.py (inline o helper)</path>
+    </interface>
+  </interfaces>
+
+  <tests>
+    <standards>
+      pytest 8.3.0+ con pytest-asyncio 0.24.0+ (asyncio_mode=auto). Tests unitarios aislados con mocks para Redis.
+      Integration tests verifican sinergia con ResponseValidator de Story 5-7a.
+      DATABASE_URL requerido para tests que tocan PostgreSQL (aunque esta story no debería necesitarlo).
+      Coverage minimum 85%, target 90% para código nuevo FSM.
+    </standards>
+    <locations>
+      <location>tests/unit/test_response_guidance.py</location>
+      <location>tests/unit/test_booking_fsm.py (extensión con tests de guidance)</location>
+      <location>tests/integration/test_response_coherence.py (extensión con tests guidance + validator)</location>
+    </locations>
+    <ideas>
+      <idea ac="1">test_response_guidance_returns_all_fields - Verificar que ResponseGuidance tiene must_show, must_ask, forbidden, context_hint</idea>
+      <idea ac="2">test_service_selection_guidance_forbidden - Verificar forbidden incluye estilistas, horarios, confirmación</idea>
+      <idea ac="2">test_service_selection_guidance_must_ask - Verificar must_ask pregunta sobre servicios adicionales</idea>
+      <idea ac="3">test_stylist_selection_guidance_must_show - Verificar must_show incluye lista de estilistas</idea>
+      <idea ac="3">test_stylist_selection_guidance_forbidden - Verificar forbidden incluye horarios específicos</idea>
+      <idea ac="4">test_slot_selection_guidance_must_show - Verificar must_show incluye horarios disponibles</idea>
+      <idea ac="4">test_slot_selection_guidance_forbidden - Verificar forbidden incluye confirmación prematura</idea>
+      <idea ac="5">test_customer_data_guidance_must_ask - Verificar must_ask pide nombre del cliente</idea>
+      <idea ac="5">test_customer_data_guidance_forbidden - Verificar forbidden incluye confirmación sin datos</idea>
+      <idea ac="6">test_guidance_prompt_format - Verificar formato DIRECTIVA FSM con todos los campos</idea>
+      <idea ac="6">test_guidance_injected_in_langchain_messages - Verificar guidance aparece en messages antes de LLM</idea>
+      <idea ac="7">test_guidance_improves_coherence_rate - Ejecutar N conversaciones, medir coherencia >95%</idea>
+      <idea ac="8">test_guidance_logs_fsm_state - Verificar logs contienen fsm_state</idea>
+      <idea ac="8">test_guidance_logs_guidance_preview - Verificar logs contienen guidance truncado</idea>
+      <idea ac="all">test_all_states_have_guidance - Parametrized test que verifica guidance para cada BookingState</idea>
+    </ideas>
+  </tests>
+</story-context>

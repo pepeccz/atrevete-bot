@@ -23,17 +23,32 @@ Public exports:
         - TOOL_STATE_PERMISSIONS: Tool-to-state mapping
         - TOOL_DATA_REQUIREMENTS: Tool-to-data requirements mapping
         - log_tool_execution: Log tool execution with FSM context
+    - Response validation (Story 5-7a):
+        - ResponseValidator: Validates LLM responses against FSM state
+        - CoherenceResult: Result of coherence validation
+        - regenerate_with_correction: Regenerate incoherent responses
+        - FORBIDDEN_PATTERNS: State-to-patterns mapping
+        - log_coherence_metrics: Log validation metrics
 """
 
 from agent.fsm.booking_fsm import BookingFSM
 from agent.fsm.intent_extractor import extract_intent
 from agent.fsm.models import (
     BookingState,
+    CoherenceResult,
     CollectedData,
     FSMResult,
     Intent,
     IntentType,
+    ResponseGuidance,
     SlotData,
+)
+from agent.fsm.response_validator import (
+    FORBIDDEN_PATTERNS,
+    GENERIC_FALLBACK_RESPONSE,
+    ResponseValidator,
+    log_coherence_metrics,
+    regenerate_with_correction,
 )
 from agent.fsm.tool_validation import (
     TOOL_DATA_REQUIREMENTS,
@@ -50,10 +65,12 @@ __all__ = [
     # Core FSM
     "BookingFSM",
     "BookingState",
+    "CoherenceResult",
     "CollectedData",
     "FSMResult",
     "Intent",
     "IntentType",
+    "ResponseGuidance",
     "SlotData",
     "extract_intent",
     # Tool validation (Story 5-4)
@@ -65,4 +82,10 @@ __all__ = [
     "TOOL_STATE_PERMISSIONS",
     "TOOL_DATA_REQUIREMENTS",
     "log_tool_execution",
+    # Response validation (Story 5-7a)
+    "ResponseValidator",
+    "regenerate_with_correction",
+    "FORBIDDEN_PATTERNS",
+    "GENERIC_FALLBACK_RESPONSE",
+    "log_coherence_metrics",
 ]

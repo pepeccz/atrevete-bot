@@ -26,6 +26,7 @@ from agent.fsm import (
     extract_intent,
 )
 from agent.fsm.intent_extractor import (
+    INTENT_SYNONYMS,
     _build_extraction_prompt,
     _build_state_context,
     _parse_llm_response,
@@ -606,3 +607,72 @@ class TestConfirmServicesIntent:
         )
 
         assert result.type == IntentType.CONFIRM_SERVICES
+
+
+class TestIntentSynonymsNormalizer:
+    """Tests for INTENT_SYNONYMS normalization (Bug #1 fix)."""
+
+    def test_intent_synonyms_dict_exists(self):
+        """INTENT_SYNONYMS dictionary is defined and non-empty."""
+        assert isinstance(INTENT_SYNONYMS, dict)
+        assert len(INTENT_SYNONYMS) > 0
+
+    def test_synonyms_for_confirm_services(self):
+        """Common Spanish variations for confirm_services are mapped."""
+        confirm_services_synonyms = [
+            "continua", "continúa", "sigamos", "ya está", "solo eso", "listo"
+        ]
+        for synonym in confirm_services_synonyms:
+            assert INTENT_SYNONYMS.get(synonym) == "confirm_services", f"'{synonym}' should map to confirm_services"
+
+    def test_synonyms_for_confirm_booking(self):
+        """Common Spanish variations for confirm_booking are mapped."""
+        confirm_booking_synonyms = [
+            "confirmo", "confirmar", "perfecto", "vale", "ok", "dale"
+        ]
+        for synonym in confirm_booking_synonyms:
+            assert INTENT_SYNONYMS.get(synonym) == "confirm_booking", f"'{synonym}' should map to confirm_booking"
+
+    def test_parse_normalizes_synonyms(self):
+        """_parse_llm_response normalizes intent synonyms before parsing (Bug #1 fix)."""
+        # LLM returns "continua" which is not a valid IntentType
+        response = '{"intent_type": "continua", "entities": {}, "confidence": 0.95}'
+        result = _parse_llm_response(response, "Continua")
+
+        # Should be normalized to confirm_services
+        assert result.type == IntentType.CONFIRM_SERVICES
+
+    def test_parse_normalizes_sigamos(self):
+        """'sigamos' is normalized to confirm_services."""
+        response = '{"intent_type": "sigamos", "entities": {}, "confidence": 0.90}'
+        result = _parse_llm_response(response, "Sigamos")
+
+        assert result.type == IntentType.CONFIRM_SERVICES
+
+    def test_parse_normalizes_confirmo(self):
+        """'confirmo' is normalized to confirm_booking."""
+        response = '{"intent_type": "confirmo", "entities": {}, "confidence": 0.95}'
+        result = _parse_llm_response(response, "Confirmo")
+
+        assert result.type == IntentType.CONFIRM_BOOKING
+
+    def test_parse_keeps_valid_intent_types(self):
+        """Valid IntentType values are not modified by normalizer."""
+        response = '{"intent_type": "start_booking", "entities": {}, "confidence": 0.95}'
+        result = _parse_llm_response(response, "Quiero cita")
+
+        assert result.type == IntentType.START_BOOKING
+
+    def test_parse_case_insensitive_normalization(self):
+        """Normalization is case-insensitive."""
+        response = '{"intent_type": "CONTINUA", "entities": {}, "confidence": 0.95}'
+        result = _parse_llm_response(response, "CONTINUA")
+
+        assert result.type == IntentType.CONFIRM_SERVICES
+
+    def test_unmapped_synonyms_still_fallback_to_unknown(self):
+        """Unmapped intent types still fall back to UNKNOWN."""
+        response = '{"intent_type": "some_random_intent", "entities": {}, "confidence": 0.95}'
+        result = _parse_llm_response(response, "test")
+
+        assert result.type == IntentType.UNKNOWN

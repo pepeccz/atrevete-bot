@@ -32,6 +32,51 @@ logger = logging.getLogger(__name__)
 # Confidence threshold below which we return UNKNOWN
 MIN_CONFIDENCE_THRESHOLD = 0.7
 
+# ============================================================================
+# INTENT SYNONYMS (Bug #1 fix)
+# ============================================================================
+# Maps common Spanish variations to canonical IntentType values.
+# This normalizer runs AFTER LLM extraction but BEFORE Intent creation,
+# catching cases where the LLM outputs valid Spanish but unmapped intent names.
+#
+# Context-aware: Some words map differently based on FSM state (handled in extraction prompt)
+# This dict handles the most common fallback mappings.
+
+INTENT_SYNONYMS: dict[str, str] = {
+    # confirm_services variations (SERVICE_SELECTION state)
+    "continua": "confirm_services",
+    "continúa": "confirm_services",
+    "continue": "confirm_services",
+    "seguir": "confirm_services",
+    "sigamos": "confirm_services",
+    "ya está": "confirm_services",
+    "ya esta": "confirm_services",
+    "solo eso": "confirm_services",
+    "nada más": "confirm_services",
+    "nada mas": "confirm_services",
+    "eso es todo": "confirm_services",
+    "listo": "confirm_services",
+    # confirm_booking variations (CONFIRMATION state)
+    "confirmo": "confirm_booking",
+    "confirmar": "confirm_booking",
+    "perfecto": "confirm_booking",
+    "adelante": "confirm_booking",  # Context: in CONFIRMATION state
+    "procede": "confirm_booking",
+    "proceder": "confirm_booking",
+    "vale": "confirm_booking",
+    "ok": "confirm_booking",
+    "dale": "confirm_booking",
+    # start_booking variations
+    "reservar": "start_booking",
+    "agendar": "start_booking",
+    "cita": "start_booking",
+    "quiero una cita": "start_booking",
+    # cancel_booking variations
+    "cancelar": "cancel_booking",
+    "no quiero": "cancel_booking",
+    "dejarlo": "cancel_booking",
+}
+
 
 def _get_llm_client() -> ChatOpenAI:
     """
@@ -81,6 +126,9 @@ def _build_state_context(
         BookingState.SERVICE_SELECTION: [
             ("select_service", "Usuario selecciona un servicio (nombre o número)"),
             ("confirm_services", "Usuario confirma que no quiere más servicios"),
+            # Allow select_stylist from SERVICE_SELECTION when LLM shows stylists without
+            # explicit confirmation (user has at least 1 service selected)
+            ("select_stylist", "Usuario selecciona un estilista (si ya tiene servicios)"),
             ("cancel_booking", "Usuario quiere cancelar la reserva"),
             ("faq", "Pregunta sobre horarios, servicios, precios"),
             ("escalate", "Quiere hablar con una persona"),
@@ -136,11 +184,17 @@ def _build_state_context(
         "\n".join(data_summary_parts) if data_summary_parts else "Ninguno aún"
     )
 
-    # State-specific disambiguation hints
+    # State-specific disambiguation hints (Bug #1 fix: expanded variations)
     disambiguation_hints: dict[BookingState, str] = {
         BookingState.SERVICE_SELECTION: (
-            "IMPORTANTE: Un número (1, 2, 3...) significa selección de servicio de la lista.\n"
-            "'Sí', 'eso es todo', 'nada más' = confirm_services"
+            "IMPORTANTE: Un número (1, 2, 3...) puede ser:\n"
+            "- Selección de SERVICIO si la lista mostrada es de servicios\n"
+            "- Selección de ESTILISTA si la lista mostrada es de estilistas\n"
+            "Analiza el CONTEXTO RECIENTE para determinar qué tipo de lista se mostró.\n"
+            "Si el asistente mostró 'Ana', 'María', 'Carlos' = usuario selecciona estilista.\n\n"
+            "CONFIRMACIÓN DE SERVICIOS (intent: confirm_services):\n"
+            "'Sí', 'eso es todo', 'nada más', 'continua', 'continúa', 'adelante', "
+            "'sigamos', 'ya está', 'solo eso', 'listo', 'seguir' = confirm_services"
         ),
         BookingState.STYLIST_SELECTION: (
             "IMPORTANTE: Un número (1, 2, 3...) significa selección de estilista de la lista.\n"
@@ -155,8 +209,11 @@ def _build_state_context(
             "Extraer first_name (obligatorio) y last_name (opcional)"
         ),
         BookingState.CONFIRMATION: (
-            "IMPORTANTE: 'Sí', 'confirmo', 'adelante', 'perfecto' = confirm_booking.\n"
-            "'No', 'cancelar', 'espera' = cancel_booking"
+            "CONFIRMACIÓN DE RESERVA (intent: confirm_booking):\n"
+            "'Sí', 'si', 'confirmo', 'adelante', 'perfecto', 'ok', 'vale', 'dale', "
+            "'correcto', 'procede', 'listo' = confirm_booking\n\n"
+            "CANCELACIÓN (intent: cancel_booking):\n"
+            "'No', 'cancelar', 'espera', 'no quiero', 'dejarlo' = cancel_booking"
         ),
     }
 
@@ -260,8 +317,17 @@ def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
 
         data = json.loads(cleaned)
 
-        # Parse intent type
+        # Parse intent type with synonym normalization (Bug #1 fix)
         intent_type_str = data.get("intent_type", "unknown")
+
+        # Normalize using INTENT_SYNONYMS before trying to parse as IntentType
+        normalized_intent = INTENT_SYNONYMS.get(intent_type_str.lower(), intent_type_str)
+        if normalized_intent != intent_type_str:
+            logger.info(
+                f"Intent normalized: '{intent_type_str}' -> '{normalized_intent}'"
+            )
+            intent_type_str = normalized_intent
+
         try:
             intent_type = IntentType(intent_type_str)
         except ValueError:

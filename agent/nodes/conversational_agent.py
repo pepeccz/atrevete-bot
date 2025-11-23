@@ -33,11 +33,17 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_openai import ChatOpenAI
 
 from agent.fsm import (
+    BookingState,
+    GENERIC_FALLBACK_RESPONSE,
     BookingFSM,
     IntentType,
+    ResponseGuidance,
+    ResponseValidator,
     ToolExecutionError,
     extract_intent,
+    log_coherence_metrics,
     log_tool_execution,
+    regenerate_with_correction,
     validate_tool_call,
 )
 from agent.prompts import load_contextual_prompt, load_stylist_context
@@ -108,6 +114,45 @@ def get_llm_with_tools() -> ChatOpenAI:
     logger.info("GPT-4.1-mini LLM initialized with 8 consolidated tools (v3.2) via OpenRouter")
 
     return llm_with_tools
+
+
+def format_guidance_prompt(guidance: ResponseGuidance, state: BookingState) -> str:
+    """
+    Format ResponseGuidance into prompt text for LLM injection (Story 5-7b).
+
+    Creates a structured directive block that instructs the LLM on what it
+    MUST show, MUST ask, and MUST NOT mention based on FSM state.
+
+    Args:
+        guidance: ResponseGuidance from BookingFSM.get_response_guidance()
+        state: Current BookingState for context
+
+    Returns:
+        Formatted prompt string to inject as SystemMessage
+
+    Example:
+        >>> guidance = ResponseGuidance(
+        ...     must_show=["lista de estilistas"],
+        ...     must_ask="¿Con quién te gustaría la cita?",
+        ...     forbidden=["horarios específicos"],
+        ...     context_hint="Usuario debe elegir estilista."
+        ... )
+        >>> prompt = format_guidance_prompt(guidance, BookingState.STYLIST_SELECTION)
+        >>> "DIRECTIVA FSM" in prompt
+        True
+    """
+    must_show_str = ", ".join(guidance.must_show) if guidance.must_show else "nada específico"
+    must_ask_str = guidance.must_ask or "nada específico"
+    forbidden_str = ", ".join(guidance.forbidden) if guidance.forbidden else "ninguna restricción"
+
+    return f"""DIRECTIVA FSM (OBLIGATORIO):
+- Estado actual: {state.value}
+- DEBES mostrar: {must_show_str}
+- DEBES preguntar: {must_ask_str}
+- PROHIBIDO mencionar: {forbidden_str}
+- Contexto: {guidance.context_hint}
+
+⚠️ CRÍTICO: Violar la directiva = respuesta será rechazada y regenerada."""
 
 
 async def execute_tool_call(
@@ -537,8 +582,27 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
 - Datos recopilados: {fsm.collected_data if fsm.collected_data else "Ninguno"}
 {fsm_context_for_llm if fsm_context_for_llm else ""}"""
 
-    # Combine dynamic contexts
-    dynamic_context = f"{temporal_context}\n\n{customer_context}\n\n{fsm_state_context}"
+    # =========================================================================
+    # FSM GUIDANCE (Story 5-7b) - Proactive directives for LLM
+    # =========================================================================
+    guidance = fsm.get_response_guidance()
+    guidance_prompt = format_guidance_prompt(guidance, fsm.state)
+
+    logger.info(
+        "FSM guidance generated | state=%s | forbidden=%d | must_show=%d",
+        fsm.state.value,
+        len(guidance.forbidden),
+        len(guidance.must_show),
+        extra={
+            "conversation_id": conversation_id,
+            "fsm_state": fsm.state.value,
+            "guidance_forbidden": guidance.forbidden,
+            "guidance_must_show": guidance.must_show,
+        }
+    )
+
+    # Combine dynamic contexts (guidance added last for prominence)
+    dynamic_context = f"{temporal_context}\n\n{customer_context}\n\n{fsm_state_context}\n\n{guidance_prompt}"
 
     # Measure dynamic context size
     dynamic_size_chars = len(dynamic_context)
@@ -689,7 +753,83 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
         # No tool calls - use response content directly
         assistant_response = response.content
 
-    # Step 6: Validate response is not blank/whitespace-only
+    # =========================================================================
+    # STEP 6: RESPONSE COHERENCE VALIDATION (Story 5-7a)
+    # =========================================================================
+    # Validate LLM response is coherent with FSM state before sending to user
+    import time
+    coherence_start = time.perf_counter()
+
+    validator = ResponseValidator()
+    coherence_result = validator.validate(assistant_response, fsm)
+
+    if not coherence_result.is_coherent:
+        # Response is incoherent - attempt regeneration (max 1 attempt)
+        logger.warning(
+            "Response incoherent with FSM state | violations=%s | attempting regeneration",
+            coherence_result.violations,
+            extra={
+                "conversation_id": conversation_id,
+                "fsm_state": fsm.state.value,
+                "violations": coherence_result.violations,
+            }
+        )
+
+        # Regenerate with correction hint
+        regenerated_response = await regenerate_with_correction(
+            messages=langchain_messages,
+            correction_hint=coherence_result.correction_hint or "",
+            fsm=fsm,
+        )
+
+        # Validate regenerated response
+        regen_coherence = validator.validate(regenerated_response, fsm)
+
+        if regen_coherence.is_coherent:
+            # Regeneration succeeded
+            assistant_response = regenerated_response
+            logger.info(
+                "Regenerated response is coherent | state=%s",
+                fsm.state.value,
+                extra={"conversation_id": conversation_id}
+            )
+            log_coherence_metrics(
+                fsm=fsm,
+                original_coherent=False,
+                regenerated=True,
+                regeneration_coherent=True,
+                total_time_ms=(time.perf_counter() - coherence_start) * 1000,
+            )
+        else:
+            # Regeneration also failed - use generic fallback
+            logger.warning(
+                "Regenerated response still incoherent | violations=%s | using fallback",
+                regen_coherence.violations,
+                extra={
+                    "conversation_id": conversation_id,
+                    "fsm_state": fsm.state.value,
+                    "regen_violations": regen_coherence.violations,
+                }
+            )
+            assistant_response = GENERIC_FALLBACK_RESPONSE
+            log_coherence_metrics(
+                fsm=fsm,
+                original_coherent=False,
+                regenerated=True,
+                regeneration_coherent=False,
+                total_time_ms=(time.perf_counter() - coherence_start) * 1000,
+            )
+    else:
+        # Original response is coherent
+        log_coherence_metrics(
+            fsm=fsm,
+            original_coherent=True,
+            regenerated=False,
+            regeneration_coherent=None,
+            total_time_ms=(time.perf_counter() - coherence_start) * 1000,
+        )
+
+    # Step 7: Validate response is not blank/whitespace-only
     if not assistant_response or assistant_response.strip() == "":
         logger.error(
             "Blank response detected from Claude",
@@ -704,7 +844,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
             "¿Podrías intentarlo de nuevo? 🌸"
         )
 
-    # Step 7: Check for escalation trigger
+    # Step 8: Check for escalation trigger
     # If escalate_to_human was called, mark escalation in state and disable bot in Chatwoot
     if response.tool_calls:
         for tool_call in response.tool_calls:
@@ -753,7 +893,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
                 updated_state["updated_at"] = datetime.now(ZoneInfo("Europe/Madrid"))
                 return updated_state
 
-    # Step 8: Detect booking confirmation from user
+    # Step 9: Detect booking confirmation from user
     # If in BOOKING_CONFIRMATION state and user gives affirmative response, mark as confirmed
     from agent.prompts import _detect_booking_state
     current_state_type = _detect_booking_state(state)
@@ -788,7 +928,7 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
             # Update state with confirmation flag BEFORE adding message
             state["booking_confirmed"] = True
 
-    # Step 9: Update state with assistant response
+    # Step 10: Update state with assistant response
     updated_state = add_message(state, "assistant", assistant_response)
     updated_state["last_node"] = "conversational_agent"
     updated_state["updated_at"] = datetime.now(ZoneInfo("Europe/Madrid"))
