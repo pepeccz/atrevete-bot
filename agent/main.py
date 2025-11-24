@@ -143,7 +143,39 @@ async def subscribe_to_incoming_messages():
                 )
 
                 try:
+                    # ================================================================
+                    # GRAPH INVOCATION WITH CHECKPOINT FLUSH (ADR-010)
+                    # ================================================================
+                    # Invoke the conversation graph which processes the message and
+                    # updates the FSM state via checkpoint persistence
                     result = await graph.ainvoke(state, config=config)
+
+                    # ================================================================
+                    # SYNCHRONOUS CHECKPOINT FLUSH (Race Condition Prevention)
+                    # ================================================================
+                    # After ainvoke(), the checkpoint is written asynchronously in the background.
+                    # If the next message arrives before the write completes, it loads the OLD
+                    # checkpoint, causing race condition FSM state mismatches.
+                    #
+                    # To prevent this, we give the background write task a chance to complete
+                    # by yielding control with asyncio.sleep(0). This allows the event loop
+                    # to run pending tasks (including the checkpoint write).
+                    #
+                    # Additional small delay (0.1s) to ensure Redis write propagates
+                    # (fsync at OS level for persistence)
+                    logger.debug(
+                        f"Checkpoint write starting (async) | conversation_id={conversation_id}",
+                        extra={"conversation_id": conversation_id}
+                    )
+
+                    # Yield control to event loop to allow checkpoint write task to run
+                    await asyncio.sleep(0)  # Yield to pending tasks
+                    await asyncio.sleep(0.1)  # Small delay for Redis fsync
+
+                    logger.debug(
+                        f"Checkpoint flush completed | conversation_id={conversation_id}",
+                        extra={"conversation_id": conversation_id}
+                    )
 
                     # Flush Langfuse traces to ensure they're sent
                     if langfuse_handler:

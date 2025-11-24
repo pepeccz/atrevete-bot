@@ -26,7 +26,7 @@ Tools available (8 consolidated):
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -38,12 +38,19 @@ from agent.fsm import (
     BookingFSM,
     IntentType,
     ResponseGuidance,
-    ResponseValidator,
-    ToolExecutionError,
+)
+from agent.fsm.intent_extractor import (
+    _normalize_start_time_timezone,
     extract_intent,
+)
+from agent.fsm.response_validator import (
+    ResponseValidator,
     log_coherence_metrics,
-    log_tool_execution,
     regenerate_with_correction,
+)
+from agent.fsm.tool_validation import (
+    ToolExecutionError,
+    log_tool_execution,
     validate_tool_call,
 )
 from agent.prompts import load_contextual_prompt, load_stylist_context
@@ -62,6 +69,132 @@ from agent.tools import (
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+async def _execute_automatic_booking(
+    fsm: BookingFSM,
+    state: ConversationState,
+    conversation_id: str,
+) -> dict[str, Any]:
+    """
+    Execute book() tool automatically when FSM transitions to BOOKED state.
+
+    This ensures the appointment is actually created in Google Calendar and database,
+    not just confirmed verbally by the LLM.
+
+    Args:
+        fsm: BookingFSM instance with collected booking data
+        state: Current conversation state
+        conversation_id: Conversation ID for logging
+
+    Returns:
+        dict with keys:
+        - success: bool
+        - appointment_id: str (if success)
+        - error: str (if failure)
+        - message: str (human-readable message)
+    """
+    import json
+
+    collected_data = fsm.collected_data
+    customer_id = state.get("customer_id")
+
+    logger.info(
+        "Executing automatic booking | conversation_id=%s | data=%s",
+        conversation_id,
+        list(collected_data.keys()),
+    )
+
+    # Validate required data
+    if not customer_id:
+        return {
+            "success": False,
+            "error": "MISSING_CUSTOMER_ID",
+            "message": "No se encontró el ID del cliente. Error del sistema.",
+        }
+
+    required_fields = ["services", "stylist_id", "slot", "first_name"]
+    missing_fields = [f for f in required_fields if not collected_data.get(f)]
+    if missing_fields:
+        return {
+            "success": False,
+            "error": "MISSING_BOOKING_DATA",
+            "message": f"Faltan datos para la reserva: {', '.join(missing_fields)}",
+        }
+
+    # Extract slot data
+    slot = collected_data.get("slot", {})
+    start_time = slot.get("start_time")
+    if not start_time:
+        return {
+            "success": False,
+            "error": "MISSING_START_TIME",
+            "message": "No se encontró la hora de inicio de la cita.",
+        }
+
+    # DEFENSIVE: Ensure start_time has timezone (defense in depth)
+    # Intent extractor should already normalize, but we double-check here
+    # to prevent book() failures from timezone-naive datetimes
+    start_time = _normalize_start_time_timezone(start_time)
+
+    # Build book() tool arguments
+    book_args = {
+        "customer_id": str(customer_id),
+        "stylist_id": collected_data["stylist_id"],
+        "start_time": start_time,
+        "services": collected_data["services"],
+        "first_name": collected_data["first_name"],
+        "last_name": collected_data.get("last_name"),
+        "notes": collected_data.get("notes"),
+    }
+
+    logger.info(
+        "Calling book() tool | conversation_id=%s | args=%s",
+        conversation_id,
+        {k: v for k, v in book_args.items() if k != "customer_id"},  # Don't log customer_id
+    )
+
+    try:
+        # Execute book() tool
+        result = await book.ainvoke(book_args)
+
+        if isinstance(result, dict) and not result.get("error"):
+            logger.info(
+                "Booking created successfully | conversation_id=%s | appointment_id=%s",
+                conversation_id,
+                result.get("appointment_id"),
+            )
+            return {
+                "success": True,
+                "appointment_id": result.get("appointment_id"),
+                "message": "Reserva creada exitosamente.",
+                "details": result,
+            }
+        else:
+            error_msg = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
+            logger.error(
+                "Booking failed | conversation_id=%s | error=%s",
+                conversation_id,
+                error_msg,
+            )
+            return {
+                "success": False,
+                "error": error_msg,
+                "message": result.get("message", "Error al crear la reserva.") if isinstance(result, dict) else str(result),
+            }
+
+    except Exception as e:
+        logger.error(
+            "Booking exception | conversation_id=%s | error=%s",
+            conversation_id,
+            str(e),
+            exc_info=True,
+        )
+        return {
+            "success": False,
+            "error": "BOOKING_EXCEPTION",
+            "message": f"Error inesperado al crear la reserva: {str(e)}",
+        }
 
 
 def get_llm_with_tools() -> ChatOpenAI:
@@ -116,6 +249,174 @@ def get_llm_with_tools() -> ChatOpenAI:
     return llm_with_tools
 
 
+# Patterns that indicate premature service confirmation (without search_services call)
+PREMATURE_CONFIRMATION_PATTERNS = [
+    "has seleccionado",
+    "servicio seleccionado",
+    "perfecto, has elegido",
+    "excelente elección",
+    "seleccionaste",
+    "elegiste",
+]
+
+# Common service-related keywords for query extraction
+SERVICE_KEYWORDS = [
+    "corte", "cortar", "pelo", "cabello", "tinte", "color", "mechas",
+    "peinado", "peinar", "secado", "secar", "tratamiento", "manicura",
+    "pedicura", "uñas", "barba", "afeitado", "alisado", "permanente",
+    "keratina", "extensiones", "recogido", "moldeado", "decoloración",
+]
+
+
+def _extract_service_query(user_message: str) -> str:
+    """
+    Extract service-related keywords from user message for search_services query.
+
+    Args:
+        user_message: The user's message
+
+    Returns:
+        Query string with extracted service keywords
+    """
+    if not user_message:
+        return "servicios"
+
+    message_lower = user_message.lower()
+
+    # Extract matching keywords
+    found_keywords = []
+    for keyword in SERVICE_KEYWORDS:
+        if keyword in message_lower:
+            found_keywords.append(keyword)
+
+    if found_keywords:
+        return " ".join(found_keywords[:3])  # Max 3 keywords
+
+    # If no keywords found, use the message itself (cleaned)
+    # Remove common booking phrases
+    cleaned = message_lower
+    for phrase in ["quiero", "quisiera", "me gustaría", "necesito", "reservar", "una cita", "para"]:
+        cleaned = cleaned.replace(phrase, "")
+
+    cleaned = cleaned.strip()
+    if cleaned and len(cleaned) > 2:
+        return cleaned[:50]  # Limit query length
+
+    return "servicios"  # Default fallback
+
+
+def _generate_fallback_for_state(fsm: Optional["BookingFSM"]) -> str:
+    """
+    Generate a context-aware fallback response based on FSM state.
+
+    This prevents generic error messages when the LLM returns a blank response,
+    instead providing helpful guidance based on where the user is in the booking flow.
+
+    Args:
+        fsm: The BookingFSM instance (or None if not available)
+
+    Returns:
+        Appropriate fallback message for the current state
+    """
+    if not fsm:
+        return "¡Hola! 🌸 ¿En qué puedo ayudarte? ¿Te gustaría agendar una cita?"
+
+    state = fsm.state
+    collected = fsm.collected_data
+
+    if state == BookingState.IDLE:
+        return "¡Hola! 🌸 Soy el asistente de Atrévete Peluquería. ¿En qué puedo ayudarte hoy?"
+
+    elif state == BookingState.SERVICE_SELECTION:
+        return (
+            "¿Qué servicio te gustaría? Puedo ayudarte con cortes, tintes, peinados, "
+            "manicura y muchos más servicios. Dime qué estás buscando. 😊"
+        )
+
+    elif state == BookingState.STYLIST_SELECTION:
+        services = collected.get("services", [])
+        services_text = ", ".join(services) if services else "tus servicios"
+        return (
+            f"Perfecto con {services_text}. Ahora necesitamos elegir estilista. "
+            "¿Con quién te gustaría agendar tu cita?"
+        )
+
+    elif state == BookingState.SLOT_SELECTION:
+        stylist_name = collected.get("stylist_name", "tu estilista")
+        return (
+            f"Genial, vas a agendar con {stylist_name}. "
+            "Déjame buscar los horarios disponibles. ¿Qué día y hora te vendría bien?"
+        )
+
+    elif state == BookingState.CUSTOMER_DATA:
+        return (
+            "Ya casi terminamos. Solo necesito confirmar tu nombre para la cita. "
+            "¿Cómo te llamas?"
+        )
+
+    elif state == BookingState.CONFIRMATION:
+        return (
+            "Tengo todos los datos de tu cita. "
+            "¿Confirmo la reserva? Puedes decirme 'sí' para confirmar."
+        )
+
+    elif state == BookingState.BOOKED:
+        return (
+            "¡Tu cita ha sido reservada! 🌸 "
+            "¿Hay algo más en lo que pueda ayudarte?"
+        )
+
+    # Default fallback for any unknown state
+    return "¿En qué puedo ayudarte? Estoy aquí para asistirte con tu reserva. 🌸"
+
+
+def detect_premature_service_confirmation(
+    response_content: str,
+    fsm_state: BookingState,
+    collected_services: list[str],
+    search_services_called: bool,
+) -> bool:
+    """
+    Detect if LLM is confirming a service selection without calling search_services first.
+
+    This prevents the bug where LLM says "Has seleccionado corte de pelo" without
+    validating that the service exists in the database.
+
+    Args:
+        response_content: The LLM's response text
+        fsm_state: Current FSM state
+        collected_services: List of services already validated in FSM
+        search_services_called: Whether search_services was called in this turn
+
+    Returns:
+        True if premature confirmation detected, False otherwise
+    """
+    # Only check in SERVICE_SELECTION state
+    if fsm_state != BookingState.SERVICE_SELECTION:
+        return False
+
+    # If services already validated, allow confirmation
+    if collected_services:
+        return False
+
+    # If search_services was called this turn, allow confirmation
+    if search_services_called:
+        return False
+
+    # Check for confirmation patterns
+    response_lower = response_content.lower()
+    for pattern in PREMATURE_CONFIRMATION_PATTERNS:
+        if pattern in response_lower:
+            logger.warning(
+                "Premature service confirmation detected | pattern=%s",
+                pattern,
+                extra={"response_preview": response_content[:100]}
+            )
+            return True
+
+    return False
+
+
 def format_guidance_prompt(guidance: ResponseGuidance, state: BookingState) -> str:
     """
     Format ResponseGuidance into prompt text for LLM injection (Story 5-7b).
@@ -145,13 +446,20 @@ def format_guidance_prompt(guidance: ResponseGuidance, state: BookingState) -> s
     must_ask_str = guidance.must_ask or "nada específico"
     forbidden_str = ", ".join(guidance.forbidden) if guidance.forbidden else "ninguna restricción"
 
+    # Build required tool call warning if applicable
+    required_tool_str = ""
+    if guidance.required_tool_call:
+        required_tool_str = f"""
+⚠️ HERRAMIENTA OBLIGATORIA: Debes llamar `{guidance.required_tool_call}()` ANTES de confirmar cualquier selección.
+NO confirmes "Has seleccionado X" sin primero llamar a {guidance.required_tool_call}() para validar que X existe."""
+
     return f"""DIRECTIVA FSM (OBLIGATORIO):
 - Estado actual: {state.value}
 - DEBES mostrar: {must_show_str}
 - DEBES preguntar: {must_ask_str}
 - PROHIBIDO mencionar: {forbidden_str}
 - Contexto: {guidance.context_hint}
-
+{required_tool_str}
 ⚠️ CRÍTICO: Violar la directiva = respuesta será rechazada y regenerada."""
 
 
@@ -314,16 +622,19 @@ async def execute_tool_call(
         # POST-EXECUTION STATE UPDATES
         # ============================================================================
 
-        # Track successful booking creation
+        # Track successful booking creation (for manual book() calls by LLM)
+        # Note: The canonical booking path is now via automatic booking in FSM transition.
+        # This code handles edge cases where LLM calls book() directly.
         if tool_name == "book" and isinstance(result, dict) and not result.get("error"):
             state_updates["appointment_created"] = True
             logger.info(
-                "Appointment created successfully",
+                "Appointment created via manual book() call",
                 extra={
                     "appointment_id": result.get("appointment_id"),
                     "customer_id": tool_args.get("customer_id")
                 }
             )
+            # Note: FSM reset is handled by _execute_automatic_booking, not here
 
         # Track service selection when search_services returns results
         if tool_name == "search_services" and isinstance(result, dict) and not result.get("error"):
@@ -481,6 +792,25 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             # Booking intent - validate with FSM
             if fsm.can_transition(intent):
                 fsm_result = fsm.transition(intent)
+
+                # ================================================================
+                # SERVICE DURATION CALCULATION (Root fix for duration bug)
+                # ================================================================
+                # Calculate actual service durations from database when:
+                # - Entering CONFIRMATION state (for accurate summary)
+                # - Entering SLOT_SELECTION state (for accurate availability)
+                # This replaces the hardcoded 90-minute default with real values
+                # ================================================================
+                if fsm_result.new_state in (
+                    BookingState.CONFIRMATION,
+                    BookingState.SLOT_SELECTION,
+                ):
+                    await fsm.calculate_service_durations()
+                    logger.info(
+                        f"Service durations calculated | total={fsm.collected_data.get('total_duration_minutes', 0)}min",
+                        extra={"conversation_id": conversation_id}
+                    )
+
                 await fsm.persist()
                 logger.info(
                     f"FSM transition SUCCESS | new_state={fsm_result.new_state.value}",
@@ -490,11 +820,80 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
                         "next_action": fsm_result.next_action,
                     }
                 )
-                fsm_context_for_llm = (
-                    f"[FSM TRANSICIÓN EXITOSA] Estado: {fsm_result.new_state.value}\n"
-                    f"Siguiente acción: {fsm_result.next_action}\n"
-                    f"Datos recopilados: {fsm_result.collected_data}"
-                )
+
+                # ================================================================
+                # AUTOMATIC BOOKING EXECUTION (Fix for Bug #2)
+                # ================================================================
+                # When FSM transitions to BOOKED, automatically execute book() tool
+                # This ensures the appointment is actually created in Google Calendar
+                # ================================================================
+                if fsm_result.new_state == BookingState.BOOKED:
+                    booking_result = await _execute_automatic_booking(
+                        fsm=fsm,
+                        state=state,
+                        conversation_id=conversation_id,
+                    )
+
+                    if booking_result["success"]:
+                        fsm_context_for_llm = (
+                            f"[RESERVA CREADA EXITOSAMENTE]\n"
+                            f"ID de cita: {booking_result.get('appointment_id', 'N/A')}\n"
+                            f"Datos: {fsm_result.collected_data}\n"
+                            f"Responde confirmando la cita al cliente con los detalles."
+                        )
+                        # Reset FSM after successful booking
+                        fsm.reset()
+                        await fsm.persist()
+                        state["appointment_created"] = True
+                    else:
+                        # ================================================================
+                        # ENHANCED ERROR HANDLING (ADR-009: Specific error detection)
+                        # ================================================================
+                        error_code = booking_result.get("error", "UNKNOWN")
+
+                        if error_code == "DATE_TOO_SOON":
+                            # Special handling for 3-day rule violation
+                            # This can happen when user resumes old conversation with obsolete slot
+                            logger.warning(
+                                "Booking failed: 3-day rule violation | "
+                                "conversation_id=%s | days_until=%s",
+                                conversation_id,
+                                booking_result.get("days_until_appointment", "N/A"),
+                            )
+                            # Reset slot so user must choose a new date
+                            fsm._collected_data.pop("slot", None)
+                            # Reset to SLOT_SELECTION for date re-selection
+                            fsm._state = BookingState.SLOT_SELECTION
+                            await fsm.persist()
+
+                            fsm_context_for_llm = (
+                                f"[FECHA DE CITA NO VÁLIDA]\n"
+                                f"Las citas deben agendarse con al menos 3 días de anticipación.\n"
+                                f"La fecha que seleccionaste ya pasó o está muy próxima.\n"
+                                f"Por favor, elige una nueva fecha con más de 3 días de anticipación."
+                            )
+                        else:
+                            # Generic error handling for other cases
+                            fsm_context_for_llm = (
+                                f"[ERROR EN RESERVA]\n"
+                                f"Error: {error_code}\n"
+                                f"Mensaje: {booking_result.get('message', '')}\n"
+                                f"Informa al cliente que hubo un problema y ofrece reintentar."
+                            )
+                        # Don't reset FSM completely - keep data for retry (unless DATE_TOO_SOON)
+                else:
+                    # Use fsm.collected_data (not fsm_result.collected_data) to get
+                    # updated data after calculate_service_durations()
+                    current_data = fsm.collected_data
+                    duration_info = ""
+                    if "total_duration_minutes" in current_data:
+                        duration_info = f"\nDuración total calculada: {current_data['total_duration_minutes']} minutos"
+
+                    fsm_context_for_llm = (
+                        f"[FSM TRANSICIÓN EXITOSA] Estado: {fsm_result.new_state.value}\n"
+                        f"Siguiente acción: {fsm_result.next_action}\n"
+                        f"Datos recopilados: {current_data}{duration_info}"
+                    )
             else:
                 # Invalid transition - FSM explains what's missing
                 fsm_result = fsm.transition(intent)  # This returns failure details
@@ -686,6 +1085,9 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
         )
 
     # Step 4: Handle tool calls if any
+    # Track if search_services was called in this turn (for premature confirmation detection)
+    search_services_called_this_turn = False
+
     if response.tool_calls:
         logger.info(
             f"Executing {len(response.tool_calls)} tool call(s)",
@@ -700,6 +1102,10 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
 
         # Execute each tool call with state-aware validation
         for tool_call in response.tool_calls:
+            # Track if search_services is being called
+            if tool_call.get("name") == "search_services":
+                search_services_called_this_turn = True
+
             tool_result, state_updates = await execute_tool_call(tool_call, state, fsm)
 
             # Apply state updates immediately
@@ -731,11 +1137,18 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
             )
 
         except Exception as e:
+            # Log full error details for debugging
+            import traceback
             logger.error(
                 "Error invoking Claude LLM for final response",
                 extra={
                     "conversation_id": conversation_id,
                     "error": str(e),
+                    "error_type": type(e).__name__,
+                    "fsm_state": fsm.state.value if fsm else "unknown",
+                    "fsm_collected_data": fsm.collected_data if fsm else {},
+                    "tool_calls_executed": [tc["name"] for tc in response.tool_calls] if response.tool_calls else [],
+                    "traceback": traceback.format_exc(),
                 },
                 exc_info=True
             )
@@ -749,9 +1162,106 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
 
         assistant_response = final_response.content
 
+        # Early detection of blank response after tool calls
+        if not assistant_response or not assistant_response.strip():
+            logger.warning(
+                "LLM returned blank response after tool execution - generating fallback",
+                extra={
+                    "conversation_id": conversation_id,
+                    "fsm_state": fsm.state.value if fsm else "unknown",
+                    "tools_executed": [tc["name"] for tc in response.tool_calls],
+                    "response_content": repr(assistant_response),
+                }
+            )
+            # Generate context-aware fallback based on FSM state
+            assistant_response = _generate_fallback_for_state(fsm)
+
     else:
         # No tool calls - use response content directly
         assistant_response = response.content
+
+        # Early detection of blank response without tool calls
+        if not assistant_response or not assistant_response.strip():
+            logger.warning(
+                "LLM returned blank response (no tools) - generating fallback",
+                extra={
+                    "conversation_id": conversation_id,
+                    "fsm_state": fsm.state.value if fsm else "unknown",
+                    "response_content": repr(assistant_response),
+                }
+            )
+            assistant_response = _generate_fallback_for_state(fsm)
+
+    # =========================================================================
+    # STEP 5b: PREMATURE SERVICE CONFIRMATION DETECTION
+    # =========================================================================
+    # Detect if LLM is confirming a service without calling search_services first
+    collected_services = fsm.collected_data.get("services", [])
+
+    if detect_premature_service_confirmation(
+        response_content=assistant_response,
+        fsm_state=fsm.state,
+        collected_services=collected_services,
+        search_services_called=search_services_called_this_turn,
+    ):
+        logger.warning(
+            "Premature service confirmation detected - forcing search_services call",
+            extra={
+                "conversation_id": conversation_id,
+                "fsm_state": fsm.state.value,
+                "original_response": assistant_response[:100],
+            }
+        )
+
+        # Extract service query from user message
+        service_query = _extract_service_query(last_user_message)
+
+        # Force search_services call
+        try:
+            search_result = await search_services.ainvoke({"query": service_query})
+
+            # Build correction message with actual services from DB
+            if isinstance(search_result, dict) and search_result.get("services"):
+                services_list = search_result.get("services", [])
+                services_text = "\n".join([
+                    f"{i+1}. {s['name']} ({s['duration_minutes']} min)"
+                    for i, s in enumerate(services_list[:5])
+                ])
+
+                # Replace premature confirmation with proper service list
+                assistant_response = (
+                    f"Tenemos estos servicios disponibles:\n\n"
+                    f"{services_text}\n\n"
+                    f"¿Cuál te gustaría agendar? Puedes responder con el número o el nombre del servicio."
+                )
+
+                logger.info(
+                    "Replaced premature confirmation with service list",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "services_found": len(services_list),
+                        "query": service_query,
+                    }
+                )
+            else:
+                # No services found - ask for clarification
+                assistant_response = (
+                    f"No encontré servicios que coincidan con '{service_query}'. "
+                    f"¿Podrías describirme qué servicio te interesa? "
+                    f"Tenemos servicios de peluquería y estética."
+                )
+
+        except Exception as e:
+            logger.error(
+                "Error forcing search_services call",
+                extra={"conversation_id": conversation_id, "error": str(e)},
+                exc_info=True,
+            )
+            # Fall back to asking for service
+            assistant_response = (
+                "¿Qué servicio te gustaría? Tenemos servicios de peluquería y estética. "
+                "Puedo buscarte opciones si me dices qué estás buscando."
+            )
 
     # =========================================================================
     # STEP 6: RESPONSE COHERENCE VALIDATION (Story 5-7a)

@@ -14,10 +14,10 @@ Key responsibilities:
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
-from agent.fsm.models import BookingState, FSMResult, Intent, IntentType, ResponseGuidance
+from agent.fsm.models import BookingState, FSMResult, Intent, IntentType, ResponseGuidance, ServiceDetail
 from shared.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -68,9 +68,15 @@ class BookingFSM:
         },
         BookingState.SLOT_SELECTION: {
             IntentType.SELECT_SLOT: BookingState.CUSTOMER_DATA,
+            # Allow re-checking availability with different dates while in slot selection
+            IntentType.CHECK_AVAILABILITY: BookingState.SLOT_SELECTION,
         },
         BookingState.CUSTOMER_DATA: {
-            IntentType.PROVIDE_CUSTOMER_DATA: BookingState.CONFIRMATION,
+            # Self-loop to accumulate data in two phases:
+            # Phase 1: Collect first_name
+            # Phase 2: Ask for notes (notes_asked=True)
+            # After phase 2 completes, transition() advances to CONFIRMATION
+            IntentType.PROVIDE_CUSTOMER_DATA: BookingState.CUSTOMER_DATA,
         },
         BookingState.CONFIRMATION: {
             IntentType.CONFIRM_BOOKING: BookingState.BOOKED,
@@ -85,13 +91,17 @@ class BookingFSM:
     }
 
     # Data validation requirements for each transition
+    # NOTE: notes_asked is a boolean flag indicating that the user was asked for notes
+    # It doesn't require actual notes content, just that the question was asked
     TRANSITION_REQUIREMENTS: ClassVar[dict[tuple[BookingState, IntentType], list[str]]] = {
         (BookingState.SERVICE_SELECTION, IntentType.CONFIRM_SERVICES): ["services"],
         # SELECT_STYLIST from SERVICE_SELECTION requires at least 1 service selected
         (BookingState.SERVICE_SELECTION, IntentType.SELECT_STYLIST): ["services", "stylist_id"],
         (BookingState.STYLIST_SELECTION, IntentType.SELECT_STYLIST): ["stylist_id"],
         (BookingState.SLOT_SELECTION, IntentType.SELECT_SLOT): ["slot"],
-        (BookingState.CUSTOMER_DATA, IntentType.PROVIDE_CUSTOMER_DATA): ["first_name"],
+        # CUSTOMER_DATA: No requirements for self-loop - data accumulated in phases
+        # Phase progression (first_name → notes_asked) handled in transition()
+        (BookingState.CUSTOMER_DATA, IntentType.PROVIDE_CUSTOMER_DATA): [],
         (BookingState.CONFIRMATION, IntentType.CONFIRM_BOOKING): [
             "services",
             "stylist_id",
@@ -220,22 +230,35 @@ class BookingFSM:
         # Update collected data from intent entities
         self._merge_entities(intent.entities)
 
+        # CUSTOMER_DATA: Conditional advance to CONFIRMATION when data is complete
+        # The self-loop accumulates data in two phases:
+        # Phase 1: Collect first_name (notes_asked=False)
+        # Phase 2: Collect notes response (notes_asked=True)
+        # Only advance to CONFIRMATION when both phases are complete
+        if (
+            from_state == BookingState.CUSTOMER_DATA
+            and intent.type == IntentType.PROVIDE_CUSTOMER_DATA
+        ):
+            has_name = bool(self._collected_data.get("first_name"))
+            notes_asked = self._collected_data.get("notes_asked", False)
+
+            if has_name and notes_asked:
+                # Both phases complete - advance to CONFIRMATION
+                to_state = BookingState.CONFIRMATION
+                logger.info(
+                    "CUSTOMER_DATA phases complete (name=%s, notes_asked=%s) -> CONFIRMATION",
+                    self._collected_data.get("first_name"),
+                    notes_asked,
+                    extra={"conversation_id": self._conversation_id}
+                )
+
         # Update state
         self._state = to_state
         self._last_updated = datetime.now(UTC)
 
-        # AUTO-RESET: BOOKED → IDLE after successful booking (Bug #2 fix)
-        # The booking is complete, confirmation message will be sent, then FSM resets
-        # This prevents the FSM from being "stuck" in BOOKED state
-        if to_state == BookingState.BOOKED:
-            logger.info(
-                "FSM auto-reset: BOOKED -> IDLE | conversation_id=%s",
-                self._conversation_id,
-            )
-            # Keep collected_data briefly for the confirmation message context
-            # but reset state to IDLE so next message starts fresh
-            self._state = BookingState.IDLE
-            self._collected_data = {}
+        # NOTE: Auto-reset removed. The FSM stays in BOOKED state until
+        # book() executes successfully, then conversational_agent calls fsm.reset()
+        # This ensures collected_data is available for the booking tool.
 
         # Determine next action
         next_action = self._get_next_action()
@@ -269,6 +292,117 @@ class BookingFSM:
             self._state.value,
             self._conversation_id,
         )
+
+    async def calculate_service_durations(self) -> None:
+        """
+        Calculate and update service durations from database.
+
+        This method:
+        1. Looks up each service name in the database to get duration_minutes
+        2. Updates service_details with enriched service data
+        3. Calculates total_duration_minutes as sum of all services
+        4. Synchronizes slot.duration_minutes with total_duration
+
+        Should be called after services are confirmed (before showing confirmation).
+        """
+        from database.connection import get_async_session
+        from sqlalchemy import select
+        from sqlalchemy.sql import func
+        from database.models import Service
+
+        services = self._collected_data.get("services", [])
+        if not services:
+            logger.debug("No services to calculate duration for")
+            return
+
+        service_details: list[ServiceDetail] = []
+        total_duration = 0
+
+        try:
+            async with get_async_session() as session:
+                for service_name in services:
+                    # Fuzzy match using similarity (pg_trgm)
+                    # First try exact match, then similarity
+                    query = (
+                        select(Service.name, Service.duration_minutes)
+                        .where(Service.is_active == True)  # noqa: E712
+                        .where(
+                            func.lower(Service.name) == func.lower(service_name)
+                        )
+                    )
+                    result = await session.execute(query)
+                    row = result.first()
+
+                    if row:
+                        name, duration = row
+                        service_details.append(
+                            ServiceDetail(name=name, duration_minutes=duration)
+                        )
+                        total_duration += duration
+                        logger.debug(
+                            f"Service '{service_name}' resolved: duration={duration}min"
+                        )
+                    else:
+                        # Try similarity match
+                        similarity_query = (
+                            select(Service.name, Service.duration_minutes)
+                            .where(Service.is_active == True)  # noqa: E712
+                            .where(
+                                func.similarity(Service.name, service_name) > 0.3
+                            )
+                            .order_by(func.similarity(Service.name, service_name).desc())
+                            .limit(1)
+                        )
+                        sim_result = await session.execute(similarity_query)
+                        sim_row = sim_result.first()
+
+                        if sim_row:
+                            name, duration = sim_row
+                            service_details.append(
+                                ServiceDetail(name=name, duration_minutes=duration)
+                            )
+                            total_duration += duration
+                            logger.info(
+                                f"Service '{service_name}' fuzzy matched to '{name}': duration={duration}min"
+                            )
+                        else:
+                            # Service not found - use conservative default
+                            logger.warning(
+                                f"Service '{service_name}' not found in DB, using 60min default"
+                            )
+                            service_details.append(
+                                ServiceDetail(name=service_name, duration_minutes=60)
+                            )
+                            total_duration += 60
+
+            # Update collected_data with enriched service data
+            self._collected_data["service_details"] = service_details
+            self._collected_data["total_duration_minutes"] = total_duration
+
+            # Synchronize slot.duration_minutes if slot exists
+            if "slot" in self._collected_data:
+                self._collected_data["slot"]["duration_minutes"] = total_duration
+                logger.info(
+                    f"Slot duration synchronized: {total_duration}min | services={len(services)}"
+                )
+
+            logger.info(
+                "Service durations calculated | total=%dmin | services=%s | conversation_id=%s",
+                total_duration,
+                [s["name"] for s in service_details],
+                self._conversation_id,
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to calculate service durations: {e}",
+                exc_info=True,
+                extra={"conversation_id": self._conversation_id}
+            )
+            # On error, set a conservative default
+            self._collected_data["total_duration_minutes"] = 60 * len(services)
+            if "slot" in self._collected_data:
+                self._collected_data["slot"]["duration_minutes"] = 60 * len(services)
 
     async def persist(self) -> None:
         """
@@ -329,6 +463,13 @@ class BookingFSM:
             if "last_updated" in data:
                 fsm._last_updated = datetime.fromisoformat(data["last_updated"])
 
+            # ================================================================
+            # VALIDATE SLOT FRESHNESS (ADR-008: Obsolete slot cleanup)
+            # ================================================================
+            # If the FSM has a slot with an obsolete date (past or violates 3-day rule),
+            # clean it up and reset to SLOT_SELECTION so user must re-select
+            fsm._validate_and_clean_slot()
+
             logger.debug(
                 "FSM load: restored state=%s | conversation_id=%s",
                 fsm._state.value,
@@ -350,15 +491,54 @@ class BookingFSM:
         """
         Merge intent entities into collected data.
 
-        Special handling for services list to accumulate rather than replace.
+        Special handling:
+        - services list: accumulate rather than replace
+        - CUSTOMER_DATA phase: FSM internally tracks notes_asked flag
         """
+        # ================================================================
+        # CUSTOMER_DATA PHASE TRACKING (Fix for Bug #1)
+        # ================================================================
+        # The FSM internally manages notes_asked flag based on conversation phase:
+        # - Phase 1: User provides name → save first_name, notes_asked stays false
+        # - Phase 2: User responds to notes question → set notes_asked=true
+        #
+        # We do NOT trust notes_asked from intent extractor because LLM may
+        # incorrectly set it when only name was provided.
+        # ================================================================
+        if self._state == BookingState.CUSTOMER_DATA:
+            # Ignore notes_asked from intent extractor - FSM manages this internally
+            entities = {k: v for k, v in entities.items() if k != "notes_asked"}
+
+            has_existing_name = bool(self._collected_data.get("first_name"))
+            incoming_name = entities.get("first_name")
+
+            if not has_existing_name and incoming_name:
+                # Phase 1: First time receiving name - don't set notes_asked yet
+                logger.info(
+                    "CUSTOMER_DATA Phase 1: Name received (%s), notes_asked stays false",
+                    incoming_name,
+                )
+            elif has_existing_name:
+                # Phase 2: We already have name, this is response to notes question
+                # Set notes_asked=true (regardless of whether actual notes were provided)
+                self._collected_data["notes_asked"] = True
+                logger.info(
+                    "CUSTOMER_DATA Phase 2: Notes response received, notes_asked=true | notes=%s",
+                    entities.get("notes", "none"),
+                )
+
+        # Standard entity merging
         for key, value in entities.items():
             if key == "services" and isinstance(value, list):
-                # Accumulate services, avoiding duplicates
+                # Accumulate services, avoiding duplicates and empty strings
                 existing = self._collected_data.get("services", [])
                 for service in value:
-                    if service not in existing:
-                        existing.append(service)
+                    # Filter empty strings and whitespace-only strings
+                    if service and service.strip() and service.strip() not in existing:
+                        existing.append(service.strip())
+                        logger.debug(f"Added service: '{service.strip()}'")
+                    elif not service or not service.strip():
+                        logger.warning(f"Filtered empty service name: '{service}'")
                 self._collected_data["services"] = existing
             else:
                 self._collected_data[key] = value
@@ -442,9 +622,10 @@ class BookingFSM:
                         "Pregunta si quiere agregar más o confirmar. "
                         "NO muestres estilistas hasta que confirme servicios."
                     ),
+                    required_tool_call="search_services",  # Still required for adding more
                 )
             else:
-                # No services yet - show service list
+                # No services yet - MUST call search_services before any confirmation
                 guidance = ResponseGuidance(
                     must_show=["lista de servicios disponibles"],
                     must_ask="¿Qué servicio te gustaría?",
@@ -452,8 +633,45 @@ class BookingFSM:
                         "estilistas", "Ana", "María", "Carlos", "Pilar", "Laura",
                         "horarios", "disponibilidad", "hora",
                         "confirmación de cita", "reserva confirmada",
+                        # NEW: Prohibit premature service confirmation
+                        "has seleccionado", "servicio seleccionado",
                     ],
-                    context_hint="Usuario está seleccionando servicios. NO mostrar estilistas aún.",
+                    context_hint=(
+                        "Usuario está seleccionando servicios. "
+                        "OBLIGATORIO: Llama search_services ANTES de confirmar cualquier servicio. "
+                        "NO confirmes servicios sin verificar que existen en la BD."
+                    ),
+                    required_tool_call="search_services",  # MUST call before confirming
+                )
+
+        # For CUSTOMER_DATA, customize based on whether we have name and notes
+        elif self._state == BookingState.CUSTOMER_DATA:
+            first_name = self._collected_data.get("first_name")
+            notes_asked = self._collected_data.get("notes_asked", False)
+
+            if not first_name:
+                # Step 1: Ask for name
+                guidance = ResponseGuidance(
+                    must_show=[],
+                    must_ask="¿Me puedes dar tu nombre para la reserva?",
+                    forbidden=["confirmación de cita", "reserva confirmada", "resumen de cita"],
+                    context_hint="Recopilar nombre del cliente. NO pedir notas aún.",
+                )
+            elif not notes_asked:
+                # Step 2: Ask for notes/preferences
+                guidance = ResponseGuidance(
+                    must_show=[],
+                    must_ask="¿Tienes alguna preferencia o nota especial para tu cita? (alergias, estilo deseado, etc.) Si no, simplemente di 'no'.",
+                    forbidden=["confirmación de cita", "reserva confirmada", "resumen de cita"],
+                    context_hint=f"Ya tenemos nombre: {first_name}. Ahora preguntar por notas/preferencias.",
+                )
+            else:
+                # Both collected - ready for confirmation (this shouldn't happen if FSM transitions correctly)
+                guidance = ResponseGuidance(
+                    must_show=["resumen de la cita"],
+                    must_ask="¿Confirmas la reserva?",
+                    forbidden=[],
+                    context_hint="Datos del cliente completos. Mostrar resumen y confirmar.",
                 )
 
         # Log guidance generation metrics (AC #8)
@@ -489,6 +707,77 @@ class BookingFSM:
                 "generation_time_ms": round(generation_time_ms, 2),
             }
         )
+
+    def _validate_and_clean_slot(self) -> None:
+        """
+        Validate that the selected slot is still valid (fresh).
+
+        If a slot is obsolete (past date or violates 3-day minimum rule),
+        clean it up and reset FSM to SLOT_SELECTION state.
+
+        This prevents silent booking failures when users resume old conversations
+        with expired/obsolete slots.
+
+        Implementation of ADR-008: Obsolete Slot Cleanup
+
+        Side effects:
+        - If slot is invalid: clears slot, resets state to SLOT_SELECTION
+        - Logs WARNING if slot was cleaned
+        """
+        if not self._collected_data.get("slot"):
+            # No slot selected yet - nothing to validate
+            return
+
+        slot = self._collected_data["slot"]
+        start_time_str = slot.get("start_time")
+
+        if not start_time_str:
+            # Malformed slot - clean it up
+            logger.warning(
+                "Slot validation: malformed slot detected (missing start_time) | "
+                "conversation_id=%s",
+                self._conversation_id,
+            )
+            self._collected_data.pop("slot", None)
+            return
+
+        try:
+            # Parse the start_time (ISO 8601 with timezone)
+            slot_datetime = datetime.fromisoformat(start_time_str)
+
+            # Get current time in UTC for comparison
+            now = datetime.now(UTC)
+
+            # Calculate days until appointment
+            days_until = (slot_datetime - now).days
+
+            # Validate 3-day minimum rule
+            if days_until < 3:
+                logger.warning(
+                    "Slot validation: 3-day rule violation | "
+                    "conversation_id=%s | days_until=%d | min_required=3 | "
+                    "slot_date=%s",
+                    self._conversation_id,
+                    days_until,
+                    slot_datetime.isoformat(),
+                )
+                # Clean up the obsolete slot
+                self._collected_data.pop("slot", None)
+
+                # Reset to SLOT_SELECTION so user must choose a new date
+                if self._state not in [BookingState.IDLE, BookingState.SERVICE_SELECTION, BookingState.STYLIST_SELECTION]:
+                    self._state = BookingState.SLOT_SELECTION
+
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                "Slot validation: failed to parse start_time | "
+                "conversation_id=%s | error=%s | start_time=%s",
+                self._conversation_id,
+                str(e),
+                start_time_str,
+            )
+            # Malformed datetime - clean it up
+            self._collected_data.pop("slot", None)
 
     # ============================================================================
     # GUIDANCE MAP BY STATE (Story 5-7b)

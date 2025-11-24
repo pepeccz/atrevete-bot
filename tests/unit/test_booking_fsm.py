@@ -244,7 +244,7 @@ class TestTransition:
         assert result.success is True
         assert fsm.state == BookingState.CUSTOMER_DATA
 
-        # Step 5: CUSTOMER_DATA -> CONFIRMATION
+        # Step 5a: CUSTOMER_DATA Phase 1 - provide name (stays in CUSTOMER_DATA)
         result = fsm.transition(
             Intent(
                 type=IntentType.PROVIDE_CUSTOMER_DATA,
@@ -252,15 +252,27 @@ class TestTransition:
             )
         )
         assert result.success is True
+        assert fsm.state == BookingState.CUSTOMER_DATA  # Still in CUSTOMER_DATA waiting for notes
+        assert fsm.collected_data.get("first_name") == "María"
+
+        # Step 5b: CUSTOMER_DATA Phase 2 - respond to notes question -> CONFIRMATION
+        result = fsm.transition(
+            Intent(
+                type=IntentType.PROVIDE_CUSTOMER_DATA,
+                entities={},  # No notes needed, just responding to question
+            )
+        )
+        assert result.success is True
         assert fsm.state == BookingState.CONFIRMATION
 
-        # Step 6: CONFIRMATION -> BOOKED (then auto-reset to IDLE)
+        # Step 6: CONFIRMATION -> BOOKED
+        # Note: FSM stays in BOOKED state - reset is handled by conversational_agent.py
+        # after book() tool executes successfully
         result = fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
         assert result.success is True
-        # Bug #2 fix: FSM auto-resets to IDLE after BOOKED
-        assert fsm.state == BookingState.IDLE
-        # collected_data is cleared after auto-reset
-        assert fsm.collected_data == {}
+        assert fsm.state == BookingState.BOOKED
+        # collected_data is preserved for book() tool to use
+        assert "first_name" in fsm.collected_data
 
     def test_transition_invalid_returns_failure(self):
         """Invalid transition returns FSMResult with success=False."""
@@ -520,6 +532,144 @@ class TestServiceAccumulation:
         assert fsm.collected_data["services"] == ["Corte largo"]
         assert len(fsm.collected_data["services"]) == 1
 
+    def test_services_filter_empty_strings(self):
+        """Empty strings are filtered from services list."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SERVICE_SELECTION
+
+        # Add services including empty strings
+        fsm._merge_entities({"services": ["", "Corte Caballero", "", "  "]})
+
+        # Only non-empty services should be added
+        assert fsm.collected_data["services"] == ["Corte Caballero"]
+        assert len(fsm.collected_data["services"]) == 1
+
+    def test_services_strip_whitespace(self):
+        """Service names are trimmed of whitespace."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SERVICE_SELECTION
+
+        fsm._merge_entities({"services": ["  Corte Caballero  ", "\nTinte\t"]})
+
+        assert fsm.collected_data["services"] == ["Corte Caballero", "Tinte"]
+
+    def test_services_filter_mixed_valid_invalid(self):
+        """Mixed valid and invalid services are handled correctly."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SERVICE_SELECTION
+
+        # First batch with empty
+        fsm._merge_entities({"services": ["", "Corte Caballero"]})
+        assert fsm.collected_data["services"] == ["Corte Caballero"]
+
+        # Second batch with whitespace-only
+        fsm._merge_entities({"services": ["   ", "Tinte"]})
+        assert fsm.collected_data["services"] == ["Corte Caballero", "Tinte"]
+
+
+class TestServiceDurationCalculation:
+    """Tests for service duration calculation from database."""
+
+    @pytest.mark.asyncio
+    async def test_calculate_service_durations_empty_services(self):
+        """calculate_service_durations handles empty services list."""
+        fsm = BookingFSM("test-conv")
+        fsm._collected_data = {}
+
+        # Should not raise, just return early
+        await fsm.calculate_service_durations()
+
+        # No duration fields should be added
+        assert "service_details" not in fsm.collected_data
+        assert "total_duration_minutes" not in fsm.collected_data
+
+    @pytest.mark.asyncio
+    async def test_calculate_service_durations_with_services(self):
+        """calculate_service_durations looks up durations from database."""
+        from contextlib import asynccontextmanager
+
+        fsm = BookingFSM("test-conv")
+        fsm._collected_data = {"services": ["Corte de Caballero"]}
+
+        # Mock the database session and query
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.first.return_value = ("Corte de Caballero", 40)
+        mock_session.execute.return_value = mock_result
+
+        @asynccontextmanager
+        async def mock_context_manager():
+            yield mock_session
+
+        with patch("database.connection.get_async_session", mock_context_manager):
+            await fsm.calculate_service_durations()
+
+        # Should have enriched data
+        assert fsm.collected_data.get("total_duration_minutes") == 40
+        assert len(fsm.collected_data.get("service_details", [])) == 1
+        assert fsm.collected_data["service_details"][0]["name"] == "Corte de Caballero"
+        assert fsm.collected_data["service_details"][0]["duration_minutes"] == 40
+
+    @pytest.mark.asyncio
+    async def test_calculate_service_durations_multiple_services(self):
+        """calculate_service_durations sums durations for multiple services."""
+        from contextlib import asynccontextmanager
+
+        fsm = BookingFSM("test-conv")
+        fsm._collected_data = {"services": ["Corte de Caballero", "Barba"]}
+
+        # Mock database to return different durations
+        call_count = [0]
+
+        async def mock_execute(query):
+            mock_result = MagicMock()
+            if call_count[0] == 0:
+                mock_result.first.return_value = ("Corte de Caballero", 40)
+            else:
+                mock_result.first.return_value = ("Barba", 20)
+            call_count[0] += 1
+            return mock_result
+
+        mock_session = AsyncMock()
+        mock_session.execute = mock_execute
+
+        @asynccontextmanager
+        async def mock_context_manager():
+            yield mock_session
+
+        with patch("database.connection.get_async_session", mock_context_manager):
+            await fsm.calculate_service_durations()
+
+        # Total should be sum of durations
+        assert fsm.collected_data.get("total_duration_minutes") == 60  # 40 + 20
+
+    @pytest.mark.asyncio
+    async def test_calculate_service_durations_syncs_slot(self):
+        """calculate_service_durations updates slot.duration_minutes."""
+        from contextlib import asynccontextmanager
+
+        fsm = BookingFSM("test-conv")
+        fsm._collected_data = {
+            "services": ["Corte de Caballero"],
+            "slot": {"start_time": "2025-11-25T10:00:00", "duration_minutes": 0},
+        }
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.first.return_value = ("Corte de Caballero", 40)
+        mock_session.execute.return_value = mock_result
+
+        @asynccontextmanager
+        async def mock_context_manager():
+            yield mock_session
+
+        with patch("database.connection.get_async_session", mock_context_manager):
+            await fsm.calculate_service_durations()
+
+        # Slot duration should be synchronized
+        assert fsm.collected_data["slot"]["duration_minutes"] == 40
+        assert fsm.collected_data.get("total_duration_minutes") == 40
+
 
 class TestNextAction:
     """Tests for next_action in FSMResult."""
@@ -553,11 +703,16 @@ class TestNextAction:
         assert result.next_action == "booking_cancelled"
 
 
-class TestBookedAutoReset:
-    """Tests for BOOKED state auto-reset behavior (Bug #2 fix)."""
+class TestBookedStateAndReset:
+    """Tests for BOOKED state behavior and manual reset.
 
-    def test_booked_auto_resets_to_idle(self):
-        """Transition to BOOKED immediately resets to IDLE (Bug #2 fix)."""
+    Note: FSM no longer auto-resets to IDLE after BOOKED transition.
+    Reset is now handled by conversational_agent.py after book() succeeds.
+    This ensures collected_data is available for the booking tool.
+    """
+
+    def test_booked_preserves_state(self):
+        """Transition to BOOKED keeps FSM in BOOKED state (data preserved for book())."""
         fsm = BookingFSM("test-conv")
         # Setup: get to CONFIRMATION state with all required data
         fsm._state = BookingState.CONFIRMATION
@@ -572,13 +727,14 @@ class TestBookedAutoReset:
         result = fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
 
         assert result.success is True
-        # FSM should be back to IDLE after auto-reset
-        assert fsm.state == BookingState.IDLE
-        # collected_data should be cleared
-        assert fsm.collected_data == {}
+        # FSM should stay in BOOKED (not auto-reset)
+        assert fsm.state == BookingState.BOOKED
+        # collected_data should be preserved for book() tool
+        assert fsm.collected_data["first_name"] == "María"
+        assert fsm.collected_data["services"] == ["Corte largo"]
 
-    def test_booked_auto_reset_clears_collected_data(self):
-        """Auto-reset from BOOKED clears all accumulated data (Bug #2 fix)."""
+    def test_booked_preserves_collected_data_for_booking_tool(self):
+        """BOOKED state preserves all accumulated data for book() tool."""
         fsm = BookingFSM("test-conv")
         fsm._state = BookingState.CONFIRMATION
         fsm._collected_data = {
@@ -592,10 +748,14 @@ class TestBookedAutoReset:
 
         fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
 
-        assert fsm.collected_data == {}
+        # All data preserved for book() tool
+        assert fsm.collected_data["services"] == ["Corte largo", "Tinte"]
+        assert fsm.collected_data["stylist_id"] == "stylist-uuid"
+        assert fsm.collected_data["first_name"] == "María"
+        assert fsm.collected_data["notes"] == "Primera visita"
 
-    def test_booked_auto_reset_allows_new_booking(self):
-        """After auto-reset from BOOKED, new booking can start immediately."""
+    def test_manual_reset_allows_new_booking(self):
+        """After manual reset() from BOOKED, new booking can start immediately."""
         fsm = BookingFSM("test-conv")
         fsm._state = BookingState.CONFIRMATION
         fsm._collected_data = {
@@ -605,20 +765,25 @@ class TestBookedAutoReset:
             "first_name": "María",
         }
 
-        # Complete booking (triggers auto-reset)
+        # Complete booking (stays in BOOKED)
         fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
+        assert fsm.state == BookingState.BOOKED
+
+        # Manual reset (called by conversational_agent after successful book())
+        fsm.reset()
         assert fsm.state == BookingState.IDLE
+        assert fsm.collected_data == {}
 
         # Start new booking immediately
         result = fsm.transition(Intent(type=IntentType.START_BOOKING))
         assert result.success is True
         assert fsm.state == BookingState.SERVICE_SELECTION
 
-    def test_booked_auto_reset_logs_correctly(self, caplog):
-        """Auto-reset from BOOKED logs INFO message (Bug #2 fix)."""
+    def test_manual_reset_logs_correctly(self, caplog):
+        """Manual reset() logs INFO message."""
         with caplog.at_level(logging.INFO, logger="agent.fsm.booking_fsm"):
-            fsm = BookingFSM("test-conv-auto-reset")
-            fsm._state = BookingState.CONFIRMATION
+            fsm = BookingFSM("test-conv-manual-reset")
+            fsm._state = BookingState.BOOKED
             fsm._collected_data = {
                 "services": ["Corte"],
                 "stylist_id": "uuid",
@@ -626,11 +791,11 @@ class TestBookedAutoReset:
                 "first_name": "María",
             }
 
-            fsm.transition(Intent(type=IntentType.CONFIRM_BOOKING))
+            fsm.reset()
 
-        # Should log the auto-reset
+        # Should log the reset
         log_messages = [r.message for r in caplog.records]
-        assert any("auto-reset" in msg.lower() for msg in log_messages)
+        assert any("reset" in msg.lower() for msg in log_messages)
         assert any("booked" in msg.lower() and "idle" in msg.lower() for msg in log_messages)
 
 
@@ -646,12 +811,13 @@ class TestValidationErrors:
 
     def test_validation_errors_contains_missing_field(self):
         """validation_errors mentions missing required field."""
+        # Test with SLOT_SELECTION which requires 'slot' field
         fsm = BookingFSM("test-conv")
-        fsm._state = BookingState.CUSTOMER_DATA
-        result = fsm.transition(Intent(type=IntentType.PROVIDE_CUSTOMER_DATA))
+        fsm._state = BookingState.SLOT_SELECTION
+        result = fsm.transition(Intent(type=IntentType.SELECT_SLOT))
 
         assert len(result.validation_errors) > 0
-        assert "first_name" in result.validation_errors[0].lower()
+        assert "slot" in result.validation_errors[0].lower()
 
     def test_validation_errors_contains_invalid_transition(self):
         """validation_errors mentions invalid transition."""
@@ -660,3 +826,401 @@ class TestValidationErrors:
 
         assert len(result.validation_errors) > 0
         assert "not allowed" in result.validation_errors[0].lower()
+
+
+class TestResponseGuidanceRequiredTool:
+    """Tests for ResponseGuidance.required_tool_call field."""
+
+    def test_response_guidance_has_required_tool_call_field(self):
+        """ResponseGuidance dataclass has required_tool_call field."""
+        from agent.fsm.models import ResponseGuidance
+
+        guidance = ResponseGuidance(
+            must_show=["lista de servicios"],
+            must_ask="¿Qué servicio?",
+            forbidden=["estilistas"],
+            context_hint="Seleccionando servicios",
+            required_tool_call="search_services",
+        )
+
+        assert guidance.required_tool_call == "search_services"
+
+    def test_response_guidance_required_tool_call_default_none(self):
+        """ResponseGuidance.required_tool_call defaults to None."""
+        from agent.fsm.models import ResponseGuidance
+
+        guidance = ResponseGuidance()
+
+        assert guidance.required_tool_call is None
+
+    def test_service_selection_guidance_requires_search_services(self):
+        """SERVICE_SELECTION state guidance requires search_services tool."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SERVICE_SELECTION
+        # No services collected yet
+
+        guidance = fsm.get_response_guidance()
+
+        assert guidance.required_tool_call == "search_services"
+
+    def test_service_selection_with_services_still_requires_search_services(self):
+        """SERVICE_SELECTION with services still requires search_services for adding more."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SERVICE_SELECTION
+        fsm._collected_data = {"services": ["Corte de Caballero"]}
+
+        guidance = fsm.get_response_guidance()
+
+        assert guidance.required_tool_call == "search_services"
+
+    def test_service_selection_forbids_premature_confirmation(self):
+        """SERVICE_SELECTION without services forbids 'has seleccionado' pattern."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SERVICE_SELECTION
+        # No services collected
+
+        guidance = fsm.get_response_guidance()
+
+        assert "has seleccionado" in guidance.forbidden
+        assert "servicio seleccionado" in guidance.forbidden
+
+    def test_other_states_no_required_tool(self):
+        """Non-SERVICE_SELECTION states don't require specific tools."""
+        for state in [
+            BookingState.IDLE,
+            BookingState.STYLIST_SELECTION,
+            BookingState.SLOT_SELECTION,
+            BookingState.CUSTOMER_DATA,
+            BookingState.CONFIRMATION,
+        ]:
+            fsm = BookingFSM("test-conv")
+            fsm._state = state
+            fsm._collected_data = {
+                "services": ["Corte"],
+                "stylist_id": "uuid",
+                "slot": {},
+                "first_name": "Test",
+            }
+
+            guidance = fsm.get_response_guidance()
+
+            assert guidance.required_tool_call is None, f"State {state} should not require tool"
+
+
+class TestPrematureServiceConfirmationDetection:
+    """Tests for premature service confirmation detection in conversational_agent."""
+
+    def test_detect_premature_confirmation_no_services(self):
+        """Detects premature confirmation when no services collected."""
+        from agent.nodes.conversational_agent import detect_premature_service_confirmation
+
+        result = detect_premature_service_confirmation(
+            response_content="Perfecto, has seleccionado corte de pelo.",
+            fsm_state=BookingState.SERVICE_SELECTION,
+            collected_services=[],
+            search_services_called=False,
+        )
+
+        assert result is True
+
+    def test_detect_premature_confirmation_with_search_called(self):
+        """Does not detect premature confirmation when search_services was called."""
+        from agent.nodes.conversational_agent import detect_premature_service_confirmation
+
+        result = detect_premature_service_confirmation(
+            response_content="Has seleccionado Corte de Caballero.",
+            fsm_state=BookingState.SERVICE_SELECTION,
+            collected_services=[],
+            search_services_called=True,  # search_services was called
+        )
+
+        assert result is False
+
+    def test_detect_premature_confirmation_with_collected_services(self):
+        """Does not detect premature confirmation when services already collected."""
+        from agent.nodes.conversational_agent import detect_premature_service_confirmation
+
+        result = detect_premature_service_confirmation(
+            response_content="Has seleccionado otro servicio.",
+            fsm_state=BookingState.SERVICE_SELECTION,
+            collected_services=["Corte de Caballero"],  # Already has services
+            search_services_called=False,
+        )
+
+        assert result is False
+
+    def test_detect_premature_confirmation_wrong_state(self):
+        """Does not detect premature confirmation in other states."""
+        from agent.nodes.conversational_agent import detect_premature_service_confirmation
+
+        result = detect_premature_service_confirmation(
+            response_content="Has seleccionado el estilista.",
+            fsm_state=BookingState.STYLIST_SELECTION,  # Different state
+            collected_services=[],
+            search_services_called=False,
+        )
+
+        assert result is False
+
+    def test_detect_premature_confirmation_various_patterns(self):
+        """Detects various premature confirmation patterns."""
+        from agent.nodes.conversational_agent import detect_premature_service_confirmation
+
+        patterns = [
+            "Has seleccionado corte",
+            "Servicio seleccionado: corte",
+            "Perfecto, has elegido el corte",
+            "Excelente elección, el corte",
+            "Seleccionaste corte de pelo",
+            "Elegiste el corte",
+        ]
+
+        for pattern in patterns:
+            result = detect_premature_service_confirmation(
+                response_content=pattern,
+                fsm_state=BookingState.SERVICE_SELECTION,
+                collected_services=[],
+                search_services_called=False,
+            )
+            assert result is True, f"Should detect pattern: {pattern}"
+
+    def test_no_premature_confirmation_for_questions(self):
+        """Does not detect premature confirmation for questions."""
+        from agent.nodes.conversational_agent import detect_premature_service_confirmation
+
+        result = detect_premature_service_confirmation(
+            response_content="¿Qué servicio te gustaría? Tenemos cortes, tintes y más.",
+            fsm_state=BookingState.SERVICE_SELECTION,
+            collected_services=[],
+            search_services_called=False,
+        )
+
+        assert result is False
+
+
+class TestExtractServiceQuery:
+    """Tests for _extract_service_query function."""
+
+    def test_extract_service_query_with_keywords(self):
+        """Extracts known service keywords from message."""
+        from agent.nodes.conversational_agent import _extract_service_query
+
+        query = _extract_service_query("Quiero cortarme el pelo")
+
+        assert "corte" in query.lower() or "cortar" in query.lower() or "pelo" in query.lower()
+
+    def test_extract_service_query_multiple_keywords(self):
+        """Extracts multiple keywords and limits to 3."""
+        from agent.nodes.conversational_agent import _extract_service_query
+
+        query = _extract_service_query("Quiero corte, tinte y mechas")
+
+        # Should have at most 3 keywords
+        words = query.split()
+        assert len(words) <= 3
+
+    def test_extract_service_query_no_keywords(self):
+        """Falls back to cleaned message when no keywords found."""
+        from agent.nodes.conversational_agent import _extract_service_query
+
+        query = _extract_service_query("Quiero algo especial")
+
+        # Should return cleaned text or fallback
+        assert len(query) > 0
+        assert query != ""
+
+    def test_extract_service_query_empty_message(self):
+        """Returns fallback for empty message."""
+        from agent.nodes.conversational_agent import _extract_service_query
+
+        query = _extract_service_query("")
+
+        assert query == "servicios"
+
+    def test_extract_service_query_removes_booking_phrases(self):
+        """Removes common booking phrases from query."""
+        from agent.nodes.conversational_agent import _extract_service_query
+
+        query = _extract_service_query("Quisiera reservar una cita para algo")
+
+        # Should not contain booking phrases
+        assert "quisiera" not in query.lower()
+        assert "reservar" not in query.lower()
+        assert "una cita" not in query.lower()
+
+
+class TestSlotFreshnessValidation:
+    """Tests for slot freshness validation (ADR-008: Obsolete slot cleanup)."""
+
+    @pytest.mark.asyncio
+    async def test_load_cleans_slot_with_past_date(self):
+        """Load() removes slots with dates in the past."""
+        from agent.fsm.booking_fsm import BookingFSM
+        from datetime import datetime, timedelta, UTC
+        from unittest.mock import AsyncMock, patch
+
+        # Create FSM state with a slot from 1 year ago
+        past_date = (datetime.now(UTC) - timedelta(days=365)).isoformat()
+        state_data = {
+            "state": "slot_selection",
+            "collected_data": {
+                "services": ["Corte"],
+                "stylist_id": "stylist-123",
+                "slot": {
+                    "start_time": past_date,
+                    "duration_minutes": 40,
+                },
+                "first_name": "Juan",
+            },
+            "last_updated": datetime.now(UTC).isoformat(),
+        }
+
+        # Mock Redis
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = json.dumps(state_data)
+
+        with patch("agent.fsm.booking_fsm.get_redis_client", return_value=mock_redis):
+            # Load the FSM
+            fsm = await BookingFSM.load("conv-obsolete-slot")
+
+            # Slot should be removed (cleaned)
+            assert "slot" not in fsm.collected_data
+            # State should reset to SLOT_SELECTION (per validation logic)
+            assert fsm.state == BookingState.SLOT_SELECTION
+
+    @pytest.mark.asyncio
+    async def test_load_cleans_slot_violating_3day_rule(self):
+        """Load() removes slots that violate the 3-day minimum rule."""
+        from agent.fsm.booking_fsm import BookingFSM
+        from datetime import datetime, timedelta, UTC
+        from unittest.mock import AsyncMock, patch
+
+        # Create FSM state with a slot only 1 day in the future (violates 3-day rule)
+        future_date = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+        state_data = {
+            "state": "confirmation",
+            "collected_data": {
+                "services": ["Corte"],
+                "stylist_id": "stylist-123",
+                "slot": {
+                    "start_time": future_date,
+                    "duration_minutes": 40,
+                },
+                "first_name": "Juan",
+            },
+            "last_updated": datetime.now(UTC).isoformat(),
+        }
+
+        # Mock Redis
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = json.dumps(state_data)
+
+        with patch("agent.fsm.booking_fsm.get_redis_client", return_value=mock_redis):
+            # Load the FSM
+            fsm = await BookingFSM.load("conv-3day-violation")
+
+            # Slot should be removed (cleaned)
+            assert "slot" not in fsm.collected_data
+            # State should reset to SLOT_SELECTION
+            assert fsm.state == BookingState.SLOT_SELECTION
+
+    @pytest.mark.asyncio
+    async def test_load_preserves_valid_slot(self):
+        """Load() preserves slots with valid future dates (>= 3 days)."""
+        from agent.fsm.booking_fsm import BookingFSM
+        from datetime import datetime, timedelta, UTC
+        from unittest.mock import AsyncMock, patch
+
+        # Create FSM state with a slot 5 days in the future (valid)
+        future_date = (datetime.now(UTC) + timedelta(days=5)).isoformat()
+        state_data = {
+            "state": "confirmation",
+            "collected_data": {
+                "services": ["Corte"],
+                "stylist_id": "stylist-123",
+                "slot": {
+                    "start_time": future_date,
+                    "duration_minutes": 40,
+                },
+                "first_name": "Juan",
+            },
+            "last_updated": datetime.now(UTC).isoformat(),
+        }
+
+        # Mock Redis
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = json.dumps(state_data)
+
+        with patch("agent.fsm.booking_fsm.get_redis_client", return_value=mock_redis):
+            # Load the FSM
+            fsm = await BookingFSM.load("conv-valid-slot")
+
+            # Slot should be preserved (NOT cleaned)
+            assert "slot" in fsm.collected_data
+            assert fsm.collected_data["slot"]["start_time"] == future_date
+            # State should remain as confirmation (not reset)
+            assert fsm.state == BookingState.CONFIRMATION
+
+    @pytest.mark.asyncio
+    async def test_load_preserves_state_if_no_slot(self):
+        """Load() preserves FSM state when there's no slot to validate."""
+        from agent.fsm.booking_fsm import BookingFSM
+        from datetime import datetime, UTC
+        from unittest.mock import AsyncMock, patch
+
+        # Create FSM state without a slot (normal case)
+        state_data = {
+            "state": "customer_data",
+            "collected_data": {
+                "services": ["Corte"],
+                "stylist_id": "stylist-123",
+                "first_name": "Juan",
+            },
+            "last_updated": datetime.now(UTC).isoformat(),
+        }
+
+        # Mock Redis
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = json.dumps(state_data)
+
+        with patch("agent.fsm.booking_fsm.get_redis_client", return_value=mock_redis):
+            # Load the FSM
+            fsm = await BookingFSM.load("conv-no-slot")
+
+            # State should be preserved
+            assert fsm.state == BookingState.CUSTOMER_DATA
+            # Collected data unchanged
+            assert fsm.collected_data["services"] == ["Corte"]
+
+    @pytest.mark.asyncio
+    async def test_load_handles_malformed_slot(self):
+        """Load() cleans up malformed slots (missing start_time)."""
+        from agent.fsm.booking_fsm import BookingFSM
+        from datetime import datetime, UTC
+        from unittest.mock import AsyncMock, patch
+
+        # Create FSM state with a malformed slot
+        state_data = {
+            "state": "confirmation",
+            "collected_data": {
+                "services": ["Corte"],
+                "stylist_id": "stylist-123",
+                "slot": {
+                    # Missing start_time!
+                    "duration_minutes": 40,
+                },
+                "first_name": "Juan",
+            },
+            "last_updated": datetime.now(UTC).isoformat(),
+        }
+
+        # Mock Redis
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = json.dumps(state_data)
+
+        with patch("agent.fsm.booking_fsm.get_redis_client", return_value=mock_redis):
+            # Load the FSM
+            fsm = await BookingFSM.load("conv-malformed-slot")
+
+            # Slot should be removed (malformed)
+            assert "slot" not in fsm.collected_data

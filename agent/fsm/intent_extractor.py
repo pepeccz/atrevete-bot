@@ -16,21 +16,88 @@ Architecture (ADR-006):
     Tool Calls     → Ejecuta ACCIONES validadas
 """
 
+import asyncio
 import json
 import logging
+import re
 import time
-from typing import Any
+from datetime import datetime
+from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from sqlalchemy import select
+from sqlalchemy.sql import func
 
 from agent.fsm.models import BookingState, Intent, IntentType
+from database.connection import get_async_session
+from database.models import Stylist
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# DYNAMIC STYLIST CACHE (replaces hardcoded STYLIST_NAME_TO_ID)
+# ============================================================================
+# In-memory cache for stylist name -> ID mapping
+# Loaded from database on first use, cached for 10 minutes
+# This prevents UUID mismatch bugs when database is re-seeded
+_stylist_cache: dict[str, str] = {}
+_stylist_cache_lock = asyncio.Lock()
+_stylist_cache_timestamp: float = 0.0
+STYLIST_CACHE_TTL_SECONDS: int = 600  # 10 minutes
+
+# Madrid timezone for datetime normalization
+MADRID_TZ = ZoneInfo("Europe/Madrid")
+
 # Confidence threshold below which we return UNKNOWN
 MIN_CONFIDENCE_THRESHOLD = 0.7
+
+
+def _normalize_start_time_timezone(start_time: str) -> str:
+    """
+    Normalize start_time to ensure it has Europe/Madrid timezone.
+
+    Root cause fix for book() failures: LLM sometimes extracts start_time without timezone
+    (e.g., "2025-11-27T10:30:00") but book() expects ISO 8601 with timezone
+    (e.g., "2025-11-27T10:30:00+01:00").
+
+    Args:
+        start_time: ISO 8601 datetime string, possibly without timezone
+
+    Returns:
+        ISO 8601 datetime string WITH timezone (+01:00 or +02:00 depending on DST)
+
+    Examples:
+        >>> _normalize_start_time_timezone("2025-11-27T10:30:00")
+        "2025-11-27T10:30:00+01:00"
+
+        >>> _normalize_start_time_timezone("2025-11-27T10:30:00+01:00")
+        "2025-11-27T10:30:00+01:00"  # Already has timezone, preserved
+    """
+    try:
+        # Check if timezone info already present (ends with +XX:XX, -XX:XX, or Z)
+        if re.search(r'[+-]\d{2}:\d{2}$', start_time) or start_time.endswith('Z'):
+            logger.debug(f"start_time '{start_time}' already has timezone, preserving")
+            return start_time
+
+        # Parse as naive datetime and add Madrid timezone
+        naive_dt = datetime.fromisoformat(start_time)
+        aware_dt = naive_dt.replace(tzinfo=MADRID_TZ)
+        normalized = aware_dt.isoformat()
+
+        logger.info(
+            f"Normalized start_time timezone: '{start_time}' → '{normalized}'"
+        )
+        return normalized
+
+    except ValueError as e:
+        logger.warning(
+            f"Could not parse start_time '{start_time}' for timezone normalization: {e}. "
+            f"Returning original value."
+        )
+        return start_time
 
 # ============================================================================
 # INTENT SYNONYMS (Bug #1 fix)
@@ -41,6 +108,146 @@ MIN_CONFIDENCE_THRESHOLD = 0.7
 #
 # Context-aware: Some words map differently based on FSM state (handled in extraction prompt)
 # This dict handles the most common fallback mappings.
+
+# ============================================================================
+# GENERIC SERVICE TERMS (Bug #1 fix - post-extraction validation)
+# ============================================================================
+# These are generic terms that indicate the user is DESCRIBING what they want,
+# NOT selecting a specific service from a list.
+# If LLM extracts select_service with ONLY a generic term (no selection_number),
+# we convert to FAQ intent to show the service list.
+#
+# Example: "Quiero cortarme el pelo" → LLM might extract {service_name: "corte"}
+# This should be FAQ (to show haircut options), NOT select_service.
+
+# Note: This list should NOT include valid service name substrings like "corte", "tinte", etc.
+# because "Corte de Caballero" might be abbreviated as "Corte" by the user.
+# Instead, focus on VERB FORMS and BODY PARTS that indicate descriptions, not selections.
+GENERIC_SERVICE_TERMS: set[str] = {
+    # Verb forms that indicate desire/description, NOT selection
+    "cortarme", "cortarse", "cortarme el pelo", "cortarme pelo", "cortarmelo",
+    "teñir", "teñirme", "teñirmelo",
+    "peinar", "peinarme",
+    "tratar", "tratarme",
+    # Body parts that indicate description
+    "pelo", "cabello", "pelo largo", "pelo corto", "el pelo",
+    "uñas", "las uñas",
+    # Generic descriptors (too vague to be service selections)
+    "algo", "cita", "servicio", "servicios",
+}
+
+# Patterns in the raw message that indicate the user is DESCRIBING what they want,
+# not SELECTING a specific service. Used for Bug #1 post-extraction validation.
+DESCRIPTION_PATTERNS: list[str] = [
+    "quiero cortarme",
+    "quiero teñirme",
+    "quiero peinarme",
+    "quiero tratarme",
+    "me gustaría",
+    "me gustaria",
+    "necesito un",
+    "necesito una",
+    "busco un",
+    "busco una",
+    "quiero un corte",
+    "quiero una cita",
+    "quiero hacerme",
+]
+
+
+async def _load_stylist_cache() -> dict[str, str]:
+    """
+    Load stylist name -> ID mapping from database.
+
+    Uses in-memory cache with 10-minute TTL to avoid repeated DB queries.
+    Returns dict mapping lowercase names to UUIDs.
+
+    This replaces the hardcoded STYLIST_NAME_TO_ID dict to prevent
+    UUID mismatch bugs when the database is re-seeded.
+    """
+    global _stylist_cache, _stylist_cache_timestamp
+
+    async with _stylist_cache_lock:
+        current_time = time.time()
+
+        # Return cached data if still valid
+        if _stylist_cache and (current_time - _stylist_cache_timestamp) < STYLIST_CACHE_TTL_SECONDS:
+            return _stylist_cache
+
+        logger.info("Loading stylist cache from database")
+
+        try:
+            async with get_async_session() as session:
+                stmt = select(Stylist).where(Stylist.is_active == True)
+                result = await session.execute(stmt)
+                stylists = result.scalars().all()
+
+                new_cache: dict[str, str] = {}
+                for stylist in stylists:
+                    name_lower = stylist.name.lower().strip()
+                    stylist_id = str(stylist.id)
+                    new_cache[name_lower] = stylist_id
+
+                    # Also add without accents for common variations
+                    name_no_accents = (
+                        name_lower
+                        .replace("á", "a")
+                        .replace("é", "e")
+                        .replace("í", "i")
+                        .replace("ó", "o")
+                        .replace("ú", "u")
+                    )
+                    if name_no_accents != name_lower:
+                        new_cache[name_no_accents] = stylist_id
+
+                _stylist_cache = new_cache
+                _stylist_cache_timestamp = current_time
+
+                logger.info(f"Stylist cache loaded: {len(_stylist_cache)} entries")
+
+            return _stylist_cache
+
+        except Exception as e:
+            logger.error(f"Error loading stylist cache: {e}", exc_info=True)
+            return _stylist_cache  # Return stale cache on error
+
+
+async def get_stylist_id_by_name(name: str) -> Optional[str]:
+    """
+    Get stylist UUID by name using dynamic database lookup.
+
+    Args:
+        name: Stylist name (case-insensitive)
+
+    Returns:
+        Stylist UUID if found, None otherwise
+    """
+    cache = await _load_stylist_cache()
+    name_lower = name.lower().strip()
+
+    # Direct lookup
+    if name_lower in cache:
+        return cache[name_lower]
+
+    # Try without accents
+    name_no_accents = (
+        name_lower
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+    )
+    if name_no_accents in cache:
+        return cache[name_no_accents]
+
+    # Partial match (e.g., "Ana" matches "Ana Maria")
+    for cached_name, stylist_id in cache.items():
+        if cached_name.startswith(name_lower) or name_lower in cached_name:
+            logger.info(f"Partial stylist match: '{name}' -> '{cached_name}'")
+            return stylist_id
+
+    return None
 
 INTENT_SYNONYMS: dict[str, str] = {
     # confirm_services variations (SERVICE_SELECTION state)
@@ -124,13 +331,13 @@ def _build_state_context(
             ("escalate", "Quiere hablar con una persona o está frustrado"),
         ],
         BookingState.SERVICE_SELECTION: [
-            ("select_service", "Usuario selecciona un servicio (nombre o número)"),
+            ("select_service", "Usuario SELECCIONA un servicio por número o nombre EXACTO de la lista"),
             ("confirm_services", "Usuario confirma que no quiere más servicios"),
             # Allow select_stylist from SERVICE_SELECTION when LLM shows stylists without
             # explicit confirmation (user has at least 1 service selected)
             ("select_stylist", "Usuario selecciona un estilista (si ya tiene servicios)"),
             ("cancel_booking", "Usuario quiere cancelar la reserva"),
-            ("faq", "Pregunta sobre horarios, servicios, precios"),
+            ("faq", "Pregunta o DESCRIBE lo que quiere (ej: 'quiero cortarme', 'me gustaría un tinte')"),
             ("escalate", "Quiere hablar con una persona"),
         ],
         BookingState.STYLIST_SELECTION: [
@@ -179,6 +386,8 @@ def _build_state_context(
         data_summary_parts.append(f"Horario: {slot.get('start_time', 'pendiente')}")
     if collected_data.get("first_name"):
         data_summary_parts.append(f"Nombre: {collected_data['first_name']}")
+    if collected_data.get("notes"):
+        data_summary_parts.append(f"Notas: {collected_data['notes']}")
 
     data_summary = (
         "\n".join(data_summary_parts) if data_summary_parts else "Ninguno aún"
@@ -202,12 +411,21 @@ def _build_state_context(
         ),
         BookingState.SLOT_SELECTION: (
             "IMPORTANTE: Un número (1, 2, 3...) significa selección de horario de la lista.\n"
-            "Una fecha/hora como 'mañana a las 10' = select_slot"
+            "Una fecha/hora como 'mañana a las 10' = select_slot\n\n"
+            "⚠️ TÉRMINOS TEMPORALES VAGOS (sin hora específica):\n"
+            "- 'por la tarde', 'de tarde', 'por la tarde' = check_availability con time_range='afternoon'\n"
+            "- 'por la mañana', 'de mañana', 'por la mañana' = check_availability con time_range='morning'\n"
+            "- 'más opciones', 'otro horario', 'más tarde' = check_availability sin time_range\n"
+            "Estos NO son select_slot porque NO especifican un slot concreto de la lista mostrada."
         ),
         BookingState.CUSTOMER_DATA: (
-            "IMPORTANTE: Cualquier nombre proporcionado = provide_customer_data.\n"
-            "Extraer first_name (obligatorio) y last_name (opcional)"
+            "IMPORTANTE: Cualquier respuesta en este estado = provide_customer_data.\n"
+            "Extraer según contexto:\n"
+            "- Si el usuario da un NOMBRE: extraer first_name, last_name (opcional)\n"
+            "- Si el usuario da PREFERENCIAS: extraer notes='contenido'\n"
+            "- Si dice 'no', 'ninguna': entities vacío {} (el FSM maneja la fase internamente)"
         ),
+
         BookingState.CONFIRMATION: (
             "CONFIRMACIÓN DE RESERVA (intent: confirm_booking):\n"
             "'Sí', 'si', 'confirmo', 'adelante', 'perfecto', 'ok', 'vale', 'dale', "
@@ -245,14 +463,20 @@ def _build_extraction_prompt(
     """
     state_context = _build_state_context(current_state, collected_data)
 
-    # Include last 3 messages for context (if available)
+    # Include last 4 messages for context (if available)
+    # Assistant messages get more chars to preserve numbered lists for resolution
     recent_context = ""
     if conversation_history:
-        recent_messages = conversation_history[-3:]
+        recent_messages = conversation_history[-4:]
         recent_parts = []
         for msg in recent_messages:
             role = "Usuario" if msg.get("role") == "user" else "Asistente"
-            content = msg.get("content", "")[:100]  # Truncate for prompt size
+            content = msg.get("content", "")
+            # Assistant messages may contain numbered lists - keep more context
+            if msg.get("role") == "assistant":
+                content = content[:600]  # Enough to capture numbered lists
+            else:
+                content = content[:150]  # User messages are typically shorter
             recent_parts.append(f"{role}: {content}")
         recent_context = "\n".join(recent_parts)
 
@@ -278,30 +502,75 @@ FORMATO DE RESPUESTA (JSON estricto):
     "entities": {{
         "service_name": "nombre si aplica",
         "selection_number": numero si aplica,
-        "stylist_id": "id si aplica",
+        "stylist_name": "nombre del estilista si aplica (NO incluir UUID)",
+        "start_time": "datetime ISO si aplica (ej: 2025-11-25T10:00:00+01:00)",
+        "slot_time": "hora simple si aplica (ej: 10:00)",
         "first_name": "nombre si aplica",
         "last_name": "apellido si aplica",
-        "slot_time": "hora si aplica",
-        "notes": "notas si aplica"
+        "notes": "notas/preferencias si aplica"
     }},
     "confidence": 0.95
 }}
 
 REGLAS DE EXTRACCIÓN DE ENTIDADES:
-- select_service: Extraer service_name (texto) o selection_number (número de lista)
-- select_stylist: Extraer stylist_id o selection_number
-- select_slot: Extraer slot_time o selection_number
-- provide_customer_data: Extraer first_name (requerido), last_name (opcional), notes (opcional)
+- select_service:
+  * SOLO usar cuando el usuario hace una SELECCIÓN EXPLÍCITA de un servicio mostrado
+  * Si el usuario dice un NÚMERO (ej: "5", "el tercero"), DEBES buscar en el CONTEXTO RECIENTE
+    la lista numerada mostrada por el Asistente y extraer AMBOS campos:
+    - selection_number: el número seleccionado
+    - service_name: el nombre EXACTO del servicio de la lista (sin la duración)
+    Ejemplo: Si el contexto tiene "5. Corte de Caballero (40 min)" y usuario dice "5"
+    → entities: {{"selection_number": 5, "service_name": "Corte de Caballero"}}
+  * Si el usuario dice el NOMBRE EXACTO de un servicio del catálogo → solo service_name
+    Ejemplo: "Corte de Caballero", "Tinte de Raíces" → select_service
+  * ⚠️ NO extraer service_name de DESCRIPCIONES o DESEOS del usuario:
+    - "quiero cortarme el pelo" → NO es select_service, es FAQ o búsqueda
+    - "me gustaría un tinte" → NO es select_service
+    - Solo selecciones EXPLÍCITAS de la lista o nombres EXACTOS del catálogo
+- select_stylist:
+  * Si el usuario dice un NOMBRE (ej: "Pilar", "Ana"), extrae el nombre del estilista
+    Ejemplo: Usuario dice "Pilar" → entities: {{"stylist_name": "Pilar"}}
+  * Si dice un NÚMERO, buscar en el CONTEXTO RECIENTE la lista de estilistas mostrada
+    y extraer el nombre correspondiente
+    Ejemplo: Contexto tiene "4. Pilar", usuario dice "4"
+    → entities: {{"selection_number": 4, "stylist_name": "Pilar"}}
+  * IMPORTANTE: NO intentes adivinar stylist_id (UUID), solo extrae el nombre.
+    El sistema resolverá el UUID automáticamente desde la base de datos.
+- select_slot:
+  * Si el usuario dice un NÚMERO (ej: "2", "el primero"), buscar en el CONTEXTO RECIENTE
+    la lista de horarios mostrada por el Asistente y extraer:
+    - selection_number: el número seleccionado
+    - start_time: el datetime ISO completo CON TIMEZONE (ej: "2025-11-25T10:00:00+01:00")
+    Ejemplo: Si el contexto tiene "2. 10:00 - 11:30 (Pilar)" y usuario dice "2"
+    → entities: {{"selection_number": 2, "start_time": "2025-11-25T10:00:00+01:00"}}
+  * Si el usuario dice una HORA (ej: "a las 10", "10:00"), buscar en el CONTEXTO RECIENTE
+    la fecha de los slots mostrados y extraer:
+    - slot_time: "10:00"
+    - start_time: datetime completo si está disponible en contexto
+  * IMPORTANTE: El contexto de slots tiene "full_datetime" - usar ese valor para start_time
+- check_availability (estado SLOT_SELECTION):
+  * Cuando el usuario quiere ver MAS OPCIONES de horarios sin seleccionar uno específico
+  * Si dice 'tarde', 'por la tarde' → entities: {{"time_range": "afternoon"}}
+  * Si dice 'mañana', 'por la mañana' → entities: {{"time_range": "morning"}}
+  * Si especifica una fecha como '1 de diciembre' → entities: {{"date": "1 diciembre"}}
+  * Si dice 'otro día', 'más opciones' → entities vacío {{}} (sin time_range ni date)
+  * IMPORTANTE: "Por la tarde" ≠ "15:00" - el primero es un RANGO, el segundo es ESPECÍFICO
+- provide_customer_data (estado CUSTOMER_DATA):
+  * Si el usuario da un NOMBRE → extraer first_name (y last_name si aplica)
+  * Si el usuario da PREFERENCIAS/NOTAS → extraer notes="contenido de las preferencias"
+  * Si el usuario dice "no", "ninguna", "no tengo" cuando se le piden notas → entities vacío {{}}
+  * NOTA: El FSM maneja internamente el tracking de fases, solo extrae los datos
 - Para otros intents: entities puede estar vacío {{}}
 
 Responde SOLO con el JSON, sin explicaciones adicionales."""
 
 
-def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
+async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
     """
     Parse LLM response into Intent object.
 
     Handles parsing errors gracefully by returning UNKNOWN intent.
+    Now async to support dynamic stylist ID lookup from database.
     """
     try:
         # Try to extract JSON from response
@@ -338,8 +607,129 @@ def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
 
         # Parse entities
         entities = data.get("entities", {})
-        # Clean up None values
-        entities = {k: v for k, v in entities.items() if v is not None}
+        # Clean up None values and empty strings
+        entities = {k: v for k, v in entities.items() if v is not None and v != ""}
+
+        # ============================================================
+        # INTENT-AWARE ENTITY FILTERING (Root cause fix for ghost services)
+        # ============================================================
+        # Each intent type has a whitelist of allowed entities.
+        # This prevents START_BOOKING from carrying invalid service entities
+        # that the LLM incorrectly extracted from natural language descriptions.
+        #
+        # Example bug prevented:
+        #   User: "quiero cortarme el pelo" → LLM extracts service_name="Corte de Pelo"
+        #   Without filtering: FSM stores "Corte de Pelo" as valid service (WRONG)
+        #   With filtering: services entity is discarded for START_BOOKING intent
+        INTENT_ALLOWED_ENTITIES: dict[IntentType, set[str]] = {
+            IntentType.START_BOOKING: set(),  # No entities - just signals intent to book
+            IntentType.GREETING: set(),  # No entities needed
+            IntentType.FAQ: {"query"},  # Optional search query
+            IntentType.ESCALATE: {"reason"},  # Optional reason
+            IntentType.SELECT_SERVICE: {"services", "service_name", "selection_number"},
+            IntentType.CONFIRM_SERVICES: set(),  # No entities - just confirmation
+            IntentType.SELECT_STYLIST: {"stylist_id", "stylist_name", "selection_number"},
+            IntentType.CHECK_AVAILABILITY: {"date", "date_range", "time_range"},  # Optional date/time hints
+            IntentType.SELECT_SLOT: {"slot", "start_time", "slot_time", "selection_number"},
+            IntentType.PROVIDE_CUSTOMER_DATA: {"first_name", "last_name", "notes"},
+            IntentType.CONFIRM_BOOKING: set(),  # No entities - just confirmation
+            IntentType.CANCEL_BOOKING: {"reason"},  # Optional reason
+            IntentType.UNKNOWN: set(),  # No entities for unknown
+        }
+
+        allowed_entities = INTENT_ALLOWED_ENTITIES.get(intent_type, set())
+        filtered_entities = {k: v for k, v in entities.items() if k in allowed_entities}
+
+        if entities != filtered_entities:
+            discarded = set(entities.keys()) - set(filtered_entities.keys())
+            logger.info(
+                f"Intent-aware filtering: discarded entities {discarded} for {intent_type.value} "
+                f"(allowed: {allowed_entities})"
+            )
+        entities = filtered_entities
+
+        # Convert service_name to services list (FSM expects "services" not "service_name")
+        if "service_name" in entities and "services" not in entities:
+            service_name = entities.pop("service_name")
+            # Only add non-empty service names
+            if service_name and service_name.strip():
+                entities["services"] = [service_name.strip()]
+                logger.info(f"Converted service_name '{service_name}' to services list")
+            else:
+                logger.warning("Skipping empty service_name in entity conversion")
+
+        # ============================================================
+        # BUG #1 FIX: Post-extraction validation for select_service
+        # ============================================================
+        # Detect if LLM incorrectly classified a DESCRIPTION as select_service
+        # This happens when user says "quiero cortarme el pelo" and LLM extracts
+        # select_service with service_name="corte" (generic term).
+        #
+        # Rule: select_service MUST have either:
+        #   1. A selection_number (user selected from numbered list)
+        #   2. An EXACT service name (not a generic term) AND the raw message
+        #      doesn't contain description patterns like "quiero cortarme"
+        # Otherwise, convert to FAQ so LLM shows service options.
+        if intent_type == IntentType.SELECT_SERVICE:
+            has_selection_number = "selection_number" in entities
+            services_list = entities.get("services", [])
+            raw_lower = raw_message.lower().strip()
+
+            # Check if all services are generic terms
+            all_generic = all(
+                service.lower().strip() in GENERIC_SERVICE_TERMS
+                for service in services_list
+            ) if services_list else False
+
+            # Check if raw message contains description patterns
+            has_description_pattern = any(
+                pattern in raw_lower for pattern in DESCRIPTION_PATTERNS
+            )
+
+            # If no number AND (generic terms OR description pattern) → convert to FAQ
+            if not has_selection_number and (all_generic or has_description_pattern):
+                logger.warning(
+                    f"Bug #1 fix: Converting select_service to faq | "
+                    f"services={services_list}, all_generic={all_generic}, "
+                    f"has_description_pattern={has_description_pattern}"
+                )
+                intent_type = IntentType.FAQ
+                # Keep the entities - the FAQ handler can use them for search
+                # but remove "services" since it's invalid for FAQ
+                entities.pop("services", None)
+
+        # Convert stylist_name to stylist_id (FSM expects "stylist_id" UUID)
+        # Uses dynamic database lookup instead of hardcoded mapping
+        if "stylist_name" in entities and "stylist_id" not in entities:
+            stylist_name = entities.get("stylist_name", "")
+            stylist_id = await get_stylist_id_by_name(stylist_name)
+            if stylist_id:
+                entities["stylist_id"] = stylist_id
+                logger.info(
+                    f"Resolved stylist_name '{stylist_name}' to stylist_id '{stylist_id}' (from DB)"
+                )
+            else:
+                logger.warning(
+                    f"Could not resolve stylist_name '{stylist_name}' to stylist_id (not found in DB)"
+                )
+
+        # Convert start_time to slot dict (FSM expects "slot" with start_time and duration_minutes)
+        # Duration is set to 0 here - will be calculated by FSM from service_details
+        # The FSM.enrich_services() method calculates actual duration from database
+        if "start_time" in entities and "slot" not in entities:
+            raw_start_time = entities.pop("start_time")
+            # CRITICAL: Normalize timezone to prevent book() failures
+            # LLM sometimes extracts without timezone (e.g., "2025-11-27T10:30:00")
+            # but book() expects ISO 8601 with timezone (e.g., "2025-11-27T10:30:00+01:00")
+            normalized_start_time = _normalize_start_time_timezone(raw_start_time)
+            entities["slot"] = {
+                "start_time": normalized_start_time,
+                "duration_minutes": 0,  # Calculated by FSM from selected services
+            }
+            logger.info(
+                f"Converted start_time to slot dict: raw='{raw_start_time}', "
+                f"normalized='{normalized_start_time}' (duration will be calculated by FSM)"
+            )
 
         # Parse confidence
         confidence = float(data.get("confidence", 0.0))
@@ -433,8 +823,8 @@ async def extract_intent(
             ]
         )
 
-        # Parse response
-        intent = _parse_llm_response(response.content, message)
+        # Parse response (async to support dynamic stylist lookup)
+        intent = await _parse_llm_response(response.content, message)
 
         # Log latency and result
         latency_ms = (time.time() - start_time) * 1000
