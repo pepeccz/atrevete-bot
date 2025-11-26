@@ -1431,3 +1431,212 @@ class TestFSMSerialization:
 
         assert fsm.state == BookingState.SERVICE_SELECTION
         assert fsm.collected_data == {}  # Should fallback to empty dict
+
+
+class TestSlotStructuralValidation:
+    """
+    Tests for slot structural validation in FSM.
+
+    These tests verify that _validate_slot_structure() correctly validates
+    slot format before allowing FSM to advance to CUSTOMER_DATA state.
+    """
+
+    def test_valid_slot_structure(self):
+        """Valid slot with start_time and duration passes validation."""
+        fsm = BookingFSM("test-conv")
+        slot = {
+            "start_time": "2025-12-09T10:00:00+01:00",
+            "duration_minutes": 60
+        }
+
+        is_valid, errors = fsm._validate_slot_structure(slot)
+
+        assert is_valid is True
+        assert errors == []
+
+    def test_slot_missing_start_time(self):
+        """Slot without start_time fails validation."""
+        fsm = BookingFSM("test-conv")
+        slot = {"duration_minutes": 60}
+
+        is_valid, errors = fsm._validate_slot_structure(slot)
+
+        assert is_valid is False
+        assert len(errors) == 1
+        assert "missing start_time" in errors[0]
+
+    def test_slot_invalid_iso_format(self):
+        """Slot with invalid ISO 8601 format fails validation."""
+        fsm = BookingFSM("test-conv")
+        slot = {
+            "start_time": "not-a-valid-datetime",
+            "duration_minutes": 60
+        }
+
+        is_valid, errors = fsm._validate_slot_structure(slot)
+
+        assert is_valid is False
+        assert len(errors) == 1
+        assert "Invalid ISO 8601" in errors[0]
+
+    def test_slot_date_only_no_time(self):
+        """Slot with date but no specific time (00:00:00) fails validation."""
+        fsm = BookingFSM("test-conv")
+        slot = {
+            "start_time": "2025-12-09T00:00:00+01:00",  # Midnight = no time specified
+            "duration_minutes": 60
+        }
+
+        is_valid, errors = fsm._validate_slot_structure(slot)
+
+        assert is_valid is False
+        assert "no specific time" in errors[0]
+
+    def test_slot_zero_duration(self):
+        """Slot with zero duration fails validation."""
+        fsm = BookingFSM("test-conv")
+        slot = {
+            "start_time": "2025-12-09T10:00:00+01:00",
+            "duration_minutes": 0
+        }
+
+        is_valid, errors = fsm._validate_slot_structure(slot)
+
+        assert is_valid is False
+        assert "Invalid duration_minutes" in errors[0]
+
+    def test_slot_negative_duration(self):
+        """Slot with negative duration fails validation."""
+        fsm = BookingFSM("test-conv")
+        slot = {
+            "start_time": "2025-12-09T10:00:00+01:00",
+            "duration_minutes": -30
+        }
+
+        is_valid, errors = fsm._validate_slot_structure(slot)
+
+        assert is_valid is False
+        assert "Invalid duration_minutes" in errors[0]
+
+    def test_slot_non_integer_duration(self):
+        """Slot with non-integer duration fails validation."""
+        fsm = BookingFSM("test-conv")
+        slot = {
+            "start_time": "2025-12-09T10:00:00+01:00",
+            "duration_minutes": "60"  # String instead of int
+        }
+
+        is_valid, errors = fsm._validate_slot_structure(slot)
+
+        assert is_valid is False
+        assert "Invalid duration_minutes" in errors[0]
+
+
+class TestSlotValidationInTransition:
+    """
+    Tests for slot validation integrated into FSM transition() method.
+
+    These tests verify that FSM rejects SELECT_SLOT transitions with invalid slots,
+    preventing bad data from advancing to CUSTOMER_DATA state.
+    """
+
+    def test_valid_slot_allows_transition(self):
+        """FSM accepts SELECT_SLOT with valid slot structure."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SLOT_SELECTION
+        fsm._collected_data = {
+            "services": ["Corte"],
+            "stylist_id": "stylist-uuid"
+        }
+
+        intent = Intent(
+            type=IntentType.SELECT_SLOT,
+            entities={
+                "slot": {
+                    "start_time": "2025-12-09T10:00:00+01:00",
+                    "duration_minutes": 60
+                }
+            }
+        )
+
+        result = fsm.transition(intent)
+
+        assert result.success is True
+        assert result.new_state == BookingState.CUSTOMER_DATA
+        assert result.validation_errors == []
+
+    def test_malformed_slot_rejects_transition(self):
+        """FSM rejects SELECT_SLOT with malformed slot (missing start_time)."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SLOT_SELECTION
+        fsm._collected_data = {
+            "services": ["Corte"],
+            "stylist_id": "stylist-uuid"
+        }
+
+        intent = Intent(
+            type=IntentType.SELECT_SLOT,
+            entities={
+                "slot": {
+                    "duration_minutes": 60
+                    # Missing start_time!
+                }
+            }
+        )
+
+        result = fsm.transition(intent)
+
+        assert result.success is False
+        assert result.new_state == BookingState.SLOT_SELECTION  # Stays in same state
+        assert len(result.validation_errors) > 0
+        assert "missing start_time" in result.validation_errors[0]
+
+    def test_date_only_slot_rejects_transition(self):
+        """FSM rejects SELECT_SLOT with date-only timestamp (00:00:00)."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SLOT_SELECTION
+        fsm._collected_data = {
+            "services": ["Corte"],
+            "stylist_id": "stylist-uuid"
+        }
+
+        intent = Intent(
+            type=IntentType.SELECT_SLOT,
+            entities={
+                "slot": {
+                    "start_time": "2025-12-07T00:00:00+01:00",  # Date only, no time
+                    "duration_minutes": 60
+                }
+            }
+        )
+
+        result = fsm.transition(intent)
+
+        assert result.success is False
+        assert result.new_state == BookingState.SLOT_SELECTION
+        assert "no specific time" in result.validation_errors[0]
+
+    def test_invalid_duration_rejects_transition(self):
+        """FSM rejects SELECT_SLOT with invalid duration."""
+        fsm = BookingFSM("test-conv")
+        fsm._state = BookingState.SLOT_SELECTION
+        fsm._collected_data = {
+            "services": ["Corte"],
+            "stylist_id": "stylist-uuid"
+        }
+
+        intent = Intent(
+            type=IntentType.SELECT_SLOT,
+            entities={
+                "slot": {
+                    "start_time": "2025-12-09T10:00:00+01:00",
+                    "duration_minutes": 0  # Invalid: zero duration
+                }
+            }
+        )
+
+        result = fsm.transition(intent)
+
+        assert result.success is False
+        assert result.new_state == BookingState.SLOT_SELECTION
+        assert "Invalid duration_minutes" in result.validation_errors[0]

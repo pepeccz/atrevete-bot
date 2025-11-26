@@ -410,13 +410,18 @@ def _build_state_context(
             "Un nombre como 'Maria' o 'con quien sea' = select_stylist"
         ),
         BookingState.SLOT_SELECTION: (
-            "IMPORTANTE: Un número (1, 2, 3...) significa selección de horario de la lista.\n"
-            "Una fecha/hora como 'mañana a las 10' = select_slot\n\n"
-            "⚠️ TÉRMINOS TEMPORALES VAGOS (sin hora específica):\n"
-            "- 'por la tarde', 'de tarde', 'por la tarde' = check_availability con time_range='afternoon'\n"
-            "- 'por la mañana', 'de mañana', 'por la mañana' = check_availability con time_range='morning'\n"
-            "- 'más opciones', 'otro horario', 'más tarde' = check_availability sin time_range\n"
-            "Estos NO son select_slot porque NO especifican un slot concreto de la lista mostrada."
+            "IMPORTANTE: Distinguir entre CHECK_AVAILABILITY y SELECT_SLOT:\n\n"
+            "✅ SELECT_SLOT requiere selección CONCRETA de la lista mostrada:\n"
+            "- Un NÚMERO de slot (ej: '3', 'el segundo', 'opción 2')\n"
+            "- Una HORA ESPECÍFICA que aparezca en la lista (ej: '10:00', '14:30')\n"
+            "- Confirmación de slot mostrado ('sí', 'ese', 'perfecto')\n\n"
+            "❌ CHECK_AVAILABILITY cuando usuario menciona:\n"
+            "- UNA FECHA SIN HORA (ej: 'diciembre 7', 'el viernes', 'mañana')\n"
+            "  → Usuario quiere VER slots disponibles, NO seleccionar\n"
+            "- Rangos temporales vagos (ej: 'por la tarde', 'por la mañana')\n"
+            "- Solicitudes de más opciones (ej: 'otro día', 'más horarios', 'otro')\n\n"
+            "⚠️ REGLA CLAVE: Si el usuario menciona una fecha/día SIN especificar "
+            "una hora de la lista mostrada, es CHECK_AVAILABILITY, NO SELECT_SLOT."
         ),
         BookingState.CUSTOMER_DATA: (
             "IMPORTANTE: Cualquier respuesta en este estado = provide_customer_data.\n"
@@ -714,8 +719,8 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
                 )
 
         # Convert start_time to slot dict (FSM expects "slot" with start_time and duration_minutes)
-        # Duration is set to 0 here - will be calculated by FSM from service_details
-        # The FSM.enrich_services() method calculates actual duration from database
+        # Duration is set to 0 here - will be synchronized by FSM.calculate_service_durations()
+        # which is triggered when entering CUSTOMER_DATA state (after slot selection)
         if "start_time" in entities and "slot" not in entities:
             raw_start_time = entities.pop("start_time")
             # CRITICAL: Normalize timezone to prevent book() failures
@@ -724,11 +729,11 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
             normalized_start_time = _normalize_start_time_timezone(raw_start_time)
             entities["slot"] = {
                 "start_time": normalized_start_time,
-                "duration_minutes": 0,  # Calculated by FSM from selected services
+                "duration_minutes": 0,  # Will be synchronized by FSM when entering CUSTOMER_DATA
             }
             logger.info(
                 f"Converted start_time to slot dict: raw='{raw_start_time}', "
-                f"normalized='{normalized_start_time}' (duration will be calculated by FSM)"
+                f"normalized='{normalized_start_time}' (duration=0, will be synced by FSM)"
             )
 
         # Parse confidence

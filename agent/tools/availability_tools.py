@@ -31,6 +31,7 @@ from agent.tools.calendar_tools import (
 from agent.utils import parse_natural_date, MADRID_TZ
 from agent.validators import validate_3_day_rule
 from database.models import ServiceCategory
+from shared.business_hours_validator import get_next_open_date, is_date_closed
 
 logger = logging.getLogger(__name__)
 
@@ -434,10 +435,21 @@ async def find_next_available(
         now = datetime.now(MADRID_TZ)
         earliest_valid = now + timedelta(days=3)
 
-        # Skip closed days (weekends: Saturday=5, Sunday=6)
-        # If earliest_valid falls on weekend, move to next Monday
-        while earliest_valid.weekday() in [5, 6]:  # 5=Saturday, 6=Sunday
-            earliest_valid += timedelta(days=1)
+        # Skip closed days using database-driven validation
+        # If earliest_valid falls on closed day, find next open date
+        next_open = await get_next_open_date(earliest_valid, max_search_days=14)
+        if next_open is None:
+            logger.warning(
+                f"No open dates found within 14 days from {earliest_valid.date()}. "
+                f"Returning empty result."
+            )
+            return {
+                "available_stylists": [],
+                "dates_searched": 0,
+                "total_slots_found": 0,
+                "error": "No hay fechas disponibles en las próximas 2 semanas",
+            }
+        earliest_valid = next_open
 
         search_start = earliest_valid.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -464,9 +476,12 @@ async def find_next_available(
             if all(len(slots) >= MAX_SLOTS_PER_STYLIST for slots in all_slots_by_stylist.values()):
                 logger.info(f"Found {MAX_SLOTS_PER_STYLIST} slots for all stylists, stopping search")
 
-            # Skip closed days (weekends: Saturday=5, Sunday=6)
-            if current_date.weekday() in [5, 6]:
-                logger.info(f"Skipping closed day (weekend): {current_date.date()} ({day_names_es[current_date.weekday()]})")
+            # Skip closed days using database-driven validation
+            if await is_date_closed(current_date):
+                logger.info(
+                    f"Skipping closed day: {current_date.date()} "
+                    f"({day_names_es[current_date.weekday()]})"
+                )
                 continue
 
             # Check for holidays

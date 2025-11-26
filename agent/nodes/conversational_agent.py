@@ -803,36 +803,73 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             fsm_context_for_llm = f"[FSM: {fsm.state.value}] Intent: {intent.type.value} (no transition)"
         else:
             # Booking intent - validate with FSM
-            if fsm.can_transition(intent):
-                fsm_result = fsm.transition(intent)
+            # ================================================================
+            # CLOSED DAY VALIDATION FOR SLOT SELECTION (Fix for user feedback)
+            # ================================================================
+            # Validate slot is on an open day BEFORE FSM transition
+            # This prevents Sunday/Monday slots from advancing FSM state
+            # User feedback: "el FSM bloquea la fecha pero el agente no sabe porque"
+            # ================================================================
+            closed_day_error = None
+            if intent.type == IntentType.SELECT_SLOT:
+                slot = intent.entities.get("slot")
+                if slot and "start_time" in slot:
+                    from shared.business_hours_validator import validate_slot_on_open_day
 
-                # ================================================================
-                # SERVICE DURATION CALCULATION (Root fix for duration bug)
-                # ================================================================
-                # Calculate actual service durations from database when:
-                # - Entering CONFIRMATION state (for accurate summary)
-                # - Entering SLOT_SELECTION state (for accurate availability)
-                # This replaces the hardcoded 90-minute default with real values
-                # ================================================================
-                if fsm_result.new_state in (
-                    BookingState.CONFIRMATION,
-                    BookingState.SLOT_SELECTION,
-                ):
-                    await fsm.calculate_service_durations()
+                    is_valid, error_msg = await validate_slot_on_open_day(slot)
+                    if not is_valid:
+                        # Closed day validation failed - reject transition
+                        closed_day_error = error_msg
+                        logger.warning(
+                            f"Closed day validation REJECTED | error={error_msg}",
+                            extra={
+                                "conversation_id": conversation_id,
+                                "slot_start_time": slot.get("start_time"),
+                            }
+                        )
+                        # Create rejection context for LLM (same format as FSM rejection)
+                        fsm_context_for_llm = (
+                            f"[FSM TRANSICIÓN RECHAZADA] Estado actual: {fsm.state.value}\n"
+                            f"Intent intentado: {intent.type.value}\n"
+                            f"Errores: {error_msg}\n"
+                            f"Guía al usuario amigablemente explicando que el salón está cerrado ese día. "
+                            f"Ofrece buscar próximos horarios disponibles con find_next_available."
+                        )
+
+            # Only proceed with FSM transition if closed day validation passed
+            if closed_day_error is None:
+                if fsm.can_transition(intent):
+                    fsm_result = fsm.transition(intent)
+
+                    # ================================================================
+                    # SERVICE DURATION CALCULATION (Root fix for duration bug)
+                    # ================================================================
+                    # Calculate actual service durations from database when:
+                    # - Entering CONFIRMATION state (for accurate summary)
+                    # - Entering SLOT_SELECTION state (for accurate availability queries)
+                    # - Entering CUSTOMER_DATA state (to sync slot.duration after SELECT_SLOT)
+                    # This replaces hardcoded values with real durations from database
+                    # ================================================================
+                    if fsm_result.new_state in (
+                        BookingState.CONFIRMATION,
+                        BookingState.SLOT_SELECTION,
+                        BookingState.CUSTOMER_DATA,  # Fix for slot duration bug (SELECT_SLOT → CUSTOMER_DATA)
+                    ):
+                        await fsm.calculate_service_durations()
+                        logger.info(
+                            f"Service durations calculated | total={fsm.collected_data.get('total_duration_minutes', 0)}min",
+                            extra={"conversation_id": conversation_id}
+                        )
+
+                    await fsm.persist()
                     logger.info(
-                        f"Service durations calculated | total={fsm.collected_data.get('total_duration_minutes', 0)}min",
-                        extra={"conversation_id": conversation_id}
+                        f"FSM transition SUCCESS | new_state={fsm_result.new_state.value}",
+                        extra={
+                            "conversation_id": conversation_id,
+                            "new_state": fsm_result.new_state.value,
+                            "next_action": fsm_result.next_action,
+                        }
                     )
-
-                await fsm.persist()
-                logger.info(
-                    f"FSM transition SUCCESS | new_state={fsm_result.new_state.value}",
-                    extra={
-                        "conversation_id": conversation_id,
-                        "new_state": fsm_result.new_state.value,
-                        "next_action": fsm_result.next_action,
-                    }
-                )
 
                 # ================================================================
                 # AUTOMATIC BOOKING EXECUTION (Fix for Bug #2)

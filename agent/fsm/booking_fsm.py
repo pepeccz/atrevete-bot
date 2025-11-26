@@ -170,6 +170,58 @@ class BookingFSM:
 
         return True
 
+    def _validate_slot_structure(self, slot: dict) -> tuple[bool, list[str]]:
+        """
+        Validate slot has required fields and correct format.
+
+        This is a structural validation that checks:
+        - Slot has start_time field
+        - start_time is valid ISO 8601 format
+        - start_time has specific time (not just date with 00:00:00)
+        - duration_minutes is positive integer
+
+        Args:
+            slot: Slot dictionary to validate
+
+        Returns:
+            Tuple of (is_valid, list_of_errors)
+            - (True, []) if slot is structurally valid
+            - (False, ["error1", "error2"]) if slot has structural issues
+
+        Example:
+            >>> slot = {"start_time": "2025-12-09T10:00:00+01:00", "duration_minutes": 60}
+            >>> is_valid, errors = self._validate_slot_structure(slot)
+            >>> # Returns: (True, [])
+
+            >>> bad_slot = {"start_time": "2025-12-09T00:00:00+01:00", "duration_minutes": 0}
+            >>> is_valid, errors = self._validate_slot_structure(bad_slot)
+            >>> # Returns: (False, ["Slot has date but no specific time", "Invalid duration_minutes: 0"])
+        """
+        errors = []
+
+        if "start_time" not in slot:
+            errors.append("Slot missing start_time")
+            return False, errors
+
+        try:
+            dt = datetime.fromisoformat(slot["start_time"])
+            # Reject date-only timestamps (00:00:00 suggests no time specified)
+            # This catches cases where LLM extracts date but no specific time
+            if dt.hour == 0 and dt.minute == 0 and dt.second == 0:
+                errors.append("Slot has date but no specific time")
+        except (ValueError, AttributeError) as e:
+            errors.append(f"Invalid ISO 8601 start_time: {e}")
+            return False, errors
+
+        duration = slot.get("duration_minutes")
+        if not isinstance(duration, int) or duration <= 0:
+            errors.append(f"Invalid duration_minutes: {duration}")
+
+        # Return final validation result
+        if errors:
+            return False, errors
+        return True, []
+
     def transition(self, intent: Intent) -> FSMResult:
         """
         Execute a state transition based on intent.
@@ -223,6 +275,36 @@ class BookingFSM:
                 next_action="invalid_transition",
                 validation_errors=validation_errors,
             )
+
+        # SLOT VALIDATION: Structural validation for SELECT_SLOT transitions
+        # This prevents invalid slots from advancing FSM to CUSTOMER_DATA
+        if (
+            self._state == BookingState.SLOT_SELECTION
+            and intent.type == IntentType.SELECT_SLOT
+        ):
+            slot = intent.entities.get("slot", self._collected_data.get("slot"))
+            if slot:
+                # Structural validation (synchronous)
+                is_valid, errors = self._validate_slot_structure(slot)
+                if not is_valid:
+                    logger.warning(
+                        "FSM slot structural validation failed: %s -> CUSTOMER_DATA | errors=%s | conversation_id=%s",
+                        self._state.value,
+                        errors,
+                        self._conversation_id,
+                    )
+                    return FSMResult(
+                        success=False,
+                        new_state=self._state,
+                        collected_data=self._collected_data.copy(),
+                        next_action="invalid_transition",
+                        validation_errors=errors,
+                    )
+
+                # NOTE: Closed day validation (async) is deferred to conversational_agent
+                # before calling transition(). The agent should validate slot is on open day
+                # using validate_slot_on_open_day() before calling FSM transition.
+                # This keeps FSM synchronous while maintaining closed day protection.
 
         # Get target state
         to_state = self.TRANSITIONS[self._state][intent.type]
