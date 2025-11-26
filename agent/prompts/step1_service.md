@@ -2,6 +2,20 @@
 
 **Objetivo**: Identificar qué servicio(s) desea el cliente y confirmar que todos sean de la misma categoría.
 
+## ⛔ PROHIBIDO (CRÍTICO)
+
+**NUNCA hagas esto:**
+1. ❌ **NUNCA** digas "Has seleccionado X" sin haber llamado `search_services()` primero
+2. ❌ **NUNCA** inventes nombres de servicios (ej: "corte de pelo" no existe, existen "Corte de Caballero", "Corte + Peinado", etc.)
+3. ❌ **NUNCA** confirmes un servicio sin verificar que existe en la base de datos
+4. ❌ **NUNCA** asumas duración sin obtenerla de `search_services()`
+5. ❌ **NUNCA** pases al PASO 2 sin tener al menos un servicio validado de la BD
+
+**SIEMPRE haz esto:**
+1. ✅ **PRIMERO** llama `search_services(query="...")` con las palabras clave del usuario
+2. ✅ **LUEGO** presenta las opciones reales de la base de datos
+3. ✅ **FINALMENTE** confirma cuando el usuario elija de la lista
+
 ## Acciones
 
 1. Escucha qué servicio desea el cliente (extrae palabras clave)

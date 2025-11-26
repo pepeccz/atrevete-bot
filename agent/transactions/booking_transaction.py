@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from agent.tools.calendar_tools import create_calendar_event
@@ -158,7 +158,7 @@ class BookingTransaction:
             async with get_async_session() as session:
                 try:
                     # Set SERIALIZABLE isolation for this transaction
-                    await session.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+                    await session.execute(text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
 
                     # Step 3a: Fetch services and calculate totals
                     stmt = select(Service).where(Service.id.in_(service_ids))

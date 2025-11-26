@@ -170,6 +170,26 @@ async def receive_chatwoot_webhook(
     # Also check root-level attachments for backward compatibility
     message_attachments = last_message.attachments or payload.attachments
     if message_attachments:
+        # Filter: Ignore messages with non-audio attachments (images, videos, files)
+        # We only want to process text messages or audio messages for transcription
+        non_audio_attachments = [
+            att for att in message_attachments
+            if att.file_type != "audio"
+        ]
+
+        if non_audio_attachments:
+            logger.info(
+                f"Ignoring message with non-audio attachments: {len(non_audio_attachments)} found",
+                extra={
+                    "conversation_id": str(payload.conversation.id),
+                    "attachment_types": [att.file_type for att in non_audio_attachments],
+                }
+            )
+            return JSONResponse(
+                status_code=200,
+                content={"status": "ignored_non_audio_attachment"}
+            )
+
         audio_attachments = [
             att for att in message_attachments
             if att.file_type == "audio"

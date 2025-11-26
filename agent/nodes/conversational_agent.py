@@ -730,13 +730,26 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     )
 
     # =========================================================================
-    # STEP 0: Load FSM state from Redis
+    # STEP 0: Load FSM state (ADR-011: Single source of truth)
     # =========================================================================
-    fsm = await BookingFSM.load(conversation_id)
-    logger.info(
-        f"FSM loaded | state={fsm.state.value} | collected_data={list(fsm.collected_data.keys())}",
-        extra={"conversation_id": conversation_id, "fsm_state": fsm.state.value}
-    )
+    # Phase 4 implementation: Checkpoint-only loading (no fallback)
+    # FSM is now authoritative source from LangGraph checkpoint
+    fsm_data = state.get("fsm_state")
+
+    if fsm_data:
+        # Load from checkpoint (single source of truth)
+        fsm = BookingFSM.from_dict(conversation_id, fsm_data)
+        logger.info(
+            f"FSM loaded from checkpoint | state={fsm.state.value} | collected_data={list(fsm.collected_data.keys())}",
+            extra={"conversation_id": conversation_id, "fsm_state": fsm.state.value}
+        )
+    else:
+        # New conversation or no FSM state yet - create fresh FSM in IDLE
+        fsm = BookingFSM(conversation_id)
+        logger.info(
+            f"FSM created (new conversation) | state={fsm.state.value}",
+            extra={"conversation_id": conversation_id, "fsm_state": fsm.state.value}
+        )
 
     # =========================================================================
     # STEP 1: Extract intent using LLM (state-aware disambiguation)
@@ -1442,6 +1455,17 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
     updated_state = add_message(state, "assistant", assistant_response)
     updated_state["last_node"] = "conversational_agent"
     updated_state["updated_at"] = datetime.now(ZoneInfo("Europe/Madrid"))
+
+    # =========================================================================
+    # PERSIST FSM STATE TO CHECKPOINT (ADR-011: Single source of truth)
+    # =========================================================================
+    # Save FSM state to checkpoint for single-source-of-truth architecture
+    # This replaces the need for separate fsm:{conversation_id} Redis keys
+    updated_state["fsm_state"] = fsm.to_dict()
+    logger.debug(
+        f"FSM state persisted to checkpoint | state={fsm.state.value}",
+        extra={"conversation_id": conversation_id, "fsm_state": fsm.state.value}
+    )
 
     logger.info(
         "Conversational agent completed",

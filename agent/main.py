@@ -151,29 +151,18 @@ async def subscribe_to_incoming_messages():
                     result = await graph.ainvoke(state, config=config)
 
                     # ================================================================
-                    # SYNCHRONOUS CHECKPOINT FLUSH (Race Condition Prevention)
+                    # CHECKPOINT PERSISTENCE (ADR-011: Single Source of Truth)
                     # ================================================================
-                    # After ainvoke(), the checkpoint is written asynchronously in the background.
-                    # If the next message arrives before the write completes, it loads the OLD
-                    # checkpoint, causing race condition FSM state mismatches.
+                    # After ainvoke(), the checkpoint is written asynchronously by AsyncRedisSaver.
+                    # With ADR-011, FSM is consolidated INTO the checkpoint, so there is only
+                    # one persistence operation (not dual persistence).
                     #
-                    # To prevent this, we give the background write task a chance to complete
-                    # by yielding control with asyncio.sleep(0). This allows the event loop
-                    # to run pending tasks (including the checkpoint write).
+                    # No race condition possible: when next message arrives, FSM loads from
+                    # the same checkpoint that LangGraph persisted.
                     #
-                    # Additional small delay (0.1s) to ensure Redis write propagates
-                    # (fsync at OS level for persistence)
+                    # This eliminates the need for synchronous checkpoint flush (ADR-010 workaround)
                     logger.debug(
-                        f"Checkpoint write starting (async) | conversation_id={conversation_id}",
-                        extra={"conversation_id": conversation_id}
-                    )
-
-                    # Yield control to event loop to allow checkpoint write task to run
-                    await asyncio.sleep(0)  # Yield to pending tasks
-                    await asyncio.sleep(0.1)  # Small delay for Redis fsync
-
-                    logger.debug(
-                        f"Checkpoint flush completed | conversation_id={conversation_id}",
+                        f"Checkpoint persisted (FSM consolidated) | conversation_id={conversation_id}",
                         extra={"conversation_id": conversation_id}
                     )
 

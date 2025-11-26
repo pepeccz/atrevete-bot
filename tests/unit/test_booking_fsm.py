@@ -1224,3 +1224,210 @@ class TestSlotFreshnessValidation:
 
             # Slot should be removed (malformed)
             assert "slot" not in fsm.collected_data
+
+
+class TestFSMSerialization:
+    """Tests for FSM serialization (ADR-011: to_dict/from_dict for checkpoint storage)."""
+
+    def test_to_dict_empty_fsm(self):
+        """to_dict() serializes empty IDLE FSM correctly."""
+        fsm = BookingFSM("conv-123")
+        result = fsm.to_dict()
+
+        assert result["state"] == "idle"
+        assert result["collected_data"] == {}
+        assert isinstance(result["last_updated"], str)
+        # Verify ISO format datetime
+        datetime.fromisoformat(result["last_updated"])
+
+    def test_to_dict_with_collected_data(self):
+        """to_dict() serializes FSM with collected data."""
+        fsm = BookingFSM("conv-123")
+        fsm._state = BookingState.CUSTOMER_DATA
+        fsm._collected_data = {
+            "services": ["Corte Largo", "Tinte"],
+            "stylist_id": "stylist-001",
+            "first_name": "Juan",
+            "notes": "Alergia a tintes",
+        }
+
+        result = fsm.to_dict()
+
+        assert result["state"] == "customer_data"
+        assert result["collected_data"]["services"] == ["Corte Largo", "Tinte"]
+        assert result["collected_data"]["stylist_id"] == "stylist-001"
+        assert result["collected_data"]["first_name"] == "Juan"
+        assert result["collected_data"]["notes"] == "Alergia a tintes"
+
+    def test_to_dict_with_slot_data(self):
+        """to_dict() serializes slot with datetime correctly."""
+        from datetime import UTC
+
+        fsm = BookingFSM("conv-123")
+        fsm._state = BookingState.CONFIRMATION
+        now = datetime.now(UTC)
+        fsm._collected_data = {
+            "services": ["Corte"],
+            "stylist_id": "stylist-001",
+            "slot": {
+                "start_time": now.isoformat(),
+                "duration_minutes": 40,
+            },
+            "first_name": "Juan",
+        }
+
+        result = fsm.to_dict()
+
+        assert result["state"] == "confirmation"
+        assert result["collected_data"]["slot"]["start_time"] == now.isoformat()
+        assert result["collected_data"]["slot"]["duration_minutes"] == 40
+
+    def test_to_dict_is_json_serializable(self):
+        """to_dict() output is JSON serializable."""
+        fsm = BookingFSM("conv-123")
+        fsm._state = BookingState.SLOT_SELECTION
+        fsm._collected_data = {
+            "services": ["Corte"],
+            "stylist_id": "stylist-001",
+        }
+
+        result = fsm.to_dict()
+        json_str = json.dumps(result)
+        parsed = json.loads(json_str)
+
+        assert parsed["state"] == "slot_selection"
+        assert "services" in parsed["collected_data"]
+
+    def test_from_dict_empty_data(self):
+        """from_dict() handles empty data gracefully."""
+        fsm = BookingFSM.from_dict("conv-123", {})
+
+        assert fsm.state == BookingState.IDLE
+        assert fsm.collected_data == {}
+        assert fsm.conversation_id == "conv-123"
+
+    def test_from_dict_none_data(self):
+        """from_dict() handles None data gracefully."""
+        fsm = BookingFSM.from_dict("conv-123", None)
+
+        assert fsm.state == BookingState.IDLE
+        assert fsm.collected_data == {}
+
+    def test_from_dict_valid_state(self):
+        """from_dict() deserializes valid state correctly."""
+        data = {
+            "state": "customer_data",
+            "collected_data": {
+                "services": ["Corte"],
+                "first_name": "Juan",
+            },
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+
+        fsm = BookingFSM.from_dict("conv-123", data)
+
+        assert fsm.state == BookingState.CUSTOMER_DATA
+        assert fsm.collected_data["services"] == ["Corte"]
+        assert fsm.collected_data["first_name"] == "Juan"
+
+    def test_from_dict_invalid_state_fallback(self):
+        """from_dict() falls back to IDLE on invalid state."""
+        data = {
+            "state": "invalid_state_name",
+            "collected_data": {},
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+
+        fsm = BookingFSM.from_dict("conv-123", data)
+
+        assert fsm.state == BookingState.IDLE
+
+    def test_from_dict_round_trip(self):
+        """to_dict() -> from_dict() round trip preserves FSM state."""
+        # Create FSM with complex data
+        fsm1 = BookingFSM("conv-123")
+        fsm1._state = BookingState.SLOT_SELECTION
+        fsm1._collected_data = {
+            "services": ["Corte Largo", "Tinte"],
+            "stylist_id": "stylist-001",
+            "first_name": "Juan",
+            "last_name": "García",
+        }
+
+        # Serialize and deserialize
+        data = fsm1.to_dict()
+        fsm2 = BookingFSM.from_dict("conv-123", data)
+
+        # Verify state preserved
+        assert fsm2.state == fsm1.state
+        assert fsm2.collected_data == fsm1.collected_data
+        assert fsm2.conversation_id == fsm1.conversation_id
+
+    def test_from_dict_malformed_last_updated(self):
+        """from_dict() handles malformed last_updated gracefully."""
+        data = {
+            "state": "service_selection",
+            "collected_data": {"services": ["Corte"]},
+            "last_updated": "not-a-valid-datetime",
+        }
+
+        fsm = BookingFSM.from_dict("conv-123", data)
+
+        # Should still load the data
+        assert fsm.state == BookingState.SERVICE_SELECTION
+        assert fsm.collected_data["services"] == ["Corte"]
+        # last_updated should be updated to current time
+        assert fsm._last_updated is not None
+
+    def test_from_dict_validates_slot_freshness(self):
+        """from_dict() validates slot freshness (ADR-008)."""
+        from datetime import UTC, timedelta
+
+        # Create slot with past date
+        past_date = datetime.now(UTC) - timedelta(days=5)
+        data = {
+            "state": "confirmation",
+            "collected_data": {
+                "services": ["Corte"],
+                "stylist_id": "stylist-001",
+                "slot": {
+                    "start_time": past_date.isoformat(),
+                    "duration_minutes": 40,
+                },
+                "first_name": "Juan",
+            },
+            "last_updated": datetime.now(UTC).isoformat(),
+        }
+
+        fsm = BookingFSM.from_dict("conv-123", data)
+
+        # Slot should be removed as it's in the past
+        assert "slot" not in fsm.collected_data
+        # State should be reset to SLOT_SELECTION
+        assert fsm.state == BookingState.SLOT_SELECTION
+
+    def test_from_dict_missing_collected_data(self):
+        """from_dict() handles missing collected_data field."""
+        data = {
+            "state": "service_selection",
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+            # missing collected_data
+        }
+
+        fsm = BookingFSM.from_dict("conv-123", data)
+
+        assert fsm.state == BookingState.SERVICE_SELECTION
+        assert fsm.collected_data == {}
+
+    def test_from_dict_invalid_collected_data_type(self):
+        """from_dict() handles non-dict collected_data."""
+        data = {
+            "state": "service_selection",
+            "collected_data": "not-a-dict",  # Invalid!
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+
+        fsm = BookingFSM.from_dict("conv-123", data)
+
+        assert fsm.state == BookingState.SERVICE_SELECTION
+        assert fsm.collected_data == {}  # Should fallback to empty dict

@@ -53,14 +53,33 @@ class SlotData(TypedDict, total=False):
     duration_minutes: int
 
 
+class ServiceDetail(TypedDict):
+    """
+    Enriched service metadata from database lookup.
+
+    Used to store service information including duration for accurate
+    total duration calculation. This enables the FSM to display correct
+    estimated duration in confirmation messages.
+    """
+
+    name: str  # Service name (e.g., "Corte de Caballero")
+    duration_minutes: int  # Duration in minutes from database
+
+
 class CollectedData(TypedDict, total=False):
     """
     TypedDict for data accumulated during booking flow.
 
     All fields are optional as they are collected progressively.
+
+    Service data is stored in two formats for compatibility:
+    - services: list[str] for book() tool compatibility
+    - service_details: list[ServiceDetail] for duration calculation
     """
 
-    services: list[str]  # List of selected service names
+    services: list[str]  # List of selected service names (for book() compatibility)
+    service_details: list[ServiceDetail]  # Enriched service data with durations
+    total_duration_minutes: int  # Calculated sum of all service durations
     stylist_id: str  # UUID of selected stylist (as string)
     slot: SlotData  # Selected time slot
     first_name: str  # Customer first name (required for booking)
@@ -125,13 +144,15 @@ class ResponseGuidance:
         must_ask: Question the LLM MUST ask the user (e.g., "¿Con quién te gustaría la cita?")
         forbidden: Elements the LLM MUST NOT mention (e.g., ["horarios", "confirmación"])
         context_hint: Brief context hint for the LLM about current state
+        required_tool_call: Tool that MUST be called before confirming selection (e.g., "search_services")
 
     Example:
         >>> guidance = ResponseGuidance(
         ...     must_show=["lista de estilistas disponibles"],
         ...     must_ask="¿Con quién te gustaría la cita?",
         ...     forbidden=["horarios específicos", "datos del cliente"],
-        ...     context_hint="Usuario debe elegir estilista. NO mostrar horarios aún."
+        ...     context_hint="Usuario debe elegir estilista. NO mostrar horarios aún.",
+        ...     required_tool_call="search_services"
         ... )
     """
 
@@ -139,6 +160,7 @@ class ResponseGuidance:
     must_ask: str | None = None
     forbidden: list[str] = field(default_factory=list)
     context_hint: str = ""
+    required_tool_call: str | None = None
 
 
 @dataclass

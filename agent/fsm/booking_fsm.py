@@ -406,11 +406,24 @@ class BookingFSM:
 
     async def persist(self) -> None:
         """
-        Persist FSM state to Redis.
+        DEPRECATED: Use ConversationState.fsm_state with to_dict() instead.
 
-        The state is saved with key pattern fsm:{conversation_id}
-        and TTL of 900 seconds (15 minutes).
+        This method is deprecated in favor of checkpoint-based persistence (ADR-011).
+        FSM state should now be persisted via:
+            updated_state["fsm_state"] = fsm.to_dict()
+
+        This method remains for backward compatibility during migration (Phase 1-3).
+        Will be removed in Phase 4.2 after cutover completes.
         """
+        import warnings
+
+        warnings.warn(
+            "BookingFSM.persist() is deprecated. Use to_dict() with checkpoint persistence instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+        # Legacy implementation - kept for safety during migration phase
         client = get_redis_client()
         key = f"fsm:{self._conversation_id}"
 
@@ -423,18 +436,194 @@ class BookingFSM:
         await client.set(key, json.dumps(data), ex=FSM_TTL_SECONDS)
 
         logger.debug(
-            "FSM persisted: state=%s | conversation_id=%s | ttl=%d",
+            "FSM persisted (DEPRECATED): state=%s | conversation_id=%s | ttl=%d",
             self._state.value,
             self._conversation_id,
             FSM_TTL_SECONDS,
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Serialize FSM state to dictionary for checkpoint storage.
+
+        Converts all non-JSON-serializable types (UUID, datetime, etc.)
+        to their string representations.
+
+        Returns:
+            Dictionary with keys: state, collected_data, last_updated
+
+        Example:
+            >>> fsm = BookingFSM("conv-123")
+            >>> fsm_dict = fsm.to_dict()
+            >>> fsm_dict["state"]
+            "idle"
+            >>> fsm_dict["last_updated"]
+            "2025-11-24T18:27:54.123456+00:00"
+        """
+        # Deep copy to avoid mutations
+        serializable_data: dict[str, Any] = {}
+
+        for key, value in self._collected_data.items():
+            if value is None:
+                serializable_data[key] = None
+            elif isinstance(value, str):
+                serializable_data[key] = value
+            elif isinstance(value, bool):
+                # Must check bool before int since bool is subclass of int
+                serializable_data[key] = value
+            elif isinstance(value, int):
+                serializable_data[key] = value
+            elif isinstance(value, list):
+                # Handle lists (services, service_details)
+                serializable_list = []
+                for item in value:
+                    if isinstance(item, dict):
+                        # ServiceDetail: {name: str, duration_minutes: int}
+                        serializable_list.append(item)
+                    elif isinstance(item, str):
+                        serializable_list.append(item)
+                    else:
+                        # Fallback for unknown types
+                        serializable_list.append(str(item))
+                serializable_data[key] = serializable_list
+            elif isinstance(value, dict):
+                # Handle dicts (slot, service_details elements)
+                serializable_dict = {}
+                for k, v in value.items():
+                    if isinstance(v, str):
+                        serializable_dict[k] = v
+                    elif isinstance(v, (int, bool, type(None))):
+                        serializable_dict[k] = v
+                    else:
+                        # Convert other types to string
+                        serializable_dict[k] = str(v)
+                serializable_data[key] = serializable_dict
+            else:
+                # Fallback for unknown types (convert to string)
+                serializable_data[key] = str(value)
+
+        return {
+            "state": self._state.value,
+            "collected_data": serializable_data,
+            "last_updated": self._last_updated.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, conversation_id: str, data: dict[str, Any]) -> "BookingFSM":
+        """
+        Deserialize FSM state from dictionary (checkpoint storage).
+
+        This is the new primary way to load FSM state from ConversationState.
+        Replaces the Redis-based load() method for the single-source-of-truth architecture.
+
+        Args:
+            conversation_id: Unique identifier for the conversation
+            data: Dictionary with keys: state, collected_data, last_updated
+
+        Returns:
+            BookingFSM instance with restored state, or IDLE if data is invalid
+
+        Error Handling:
+            - Invalid state enum: fallback to IDLE
+            - Missing fields: use defaults (empty dict for collected_data)
+            - Malformed datetime: log warning, use current time
+            - Slot validation failure: clean slot, reset to SLOT_SELECTION
+
+        Example:
+            >>> data = {
+            ...     "state": "slot_selection",
+            ...     "collected_data": {"services": ["Corte"]},
+            ...     "last_updated": "2025-11-24T18:27:54.123456+00:00"
+            ... }
+            >>> fsm = BookingFSM.from_dict("conv-123", data)
+            >>> fsm.state
+            BookingState.SLOT_SELECTION
+        """
+        fsm = cls(conversation_id)
+
+        # Handle empty data
+        if not data:
+            logger.debug(
+                "FSM from_dict: empty data, creating new IDLE FSM | conversation_id=%s",
+                conversation_id,
+            )
+            return fsm
+
+        try:
+            # Deserialize state (with fallback to IDLE on error)
+            state_value = data.get("state")
+            if state_value:
+                try:
+                    fsm._state = BookingState(state_value)
+                except ValueError:
+                    logger.error(
+                        "FSM from_dict: invalid state value, falling back to IDLE | "
+                        "conversation_id=%s | state=%s",
+                        conversation_id,
+                        state_value,
+                    )
+                    fsm._state = BookingState.IDLE
+
+            # Deserialize collected_data
+            fsm._collected_data = data.get("collected_data", {})
+            if not isinstance(fsm._collected_data, dict):
+                logger.warning(
+                    "FSM from_dict: collected_data is not dict, using empty dict | "
+                    "conversation_id=%s | type=%s",
+                    conversation_id,
+                    type(fsm._collected_data),
+                )
+                fsm._collected_data = {}
+
+            # Deserialize last_updated
+            if "last_updated" in data:
+                try:
+                    fsm._last_updated = datetime.fromisoformat(data["last_updated"])
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "FSM from_dict: failed to parse last_updated, using current time | "
+                        "conversation_id=%s | value=%s",
+                        conversation_id,
+                        data.get("last_updated"),
+                    )
+                    fsm._last_updated = datetime.now(UTC)
+
+            # ================================================================
+            # VALIDATE SLOT FRESHNESS (ADR-008: Obsolete slot cleanup)
+            # ================================================================
+            # Ensure slot is still valid after deserialization
+            fsm._validate_and_clean_slot()
+
+            logger.debug(
+                "FSM from_dict: deserialized state=%s | conversation_id=%s",
+                fsm._state.value,
+                conversation_id,
+            )
+
+            return fsm
+
+        except Exception as e:
+            # Catch-all for unexpected errors
+            logger.error(
+                "FSM from_dict: unexpected error during deserialization, "
+                "falling back to IDLE | conversation_id=%s | error=%s",
+                conversation_id,
+                str(e),
+            )
+            return cls(conversation_id)
+
     @classmethod
     async def load(cls, conversation_id: str) -> "BookingFSM":
         """
-        Load FSM state from Redis.
+        DEPRECATED: Use BookingFSM.from_dict() with checkpoint data instead.
 
-        If no state exists for the conversation_id, returns a new FSM in IDLE state.
+        This method is deprecated in favor of checkpoint-based loading (ADR-011).
+        FSM state should now be loaded via:
+            fsm_data = state.get("fsm_state")
+            fsm = BookingFSM.from_dict(conversation_id, fsm_data)
+
+        This method remains for backward compatibility during migration (Phase 1-3).
+        Will be removed in Phase 4.2 after cutover completes.
 
         Args:
             conversation_id: Unique identifier for the conversation
@@ -442,6 +631,13 @@ class BookingFSM:
         Returns:
             BookingFSM instance with restored or initial state
         """
+        import warnings
+
+        warnings.warn(
+            "BookingFSM.load() is deprecated. Use from_dict() with checkpoint data instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         client = get_redis_client()
         key = f"fsm:{conversation_id}"
 

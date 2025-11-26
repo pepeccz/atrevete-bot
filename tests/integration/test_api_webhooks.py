@@ -393,3 +393,59 @@ class TestHealthCheck:
                     assert "status" in data
                     assert "redis" in data
                     assert "postgres" in data
+
+
+    def test_image_attachment_ignored(self):
+        """Test that messages with image attachments are ignored."""
+        client = TestClient(app)
+
+        payload = {
+            "event": "message_created",
+            "conversation": {
+                "id": 100,
+                "inbox_id": 1,
+                "messages": [
+                    {
+                        "id": 12345,
+                        "content": None,
+                        "message_type": 0,
+                        "created_at": 1730000000,
+                        "conversation_id": 100,
+                        "attachments": [
+                            {
+                                "id": 29,
+                                "message_id": 12345,
+                                "file_type": "image",
+                                "account_id": 1,
+                                "extension": None,
+                                "data_url": "https://example.com/image.jpg",
+                                "thumb_url": "https://example.com/thumb.jpg",
+                                "file_size": 208940,
+                                "width": None,
+                                "height": None
+                            }
+                        ]
+                    }
+                ],
+            },
+            "sender": {"phone_number": "612345678", "name": "User"},
+            "created_at": "2025-10-27T10:00:00Z",
+        }
+
+        body = json.dumps(payload).encode()
+
+        from shared.config import get_settings
+        settings = get_settings()
+        token = settings.CHATWOOT_WEBHOOK_TOKEN
+
+        with patch("api.routes.chatwoot.publish_to_channel") as mock_publish:
+            response = client.post(
+                f"/webhook/chatwoot/{token}",
+                content=body,
+                headers={"Content-Type": "application/json"},
+            )
+
+            assert response.status_code == 200
+            assert response.json()["status"] == "ignored_non_audio_attachment"
+            # Should NOT publish to Redis
+            mock_publish.assert_not_called()

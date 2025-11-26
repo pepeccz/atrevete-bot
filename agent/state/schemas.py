@@ -37,7 +37,7 @@ class ConversationState(TypedDict, total=False):
     CUSTOMER_DATA, BOOKING_CONFIRMATION, BOOKING_EXECUTION, POST_BOOKING)
     for focused prompt loading.
 
-    Fields (20 total):
+    Fields (21 total):
         # Core Metadata (5 fields)
         conversation_id: LangGraph thread_id for checkpointing
         customer_phone: E.164 phone (e.g., +34612345678)
@@ -62,6 +62,12 @@ class ConversationState(TypedDict, total=False):
         slot_selected: Selected slot dict {stylist_id, start_time, duration}
         booking_confirmed: True after user confirms booking summary
         appointment_created: True after book() successfully creates appointment
+
+        # FSM State - ADR-011: Single Source of Truth (1 field)
+        fsm_state: Consolidated FSM state from BookingFSM
+            Structure: {"state": str, "collected_data": dict, "last_updated": str}
+            Use BookingFSM.to_dict() to serialize, BookingFSM.from_dict() to deserialize
+            Replaces separate fsm:{conversation_id} Redis key (eliminated dual persistence)
 
         # Node Tracking (1 field)
         last_node: Last executed node (for debugging)
@@ -105,6 +111,11 @@ class ConversationState(TypedDict, total=False):
     slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
     booking_confirmed: bool  # True after user confirms booking summary
     appointment_created: bool  # True after book() successfully creates appointment
+
+    # ============================================================================
+    # FSM State - ADR-011: Single Source of Truth (1 field)
+    # ============================================================================
+    fsm_state: dict[str, Any] | None  # BookingFSM serialized state: {state, collected_data, last_updated}
 
     # ============================================================================
     # Node Tracking (1 field)

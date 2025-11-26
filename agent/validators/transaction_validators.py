@@ -14,7 +14,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
-from database.models import Appointment, Service, ServiceCategory
+from database.models import Appointment, AppointmentStatus, Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
 
@@ -166,14 +166,13 @@ async def validate_slot_availability(
     stmt = (
         select(Appointment)
         .where(Appointment.stylist_id == stylist_id)
-        .where(Appointment.status.in_(["provisional", "confirmed"]))
-        .where(
-            # Check for overlap: existing appointment overlaps with [start_time, end_time]
-            # Appointment starts before our end_time
-            (Appointment.start_time < end_time) &
-            # Appointment ends after our start_time (calculated dynamically)
-            (text("start_time + (duration_minutes || ' minutes')::interval") > start_time)
-        )
+        .where(Appointment.status.in_([AppointmentStatus.PENDING.value, AppointmentStatus.CONFIRMED.value]))
+        # Check for overlap: existing appointment overlaps with [start_time, end_time]
+        # Appointment starts before our end_time
+        .where(Appointment.start_time < end_time)
+        # Appointment ends after our start_time (calculated dynamically)
+        # Note: Use bindparams() for proper SQLAlchemy 2.0 text() comparison
+        .where(text("start_time + (duration_minutes || ' minutes')::interval > :start_time").bindparams(start_time=start_time))
         .with_for_update()  # Row lock to prevent concurrent bookings
     )
 
@@ -181,9 +180,8 @@ async def validate_slot_availability(
     conflicting_appointments = list(result.scalars().all())
 
     # All appointments returned by the query are conflicts
-    # (both 'confirmed' and 'provisional' status)
+    # (both 'pending' and 'confirmed' status)
     # Note: Payment system removed Nov 10, 2025 - all appointments auto-confirm
-    # so provisional appointments are treated the same as confirmed
 
     if conflicting_appointments:
         conflict = conflicting_appointments[0]

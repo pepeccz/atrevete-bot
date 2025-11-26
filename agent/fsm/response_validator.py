@@ -65,6 +65,12 @@ _FORBIDDEN_PATTERNS_RAW: dict[BookingState, list[tuple[str, str]]] = {
          "Muestra días con disponibilidad antes de seleccionar estilista"),
         # Slot confirmation
         (r"(reservar|agendar)\s+(para|a las)\s+\d", "Intenta reservar slot sin estilista seleccionado"),
+        # Service selection language (concatenated response from old message)
+        (r"(qué tipo de corte|quieres cortarte|cortarte el pelo|muestre las opciones)",
+         "Pregunta sobre servicios cuando ya está seleccionando estilista"),
+        # Greeting after booking started (indicates concatenated response)
+        (r"¡?Hola[,!]?\s+(veo que|me llamo|soy|encantad|buen)",
+         "Saludo de inicio cuando ya está en flujo de reserva"),
     ],
 
     # SLOT_SELECTION: User is selecting time slot, shouldn't confirm or ask for customer data
@@ -77,6 +83,15 @@ _FORBIDDEN_PATTERNS_RAW: dict[BookingState, list[tuple[str, str]]] = {
         (r"(tu nombre|tus datos|cómo te llamas)", "Solicita datos del cliente antes de seleccionar slot"),
         # Booking summary (premature)
         (r"resumen de (tu|la) (cita|reserva)", "Muestra resumen antes de completar slot"),
+        # Service selection language (concatenated response from old message)
+        (r"(qué tipo de corte|quieres cortarte|cortarte el pelo|muestre las opciones)",
+         "Pregunta sobre servicios cuando ya está seleccionando horario"),
+        (r"servicios de corte disponibles", "Lista servicios cuando ya está seleccionando horario"),
+        # Greeting after booking started (indicates concatenated response)
+        (r"¡?Hola[,!]?\s+(veo que|me llamo|soy|encantad|buen)",
+         "Saludo de inicio cuando ya está en flujo de reserva"),
+        # Stylist selection language (going backwards)
+        (r"(qué|cuál|con qué)\s+estilista", "Pregunta por estilista cuando ya está seleccionando horario"),
     ],
 
     # CUSTOMER_DATA: Collecting customer info, shouldn't confirm without name
@@ -86,6 +101,12 @@ _FORBIDDEN_PATTERNS_RAW: dict[BookingState, list[tuple[str, str]]] = {
         (r"(ha sido|está)\s+(confirmada|reservada|agendada)", "Indica confirmación prematura de cita"),
         # Booking complete message
         (r"(hemos|he)\s+(reservado|agendado|confirmado)", "Indica reserva completa sin datos"),
+        # Service selection language (concatenated response from old message)
+        (r"(qué tipo de corte|quieres cortarte|cortarte el pelo|muestre las opciones)",
+         "Pregunta sobre servicios cuando ya está recopilando datos"),
+        # Greeting after booking started (indicates concatenated response)
+        (r"¡?Hola[,!]?\s+(veo que|me llamo|soy|encantad|buen)",
+         "Saludo de inicio cuando ya está en flujo de reserva"),
     ],
 
     # CONFIRMATION: Waiting for user confirmation - most responses are valid

@@ -597,3 +597,119 @@ class TestGenericFallback:
         """Fallback should be a friendly greeting."""
         assert "Atrévete" in GENERIC_FALLBACK_RESPONSE or "asistente" in GENERIC_FALLBACK_RESPONSE
         assert "🌸" in GENERIC_FALLBACK_RESPONSE or "ayudar" in GENERIC_FALLBACK_RESPONSE
+
+
+# ============================================================================
+# TEST: CONCATENATED RESPONSE DETECTION (Bug Fix Nov 24, 2025)
+# ============================================================================
+
+
+class TestConcatenatedResponseDetection:
+    """Tests for detecting concatenated/incoherent responses.
+
+    These tests verify that the validator detects when the LLM generates
+    a response that mixes current state content with old message responses,
+    resulting in concatenated messages like:
+    "Horarios disponibles...Hola, quiero cortarte el pelo!"
+    """
+
+    def test_detects_greeting_in_slot_selection(self, validator, mock_fsm):
+        """Detect greeting phrase concatenated with slot selection response."""
+        mock_fsm.state = BookingState.SLOT_SELECTION
+        response = """Estos son los horarios disponibles:
+1. Jueves 10:00
+2. Jueves 10:30
+
+¿Qué horario te viene mejor?Hola, veo que quieres cortarte el pelo!"""
+
+        result = validator.validate(response, mock_fsm)
+
+        assert result.is_coherent is False
+        assert any("saludo" in v.lower() or "inicio" in v.lower() for v in result.violations)
+
+    def test_detects_service_question_in_slot_selection(self, validator, mock_fsm):
+        """Detect service selection language in SLOT_SELECTION state."""
+        mock_fsm.state = BookingState.SLOT_SELECTION
+        response = """Pilar tiene estos horarios:
+1. 10:00
+2. 11:00
+
+¿Qué tipo de corte te gustaría?"""
+
+        result = validator.validate(response, mock_fsm)
+
+        assert result.is_coherent is False
+        assert any("servicio" in v.lower() for v in result.violations)
+
+    def test_detects_service_list_in_slot_selection(self, validator, mock_fsm):
+        """Detect service listing in SLOT_SELECTION state."""
+        mock_fsm.state = BookingState.SLOT_SELECTION
+        response = """Horarios disponibles:
+1. 10:00
+
+Tenemos estos servicios de corte disponibles para ti."""
+
+        result = validator.validate(response, mock_fsm)
+
+        assert result.is_coherent is False
+
+    def test_detects_greeting_in_stylist_selection(self, validator, mock_fsm):
+        """Detect greeting phrase in STYLIST_SELECTION state."""
+        mock_fsm.state = BookingState.STYLIST_SELECTION
+        response = """Nuestras estilistas:
+1. Ana
+2. María
+
+Hola, veo que buscas un corte!"""
+
+        result = validator.validate(response, mock_fsm)
+
+        assert result.is_coherent is False
+
+    def test_detects_service_question_in_stylist_selection(self, validator, mock_fsm):
+        """Detect service selection language in STYLIST_SELECTION state."""
+        mock_fsm.state = BookingState.STYLIST_SELECTION
+        response = "Ana está disponible. ¿Quieres cortarte el pelo?"
+
+        result = validator.validate(response, mock_fsm)
+
+        assert result.is_coherent is False
+
+    def test_detects_greeting_in_customer_data(self, validator, mock_fsm):
+        """Detect greeting phrase in CUSTOMER_DATA state."""
+        mock_fsm.state = BookingState.CUSTOMER_DATA
+        response = "¿Cuál es tu nombre? Hola, veo que quieres una cita!"
+
+        result = validator.validate(response, mock_fsm)
+
+        assert result.is_coherent is False
+
+    def test_allows_clean_slot_selection_response(self, validator, mock_fsm):
+        """Allow clean slot selection response without concatenation."""
+        mock_fsm.state = BookingState.SLOT_SELECTION
+        response = """Estos son los horarios disponibles con Pilar:
+
+1. Jueves 27 de noviembre - 10:00
+2. Jueves 27 de noviembre - 10:30
+3. Jueves 27 de noviembre - 11:00
+
+¿Qué horario te viene mejor? Puedes responder con el número o describirlo."""
+
+        result = validator.validate(response, mock_fsm)
+
+        assert result.is_coherent is True
+        assert len(result.violations) == 0
+
+    def test_detects_stylist_question_in_slot_selection(self, validator, mock_fsm):
+        """Detect stylist selection language in SLOT_SELECTION (going backwards)."""
+        mock_fsm.state = BookingState.SLOT_SELECTION
+        response = """Horarios disponibles:
+1. 10:00
+2. 11:00
+
+¿Con qué estilista te gustaría la cita?"""
+
+        result = validator.validate(response, mock_fsm)
+
+        assert result.is_coherent is False
+        assert any("estilista" in v.lower() for v in result.violations)

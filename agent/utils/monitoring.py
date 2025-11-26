@@ -7,9 +7,15 @@ conversational agent, enabling:
 - Conversation flow tracing (nodes, tools, LLM calls)
 - Performance metrics (latency, error rates)
 - Customer behavior analytics (session/user grouping)
+
+NOTE: Langfuse 3.x uses OpenTelemetry and requires environment variables:
+- LANGFUSE_PUBLIC_KEY
+- LANGFUSE_SECRET_KEY
+- LANGFUSE_HOST (optional, defaults to Langfuse cloud)
 """
 
 import logging
+import os
 from typing import Optional
 
 from langfuse.langchain import CallbackHandler
@@ -28,14 +34,13 @@ def get_langfuse_handler(
     """
     Create a Langfuse callback handler for tracing agent conversations.
 
-    This handler captures all LLM invocations, tool calls, and state transitions
-    within a LangGraph conversation flow, grouping traces by:
-    - session_id: WhatsApp conversation ID (groups messages in one conversation)
-    - user_id: Customer phone number (groups all conversations for a customer)
+    In Langfuse 3.x, configuration is done via environment variables.
+    This function ensures the environment variables are set before
+    creating the handler.
 
     Args:
-        conversation_id: Chatwoot conversation ID (used as Langfuse session_id)
-        customer_phone: Customer's phone number (used as Langfuse user_id)
+        conversation_id: Chatwoot conversation ID (used as session_id via env)
+        customer_phone: Customer's phone number (used as user_id via env)
         customer_name: Optional customer name for metadata enrichment
         additional_metadata: Optional dict with extra metadata to attach
 
@@ -57,28 +62,28 @@ def get_langfuse_handler(
     """
     settings = get_settings()
 
-    # Build metadata
-    metadata = {
-        "customer_phone": customer_phone,
-        "environment": settings.LOG_LEVEL,
-        "timezone": settings.TIMEZONE,
-    }
+    # Langfuse 3.x uses environment variables for configuration
+    # Set them before creating the handler
+    os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
+    os.environ["LANGFUSE_SECRET_KEY"] = settings.LANGFUSE_SECRET_KEY
+    if settings.LANGFUSE_BASE_URL:
+        os.environ["LANGFUSE_HOST"] = settings.LANGFUSE_BASE_URL
 
+    # Set session and user context via environment (Langfuse 3.x approach)
+    os.environ["LANGFUSE_SESSION_ID"] = conversation_id
+    os.environ["LANGFUSE_USER_ID"] = customer_phone
+
+    # Build metadata tags
+    tags = ["production", "whatsapp", "langgraph"]
     if customer_name:
-        metadata["customer_name"] = customer_name
+        tags.append(f"customer:{customer_name}")
 
-    if additional_metadata:
-        metadata.update(additional_metadata)
+    os.environ["LANGFUSE_TAGS"] = ",".join(tags)
 
     try:
+        # In Langfuse 3.x, CallbackHandler reads from environment variables
         handler = CallbackHandler(
-            publicKey=settings.LANGFUSE_PUBLIC_KEY,
-            secretKey=settings.LANGFUSE_SECRET_KEY,
-            host=settings.LANGFUSE_BASE_URL,
-            sessionId=conversation_id,  # Group by conversation
-            userId=customer_phone,  # Group by customer
-            tags=["production", "whatsapp", "langgraph"],
-            metadata=metadata,
+            public_key=settings.LANGFUSE_PUBLIC_KEY,  # Still accepts public_key
         )
         logger.debug(
             f"Langfuse handler created for conversation {conversation_id} "
@@ -87,6 +92,5 @@ def get_langfuse_handler(
         return handler
     except Exception as e:
         logger.error(f"Failed to create Langfuse handler: {e}", exc_info=True)
-        # Return a no-op handler to ensure graceful degradation
-        # (Langfuse failures should not break the bot)
+        # Langfuse failures should not break the bot
         raise
