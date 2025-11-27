@@ -12,10 +12,10 @@
 | Fase 1: Stabilización | ✅ COMPLETADA | 5/5 tareas | 1 día | 2025-11-27 | 2025-11-27 |
 | Fase 2: Centralización Validaciones | ✅ COMPLETADA | 6/6 tareas | 1 día | 2025-11-27 | 2025-11-27 |
 | Fase 3: Eliminación Acoplamiento | ⏸️ PENDIENTE | 0/5 tareas | 5 días | - | - |
-| Fase 4: Testing Strategy | ⏸️ PENDIENTE | 0/4 tareas | 5 días | - | - |
+| Fase 4: Testing Strategy | 🔄 EN PROGRESO | 2/4 tareas | 5 días | 2025-11-27 | - |
 | Fase 5: Documentación Ownership | ⏸️ PENDIENTE | 0/4 tareas | 2 días | - | - |
 
-**Progreso total**: 11/24 tareas completadas (45.8%)
+**Progreso total**: 13/24 tareas completadas (54.2%)
 
 ---
 
@@ -155,21 +155,50 @@ tests/integration/test_booking_e2e.py (nuevo test class, 3 tests)
 
 ---
 
-## Fase 4: Testing Strategy ⏸️ PENDIENTE
+## Fase 4: Testing Strategy 🔄 EN PROGRESO
 
 **Objetivo**: 90%+ cobertura en flujos críticos.
 
 **Resultado esperado**: Bugs detectados en tests, no en producción.
 
+### Tareas Completadas
+
+- [x] **Tarea 4.1**: Crear `tests/integration/test_booking_flow_complete.py`
+  - **Commit**: ✅ d00cd06 (2025-11-27)
+  - **Archivos creados**: `tests/integration/test_booking_flow_complete.py` (451 líneas)
+  - **Tests agregados**: 7 test scenarios
+    - TestCompleteBookingFlow: Happy path completo
+    - TestClosedDayValidation: Rechazo de días cerrados
+    - Test3DayRuleValidation: Enforcement de 3-day rule
+    - TestMultipleServicesDuration: Cálculo de duración
+    - TestInvalidSlotStructure: Validación estructural (2 scenarios)
+  - **Validación**: ✅ Sintaxis verificada con py_compile
+
+- [x] **Tarea 4.2**: Implementar tests end-to-end para edge cases
+  - **Commit**: ✅ d00cd06 (2025-11-27)
+  - **Archivos creados**: `tests/integration/scenarios/test_duration_enrichment.py` (300 líneas)
+  - **Tests agregados**: 5 test scenarios
+    - TestDurationPlaceholderAcceptance: Validación de Fase 1
+    - TestDurationCalculationTiming: Timing de cálculo
+    - TestMultipleServicesDurationSum: Suma de duraciones
+    - TestServiceNotFoundFallback: Degradación graceful
+  - **Validación**: ✅ Cobertura de edge cases documentada en TESTING-STRATEGY.md
+
 ### Tareas Pendientes
 
-- [ ] **Tarea 4.1**: Crear `tests/integration/test_booking_flow_complete.py`
-- [ ] **Tarea 4.2**: Implementar tests end-to-end para edge cases
 - [ ] **Tarea 4.3**: Configurar CI/CD con syntax check + tests
-- [ ] **Tarea 4.4**: Target: 70%+ integration coverage, 90%+ end-to-end
+  - GitHub Actions workflow con pytest
+  - Coverage report automático
+  - Bloqueo de merges si coverage < 85%
 
-**Días estimados**: 5 días (paralelo a Fase 3)
-**Prioridad**: P1 (High)
+- [ ] **Tarea 4.4**: Target: 70%+ integration coverage, 90%+ end-to-end
+  - Ejecutar pytest --cov para generar report
+  - Identificar gaps críticos
+  - Agregar tests faltantes
+
+**Días invertidos**: 1 día (2 tareas completadas)
+**Días estimados restantes**: 2-3 días (2 tareas pendientes)
+**Prioridad**: P1 (High) - EN PROGRESO
 
 ---
 
