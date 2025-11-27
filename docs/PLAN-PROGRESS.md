@@ -12,10 +12,10 @@
 | Fase 1: Stabilización | ✅ COMPLETADA | 5/5 tareas | 1 día | 2025-11-27 | 2025-11-27 |
 | Fase 2: Centralización Validaciones | ✅ COMPLETADA | 6/6 tareas | 1 día | 2025-11-27 | 2025-11-27 |
 | Fase 3: Eliminación Acoplamiento | ⏸️ PENDIENTE | 0/5 tareas | 5 días | - | - |
-| Fase 4: Testing Strategy | 🔄 EN PROGRESO | 2/4 tareas | 5 días | 2025-11-27 | - |
+| Fase 4: Testing Strategy | 🔄 EN PROGRESO | 3/4 tareas | 5 días | 2025-11-27 | - |
 | Fase 5: Documentación Ownership | ⏸️ PENDIENTE | 0/4 tareas | 2 días | - | - |
 
-**Progreso total**: 13/24 tareas completadas (54.2%)
+**Progreso total**: 14/24 tareas completadas (58.3%)
 
 ---
 
@@ -184,20 +184,30 @@ tests/integration/test_booking_e2e.py (nuevo test class, 3 tests)
     - TestServiceNotFoundFallback: Degradación graceful
   - **Validación**: ✅ Cobertura de edge cases documentada en TESTING-STRATEGY.md
 
-### Tareas Pendientes
+- [x] **Tarea 4.3**: Configurar CI/CD con syntax check + tests
+  - **Commit**: ✅ f3c561b (2025-11-27)
+  - **Archivos modificados**:
+    - `.github/workflows/test.yml`: Enhanced con coverage enforcement
+    - `pyproject.toml`: Refined pytest configuration
+  - **Archivos creados**:
+    - `scripts/run-tests-with-coverage.sh` (68 líneas): Helper script
+    - `tests/README.md` (350+ líneas): Comprehensive documentation
+  - **Mejoras**:
+    - Coverage fail-under=85 en CI
+    - PR coverage comments
+    - Multiple report formats (HTML, XML, terminal)
+    - Developer-friendly testing tools
+  - **Validación**: ✅ CI/CD configurado y documentado
 
-- [ ] **Tarea 4.3**: Configurar CI/CD con syntax check + tests
-  - GitHub Actions workflow con pytest
-  - Coverage report automático
-  - Bloqueo de merges si coverage < 85%
+### Tareas Pendientes
 
 - [ ] **Tarea 4.4**: Target: 70%+ integration coverage, 90%+ end-to-end
   - Ejecutar pytest --cov para generar report
   - Identificar gaps críticos
-  - Agregar tests faltantes
+  - Agregar tests faltantes para alcanzar 85%+ overall
 
-**Días invertidos**: 1 día (2 tareas completadas)
-**Días estimados restantes**: 2-3 días (2 tareas pendientes)
+**Días invertidos**: 1 día (3 tareas completadas)
+**Días estimados restantes**: 1-2 días (1 tarea pendiente)
 **Prioridad**: P1 (High) - EN PROGRESO
 
 ---
