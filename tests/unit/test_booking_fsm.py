@@ -1411,18 +1411,18 @@ class TestSlotStructuralValidation:
         assert is_valid is False
         assert "no specific time" in errors[0]
 
-    def test_slot_zero_duration(self):
-        """Slot with zero duration fails validation."""
+    def test_slot_zero_duration_allowed_as_placeholder(self):
+        """Slot with zero duration is allowed as placeholder (FSM will sync duration later)."""
         fsm = BookingFSM("test-conv")
         slot = {
             "start_time": "2025-12-09T10:00:00+01:00",
-            "duration_minutes": 0
+            "duration_minutes": 0  # Placeholder - FSM syncs via calculate_service_durations()
         }
 
         is_valid, errors = fsm._validate_slot_structure(slot)
 
-        assert is_valid is False
-        assert "Invalid duration_minutes" in errors[0]
+        assert is_valid is True
+        assert errors == []
 
     def test_slot_negative_duration(self):
         """Slot with negative duration fails validation."""
@@ -1535,8 +1535,8 @@ class TestSlotValidationInTransition:
         assert result.new_state == BookingState.SLOT_SELECTION
         assert "no specific time" in result.validation_errors[0]
 
-    def test_invalid_duration_rejects_transition(self):
-        """FSM rejects SELECT_SLOT with invalid duration."""
+    def test_zero_duration_placeholder_accepts_transition(self):
+        """FSM accepts SELECT_SLOT with duration:0 (placeholder for later sync)."""
         fsm = BookingFSM("test-conv")
         fsm._state = BookingState.SLOT_SELECTION
         fsm._collected_data = {
@@ -1549,16 +1549,16 @@ class TestSlotValidationInTransition:
             entities={
                 "slot": {
                     "start_time": "2025-12-09T10:00:00+01:00",
-                    "duration_minutes": 0  # Invalid: zero duration
+                    "duration_minutes": 0  # Placeholder - FSM syncs via calculate_service_durations()
                 }
             }
         )
 
         result = fsm.transition(intent)
 
-        assert result.success is False
-        assert result.new_state == BookingState.SLOT_SELECTION
-        assert "Invalid duration_minutes" in result.validation_errors[0]
+        assert result.success is True
+        assert result.new_state == BookingState.CUSTOMER_DATA
+        assert result.validation_errors == []
 
 
 class TestSlotSelectionSubPhases:

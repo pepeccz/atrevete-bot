@@ -870,93 +870,93 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
                         }
                     )
 
-                # ================================================================
-                # AUTOMATIC BOOKING EXECUTION (Fix for Bug #2)
-                # ================================================================
-                # When FSM transitions to BOOKED, automatically execute book() tool
-                # This ensures the appointment is actually created in Google Calendar
-                # ================================================================
-                if fsm_result.new_state == BookingState.BOOKED:
-                    booking_result = await _execute_automatic_booking(
-                        fsm=fsm,
-                        state=state,
-                        conversation_id=conversation_id,
-                    )
-
-                    if booking_result["success"]:
-                        fsm_context_for_llm = (
-                            f"[RESERVA CREADA EXITOSAMENTE]\n"
-                            f"ID de cita: {booking_result.get('appointment_id', 'N/A')}\n"
-                            f"Datos: {fsm_result.collected_data}\n"
-                            f"Responde confirmando la cita al cliente con los detalles."
+                    # ================================================================
+                    # AUTOMATIC BOOKING EXECUTION (Fix for Bug #2)
+                    # ================================================================
+                    # When FSM transitions to BOOKED, automatically execute book() tool
+                    # This ensures the appointment is actually created in Google Calendar
+                    # ================================================================
+                    if fsm_result and fsm_result.new_state == BookingState.BOOKED:
+                        booking_result = await _execute_automatic_booking(
+                            fsm=fsm,
+                            state=state,
+                            conversation_id=conversation_id,
                         )
-                        # Reset FSM after successful booking
-                        fsm.reset()
-                        state["appointment_created"] = True
-                    else:
-                        # ================================================================
-                        # ENHANCED ERROR HANDLING (ADR-009: Specific error detection)
-                        # ================================================================
-                        error_code = booking_result.get("error", "UNKNOWN")
 
-                        if error_code == "DATE_TOO_SOON":
-                            # Special handling for 3-day rule violation
-                            # This can happen when user resumes old conversation with obsolete slot
-                            logger.warning(
-                                "Booking failed: 3-day rule violation | "
-                                "conversation_id=%s | days_until=%s",
-                                conversation_id,
-                                booking_result.get("days_until_appointment", "N/A"),
-                            )
-                            # Reset slot so user must choose a new date
-                            fsm._collected_data.pop("slot", None)
-                            # Reset to SLOT_SELECTION for date re-selection
-                            fsm._state = BookingState.SLOT_SELECTION
-
+                        if booking_result["success"]:
                             fsm_context_for_llm = (
-                                f"[FECHA DE CITA NO VÁLIDA]\n"
-                                f"Las citas deben agendarse con al menos 3 días de anticipación.\n"
-                                f"La fecha que seleccionaste ya pasó o está muy próxima.\n"
-                                f"Por favor, elige una nueva fecha con más de 3 días de anticipación."
+                                f"[RESERVA CREADA EXITOSAMENTE]\n"
+                                f"ID de cita: {booking_result.get('appointment_id', 'N/A')}\n"
+                                f"Datos: {fsm_result.collected_data}\n"
+                                f"Responde confirmando la cita al cliente con los detalles."
                             )
+                            # Reset FSM after successful booking
+                            fsm.reset()
+                            state["appointment_created"] = True
                         else:
-                            # Generic error handling for other cases
-                            fsm_context_for_llm = (
-                                f"[ERROR EN RESERVA]\n"
-                                f"Error: {error_code}\n"
-                                f"Mensaje: {booking_result.get('message', '')}\n"
-                                f"Informa al cliente que hubo un problema y ofrece reintentar."
-                            )
-                        # Don't reset FSM completely - keep data for retry (unless DATE_TOO_SOON)
-                else:
-                    # Use fsm.collected_data (not fsm_result.collected_data) to get
-                    # updated data after calculate_service_durations()
-                    current_data = fsm.collected_data
-                    duration_info = ""
-                    if "total_duration_minutes" in current_data:
-                        duration_info = f"\nDuración total calculada: {current_data['total_duration_minutes']} minutos"
+                            # ================================================================
+                            # ENHANCED ERROR HANDLING (ADR-009: Specific error detection)
+                            # ================================================================
+                            error_code = booking_result.get("error", "UNKNOWN")
 
-                    fsm_context_for_llm = (
-                        f"[FSM TRANSICIÓN EXITOSA] Estado: {fsm_result.new_state.value}\n"
-                        f"Siguiente acción: {fsm_result.next_action}\n"
-                        f"Datos recopilados: {current_data}{duration_info}"
+                            if error_code == "DATE_TOO_SOON":
+                                # Special handling for 3-day rule violation
+                                # This can happen when user resumes old conversation with obsolete slot
+                                logger.warning(
+                                    "Booking failed: 3-day rule violation | "
+                                    "conversation_id=%s | days_until=%s",
+                                    conversation_id,
+                                    booking_result.get("days_until_appointment", "N/A"),
+                                )
+                                # Reset slot so user must choose a new date
+                                fsm._collected_data.pop("slot", None)
+                                # Reset to SLOT_SELECTION for date re-selection
+                                fsm._state = BookingState.SLOT_SELECTION
+
+                                fsm_context_for_llm = (
+                                    f"[FECHA DE CITA NO VÁLIDA]\n"
+                                    f"Las citas deben agendarse con al menos 3 días de anticipación.\n"
+                                    f"La fecha que seleccionaste ya pasó o está muy próxima.\n"
+                                    f"Por favor, elige una nueva fecha con más de 3 días de anticipación."
+                                )
+                            else:
+                                # Generic error handling for other cases
+                                fsm_context_for_llm = (
+                                    f"[ERROR EN RESERVA]\n"
+                                    f"Error: {error_code}\n"
+                                    f"Mensaje: {booking_result.get('message', '')}\n"
+                                    f"Informa al cliente que hubo un problema y ofrece reintentar."
+                                )
+                            # Don't reset FSM completely - keep data for retry (unless DATE_TOO_SOON)
+                    else:
+                        # Use fsm.collected_data (not fsm_result.collected_data) to get
+                        # updated data after calculate_service_durations()
+                        current_data = fsm.collected_data
+                        duration_info = ""
+                        if "total_duration_minutes" in current_data:
+                            duration_info = f"\nDuración total calculada: {current_data['total_duration_minutes']} minutos"
+
+                        fsm_context_for_llm = (
+                            f"[FSM TRANSICIÓN EXITOSA] Estado: {fsm_result.new_state.value}\n"
+                            f"Siguiente acción: {fsm_result.next_action}\n"
+                            f"Datos recopilados: {current_data}{duration_info}"
+                        )
+                else:
+                    # Invalid transition - FSM explains what's missing
+                    fsm_result = fsm.transition(intent)  # This returns failure details
+                    logger.warning(
+                        f"FSM transition REJECTED | errors={fsm_result.validation_errors}",
+                        extra={
+                            "conversation_id": conversation_id,
+                            "errors": fsm_result.validation_errors,
+                        }
                     )
-            else:
-                # Invalid transition - FSM explains what's missing
-                fsm_result = fsm.transition(intent)  # This returns failure details
-                logger.warning(
-                    f"FSM transition REJECTED | errors={fsm_result.validation_errors}",
-                    extra={
-                        "conversation_id": conversation_id,
-                        "errors": fsm_result.validation_errors,
-                    }
-                )
-                fsm_context_for_llm = (
-                    f"[FSM TRANSICIÓN RECHAZADA] Estado actual: {fsm.state.value}\n"
-                    f"Intent intentado: {intent.type.value}\n"
-                    f"Errores: {', '.join(fsm_result.validation_errors)}\n"
-                    f"Guía al usuario amigablemente explicando qué falta."
-                )
+                    fsm_context_for_llm = (
+                        f"[FSM TRANSICIÓN RECHAZADA] Estado actual: {fsm.state.value}\n"
+                        f"Intent intentado: {intent.type.value}\n"
+                        f"Errores: {', '.join(fsm_result.validation_errors)}\n"
+                        f"Guía al usuario amigablemente explicando qué falta."
+                    )
 
     # Step 1: Build LangChain message history from state
     langchain_messages = []

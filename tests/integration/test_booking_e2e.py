@@ -837,6 +837,101 @@ class TestServiceAccumulation:
 
 
 # ============================================================================
+# Bug Regression Tests (2025-11-27)
+# ============================================================================
+
+
+class TestDurationPlaceholderBugFix:
+    """
+    Regression tests for Bug #1 and Bug #3 (2025-11-27).
+
+    Bug #1: AttributeError 'NoneType' object has no attribute 'new_state'
+    Bug #3: FSM rejected slots with duration_minutes: 0
+
+    Root cause: Intent extractor creates slots with duration:0 placeholder
+    because it doesn't have context of services selected. FSM must accept
+    duration:0 and calculate actual duration after transition.
+    """
+
+    def test_slot_with_zero_duration_accepted(self, fresh_fsm: BookingFSM):
+        """
+        Test that FSM accepts slot with duration_minutes: 0 (placeholder).
+
+        This validates the fix for Bug #3:
+        - Intent extractor creates slot with duration:0
+        - FSM validates structural format only (not semantic duration)
+        - Duration is calculated AFTER transition via calculate_service_durations()
+        """
+        # Setup: FSM in SLOT_SELECTION with services selected
+        fresh_fsm.transition(Intent(type=IntentType.START_BOOKING))
+        fresh_fsm.transition(
+            Intent(type=IntentType.CONFIRM_SERVICES, entities={"services": ["Corte"]})
+        )
+        stylist_id = str(uuid4())
+        fresh_fsm.transition(
+            Intent(type=IntentType.SELECT_STYLIST, entities={"stylist_id": stylist_id})
+        )
+
+        # Verify we're at SLOT_SELECTION
+        assert fresh_fsm.state == BookingState.SLOT_SELECTION
+
+        # Create slot with duration:0 (placeholder - as intent extractor does)
+        start = datetime.now(UTC) + timedelta(days=7)
+        slot = {
+            "start_time": start.isoformat(),
+            "duration_minutes": 0,  # Placeholder - FSM should accept this
+        }
+
+        # Execute: SELECT_SLOT with duration:0
+        result = fresh_fsm.transition(Intent(type=IntentType.SELECT_SLOT, entities={"slot": slot}))
+
+        # Verify: Transition should succeed (NOT reject like before the fix)
+        assert result.success is True, f"FSM should accept duration:0, got errors: {result.validation_errors}"
+        assert result.new_state == BookingState.CUSTOMER_DATA
+        assert result.validation_errors == []
+
+        # Verify: Slot stored in collected_data
+        assert "slot" in fresh_fsm.collected_data
+        assert fresh_fsm.collected_data["slot"]["duration_minutes"] == 0
+
+    def test_duration_zero_not_rejected_by_structure_validation(self):
+        """
+        Test that _validate_slot_structure accepts duration:0.
+
+        Before fix: FSM rejected slots with duration <= 0
+        After fix: FSM accepts duration:0 as placeholder
+        """
+        fsm = BookingFSM("test-validation")
+        slot = {
+            "start_time": "2025-12-10T10:00:00+01:00",
+            "duration_minutes": 0,  # Placeholder value
+        }
+
+        is_valid, errors = fsm._validate_slot_structure(slot)
+
+        assert is_valid is True, f"Duration:0 should be valid placeholder, got errors: {errors}"
+        assert errors == []
+
+    def test_negative_duration_still_rejected(self):
+        """
+        Test that negative durations are still rejected (semantic validation).
+
+        We relax validation to accept duration:0, but negative values are still invalid.
+        """
+        fsm = BookingFSM("test-validation")
+        slot = {
+            "start_time": "2025-12-10T10:00:00+01:00",
+            "duration_minutes": -10,  # Invalid: negative
+        }
+
+        is_valid, errors = fsm._validate_slot_structure(slot)
+
+        assert is_valid is False
+        assert len(errors) > 0
+        assert any("duration_minutes" in err.lower() for err in errors)
+
+
+# ============================================================================
 # Checkpoint Persistence Tests
 # ============================================================================
 # FSM state is now persisted via checkpoint (ADR-011: single source of truth).

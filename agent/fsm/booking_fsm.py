@@ -208,7 +208,9 @@ class BookingFSM:
             return False, errors
 
         duration = slot.get("duration_minutes")
-        if not isinstance(duration, int) or duration <= 0:
+        # Allow duration_minutes: 0 or None as valid placeholder
+        # FSM will sync correct duration after transition via calculate_service_durations()
+        if duration is not None and (not isinstance(duration, int) or duration < 0):
             errors.append(f"Invalid duration_minutes: {duration}")
 
         # Return final validation result
