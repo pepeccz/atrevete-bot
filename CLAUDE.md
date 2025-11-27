@@ -149,16 +149,16 @@ mypy .
 
 ## Architecture Overview
 
-> ✅ **ADR-011 IMPLEMENTATION COMPLETE (2025-11-24):** Sistema migrado de **dual persistence a single source of truth**. FSM state ahora consolidado en LangGraph checkpoints (eliminada raza condition, +100ms latencia).
+> ✅ **ADR-011 COMPLETE (2025-11-27):** Sistema 100% unificado en **single source of truth**. FSM state consolidado en LangGraph checkpoints. Eliminada dual persistence Redis + Checkpoint.
 
-### FSM-LangGraph Single Source of Truth (ADR-011) - IMPLEMENTED
+### FSM-LangGraph Single Source of Truth (ADR-011) - COMPLETE
 
 **Problema anterior (ADR-010):** Dual persistence causaba race conditions y requería workaround de 100ms sleep:
-- FSM persistía en Redis key `fsm:{conversation_id}` (síncrono)
-- LangGraph checkpoint persistía en `langchain:checkpoint:thread:*` (asincrónico)
-- Divergencia posible si mensajes llegaban rápido
+- FSM persistía en Redis key `fsm:{conversation_id}` (síncrono) ❌ ELIMINADO
+- LangGraph checkpoint persistía en `langchain:checkpoint:thread:*` (asincrónico) ✅ ÚNICA FUENTE
+- Divergencia posible si mensajes llegaban rápido ❌ ELIMINADA
 
-**Solución ADR-011 (Implementada):** FSM consolidado en checkpoint:
+**Solución ADR-011 (Completada 2025-11-27):** FSM consolidado completamente en checkpoint:
 ```
 Message llega
     ↓
@@ -166,23 +166,26 @@ FSM carga desde ConversationState.fsm_state (ÚNICA FUENTE)
     ↓
 FSM procesa + transiciona
     ↓
-FSM serializa a state["fsm_state"] = fsm.to_dict()
+state["fsm_state"] = fsm.to_dict() (ÚNICA ESCRITURA)
     ↓
-LangGraph persiste TODO en checkpoint (una escritura, no dos)
+LangGraph persiste checkpoint (escritura atómica)
     ↓
-Próximo mensaje: FSM y checkpoint SIEMPRE en sync
+Próximo mensaje: FSM y checkpoint SIEMPRE en sync (garantizado)
 ```
 
-**Beneficios:**
-- ✅ Eliminada race condition (0% divergencia garantizado)
+**Beneficios Alcanzados:**
+- ✅ 0% race condition (eliminada dual persistence)
 - ✅ -100ms latencia (sin sleep workaround)
-- ✅ -20-30% Redis memory (sin fsm:* keys)
+- ✅ -100% Redis memory para fsm:* keys (eliminadas completamente)
 - ✅ Arquitectura más simple (una fuente de verdad)
+- ✅ Código más mantenible (-107 líneas de métodos deprecated)
 
 **Implementación:**
-- Fases 1-4 completadas (serialización, dual-read, cutover)
-- Phase 5 pendiente (optimización + documentación)
-- Ver `docs/fsm-langgraph-harmony-analysis-2025-11-24.md` para análisis completo
+- Phase 1-4: COMPLETE ✅ (serialización, dual-read, cutover, cleanup)
+- `persist()` y `load()` methods: ELIMINADOS ✅
+- fsm:* Redis keys: ELIMINADAS ✅
+- Tests: ACTUALIZADOS a checkpoint-only ✅
+- Ver `ADR-011-STATUS.md` para detalles completos
 
 ### FSM Hybrid Architecture (v4.0) - FOUNDATION FOR ADR-011
 

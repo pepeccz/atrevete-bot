@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 """
+DEPRECATED (2025-11-27): No longer needed.
+===========================================
+All fsm:* keys have been eliminated.
+This script is kept for historical reference only.
+===========================================
+
 ADR-011 Cleanup Script: Remove fsm:* Redis keys after checkpoint migration.
 
 This script cleans up the separate FSM Redis keys (fsm:{conversation_id}) after

@@ -46,17 +46,20 @@ ADR-011 (FSM-LangGraph Single Source of Truth) has been successfully implemented
 
 **Files**: `scripts/migrate_fsm_to_checkpoint.py`
 
-### ✅ Phase 4: Cutover (COMPLETE)
+### ✅ Phase 4: Cutover (COMPLETE - 2025-11-27)
 **Removed dual persistence, committed to single source**
-- 4.1 Checkpoint-only loading (removed Redis fallback)
-- 4.2 Deprecated legacy methods with warnings
-- 4.3 Removed ADR-010 100ms sleep workaround
-- 4.4 Cleanup script for obsolete Redis keys
+- 4.1 Checkpoint-only loading ✅ (already implemented)
+- 4.2 Removed legacy persist()/load() methods ✅
+- 4.3 Removed all fsm.persist() calls ✅ (3 calls eliminated)
+- 4.4 Cleaned up obsolete Redis fsm:* keys ✅
+- 4.5 Updated tests to checkpoint-only ✅
 
-**Files**:
-- `agent/nodes/conversational_agent.py:732-752, 1486-1495`
-- `agent/main.py:153-167`
-- `scripts/cleanup_fsm_redis_keys.py`
+**Files Modified**:
+- `agent/nodes/conversational_agent.py`: Removed 3 persist() calls (lines 864, 896, 917)
+- `agent/fsm/booking_fsm.py`: Removed persist() and load() methods (107 lines)
+- `tests/unit/test_booking_fsm.py`: Removed TestPersistence class
+- `tests/integration/test_booking_e2e.py`: Removed TestFSMPersistence class
+- `tests/integration/test_fsm_llm_integration.py`: Updated to checkpoint-only
 
 ### ⏳ Phase 5: Optimization (OPTIONAL - Post-Deployment)
 Not required for production deployment. Can be deferred.

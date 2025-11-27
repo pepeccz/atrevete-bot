@@ -71,9 +71,8 @@ class TestFSMIntentExtractorIntegration:
         assert result.success is True
         assert result.new_state == BookingState.SERVICE_SELECTION
 
-        # Step 5: Persist FSM
-        await fsm.persist()
-        mock_redis_client.set.assert_called_once()
+        # FSM state is persisted via checkpoint in production (ADR-011)
+        # No Redis persistence needed in tests
 
     @pytest.mark.asyncio
     @patch("agent.fsm.intent_extractor._get_llm_client")

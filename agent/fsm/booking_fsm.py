@@ -8,23 +8,17 @@ through the booking process.
 Key responsibilities:
 - Validate state transitions based on current state and intent
 - Accumulate booking data (services, stylist, slot, customer info)
-- Persist state to Redis for session continuity
+- Serialize state for checkpoint persistence (ADR-011: single source of truth)
 - Log all transitions for debugging and monitoring
 """
 
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
 from agent.fsm.models import BookingState, FSMResult, Intent, IntentType, ResponseGuidance, ServiceDetail
-from shared.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
-
-# TTL for FSM state in Redis (24 hours - synchronized with AsyncRedisSaver checkpoint TTL)
-# See: docs/sprint-change-proposal-2025-11-22-fsm-ttl-fix.md (ADR-007)
-FSM_TTL_SECONDS: int = 86400
 
 
 class BookingFSM:
@@ -486,44 +480,6 @@ class BookingFSM:
             if "slot" in self._collected_data:
                 self._collected_data["slot"]["duration_minutes"] = 60 * len(services)
 
-    async def persist(self) -> None:
-        """
-        DEPRECATED: Use ConversationState.fsm_state with to_dict() instead.
-
-        This method is deprecated in favor of checkpoint-based persistence (ADR-011).
-        FSM state should now be persisted via:
-            updated_state["fsm_state"] = fsm.to_dict()
-
-        This method remains for backward compatibility during migration (Phase 1-3).
-        Will be removed in Phase 4.2 after cutover completes.
-        """
-        import warnings
-
-        warnings.warn(
-            "BookingFSM.persist() is deprecated. Use to_dict() with checkpoint persistence instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        # Legacy implementation - kept for safety during migration phase
-        client = get_redis_client()
-        key = f"fsm:{self._conversation_id}"
-
-        data = {
-            "state": self._state.value,
-            "collected_data": self._collected_data,
-            "last_updated": self._last_updated.isoformat(),
-        }
-
-        await client.set(key, json.dumps(data), ex=FSM_TTL_SECONDS)
-
-        logger.debug(
-            "FSM persisted (DEPRECATED): state=%s | conversation_id=%s | ttl=%d",
-            self._state.value,
-            self._conversation_id,
-            FSM_TTL_SECONDS,
-        )
-
     def to_dict(self) -> dict[str, Any]:
         """
         Serialize FSM state to dictionary for checkpoint storage.
@@ -689,77 +645,6 @@ class BookingFSM:
             logger.error(
                 "FSM from_dict: unexpected error during deserialization, "
                 "falling back to IDLE | conversation_id=%s | error=%s",
-                conversation_id,
-                str(e),
-            )
-            return cls(conversation_id)
-
-    @classmethod
-    async def load(cls, conversation_id: str) -> "BookingFSM":
-        """
-        DEPRECATED: Use BookingFSM.from_dict() with checkpoint data instead.
-
-        This method is deprecated in favor of checkpoint-based loading (ADR-011).
-        FSM state should now be loaded via:
-            fsm_data = state.get("fsm_state")
-            fsm = BookingFSM.from_dict(conversation_id, fsm_data)
-
-        This method remains for backward compatibility during migration (Phase 1-3).
-        Will be removed in Phase 4.2 after cutover completes.
-
-        Args:
-            conversation_id: Unique identifier for the conversation
-
-        Returns:
-            BookingFSM instance with restored or initial state
-        """
-        import warnings
-
-        warnings.warn(
-            "BookingFSM.load() is deprecated. Use from_dict() with checkpoint data instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        client = get_redis_client()
-        key = f"fsm:{conversation_id}"
-
-        data_str = await client.get(key)
-
-        if data_str is None:
-            logger.debug(
-                "FSM load: no existing state, creating new | conversation_id=%s",
-                conversation_id,
-            )
-            return cls(conversation_id)
-
-        try:
-            data = json.loads(data_str)
-            fsm = cls(conversation_id)
-            fsm._state = BookingState(data["state"])
-            fsm._collected_data = data.get("collected_data", {})
-
-            if "last_updated" in data:
-                fsm._last_updated = datetime.fromisoformat(data["last_updated"])
-
-            # ================================================================
-            # VALIDATE SLOT FRESHNESS (ADR-008: Obsolete slot cleanup)
-            # ================================================================
-            # If the FSM has a slot with an obsolete date (past or violates 3-day rule),
-            # clean it up and reset to SLOT_SELECTION so user must re-select
-            fsm._validate_and_clean_slot()
-
-            logger.debug(
-                "FSM load: restored state=%s | conversation_id=%s",
-                fsm._state.value,
-                conversation_id,
-            )
-
-            return fsm
-
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.warning(
-                "FSM load: failed to parse stored state, creating new | "
-                "conversation_id=%s | error=%s",
                 conversation_id,
                 str(e),
             )

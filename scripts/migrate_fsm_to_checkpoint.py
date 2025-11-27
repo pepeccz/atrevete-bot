@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+DEPRECATED (2025-11-27): Migration completed in development.
+=========================================================
+This script is kept for historical reference only.
+All FSM state is now persisted exclusively via checkpoint.
+No migration needed for new deployments.
+=========================================================
+
 ADR-011 Migration Script: Populate fsm_state in LangGraph checkpoints.
 
 This script migrates FSM state from separate Redis keys (fsm:{conversation_id})

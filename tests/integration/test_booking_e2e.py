@@ -837,57 +837,7 @@ class TestServiceAccumulation:
 
 
 # ============================================================================
-# Persistence Tests
+# Checkpoint Persistence Tests
 # ============================================================================
-
-
-class TestFSMPersistence:
-    """Tests for FSM Redis persistence."""
-
-    @pytest.mark.asyncio
-    async def test_persist_and_load_roundtrip(self, fresh_fsm: BookingFSM):
-        """FSM state persists and loads correctly."""
-        stylist_id = str(uuid4())
-
-        # Progress FSM
-        fresh_fsm.transition(Intent(type=IntentType.START_BOOKING))
-        fresh_fsm.transition(
-            Intent(type=IntentType.CONFIRM_SERVICES, entities={"services": ["Corte"]})
-        )
-        fresh_fsm.transition(Intent(type=IntentType.SELECT_STYLIST, entities={"stylist_id": stylist_id}))
-
-        # Mock Redis
-        stored_data = {}
-
-        async def mock_set(key, value, ex=None):
-            stored_data[key] = value
-
-        async def mock_get(key):
-            return stored_data.get(key)
-
-        mock_redis = AsyncMock()
-        mock_redis.set = mock_set
-        mock_redis.get = mock_get
-
-        with patch("agent.fsm.booking_fsm.get_redis_client", return_value=mock_redis):
-            # Persist
-            await fresh_fsm.persist()
-
-            # Load into new FSM
-            loaded_fsm = await BookingFSM.load(fresh_fsm.conversation_id)
-
-            # Verify state matches
-            assert loaded_fsm.state == fresh_fsm.state
-            assert loaded_fsm.collected_data == fresh_fsm.collected_data
-
-    @pytest.mark.asyncio
-    async def test_load_nonexistent_returns_idle(self):
-        """Loading non-existent FSM returns new FSM in IDLE."""
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
-
-        with patch("agent.fsm.booking_fsm.get_redis_client", return_value=mock_redis):
-            fsm = await BookingFSM.load("nonexistent-conversation")
-
-            assert fsm.state == BookingState.IDLE
-            assert fsm.collected_data == {}
+# FSM state is now persisted via checkpoint (ADR-011: single source of truth).
+# Tests for checkpoint persistence are in test_checkpoint_persistence.py.

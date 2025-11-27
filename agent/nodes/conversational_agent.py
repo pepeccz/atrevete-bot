@@ -861,7 +861,6 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
                             extra={"conversation_id": conversation_id}
                         )
 
-                    await fsm.persist()
                     logger.info(
                         f"FSM transition SUCCESS | new_state={fsm_result.new_state.value}",
                         extra={
@@ -893,7 +892,6 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
                         )
                         # Reset FSM after successful booking
                         fsm.reset()
-                        await fsm.persist()
                         state["appointment_created"] = True
                     else:
                         # ================================================================
@@ -914,7 +912,6 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
                             fsm._collected_data.pop("slot", None)
                             # Reset to SLOT_SELECTION for date re-selection
                             fsm._state = BookingState.SLOT_SELECTION
-                            await fsm.persist()
 
                             fsm_context_for_llm = (
                                 f"[FECHA DE CITA NO VÁLIDA]\n"
