@@ -218,7 +218,7 @@ class BookingFSM:
             return False, errors
         return True, []
 
-    def transition(self, intent: Intent) -> FSMResult:
+    async def transition(self, intent: Intent) -> FSMResult:
         """
         Execute a state transition based on intent.
 
@@ -228,6 +228,8 @@ class BookingFSM:
         Returns:
             FSMResult with success status, new state, and collected data
         """
+        from agent.validators.slot_validator import SlotValidator
+
         from_state = self._state
 
         # Handle cancel from any state
@@ -272,21 +274,22 @@ class BookingFSM:
                 validation_errors=validation_errors,
             )
 
-        # SLOT VALIDATION: Structural validation for SELECT_SLOT transitions
-        # This prevents invalid slots from advancing FSM to CUSTOMER_DATA
+        # SLOT VALIDATION: Centralized validation via SlotValidator
+        # This checks structure, closed days, and 3-day rule
         if (
             self._state == BookingState.SLOT_SELECTION
             and intent.type == IntentType.SELECT_SLOT
         ):
             slot = intent.entities.get("slot", self._collected_data.get("slot"))
             if slot:
-                # Structural validation (synchronous)
-                is_valid, errors = self._validate_slot_structure(slot)
-                if not is_valid:
+                # Async validation against DB rules
+                validation = await SlotValidator.validate_complete(slot)
+                
+                if not validation.valid:
                     logger.warning(
-                        "FSM slot structural validation failed: %s -> CUSTOMER_DATA | errors=%s | conversation_id=%s",
+                        "FSM slot validation failed: %s -> CUSTOMER_DATA | error=%s | conversation_id=%s",
                         self._state.value,
-                        errors,
+                        validation.error_message,
                         self._conversation_id,
                     )
                     return FSMResult(
@@ -294,13 +297,8 @@ class BookingFSM:
                         new_state=self._state,
                         collected_data=self._collected_data.copy(),
                         next_action="invalid_transition",
-                        validation_errors=errors,
+                        validation_errors=[validation.error_message or "Slot inválido"],
                     )
-
-                # NOTE: Closed day validation (async) is deferred to conversational_agent
-                # before calling transition(). The agent should validate slot is on open day
-                # using validate_slot_on_open_day() before calling FSM transition.
-                # This keeps FSM synchronous while maintaining closed day protection.
 
         # Get target state
         to_state = self.TRANSITIONS[self._state][intent.type]
