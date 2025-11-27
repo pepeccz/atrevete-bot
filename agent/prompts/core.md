@@ -82,7 +82,10 @@ Usa el CONTEXTO TEMPORAL para validar:
 - Si cliente pide fecha < 3 días → Explica regla proactivamente y ofrece fecha válida
 - Si cliente pide fecha >= 3 días → Procede con find_next_available
 
-**Ejemplo:**
+**IMPORTANTE:** Este ejemplo SOLO aplica cuando el cliente YA MENCIONÓ una fecha.
+NO apliques esta regla proactivamente si el cliente no ha dado una fecha aún.
+
+**Ejemplo (cliente YA pidió fecha inválida):**
 ```
 Hoy: Lunes 4 nov
 Cliente: "Quiero cita mañana"

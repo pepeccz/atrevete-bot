@@ -306,6 +306,18 @@ class BookingFSM:
         # Update collected data from intent entities
         self._merge_entities(intent.entities)
 
+        # SLOT_SELECTION: Mark date preference requested when CHECK_AVAILABILITY intent
+        if (
+            from_state == BookingState.SLOT_SELECTION
+            and intent.type == IntentType.CHECK_AVAILABILITY
+            and to_state == BookingState.SLOT_SELECTION  # Self-loop
+        ):
+            self._collected_data["date_preference_requested"] = True
+            logger.info(
+                "Date preference received in SLOT_SELECTION, marking flag",
+                extra={"conversation_id": self._conversation_id}
+            )
+
         # CUSTOMER_DATA: Conditional advance to CONFIRMATION when data is complete
         # The self-loop accumulates data in two phases:
         # Phase 1: Collect first_name (notes_asked=False)
@@ -327,6 +339,17 @@ class BookingFSM:
                     notes_asked,
                     extra={"conversation_id": self._conversation_id}
                 )
+
+        # Reset date_preference_requested when entering SLOT_SELECTION from STYLIST_SELECTION
+        if (
+            from_state == BookingState.STYLIST_SELECTION
+            and to_state == BookingState.SLOT_SELECTION
+        ):
+            self._collected_data["date_preference_requested"] = False
+            logger.info(
+                "Entering SLOT_SELECTION, resetting date_preference_requested flag",
+                extra={"conversation_id": self._conversation_id}
+            )
 
         # Update state
         self._state = to_state
@@ -838,6 +861,27 @@ class BookingFSM:
                     must_ask="¿Confirmas la reserva?",
                     forbidden=[],
                     context_hint="Datos del cliente completos. Mostrar resumen y confirmar.",
+                )
+
+        # For SLOT_SELECTION, customize based on whether date preference requested
+        elif self._state == BookingState.SLOT_SELECTION:
+            date_requested = self._collected_data.get("date_preference_requested", False)
+
+            if not date_requested:
+                # Sub-fase 1: Preguntar por fecha
+                guidance = ResponseGuidance(
+                    must_show=[],
+                    must_ask="¿Para qué día te gustaría la cita? (ej: mañana, el viernes, el 1 de diciembre, o lo antes posible)",
+                    forbidden=["horarios", "10:00", "14:30", "disponibilidad específica"],
+                    context_hint="IMPORTANTE: PREGUNTAR por preferencia temporal. NO buscar horarios aún.",
+                )
+            else:
+                # Sub-fase 2: Mostrar horarios (después de tener preferencia)
+                guidance = ResponseGuidance(
+                    must_show=["horarios disponibles del estilista"],
+                    must_ask="¿Qué horario te viene mejor?",
+                    forbidden=["confirmación de cita"],
+                    context_hint="Usuario ya dio preferencia temporal. Mostrar horarios disponibles.",
                 )
 
         # Log guidance generation metrics (AC #8)

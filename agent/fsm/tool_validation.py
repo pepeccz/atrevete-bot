@@ -228,6 +228,33 @@ def validate_tool_call(
             redirect_message=redirect_msg,
         )
 
+    # SLOT_SELECTION: Require date preference before availability tools
+    if (
+        fsm.state == BookingState.SLOT_SELECTION
+        and tool_name in ["check_availability", "find_next_available"]
+        and not fsm.collected_data.get("date_preference_requested", False)
+    ):
+        logger.warning(
+            "Availability tool rejected - date preference not requested yet | tool=%s | state=%s",
+            tool_name,
+            fsm.state.value,
+            extra={
+                "tool_name": tool_name,
+                "fsm_state": fsm.state.value,
+                "conversation_id": fsm.conversation_id,
+            }
+        )
+
+        return ToolValidationResult(
+            allowed=False,
+            error_code="DATE_PREFERENCE_NOT_REQUESTED",
+            error_message=(
+                "Debes preguntar por la preferencia temporal del usuario ANTES de buscar horarios. "
+                "Espera a que el usuario mencione una fecha o diga 'lo antes posible'."
+            ),
+            redirect_message="Primero pregunta al usuario para qué día desea la cita.",
+        )
+
     # Check data requirements
     required_fields = TOOL_DATA_REQUIREMENTS.get(tool_name, [])
     missing_fields = []

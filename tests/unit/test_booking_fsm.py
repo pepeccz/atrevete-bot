@@ -1559,3 +1559,118 @@ class TestSlotValidationInTransition:
         assert result.success is False
         assert result.new_state == BookingState.SLOT_SELECTION
         assert "Invalid duration_minutes" in result.validation_errors[0]
+
+
+class TestSlotSelectionSubPhases:
+    """
+    Tests for SLOT_SELECTION sub-phases with date_preference_requested flag.
+
+    Validates that SLOT_SELECTION has two sub-phases:
+    1. Ask for date preference (date_preference_requested=False)
+    2. Show available slots (date_preference_requested=True)
+    """
+
+    def test_slot_selection_sub_phase_1_asks_for_date(self):
+        """
+        Test sub-phase 1: When entering SLOT_SELECTION without date preference,
+        guidance should ask for date without showing slots.
+        """
+        fsm = BookingFSM(conversation_id="test-conv")
+
+        # Transition to SLOT_SELECTION from STYLIST_SELECTION
+        fsm._state = BookingState.STYLIST_SELECTION
+        fsm._collected_data["services"] = ["Corte + Peinado (Corto-Medio)"]
+        fsm._collected_data["stylist_id"] = "stylist-123"
+
+        intent = Intent(
+            type=IntentType.SELECT_STYLIST,
+            entities={"stylist_id": "stylist-123"}
+        )
+
+        result = fsm.transition(intent)
+
+        # Verify transition succeeded
+        assert result.success is True
+        assert result.new_state == BookingState.SLOT_SELECTION
+
+        # Verify flag was reset
+        assert fsm.collected_data.get("date_preference_requested") is False
+
+        # Verify guidance for sub-phase 1
+        guidance = fsm.get_response_guidance()
+        assert guidance.must_show == []
+        assert "día" in guidance.must_ask.lower()
+        assert "horarios" in guidance.forbidden
+
+    def test_slot_selection_sub_phase_2_shows_slots(self):
+        """
+        Test sub-phase 2: After date preference is given (flag=True),
+        guidance should show available slots.
+        """
+        fsm = BookingFSM(conversation_id="test-conv")
+
+        # Setup SLOT_SELECTION state with date preference requested
+        fsm._state = BookingState.SLOT_SELECTION
+        fsm._collected_data["services"] = ["Corte + Peinado (Corto-Medio)"]
+        fsm._collected_data["stylist_id"] = "stylist-123"
+        fsm._collected_data["date_preference_requested"] = True
+
+        # Verify guidance for sub-phase 2
+        guidance = fsm.get_response_guidance()
+        assert "horarios disponibles" in guidance.must_show
+        assert "horario" in guidance.must_ask.lower()
+        assert "confirmación de cita" in guidance.forbidden
+
+    def test_flag_resets_on_entry_from_stylist_selection(self):
+        """
+        Test that date_preference_requested flag resets when entering
+        SLOT_SELECTION from STYLIST_SELECTION.
+        """
+        fsm = BookingFSM(conversation_id="test-conv")
+
+        # Start in STYLIST_SELECTION
+        fsm._state = BookingState.STYLIST_SELECTION
+        fsm._collected_data["services"] = ["Corte de Caballero"]
+
+        # Manually set flag to True (simulating previous booking attempt)
+        fsm._collected_data["date_preference_requested"] = True
+
+        # Transition to SLOT_SELECTION
+        intent = Intent(
+            type=IntentType.SELECT_STYLIST,
+            entities={"stylist_id": "stylist-456"}
+        )
+
+        result = fsm.transition(intent)
+
+        # Verify flag was reset
+        assert result.success is True
+        assert fsm.collected_data.get("date_preference_requested") is False
+
+    def test_flag_set_on_check_availability_self_loop(self):
+        """
+        Test that date_preference_requested flag is set to True when
+        CHECK_AVAILABILITY intent occurs in SLOT_SELECTION (self-loop).
+        """
+        fsm = BookingFSM(conversation_id="test-conv")
+
+        # Setup SLOT_SELECTION state
+        fsm._state = BookingState.SLOT_SELECTION
+        fsm._collected_data["services"] = ["Corte de Caballero"]
+        fsm._collected_data["stylist_id"] = "stylist-789"
+        fsm._collected_data["date_preference_requested"] = False
+
+        # Transition with CHECK_AVAILABILITY (self-loop)
+        intent = Intent(
+            type=IntentType.CHECK_AVAILABILITY,
+            entities={"date": "2025-12-01"}
+        )
+
+        result = fsm.transition(intent)
+
+        # Verify self-loop occurred
+        assert result.success is True
+        assert result.new_state == BookingState.SLOT_SELECTION
+
+        # Verify flag was set
+        assert fsm.collected_data.get("date_preference_requested") is True
