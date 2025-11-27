@@ -99,12 +99,33 @@ jobs:
         run: mypy .
 
       - name: Run tests with coverage
-        run: pytest
+        run: |
+          pytest --cov=agent --cov=shared --cov=database \
+                 --cov-report=term-missing \
+                 --cov-report=html \
+                 --cov-report=xml \
+                 --cov-fail-under=85
 
-      - name: Upload coverage report
+      - name: Upload coverage report (HTML)
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: coverage-report
+          name: coverage-report-html
           path: htmlcov/
           retention-days: 30
+
+      - name: Upload coverage report (XML)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report-xml
+          path: coverage.xml
+          retention-days: 30
+
+      - name: Comment coverage on PR
+        uses: py-cov-action/python-coverage-comment-action@v3
+        if: github.event_name == 'pull_request'
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          MINIMUM_GREEN: 85
+          MINIMUM_ORANGE: 70
