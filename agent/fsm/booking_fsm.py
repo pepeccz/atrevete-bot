@@ -374,17 +374,18 @@ class BookingFSM:
         Calculate and update service durations from database.
 
         This method:
-        1. Looks up each service name in the database to get duration_minutes
-        2. Updates service_details with enriched service data
-        3. Calculates total_duration_minutes as sum of all services
-        4. Synchronizes slot.duration_minutes with total_duration
+        1. Resolves each service name to a UUID using service_resolver (consistent with search)
+        2. Fetches duration from database
+        3. Updates service_details with enriched service data
+        4. Calculates total_duration_minutes
+        5. Synchronizes slot.duration_minutes
 
-        Should be called after services are confirmed (before showing confirmation).
+        Should be called after services are confirmed.
         """
+        from agent.utils.service_resolver import resolve_single_service
         from database.connection import get_async_session
-        from sqlalchemy import select
-        from sqlalchemy.sql import func
         from database.models import Service
+        from sqlalchemy import select
 
         services = self._collected_data.get("services", [])
         if not services:
@@ -397,59 +398,61 @@ class BookingFSM:
         try:
             async with get_async_session() as session:
                 for service_name in services:
-                    # Fuzzy match using similarity (pg_trgm)
-                    # First try exact match, then similarity
-                    query = (
-                        select(Service.name, Service.duration_minutes)
-                        .where(Service.is_active == True)  # noqa: E712
-                        .where(
-                            func.lower(Service.name) == func.lower(service_name)
-                        )
-                    )
-                    result = await session.execute(query)
-                    row = result.first()
+                    try:
+                        # Resolve service name to UUID or ambiguity info
+                        result = await resolve_single_service(service_name)
+                        
+                        service_model = None
+                        
+                        if isinstance(result, dict):
+                            # Ambiguity info returned
+                            # In this context (calculating duration for already selected services),
+                            # we pick the first option as the "best guess" to avoid blocking.
+                            # The user likely selected one of these.
+                            options = result.get("options", [])
+                            if options:
+                                first_option = options[0]
+                                # We have the details in the option dict, no need to query DB if complete
+                                # But let's query DB by ID to be safe and consistent
+                                service_uuid = first_option.get("id")
+                                logger.info(
+                                    f"Ambiguous service '{service_name}', defaulting to first option: {first_option.get('name')}"
+                                )
+                                # Fetch by UUID
+                                if service_uuid:
+                                    query = select(Service).where(Service.id == service_uuid)
+                                    db_result = await session.execute(query)
+                                    service_model = db_result.scalar_one_or_none()
+                        else:
+                            # UUID returned (unambiguous)
+                            service_uuid = result
+                            query = select(Service).where(Service.id == service_uuid)
+                            db_result = await session.execute(query)
+                            service_model = db_result.scalar_one_or_none()
 
-                    if row:
-                        name, duration = row
-                        service_details.append(
-                            ServiceDetail(name=name, duration_minutes=duration)
-                        )
-                        total_duration += duration
-                        logger.debug(
-                            f"Service '{service_name}' resolved: duration={duration}min"
-                        )
-                    else:
-                        # Try similarity match
-                        similarity_query = (
-                            select(Service.name, Service.duration_minutes)
-                            .where(Service.is_active == True)  # noqa: E712
-                            .where(
-                                func.similarity(Service.name, service_name) > 0.3
-                            )
-                            .order_by(func.similarity(Service.name, service_name).desc())
-                            .limit(1)
-                        )
-                        sim_result = await session.execute(similarity_query)
-                        sim_row = sim_result.first()
-
-                        if sim_row:
-                            name, duration = sim_row
+                        if service_model:
                             service_details.append(
-                                ServiceDetail(name=name, duration_minutes=duration)
+                                ServiceDetail(name=service_model.name, duration_minutes=service_model.duration_minutes)
                             )
-                            total_duration += duration
-                            logger.info(
-                                f"Service '{service_name}' fuzzy matched to '{name}': duration={duration}min"
+                            total_duration += service_model.duration_minutes
+                            logger.debug(
+                                f"Service '{service_name}' resolved to '{service_model.name}': {service_model.duration_minutes}min"
                             )
                         else:
-                            # Service not found - use conservative default
-                            logger.warning(
-                                f"Service '{service_name}' not found in DB, using 60min default"
-                            )
+                            # UUID valid but not found in DB? Should not happen.
+                            logger.warning(f"Service UUID found but DB record missing for '{service_name}'")
                             service_details.append(
                                 ServiceDetail(name=service_name, duration_minutes=60)
                             )
                             total_duration += 60
+
+                    except Exception as e:
+                        # resolve_single_service raises ValueError if not found
+                        logger.warning(f"Could not resolve service '{service_name}': {e}. Using default 60min.")
+                        service_details.append(
+                            ServiceDetail(name=service_name, duration_minutes=60)
+                        )
+                        total_duration += 60
 
             # Update collected_data with enriched service data
             self._collected_data["service_details"] = service_details

@@ -19,7 +19,7 @@
 ## Acciones
 
 1. Escucha qué servicio desea el cliente (extrae palabras clave)
-2. **Llama `search_services(query="...", category="Peluquería")` con las palabras clave**
+2. **Llama `search_services(query="...")` con las palabras clave** (usa `category` SOLO si el usuario lo especifica o para filtrar por la categoría del primer servicio seleccionado)
 3. **Presenta las opciones retornadas con LISTA NUMERADA** (máximo 5 servicios):
    ```
    Tenemos estos servicios disponibles:
@@ -39,7 +39,7 @@
    - **SIEMPRE pregunta**: "¿Deseas agregar otro servicio? (máximo 5 servicios por cita)"
 5. Si quiere agregar más servicios:
    - **Verifica límite**: Si ya tiene 5 servicios, informa amigablemente el límite alcanzado (ver punto 7)
-   - Vuelve a llamar `search_services` con nuevas palabras clave
+   - Vuelve a llamar `search_services` con nuevas palabras clave **filtrando por la categoría del primer servicio** (`category="Peluquería"` o `"Estética"`)
    - Verifica que TODOS los servicios sean de la misma categoría
    - Si intenta mezclar categorías → **RECHAZA** (ver core.md, regla crítica #4)
    - Repite el proceso desde el punto 4 (confirma servicio + pregunta "¿agregar otro?")
@@ -75,7 +75,8 @@
 
 ### search_services
 ```python
-search_services(query="corte peinado largo", category="Peluquería")
+search_services(query="corte peinado largo")
+# O: search_services(query="...", category="Peluquería") si ya hay un servicio de esa categoría
 ```
 
 **Retorna**: Máximo 5 servicios más relevantes (con fuzzy matching)
