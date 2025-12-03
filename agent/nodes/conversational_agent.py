@@ -158,7 +158,8 @@ async def _execute_automatic_booking(
         # Execute book() tool
         result = await book.ainvoke(book_args)
 
-        if isinstance(result, dict) and not result.get("error"):
+        # POSITIVE VALIDATION: Explicit success check (ADR-012: Fix booking hallucination bug)
+        if isinstance(result, dict) and result.get("success") is True:
             logger.info(
                 "Booking created successfully | conversation_id=%s | appointment_id=%s",
                 conversation_id,
@@ -625,7 +626,8 @@ async def execute_tool_call(
         # Track successful booking creation (for manual book() calls by LLM)
         # Note: The canonical booking path is now via automatic booking in FSM transition.
         # This code handles edge cases where LLM calls book() directly.
-        if tool_name == "book" and isinstance(result, dict) and not result.get("error"):
+        # POSITIVE VALIDATION: Explicit success check (ADR-012)
+        if tool_name == "book" and isinstance(result, dict) and result.get("success") is True:
             state_updates["appointment_created"] = True
             logger.info(
                 "Appointment created via manual book() call",
@@ -730,6 +732,12 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     )
 
     # =========================================================================
+    # TOOL EXECUTION TRACKING (ADR-012: Layer 3 defense against hallucinations)
+    # =========================================================================
+    # Track which tools are actually called this turn for auditing
+    tools_executed_this_turn: set[str] = set()
+
+    # =========================================================================
     # STEP 0: Load FSM state (ADR-011: Single source of truth)
     # =========================================================================
     # Phase 4 implementation: Checkpoint-only loading (no fallback)
@@ -802,6 +810,31 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             )
             fsm_context_for_llm = f"[FSM: {fsm.state.value}] Intent: {intent.type.value} (no transition)"
         else:
+            # ================================================================
+            # PRE-FLIGHT VALIDATION: Prevent booking hallucination (ADR-012)
+            # ================================================================
+            # Before allowing CONFIRM_BOOKING intent, verify ALL required data exists
+            # This prevents FSM from reaching BOOKED state with incomplete data
+            if intent.type == IntentType.CONFIRM_BOOKING:
+                required_data = ["services", "stylist_id", "slot", "first_name"]
+                missing = [f for f in required_data if not fsm.collected_data.get(f)]
+                if missing:
+                    logger.error(
+                        "BOOKING HALLUCINATION PREVENTED: Attempted CONFIRM_BOOKING without required data",
+                        extra={
+                            "conversation_id": conversation_id,
+                            "missing_fields": missing,
+                            "fsm_state": fsm.state.value
+                        }
+                    )
+                    # Force FSM to reject by setting intent to UNKNOWN
+                    intent = Intent(
+                        type=IntentType.UNKNOWN,
+                        entities={},
+                        confidence=0.0,
+                        raw_message=last_user_message
+                    )
+
             # Booking intent - validate with FSM
             if fsm.can_transition(intent):
                 fsm_result = await fsm.transition(intent)
@@ -849,11 +882,30 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
                     )
 
                     if booking_result["success"]:
+                        # ================================================================
+                        # PARANOID VALIDATION: Verify booking actually created (ADR-012)
+                        # ================================================================
+                        # Catch any bugs where BookingTransaction reports success without
+                        # actually creating the appointment
+                        assert booking_result.get("appointment_id"), \
+                            "Booking reports success but no appointment_id"
+                        assert booking_result.get("google_calendar_event_id"), \
+                            "Booking reports success but no calendar event"
+
+                        logger.info(
+                            "Booking verified successful",
+                            extra={
+                                "conversation_id": conversation_id,
+                                "appointment_id": booking_result['appointment_id'],
+                                "calendar_event_id": booking_result['google_calendar_event_id']
+                            }
+                        )
+
                         fsm_context_for_llm = (
-                            f"[RESERVA CREADA EXITOSAMENTE]\n"
-                            f"ID de cita: {booking_result.get('appointment_id', 'N/A')}\n"
-                            f"Datos: {fsm_result.collected_data}\n"
-                            f"Responde confirmando la cita al cliente con los detalles."
+                            f"[RESERVA CREADA EXITOSAMENTE - VERIFIED]\n"
+                            f"ID de cita: {booking_result['appointment_id']}\n"
+                            f"Google Calendar ID: {booking_result['google_calendar_event_id']}\n"
+                            f"✅ CONFIRMACIÓN VÁLIDA: Puedes decir al cliente que la cita está confirmada."
                         )
                         # Reset FSM after successful booking
                         fsm.reset()
@@ -1114,8 +1166,14 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
 
         # Execute each tool call with state-aware validation
         for tool_call in response.tool_calls:
+            tool_name = tool_call.get("name")
+
+            # Track tool execution for auditing (ADR-012)
+            if tool_name:
+                tools_executed_this_turn.add(tool_name)
+
             # Track if search_services is being called
-            if tool_call.get("name") == "search_services":
+            if tool_name == "search_services":
                 search_services_called_this_turn = True
 
             tool_result, state_updates = await execute_tool_call(tool_call, state, fsm)
@@ -1449,6 +1507,54 @@ NUNCA preguntes por el teléfono. Úsalo directamente cuando necesites llamar a 
             )
             # Update state with confirmation flag BEFORE adding message
             state["booking_confirmed"] = True
+
+    # =========================================================================
+    # STATE-ACTION COHERENCE AUDIT (ADR-012: Layer 4 defense)
+    # =========================================================================
+    # Audit state-action coherence before sending response to user
+    # This is the FINAL safety net to prevent booking hallucinations
+    from agent.fsm.state_action_auditor import StateActionAuditor
+
+    auditor = StateActionAuditor()
+    audit_result = await auditor.audit(
+        fsm=fsm,
+        response=assistant_response,
+        tools_executed=tools_executed_this_turn,
+        state=state
+    )
+
+    if not audit_result.coherent and audit_result.severity == "critical":
+        logger.critical(
+            "STATE-ACTION AUDIT FAILED: Critical violations detected",
+            extra={
+                "conversation_id": conversation_id,
+                "violations": audit_result.violations,
+                "severity": audit_result.severity
+            }
+        )
+
+        # Auto-escalate to human (user decision: safest approach)
+        from agent.tools.escalate import escalate_to_human
+        try:
+            await escalate_to_human.ainvoke({
+                "reason": f"System audit failed: {', '.join(audit_result.violations)}"
+            })
+            logger.info(
+                f"Auto-escalated to human due to audit failure",
+                extra={"conversation_id": conversation_id}
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to auto-escalate after audit failure: {e}",
+                extra={"conversation_id": conversation_id, "error": str(e)},
+                exc_info=True
+            )
+
+        # Override response with safe error message (user decision: prevent false confirmations)
+        assistant_response = (
+            "Detecté un problema con tu reserva. He notificado al equipo para que te ayuden. "
+            "Alguien se pondrá en contacto contigo pronto. 🌸"
+        )
 
     # Step 10: Update state with assistant response
     updated_state = add_message(state, "assistant", assistant_response)

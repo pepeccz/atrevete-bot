@@ -79,6 +79,11 @@ _FORBIDDEN_PATTERNS_RAW: dict[BookingState, list[tuple[str, str]]] = {
         (r"(cita|reserva)\s+(ha sido\s+)?(confirmada|reservada|agendada)", "Confirma cita antes de seleccionar slot"),
         (r"(ha sido|está)\s+(confirmada|reservada|agendada)", "Indica confirmación prematura de cita"),
         (r"reserva\s+está\s+completa", "Indica reserva completa prematuramente"),
+        # BOOKING HALLUCINATION PATTERNS (ADR-012: Critical fix for false confirmations)
+        (r"(ya he|he|hemos)\s+(reservado|agendado|creado|confirmado)\s+(tu|su|la)\s+cita",
+         "Confirma cita sin ejecutar book()"),
+        (r"cita\s+(está|ha sido)\s+(reservada|agendada|creada|confirmada)",
+         "Indica cita confirmada sin book()"),
         # Customer data requests (should happen after slot selection)
         (r"(tu nombre|tus datos|cómo te llamas)", "Solicita datos del cliente antes de seleccionar slot"),
         # Booking summary (premature)
@@ -101,6 +106,11 @@ _FORBIDDEN_PATTERNS_RAW: dict[BookingState, list[tuple[str, str]]] = {
         (r"(ha sido|está)\s+(confirmada|reservada|agendada)", "Indica confirmación prematura de cita"),
         # Booking complete message
         (r"(hemos|he)\s+(reservado|agendado|confirmado)", "Indica reserva completa sin datos"),
+        # BOOKING HALLUCINATION PATTERNS (ADR-012: Critical fix for false confirmations)
+        (r"(ya he|he|hemos)\s+(reservado|agendado|creado|confirmado)\s+(tu|su|la)\s+cita",
+         "Confirma cita sin ejecutar book()"),
+        (r"cita\s+(está|ha sido)\s+(reservada|agendada|creada|confirmada)",
+         "Indica cita confirmada sin book()"),
         # Service selection language (concatenated response from old message)
         (r"(qué tipo de corte|quieres cortarte|cortarte el pelo|muestre las opciones)",
          "Pregunta sobre servicios cuando ya está recopilando datos"),
