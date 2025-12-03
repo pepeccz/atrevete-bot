@@ -6,11 +6,17 @@ This module defines the core data structures used by the BookingFSM:
 - Intent: Structured representation of user intent
 - FSMResult: Result of FSM transition operations
 - CollectedData: TypedDict for accumulated booking data
+- FSMAction: Prescriptive action specification (v5.0 architecture)
+- ToolCall: Tool call specification for FSMAction
+- ActionType: Types of actions FSM can prescribe
 """
 
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, TypedDict
+
+# Import FSMAction system (v5.0 prescriptive architecture)
+from agent.fsm.fsm_action import ActionType, FSMAction, ToolCall
 
 
 class IntentType(str, Enum):

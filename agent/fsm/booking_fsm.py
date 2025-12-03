@@ -16,7 +16,17 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
-from agent.fsm.models import BookingState, FSMResult, Intent, IntentType, ResponseGuidance, ServiceDetail
+from agent.fsm.models import (
+    ActionType,
+    BookingState,
+    FSMAction,
+    FSMResult,
+    Intent,
+    IntentType,
+    ResponseGuidance,
+    ServiceDetail,
+    ToolCall,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1051,3 +1061,307 @@ class BookingFSM:
             context_hint="Booking completado. Confirmar cita y ofrecer ayuda adicional.",
         ),
     }
+
+    # ============================================================================
+    # V5.0 PRESCRIPTIVE FSM ARCHITECTURE
+    # ============================================================================
+    # Methods for prescriptive action generation (v5.0 architecture).
+    # FSM prescribes EXACT tools to call + response templates.
+    # LLM relegated to: (1) intent extraction (NLU), (2) response formatting (generation)
+
+    def get_required_action(self) -> FSMAction:
+        """
+        Get prescriptive action for current state (v5.0 prescriptive architecture).
+
+        This method determines EXACTLY what the agent should do based on FSM state,
+        removing tool decision power from the LLM. The FSM prescribes:
+        - Which tools to call (if any)
+        - Tool arguments (built from collected_data)
+        - Response template structure
+        - Whether to allow LLM creativity in formatting
+
+        Returns:
+            FSMAction specifying tool calls and/or response generation
+
+        Example:
+            >>> fsm = BookingFSM("conv-123")
+            >>> fsm._state = BookingState.SLOT_SELECTION
+            >>> fsm._collected_data = {"stylist_id": "uuid-123", "total_duration_minutes": 60}
+            >>> action = fsm.get_required_action()
+            >>> action.action_type
+            ActionType.CALL_TOOLS_SEQUENCE
+            >>> action.tool_calls[0].name
+            'find_next_available'
+        """
+        # Map states to action builders
+        action_builders = {
+            BookingState.IDLE: self._action_idle,
+            BookingState.SERVICE_SELECTION: self._action_service_selection,
+            BookingState.STYLIST_SELECTION: self._action_stylist_selection,
+            BookingState.SLOT_SELECTION: self._action_slot_selection,
+            BookingState.CUSTOMER_DATA: self._action_customer_data,
+            BookingState.CONFIRMATION: self._action_confirmation,
+            BookingState.BOOKED: self._action_booked,
+        }
+
+        builder = action_builders.get(self._state)
+        if not builder:
+            logger.error(f"No action builder for state {self._state}")
+            return FSMAction(action_type=ActionType.NO_ACTION)
+
+        return builder()
+
+    def _action_idle(self) -> FSMAction:
+        """
+        Build action for IDLE state (no active booking).
+
+        Returns:
+            FSMAction with greeting/welcome message (no tools)
+        """
+        return FSMAction(
+            action_type=ActionType.GENERATE_RESPONSE,
+            response_template=(
+                "¡Hola! Soy Maite, tu asistente virtual de la Peluquería Atrévete. "
+                "¿En qué puedo ayudarte hoy? Puedo ayudarte a reservar una cita, "
+                "consultar nuestros servicios, horarios, o cualquier duda que tengas."
+            ),
+            allow_llm_creativity=True,
+        )
+
+    def _action_service_selection(self) -> FSMAction:
+        """
+        Build action for SERVICE_SELECTION state.
+
+        Logic:
+        - If no services selected yet → call search_services to show catalog
+        - If services already selected → ask for confirmation or more
+
+        Returns:
+            FSMAction with tool call (search_services) or response generation
+        """
+        services = self._collected_data.get("services", [])
+
+        if not services:
+            # No services yet - MUST call search_services to show catalog
+            return FSMAction(
+                action_type=ActionType.CALL_TOOLS_SEQUENCE,
+                tool_calls=[
+                    ToolCall(
+                        name="search_services",
+                        args={"query": "servicios", "limit": 10},
+                        required=True,
+                    )
+                ],
+                response_template=(
+                    "¡Perfecto! Estos son algunos de nuestros servicios:\n\n"
+                    "{% for service in services %}"
+                    "{{ loop.index }}. {{ service.name }}"
+                    "{% if service.duration_minutes %} ({{ service.duration_minutes }} min){% endif %}\n"
+                    "{% endfor %}\n\n"
+                    "¿Cuál te gustaría? Puedes decirme el número o el nombre del servicio."
+                ),
+                template_vars={"services": []},  # Will be populated by tool result
+                allow_llm_creativity=True,
+            )
+        else:
+            # Services selected - confirm or ask for more
+            return FSMAction(
+                action_type=ActionType.GENERATE_RESPONSE,
+                response_template=(
+                    "Perfecto, tienes seleccionados: {{ services|join(', ') }}.\n\n"
+                    "¿Quieres agregar otro servicio o continuamos con estos?"
+                ),
+                template_vars={"services": services},
+                allow_llm_creativity=True,
+            )
+
+    def _action_stylist_selection(self) -> FSMAction:
+        """
+        Build action for STYLIST_SELECTION state.
+
+        Stylists are static data (not a tool call). Show list and ask selection.
+
+        Returns:
+            FSMAction with response generation (no tools)
+        """
+        # Stylist names are loaded from context in conversational_agent
+        # Here we just provide the template
+        return FSMAction(
+            action_type=ActionType.GENERATE_RESPONSE,
+            response_template=(
+                "Nuestros estilistas disponibles son:\n\n"
+                "1. Ana - Especialista en cortes modernos\n"
+                "2. María - Experta en color y mechas\n"
+                "3. Carlos - Especialista en caballero\n"
+                "4. Pilar - Maestra en peinados y recogidos\n"
+                "5. Laura - Experta en tratamientos capilares\n\n"
+                "¿Con quién te gustaría la cita? Si no tienes preferencia, "
+                "puedo buscar disponibilidad con cualquiera de ellos."
+            ),
+            allow_llm_creativity=True,
+        )
+
+    def _action_slot_selection(self) -> FSMAction:
+        """
+        Build action for SLOT_SELECTION state.
+
+        Logic:
+        - Check if date preference has been requested
+        - If not requested → ask for date preference (no tool)
+        - If requested → call find_next_available to show slots
+
+        Returns:
+            FSMAction with tool call (find_next_available) or response generation
+        """
+        stylist_id = self._collected_data.get("stylist_id")
+        total_duration = self._collected_data.get("total_duration_minutes", 60)
+        date_preference_requested = self._collected_data.get("date_preference_requested", False)
+
+        if not date_preference_requested:
+            # Sub-phase 1: Ask for date preference (no tool call yet)
+            return FSMAction(
+                action_type=ActionType.GENERATE_RESPONSE,
+                response_template=(
+                    "¿Para qué día te gustaría la cita? Puedes decirme:\n"
+                    "- 'mañana' o 'pasado mañana'\n"
+                    "- Un día de la semana ('el lunes', 'el viernes')\n"
+                    "- Una fecha específica ('el 15 de diciembre')\n"
+                    "- O 'lo antes posible' para ver los próximos disponibles"
+                ),
+                allow_llm_creativity=True,
+            )
+        else:
+            # Sub-phase 2: Show availability (MUST call find_next_available)
+            return FSMAction(
+                action_type=ActionType.CALL_TOOLS_SEQUENCE,
+                tool_calls=[
+                    ToolCall(
+                        name="find_next_available",
+                        args={
+                            "stylist_id": stylist_id,
+                            "duration_minutes": total_duration,
+                            "max_results": 5,
+                        },
+                        required=True,
+                    )
+                ],
+                response_template=(
+                    "Aquí están los horarios disponibles:\n\n"
+                    "{% for slot in slots %}"
+                    "{{ loop.index }}. {{ slot.date }} a las {{ slot.time }} "
+                    "(con {{ slot.stylist_name }})\n"
+                    "{% endfor %}\n\n"
+                    "¿Cuál prefieres? Puedes decirme el número."
+                ),
+                template_vars={"slots": []},  # Will be populated by tool result
+                allow_llm_creativity=True,
+            )
+
+    def _action_customer_data(self) -> FSMAction:
+        """
+        Build action for CUSTOMER_DATA state.
+
+        Logic:
+        - Phase 1: If no first_name → ask for name
+        - Phase 2: If has first_name but notes not asked → ask for notes
+        - After phase 2, FSM will transition to CONFIRMATION
+
+        Returns:
+            FSMAction with response generation (no tools - just collecting data)
+        """
+        first_name = self._collected_data.get("first_name")
+        notes_asked = self._collected_data.get("notes_asked", False)
+
+        if not first_name:
+            # Phase 1: Collect name
+            return FSMAction(
+                action_type=ActionType.GENERATE_RESPONSE,
+                response_template="¿Me puedes dar tu nombre para la reserva?",
+                allow_llm_creativity=True,
+            )
+        elif not notes_asked:
+            # Phase 2: Ask for notes
+            return FSMAction(
+                action_type=ActionType.GENERATE_RESPONSE,
+                response_template=(
+                    "Perfecto, {{ first_name }}. "
+                    "¿Tienes alguna preferencia o nota especial para tu cita? "
+                    "(Por ejemplo, alergias, preferencias de estilo, etc.). "
+                    "Si no, podemos continuar."
+                ),
+                template_vars={"first_name": first_name},
+                allow_llm_creativity=True,
+            )
+        else:
+            # Both phases complete - transition to CONFIRMATION will happen
+            # This shouldn't be reached, but provide fallback
+            return FSMAction(
+                action_type=ActionType.GENERATE_RESPONSE,
+                response_template="Perfecto, tengo todos tus datos. Vamos a confirmar la cita.",
+                allow_llm_creativity=True,
+            )
+
+    def _action_confirmation(self) -> FSMAction:
+        """
+        Build action for CONFIRMATION state.
+
+        Show booking summary and ask for final confirmation.
+
+        Returns:
+            FSMAction with response generation (no tools)
+        """
+        services = self._collected_data.get("services", [])
+        stylist_id = self._collected_data.get("stylist_id", "")
+        slot = self._collected_data.get("slot", {})
+        first_name = self._collected_data.get("first_name", "")
+        last_name = self._collected_data.get("last_name", "")
+        notes = self._collected_data.get("notes", "")
+
+        # Build summary data
+        summary_data = {
+            "services": ", ".join(services),
+            "stylist_id": stylist_id,
+            "date_time": slot.get("start_time", ""),
+            "customer_name": f"{first_name} {last_name}".strip(),
+            "notes": notes or "Ninguna",
+        }
+
+        return FSMAction(
+            action_type=ActionType.GENERATE_RESPONSE,
+            response_template=(
+                "Perfecto, aquí está el resumen de tu cita:\n\n"
+                "📅 **Servicios**: {{ services }}\n"
+                "💇 **Estilista**: {{ stylist_id }}\n"
+                "🕐 **Fecha y hora**: {{ date_time }}\n"
+                "👤 **Nombre**: {{ customer_name }}\n"
+                "📝 **Notas**: {{ notes }}\n\n"
+                "¿Confirmas la reserva?"
+            ),
+            template_vars=summary_data,
+            allow_llm_creativity=True,
+        )
+
+    def _action_booked(self) -> FSMAction:
+        """
+        Build action for BOOKED state (booking confirmed).
+
+        This state is reached after book() tool is called successfully.
+        Just provide confirmation message.
+
+        Returns:
+            FSMAction with response generation (book() already called by transition())
+        """
+        appointment_id = self._collected_data.get("appointment_id", "")
+
+        return FSMAction(
+            action_type=ActionType.GENERATE_RESPONSE,
+            response_template=(
+                "✅ ¡Listo! Tu cita ha sido confirmada.\n\n"
+                "Tu número de reserva es: **{{ appointment_id }}**\n\n"
+                "Te esperamos en la Peluquería Atrévete. "
+                "Si necesitas modificar o cancelar, no dudes en escribirnos.\n\n"
+                "¿Hay algo más en lo que pueda ayudarte?"
+            ),
+            template_vars={"appointment_id": appointment_id},
+            allow_llm_creativity=True,
+        )
