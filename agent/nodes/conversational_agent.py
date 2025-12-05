@@ -104,6 +104,15 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         fsm = BookingFSM(conversation_id)
         logger.info(f"FSM initialized | conversation_id={conversation_id}")
 
+    # Inject customer_id from ConversationState into FSM collected_data
+    # customer_id is set in process_incoming_message via ensure_customer_exists()
+    if state.get("customer_id"):
+        fsm._collected_data["customer_id"] = state["customer_id"]
+        logger.debug(
+            f"Injected customer_id into FSM | conversation_id={conversation_id} | "
+            f"customer_id={state['customer_id']}"
+        )
+
     # ============================================================================
     # STEP 2: Extract intent (LLM NLU only - no tool decisions)
     # ============================================================================

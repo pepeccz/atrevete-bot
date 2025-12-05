@@ -16,6 +16,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
+from agent.utils.date_parser import format_date_spanish
 from agent.fsm.models import (
     ActionType,
     BookingState,
@@ -1148,7 +1149,7 @@ class BookingFSM:
                 tool_calls=[
                     ToolCall(
                         name="search_services",
-                        args={"query": "servicios", "limit": 10},
+                        args={"query": "servicios", "max_results": 10},
                         required=True,
                     )
                 ],
@@ -1179,22 +1180,29 @@ class BookingFSM:
         """
         Build action for STYLIST_SELECTION state.
 
-        Stylists are static data (not a tool call). Show list and ask selection.
+        Calls list_stylists tool to get stylists from database, filtered by
+        the service category selected by the user.
 
         Returns:
-            FSMAction with response generation (no tools)
+            FSMAction with tool call (list_stylists)
         """
-        # Stylist names are loaded from context in conversational_agent
-        # Here we just provide the template
+        # Get service category from selected services (default: Peluquería/HAIRDRESSING)
+        service_category = self._collected_data.get("service_category", "HAIRDRESSING")
+
         return FSMAction(
-            action_type=ActionType.GENERATE_RESPONSE,
+            action_type=ActionType.CALL_TOOLS_SEQUENCE,
+            tool_calls=[
+                ToolCall(
+                    name="list_stylists",
+                    args={"category": service_category},
+                    required=True,
+                )
+            ],
             response_template=(
                 "Nuestros estilistas disponibles son:\n\n"
-                "1. Ana - Especialista en cortes modernos\n"
-                "2. María - Experta en color y mechas\n"
-                "3. Carlos - Especialista en caballero\n"
-                "4. Pilar - Maestra en peinados y recogidos\n"
-                "5. Laura - Experta en tratamientos capilares\n\n"
+                "{% for stylist in stylists %}"
+                "{{ loop.index }}. {{ stylist.name }}\n"
+                "{% endfor %}\n"
                 "¿Con quién te gustaría la cita? Si no tienes preferencia, "
                 "puedo buscar disponibilidad con cualquiera de ellos."
             ),
@@ -1232,15 +1240,21 @@ class BookingFSM:
             )
         else:
             # Sub-phase 2: Show availability (MUST call find_next_available)
+            # Derive service_category from selected services (default: Peluquería)
+            service_category = self._collected_data.get("service_category", "Peluquería")
+            # Get user's preferred date (if provided) to pass to find_next_available
+            preferred_date = self._collected_data.get("date")
+
             return FSMAction(
                 action_type=ActionType.CALL_TOOLS_SEQUENCE,
                 tool_calls=[
                     ToolCall(
                         name="find_next_available",
                         args={
-                            "stylist_id": stylist_id,
-                            "duration_minutes": total_duration,
-                            "max_results": 5,
+                            "service_category": service_category,
+                            "stylist_id": str(stylist_id) if stylist_id else None,
+                            "max_days_to_search": 10,
+                            "start_date": preferred_date,  # User's preferred date
                         },
                         required=True,
                     )
@@ -1248,12 +1262,12 @@ class BookingFSM:
                 response_template=(
                     "Aquí están los horarios disponibles:\n\n"
                     "{% for slot in slots %}"
-                    "{{ loop.index }}. {{ slot.date }} a las {{ slot.time }} "
-                    "(con {{ slot.stylist_name }})\n"
+                    "{{ loop.index }}. {{ slot.day_name }} {{ slot.date }} a las {{ slot.time }} "
+                    "(con {{ slot.stylist }})\n"
                     "{% endfor %}\n\n"
                     "¿Cuál prefieres? Puedes decirme el número."
                 ),
-                template_vars={"slots": []},  # Will be populated by tool result
+                template_vars={"slots": []},  # Will be populated by flattened tool result
                 allow_llm_creativity=True,
             )
 
@@ -1311,17 +1325,33 @@ class BookingFSM:
             FSMAction with response generation (no tools)
         """
         services = self._collected_data.get("services", [])
-        stylist_id = self._collected_data.get("stylist_id", "")
         slot = self._collected_data.get("slot", {})
         first_name = self._collected_data.get("first_name", "")
         last_name = self._collected_data.get("last_name", "")
         notes = self._collected_data.get("notes", "")
 
+        # Get stylist name (prefer slot.stylist, fallback to collected_data.stylist_name)
+        stylist_name = slot.get("stylist") or self._collected_data.get("stylist_name", "Por asignar")
+
+        # Format datetime in Spanish (Bug #5 fix)
+        date_time_formatted = "Por confirmar"
+        start_time_str = slot.get("full_datetime") or slot.get("start_time", "")
+        if start_time_str:
+            try:
+                dt = datetime.fromisoformat(start_time_str)
+                # Use format_date_spanish for date + add time
+                date_part = format_date_spanish(dt)
+                time_part = dt.strftime("%H:%M")
+                date_time_formatted = f"{date_part} a las {time_part}"
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Could not format datetime '{start_time_str}': {e}")
+                date_time_formatted = start_time_str  # Fallback to raw value
+
         # Build summary data
         summary_data = {
             "services": ", ".join(services),
-            "stylist_id": stylist_id,
-            "date_time": slot.get("start_time", ""),
+            "stylist_name": stylist_name,
+            "date_time": date_time_formatted,
             "customer_name": f"{first_name} {last_name}".strip(),
             "notes": notes or "Ninguna",
         }
@@ -1330,11 +1360,11 @@ class BookingFSM:
             action_type=ActionType.GENERATE_RESPONSE,
             response_template=(
                 "Perfecto, aquí está el resumen de tu cita:\n\n"
-                "📅 **Servicios**: {{ services }}\n"
-                "💇 **Estilista**: {{ stylist_id }}\n"
-                "🕐 **Fecha y hora**: {{ date_time }}\n"
-                "👤 **Nombre**: {{ customer_name }}\n"
-                "📝 **Notas**: {{ notes }}\n\n"
+                "📅 Servicios: {{ services }}\n"
+                "💇 Estilista: {{ stylist_name }}\n"
+                "🕐 Fecha y hora: {{ date_time }}\n"
+                "👤 Nombre: {{ customer_name }}\n"
+                "📝 Notas: {{ notes }}\n\n"
                 "¿Confirmas la reserva?"
             ),
             template_vars=summary_data,
@@ -1345,23 +1375,55 @@ class BookingFSM:
         """
         Build action for BOOKED state (booking confirmed).
 
-        This state is reached after book() tool is called successfully.
-        Just provide confirmation message.
+        This state MUST call the book() tool to actually create the appointment.
+        Previous docstring was WRONG - book() was never called!
 
         Returns:
-            FSMAction with response generation (book() already called by transition())
+            FSMAction with CALL_TOOLS_SEQUENCE to invoke book() tool
         """
-        appointment_id = self._collected_data.get("appointment_id", "")
+        # Collect all booking data from FSM collected_data
+        services = self._collected_data.get("services", [])
+        stylist_id = self._collected_data.get("stylist_id")
+        slot = self._collected_data.get("slot", {})
+        first_name = self._collected_data.get("first_name", "")
+        last_name = self._collected_data.get("last_name")
+        notes = self._collected_data.get("notes")
+        customer_id = self._collected_data.get("customer_id")
+        conversation_id = self._conversation_id
+
+        # Get start_time from slot (prefer full_datetime, fallback to start_time)
+        start_time = slot.get("full_datetime") or slot.get("start_time", "")
 
         return FSMAction(
-            action_type=ActionType.GENERATE_RESPONSE,
+            action_type=ActionType.CALL_TOOLS_SEQUENCE,
+            tool_calls=[
+                ToolCall(
+                    name="book",
+                    args={
+                        "customer_id": str(customer_id) if customer_id else "",
+                        "first_name": first_name,
+                        "last_name": last_name,
+                        "notes": notes,
+                        "services": services,
+                        "stylist_id": str(stylist_id) if stylist_id else "",
+                        "start_time": start_time,
+                        "conversation_id": str(conversation_id) if conversation_id else None,
+                    },
+                    required=True,
+                )
+            ],
             response_template=(
                 "✅ ¡Listo! Tu cita ha sido confirmada.\n\n"
-                "Tu número de reserva es: **{{ appointment_id }}**\n\n"
+                "📅 Fecha: {{ friendly_date }}\n"
+                "💇 Estilista: {{ stylist_name }}\n"
+                "✨ Servicios: {{ service_names }}\n\n"
+                "📍 Dirección: {{ salon_address }}\n\n"
+                "📲 Añade la cita a tu calendario:\n"
+                "{{ calendar_link }}\n\n"
                 "Te esperamos en la Peluquería Atrévete. "
                 "Si necesitas modificar o cancelar, no dudes en escribirnos.\n\n"
                 "¿Hay algo más en lo que pueda ayudarte?"
             ),
-            template_vars={"appointment_id": appointment_id},
+            template_vars={},  # Will be populated by flattened tool result
             allow_llm_creativity=True,
         )

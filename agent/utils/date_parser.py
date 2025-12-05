@@ -122,6 +122,20 @@ def parse_natural_date(
             month = SPANISH_MONTHS[month_name]
             return datetime(year, month, day, 0, 0, 0, tzinfo=timezone)
 
+    # 4b. Try written Spanish dates WITHOUT "de": "15 diciembre", "8 noviembre"
+    # This handles the format extracted by intent extractor which sometimes omits "de"
+    simple_date_match = re.match(
+        r'^(\d{1,2})\s+(\w+)$',
+        date_str_normalized
+    )
+    if simple_date_match:
+        day = int(simple_date_match.group(1))
+        month_name = simple_date_match.group(2)
+        if month_name in SPANISH_MONTHS:
+            month = SPANISH_MONTHS[month_name]
+            year = reference_date.year
+            return datetime(year, month, day, 0, 0, 0, tzinfo=timezone)
+
     # 5. Try day/month format: "08/11", "8-11"
     day_month_match = re.match(r'^(\d{1,2})[-/](\d{1,2})$', date_str_normalized)
     if day_month_match:

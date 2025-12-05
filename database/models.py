@@ -344,8 +344,15 @@ class Appointment(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Status tracking
+    # Note: values_callable ensures SQLAlchemy uses enum .value ("pending")
+    # instead of .name ("PENDING") when create_type=False
     status: Mapped[AppointmentStatus] = mapped_column(
-        SQLEnum(AppointmentStatus, name="appointment_status", create_type=False),
+        SQLEnum(
+            AppointmentStatus,
+            name="appointment_status",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=AppointmentStatus.PENDING,
         nullable=False,
         index=True,

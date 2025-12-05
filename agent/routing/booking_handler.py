@@ -17,6 +17,7 @@ Flow:
 
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from jinja2 import Template
@@ -85,7 +86,8 @@ TAREA: Reescribe la respuesta manteniendo TODA la información estructurada
 REGLAS ESTRICTAS:
 - MANTÉN todos los números, horarios, nombres, listas intactas
 - MANTÉN la estructura general (listas numeradas, secciones)
-- Puedes agregar saludos, emojis (🌸 💐 ✨), frases amigables
+- NO agregues saludos como "¡Hola!" - el saludo inicial ya se envió al inicio de la conversación
+- Puedes usar emojis (🌸 💐 ✨) y frases amigables para dar calidez
 - Puedes variar la redacción para sonar más natural
 - NO inventes información nueva
 - NO omitas información de la respuesta original
@@ -197,19 +199,29 @@ class BookingHandler:
             tool_calls: List of ToolCall specifications from FSMAction
 
         Returns:
-            Dict of tool results keyed by tool name
+            Dict of tool results with FLATTENED structure for template access.
+
+            Example: If search_services returns {"services": [...], "count": 5},
+            this method returns:
+            {
+                "search_services": {"services": [...], "count": 5},  # Full result
+                "services": [...],  # Flattened for direct template access
+                "count": 5          # Flattened for direct template access
+            }
         """
         # Import tools here to avoid circular imports
         from agent.tools import (
             book,
             check_availability,
             find_next_available,
+            list_stylists,
             search_services,
         )
 
         # Map tool names to implementations
         tool_map = {
             "search_services": search_services,
+            "list_stylists": list_stylists,
             "find_next_available": find_next_available,
             "check_availability": check_availability,
             "book": book,
@@ -236,13 +248,56 @@ class BookingHandler:
                 )
                 result = await tool.ainvoke(tool_call.args)
 
-                # Store result
+                # Store full result under tool name
                 results[tool_call.name] = result
+
+                # FLATTEN: Extract nested keys for direct template access
+                # This allows templates to use {% for service in services %}
+                # instead of {% for service in search_services.services %}
+                if isinstance(result, dict):
+                    for key, value in result.items():
+                        # Don't overwrite existing keys (preserves tool-specific data)
+                        if key not in results:
+                            results[key] = value
+                            logger.debug(
+                                f"Flattened key '{key}' from tool '{tool_call.name}'"
+                            )
+
+                    # Special handling for find_next_available:
+                    # It returns {"available_stylists": [{"slots": [...]}]}
+                    # We need to flatten all slots into a single "slots" list
+                    if tool_call.name == "find_next_available":
+                        all_slots = []
+                        available_stylists = result.get("available_stylists", [])
+                        for stylist_data in available_stylists:
+                            stylist_slots = stylist_data.get("slots", [])
+                            all_slots.extend(stylist_slots)
+
+                        # Format dates in Spanish for better UX
+                        # Convert "2025-12-09" to "9 de diciembre"
+                        month_names = [
+                            "enero", "febrero", "marzo", "abril", "mayo", "junio",
+                            "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+                        ]
+                        for slot in all_slots:
+                            if "date" in slot and isinstance(slot["date"], str):
+                                try:
+                                    date_obj = datetime.strptime(slot["date"], "%Y-%m-%d")
+                                    slot["date"] = f"{date_obj.day} de {month_names[date_obj.month - 1]}"
+                                except ValueError:
+                                    pass  # Keep original format if parsing fails
+
+                        results["slots"] = all_slots
+                        logger.info(
+                            f"Flattened {len(all_slots)} slots from "
+                            f"{len(available_stylists)} stylists"
+                        )
 
                 logger.info(
                     f"Tool executed | name={tool_call.name} | "
                     f"success={not result.get('error')} | "
-                    f"result_keys={list(result.keys()) if isinstance(result, dict) else 'non-dict'}"
+                    f"result_keys={list(result.keys()) if isinstance(result, dict) else 'non-dict'} | "
+                    f"flattened_keys={[k for k in results.keys() if k != tool_call.name]}"
                 )
 
             except Exception as e:

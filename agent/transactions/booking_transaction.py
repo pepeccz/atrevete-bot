@@ -20,6 +20,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from agent.tools.calendar_tools import create_calendar_event
+from agent.utils.calendar_link import generate_google_calendar_link
 from agent.validators.transaction_validators import (
     validate_3_day_rule,
     validate_category_consistency,
@@ -27,6 +28,7 @@ from agent.validators.transaction_validators import (
 )
 from database.connection import get_async_session
 from database.models import Appointment, AppointmentStatus, Service, Stylist
+from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -273,16 +275,18 @@ class BookingTransaction:
                         }
                     )
 
-                    calendar_result = await create_calendar_event(
-                        stylist_id=str(stylist_id),
-                        start_time=start_time.isoformat(),
-                        duration_minutes=duration_with_buffer,
-                        customer_name=first_name,  # Use first_name only for emoji format
-                        service_names=service_names,
-                        status="pending",  # Use pending status for emoji 🟡
-                        customer_id=str(customer_id),
-                        conversation_id=trace_id
-                    )
+                    # Note: create_calendar_event is a LangChain StructuredTool,
+                    # so we must use .ainvoke() with a dict instead of direct call
+                    calendar_result = await create_calendar_event.ainvoke({
+                        "stylist_id": str(stylist_id),
+                        "start_time": start_time.isoformat(),
+                        "duration_minutes": duration_with_buffer,
+                        "customer_name": first_name,  # Use first_name only for emoji format
+                        "service_names": service_names,
+                        "status": "pending",  # Use pending status for emoji 🟡
+                        "customer_id": str(customer_id),
+                        "conversation_id": trace_id,
+                    })
 
                     if not calendar_result.get("success"):
                         logger.error(
@@ -336,6 +340,16 @@ class BookingTransaction:
                         f"✨ Servicios: {service_names}"
                     )
 
+                    # Generate Google Calendar link for customer
+                    settings = get_settings()
+                    calendar_link = generate_google_calendar_link(
+                        title="Cita en Peluquería Atrévete",
+                        start_time=start_time,
+                        end_time=end_time,
+                        description=f"Servicios: {service_names}\nEstilista: {stylist.name}",
+                        location=settings.SALON_ADDRESS,
+                    )
+
                     # Return success
                     return {
                         "success": True,
@@ -351,7 +365,10 @@ class BookingTransaction:
                         "service_ids": [str(sid) for sid in service_ids],
                         "service_names": service_names,
                         "status": "pending",  # Status is PENDING until 48h confirmation
-                        "message": confirmation_message  # AC5: User-friendly confirmation message
+                        "message": confirmation_message,  # AC5: User-friendly confirmation message
+                        "friendly_date": friendly_date,  # For FSM template
+                        "calendar_link": calendar_link,  # Google Calendar "Add Event" URL
+                        "salon_address": settings.SALON_ADDRESS,  # Salon address for template
                     }
 
                 except IntegrityError as e:

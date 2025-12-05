@@ -23,12 +23,13 @@ from agent.tools.availability_tools import check_availability, find_next_availab
 from agent.tools.booking_tools import book
 from agent.tools.customer_tools import get_customer_history, manage_customer
 from agent.tools.escalation_tools import escalate_to_human
-from agent.tools.info_tools import query_info
+from agent.tools.info_tools import list_stylists, query_info
 from agent.tools.search_services import search_services
 
 __all__ = [
-    # Information tools (2 tools: general queries + search)
+    # Information tools (3 tools: general queries + search + stylists)
     "search_services",  # NEW: Fuzzy search for specific services (solves 47-service overflow)
+    "list_stylists",  # NEW: List active stylists from database
     # Customer tools (2 tools: 1 consolidated + 1 specialized)
     "manage_customer",  # Replaces: get_customer_by_phone, create_customer, update_customer_name
     "get_customer_history",  # Kept separate (different use case: querying appointments)

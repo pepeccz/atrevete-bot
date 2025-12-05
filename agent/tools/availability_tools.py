@@ -318,6 +318,14 @@ class FindNextAvailableSchema(BaseModel):
         default=10,
         description="Maximum number of days to search ahead (default: 10)"
     )
+    start_date: str | None = Field(
+        default=None,
+        description=(
+            "Optional preferred start date in natural language or ISO format. "
+            "If specified, search starts from this date (respecting 3-day rule). "
+            "Accepts: 'mañana', 'viernes', '15 de diciembre', '2025-12-15'"
+        )
+    )
 
 
 @tool(args_schema=FindNextAvailableSchema)
@@ -325,7 +333,8 @@ async def find_next_available(
     service_category: str,
     time_range: str | None = None,
     stylist_id: str | None = None,
-    max_days_to_search: int = 10
+    max_days_to_search: int = 10,
+    start_date: str | None = None,
 ) -> dict[str, Any]:
     """
     Automatically search for next available slots across multiple dates.
@@ -431,9 +440,30 @@ async def find_next_available(
         # Spanish day names for formatting
         day_names_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
-        # Start searching from the earliest valid date (3 days from now)
+        # Start searching from the earliest valid date
         now = datetime.now(MADRID_TZ)
-        earliest_valid = now + timedelta(days=3)
+        min_valid_date = now + timedelta(days=3)  # 3-day rule minimum
+
+        # If start_date is provided, parse and use it (respecting 3-day rule)
+        if start_date:
+            try:
+                preferred_date = parse_natural_date(start_date, timezone=MADRID_TZ)
+                logger.info(f"Parsed preferred start_date '{start_date}' → {preferred_date.date()}")
+                # Use preferred date if it's after the 3-day minimum
+                if preferred_date >= min_valid_date:
+                    earliest_valid = preferred_date
+                else:
+                    # Preferred date is too soon, use minimum valid date
+                    logger.info(
+                        f"Preferred date {preferred_date.date()} is before 3-day minimum "
+                        f"{min_valid_date.date()}, using minimum"
+                    )
+                    earliest_valid = min_valid_date
+            except ValueError as e:
+                logger.warning(f"Could not parse start_date '{start_date}': {e}, using default")
+                earliest_valid = min_valid_date
+        else:
+            earliest_valid = min_valid_date
 
         # Skip closed days using database-driven validation
         # If earliest_valid falls on closed day, find next open date
@@ -586,13 +616,15 @@ async def find_next_available(
                 # Truncate to first 5 slots per stylist
                 truncated_slots = stylist_slots[:max_slots_per_stylist]
 
-                # Simplify slot output: remove redundant fields
+                # Simplify slot output: keep essential fields for display and booking
                 simplified_slots = [
                     {
                         "time": slot["time"],
                         "date": slot["date"],
                         "day_name": slot["day_name"],
-                        "full_datetime": slot["full_datetime"]  # Keep for booking
+                        "full_datetime": slot["full_datetime"],  # Keep for booking
+                        "stylist": slot["stylist"],  # Keep for display "(con Pilar)"
+                        "stylist_id": slot["stylist_id"],  # Keep for booking
                     }
                     for slot in truncated_slots
                 ]

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from database.connection import get_async_session
-from database.models import BusinessHours, Policy, Service, ServiceCategory
+from database.models import BusinessHours, Policy, Service, ServiceCategory, Stylist
 
 logger = logging.getLogger(__name__)
 
@@ -428,3 +428,64 @@ def _get_location() -> dict[str, Any]:
         "address": address,
         "formatted": address,
     }
+
+
+@tool
+async def list_stylists(category: str | None = None) -> dict[str, Any]:
+    """
+    List active stylists, optionally filtered by service category.
+
+    Use this tool to get the list of available stylists when helping
+    customers select who they want for their appointment.
+
+    Args:
+        category: Optional filter by service category.
+            - "Peluquería" or "HAIRDRESSING": Hair stylists
+            - "Estética" or "AESTHETICS": Aesthetics specialists
+            - None: All active stylists
+
+    Returns:
+        Dict with stylists list:
+            {
+                "stylists": [
+                    {"id": str, "name": str, "category": str},
+                    ...
+                ],
+                "count": int
+            }
+
+    Example:
+        >>> await list_stylists("Peluquería")
+        {"stylists": [{"id": "...", "name": "Ana", "category": "HAIRDRESSING"}, ...], "count": 5}
+    """
+    async with get_async_session() as session:
+        query = select(Stylist).where(Stylist.is_active == True)
+
+        # Filter by category if provided
+        if category:
+            if category in ["Peluquería", "PELUQUERIA", "HAIRDRESSING"]:
+                query = query.where(Stylist.category == ServiceCategory.HAIRDRESSING)
+            elif category in ["Estética", "ESTETICA", "AESTHETICS"]:
+                query = query.where(Stylist.category == ServiceCategory.AESTHETICS)
+
+        query = query.order_by(Stylist.name)
+
+        result = await session.execute(query)
+        stylists = list(result.scalars().all())
+
+        logger.info(
+            f"Retrieved {len(stylists)} stylists" +
+            (f" for category {category}" if category else "")
+        )
+
+        return {
+            "stylists": [
+                {
+                    "id": str(s.id),
+                    "name": s.name,
+                    "category": s.category.value,
+                }
+                for s in stylists
+            ],
+            "count": len(stylists),
+        }

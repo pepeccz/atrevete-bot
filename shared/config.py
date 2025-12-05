@@ -92,6 +92,12 @@ class Settings(BaseSettings):
         default="Calle de la Constitución, 5, 28100 Alcobendas, Madrid",
         description="Physical address of the beauty salon"
     )
+    MESSAGE_BATCH_WINDOW_SECONDS: int = Field(
+        default=30,
+        ge=0,
+        le=120,
+        description="Message batching window in seconds. Collects messages within this window and processes them as one. Set to 0 to disable batching."
+    )
 
     class Config:
         env_file = ".env"

@@ -8,10 +8,12 @@ import logging
 import signal
 from datetime import UTC, datetime
 
+from agent.batching.message_batcher import MessageBatcher
 from agent.graphs.conversation_flow import MAITE_SYSTEM_PROMPT, create_conversation_graph
 from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
 from agent.state.helpers import add_message
 from agent.utils.monitoring import get_langfuse_handler
+from shared.config import get_settings
 from shared.logging_config import configure_logging
 from shared.redis_client import get_redis_client, publish_to_channel
 
@@ -22,14 +24,17 @@ logger = logging.getLogger(__name__)
 # Global flag for graceful shutdown
 shutdown_event = asyncio.Event()
 
+# Global batcher instance (initialized in subscribe_to_incoming_messages)
+batcher: MessageBatcher | None = None
+
 
 async def subscribe_to_incoming_messages():
     """
     Subscribe to incoming_messages Redis channel and process with LangGraph.
 
     This worker listens for messages published by the FastAPI webhook receiver,
-    processes them through the conversation StateGraph, and publishes responses
-    to the outgoing_messages channel.
+    batches them within a configurable time window (default 30s), and processes
+    batched messages through the conversation StateGraph.
 
     Message format (incoming_messages):
         {
@@ -45,7 +50,10 @@ async def subscribe_to_incoming_messages():
             "message": "AI response text"
         }
     """
+    global batcher
+
     client = get_redis_client()
+    settings = get_settings()
 
     logger.info("Initializing Redis checkpointer...")
 
@@ -62,6 +70,216 @@ async def subscribe_to_incoming_messages():
 
     graph = create_conversation_graph(checkpointer=checkpointer)
     logger.info("Conversation graph created successfully")
+
+    # Initialize message batcher with configurable window
+    batch_window = settings.MESSAGE_BATCH_WINDOW_SECONDS
+    batcher = MessageBatcher(window_seconds=batch_window)
+    logger.info(
+        f"Message batcher initialized | window_seconds={batch_window} | "
+        f"batching={'enabled' if batch_window > 0 else 'disabled'}"
+    )
+
+    async def process_batch(conversation_id: str, messages: list[dict]) -> None:
+        """
+        Process a batch of messages as one combined input.
+
+        This callback is invoked by the MessageBatcher when the batch window expires.
+        All messages in the batch are combined into a single user_message.
+
+        Args:
+            conversation_id: The conversation thread ID
+            messages: List of message dicts from the batch
+        """
+        # Combine all message texts with double newline separator
+        combined_text = "\n\n".join([
+            msg.get("message_text", "") for msg in messages
+            if msg.get("message_text")
+        ])
+
+        # Use metadata from last message (most recent)
+        last_msg = messages[-1]
+        customer_phone = last_msg.get("customer_phone")
+        customer_name = last_msg.get("customer_name")
+
+        # Check if any message was from audio transcription
+        has_audio = any(msg.get("is_audio_transcription") for msg in messages)
+
+        logger.info(
+            f"Processing batch | conversation_id={conversation_id} | "
+            f"messages={len(messages)} | combined_length={len(combined_text)} | "
+            f"has_audio={has_audio}",
+            extra={
+                "conversation_id": conversation_id,
+                "batch_size": len(messages),
+                "has_audio": has_audio,
+            }
+        )
+
+        # Log full combined message for debugging
+        logger.debug(
+            f"Full combined message: '{combined_text}'",
+            extra={
+                "conversation_id": conversation_id,
+                "message_length": len(combined_text),
+            }
+        )
+
+        # Create initial ConversationState
+        # NOTE: Only pass essential fields. LangGraph will load messages, total_message_count,
+        # and other fields from the checkpoint (if thread_id exists in Redis).
+        state = {
+            "conversation_id": conversation_id,
+            "customer_phone": customer_phone,
+            "customer_name": customer_name,
+            "user_message": combined_text,
+            "updated_at": datetime.now(UTC),
+        }
+
+        # Create Langfuse handler for tracing and token monitoring
+        langfuse_handler = None
+        try:
+            langfuse_handler = get_langfuse_handler(
+                conversation_id=conversation_id,
+                customer_phone=customer_phone,
+                customer_name=customer_name,
+            )
+        except Exception as langfuse_error:
+            logger.warning(
+                f"Failed to create Langfuse handler (continuing without tracing): {langfuse_error}",
+                extra={"conversation_id": conversation_id},
+            )
+
+        # Invoke graph with checkpointing and Langfuse callbacks
+        config = {
+            "configurable": {"thread_id": conversation_id},
+            "callbacks": [langfuse_handler] if langfuse_handler else [],
+        }
+        logger.info(
+            f"Invoking graph for thread_id={conversation_id}",
+            extra={"conversation_id": conversation_id},
+        )
+
+        try:
+            # ================================================================
+            # GRAPH INVOCATION WITH CHECKPOINT FLUSH (ADR-010)
+            # ================================================================
+            result = await graph.ainvoke(state, config=config)
+
+            # ================================================================
+            # CHECKPOINT PERSISTENCE (ADR-011: Single Source of Truth)
+            # ================================================================
+            logger.debug(
+                f"Checkpoint persisted (FSM consolidated) | conversation_id={conversation_id}",
+                extra={"conversation_id": conversation_id}
+            )
+
+            # Flush Langfuse traces to ensure they're sent
+            if langfuse_handler:
+                try:
+                    langfuse_handler.flush()
+                    logger.debug(
+                        f"Langfuse traces flushed for conversation_id={conversation_id}"
+                    )
+                except Exception as flush_error:
+                    logger.warning(
+                        f"Failed to flush Langfuse traces (trace may be incomplete): {flush_error}",
+                        extra={"conversation_id": conversation_id},
+                    )
+
+        except Exception as graph_error:
+            # Handle checkpoint corruption or graph execution errors
+            logger.error(
+                f"Graph invocation failed for conversation_id={conversation_id}: {graph_error}",
+                extra={
+                    "conversation_id": conversation_id,
+                    "error_type": type(graph_error).__name__,
+                },
+                exc_info=True,
+            )
+
+            # Flush Langfuse traces even on error
+            if langfuse_handler:
+                try:
+                    langfuse_handler.flush()
+                except Exception as flush_error:
+                    logger.warning(f"Failed to flush Langfuse traces on error: {flush_error}")
+
+            # Send fallback error message to user
+            fallback_message = "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕"
+            await publish_to_channel(
+                "outgoing_messages",
+                {
+                    "conversation_id": conversation_id,
+                    "customer_phone": customer_phone,
+                    "message": fallback_message,
+                },
+            )
+            logger.info(f"Sent fallback message for conversation_id={conversation_id}")
+            return
+
+        # Extract AI response from result state
+        last_message = result["messages"][-1]
+
+        # Handle both dict and Message object formats
+        if isinstance(last_message, dict):
+            content = last_message.get("content", "")
+        else:
+            content = last_message.content
+
+        # Extract text from content (handle both string and list of blocks)
+        if isinstance(content, str):
+            ai_message = content
+        elif isinstance(content, list):
+            # Content is a list of blocks (text + tool_use) - extract only text blocks
+            text_blocks = [
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            ai_message = " ".join(text_blocks).strip()
+        else:
+            ai_message = str(content)
+
+        # Log full AI response for debugging
+        logger.debug(
+            f"Full AI response: '{ai_message}'",
+            extra={
+                "conversation_id": conversation_id,
+                "response_length": len(ai_message) if ai_message else 0,
+            }
+        )
+
+        logger.info(
+            f"Graph completed for conversation_id={conversation_id}",
+            extra={
+                "conversation_id": conversation_id,
+                "ai_message_preview": ai_message[:50] if ai_message else "",
+            },
+        )
+
+        # Prepare outgoing message payload
+        outgoing_payload = {
+            "conversation_id": conversation_id,
+            "customer_phone": customer_phone,
+            "message": ai_message,
+        }
+
+        # Log full outgoing payload for debugging
+        logger.debug(
+            f"Outgoing Redis payload: {outgoing_payload}",
+            extra={"conversation_id": conversation_id}
+        )
+
+        # Publish to outgoing_messages channel
+        await publish_to_channel("outgoing_messages", outgoing_payload)
+
+        logger.info(
+            f"Message published to outgoing_messages: conversation_id={conversation_id}",
+            extra={"conversation_id": conversation_id},
+        )
+
+    # Set the callback for when batches expire
+    batcher.set_callback(process_batch)
 
     logger.info("Subscribing to 'incoming_messages' channel...")
 
@@ -83,10 +301,11 @@ async def subscribe_to_incoming_messages():
                 conversation_id = data.get("conversation_id")
                 customer_phone = data.get("customer_phone")
                 message_text = data.get("message_text")
-                customer_name = data.get("customer_name")  # Get name from Chatwoot webhook
+                customer_name = data.get("customer_name")
 
                 logger.info(
-                    f"Message received: conversation_id={conversation_id}, phone={customer_phone}, name={customer_name}",
+                    f"Message received: conversation_id={conversation_id}, "
+                    f"phone={customer_phone}, name={customer_name}",
                     extra={
                         "conversation_id": conversation_id,
                         "customer_phone": customer_phone,
@@ -103,171 +322,10 @@ async def subscribe_to_incoming_messages():
                     }
                 )
 
-                # Create initial ConversationState
-                # NOTE: Only pass essential fields. LangGraph will load messages, total_message_count,
-                # and other fields from the checkpoint (if thread_id exists in Redis).
-                # Do NOT initialize messages/total_message_count here as it would overwrite the checkpoint.
-                #
-                # The graph's entry point will handle adding the new user message to the existing
-                # conversation history loaded from the checkpoint.
-                state = {
-                    "conversation_id": conversation_id,
-                    "customer_phone": customer_phone,
-                    "customer_name": customer_name,  # Use name from webhook if available
-                    "user_message": message_text,  # Store the incoming message for the graph to process
-                    "updated_at": datetime.now(UTC),
-                }
-
-                # Create Langfuse handler for tracing and token monitoring
-                try:
-                    langfuse_handler = get_langfuse_handler(
-                        conversation_id=conversation_id,
-                        customer_phone=customer_phone,
-                        customer_name=customer_name,
-                    )
-                except Exception as langfuse_error:
-                    logger.warning(
-                        f"Failed to create Langfuse handler (continuing without tracing): {langfuse_error}",
-                        extra={"conversation_id": conversation_id},
-                    )
-                    langfuse_handler = None
-
-                # Invoke graph with checkpointing and Langfuse callbacks
-                config = {
-                    "configurable": {"thread_id": conversation_id},
-                    "callbacks": [langfuse_handler] if langfuse_handler else [],
-                }
-                logger.info(
-                    f"Invoking graph for thread_id={conversation_id}",
-                    extra={"conversation_id": conversation_id},
-                )
-
-                try:
-                    # ================================================================
-                    # GRAPH INVOCATION WITH CHECKPOINT FLUSH (ADR-010)
-                    # ================================================================
-                    # Invoke the conversation graph which processes the message and
-                    # updates the FSM state via checkpoint persistence
-                    result = await graph.ainvoke(state, config=config)
-
-                    # ================================================================
-                    # CHECKPOINT PERSISTENCE (ADR-011: Single Source of Truth)
-                    # ================================================================
-                    # After ainvoke(), the checkpoint is written asynchronously by AsyncRedisSaver.
-                    # With ADR-011, FSM is consolidated INTO the checkpoint, so there is only
-                    # one persistence operation (not dual persistence).
-                    #
-                    # No race condition possible: when next message arrives, FSM loads from
-                    # the same checkpoint that LangGraph persisted.
-                    #
-                    # This eliminates the need for synchronous checkpoint flush (ADR-010 workaround)
-                    logger.debug(
-                        f"Checkpoint persisted (FSM consolidated) | conversation_id={conversation_id}",
-                        extra={"conversation_id": conversation_id}
-                    )
-
-                    # Flush Langfuse traces to ensure they're sent
-                    if langfuse_handler:
-                        try:
-                            await langfuse_handler.flushAsync()
-                            logger.debug(
-                                f"Langfuse traces flushed for conversation_id={conversation_id}"
-                            )
-                        except Exception as flush_error:
-                            logger.warning(
-                                f"Failed to flush Langfuse traces (trace may be incomplete): {flush_error}",
-                                extra={"conversation_id": conversation_id},
-                            )
-                except Exception as graph_error:
-                    # Handle checkpoint corruption or graph execution errors
-                    logger.error(
-                        f"Graph invocation failed for conversation_id={conversation_id}: {graph_error}",
-                        extra={
-                            "conversation_id": conversation_id,
-                            "error_type": type(graph_error).__name__,
-                        },
-                        exc_info=True,
-                    )
-
-                    # Flush Langfuse traces even on error to capture error context
-                    if langfuse_handler:
-                        try:
-                            await langfuse_handler.flushAsync()
-                        except Exception as flush_error:
-                            logger.warning(f"Failed to flush Langfuse traces on error: {flush_error}")
-
-                    # Send fallback error message to user
-                    fallback_message = "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕"
-                    await publish_to_channel(
-                        "outgoing_messages",
-                        {
-                            "conversation_id": conversation_id,
-                            "customer_phone": customer_phone,
-                            "message": fallback_message,
-                        },
-                    )
-                    logger.info(f"Sent fallback message for conversation_id={conversation_id}")
-                    continue
-
-                # Extract AI response from result state
-                last_message = result["messages"][-1]
-
-                # Handle both dict and Message object formats
-                if isinstance(last_message, dict):
-                    content = last_message.get("content", "")
-                else:
-                    content = last_message.content
-
-                # Extract text from content (handle both string and list of blocks)
-                if isinstance(content, str):
-                    ai_message = content
-                elif isinstance(content, list):
-                    # Content is a list of blocks (text + tool_use) - extract only text blocks
-                    text_blocks = [
-                        block.get("text", "") if isinstance(block, dict) else str(block)
-                        for block in content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                    ]
-                    ai_message = " ".join(text_blocks).strip()
-                else:
-                    ai_message = str(content)
-
-                # Log full AI response for debugging
-                logger.debug(
-                    f"Full AI response: '{ai_message}'",
-                    extra={
-                        "conversation_id": conversation_id,
-                        "response_length": len(ai_message) if ai_message else 0,
-                    }
-                )
-
-                logger.info(
-                    f"Graph completed for conversation_id={conversation_id}",
-                    extra={
-                        "conversation_id": conversation_id,
-                        "ai_message_preview": ai_message[:50],
-                    },
-                )
-
-                # Prepare outgoing message payload
-                outgoing_payload = {
-                    "conversation_id": conversation_id,
-                    "customer_phone": customer_phone,
-                    "message": ai_message,
-                }
-
-                # Log full outgoing payload for debugging
-                logger.debug(
-                    f"Outgoing Redis payload: {outgoing_payload}",
-                    extra={"conversation_id": conversation_id}
-                )
-
-                # Publish to outgoing_messages channel
-                await publish_to_channel("outgoing_messages", outgoing_payload)
-
-                logger.info(
-                    f"Message published to outgoing_messages: conversation_id={conversation_id}",
-                    extra={"conversation_id": conversation_id},
+                # Add message to batcher (will be processed after window expires)
+                await batcher.add_message(
+                    conversation_id=conversation_id,
+                    message_data=data,
                 )
 
             except json.JSONDecodeError as e:
@@ -276,7 +334,7 @@ async def subscribe_to_incoming_messages():
 
             except Exception as e:
                 logger.error(
-                    f"Error processing message: {e}",
+                    f"Error adding message to batch: {e}",
                     extra={
                         "conversation_id": data.get("conversation_id") if "data" in locals() else "unknown",
                     },
@@ -286,6 +344,10 @@ async def subscribe_to_incoming_messages():
 
     except asyncio.CancelledError:
         logger.info("Incoming message subscriber cancelled")
+        # Flush pending batches before shutting down
+        if batcher:
+            logger.info("Flushing pending batches before shutdown...")
+            await batcher.flush_all()
         await pubsub.unsubscribe("incoming_messages")
         await pubsub.close()
         raise
