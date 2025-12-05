@@ -86,7 +86,9 @@ class BookingFSM:
         BookingState.CONFIRMATION: {
             IntentType.CONFIRM_BOOKING: BookingState.BOOKED,
         },
-        BookingState.BOOKED: {},  # Terminal state, auto-resets to IDLE
+        BookingState.BOOKED: {
+            IntentType.START_BOOKING: BookingState.SERVICE_SELECTION,
+        },  # Allows starting new booking from booked state
     }
 
     # Intents that accumulate data without requiring validation
@@ -359,6 +361,21 @@ class BookingFSM:
             self._collected_data["date_preference_requested"] = False
             logger.info(
                 "Entering SLOT_SELECTION, resetting date_preference_requested flag",
+                extra={"conversation_id": self._conversation_id}
+            )
+
+        # Reset collected_data when starting new booking from BOOKED state
+        # Preserve customer_id for continuity, clear all other booking data
+        if (
+            from_state == BookingState.BOOKED
+            and intent.type == IntentType.START_BOOKING
+            and to_state == BookingState.SERVICE_SELECTION
+        ):
+            customer_id = self._collected_data.get("customer_id")
+            self._collected_data = {"customer_id": customer_id} if customer_id else {}
+            logger.info(
+                "FSM reset for new booking from BOOKED | preserving customer_id=%s",
+                customer_id,
                 extra={"conversation_id": self._conversation_id}
             )
 

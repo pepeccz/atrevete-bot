@@ -367,6 +367,7 @@ def _build_state_context(
             ("greeting", "Saludo o despedida"),
             ("faq", "Pregunta sobre la cita confirmada"),
             ("escalate", "Quiere hablar con una persona"),
+            ("start_booking", "Quiere hacer una NUEVA reserva (además de la existente)"),
         ],
     }
 
@@ -612,6 +613,10 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
 
         # Parse entities
         entities = data.get("entities", {})
+        # Ensure entities is a dict (LLM sometimes returns list for multiple selections)
+        if not isinstance(entities, dict):
+            logger.warning(f"Entities is not a dict: {type(entities)} - converting to empty dict")
+            entities = {}
         # Clean up None values and empty strings
         entities = {k: v for k, v in entities.items() if v is not None and v != ""}
 

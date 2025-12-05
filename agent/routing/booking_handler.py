@@ -25,6 +25,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from agent.fsm import BookingFSM
+from agent.fsm.booking_fsm import BookingState
 from agent.fsm.models import ActionType, FSMAction, Intent
 from agent.state.schemas import ConversationState
 
@@ -299,6 +300,16 @@ class BookingHandler:
                     f"result_keys={list(result.keys()) if isinstance(result, dict) else 'non-dict'} | "
                     f"flattened_keys={[k for k in results.keys() if k != tool_call.name]}"
                 )
+
+                # Reset FSM to IDLE after successful booking
+                # This allows users to start a new booking naturally
+                if tool_call.name == "book" and not result.get("error"):
+                    customer_id = self.fsm.collected_data.get("customer_id")
+                    self.fsm._state = BookingState.IDLE
+                    self.fsm._collected_data = {"customer_id": customer_id} if customer_id else {}
+                    logger.info(
+                        f"FSM reset to IDLE after successful booking | customer_id={customer_id}"
+                    )
 
             except Exception as e:
                 logger.error(
