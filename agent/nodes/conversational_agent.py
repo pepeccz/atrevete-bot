@@ -132,6 +132,16 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             f"confidence={intent.confidence:.2f}"
         )
 
+        # Store user_message as service_query when starting a booking
+        # This allows search_services to use the original message for fuzzy matching
+        # instead of hardcoded "servicios" query (Bug fix: wrong services shown)
+        if intent.type == IntentType.START_BOOKING:
+            fsm._collected_data["service_query"] = user_message
+            logger.info(
+                f"Stored service_query | conversation_id={conversation_id} | "
+                f"query={user_message[:50]}..."
+            )
+
     except (ValueError, KeyError) as e:
         # Intent parsing error (expected - malformed data, missing fields)
         logger.warning(

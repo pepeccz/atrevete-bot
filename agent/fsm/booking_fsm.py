@@ -1161,12 +1161,15 @@ class BookingFSM:
 
         if not services:
             # No services yet - MUST call search_services to show catalog
+            # Use user's original message for fuzzy matching (if available)
+            # This allows "quiero cortarme el pelo" to match "Corte de Caballero"
+            service_query = self._collected_data.get("service_query", "servicios")
             return FSMAction(
                 action_type=ActionType.CALL_TOOLS_SEQUENCE,
                 tool_calls=[
                     ToolCall(
                         name="search_services",
-                        args={"query": "servicios", "max_results": 10},
+                        args={"query": service_query, "max_results": 10},
                         required=True,
                     )
                 ],
