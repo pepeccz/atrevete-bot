@@ -27,14 +27,8 @@ const STYLIST_COLORS = [
   { bg: "#0891B2", border: "#0E7490", name: "Cyan" },
 ];
 
-// Blocking event colors (darker/muted)
-const BLOCKING_EVENT_COLORS = {
-  vacation: { bg: "#EF4444", border: "#DC2626" }, // Red
-  meeting: { bg: "#F97316", border: "#EA580C" }, // Orange
-  break: { bg: "#22C55E", border: "#16A34A" }, // Green
-  general: { bg: "#6B7280", border: "#4B5563" }, // Gray
-  personal: { bg: "#EC4899", border: "#DB2777" }, // Pink
-};
+// Holiday color (special - no stylist)
+const HOLIDAY_COLOR = { bg: "#991B1B", border: "#7F1D1D" };
 
 interface CalendarEvent {
   id: string;
@@ -66,6 +60,16 @@ interface Stylist {
   is_active: boolean;
 }
 
+interface EditingBlockingEvent {
+  id: string;
+  title: string;
+  description: string | null;
+  event_type: string;
+  start_time: string;
+  end_time: string;
+  stylist_id: string;
+}
+
 export function CalendarView() {
   const router = useRouter();
   const calendarRef = useRef<FullCalendar>(null);
@@ -81,6 +85,10 @@ export function CalendarView() {
   const [selectedStartTime, setSelectedStartTime] = useState<Date | null>(null);
   const [selectedEndTime, setSelectedEndTime] = useState<Date | null>(null);
   const [selectedStylistForModal, setSelectedStylistForModal] = useState<string | null>(null);
+
+  // Edit mode states
+  const [blockingModalMode, setBlockingModalMode] = useState<"create" | "edit">("create");
+  const [editingBlockingEvent, setEditingBlockingEvent] = useState<EditingBlockingEvent | null>(null);
 
   // Assign colors to stylists
   const assignStylistColors = useCallback((stylistList: Stylist[]) => {
@@ -155,23 +163,24 @@ export function CalendarView() {
       console.log("[Calendar] Received events:", response);
       console.log("[Calendar] Number of events:", response.events.length);
 
-      // Apply colors based on stylist and event type
+      // Apply colors based on stylist (ALL events use stylist color, except holidays)
       const coloredEvents = response.events.map(event => {
         let bgColor = event.backgroundColor;
         let borderColor = event.borderColor;
 
-        if (event.extendedProps.type === "blocking_event") {
-          // Use blocking event colors
-          const eventType = event.extendedProps.event_type || "general";
-          const blockColors = BLOCKING_EVENT_COLORS[eventType as keyof typeof BLOCKING_EVENT_COLORS] || BLOCKING_EVENT_COLORS.general;
-          bgColor = blockColors.bg;
-          borderColor = blockColors.border;
+        if (event.extendedProps.type === "holiday") {
+          // Holidays have special color (no stylist)
+          bgColor = HOLIDAY_COLOR.bg;
+          borderColor = HOLIDAY_COLOR.border;
         } else {
-          // Use stylist colors for appointments
-          const stylistColor = stylistColors[event.extendedProps.stylist_id];
-          if (stylistColor) {
-            bgColor = stylistColor.bg;
-            borderColor = stylistColor.border;
+          // ALL other events (appointments AND blocking events) use stylist color
+          const stylistId = event.extendedProps.stylist_id;
+          if (stylistId) {
+            const stylistColor = stylistColors[stylistId];
+            if (stylistColor) {
+              bgColor = stylistColor.bg;
+              borderColor = stylistColor.border;
+            }
           }
         }
 
@@ -208,17 +217,28 @@ export function CalendarView() {
   };
 
   // Handle event click
-  const handleEventClick = (info: { event: { id: string; extendedProps: Record<string, unknown> } }) => {
+  const handleEventClick = (info: { event: { id: string; title: string; startStr: string; endStr: string; extendedProps: Record<string, unknown> } }) => {
     const props = info.event.extendedProps;
     console.log("Event clicked:", info.event.id, props);
 
     if (props.type === "blocking_event") {
-      // TODO: Open blocking event details/delete modal
-      alert(`Evento de bloqueo: ${props.event_type}\n${props.description || "Sin descripción"}`);
-    } else {
-      // TODO: Open appointment details modal
-      alert(`Cita: ${props.status}\nNotas: ${props.notes || "Sin notas"}`);
+      // Open blocking event edit modal
+      setEditingBlockingEvent({
+        id: props.blocking_event_id as string,
+        title: info.event.title,
+        description: props.description as string | null,
+        event_type: props.event_type as string,
+        start_time: info.event.startStr,
+        end_time: info.event.endStr,
+        stylist_id: props.stylist_id as string,
+      });
+      setBlockingModalMode("edit");
+      setIsBlockingModalOpen(true);
+    } else if (props.type === "appointment") {
+      // Single click on appointment - show info (double click navigates)
+      alert(`Cita: ${props.status}\nNotas: ${props.notes || "Sin notas"}\n\nDoble-click para editar`);
     }
+    // Holidays: no action on click
   };
 
   // Handle drag-select (for creating blocking events)
@@ -256,6 +276,8 @@ export function CalendarView() {
     setSelectedDate(new Date());
     setSelectedStartTime(null);  // Will use defaults in modal
     setSelectedEndTime(null);
+    setBlockingModalMode("create");
+    setEditingBlockingEvent(null);
     setIsBlockingModalOpen(true);
   };
 
@@ -358,33 +380,13 @@ export function CalendarView() {
 
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-        <span className="font-medium">Tipos de evento:</span>
+        <span className="font-medium">Leyenda:</span>
         <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded" style={{ backgroundColor: "#7C3AED" }} />
-          <span>Citas (color por estilista)</span>
+          <span className="w-3 h-3 rounded border-2 border-dashed border-gray-400" />
+          <span>Citas y bloqueos (color por estilista)</span>
         </div>
         <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded" style={{ backgroundColor: BLOCKING_EVENT_COLORS.vacation.bg }} />
-          <span>Vacaciones</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded" style={{ backgroundColor: BLOCKING_EVENT_COLORS.meeting.bg }} />
-          <span>Reuniones</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded" style={{ backgroundColor: BLOCKING_EVENT_COLORS.break.bg }} />
-          <span>Descansos</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded" style={{ backgroundColor: BLOCKING_EVENT_COLORS.general.bg }} />
-          <span>Bloqueos</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded" style={{ backgroundColor: BLOCKING_EVENT_COLORS.personal.bg }} />
-          <span>Asunto Propio</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded" style={{ backgroundColor: "#991B1B" }} />
+          <span className="w-3 h-3 rounded" style={{ backgroundColor: HOLIDAY_COLOR.bg }} />
           <span>Festivos</span>
         </div>
       </div>

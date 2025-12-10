@@ -24,7 +24,8 @@ const DAY_NAMES = [
 ];
 
 // Format time from hour/minute to HH:MM
-function formatTime(hour: number, minute: number): string {
+function formatTime(hour: number | null, minute: number | null): string {
+  if (hour === null || minute === null) return "00:00";
   return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
 }
 

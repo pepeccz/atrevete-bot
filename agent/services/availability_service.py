@@ -486,7 +486,9 @@ async def get_calendar_events_for_range(
 
     try:
         async with get_async_session() as session:
-            # Fetch appointments
+            # Fetch appointments - simplified query to avoid timezone issues
+            # The datetime arithmetic in SQL causes "can't subtract offset-naive and offset-aware datetimes"
+            # So we fetch a broader range and filter in Python
             appt_result = await session.execute(
                 select(Appointment).where(
                     and_(
@@ -496,11 +498,17 @@ async def get_calendar_events_for_range(
                             AppointmentStatus.CONFIRMED,
                         ]),
                         Appointment.start_time < end_time,
-                        Appointment.start_time + Appointment.duration_minutes * timedelta(minutes=1) > start_time,
+                        Appointment.start_time >= start_time - timedelta(hours=24),  # Buffer for duration
                     )
                 )
             )
-            appointments = appt_result.scalars().all()
+            all_appointments = appt_result.scalars().all()
+
+            # Filter in Python for exact overlap check (appointment ends after our start time)
+            appointments = [
+                appt for appt in all_appointments
+                if appt.start_time + timedelta(minutes=appt.duration_minutes) > start_time
+            ]
 
             for appt in appointments:
                 appt_end = appt.start_time + timedelta(minutes=appt.duration_minutes)

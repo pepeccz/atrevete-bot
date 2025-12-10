@@ -69,19 +69,14 @@ const managementNav: NavItem[] = [
 
 const configNav: NavItem[] = [
   {
-    title: "Horarios",
-    href: "/business-hours",
-    icon: Clock,
+    title: "Configuración del Salón",
+    href: "/settings",
+    icon: Settings,
   },
   {
     title: "Conversaciones",
     href: "/conversations",
     icon: MessageSquare,
-  },
-  {
-    title: "Sistema",
-    href: "/system",
-    icon: Activity,
   },
 ];
 
