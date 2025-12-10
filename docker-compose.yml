@@ -90,31 +90,6 @@ services:
       retries: 3
       start_period: 40s
 
-  # Admin service: Django Admin Panel
-  admin:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.admin
-    container_name: atrevete-admin
-    env_file: .env
-    ports:
-      - "8001:8001"
-    volumes:
-      - health_data:/var/health:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - atrevete-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8001/admin/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
   # Agent service: LangGraph orchestrator + workers
   agent:
     build:
@@ -149,8 +124,6 @@ services:
     container_name: atrevete-archiver
     command: python -m agent.workers.conversation_archiver
     env_file: .env
-    volumes:
-      - health_data:/var/health:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,9 +146,9 @@ services:
       dockerfile: docker/Dockerfile.admin-panel
     container_name: atrevete-admin-panel
     environment:
-      - NEXT_PUBLIC_API_URL=http://api:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
     ports:
-      - "3000:3000"
+      - "8001:3000"
     depends_on:
       api:
         condition: service_healthy
@@ -197,4 +170,3 @@ volumes:
   postgres_data:
   pgadmin_data:
   redis_data:
-  health_data:

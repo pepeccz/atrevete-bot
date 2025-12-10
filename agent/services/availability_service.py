@@ -540,6 +540,7 @@ async def get_calendar_events_for_range(
                 "meeting": "#D97706",    # Amber
                 "break": "#059669",      # Emerald
                 "general": "#6B7280",    # Gray
+                "personal": "#EC4899",   # Pink
             }
 
             for block in blocking_events:
@@ -557,6 +558,35 @@ async def get_calendar_events_for_range(
                         "description": block.description,
                         "event_type": block.event_type.value,
                         "type": "blocking_event",
+                    },
+                })
+
+            # Fetch holidays (salon-wide closures)
+            start_date = start_time.date()
+            end_date = end_time.date()
+
+            holiday_result = await session.execute(
+                select(Holiday).where(
+                    and_(
+                        Holiday.date >= start_date,
+                        Holiday.date <= end_date,
+                    )
+                )
+            )
+            holidays = holiday_result.scalars().all()
+
+            for holiday in holidays:
+                events.append({
+                    "id": f"holiday-{holiday.id}",
+                    "title": f"FESTIVO: {holiday.name}",
+                    "start": holiday.date.isoformat(),
+                    "end": holiday.date.isoformat(),
+                    "allDay": True,
+                    "backgroundColor": "#991B1B",  # Dark red
+                    "borderColor": "#7F1D1D",
+                    "extendedProps": {
+                        "holiday_id": str(holiday.id),
+                        "type": "holiday",
                     },
                 })
 

@@ -22,6 +22,7 @@ COPY api/ ./api/
 COPY shared/ ./shared/
 COPY database/ ./database/
 COPY agent/ ./agent/
+COPY alembic.ini ./alembic.ini
 
 # Expose FastAPI port
 EXPOSE 8000

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -12,7 +13,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Plus, Calendar, Ban } from "lucide-react";
 import api from "@/lib/api";
-import { CreateAppointmentModal } from "./create-appointment-modal";
 import { CreateBlockingEventModal } from "./create-blocking-event-modal";
 
 // Color palette for stylists (8 distinct colors)
@@ -33,6 +33,7 @@ const BLOCKING_EVENT_COLORS = {
   meeting: { bg: "#F97316", border: "#EA580C" }, // Orange
   break: { bg: "#22C55E", border: "#16A34A" }, // Green
   general: { bg: "#6B7280", border: "#4B5563" }, // Gray
+  personal: { bg: "#EC4899", border: "#DB2777" }, // Pink
 };
 
 interface CalendarEvent {
@@ -42,17 +43,19 @@ interface CalendarEvent {
   end: string;
   backgroundColor: string;
   borderColor: string;
+  allDay?: boolean;
   extendedProps: {
     appointment_id?: string;
     blocking_event_id?: string;
+    holiday_id?: string;
     customer_id?: string;
-    stylist_id: string;
+    stylist_id?: string;
     status?: string;
     duration_minutes?: number;
     notes?: string | null;
     description?: string | null;
     event_type?: string;
-    type: "appointment" | "blocking_event";
+    type: "appointment" | "blocking_event" | "holiday";
   };
 }
 
@@ -64,6 +67,7 @@ interface Stylist {
 }
 
 export function CalendarView() {
+  const router = useRouter();
   const calendarRef = useRef<FullCalendar>(null);
   const [selectedStylistIds, setSelectedStylistIds] = useState<string[]>([]);
   const [stylists, setStylists] = useState<Stylist[]>([]);
@@ -72,9 +76,10 @@ export function CalendarView() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Modal states
-  const [isAppointmentModalOpen, setIsAppointmentModalOpen] = useState(false);
   const [isBlockingModalOpen, setIsBlockingModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedStartTime, setSelectedStartTime] = useState<Date | null>(null);
+  const [selectedEndTime, setSelectedEndTime] = useState<Date | null>(null);
   const [selectedStylistForModal, setSelectedStylistForModal] = useState<string | null>(null);
 
   // Assign colors to stylists
@@ -216,26 +221,30 @@ export function CalendarView() {
     }
   };
 
-  // Handle date click (for creating new events)
-  const handleDateClick = (info: { dateStr: string; date: Date }) => {
+  // Handle drag-select (for creating blocking events)
+  const handleSelect = (info: { start: Date; end: Date; allDay: boolean }) => {
     if (selectedStylistIds.length === 0) {
-      alert("Por favor selecciona al menos un estilista");
+      alert("Por favor selecciona al menos un estilista para crear un bloqueo");
       return;
     }
+
+    // Save start and end times from drag selection
+    setSelectedStartTime(info.start);
+    setSelectedEndTime(info.end);
+    setSelectedDate(info.start);
 
     // If only one stylist selected, use that one
     if (selectedStylistIds.length === 1) {
       setSelectedStylistForModal(selectedStylistIds[0]);
     } else {
-      // If multiple selected, user needs to choose
-      setSelectedStylistForModal(null);
+      // Default to first selected stylist (modal will allow changing)
+      setSelectedStylistForModal(selectedStylistIds[0]);
     }
 
-    setSelectedDate(info.date);
-    setIsAppointmentModalOpen(true);
+    setIsBlockingModalOpen(true);
   };
 
-  // Handle creating blocking event
+  // Handle creating blocking event from button (uses current date/time)
   const handleCreateBlockingEvent = () => {
     if (selectedStylistIds.length === 0) {
       alert("Por favor selecciona al menos un estilista");
@@ -245,7 +254,14 @@ export function CalendarView() {
     // Default to first selected stylist
     setSelectedStylistForModal(selectedStylistIds[0]);
     setSelectedDate(new Date());
+    setSelectedStartTime(null);  // Will use defaults in modal
+    setSelectedEndTime(null);
     setIsBlockingModalOpen(true);
+  };
+
+  // Handle creating appointment - redirect to wizard
+  const handleCreateAppointment = () => {
+    router.push('/appointments?new=true');
   };
 
   // Handle event creation success
@@ -332,16 +348,7 @@ export function CalendarView() {
           <Button
             variant="default"
             size="sm"
-            onClick={() => {
-              if (selectedStylistIds.length === 0) {
-                alert("Por favor selecciona al menos un estilista");
-                return;
-              }
-              setSelectedStylistForModal(selectedStylistIds[0]);
-              setSelectedDate(new Date());
-              setIsAppointmentModalOpen(true);
-            }}
-            disabled={selectedStylistIds.length === 0}
+            onClick={handleCreateAppointment}
           >
             <Plus className="h-4 w-4 mr-1" />
             Nueva Cita
@@ -371,6 +378,14 @@ export function CalendarView() {
         <div className="flex items-center gap-1">
           <span className="w-3 h-3 rounded" style={{ backgroundColor: BLOCKING_EVENT_COLORS.general.bg }} />
           <span>Bloqueos</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 rounded" style={{ backgroundColor: BLOCKING_EVENT_COLORS.personal.bg }} />
+          <span>Asunto Propio</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 rounded" style={{ backgroundColor: "#991B1B" }} />
+          <span>Festivos</span>
         </div>
       </div>
 
@@ -403,7 +418,7 @@ export function CalendarView() {
           }}
           slotMinTime="09:00:00"
           slotMaxTime="21:00:00"
-          allDaySlot={false}
+          allDaySlot={true}
           weekends={true}
           editable={false}
           selectable={true}
@@ -412,7 +427,7 @@ export function CalendarView() {
           events={events}
           datesSet={handleDatesSet}
           eventClick={handleEventClick}
-          dateClick={handleDateClick}
+          select={handleSelect}
           height="auto"
           slotDuration="00:15:00"
           slotLabelInterval="01:00"
@@ -425,17 +440,6 @@ export function CalendarView() {
         />
       </Card>
 
-      {/* Create Appointment Modal */}
-      {selectedStylistForModal && (
-        <CreateAppointmentModal
-          isOpen={isAppointmentModalOpen}
-          onClose={() => setIsAppointmentModalOpen(false)}
-          stylistId={selectedStylistForModal}
-          selectedDate={selectedDate}
-          onSuccess={handleEventCreated}
-        />
-      )}
-
       {/* Create Blocking Event Modal */}
       {selectedStylistForModal && (
         <CreateBlockingEventModal
@@ -444,6 +448,9 @@ export function CalendarView() {
           stylistId={selectedStylistForModal}
           stylistName={getStylistName(selectedStylistForModal)}
           selectedDate={selectedDate}
+          selectedStartTime={selectedStartTime}
+          selectedEndTime={selectedEndTime}
+          stylists={stylists.filter(s => selectedStylistIds.includes(s.id))}
           onSuccess={handleEventCreated}
         />
       )}

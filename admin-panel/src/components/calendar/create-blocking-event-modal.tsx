@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
+import { CalendarIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -19,7 +23,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
 import api from "@/lib/api";
+
+interface Stylist {
+  id: string;
+  name: string;
+  category: string;
+}
 
 interface CreateBlockingEventModalProps {
   isOpen: boolean;
@@ -27,6 +44,9 @@ interface CreateBlockingEventModalProps {
   stylistId: string;
   stylistName: string;
   selectedDate: Date | null;
+  selectedStartTime?: Date | null;
+  selectedEndTime?: Date | null;
+  stylists?: Stylist[];
   onSuccess: () => void;
 }
 
@@ -35,23 +55,92 @@ const EVENT_TYPES = [
   { value: "meeting", label: "Reunión", emoji: "📅" },
   { value: "break", label: "Descanso", emoji: "☕" },
   { value: "general", label: "Bloqueo general", emoji: "🚫" },
+  { value: "personal", label: "Asunto Propio", emoji: "💕" },
 ];
 
 export function CreateBlockingEventModal({
   isOpen,
   onClose,
-  stylistId,
-  stylistName,
+  stylistId: initialStylistId,
+  stylistName: initialStylistName,
   selectedDate,
+  selectedStartTime,
+  selectedEndTime,
+  stylists = [],
   onSuccess,
 }: CreateBlockingEventModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [eventType, setEventType] = useState("general");
-  const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("14:00");
+  const [blockingDate, setBlockingDate] = useState<Date | undefined>(
+    selectedDate || new Date()
+  );
+  // Multi-select: array of stylist IDs
+  const [selectedStylistIds, setSelectedStylistIds] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Calculate default times from drag selection or use defaults
+  const getDefaultStartTime = () => {
+    if (selectedStartTime) {
+      return format(selectedStartTime, "HH:mm");
+    }
+    return "09:00";
+  };
+
+  const getDefaultEndTime = () => {
+    if (selectedEndTime) {
+      return format(selectedEndTime, "HH:mm");
+    }
+    return "14:00";
+  };
+
+  const [startTime, setStartTime] = useState(getDefaultStartTime());
+  const [endTime, setEndTime] = useState(getDefaultEndTime());
+
+  // Reset form when modal opens with new data
+  useEffect(() => {
+    if (isOpen) {
+      setBlockingDate(selectedDate || new Date());
+      setStartTime(getDefaultStartTime());
+      setEndTime(getDefaultEndTime());
+      // Default: select all stylists if more than one, otherwise just the initial one
+      if (stylists.length > 1) {
+        setSelectedStylistIds(stylists.map(s => s.id));
+      } else if (stylists.length === 1) {
+        setSelectedStylistIds([stylists[0].id]);
+      } else {
+        setSelectedStylistIds([initialStylistId]);
+      }
+      setTitle("");
+      setDescription("");
+      setEventType("general");
+      setError(null);
+    }
+  }, [isOpen, selectedDate, selectedStartTime, selectedEndTime, initialStylistId, stylists]);
+
+  // Toggle individual stylist selection
+  const toggleStylist = (stylistId: string) => {
+    setSelectedStylistIds(prev => {
+      if (prev.includes(stylistId)) {
+        return prev.filter(id => id !== stylistId);
+      } else {
+        return [...prev, stylistId];
+      }
+    });
+  };
+
+  // Toggle all stylists
+  const toggleAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedStylistIds(stylists.map(s => s.id));
+    } else {
+      setSelectedStylistIds([]);
+    }
+  };
+
+  const allSelected = stylists.length > 0 && selectedStylistIds.length === stylists.length;
+  const someSelected = selectedStylistIds.length > 0 && selectedStylistIds.length < stylists.length;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,13 +151,18 @@ export function CreateBlockingEventModal({
       return;
     }
 
-    if (!selectedDate) {
+    if (!blockingDate) {
       setError("Selecciona una fecha");
       return;
     }
 
+    if (selectedStylistIds.length === 0) {
+      setError("Selecciona al menos un estilista");
+      return;
+    }
+
     // Build datetime strings
-    const dateStr = selectedDate.toISOString().split("T")[0];
+    const dateStr = format(blockingDate, "yyyy-MM-dd");
     const startDateTime = `${dateStr}T${startTime}:00`;
     const endDateTime = `${dateStr}T${endTime}:00`;
 
@@ -82,20 +176,13 @@ export function CreateBlockingEventModal({
 
     try {
       await api.createBlockingEvent({
-        stylist_id: stylistId,
+        stylist_ids: selectedStylistIds,
         title: title.trim(),
         description: description.trim() || undefined,
         start_time: startDateTime,
         end_time: endDateTime,
         event_type: eventType,
       });
-
-      // Reset form
-      setTitle("");
-      setDescription("");
-      setEventType("general");
-      setStartTime("09:00");
-      setEndTime("14:00");
 
       onSuccess();
       onClose();
@@ -106,16 +193,6 @@ export function CreateBlockingEventModal({
     }
   };
 
-  const formatDate = (date: Date | null) => {
-    if (!date) return "";
-    return date.toLocaleDateString("es-ES", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-  };
-
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[425px]">
@@ -124,14 +201,85 @@ export function CreateBlockingEventModal({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Stylist info */}
-          <div className="text-sm text-muted-foreground">
-            Estilista: <strong>{stylistName}</strong>
-          </div>
+          {/* Stylist multi-select */}
+          {stylists.length > 1 ? (
+            <div className="space-y-2">
+              <Label>Estilistas</Label>
+              <div className="border rounded-md p-3 space-y-2">
+                {/* Select all checkbox */}
+                <div className="flex items-center gap-2 pb-2 border-b">
+                  <Checkbox
+                    id="select-all"
+                    checked={allSelected}
+                    onCheckedChange={(checked) => toggleAll(checked === true)}
+                    className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                  />
+                  <Label htmlFor="select-all" className="font-medium cursor-pointer">
+                    Todos los estilistas
+                  </Label>
+                </div>
 
-          {/* Date display */}
-          <div className="text-sm text-muted-foreground">
-            Fecha: <strong>{formatDate(selectedDate)}</strong>
+                {/* Individual stylists */}
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {stylists.map((stylist) => (
+                    <div key={stylist.id} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`stylist-${stylist.id}`}
+                        checked={selectedStylistIds.includes(stylist.id)}
+                        onCheckedChange={() => toggleStylist(stylist.id)}
+                      />
+                      <Label
+                        htmlFor={`stylist-${stylist.id}`}
+                        className="cursor-pointer text-sm"
+                      >
+                        {stylist.name}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {selectedStylistIds.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {selectedStylistIds.length} estilista{selectedStylistIds.length !== 1 ? "s" : ""} seleccionado{selectedStylistIds.length !== 1 ? "s" : ""}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              Estilista: <strong>{stylists[0]?.name || initialStylistName}</strong>
+            </div>
+          )}
+
+          {/* Date picker */}
+          <div className="space-y-2">
+            <Label>Fecha</Label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    "w-full justify-start text-left font-normal",
+                    !blockingDate && "text-muted-foreground"
+                  )}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {blockingDate ? (
+                    format(blockingDate, "EEEE, d 'de' MMMM 'de' yyyy", { locale: es })
+                  ) : (
+                    <span>Seleccionar fecha</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={blockingDate}
+                  onSelect={setBlockingDate}
+                  locale={es}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
           </div>
 
           {/* Title */}
@@ -213,8 +361,15 @@ export function CreateBlockingEventModal({
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Creando..." : "Crear bloqueo"}
+            <Button
+              type="submit"
+              disabled={isSubmitting || selectedStylistIds.length === 0}
+            >
+              {isSubmitting
+                ? "Creando..."
+                : selectedStylistIds.length > 1
+                ? `Crear bloqueo (${selectedStylistIds.length})`
+                : "Crear bloqueo"}
             </Button>
           </DialogFooter>
         </form>

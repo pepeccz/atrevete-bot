@@ -94,6 +94,7 @@ class BlockingEventType(str, PyEnum):
     MEETING = "meeting"        # Reuniones, formaciones
     BREAK = "break"           # Descanso programado
     GENERAL = "general"       # Bloqueo general
+    PERSONAL = "personal"     # Asunto propio
 
 
 # ============================================================================

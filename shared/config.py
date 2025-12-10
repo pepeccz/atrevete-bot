@@ -120,7 +120,7 @@ class Settings(BaseSettings):
 
     # CORS Origins for API
     CORS_ORIGINS: str = Field(
-        default="http://localhost:3000,http://localhost:8000,http://api:8000",
+        default="http://localhost:3000,http://localhost:8000,http://localhost:8001,http://api:8000",
         description="Comma-separated list of allowed origins for CORS (e.g., 'http://localhost:3000,https://admin.domain.com')"
     )
 

@@ -564,6 +564,20 @@ async def get_stylist_performance(
 # =============================================================================
 
 
+class CreateStylistRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    category: str = Field(default="HAIRDRESSING")
+    google_calendar_id: str = Field(..., min_length=1)
+    is_active: bool = True
+
+
+class UpdateStylistRequest(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100)
+    category: str | None = None
+    google_calendar_id: str | None = Field(None, min_length=1)
+    is_active: bool | None = None
+
+
 @router.get("/stylists")
 async def list_stylists(
     current_user: Annotated[dict, Depends(get_current_user)],
@@ -630,9 +644,131 @@ async def get_stylist(
         }
 
 
+@router.post("/stylists", status_code=status.HTTP_201_CREATED)
+async def create_stylist(
+    request: CreateStylistRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Create a new stylist."""
+    from database.models import ServiceCategory
+
+    # Validate category
+    try:
+        category_enum = ServiceCategory(request.category)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid category: {request.category}. Must be HAIRDRESSING, AESTHETICS, or BOTH"
+        )
+
+    async with get_async_session() as session:
+        stylist = Stylist(
+            name=request.name,
+            category=category_enum,
+            google_calendar_id=request.google_calendar_id,
+            is_active=request.is_active,
+        )
+        session.add(stylist)
+        await session.commit()
+        await session.refresh(stylist)
+
+        return {
+            "id": str(stylist.id),
+            "name": stylist.name,
+            "category": stylist.category.value,
+            "google_calendar_id": stylist.google_calendar_id,
+            "is_active": stylist.is_active,
+            "created_at": stylist.created_at.isoformat(),
+            "updated_at": stylist.updated_at.isoformat(),
+        }
+
+
+@router.put("/stylists/{stylist_id}")
+async def update_stylist(
+    stylist_id: UUID,
+    request: UpdateStylistRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Update an existing stylist."""
+    from database.models import ServiceCategory
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Stylist).where(Stylist.id == stylist_id)
+        )
+        stylist = result.scalar_one_or_none()
+
+        if not stylist:
+            raise HTTPException(status_code=404, detail="Stylist not found")
+
+        # Update fields if provided
+        if request.name is not None:
+            stylist.name = request.name
+        if request.category is not None:
+            try:
+                stylist.category = ServiceCategory(request.category)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid category: {request.category}"
+                )
+        if request.google_calendar_id is not None:
+            stylist.google_calendar_id = request.google_calendar_id
+        if request.is_active is not None:
+            stylist.is_active = request.is_active
+
+        await session.commit()
+        await session.refresh(stylist)
+
+        return {
+            "id": str(stylist.id),
+            "name": stylist.name,
+            "category": stylist.category.value,
+            "google_calendar_id": stylist.google_calendar_id,
+            "is_active": stylist.is_active,
+            "created_at": stylist.created_at.isoformat(),
+            "updated_at": stylist.updated_at.isoformat(),
+        }
+
+
+@router.delete("/stylists/{stylist_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_stylist(
+    stylist_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Delete a stylist."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Stylist).where(Stylist.id == stylist_id)
+        )
+        stylist = result.scalar_one_or_none()
+
+        if not stylist:
+            raise HTTPException(status_code=404, detail="Stylist not found")
+
+        await session.delete(stylist)
+        await session.commit()
+
+
 # =============================================================================
 # Customers CRUD
 # =============================================================================
+
+
+class CreateCustomerRequest(BaseModel):
+    phone: str = Field(..., min_length=1)
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str | None = None
+    notes: str | None = None
+    preferred_stylist_id: UUID | None = None
+
+
+class UpdateCustomerRequest(BaseModel):
+    phone: str | None = Field(None, min_length=1)
+    first_name: str | None = Field(None, min_length=1, max_length=100)
+    last_name: str | None = None
+    notes: str | None = None
+    preferred_stylist_id: UUID | None = None
 
 
 @router.get("/customers")
@@ -723,9 +859,153 @@ async def get_customer(
         }
 
 
+@router.post("/customers", status_code=status.HTTP_201_CREATED)
+async def create_customer(
+    request: CreateCustomerRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Create a new customer."""
+    async with get_async_session() as session:
+        # Check if phone already exists
+        existing = await session.execute(
+            select(Customer).where(Customer.phone == request.phone)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail=f"Customer with phone {request.phone} already exists"
+            )
+
+        customer = Customer(
+            phone=request.phone,
+            first_name=request.first_name,
+            last_name=request.last_name,
+            notes=request.notes,
+            preferred_stylist_id=request.preferred_stylist_id,
+        )
+        session.add(customer)
+        await session.commit()
+        await session.refresh(customer)
+
+        return {
+            "id": str(customer.id),
+            "phone": customer.phone,
+            "first_name": customer.first_name,
+            "last_name": customer.last_name,
+            "total_spent": str(customer.total_spent),
+            "last_service_date": None,
+            "preferred_stylist_id": (
+                str(customer.preferred_stylist_id)
+                if customer.preferred_stylist_id
+                else None
+            ),
+            "notes": customer.notes,
+            "created_at": customer.created_at.isoformat(),
+        }
+
+
+@router.put("/customers/{customer_id}")
+async def update_customer(
+    customer_id: UUID,
+    request: UpdateCustomerRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Update an existing customer."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Customer).where(Customer.id == customer_id)
+        )
+        customer = result.scalar_one_or_none()
+
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        # Update fields if provided
+        if request.phone is not None:
+            # Check if new phone already exists (for another customer)
+            existing = await session.execute(
+                select(Customer).where(
+                    Customer.phone == request.phone,
+                    Customer.id != customer_id
+                )
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Phone {request.phone} already in use"
+                )
+            customer.phone = request.phone
+        if request.first_name is not None:
+            customer.first_name = request.first_name
+        if request.last_name is not None:
+            customer.last_name = request.last_name
+        if request.notes is not None:
+            customer.notes = request.notes
+        if request.preferred_stylist_id is not None:
+            customer.preferred_stylist_id = request.preferred_stylist_id
+
+        await session.commit()
+        await session.refresh(customer)
+
+        return {
+            "id": str(customer.id),
+            "phone": customer.phone,
+            "first_name": customer.first_name,
+            "last_name": customer.last_name,
+            "total_spent": str(customer.total_spent),
+            "last_service_date": (
+                customer.last_service_date.isoformat()
+                if customer.last_service_date
+                else None
+            ),
+            "preferred_stylist_id": (
+                str(customer.preferred_stylist_id)
+                if customer.preferred_stylist_id
+                else None
+            ),
+            "notes": customer.notes,
+            "created_at": customer.created_at.isoformat(),
+        }
+
+
+@router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer(
+    customer_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Delete a customer."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Customer).where(Customer.id == customer_id)
+        )
+        customer = result.scalar_one_or_none()
+
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        await session.delete(customer)
+        await session.commit()
+
+
 # =============================================================================
 # Services CRUD
 # =============================================================================
+
+
+class CreateServiceRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    category: str = Field(default="HAIRDRESSING")
+    duration_minutes: int = Field(default=30, ge=5, le=480)
+    description: str | None = None
+    is_active: bool = True
+
+
+class UpdateServiceRequest(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    category: str | None = None
+    duration_minutes: int | None = Field(None, ge=5, le=480)
+    description: str | None = None
+    is_active: bool | None = None
 
 
 @router.get("/services")
@@ -771,6 +1051,144 @@ async def list_services(
             "page_size": page_size,
             "has_more": has_more,
         }
+
+
+@router.get("/services/{service_id}")
+async def get_service(
+    service_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Get a single service by ID."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service).where(Service.id == service_id)
+        )
+        service = result.scalar_one_or_none()
+
+        if not service:
+            raise HTTPException(status_code=404, detail="Service not found")
+
+        return {
+            "id": str(service.id),
+            "name": service.name,
+            "category": service.category.value,
+            "duration_minutes": service.duration_minutes,
+            "description": service.description,
+            "is_active": service.is_active,
+            "created_at": service.created_at.isoformat(),
+            "updated_at": service.updated_at.isoformat(),
+        }
+
+
+@router.post("/services", status_code=status.HTTP_201_CREATED)
+async def create_service(
+    request: CreateServiceRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Create a new service."""
+    from database.models import ServiceCategory
+
+    # Validate category
+    try:
+        category_enum = ServiceCategory(request.category)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid category: {request.category}. Must be HAIRDRESSING, AESTHETICS, or BOTH"
+        )
+
+    async with get_async_session() as session:
+        service = Service(
+            name=request.name,
+            category=category_enum,
+            duration_minutes=request.duration_minutes,
+            description=request.description,
+            is_active=request.is_active,
+        )
+        session.add(service)
+        await session.commit()
+        await session.refresh(service)
+
+        return {
+            "id": str(service.id),
+            "name": service.name,
+            "category": service.category.value,
+            "duration_minutes": service.duration_minutes,
+            "description": service.description,
+            "is_active": service.is_active,
+            "created_at": service.created_at.isoformat(),
+            "updated_at": service.updated_at.isoformat(),
+        }
+
+
+@router.put("/services/{service_id}")
+async def update_service(
+    service_id: UUID,
+    request: UpdateServiceRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Update an existing service."""
+    from database.models import ServiceCategory
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service).where(Service.id == service_id)
+        )
+        service = result.scalar_one_or_none()
+
+        if not service:
+            raise HTTPException(status_code=404, detail="Service not found")
+
+        # Update fields if provided
+        if request.name is not None:
+            service.name = request.name
+        if request.category is not None:
+            try:
+                service.category = ServiceCategory(request.category)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid category: {request.category}"
+                )
+        if request.duration_minutes is not None:
+            service.duration_minutes = request.duration_minutes
+        if request.description is not None:
+            service.description = request.description
+        if request.is_active is not None:
+            service.is_active = request.is_active
+
+        await session.commit()
+        await session.refresh(service)
+
+        return {
+            "id": str(service.id),
+            "name": service.name,
+            "category": service.category.value,
+            "duration_minutes": service.duration_minutes,
+            "description": service.description,
+            "is_active": service.is_active,
+            "created_at": service.created_at.isoformat(),
+            "updated_at": service.updated_at.isoformat(),
+        }
+
+
+@router.delete("/services/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_service(
+    service_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Delete a service."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service).where(Service.id == service_id)
+        )
+        service = result.scalar_one_or_none()
+
+        if not service:
+            raise HTTPException(status_code=404, detail="Service not found")
+
+        await session.delete(service)
+        await session.commit()
 
 
 # =============================================================================
@@ -961,6 +1379,123 @@ async def create_appointment(
             "created_at": new_appointment.created_at.isoformat(),
             "updated_at": new_appointment.updated_at.isoformat(),
         }
+
+
+class UpdateAppointmentRequest(BaseModel):
+    stylist_id: UUID | None = None
+    service_ids: list[UUID] | None = None
+    start_time: datetime | None = None
+    status: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    notes: str | None = None
+
+
+@router.put("/appointments/{appointment_id}")
+async def update_appointment(
+    appointment_id: UUID,
+    request: UpdateAppointmentRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Update an existing appointment."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Appointment).where(Appointment.id == appointment_id)
+        )
+        appointment = result.scalar_one_or_none()
+
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+
+        # Update fields if provided
+        if request.stylist_id is not None:
+            # Verify stylist exists
+            stylist_result = await session.execute(
+                select(Stylist).where(Stylist.id == request.stylist_id)
+            )
+            if not stylist_result.scalar_one_or_none():
+                raise HTTPException(status_code=404, detail="Stylist not found")
+            appointment.stylist_id = request.stylist_id
+
+        if request.service_ids is not None:
+            # Verify all services exist and recalculate duration
+            services_result = await session.execute(
+                select(Service).where(Service.id.in_(request.service_ids))
+            )
+            services = services_result.scalars().all()
+            if len(services) != len(request.service_ids):
+                raise HTTPException(status_code=404, detail="One or more services not found")
+            appointment.service_ids = request.service_ids
+            appointment.duration_minutes = sum(s.duration_minutes for s in services)
+
+        if request.start_time is not None:
+            appointment.start_time = request.start_time
+
+        if request.status is not None:
+            try:
+                appointment.status = AppointmentStatus(request.status)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status: {request.status}. Must be pending, confirmed, completed, cancelled, or no_show"
+                )
+
+        if request.first_name is not None:
+            appointment.first_name = request.first_name
+        if request.last_name is not None:
+            appointment.last_name = request.last_name
+        if request.notes is not None:
+            appointment.notes = request.notes
+
+        await session.commit()
+        await session.refresh(appointment)
+
+        return {
+            "id": str(appointment.id),
+            "customer_id": str(appointment.customer_id),
+            "stylist_id": str(appointment.stylist_id),
+            "service_ids": [str(sid) for sid in appointment.service_ids],
+            "start_time": appointment.start_time.isoformat(),
+            "duration_minutes": appointment.duration_minutes,
+            "status": appointment.status.value,
+            "google_calendar_event_id": appointment.google_calendar_event_id,
+            "first_name": appointment.first_name,
+            "last_name": appointment.last_name,
+            "notes": appointment.notes,
+            "created_at": appointment.created_at.isoformat(),
+            "updated_at": appointment.updated_at.isoformat(),
+        }
+
+
+@router.delete("/appointments/{appointment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_appointment(
+    appointment_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Delete an appointment."""
+    from agent.services.gcal_push_service import delete_gcal_event
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Appointment).where(Appointment.id == appointment_id)
+        )
+        appointment = result.scalar_one_or_none()
+
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+
+        # Delete from Google Calendar if it was synced
+        if appointment.google_calendar_event_id:
+            try:
+                await delete_gcal_event(
+                    appointment.stylist_id,
+                    appointment.google_calendar_event_id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to delete Google Calendar event: {e}")
+
+        await session.delete(appointment)
+        await session.commit()
 
 
 # =============================================================================
@@ -1219,9 +1754,212 @@ async def get_calendar_availability(
             )
 
 
+class AdminAvailabilityRequest(BaseModel):
+    """Request schema for admin availability check with date range."""
+    service_ids: list[UUID]
+    start_date: str  # YYYY-MM-DD format
+    end_date: str  # YYYY-MM-DD format
+    stylist_id: UUID | None = None  # Optional filter by stylist
+
+
+# Spanish day names
+DAY_NAMES_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+
+
+@router.post("/availability/search")
+async def search_availability(
+    request: AdminAvailabilityRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Search availability for stylists across a date range.
+
+    This endpoint is for admin use only - no 3-day limit restriction.
+    Maximum date range: 14 days.
+
+    Process:
+    1. Calculate total duration from selected services
+    2. Determine service category
+    3. Find compatible stylists (by category), optionally filtered by stylist_id
+    4. For each day in range, return available slots grouped by stylist
+
+    Args:
+        service_ids: List of service UUIDs to book
+        start_date: Start date of range (YYYY-MM-DD)
+        end_date: End date of range (YYYY-MM-DD)
+        stylist_id: Optional UUID to filter by specific stylist
+
+    Returns:
+        {
+            "start_date": "2025-12-15",
+            "end_date": "2025-12-20",
+            "total_duration_minutes": 90,
+            "service_category": "HAIRDRESSING",
+            "days": [
+                {
+                    "date": "2025-12-16",
+                    "day_name": "Martes",
+                    "is_closed": false,
+                    "holiday": null,
+                    "stylists": [
+                        {
+                            "id": "uuid",
+                            "name": "María",
+                            "category": "HAIRDRESSING",
+                            "slots": [{"time": "10:00", "end_time": "11:30", ...}]
+                        }
+                    ]
+                }
+            ]
+        }
+    """
+    from agent.services.availability_service import get_available_slots, is_holiday
+    from database.models import ServiceCategory
+    from datetime import date as date_type, timedelta
+    from shared.business_hours_validator import is_date_closed
+
+    # Parse dates
+    try:
+        start = date_type.fromisoformat(request.start_date)
+        end = date_type.fromisoformat(request.end_date)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date format. Use YYYY-MM-DD"
+        )
+
+    # Validate date range
+    if end < start:
+        raise HTTPException(
+            status_code=400,
+            detail="end_date must be >= start_date"
+        )
+
+    days_diff = (end - start).days
+    if days_diff > 14:
+        raise HTTPException(
+            status_code=400,
+            detail="Maximum date range is 14 days"
+        )
+
+    async with get_async_session() as session:
+        # Get services and calculate total duration + category
+        services_result = await session.execute(
+            select(Service).where(Service.id.in_(request.service_ids))
+        )
+        services = services_result.scalars().all()
+
+        if len(services) != len(request.service_ids):
+            raise HTTPException(
+                status_code=404,
+                detail="One or more services not found"
+            )
+
+        total_duration = sum(s.duration_minutes for s in services)
+
+        # Determine category - if mixed, need "BOTH" stylist
+        categories = set(s.category for s in services)
+        if ServiceCategory.HAIRDRESSING in categories and ServiceCategory.AESTHETICS in categories:
+            required_category = ServiceCategory.BOTH
+        elif ServiceCategory.AESTHETICS in categories:
+            required_category = ServiceCategory.AESTHETICS
+        else:
+            required_category = ServiceCategory.HAIRDRESSING
+
+        # Find compatible stylists
+        stylists_query = select(Stylist).where(
+            Stylist.is_active == True,
+        )
+
+        # Filter by specific stylist if provided
+        if request.stylist_id:
+            stylists_query = stylists_query.where(Stylist.id == request.stylist_id)
+        else:
+            # Filter by category compatibility
+            if required_category == ServiceCategory.BOTH:
+                stylists_query = stylists_query.where(
+                    Stylist.category == ServiceCategory.BOTH
+                )
+            elif required_category == ServiceCategory.AESTHETICS:
+                stylists_query = stylists_query.where(
+                    Stylist.category.in_([ServiceCategory.AESTHETICS, ServiceCategory.BOTH])
+                )
+            else:  # HAIRDRESSING
+                stylists_query = stylists_query.where(
+                    Stylist.category.in_([ServiceCategory.HAIRDRESSING, ServiceCategory.BOTH])
+                )
+
+        stylists_result = await session.execute(stylists_query)
+        compatible_stylists = stylists_result.scalars().all()
+
+        if not compatible_stylists:
+            return {
+                "start_date": request.start_date,
+                "end_date": request.end_date,
+                "total_duration_minutes": total_duration,
+                "service_category": required_category.value,
+                "days": [],
+                "message": "No hay estilistas disponibles para estos servicios",
+            }
+
+        # Iterate over each day in range
+        days_result = []
+        current_date = start
+        while current_date <= end:
+            # Check if holiday
+            holiday_name = await is_holiday(current_date)
+
+            # Check if salon is closed
+            is_closed = await is_date_closed(current_date)
+
+            day_stylists = []
+            if not holiday_name and not is_closed:
+                # Get availability for each stylist
+                for stylist in compatible_stylists:
+                    slots = await get_available_slots(
+                        stylist_id=stylist.id,
+                        target_date=current_date,
+                        service_duration_minutes=total_duration,
+                        slot_interval_minutes=15,
+                    )
+
+                    day_stylists.append({
+                        "id": str(stylist.id),
+                        "name": stylist.name,
+                        "category": stylist.category.value,
+                        "slots": slots,
+                    })
+
+            days_result.append({
+                "date": current_date.isoformat(),
+                "day_name": DAY_NAMES_ES[current_date.weekday()],
+                "is_closed": is_closed,
+                "holiday": holiday_name,
+                "stylists": day_stylists,
+            })
+
+            current_date += timedelta(days=1)
+
+        return {
+            "start_date": request.start_date,
+            "end_date": request.end_date,
+            "total_duration_minutes": total_duration,
+            "service_category": required_category.value,
+            "days": days_result,
+        }
+
+
 # =============================================================================
 # Business Hours
 # =============================================================================
+
+
+class UpdateBusinessHoursRequest(BaseModel):
+    is_closed: bool | None = None
+    start_hour: int | None = Field(None, ge=0, le=23)
+    start_minute: int | None = Field(None, ge=0, le=59)
+    end_hour: int | None = Field(None, ge=0, le=23)
+    end_minute: int | None = Field(None, ge=0, le=59)
 
 
 @router.get("/business-hours")
@@ -1251,14 +1989,56 @@ async def list_business_hours(
         }
 
 
+@router.put("/business-hours/{hours_id}")
+async def update_business_hours(
+    hours_id: UUID,
+    request: UpdateBusinessHoursRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Update business hours for a specific day."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(BusinessHours).where(BusinessHours.id == hours_id)
+        )
+        hours = result.scalar_one_or_none()
+
+        if not hours:
+            raise HTTPException(status_code=404, detail="Business hours not found")
+
+        # Update fields if provided
+        if request.is_closed is not None:
+            hours.is_closed = request.is_closed
+        if request.start_hour is not None:
+            hours.start_hour = request.start_hour
+        if request.start_minute is not None:
+            hours.start_minute = request.start_minute
+        if request.end_hour is not None:
+            hours.end_hour = request.end_hour
+        if request.end_minute is not None:
+            hours.end_minute = request.end_minute
+
+        await session.commit()
+        await session.refresh(hours)
+
+        return {
+            "id": str(hours.id),
+            "day_of_week": hours.day_of_week,
+            "is_closed": hours.is_closed,
+            "start_hour": hours.start_hour,
+            "start_minute": hours.start_minute,
+            "end_hour": hours.end_hour,
+            "end_minute": hours.end_minute,
+        }
+
+
 # =============================================================================
 # Blocking Events CRUD
 # =============================================================================
 
 
 class CreateBlockingEventRequest(BaseModel):
-    """Request schema for creating a blocking event."""
-    stylist_id: UUID
+    """Request schema for creating blocking events for one or more stylists."""
+    stylist_ids: list[UUID] = Field(..., min_length=1)  # One or more stylists
     title: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
     start_time: datetime
@@ -1332,9 +2112,9 @@ async def create_blocking_event(
     request: CreateBlockingEventRequest,
 ):
     """
-    Create a new blocking event.
+    Create blocking events for one or more stylists.
 
-    This creates the event in the database and optionally pushes to Google Calendar.
+    This creates events in the database and pushes each to Google Calendar.
     """
     from agent.services.gcal_push_service import fire_and_forget_push_blocking_event
 
@@ -1354,50 +2134,66 @@ async def create_blocking_event(
             detail="end_time must be after start_time"
         )
 
+    created_events = []
+
     async with get_async_session() as session:
-        # Verify stylist exists
+        # Verify all stylists exist
         stylist_result = await session.execute(
-            select(Stylist).where(Stylist.id == request.stylist_id)
+            select(Stylist).where(Stylist.id.in_(request.stylist_ids))
         )
-        stylist = stylist_result.scalar_one_or_none()
+        found_stylists = {str(s.id) for s in stylist_result.scalars().all()}
+        requested_ids = {str(sid) for sid in request.stylist_ids}
 
-        if not stylist:
-            raise HTTPException(status_code=404, detail="Stylist not found")
+        missing_ids = requested_ids - found_stylists
+        if missing_ids:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Stylists not found: {', '.join(missing_ids)}"
+            )
 
-        # Create blocking event
-        blocking_event = BlockingEvent(
-            stylist_id=request.stylist_id,
-            title=request.title,
-            description=request.description,
-            start_time=request.start_time,
-            end_time=request.end_time,
-            event_type=event_type_enum,
-        )
+        # Create blocking event for each stylist
+        for stylist_id in request.stylist_ids:
+            blocking_event = BlockingEvent(
+                stylist_id=stylist_id,
+                title=request.title,
+                description=request.description,
+                start_time=request.start_time,
+                end_time=request.end_time,
+                event_type=event_type_enum,
+            )
+            session.add(blocking_event)
+            created_events.append(blocking_event)
 
-        session.add(blocking_event)
         await session.commit()
-        await session.refresh(blocking_event)
 
-        # Fire-and-forget push to Google Calendar
-        await fire_and_forget_push_blocking_event(
-            blocking_event_id=blocking_event.id,
-            stylist_id=blocking_event.stylist_id,
-            title=blocking_event.title,
-            description=blocking_event.description,
-            start_time=blocking_event.start_time,
-            end_time=blocking_event.end_time,
-            event_type=blocking_event.event_type.value,
-        )
+        # Refresh all events and push to Google Calendar
+        for event in created_events:
+            await session.refresh(event)
+            await fire_and_forget_push_blocking_event(
+                blocking_event_id=event.id,
+                stylist_id=event.stylist_id,
+                title=event.title,
+                description=event.description,
+                start_time=event.start_time,
+                end_time=event.end_time,
+                event_type=event.event_type.value,
+            )
 
         return {
-            "id": str(blocking_event.id),
-            "stylist_id": str(blocking_event.stylist_id),
-            "title": blocking_event.title,
-            "description": blocking_event.description,
-            "start_time": blocking_event.start_time.isoformat(),
-            "end_time": blocking_event.end_time.isoformat(),
-            "event_type": blocking_event.event_type.value,
-            "created_at": blocking_event.created_at.isoformat(),
+            "created": len(created_events),
+            "events": [
+                {
+                    "id": str(event.id),
+                    "stylist_id": str(event.stylist_id),
+                    "title": event.title,
+                    "description": event.description,
+                    "start_time": event.start_time.isoformat(),
+                    "end_time": event.end_time.isoformat(),
+                    "event_type": event.event_type.value,
+                    "created_at": event.created_at.isoformat(),
+                }
+                for event in created_events
+            ],
         }
 
 
@@ -1669,3 +2465,83 @@ async def delete_holiday(
 
         await session.delete(holiday)
         await session.commit()
+
+
+# =============================================================================
+# Conversation History (Read-only)
+# =============================================================================
+
+
+@router.get("/conversations")
+async def list_conversations(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    page: int = 1,
+    page_size: int = 50,
+    customer_id: UUID | None = None,
+):
+    """List conversation history (read-only)."""
+    from database.models import ConversationHistory
+
+    async with get_async_session() as session:
+        query = select(ConversationHistory)
+
+        if customer_id:
+            query = query.where(ConversationHistory.customer_id == customer_id)
+
+        query = query.order_by(ConversationHistory.started_at.desc())
+        query = query.offset((page - 1) * page_size).limit(page_size + 1)
+
+        result = await session.execute(query)
+        conversations = result.scalars().all()
+
+        has_more = len(conversations) > page_size
+        items = conversations[:page_size]
+
+        return {
+            "items": [
+                {
+                    "id": str(c.id),
+                    "customer_id": str(c.customer_id),
+                    "started_at": c.started_at.isoformat() if c.started_at else None,
+                    "ended_at": c.ended_at.isoformat() if c.ended_at else None,
+                    "message_count": c.message_count,
+                    "messages": c.messages,  # JSON field
+                    "summary": c.summary,
+                    "created_at": c.created_at.isoformat(),
+                }
+                for c in items
+            ],
+            "total": len(items),
+            "page": page,
+            "page_size": page_size,
+            "has_more": has_more,
+        }
+
+
+@router.get("/conversations/{conversation_id}")
+async def get_conversation(
+    conversation_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Get a single conversation by ID."""
+    from database.models import ConversationHistory
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(ConversationHistory).where(ConversationHistory.id == conversation_id)
+        )
+        conversation = result.scalar_one_or_none()
+
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        return {
+            "id": str(conversation.id),
+            "customer_id": str(conversation.customer_id),
+            "started_at": conversation.started_at.isoformat() if conversation.started_at else None,
+            "ended_at": conversation.ended_at.isoformat() if conversation.ended_at else None,
+            "message_count": conversation.message_count,
+            "messages": conversation.messages,
+            "summary": conversation.summary,
+            "created_at": conversation.created_at.isoformat(),
+        }
