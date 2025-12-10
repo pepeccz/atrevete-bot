@@ -8,6 +8,7 @@ Provides REST endpoints for:
 - Calendar and availability
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Annotated, Any
@@ -1507,6 +1508,36 @@ async def update_appointment(
         await session.commit()
         await session.refresh(appointment)
 
+        # Sync with Google Calendar if event exists
+        if appointment.google_calendar_event_id:
+            from agent.services.gcal_push_service import update_appointment_in_gcal
+
+            # Get customer name and service names for Google Calendar
+            customer_name = f"{appointment.first_name} {appointment.last_name or ''}".strip()
+
+            services_result = await session.execute(
+                select(Service).where(Service.id.in_(appointment.service_ids))
+            )
+            services = services_result.scalars().all()
+            service_names = ", ".join(s.name for s in services)
+
+            # Fire-and-forget update to Google Calendar
+            asyncio.create_task(
+                update_appointment_in_gcal(
+                    appointment_id=appointment.id,
+                    stylist_id=appointment.stylist_id,
+                    event_id=appointment.google_calendar_event_id,
+                    customer_name=customer_name,
+                    service_names=service_names,
+                    start_time=appointment.start_time,
+                    duration_minutes=appointment.duration_minutes,
+                    status=appointment.status.value,
+                )
+            )
+            logger.info(
+                f"Triggered Google Calendar update for appointment {appointment.id}"
+            )
+
         return {
             "id": str(appointment.id),
             "customer_id": str(appointment.customer_id),
@@ -2297,6 +2328,27 @@ async def update_blocking_event(
 
         await session.commit()
         await session.refresh(event)
+
+        # Sync with Google Calendar if event exists
+        if event.google_calendar_event_id:
+            from agent.services.gcal_push_service import update_blocking_event_in_gcal
+
+            # Fire-and-forget update to Google Calendar
+            asyncio.create_task(
+                update_blocking_event_in_gcal(
+                    blocking_event_id=event.id,
+                    stylist_id=event.stylist_id,
+                    event_id=event.google_calendar_event_id,
+                    title=event.title,
+                    description=event.description,
+                    start_time=event.start_time,
+                    end_time=event.end_time,
+                    event_type=event.event_type.value,
+                )
+            )
+            logger.info(
+                f"Triggered Google Calendar update for blocking event {event.id}"
+            )
 
         return {
             "id": str(event.id),

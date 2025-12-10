@@ -57,6 +57,7 @@ EVENT_COLORS = {
     "meeting": "6",      # Orange
     "break": "2",        # Green (lighter)
     "general": "8",      # Gray
+    "personal": "14",    # Pink
 }
 
 
@@ -293,6 +294,7 @@ async def push_blocking_event_to_gcal(
             "meeting": "📅",
             "break": "☕",
             "general": "🚫",
+            "personal": "💕",
         }
         emoji = type_emojis.get(event_type, "🚫")
         summary = f"{emoji} {title}"
@@ -378,6 +380,227 @@ async def _update_blocking_event_gcal_id(blocking_event_id: UUID, event_id: str)
             f"Failed to update blocking event {blocking_event_id} with gcal event ID: {e}",
             exc_info=True
         )
+
+
+async def update_appointment_in_gcal(
+    appointment_id: UUID,
+    stylist_id: UUID,
+    event_id: str,
+    customer_name: str,
+    service_names: str,
+    start_time: datetime,
+    duration_minutes: int,
+    status: str = "confirmed",
+) -> bool:
+    """
+    Update an existing appointment in Google Calendar.
+
+    Uses service.events().patch() to update only changed fields.
+
+    Args:
+        appointment_id: UUID of the appointment (for logging)
+        stylist_id: UUID of the stylist (to get calendar ID)
+        event_id: Google Calendar event ID (from appointment.google_calendar_event_id)
+        customer_name: Updated customer name
+        service_names: Updated service names
+        start_time: Updated start time (timezone-aware)
+        duration_minutes: Updated duration
+        status: Updated status ("pending", "confirmed", etc.)
+
+    Returns:
+        True if updated successfully, False otherwise
+    """
+    try:
+        # Get stylist's calendar ID
+        calendar_id = await _get_stylist_calendar_id(stylist_id)
+        if not calendar_id:
+            logger.warning(
+                f"Cannot update appointment {appointment_id}: "
+                f"No calendar ID found for stylist {stylist_id}"
+            )
+            return False
+
+        # Calculate end time
+        end_time = start_time + timedelta(minutes=duration_minutes)
+
+        # Build event summary with status emoji
+        if status == "pending":
+            summary = f"🟡 {customer_name} - {service_names}"
+        elif status == "confirmed":
+            summary = f"🟢 {customer_name} - {service_names}"
+        else:
+            summary = f"{customer_name} - {service_names}"
+
+        # Build event description
+        description = (
+            f"Customer: {customer_name}\n"
+            f"Services: {service_names}\n"
+            f"Status: {status}\n"
+            f"Appointment ID: {appointment_id}"
+        )
+
+        # Determine color based on status
+        color_id = EVENT_COLORS.get(status, "5")
+
+        # Build update body (only fields that might have changed)
+        update_body = {
+            "summary": summary,
+            "description": description,
+            "start": {
+                "dateTime": start_time.isoformat(),
+                "timeZone": "Europe/Madrid",
+            },
+            "end": {
+                "dateTime": end_time.isoformat(),
+                "timeZone": "Europe/Madrid",
+            },
+            "colorId": color_id,
+        }
+
+        # Update event in Google Calendar (use patch for partial update)
+        service = _get_calendar_service()
+
+        def update_event():
+            return service.events().patch(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=update_body,
+            ).execute()
+
+        # Run in thread pool to not block the event loop
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, update_event)
+
+        logger.info(
+            f"Updated appointment {appointment_id} in Google Calendar: "
+            f"event_id={event_id}"
+        )
+        return True
+
+    except HttpError as e:
+        if e.resp.status == 404:
+            logger.warning(
+                f"Appointment {appointment_id} not found in Google Calendar "
+                f"(event_id={event_id}). Event may have been deleted externally."
+            )
+            return False
+        logger.error(
+            f"Google Calendar API error updating appointment {appointment_id}: {e}",
+            exc_info=True
+        )
+        return False
+    except Exception as e:
+        logger.error(
+            f"Error updating appointment {appointment_id} in Google Calendar: {e}",
+            exc_info=True
+        )
+        return False
+
+
+async def update_blocking_event_in_gcal(
+    blocking_event_id: UUID,
+    stylist_id: UUID,
+    event_id: str,
+    title: str,
+    description: Optional[str],
+    start_time: datetime,
+    end_time: datetime,
+    event_type: str = "general",
+) -> bool:
+    """
+    Update an existing blocking event in Google Calendar.
+
+    Uses service.events().patch() to update only changed fields.
+
+    Args:
+        blocking_event_id: UUID of the blocking event (for logging)
+        stylist_id: UUID of the stylist (to get calendar ID)
+        event_id: Google Calendar event ID (from blocking_event.google_calendar_event_id)
+        title: Updated event title
+        description: Updated event description
+        start_time: Updated start time (timezone-aware)
+        end_time: Updated end time (timezone-aware)
+        event_type: Updated event type (vacation, meeting, break, general, personal)
+
+    Returns:
+        True if updated successfully, False otherwise
+    """
+    try:
+        # Get stylist's calendar ID
+        calendar_id = await _get_stylist_calendar_id(stylist_id)
+        if not calendar_id:
+            logger.warning(
+                f"Cannot update blocking event {blocking_event_id}: "
+                f"No calendar ID found for stylist {stylist_id}"
+            )
+            return False
+
+        # Add emoji based on event type
+        type_emojis = {
+            "vacation": "🏖️",
+            "meeting": "📅",
+            "break": "☕",
+            "general": "🚫",
+            "personal": "💕",
+        }
+        emoji = type_emojis.get(event_type, "🚫")
+        summary = f"{emoji} {title}"
+
+        # Determine color based on event type
+        color_id = EVENT_COLORS.get(event_type, "8")
+
+        # Build update body
+        update_body = {
+            "summary": summary,
+            "description": description or "",
+            "start": {
+                "dateTime": start_time.isoformat(),
+                "timeZone": "Europe/Madrid",
+            },
+            "end": {
+                "dateTime": end_time.isoformat(),
+                "timeZone": "Europe/Madrid",
+            },
+            "colorId": color_id,
+        }
+
+        # Update event in Google Calendar
+        service = _get_calendar_service()
+
+        def update_event():
+            return service.events().patch(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=update_body,
+            ).execute()
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, update_event)
+
+        logger.info(
+            f"Updated blocking event {blocking_event_id} in Google Calendar: "
+            f"event_id={event_id}"
+        )
+        return True
+
+    except HttpError as e:
+        if e.resp.status == 404:
+            logger.warning(
+                f"Blocking event {blocking_event_id} not found in Google Calendar "
+                f"(event_id={event_id}). Event may have been deleted externally."
+            )
+            return False
+        logger.error(
+            f"Google Calendar API error updating blocking event {blocking_event_id}: {e}",
+            exc_info=True
+        )
+        return False
+    except Exception as e:
+        logger.error(
+            f"Error updating blocking event {blocking_event_id} in Google Calendar: {e}",
+            exc_info=True
+        )
+        return False
 
 
 async def delete_gcal_event(

@@ -36,6 +36,7 @@ from agent.tools.calendar_tools import (
 )
 from agent.utils import parse_natural_date, MADRID_TZ
 from agent.validators import validate_3_day_rule
+from agent.validators.transaction_validators import MINIMUM_DAYS
 from database.models import ServiceCategory
 from shared.business_hours_validator import get_next_open_date, is_date_closed
 
@@ -421,7 +422,7 @@ async def find_next_available(
 
         # Start searching from the earliest valid date
         now = datetime.now(MADRID_TZ)
-        min_valid_date = now + timedelta(days=3)  # 3-day rule minimum
+        min_valid_date = now + timedelta(days=MINIMUM_DAYS)  # 3-day rule minimum
 
         # If start_date is provided, parse and use it (respecting 3-day rule)
         if start_date:
@@ -443,6 +444,17 @@ async def find_next_available(
                 earliest_valid = min_valid_date
         else:
             earliest_valid = min_valid_date
+
+        # Check if earliest_valid date is a holiday
+        if isinstance(earliest_valid, datetime):
+            holiday_name = await is_holiday(earliest_valid.date())
+            if holiday_name:
+                logger.info(
+                    f"find_next_available: start date {earliest_valid.date()} is a holiday ({holiday_name}), "
+                    f"starting search from next day"
+                )
+                # Start from next day instead
+                earliest_valid = earliest_valid + timedelta(days=1)
 
         # Skip closed days using database-driven validation
         # If earliest_valid falls on closed day, find next open date
@@ -582,7 +594,7 @@ async def find_next_available(
         logger.error(f"Error in find_next_available: {e}", exc_info=True)
         return {
             "error": f"Error searching availability: {str(e)}",
-            "available_dates": [],
+            "available_stylists": [],
             "total_slots_found": 0,
             "dates_searched": 0,
         }

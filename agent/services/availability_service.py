@@ -512,11 +512,16 @@ async def get_calendar_events_for_range(
 
             for appt in appointments:
                 appt_end = appt.start_time + timedelta(minutes=appt.duration_minutes)
+
+                # Convert to Madrid timezone before serialization
+                start_madrid = appt.start_time.astimezone(MADRID_TZ)
+                end_madrid = appt_end.astimezone(MADRID_TZ)
+
                 events.append({
                     "id": f"appt-{appt.id}",
                     "title": f"{appt.first_name} {appt.last_name or ''}".strip(),
-                    "start": appt.start_time.isoformat(),
-                    "end": appt_end.isoformat(),
+                    "start": start_madrid.isoformat(),
+                    "end": end_madrid.isoformat(),
                     "backgroundColor": "#7C3AED",  # Default violet
                     "borderColor": "#7C3AED",
                     "extendedProps": {
@@ -553,11 +558,16 @@ async def get_calendar_events_for_range(
 
             for block in blocking_events:
                 color = block_colors.get(block.event_type.value, "#6B7280")
+
+                # Convert to Madrid timezone before serialization
+                start_madrid = block.start_time.astimezone(MADRID_TZ)
+                end_madrid = block.end_time.astimezone(MADRID_TZ)
+
                 events.append({
                     "id": f"block-{block.id}",
                     "title": block.title,
-                    "start": block.start_time.isoformat(),
-                    "end": block.end_time.isoformat(),
+                    "start": start_madrid.isoformat(),
+                    "end": end_madrid.isoformat(),
                     "backgroundColor": color,
                     "borderColor": color,
                     "extendedProps": {

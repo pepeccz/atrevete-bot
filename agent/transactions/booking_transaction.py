@@ -340,7 +340,7 @@ class BookingTransaction:
 
                     # Build confirmation message
                     confirmation_message = (
-                        f"¡Cita confirmada! 🎉 Te enviaremos un mensaje 48 horas antes para confirmar tu asistencia.\n\n"
+                        f"¡Cita registrada! 📝 Te enviaremos un mensaje de confirmación 48 horas antes de tu cita.\n\n"
                         f"📅 Fecha: {friendly_date}\n"
                         f"💇 Estilista: {stylist.name}\n"
                         f"✨ Servicios: {service_names}"
