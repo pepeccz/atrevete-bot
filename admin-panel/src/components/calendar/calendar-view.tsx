@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Plus, Calendar, Ban } from "lucide-react";
 import api from "@/lib/api";
-import { CreateBlockingEventModal } from "./create-blocking-event-modal";
+import { BlockingEventModal } from "./blocking-event-modal";
 
 // Color palette for stylists (8 distinct colors)
 const STYLIST_COLORS = [
@@ -261,6 +261,8 @@ export function CalendarView() {
       setSelectedStylistForModal(selectedStylistIds[0]);
     }
 
+    setBlockingModalMode("create");
+    setEditingBlockingEvent(null);
     setIsBlockingModalOpen(true);
   };
 
@@ -439,23 +441,36 @@ export function CalendarView() {
             minute: "2-digit",
             hour12: false,
           }}
+          eventDidMount={(info) => {
+            // Add double-click handler for appointments
+            info.el.addEventListener('dblclick', () => {
+              const props = info.event.extendedProps;
+              if (props.type === "appointment" && props.appointment_id) {
+                router.push(`/appointments/${props.appointment_id}`);
+              }
+            });
+          }}
         />
       </Card>
 
-      {/* Create Blocking Event Modal */}
-      {selectedStylistForModal && (
-        <CreateBlockingEventModal
-          isOpen={isBlockingModalOpen}
-          onClose={() => setIsBlockingModalOpen(false)}
-          stylistId={selectedStylistForModal}
-          stylistName={getStylistName(selectedStylistForModal)}
-          selectedDate={selectedDate}
-          selectedStartTime={selectedStartTime}
-          selectedEndTime={selectedEndTime}
-          stylists={stylists.filter(s => selectedStylistIds.includes(s.id))}
-          onSuccess={handleEventCreated}
-        />
-      )}
+      {/* Blocking Event Modal (Create/Edit) */}
+      <BlockingEventModal
+        isOpen={isBlockingModalOpen}
+        onClose={() => {
+          setIsBlockingModalOpen(false);
+          setEditingBlockingEvent(null);
+          setBlockingModalMode("create");
+        }}
+        mode={blockingModalMode}
+        blockingEvent={editingBlockingEvent}
+        stylistId={selectedStylistForModal || selectedStylistIds[0]}
+        stylistName={getStylistName(selectedStylistForModal || selectedStylistIds[0])}
+        selectedDate={selectedDate}
+        selectedStartTime={selectedStartTime}
+        selectedEndTime={selectedEndTime}
+        stylists={stylists.filter(s => selectedStylistIds.includes(s.id))}
+        onSuccess={handleEventCreated}
+      />
     </div>
   );
 }

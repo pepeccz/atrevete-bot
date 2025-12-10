@@ -22,6 +22,7 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from database.connection import get_async_session
 from database.models import (
@@ -1378,6 +1379,62 @@ async def create_appointment(
             "notes": new_appointment.notes,
             "created_at": new_appointment.created_at.isoformat(),
             "updated_at": new_appointment.updated_at.isoformat(),
+        }
+
+
+@router.get("/appointments/{appointment_id}")
+async def get_appointment(
+    appointment_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Get a single appointment by ID with all related data."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Appointment)
+            .options(
+                selectinload(Appointment.services),
+                selectinload(Appointment.customer),
+                selectinload(Appointment.stylist),
+            )
+            .where(Appointment.id == appointment_id)
+        )
+        appointment = result.scalar_one_or_none()
+
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+
+        return {
+            "id": str(appointment.id),
+            "customer_id": str(appointment.customer_id),
+            "stylist_id": str(appointment.stylist_id),
+            "start_time": appointment.start_time.isoformat(),
+            "duration_minutes": appointment.duration_minutes,
+            "status": appointment.status.value,
+            "first_name": appointment.first_name,
+            "last_name": appointment.last_name,
+            "notes": appointment.notes,
+            "services": [
+                {
+                    "id": str(s.id),
+                    "name": s.name,
+                    "category": s.category.value,
+                    "duration_minutes": s.duration_minutes,
+                }
+                for s in appointment.services
+            ],
+            "customer": {
+                "id": str(appointment.customer.id),
+                "phone_number": appointment.customer.phone_number,
+                "first_name": appointment.customer.first_name,
+                "last_name": appointment.customer.last_name,
+            },
+            "stylist": {
+                "id": str(appointment.stylist.id),
+                "name": appointment.stylist.name,
+                "category": appointment.stylist.category.value,
+            },
+            "created_at": appointment.created_at.isoformat(),
+            "updated_at": appointment.updated_at.isoformat(),
         }
 
 
