@@ -1,6 +1,6 @@
 "use client";
 
-import { Settings, Clock, Activity, Users, Scissors, Calendar } from "lucide-react";
+import { Settings, Clock, Activity, Users, Scissors, Calendar, CalendarX } from "lucide-react";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +27,13 @@ const configSections = [
     icon: Scissors,
     href: "/services",
     color: "bg-pink-500",
+  },
+  {
+    title: "Festivos",
+    description: "Configura días festivos y cierres especiales del salón",
+    icon: CalendarX,
+    href: "/holidays",
+    color: "bg-red-500",
   },
   {
     title: "Eventos de Bloqueo",
