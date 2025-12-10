@@ -1,6 +1,6 @@
 "use client";
 
-import { Settings, Clock, Activity, Users, Scissors, Calendar, CalendarX } from "lucide-react";
+import { Clock, Activity, Users, Scissors, CalendarX } from "lucide-react";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,14 +36,6 @@ const configSections = [
     color: "bg-red-500",
   },
   {
-    title: "Eventos de Bloqueo",
-    description: "Configura vacaciones, descansos y eventos especiales (próximamente)",
-    icon: Calendar,
-    href: "#",
-    color: "bg-orange-500",
-    disabled: true,
-  },
-  {
     title: "Estado del Sistema",
     description: "Monitorea la salud de Redis, PostgreSQL y servicios",
     icon: Activity,
@@ -65,7 +57,7 @@ export default function SettingsPage() {
           {configSections.map((section) => {
             const Icon = section.icon;
             return (
-              <Card key={section.href} className={section.disabled ? "opacity-60" : ""}>
+              <Card key={section.href}>
                 <CardHeader>
                   <div className={`w-12 h-12 rounded-lg ${section.color} flex items-center justify-center mb-4`}>
                     <Icon className="h-6 w-6 text-white" />
@@ -74,17 +66,9 @@ export default function SettingsPage() {
                   <CardDescription>{section.description}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {section.disabled ? (
-                    <Button disabled className="w-full">
-                      Próximamente
-                    </Button>
-                  ) : (
-                    <Link href={section.href}>
-                      <Button className="w-full">
-                        Configurar
-                      </Button>
-                    </Link>
-                  )}
+                  <Link href={section.href}>
+                    <Button className="w-full">Configurar</Button>
+                  </Link>
                 </CardContent>
               </Card>
             );

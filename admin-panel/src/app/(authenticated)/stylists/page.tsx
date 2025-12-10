@@ -76,7 +76,20 @@ interface StylistFormData {
   category: ServiceCategory;
   google_calendar_id: string;
   is_active: boolean;
+  color: string | null;
 }
+
+// Color palette for stylists (matches calendar-view.tsx)
+const STYLIST_COLORS = [
+  { bg: "#7C3AED", name: "Violeta" },
+  { bg: "#2563EB", name: "Azul" },
+  { bg: "#059669", name: "Esmeralda" },
+  { bg: "#DC2626", name: "Rojo" },
+  { bg: "#D97706", name: "Ámbar" },
+  { bg: "#7C2D12", name: "Marrón" },
+  { bg: "#DB2777", name: "Rosa" },
+  { bg: "#0891B2", name: "Cian" },
+];
 
 function StylistModal({
   open,
@@ -95,6 +108,7 @@ function StylistModal({
     category: "HAIRDRESSING",
     google_calendar_id: "",
     is_active: true,
+    color: null,
   });
 
   useEffect(() => {
@@ -104,6 +118,7 @@ function StylistModal({
         category: stylist.category,
         google_calendar_id: stylist.google_calendar_id,
         is_active: stylist.is_active,
+        color: stylist.color || null,
       });
     } else {
       setFormData({
@@ -111,6 +126,7 @@ function StylistModal({
         category: "HAIRDRESSING",
         google_calendar_id: "",
         is_active: true,
+        color: null,
       });
     }
   }, [stylist, open]);
@@ -130,6 +146,7 @@ function StylistModal({
           category: formData.category,
           google_calendar_id: formData.google_calendar_id,
           is_active: formData.is_active,
+          color: formData.color,
         });
         toast.success("Estilista actualizado correctamente");
       } else {
@@ -138,6 +155,7 @@ function StylistModal({
           category: formData.category,
           google_calendar_id: formData.google_calendar_id,
           is_active: formData.is_active,
+          color: formData.color,
         });
         toast.success("Estilista creado correctamente");
       }
@@ -234,6 +252,43 @@ function StylistModal({
             <Label htmlFor="is_active" className="cursor-pointer">
               Estilista activo
             </Label>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Color del calendario</Label>
+            <div className="flex flex-wrap gap-2">
+              {STYLIST_COLORS.map((color) => (
+                <button
+                  key={color.bg}
+                  type="button"
+                  onClick={() =>
+                    setFormData((prev) => ({ ...prev, color: color.bg }))
+                  }
+                  className={`w-8 h-8 rounded-full border-2 transition-all ${
+                    formData.color === color.bg
+                      ? "border-gray-900 scale-110"
+                      : "border-transparent hover:scale-105"
+                  }`}
+                  style={{ backgroundColor: color.bg }}
+                  title={color.name}
+                />
+              ))}
+              <button
+                type="button"
+                onClick={() => setFormData((prev) => ({ ...prev, color: null }))}
+                className={`w-8 h-8 rounded-full border-2 transition-all flex items-center justify-center text-xs ${
+                  formData.color === null
+                    ? "border-gray-900 scale-110 bg-gray-100"
+                    : "border-gray-300 hover:scale-105 bg-gray-50"
+                }`}
+                title="Automático (por orden)"
+              >
+                Auto
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Selecciona un color o deja en automático
+            </p>
           </div>
 
           <div className="flex justify-end gap-2 pt-4">

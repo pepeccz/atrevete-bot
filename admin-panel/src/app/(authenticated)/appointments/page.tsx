@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -18,6 +19,7 @@ import {
   Check,
   X,
   Loader2,
+  Edit,
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
@@ -121,6 +123,8 @@ interface WizardState {
     stylist_name: string;
     date: string;
   } | null;
+  firstName: string;  // Appointment-specific name (defaults to customer name)
+  lastName: string;   // Appointment-specific last name (defaults to customer last name)
   notes: string;
 }
 
@@ -724,13 +728,21 @@ function ConfirmationStep({
   customer,
   services,
   slot,
+  firstName,
+  lastName,
   notes,
+  onFirstNameChange,
+  onLastNameChange,
   onNotesChange,
 }: {
   customer: Customer;
   services: Service[];
   slot: NonNullable<WizardState["selectedSlot"]>;
+  firstName: string;
+  lastName: string;
   notes: string;
+  onFirstNameChange: (firstName: string) => void;
+  onLastNameChange: (lastName: string) => void;
   onNotesChange: (notes: string) => void;
 }) {
   const totalDuration = services.reduce(
@@ -793,6 +805,37 @@ function ConfirmationStep({
         </div>
       </div>
 
+      {/* Appointment Name Section */}
+      <div className="space-y-3 border-t pt-4">
+        <div>
+          <p className="text-sm font-medium">Nombre para la cita</p>
+          <p className="text-xs text-muted-foreground">
+            Por defecto el nombre del cliente. Modifica si la cita es para otra persona.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="firstName">Nombre *</Label>
+            <Input
+              id="firstName"
+              value={firstName}
+              onChange={(e) => onFirstNameChange(e.target.value)}
+              placeholder="Nombre"
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="lastName">Apellidos</Label>
+            <Input
+              id="lastName"
+              value={lastName}
+              onChange={(e) => onLastNameChange(e.target.value)}
+              placeholder="Apellidos (opcional)"
+            />
+          </div>
+        </div>
+      </div>
+
       <div className="space-y-2">
         <Label htmlFor="notes">Notas (opcional)</Label>
         <Textarea
@@ -836,6 +879,8 @@ function AppointmentWizardModal({
     startDate: "",
     endDate: "",
     selectedSlot: null,
+    firstName: "",
+    lastName: "",
     notes: "",
   });
 
@@ -849,6 +894,8 @@ function AppointmentWizardModal({
         startDate: "",
         endDate: "",
         selectedSlot: null,
+        firstName: "",
+        lastName: "",
         notes: "",
       });
     }
@@ -863,7 +910,7 @@ function AppointmentWizardModal({
       case 3:
         return state.selectedSlot !== null;
       case 4:
-        return true;
+        return state.firstName.trim().length > 0;
       default:
         return false;
     }
@@ -884,6 +931,13 @@ function AppointmentWizardModal({
   const handleSubmit = async () => {
     if (!state.customer || !state.selectedSlot) return;
 
+    // Validate firstName is not empty
+    const trimmedFirstName = state.firstName.trim();
+    if (!trimmedFirstName) {
+      toast.error("El nombre es obligatorio");
+      return;
+    }
+
     setLoading(true);
     try {
       await api.create("appointments", {
@@ -891,8 +945,8 @@ function AppointmentWizardModal({
         stylist_id: state.selectedSlot.stylist_id,
         service_ids: state.selectedServices.map((s) => s.id),
         start_time: state.selectedSlot.full_datetime,
-        first_name: state.customer.first_name,
-        last_name: state.customer.last_name || null,
+        first_name: trimmedFirstName,
+        last_name: state.lastName.trim() || null,
         notes: state.notes || null,
       });
 
@@ -943,9 +997,21 @@ function AppointmentWizardModal({
             <CustomerStep
               customers={customers}
               selectedCustomer={state.customer}
-              onSelect={(customer) => setState((prev) => ({ ...prev, customer }))}
+              onSelect={(customer) =>
+                setState((prev) => ({
+                  ...prev,
+                  customer,
+                  firstName: customer.first_name,
+                  lastName: customer.last_name || "",
+                }))
+              }
               onCreateNew={(customer) => {
-                setState((prev) => ({ ...prev, customer }));
+                setState((prev) => ({
+                  ...prev,
+                  customer,
+                  firstName: customer.first_name,
+                  lastName: customer.last_name || "",
+                }));
                 refreshCustomers();
               }}
             />
@@ -997,7 +1063,15 @@ function AppointmentWizardModal({
               customer={state.customer}
               services={state.selectedServices}
               slot={state.selectedSlot}
+              firstName={state.firstName}
+              lastName={state.lastName}
               notes={state.notes}
+              onFirstNameChange={(firstName) =>
+                setState((prev) => ({ ...prev, firstName }))
+              }
+              onLastNameChange={(lastName) =>
+                setState((prev) => ({ ...prev, lastName }))
+              }
               onNotesChange={(notes) => setState((prev) => ({ ...prev, notes }))}
             />
           )}
@@ -1025,7 +1099,7 @@ function AppointmentWizardModal({
               <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
           ) : (
-            <Button onClick={handleSubmit} disabled={loading}>
+            <Button onClick={handleSubmit} disabled={loading || !canProceed()}>
               {loading ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -1050,6 +1124,7 @@ function AppointmentWizardModal({
 // ============================================================================
 
 export default function AppointmentsPage() {
+  const router = useRouter();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [stylists, setStylists] = useState<Stylist[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -1200,6 +1275,12 @@ export default function AppointmentsPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => router.push(`/appointments/${appointment.id}`)}
+              >
+                <Edit className="mr-2 h-4 w-4" />
+                Editar
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {
                   setAppointmentToDelete(appointment.id);

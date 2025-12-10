@@ -77,11 +77,17 @@ class BookingFSM:
             IntentType.CHECK_AVAILABILITY: BookingState.SLOT_SELECTION,
         },
         BookingState.CUSTOMER_DATA: {
-            # Self-loop to accumulate data in two phases:
-            # Phase 1: Collect first_name
+            # Self-loop to accumulate data in enhanced 3-phase flow (v6.0):
+            # Phase 1a: Ask who the appointment is for
+            # Phase 1b: Confirm customer name (if use_customer_name=True)
+            # Phase 1c: Request third-party name (if needed)
             # Phase 2: Ask for notes (notes_asked=True)
             # After phase 2 completes, transition() advances to CONFIRMATION
             IntentType.PROVIDE_CUSTOMER_DATA: BookingState.CUSTOMER_DATA,
+            IntentType.USE_CUSTOMER_NAME: BookingState.CUSTOMER_DATA,  # v6.0
+            IntentType.PROVIDE_THIRD_PARTY_BOOKING: BookingState.CUSTOMER_DATA,  # v6.0
+            IntentType.CONFIRM_NAME: BookingState.CUSTOMER_DATA,  # v6.0
+            IntentType.CORRECT_NAME: BookingState.CUSTOMER_DATA,  # v6.0
         },
         BookingState.CONFIRMATION: {
             IntentType.CONFIRM_BOOKING: BookingState.BOOKED,
@@ -231,6 +237,78 @@ class BookingFSM:
             return False, errors
         return True, []
 
+    async def _load_customer_name(self, customer_id: str) -> dict[str, Any] | None:
+        """
+        Load customer first_name and last_name from database.
+
+        Args:
+            customer_id: Customer UUID as string
+
+        Returns:
+            Dict with {"first_name": str, "last_name": str | None} or None if not found
+        """
+        from database.connection import get_async_session
+        from database.models import Customer
+        from sqlalchemy import select
+        from uuid import UUID
+
+        try:
+            async with get_async_session() as session:
+                stmt = select(Customer).where(Customer.id == UUID(customer_id))
+                result = await session.execute(stmt)
+                customer = result.scalar_one_or_none()
+
+                if customer:
+                    return {
+                        "first_name": customer.first_name,
+                        "last_name": customer.last_name
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Error loading customer name: {e}", exc_info=True)
+            return None
+
+    async def _update_customer_name(
+        self,
+        customer_id: str,
+        first_name: str,
+        last_name: str | None
+    ) -> bool:
+        """
+        Update customer first_name and last_name in database.
+
+        Args:
+            customer_id: Customer UUID as string
+            first_name: New first name
+            last_name: New last name (optional)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        from database.connection import get_async_session
+        from database.models import Customer
+        from sqlalchemy import select
+        from uuid import UUID
+
+        try:
+            async with get_async_session() as session:
+                stmt = select(Customer).where(Customer.id == UUID(customer_id))
+                result = await session.execute(stmt)
+                customer = result.scalar_one_or_none()
+
+                if customer:
+                    customer.first_name = first_name
+                    customer.last_name = last_name
+                    await session.commit()
+                    logger.info(
+                        f"Updated customer name | id={customer_id} | name={first_name} {last_name}"
+                    )
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"Error updating customer name: {e}", exc_info=True)
+            return False
+
     async def transition(self, intent: Intent) -> FSMResult:
         """
         Execute a state transition based on intent.
@@ -331,27 +409,117 @@ class BookingFSM:
                 extra={"conversation_id": self._conversation_id}
             )
 
-        # CUSTOMER_DATA: Conditional advance to CONFIRMATION when data is complete
-        # The self-loop accumulates data in two phases:
-        # Phase 1: Collect first_name (notes_asked=False)
-        # Phase 2: Collect notes response (notes_asked=True)
-        # Only advance to CONFIRMATION when both phases are complete
-        if (
-            from_state == BookingState.CUSTOMER_DATA
-            and intent.type == IntentType.PROVIDE_CUSTOMER_DATA
-        ):
-            has_name = bool(self._collected_data.get("first_name"))
+        # CUSTOMER_DATA: Enhanced 3-phase logic with customer name confirmation (v6.0)
+        # Phase 1a: Ask who the appointment is for
+        # Phase 1b: Confirm customer name (if use_customer_name=True)
+        # Phase 1c: Request third-party name (if needed)
+        # Phase 2: Collect notes
+        # Only advance to CONFIRMATION when both name and notes are complete
+        if from_state == BookingState.CUSTOMER_DATA:
+            # Get phase tracking variables
+            has_appointee_name = bool(self._collected_data.get("first_name"))
+            use_customer_name = self._collected_data.get("use_customer_name", False)
+            name_confirmation_pending = self._collected_data.get("name_confirmation_pending", False)
+            appointee_name_confirmed = self._collected_data.get("appointee_name_confirmed", False)
             notes_asked = self._collected_data.get("notes_asked", False)
 
-            if has_name and notes_asked:
-                # Both phases complete - advance to CONFIRMATION
-                to_state = BookingState.CONFIRMATION
+            # Sub-phase 1a: USE_CUSTOMER_NAME intent (user said "sí"/"para mí")
+            if intent.type == IntentType.USE_CUSTOMER_NAME and not use_customer_name:
+                # Load customer name from DB
+                customer_id = self._collected_data.get("customer_id")
+                if customer_id:
+                    customer_data = await self._load_customer_name(customer_id)
+                    if customer_data:
+                        self._collected_data["customer_first_name"] = customer_data["first_name"]
+                        self._collected_data["customer_last_name"] = customer_data.get("last_name")
+                        self._collected_data["use_customer_name"] = True
+                        self._collected_data["name_confirmation_pending"] = True
+                        logger.info(
+                            f"Loaded customer name from DB | name={customer_data['first_name']}",
+                            extra={"conversation_id": self._conversation_id}
+                        )
+                    else:
+                        # Fallback: DB load failed, ask for name manually
+                        self._collected_data["use_customer_name"] = False
+                        logger.warning("Failed to load customer name, falling back to manual entry")
+                to_state = BookingState.CUSTOMER_DATA  # Self-loop
+
+            # Sub-phase 1b: CONFIRM_NAME intent (user confirmed shown name)
+            elif intent.type == IntentType.CONFIRM_NAME and name_confirmation_pending:
+                # Use customer name for appointment
+                self._collected_data["first_name"] = self._collected_data["customer_first_name"]
+                self._collected_data["last_name"] = self._collected_data.get("customer_last_name")
+                self._collected_data["appointee_name_confirmed"] = True
+                self._collected_data["name_confirmation_pending"] = False
                 logger.info(
-                    "CUSTOMER_DATA phases complete (name=%s, notes_asked=%s) -> CONFIRMATION",
-                    self._collected_data.get("first_name"),
-                    notes_asked,
+                    f"Customer confirmed name | name={self._collected_data['first_name']}",
                     extra={"conversation_id": self._conversation_id}
                 )
+                to_state = BookingState.CUSTOMER_DATA  # Self-loop
+
+            # Sub-phase 1b: CORRECT_NAME intent (user corrected their name)
+            elif intent.type == IntentType.CORRECT_NAME and name_confirmation_pending:
+                # Extract corrected name from intent
+                new_first_name = intent.entities.get("first_name")
+                new_last_name = intent.entities.get("last_name")
+
+                if new_first_name:
+                    # Use corrected name for appointment
+                    self._collected_data["first_name"] = new_first_name
+                    self._collected_data["last_name"] = new_last_name
+                    self._collected_data["appointee_name_confirmed"] = True
+                    self._collected_data["name_confirmation_pending"] = False
+
+                    # Update customer record in DB
+                    customer_id = self._collected_data.get("customer_id")
+                    if customer_id:
+                        await self._update_customer_name(customer_id, new_first_name, new_last_name)
+
+                    logger.info(
+                        f"Customer corrected name | old={self._collected_data.get('customer_first_name')} | "
+                        f"new={new_first_name}",
+                        extra={"conversation_id": self._conversation_id}
+                    )
+                to_state = BookingState.CUSTOMER_DATA  # Self-loop
+
+            # Sub-phase 1c: PROVIDE_THIRD_PARTY_BOOKING (third party without name)
+            elif intent.type == IntentType.PROVIDE_THIRD_PARTY_BOOKING:
+                # Just mark that we need to ask for third party name
+                # The next PROVIDE_CUSTOMER_DATA will have the name
+                self._collected_data["use_customer_name"] = False
+                logger.info(
+                    "Third-party booking without name, will ask for name",
+                    extra={"conversation_id": self._conversation_id}
+                )
+                to_state = BookingState.CUSTOMER_DATA  # Self-loop
+
+            # Sub-phase 2: PROVIDE_CUSTOMER_DATA (name directly provided or notes)
+            elif intent.type == IntentType.PROVIDE_CUSTOMER_DATA:
+                # Check if this is providing name or notes based on context
+                has_first_name_in_intent = bool(intent.entities.get("first_name"))
+
+                if has_first_name_in_intent and not has_appointee_name:
+                    # This is providing name (either initial or after third_party_booking)
+                    self._collected_data["appointee_name_confirmed"] = True
+                    self._collected_data["use_customer_name"] = False
+                    logger.info(
+                        f"Name provided directly | name={intent.entities.get('first_name')}",
+                        extra={"conversation_id": self._conversation_id}
+                    )
+
+                # Standard logic: advance if both name and notes collected
+                has_name = bool(self._collected_data.get("first_name"))
+                notes_asked = self._collected_data.get("notes_asked", False)
+
+                if has_name and notes_asked:
+                    # Both phases complete - advance to CONFIRMATION
+                    to_state = BookingState.CONFIRMATION
+                    logger.info(
+                        "CUSTOMER_DATA phases complete -> CONFIRMATION",
+                        extra={"conversation_id": self._conversation_id}
+                    )
+                else:
+                    to_state = BookingState.CUSTOMER_DATA  # Self-loop
 
         # Reset date_preference_requested when entering SLOT_SELECTION from STYLIST_SELECTION
         if (
@@ -861,29 +1029,59 @@ class BookingFSM:
                     required_tool_call="search_services",  # MUST call before confirming
                 )
 
-        # For CUSTOMER_DATA, customize based on whether we have name and notes
+        # For CUSTOMER_DATA, customize based on enhanced 3-phase flow (v6.0)
         elif self._state == BookingState.CUSTOMER_DATA:
-            first_name = self._collected_data.get("first_name")
+            # Get phase tracking variables
+            has_appointee_name = bool(self._collected_data.get("first_name"))
+            use_customer_name = self._collected_data.get("use_customer_name", False)
+            name_confirmation_pending = self._collected_data.get("name_confirmation_pending", False)
+            appointee_name_confirmed = self._collected_data.get("appointee_name_confirmed", False)
             notes_asked = self._collected_data.get("notes_asked", False)
 
-            if not first_name:
-                # Step 1: Ask for name
+            # Sub-phase 1a: Ask who the appointment is for
+            if not has_appointee_name and not use_customer_name and not name_confirmation_pending:
                 guidance = ResponseGuidance(
                     must_show=[],
-                    must_ask="¿Me puedes dar tu nombre para la reserva?",
-                    forbidden=["confirmación de cita", "reserva confirmada", "resumen de cita"],
-                    context_hint="Recopilar nombre del cliente. NO pedir notas aún.",
+                    must_ask="¿Para quién es la cita? ¿Uso tu nombre?",
+                    forbidden=["confirmación", "resumen", "notas"],
+                    context_hint="Preguntar si la cita es para el usuario o para otra persona. Esperar respuesta: 'sí'/'para mí' o nombre directo.",
                 )
-            elif not notes_asked:
-                # Step 2: Ask for notes/preferences
+
+            # Sub-phase 1b: Confirm customer name (if use_customer_name=True)
+            elif name_confirmation_pending and not appointee_name_confirmed:
+                customer_first_name = self._collected_data.get("customer_first_name", "")
+                customer_last_name = self._collected_data.get("customer_last_name", "")
+                full_name = f"{customer_first_name} {customer_last_name}".strip()
+
+                guidance = ResponseGuidance(
+                    must_show=[f"nombre a confirmar: {full_name}"],
+                    must_ask=f"Perfecto, la cita será a nombre de {full_name}. ¿Es correcto?",
+                    forbidden=["confirmación de cita", "resumen", "notas"],
+                    context_hint=f"Confirmar nombre del customer: {full_name}. Esperar 'sí' o corrección.",
+                )
+
+            # Sub-phase 1c: Ask for third-party name (if needed)
+            elif not has_appointee_name and use_customer_name == False and not name_confirmation_pending:
+                # This means user said "para otra persona" without giving name
                 guidance = ResponseGuidance(
                     must_show=[],
-                    must_ask="¿Tienes alguna preferencia o nota especial para tu cita? (alergias, estilo deseado, etc.) Si no, simplemente di 'no'.",
+                    must_ask="¿Cuál es el nombre de la persona?",
+                    forbidden=["confirmación", "resumen", "notas"],
+                    context_hint="Usuario indicó tercero pero no dio nombre. Preguntar explícitamente.",
+                )
+
+            # Sub-phase 2: Ask for notes (after name is confirmed)
+            elif has_appointee_name and not notes_asked:
+                first_name = self._collected_data.get("first_name")
+                guidance = ResponseGuidance(
+                    must_show=[],
+                    must_ask="¿Hay algo que debamos saber antes de tu cita? (alergias, preferencias, etc.) Si no, simplemente di 'no'.",
                     forbidden=["confirmación de cita", "reserva confirmada", "resumen de cita"],
                     context_hint=f"Ya tenemos nombre: {first_name}. Ahora preguntar por notas/preferencias.",
                 )
+
             else:
-                # Both collected - ready for confirmation (this shouldn't happen if FSM transitions correctly)
+                # Edge case: both collected (shouldn't happen if FSM transitions correctly)
                 guidance = ResponseGuidance(
                     must_show=["resumen de la cita"],
                     must_ask="¿Confirmas la reserva?",

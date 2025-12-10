@@ -295,8 +295,8 @@ export default function HolidaysPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Eliminar festivo?</AlertDialogTitle>
             <AlertDialogDescription>
-              ¿Estás seguro de que deseas eliminar el festivo "
-              {holidayToDelete?.name}"? Esta acción no se puede deshacer.
+              ¿Estás seguro de que deseas eliminar el festivo &quot;
+              {holidayToDelete?.name}&quot;? Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

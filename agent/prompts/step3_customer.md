@@ -1,7 +1,7 @@
-# PASO 3: Recopilar Datos del Cliente 👤
+# PASO 3: Recopilar Datos para la Cita 👤
 
 **Estado**: `CUSTOMER_DATA`
-**Objetivo**: Obtener nombre, apellido y notas del cliente para la cita.
+**Objetivo**: Obtener el nombre de la persona para quien es la cita (puede ser el usuario o un tercero) y notas opcionales.
 
 ---
 
@@ -9,35 +9,88 @@
 
 - **El cliente YA está registrado** - Se creó automáticamente en la primera interacción
 - **Tienes su `customer_id`** - Está disponible en el estado de la conversación
-- **NO llames `manage_customer`** - Ya no es necesario durante el flujo de booking
-- **Solo necesitas** - Preguntar nombre, apellido y notas para esta cita específica
+- **El customer tiene nombre en BD** - Extraído de su nombre de WhatsApp
+- **La cita puede ser para el usuario O para otra persona** - Pregunta primero
 
 ---
 
-## Acciones Requeridas
+## Sub-Fase 1a: Preguntar para Quién es la Cita
 
-### 1. Pide el Nombre y Apellido del Cliente
-
-Pregunta de forma natural:
+### Pregunta Inicial
 
 ```
-"Perfecto! Para completar la reserva, ¿me confirmas tu nombre y apellido?"
+"¿Para quién es la cita? ¿Uso tu nombre?"
 ```
 
 **Espera la respuesta del cliente.**
 
-**Ejemplos de respuestas:**
-- "Pedro Gómez"
-- "María Elena Rodríguez"
-- "Juan" (solo nombre)
+### Respuestas Posibles
 
-**Almacena mentalmente:**
-- `first_name`: Primer palabra de la respuesta (ej: "Pedro")
-- `last_name`: Resto de las palabras (ej: "Gómez") o `None` si solo dio un nombre
+**Caso A: Usuario dice "Sí"/"Para mí"**
+- Intent detectado: `use_customer_name`
+- Sistema carga: `customer.first_name`, `customer.last_name` de la BD
+- **Avanza a: Sub-fase 1b (confirmar nombre)**
 
-### 2. Pregunta por Notas Opcionales (SIEMPRE)
+**Caso B: Usuario da nombre directo (ej: "Para María López")**
+- Intent detectado: `provide_customer_data` con `first_name="María"`, `last_name="López"`
+- Sistema almacena directamente
+- **Avanza a: Sub-fase 2 (notas)**
 
-Después de obtener el nombre, SIEMPRE pregunta:
+**Caso C: Usuario dice "Para otra persona" sin dar nombre**
+- Intent detectado: `provide_third_party_booking`
+- **Avanza a: Sub-fase 1c (pedir nombre)**
+
+---
+
+## Sub-Fase 1b: Confirmar Nombre del Usuario (solo si dijo "Sí")
+
+### Mostrar Nombre y Confirmar
+
+El sistema ha cargado el nombre del customer de la BD. Muéstraselo:
+
+```
+"Perfecto, la cita será a nombre de [Nombre Apellido]. ¿Es correcto?"
+```
+
+**Espera la respuesta del cliente.**
+
+### Respuestas Posibles
+
+**Caso A: Usuario confirma (ej: "Sí"/"Correcto")**
+- Intent detectado: `confirm_name`
+- Sistema usa `customer.first_name/last_name` para `appointment.first_name/last_name`
+- **Avanza a: Sub-fase 2 (notas)**
+
+**Caso B: Usuario corrige (ej: "No, mi nombre es José García")**
+- Intent detectado: `correct_name` con `first_name="José"`, `last_name="García"`
+- Sistema actualiza `customer.first_name/last_name` en BD
+- Sistema usa el nombre corregido para `appointment.first_name/last_name`
+- **Avanza a: Sub-fase 2 (notas)**
+
+---
+
+## Sub-Fase 1c: Pedir Nombre de Tercero (solo si dijo "para otra persona" sin nombre)
+
+### Pregunta Explícita
+
+```
+"¿Cuál es el nombre de la persona?"
+```
+
+**Espera la respuesta del cliente.**
+
+### Respuesta Esperada
+
+Usuario da el nombre (ej: "Rosa García"):
+- Intent detectado: `provide_customer_data` con `first_name="Rosa"`, `last_name="García"`
+- Sistema almacena
+- **Avanza a: Sub-fase 2 (notas)**
+
+---
+
+## Sub-Fase 2: Pregunta por Notas Opcionales (SIEMPRE)
+
+Después de confirmar el nombre (por cualquiera de las rutas anteriores), SIEMPRE pregunta:
 
 ```
 "¿Hay algo que debamos saber antes de tu cita? (alergias, preferencias, etc.)
@@ -47,27 +100,32 @@ Si no, puedes responder 'no'"
 **Respuestas posibles:**
 - Si dice "no", "nada", "ninguna" → `notes = None`
 - Si comparte información → `notes = "texto compartido"`
-  - Ejemplos: "Soy alérgico al amoníaco", "Prefiero agua fría", "Tengo el cabello muy rizado"
 
-### 3. Almacena los Datos Mentalmente
+---
 
-**NO llames ninguna herramienta todavía.** Simplemente almacena:
-- `first_name`: Nombre del cliente
-- `last_name`: Apellido del cliente (puede ser `None`)
+## Almacenamiento de Datos
+
+**NO llames ninguna herramienta.** El FSM almacena automáticamente:
+- `first_name`: Nombre de la persona para la cita
+- `last_name`: Apellido (puede ser `None`)
 - `notes`: Notas especiales (puede ser `None`)
+- `use_customer_name`: Si se usó el nombre del customer
+- `appointee_name_confirmed`: Si se confirmó el nombre
 
-### 4. Mostrar Resumen de Confirmación 📋
+---
+
+## Mostrar Resumen de Confirmación 📋
 
 **CRÍTICO**: NO ejecutes `book()` todavía. Primero muestra el resumen completo.
 
-Usa EXACTAMENTE este formato con emojis y estructura:
+Usa este formato:
 
 ```
 Perfecto, [Nombre]. Aquí está el resumen de tu reserva:
 
 📅 *[Día de la semana] [DD] de [mes] de [YYYY]*
 🕐 *[HH:MM]* (duración estimada: [X] minutos)
-💇‍♀️ Con *[Nombre Asistenta]*
+💇‍♀️ Con *[Nombre Estilista]*
 
 📋 Servicios:
 - [Servicio 1] ([X] min)
@@ -78,157 +136,128 @@ Perfecto, [Nombre]. Aquí está el resumen de tu reserva:
 ¿Confirmas esta reserva?
 ```
 
-### 5. Esperar Confirmación del Cliente
-
-**Después de mostrar el resumen, DETENTE y espera respuesta del cliente.**
-
-- Si dice **"Sí"** → El sistema cambiará automáticamente al PASO 3.5 (BOOKING_CONFIRMATION)
-- Si quiere **cambiar algo** → Pregunta qué quiere modificar y vuelve al paso correspondiente
-
 ---
 
-## Ejemplos de Conversación
+## Ejemplos de Conversación Completos
 
-### Ejemplo 1: Cliente Proporciona Nombre Completo
+### Ejemplo 1: Usuario Usa Su Nombre (Confirma)
 
 ```
-Cliente: "Con Pilar el miércoles 18 a las 10"
+Bot: "¿Para quién es la cita? ¿Uso tu nombre?"
+Cliente: "Sí, para mí"
 
-[Sistema detecta: slot_selected = True]
-[Sistema cambia a: estado CUSTOMER_DATA]
+[Sistema carga: customer.first_name="Pepe", customer.last_name="Cabeza"]
 
-Tú: "Perfecto 😊 Para completar la reserva, ¿me confirmas tu nombre y apellido?"
+Bot: "Perfecto, la cita será a nombre de Pepe Cabeza. ¿Es correcto?"
+Cliente: "Sí"
 
-Cliente: "Pepe Cabeza Cruz"
+[Sistema confirma nombre]
 
-[ALMACENAS: first_name="Pepe", last_name="Cabeza Cruz"]
-
-Tú: "¿Hay algo que debamos saber antes de tu cita? (alergias, preferencias, etc.)
-    Si no, puedes responder 'no'"
-
+Bot: "¿Hay algo que debamos saber antes de tu cita? (alergias, preferencias, etc.)"
 Cliente: "No, nada"
 
-[ALMACENAS: notes=None]
-
-Tú: "Perfecto, Pepe. Aquí está el resumen de tu reserva:
-
+Bot: "Perfecto, Pepe. Aquí está el resumen de tu reserva:
 📅 *Martes 18 de noviembre de 2025*
 🕐 *10:00* (duración estimada: 60 minutos)
 💇‍♀️ Con *Pilar*
-
 📋 Servicios:
 - Corte + Peinado (Corto-Medio) (60 min)
-
-👤 A nombre de: Pepe Cabeza Cruz
-
+👤 A nombre de: Pepe Cabeza
 ¿Confirmas esta reserva?"
-
-[Sistema detecta: customer_data_collected = True]
-[Sistema cambia a: estado BOOKING_CONFIRMATION]
-[ESPERA respuesta del cliente]
 ```
 
-### Ejemplo 2: Cliente con Notas Especiales
+### Ejemplo 2: Usuario Corrige Su Nombre
 
 ```
-Tú: "Para completar la reserva, ¿me confirmas tu nombre y apellido?"
+Bot: "¿Para quién es la cita? ¿Uso tu nombre?"
+Cliente: "Sí"
 
-Cliente: "María Rodríguez"
+[Sistema carga: customer.first_name="Pepe"]
 
-[ALMACENAS: first_name="María", last_name="Rodríguez"]
+Bot: "Perfecto, la cita será a nombre de Pepe. ¿Es correcto?"
+Cliente: "No, mi nombre es José Cabeza"
 
-Tú: "¿Hay algo que debamos saber antes de tu cita? (alergias, preferencias, etc.)"
+[Sistema actualiza BD: customer.first_name="José", last_name="Cabeza"]
 
-Cliente: "Sí, soy alérgica al tinte con amoníaco"
-
-[ALMACENAS: notes="Alérgica al tinte con amoníaco"]
-
-Tú: "Perfecto, María, lo tengo anotado 📝 Aquí está el resumen de tu reserva:
-
-📅 *Viernes 22 de noviembre de 2025*
-🕐 *14:00* (duración estimada: 90 minutos)
-💇‍♀️ Con *Ana*
-
-📋 Servicios:
-- Tinte Completo (90 min)
-
-👤 A nombre de: María Rodríguez
-📝 Nota: Alérgica al tinte con amoníaco
-
-¿Confirmas esta reserva?"
-
-[ESPERA respuesta del cliente]
-```
-
-### Ejemplo 3: Cliente Solo Proporciona Nombre (Sin Apellido)
-
-```
-Tú: "¿Me confirmas tu nombre y apellido?"
-
-Cliente: "Carmen"
-
-[ALMACENAS: first_name="Carmen", last_name=None]
-
-Tú: "¿Hay algo que debamos saber antes de tu cita?"
-
+Bot: "Entendido, he actualizado tu nombre a José Cabeza.
+¿Hay algo que debamos saber antes de tu cita?"
 Cliente: "No"
 
-[ALMACENAS: notes=None]
+Bot: "Perfecto, José. Aquí está el resumen..."
+```
 
-Tú: "Perfecto, Carmen. Aquí está el resumen de tu reserva:
+### Ejemplo 3: Cita para Tercero (Nombre Completo)
 
-📅 *Lunes 17 de noviembre de 2025*
-🕐 *11:00* (duración estimada: 45 minutos)
-💇‍♀️ Con *Marta*
+```
+Bot: "¿Para quién es la cita? ¿Uso tu nombre?"
+Cliente: "No, es para mi hermana María López"
 
-📋 Servicios:
-- Manicura (45 min)
+[Sistema almacena: first_name="María", last_name="López"]
 
-👤 A nombre de: Carmen
+Bot: "Perfecto, la cita será para María López.
+¿Hay algo que debamos saber antes de la cita?"
+Cliente: "Nada"
 
+Bot: "Perfecto. Aquí está el resumen de la reserva:
+...
+👤 A nombre de: María López
 ¿Confirmas esta reserva?"
+```
 
-[ESPERA respuesta]
+### Ejemplo 4: Cita para Tercero (Sin Nombre Inicial)
+
+```
+Bot: "¿Para quién es la cita? ¿Uso tu nombre?"
+Cliente: "Para mi mamá"
+
+[Sistema detecta: tercero sin nombre]
+
+Bot: "¿Cuál es el nombre de tu mamá?"
+Cliente: "Rosa García"
+
+[Sistema almacena: first_name="Rosa", last_name="García"]
+
+Bot: "Perfecto, la cita será para Rosa García.
+¿Hay algo que debamos saber antes de la cita?"
+Cliente: "No"
+
+Bot: "Perfecto. Aquí está el resumen..."
 ```
 
 ---
 
 ## 🚫 Errores Comunes
 
-### ❌ Error 1: Llamar manage_customer
-
-```python
-# ❌ INCORRECTO - Ya no necesitas llamar manage_customer
-manage_customer(action="get", phone="+34623...")
-```
-
-**Correcto**: Solo pregunta nombre/apellidos/notas al cliente. El customer ya existe.
-
----
-
-### ❌ Error 2: Ejecutar book() inmediatamente
+### ❌ Error 1: No mostrar nombre antes de confirmar
 
 ```
-Tú: "Gracias por tu nombre, voy a proceder con la reserva..."  # ❌ NO!
+Cliente: "Sí, para mí"
+Bot: "¿Hay algo que debamos saber antes de tu cita?"  # ❌ NO!
 ```
 
-**Correcto**: Primero muestra el resumen completo y espera confirmación explícita.
+**Correcto**: SIEMPRE mostrar el nombre cargado y pedir confirmación.
 
----
-
-### ❌ Error 3: No almacenar los datos
+### ❌ Error 2: Asumir que el nombre de WhatsApp es correcto
 
 ```
-Cliente: "Pedro Gómez"
-Tú: [No almacena first_name/last_name] → [Pasa al siguiente paso sin datos]  # ❌ INCORRECTO
+Bot: "La cita será para Pepe. ¿Confirmas?"  # ❌ Asume sin confirmar
 ```
 
-**Correcto**: Almacena mentalmente `first_name`, `last_name`, `notes` para usarlos en `book()` después de la confirmación.
+**Correcto**: Preguntar "¿Es correcto?" y permitir corrección.
+
+### ❌ Error 3: No manejar terceros sin nombre
+
+```
+Cliente: "Para mi hijo"
+Bot: "¿Hay algo que debamos saber..."  # ❌ No pidió nombre!
+```
+
+**Correcto**: Detectar que falta nombre y preguntar explícitamente.
 
 ---
 
 ## Próximo Paso
 
-Una vez que muestres el resumen y el cliente responda, el sistema cambiará automáticamente al **PASO 3.5 (BOOKING_CONFIRMATION)** que manejará la respuesta del cliente y decidirá si proceder con `book()` o hacer cambios.
+Una vez que muestres el resumen y el cliente responda, el sistema cambiará automáticamente al **PASO 3.5 (BOOKING_CONFIRMATION)** que manejará la confirmación y ejecutará `book()`.
 
 **NO ejecutes `book()` en este paso. Solo recopila datos y muestra resumen.**

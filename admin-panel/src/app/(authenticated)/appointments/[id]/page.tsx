@@ -85,7 +85,7 @@ interface AppointmentDetail {
   }>;
   customer: {
     id: string;
-    phone_number: string;
+    phone: string;
     first_name: string | null;
     last_name: string | null;
   };
@@ -274,7 +274,7 @@ export default function AppointmentDetailPage() {
                   {appointment.customer.first_name} {appointment.customer.last_name}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  {appointment.customer.phone_number}
+                  {appointment.customer.phone}
                 </p>
               </div>
 

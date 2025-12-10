@@ -128,6 +128,9 @@ class Stylist(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Calendar color (hex code like "#7C3AED")
+    color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+
     # Metadata
     metadata_: Mapped[dict] = mapped_column(
         "metadata", JSONB, default=dict, nullable=False

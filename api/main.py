@@ -87,6 +87,38 @@ async def validation_exception_handler(request: Request, exc: ValidationError) -
     )
 
 
+# Global exception handler to ensure CORS headers on all errors
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Global exception handler that ensures CORS headers are present even on unhandled exceptions.
+
+    This prevents CORS errors when endpoints fail before returning a response.
+    The browser will see the actual error instead of a misleading CORS blockage.
+    """
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+
+    # Get CORS origins from settings
+    settings_exc = get_settings()
+    origins = settings_exc.CORS_ORIGINS.split(",")
+
+    # Get origin from request
+    origin = request.headers.get("origin", "")
+
+    # Build response
+    response = JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": str(exc)},
+    )
+
+    # Add CORS headers if origin is allowed
+    if origin in origins or "*" in origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+
+    return response
+
+
 @app.get("/health")
 async def health_check() -> JSONResponse:
     """

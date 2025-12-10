@@ -22,6 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -32,6 +33,7 @@ from database.models import (
     BlockingEvent,
     BlockingEventType,
     BusinessHours,
+    ConversationHistory,
     Customer,
     Holiday,
     Policy,
@@ -147,6 +149,7 @@ class StylistResponse(BaseModel):
     category: str
     google_calendar_id: str
     is_active: bool
+    color: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -571,6 +574,7 @@ class CreateStylistRequest(BaseModel):
     category: str = Field(default="HAIRDRESSING")
     google_calendar_id: str = Field(..., min_length=1)
     is_active: bool = True
+    color: str | None = Field(None, min_length=7, max_length=7, pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
 class UpdateStylistRequest(BaseModel):
@@ -578,6 +582,7 @@ class UpdateStylistRequest(BaseModel):
     category: str | None = None
     google_calendar_id: str | None = Field(None, min_length=1)
     is_active: bool | None = None
+    color: str | None = Field(None, min_length=7, max_length=7, pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
 @router.get("/stylists")
@@ -1393,7 +1398,6 @@ async def get_appointment(
         result = await session.execute(
             select(Appointment)
             .options(
-                selectinload(Appointment.services),
                 selectinload(Appointment.customer),
                 selectinload(Appointment.stylist),
             )
@@ -1403,6 +1407,14 @@ async def get_appointment(
 
         if not appointment:
             raise HTTPException(status_code=404, detail="Appointment not found")
+
+        # Load services separately by IDs (no relationship in model)
+        services = []
+        if appointment.service_ids:
+            services_result = await session.execute(
+                select(Service).where(Service.id.in_(appointment.service_ids))
+            )
+            services = services_result.scalars().all()
 
         return {
             "id": str(appointment.id),
@@ -1421,11 +1433,11 @@ async def get_appointment(
                     "category": s.category.value,
                     "duration_minutes": s.duration_minutes,
                 }
-                for s in appointment.services
+                for s in services
             ],
             "customer": {
                 "id": str(appointment.customer.id),
-                "phone_number": appointment.customer.phone_number,
+                "phone": appointment.customer.phone,
                 "first_name": appointment.customer.first_name,
                 "last_name": appointment.customer.last_name,
             },
@@ -2414,24 +2426,7 @@ async def get_calendar_events(
     """
     from agent.services.availability_service import get_calendar_events_for_range
 
-    # Parse stylist_ids if provided
-    if stylist_ids:
-        try:
-            stylist_uuid_list = [UUID(sid.strip()) for sid in stylist_ids.split(",")]
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid stylist_ids format: {e}"
-            )
-    else:
-        # Get all active stylists
-        async with get_async_session() as session:
-            result = await session.execute(
-                select(Stylist.id).where(Stylist.is_active == True)
-            )
-            stylist_uuid_list = [row[0] for row in result.all()]
-
-    # Define color palette for stylists
+    # Default color palette (fallback for stylists without custom color)
     STYLIST_COLORS = [
         "#7C3AED",  # Violet
         "#2563EB",  # Blue
@@ -2443,6 +2438,31 @@ async def get_calendar_events(
         "#0891B2",  # Cyan
     ]
 
+    # Parse stylist_ids if provided
+    if stylist_ids:
+        try:
+            stylist_uuid_list = [UUID(sid.strip()) for sid in stylist_ids.split(",")]
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid stylist_ids format: {e}"
+            )
+        # Load stylists with their colors
+        async with get_async_session() as session:
+            result = await session.execute(
+                select(Stylist.id, Stylist.color).where(Stylist.id.in_(stylist_uuid_list))
+            )
+            stylist_colors_db = {str(row[0]): row[1] for row in result.all()}
+    else:
+        # Get all active stylists with their colors
+        async with get_async_session() as session:
+            result = await session.execute(
+                select(Stylist.id, Stylist.color).where(Stylist.is_active == True)
+            )
+            rows = result.all()
+            stylist_uuid_list = [row[0] for row in rows]
+            stylist_colors_db = {str(row[0]): row[1] for row in rows}
+
     # Get events from DB
     events = await get_calendar_events_for_range(
         stylist_ids=stylist_uuid_list,
@@ -2450,10 +2470,12 @@ async def get_calendar_events(
         end_time=end,
     )
 
-    # Assign colors based on stylist order
+    # Assign colors: use stored color if available, fallback to palette
     stylist_color_map = {}
     for i, sid in enumerate(stylist_uuid_list):
-        stylist_color_map[str(sid)] = STYLIST_COLORS[i % len(STYLIST_COLORS)]
+        sid_str = str(sid)
+        db_color = stylist_colors_db.get(sid_str)
+        stylist_color_map[sid_str] = db_color if db_color else STYLIST_COLORS[i % len(STYLIST_COLORS)]
 
     # Apply stylist colors to appointment events
     for event in events:
@@ -2588,43 +2610,79 @@ async def list_conversations(
     page_size: int = 50,
     customer_id: UUID | None = None,
 ):
-    """List conversation history (read-only)."""
-    from database.models import ConversationHistory
+    """
+    List conversation history (read-only).
 
-    async with get_async_session() as session:
-        query = select(ConversationHistory)
+    Aggregates individual messages from conversation_history table
+    into grouped conversations by conversation_id.
+    """
+    try:
+        async with get_async_session() as session:
+            # Subquery to aggregate messages by conversation_id
+            subquery = (
+                select(
+                    ConversationHistory.conversation_id.label("id"),
+                    func.array_agg(ConversationHistory.customer_id)[1].label("customer_id"),
+                    func.min(ConversationHistory.timestamp).label("started_at"),
+                    func.max(ConversationHistory.timestamp).label("ended_at"),
+                    func.count().label("message_count"),
+                    func.json_agg(
+                        func.json_build_object(
+                            "role", ConversationHistory.message_role,
+                            "content", ConversationHistory.message_content,
+                            "timestamp", ConversationHistory.timestamp,
+                        ).cast(JSONB)
+                    ).label("messages"),
+                )
+                .group_by(ConversationHistory.conversation_id)
+            )
 
-        if customer_id:
-            query = query.where(ConversationHistory.customer_id == customer_id)
+            # Apply customer_id filter if provided
+            if customer_id:
+                subquery = subquery.where(ConversationHistory.customer_id == customer_id)
 
-        query = query.order_by(ConversationHistory.started_at.desc())
-        query = query.offset((page - 1) * page_size).limit(page_size + 1)
+            # Create CTE for pagination
+            cte = subquery.cte("conversations_grouped")
 
-        result = await session.execute(query)
-        conversations = result.scalars().all()
+            # Main query with pagination
+            query = (
+                select(cte)
+                .order_by(cte.c.started_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size + 1)
+            )
 
-        has_more = len(conversations) > page_size
-        items = conversations[:page_size]
+            result = await session.execute(query)
+            rows = result.all()
 
-        return {
-            "items": [
-                {
-                    "id": str(c.id),
-                    "customer_id": str(c.customer_id),
-                    "started_at": c.started_at.isoformat() if c.started_at else None,
-                    "ended_at": c.ended_at.isoformat() if c.ended_at else None,
-                    "message_count": c.message_count,
-                    "messages": c.messages,  # JSON field
-                    "summary": c.summary,
-                    "created_at": c.created_at.isoformat(),
-                }
-                for c in items
-            ],
-            "total": len(items),
-            "page": page,
-            "page_size": page_size,
-            "has_more": has_more,
-        }
+            has_more = len(rows) > page_size
+            items = rows[:page_size]
+
+            return {
+                "items": [
+                    {
+                        "id": str(row.id),
+                        "customer_id": str(row.customer_id) if row.customer_id else None,
+                        "started_at": row.started_at.isoformat() if row.started_at else None,
+                        "ended_at": row.ended_at.isoformat() if row.ended_at else None,
+                        "message_count": row.message_count or 0,
+                        "messages": row.messages if row.messages else [],
+                        "summary": None,  # Could be computed from messages
+                        "created_at": row.started_at.isoformat() if row.started_at else None,
+                    }
+                    for row in items
+                ],
+                "total": len(items),
+                "page": page,
+                "page_size": page_size,
+                "has_more": has_more,
+            }
+    except Exception as e:
+        logger.error(f"Error listing conversations: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve conversations: {str(e)}"
+        )
 
 
 @router.get("/conversations/{conversation_id}")

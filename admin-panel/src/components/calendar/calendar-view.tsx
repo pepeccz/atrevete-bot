@@ -58,6 +58,7 @@ interface Stylist {
   name: string;
   category: string;
   is_active: boolean;
+  color?: string;
 }
 
 interface EditingBlockingEvent {
@@ -90,12 +91,29 @@ export function CalendarView() {
   const [blockingModalMode, setBlockingModalMode] = useState<"create" | "edit">("create");
   const [editingBlockingEvent, setEditingBlockingEvent] = useState<EditingBlockingEvent | null>(null);
 
-  // Assign colors to stylists
+  // Generate darker border color from background color
+  const getDarkerColor = (hex: string): string => {
+    // Remove # and parse RGB
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    // Darken by 15%
+    const darken = (c: number) => Math.max(0, Math.floor(c * 0.85));
+    return `#${darken(r).toString(16).padStart(2, '0')}${darken(g).toString(16).padStart(2, '0')}${darken(b).toString(16).padStart(2, '0')}`;
+  };
+
+  // Assign colors to stylists (use stored color if available, fallback to palette)
   const assignStylistColors = useCallback((stylistList: Stylist[]) => {
     const colors: Record<string, { bg: string; border: string }> = {};
     stylistList.forEach((stylist, index) => {
-      const color = STYLIST_COLORS[index % STYLIST_COLORS.length];
-      colors[stylist.id] = { bg: color.bg, border: color.border };
+      if (stylist.color) {
+        // Use the stylist's custom color
+        colors[stylist.id] = { bg: stylist.color, border: getDarkerColor(stylist.color) };
+      } else {
+        // Fallback to palette based on index
+        const color = STYLIST_COLORS[index % STYLIST_COLORS.length];
+        colors[stylist.id] = { bg: color.bg, border: color.border };
+      }
     });
     setStylistColors(colors);
   }, []);
@@ -234,9 +252,9 @@ export function CalendarView() {
       });
       setBlockingModalMode("edit");
       setIsBlockingModalOpen(true);
-    } else if (props.type === "appointment") {
-      // Single click on appointment - show info (double click navigates)
-      alert(`Cita: ${props.status}\nNotas: ${props.notes || "Sin notas"}\n\nDoble-click para editar`);
+    } else if (props.type === "appointment" && props.appointment_id) {
+      // Navigate to appointment detail page
+      router.push(`/appointments/${props.appointment_id}`);
     }
     // Holidays: no action on click
   };

@@ -356,7 +356,11 @@ def _build_state_context(
             ("escalate", "Quiere hablar con una persona"),
         ],
         BookingState.CUSTOMER_DATA: [
-            ("provide_customer_data", "Usuario da su nombre y/o datos"),
+            ("provide_customer_data", "Usuario da nombre directamente y/o datos"),
+            ("use_customer_name", "Usuario dice 'sí', 'para mí', 'mi nombre'"),  # v6.0
+            ("provide_third_party_booking", "Usuario dice 'para otra persona' sin dar nombre"),  # v6.0
+            ("confirm_name", "Usuario confirma nombre mostrado: 'sí', 'correcto'"),  # v6.0
+            ("correct_name", "Usuario corrige su nombre: 'no, mi nombre es X'"),  # v6.0
             ("cancel_booking", "Usuario quiere cancelar la reserva"),
             ("escalate", "Quiere hablar con una persona"),
         ],
@@ -427,11 +431,22 @@ def _build_state_context(
             "una hora de la lista mostrada, es CHECK_AVAILABILITY, NO SELECT_SLOT."
         ),
         BookingState.CUSTOMER_DATA: (
-            "IMPORTANTE: Cualquier respuesta en este estado = provide_customer_data.\n"
-            "Extraer según contexto:\n"
-            "- Si el usuario da un NOMBRE: extraer first_name, last_name (opcional)\n"
-            "- Si el usuario da PREFERENCIAS: extraer notes='contenido'\n"
-            "- Si dice 'no', 'ninguna': entities vacío {} (el FSM maneja la fase internamente)"
+            "IMPORTANTE: Distinguir entre 3 sub-fases según contexto del mensaje anterior del bot:\n\n"
+
+            "SUB-FASE 1a (pregunta inicial '¿Para quién es la cita? ¿Uso tu nombre?'):\n"
+            "- Usuario dice 'sí', 'para mí', 'mi nombre' → USE_CUSTOMER_NAME\n"
+            "- Usuario dice 'para otra persona' SIN dar nombre → PROVIDE_THIRD_PARTY_BOOKING\n"
+            "- Usuario dice 'para María López' (nombre directo) → PROVIDE_CUSTOMER_DATA con first_name/last_name\n\n"
+
+            "SUB-FASE 1b (bot mostró nombre y pregunta '¿Es correcto?'):\n"
+            "- Usuario confirma: 'sí', 'correcto', 'está bien' → CONFIRM_NAME\n"
+            "- Usuario corrige: 'no, mi nombre es José García' → CORRECT_NAME con first_name/last_name\n\n"
+
+            "SUB-FASE 1c (bot pregunta '¿Cuál es el nombre?'):\n"
+            "- Usuario da nombre → PROVIDE_CUSTOMER_DATA con first_name/last_name\n\n"
+
+            "SUB-FASE 2 (bot pregunta por notas/preferencias):\n"
+            "- Usuario responde → PROVIDE_CUSTOMER_DATA con notes (o sin entities si dice 'no')\n"
         ),
 
         BookingState.CONFIRMATION: (
