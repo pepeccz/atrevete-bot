@@ -37,6 +37,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             Response with rate limit headers
             429 if rate limit exceeded
         """
+        # Skip rate limiting for authenticated admin routes
+        # Admin panel already requires JWT authentication, no need to rate limit
+        if request.url.path.startswith("/api/admin/"):
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
+                # Has valid authorization header format, skip rate limiting
+                return await call_next(request)
+
+        # Skip rate limiting for health check endpoint
+        if request.url.path == "/health":
+            return await call_next(request)
+
         # Extract client IP
         client_ip = request.client.host if request.client else "unknown"
 

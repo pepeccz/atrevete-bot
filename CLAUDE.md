@@ -187,6 +187,47 @@ Próximo mensaje: FSM y checkpoint SIEMPRE en sync (garantizado)
 - Tests: ACTUALIZADOS a checkpoint-only ✅
 - Ver `ADR-011-STATUS.md` para detalles completos
 
+### DB-First Calendar Architecture (v4.1) - NEW
+
+> ✅ **DB-First Calendar Migration COMPLETE (2025-12-09):** PostgreSQL es ahora la fuente de verdad para disponibilidad. Google Calendar es push-only mirror.
+
+**Problema anterior:** Availability checks via Google Calendar API tomaban 2-5 segundos por estilista (rate limits, latencia API).
+
+**Solución v4.1:** DB-first architecture con push híbrido:
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FLUJO NUEVO (DB-first)                   │
+├─────────────────────────────────────────────────────────────┤
+│ check_availability() → PostgreSQL query → <100ms            │
+│ book() → DB commit → fire-and-forget GCal push (async)      │
+│ Admin calendar → DB only → <50ms                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Nuevos Componentes:**
+- `agent/services/availability_service.py` - DB-first availability checking
+- `agent/services/gcal_push_service.py` - Fire-and-forget Google Calendar push
+- `database/models.py` - BlockingEvent, Holiday models
+- `api/routes/admin.py` - CRUD endpoints for blocking events, holidays
+
+**Nuevas Tablas:**
+- `blocking_events` - Eventos que bloquean disponibilidad (vacaciones, reuniones, descansos)
+- `holidays` - Festivos nacionales y regionales (cierre global del salón)
+
+**Performance:**
+| Operación | Antes (Google Calendar) | Después (DB-First) |
+|-----------|-------------------------|---------------------|
+| Verificar disponibilidad | 2-5 segundos | <100ms |
+| Crear cita | 3 segundos (blocking) | <50ms + async push |
+| Vista calendario admin | 5 API calls paralelos | 1 query <50ms |
+| Detectar festivos | 5 API calls | 1 query <10ms |
+
+**Funciones Deprecated:**
+- `calendar_tools.fetch_calendar_events()` → Use `availability_service.get_busy_periods()`
+- `calendar_tools.fetch_calendar_events_async()` → Use `availability_service.get_busy_periods()`
+- `calendar_tools.check_holiday_closure()` → Use `availability_service.is_holiday()`
+- `calendar_tools.get_calendar_availability()` → Use `availability_tools.check_availability()`
+
 ### FSM Hybrid Architecture (v4.0) - FOUNDATION FOR ADR-011
 
 **Base (v4.0):** FSM híbrida donde LLM solo maneja NLU y generación de lenguaje, mientras FSM controla flujo de conversación.

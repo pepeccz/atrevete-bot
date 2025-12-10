@@ -299,6 +299,8 @@ def _get_llm_client() -> ChatOpenAI:
         api_key=settings.OPENROUTER_API_KEY,
         base_url="https://openrouter.ai/api/v1",
         temperature=0.1,  # Low temperature for deterministic classification
+        request_timeout=15.0,  # 15s timeout for intent extraction (simple task)
+        max_retries=2,  # Retry 2x on transient failures
         default_headers={
             "HTTP-Referer": settings.SITE_URL,
             "X-Title": settings.SITE_NAME,

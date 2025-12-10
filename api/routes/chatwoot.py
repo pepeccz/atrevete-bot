@@ -19,11 +19,50 @@ from api.models.chatwoot_webhook import (
 from shared.audio_conversion import convert_ogg_to_wav
 from shared.audio_transcription import get_transcription_service
 from shared.config import get_settings
-from shared.redis_client import publish_to_channel
+from shared.redis_client import (
+    publish_to_channel,
+    add_to_stream,
+    get_redis_client,
+    INCOMING_STREAM,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Idempotency constants
+IDEMPOTENCY_TTL = 300  # 5 minutes
+IDEMPOTENCY_PREFIX = "idempotency:chatwoot:"
+
+
+async def check_and_set_idempotency(message_id: int) -> bool:
+    """
+    Check if message has already been processed (idempotency check).
+
+    Uses Redis SETNX with TTL to prevent duplicate processing.
+    If Chatwoot retries a webhook, the message_id will already exist.
+
+    Args:
+        message_id: Chatwoot message ID
+
+    Returns:
+        True if message is a duplicate (already processed)
+        False if message is new (should be processed)
+    """
+    client = get_redis_client()
+    key = f"{IDEMPOTENCY_PREFIX}{message_id}"
+
+    # SETNX returns True if key was set (new message), False if already exists (duplicate)
+    was_set = await client.setnx(key, "1")
+
+    if was_set:
+        # New message - set TTL and allow processing
+        await client.expire(key, IDEMPOTENCY_TTL)
+        return False  # Not a duplicate
+
+    # Key already exists - this is a duplicate
+    logger.info(f"Duplicate message detected: {message_id}")
+    return True  # Is a duplicate
 
 
 @router.post("/chatwoot/{token}")
@@ -94,6 +133,10 @@ async def receive_chatwoot_webhook(
             f"Ignoring non-incoming message: message_type={last_message.message_type}"
         )
         return JSONResponse(status_code=200, content={"status": "ignored"})
+
+    # Idempotency check: Prevent duplicate processing if Chatwoot retries webhook
+    if await check_and_set_idempotency(last_message.id):
+        return JSONResponse(status_code=200, content={"status": "duplicate"})
 
     # Ensure phone number exists (use sender from root level, not from message)
     if not payload.sender.phone_number:
@@ -340,21 +383,32 @@ async def receive_chatwoot_webhook(
         }
     )
 
-    # Publish to Redis channel
-    await publish_to_channel(
-        "incoming_messages",
-        message_event.model_dump(),
-    )
+    # Publish to Redis (using Streams or Pub/Sub based on config)
+    if settings.USE_REDIS_STREAMS:
+        # Redis Streams: Persistent with acknowledgment
+        stream_msg_id = await add_to_stream(
+            INCOMING_STREAM,
+            message_event.model_dump(),
+        )
+        logger.info(
+            f"Chatwoot message added to stream: conversation_id={message_event.conversation_id}, "
+            f"phone={message_event.customer_phone}, stream_msg_id={stream_msg_id}"
+        )
+    else:
+        # Legacy Pub/Sub: Fire-and-forget
+        await publish_to_channel(
+            "incoming_messages",
+            message_event.model_dump(),
+        )
+        logger.info(
+            f"Chatwoot message published (pub/sub): conversation_id={message_event.conversation_id}, "
+            f"phone={message_event.customer_phone}"
+        )
 
     # Log Redis payload for debugging
     logger.debug(
-        f"Redis payload published: {message_event.model_dump()}",
+        f"Redis payload: {message_event.model_dump()}",
         extra={"conversation_id": message_event.conversation_id}
-    )
-
-    logger.info(
-        f"Chatwoot message enqueued: conversation_id={message_event.conversation_id}, "
-        f"phone={message_event.customer_phone}"
     )
 
     return JSONResponse(status_code=200, content={"status": "received"})

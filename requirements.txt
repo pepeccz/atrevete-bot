@@ -8,6 +8,7 @@ langfuse>=2.0.0
 # API & Web Framework
 fastapi[standard]==0.116.1
 uvicorn[standard]>=0.30.0
+python-jose[cryptography]>=3.3.0
 
 # Database & ORM
 psycopg[binary]>=3.2.0
@@ -58,3 +59,6 @@ tenacity
 phonenumbers
 schedule>=1.2.0
 rapidfuzz>=3.0.0
+pybreaker>=1.0.0  # Circuit breaker pattern for resilience
+pytz>=2024.1  # Timezone conversion for Europe/Madrid
+python-dateutil>=2.8.0  # ISO 8601 date parsing

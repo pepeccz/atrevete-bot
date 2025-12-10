@@ -1,11 +1,15 @@
 """
-Booking Transaction Handler for v3.0 Architecture.
+Booking Transaction Handler for v4.1 DB-First Architecture.
 
-This module implements the atomic booking transaction that creates appointments with:
+This module implements the booking transaction with DB-first calendar architecture:
 - Business rule validation (3-day rule, category consistency, slot availability)
-- Google Calendar event creation
-- Database persistence with SERIALIZABLE isolation
-- Complete rollback on any failure
+- Database persistence with SERIALIZABLE isolation (source of truth)
+- Google Calendar push AFTER commit (fire-and-forget, non-blocking)
+
+Key architectural change (v4.1):
+- Database is committed FIRST (source of truth)
+- Google Calendar is push-only mirror (fire-and-forget)
+- Calendar push failures don't roll back the booking
 
 The BookingTransaction.execute() method is the single entry point for creating appointments.
 It's called by the book() tool in agent/tools/booking_tools.py.
@@ -19,7 +23,7 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from agent.tools.calendar_tools import create_calendar_event
+from agent.services.gcal_push_service import push_appointment_to_gcal
 from agent.utils.calendar_link import generate_google_calendar_link
 from agent.validators.transaction_validators import (
     validate_3_day_rule,
@@ -263,11 +267,25 @@ class BookingTransaction:
                                 extra={"conversation_id": conversation_id}
                             )
 
-                    # Step 5: Create Google Calendar event with emoji 🟡
+                    # Step 5: Commit transaction FIRST (DB is source of truth - DB-first architecture)
+                    # Google Calendar push happens AFTER commit as fire-and-forget
+                    await session.commit()
+                    await session.refresh(new_appointment)
+
+                    logger.info(
+                        f"[{trace_id}] Appointment committed to database (DB-first)",
+                        extra={
+                            "appointment_id": str(new_appointment.id),
+                            "status": "PENDING"
+                        }
+                    )
+
+                    # Step 6: Push to Google Calendar (fire-and-forget, non-blocking)
+                    # Push failures are logged but don't affect the booking
                     service_names = ", ".join(s.name for s in services)
 
                     logger.info(
-                        f"[{trace_id}] Creating Google Calendar event with emoji 🟡",
+                        f"[{trace_id}] Pushing to Google Calendar with emoji 🟡 (fire-and-forget)",
                         extra={
                             "customer_name": first_name,
                             "services": service_names,
@@ -275,40 +293,28 @@ class BookingTransaction:
                         }
                     )
 
-                    # Note: create_calendar_event is a LangChain StructuredTool,
-                    # so we must use .ainvoke() with a dict instead of direct call
-                    calendar_result = await create_calendar_event.ainvoke({
-                        "stylist_id": str(stylist_id),
-                        "start_time": start_time.isoformat(),
-                        "duration_minutes": duration_with_buffer,
-                        "customer_name": first_name,  # Use first_name only for emoji format
-                        "service_names": service_names,
-                        "status": "pending",  # Use pending status for emoji 🟡
-                        "customer_id": str(customer_id),
-                        "conversation_id": trace_id,
-                    })
+                    # DB-first: Push is fire-and-forget, failures don't roll back booking
+                    google_event_id = await push_appointment_to_gcal(
+                        appointment_id=new_appointment.id,
+                        stylist_id=stylist_id,
+                        customer_name=first_name,
+                        service_names=service_names,
+                        start_time=start_time,
+                        duration_minutes=duration_with_buffer,
+                        status="pending",  # Yellow emoji 🟡
+                    )
 
-                    if not calendar_result.get("success"):
-                        logger.error(
-                            f"[{trace_id}] Failed to create Google Calendar event",
-                            extra={"error": calendar_result.get("error")}
+                    if google_event_id:
+                        logger.info(
+                            f"[{trace_id}] Google Calendar event created successfully 🟡",
+                            extra={"google_event_id": google_event_id}
                         )
-                        # Rollback is automatic when exiting context manager without commit
-                        return {
-                            "success": False,
-                            "error_code": "CALENDAR_EVENT_FAILED",
-                            "error_message": "No pudimos completar tu reserva. Por favor, intenta de nuevo o contacta con el salón.",
-                            "details": {"calendar_error": calendar_result.get("error")}
-                        }
-
-                    google_event_id = calendar_result["event_id"]
-
-                    # Step 6: Save google_calendar_event_id to appointment
-                    new_appointment.google_calendar_event_id = google_event_id
-
-                    # Step 7: Commit transaction (if we reach here, both DB and Calendar succeeded)
-                    await session.commit()
-                    await session.refresh(new_appointment)
+                    else:
+                        # Log warning but don't fail - booking is already committed
+                        logger.warning(
+                            f"[{trace_id}] Google Calendar push failed (booking still valid)",
+                            extra={"appointment_id": str(new_appointment.id)}
+                        )
 
                     logger.info(
                         f"[{trace_id}] Appointment created successfully with Calendar event 🟡",

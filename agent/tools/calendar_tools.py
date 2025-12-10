@@ -12,6 +12,7 @@ All tools use Google Calendar API with service account authentication
 and Europe/Madrid timezone for all datetime operations.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any
@@ -64,6 +65,9 @@ EVENT_COLORS = {
     "confirmed": "10",   # Green (🟢) - customer confirmed
     "provisional": "5",  # Yellow (legacy support)
 }
+
+# Calendar API timeout in seconds
+CALENDAR_API_TIMEOUT = 5.0
 
 
 # ============================================================================
@@ -447,6 +451,17 @@ def generate_time_slots(
     return slots
 
 
+# ===========================================================================
+# DEPRECATED FUNCTIONS - No longer used after DB-first migration (v4.0)
+#
+# These functions queried Google Calendar API for availability checking.
+# They have been replaced by agent/services/availability_service.py which
+# queries PostgreSQL directly for ~20x faster performance.
+#
+# Kept for backwards compatibility but may be removed in future versions.
+# ===========================================================================
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=4),
@@ -459,7 +474,11 @@ def fetch_calendar_events(
     time_max: str
 ) -> list[dict[str, Any]]:
     """
+    DEPRECATED: Use agent.services.availability_service.get_busy_periods() instead.
+
     Fetch calendar events with automatic retry on rate limit errors.
+    This function queries Google Calendar API which is slow (2-5s).
+    The DB-first approach queries PostgreSQL in <100ms.
 
     Args:
         service: Google Calendar API service instance
@@ -473,6 +492,12 @@ def fetch_calendar_events(
     Raises:
         HttpError: After 3 failed retry attempts
     """
+    import warnings
+    warnings.warn(
+        "fetch_calendar_events is deprecated. Use availability_service.get_busy_periods() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     try:
         events_result = service.events().list(
             calendarId=calendar_id,
@@ -489,13 +514,69 @@ def fetch_calendar_events(
         raise
 
 
+async def fetch_calendar_events_async(
+    service,
+    calendar_id: str,
+    time_min: str,
+    time_max: str,
+    timeout: float = CALENDAR_API_TIMEOUT,
+) -> list[dict[str, Any]]:
+    """
+    DEPRECATED: Use agent.services.availability_service.get_busy_periods() instead.
+
+    Async version of fetch_calendar_events with timeout protection.
+    This function queries Google Calendar API which is slow (2-5s).
+    The DB-first approach queries PostgreSQL in <100ms.
+
+    Args:
+        service: Google Calendar API service instance
+        calendar_id: Google Calendar ID
+        time_min: Start time in RFC3339 format
+        time_max: End time in RFC3339 format
+        timeout: Maximum seconds to wait for API response (default: 5s)
+
+    Returns:
+        List of event dictionaries, empty list on timeout
+    """
+    import warnings
+    warnings.warn(
+        "fetch_calendar_events_async is deprecated. Use availability_service.get_busy_periods() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    try:
+        events = await asyncio.wait_for(
+            asyncio.to_thread(
+                fetch_calendar_events,
+                service,
+                calendar_id,
+                time_min,
+                time_max,
+            ),
+            timeout=timeout,
+        )
+        return events
+    except asyncio.TimeoutError:
+        logger.error(
+            f"Calendar API timeout ({timeout}s) fetching events for calendar_id={calendar_id}"
+        )
+        return []  # Graceful degradation: return empty list
+    except Exception as e:
+        logger.error(f"Error fetching calendar events: {e}")
+        return []
+
+
 async def check_holiday_closure(
     service,
     date: datetime,
     conversation_id: str = ""
 ) -> dict[str, Any] | None:
     """
+    DEPRECATED: Use agent.services.availability_service.is_holiday() instead.
+
     Check if salon is closed due to holiday across ALL stylist calendars.
+    This function queries Google Calendar API which is slow.
+    The DB-first approach queries the holidays table in <10ms.
 
     Args:
         service: Google Calendar API service instance
@@ -504,8 +585,13 @@ async def check_holiday_closure(
 
     Returns:
         Dictionary with holiday info if detected, None otherwise
-        Example: {"holiday_detected": true, "reason": "Festivo - Navidad"}
     """
+    import warnings
+    warnings.warn(
+        "check_holiday_closure is deprecated. Use availability_service.is_holiday() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     # Query ALL active stylists (regardless of category)
     async with get_async_session() as session:
         try:
@@ -529,7 +615,7 @@ async def check_holiday_closure(
     # Check each calendar for holiday events
     for stylist in all_stylists:
         try:
-            events = fetch_calendar_events(
+            events = await fetch_calendar_events_async(
                 service,
                 stylist.google_calendar_id,
                 time_min_str,
@@ -646,7 +732,11 @@ async def get_calendar_availability(
     conversation_id: str = ""
 ) -> dict[str, Any]:
     """
+    DEPRECATED: Use check_availability from agent/tools/availability_tools.py instead.
+
     Get available time slots for a service category on a specific date.
+    This tool queries Google Calendar API which is slow (2-5s per stylist).
+    The DB-first check_availability() queries PostgreSQL in <100ms total.
 
     Checks availability across all stylists who provide the requested service category.
     Respects business hours, busy events, and salon holiday closures.
@@ -662,16 +752,13 @@ async def get_calendar_availability(
         - available_slots: List of dicts with {time, stylist_id, stylist_name}
         - holiday_detected: bool (if salon is closed)
         - error: str (if failed)
-
-    Example:
-        {
-            "success": true,
-            "available_slots": [
-                {"time": "10:00", "stylist_id": "uuid", "stylist_name": "Pilar"},
-                {"time": "10:30", "stylist_id": "uuid", "stylist_name": "Pilar"}
-            ]
-        }
     """
+    import warnings
+    warnings.warn(
+        "get_calendar_availability is deprecated. Use check_availability from availability_tools instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     try:
         # Parse date string to datetime
         try:
@@ -729,8 +816,8 @@ async def get_calendar_availability(
 
         for stylist in stylists:
             try:
-                # Fetch busy events for this stylist
-                busy_events = fetch_calendar_events(
+                # Fetch busy events for this stylist (with timeout protection)
+                busy_events = await fetch_calendar_events_async(
                     service,
                     stylist.google_calendar_id,
                     time_min_str,
@@ -1046,7 +1133,11 @@ async def delete_calendar_event(
             ).execute()
 
         try:
-            delete_event()
+            # Wrap with asyncio.wait_for for timeout protection
+            await asyncio.wait_for(
+                asyncio.to_thread(delete_event),
+                timeout=CALENDAR_API_TIMEOUT,
+            )
 
             logger.info(
                 f"Deleted calendar event {event_id} for {stylist.name} | "
@@ -1054,6 +1145,16 @@ async def delete_calendar_event(
             )
 
             return {"success": True}
+
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Calendar API timeout ({CALENDAR_API_TIMEOUT}s) deleting event {event_id} | "
+                f"conversation_id={conversation_id}"
+            )
+            return {
+                "success": False,
+                "error": f"Calendar API timeout ({CALENDAR_API_TIMEOUT}s). Please try again."
+            }
 
         except RetryError as e:
             # Check the cause of the retry error

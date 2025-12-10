@@ -8,6 +8,7 @@ Can be run standalone: python -m database.seeds
 import asyncio
 
 # from database.seeds.packs import seed_packs  # Removed - packs functionality eliminated
+from database.seeds.holidays import seed_holidays
 from database.seeds.policies import seed_policies
 from database.seeds.services import seed_services
 from database.seeds.stylists import seed_stylists
@@ -21,6 +22,7 @@ async def seed_all() -> None:
     1. stylists (Story 1.3a) - independent
     2. services (Story 1.3b) - independent
     3. policies (Story 1.3b) - independent
+    4. holidays - salon closure dates (2025-2026)
 
     Note: packs removed (functionality eliminated)
     """
@@ -31,6 +33,7 @@ async def seed_all() -> None:
     await seed_services()
     # await seed_packs()  # Removed - packs functionality eliminated
     await seed_policies()
+    await seed_holidays()
 
     print("-" * 50)
     print("✓ Database seeding complete!")

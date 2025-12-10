@@ -71,6 +71,8 @@ services:
       dockerfile: docker/Dockerfile.api
     container_name: atrevete-api
     env_file: .env
+    volumes:
+      - ./service-account-key.json:/app/service-account-key.json:ro
     ports:
       - "8000:8000"
     depends_on:
@@ -163,6 +165,29 @@ services:
       timeout: 10s
       retries: 3
       start_period: 120s
+
+  # Admin Panel: NextJS 15 + ShadCN modern admin interface
+  admin-panel:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.admin-panel
+    container_name: atrevete-admin-panel
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - atrevete-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 networks:
   atrevete-network:

@@ -14,7 +14,7 @@ All models use:
 - Proper indexes and constraints
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum as PyEnum
 from typing import Any, Optional
@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     ARRAY,
+    DATE,
     TIMESTAMP,
     Boolean,
     CheckConstraint,
@@ -84,6 +85,15 @@ class MessageRole(str, PyEnum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+
+
+class BlockingEventType(str, PyEnum):
+    """Type of calendar blocking event."""
+
+    VACATION = "vacation"      # Vacaciones del estilista
+    MEETING = "meeting"        # Reuniones, formaciones
+    BREAK = "break"           # Descanso programado
+    GENERAL = "general"       # Bloqueo general
 
 
 # ============================================================================
@@ -614,3 +624,135 @@ class BusinessHours(Base):
         if self.is_closed:
             return f"<BusinessHours(day={self.day_of_week}, CLOSED)>"
         return f"<BusinessHours(day={self.day_of_week}, {self.start_hour}:{self.start_minute:02d}-{self.end_hour}:{self.end_minute:02d})>"
+
+
+# ============================================================================
+# Calendar Management Models
+# ============================================================================
+
+
+class BlockingEvent(Base):
+    """
+    BlockingEvent model - Calendar blocking events for stylists.
+
+    Used to block time slots for vacations, meetings, breaks, or general purposes.
+    These events prevent booking availability during the specified time range.
+    Optionally syncs to Google Calendar for stylist visibility on mobile.
+    """
+
+    __tablename__ = "blocking_events"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Foreign key to stylist
+    stylist_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("stylists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Event details
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Time range
+    start_time: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    end_time: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+
+    # Event type
+    event_type: Mapped[BlockingEventType] = mapped_column(
+        SQLEnum(
+            BlockingEventType,
+            name="blocking_event_type",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=BlockingEventType.GENERAL,
+        nullable=False,
+    )
+
+    # Google Calendar sync (optional - for push to stylist's mobile)
+    google_calendar_event_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    # Relationship
+    stylist: Mapped["Stylist"] = relationship("Stylist")
+
+    # Constraints and indexes
+    __table_args__ = (
+        # End time must be after start time
+        CheckConstraint("end_time > start_time", name="check_blocking_end_after_start"),
+        # Composite index for efficient overlap queries
+        Index(
+            "idx_blocking_events_stylist_time",
+            "stylist_id",
+            "start_time",
+            "end_time",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<BlockingEvent(id={self.id}, stylist_id={self.stylist_id}, title='{self.title}', type='{self.event_type.value}')>"
+
+
+class Holiday(Base):
+    """
+    Holiday model - Salon-wide closure dates.
+
+    Stores dates when the entire salon is closed (national holidays, etc.).
+    All stylists are considered unavailable on these dates.
+    These are salon-specific holidays, not fetched from Google Calendar.
+    """
+
+    __tablename__ = "holidays"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Holiday details
+    date: Mapped[date] = mapped_column(
+        DATE, unique=True, nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    # All-day flag (always true for now, future support for partial closures)
+    is_all_day: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_holidays_date", "date"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Holiday(id={self.id}, date={self.date}, name='{self.name}')>"

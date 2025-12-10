@@ -33,9 +33,11 @@ Changes from v4.0:
 import logging
 from typing import Any
 
+import pybreaker
 from langchain_openai import ChatOpenAI
 
 from agent.fsm import BookingFSM, BookingState
+from shared.circuit_breaker import call_with_breaker, openrouter_breaker
 from agent.fsm.intent_extractor import extract_intent
 from agent.fsm.models import Intent, IntentType
 from agent.routing import IntentRouter
@@ -259,12 +261,17 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             base_url="https://openrouter.ai/api/v1",
             api_key=settings.OPENROUTER_API_KEY,
             temperature=0.3,  # Creative but controlled
+            request_timeout=30.0,  # 30s timeout for conversation
+            max_retries=2,  # Retry 2x on transient failures
         )
 
-        # Route to appropriate handler
+        # Route to appropriate handler (wrapped with circuit breaker)
         # BookingHandler: FSM prescribes tools (prescriptive)
         # NonBookingHandler: LLM decides from safe tools (conversational)
-        response_text = await IntentRouter.route(
+        # Circuit breaker protects against OpenRouter outages
+        response_text = await call_with_breaker(
+            openrouter_breaker,
+            IntentRouter.route,
             intent=intent,
             fsm=fsm,
             state=state,
@@ -276,6 +283,19 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             f"length={len(response_text)} | "
             f"fsm_state={fsm.state.value}"
         )
+
+    except pybreaker.CircuitBreakerError:
+        # Circuit is OPEN - OpenRouter is down, fail fast and escalate
+        logger.error(
+            f"OpenRouter circuit breaker OPEN | conversation_id={conversation_id} | "
+            f"escalating to human"
+        )
+        response_text = (
+            "Disculpa, estoy teniendo problemas técnicos en este momento. "
+            "Te paso con un compañero humano que te ayudará enseguida."
+        )
+        # Mark for escalation so Chatwoot can route to human agent
+        state["escalated"] = True
 
     except (ValueError, KeyError) as e:
         # Handler execution error (expected - invalid tool args, missing data)

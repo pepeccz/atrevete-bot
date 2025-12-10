@@ -91,6 +91,8 @@ async def summarize_conversation(state: ConversationState) -> dict:
             base_url="https://openrouter.ai/api/v1",
             temperature=0.3,  # Deterministic summaries
             max_tokens=300,   # 2-3 sentences ~100-200 tokens
+            request_timeout=20.0,  # 20s timeout for summarization
+            max_retries=2,  # Retry 2x on transient failures
             default_headers={
                 "HTTP-Referer": settings.SITE_URL,
                 "X-Title": settings.SITE_NAME,

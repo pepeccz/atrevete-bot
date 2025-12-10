@@ -5,6 +5,7 @@ Background worker for conversation orchestration
 import asyncio
 import json
 import logging
+import os
 import signal
 from datetime import UTC, datetime
 
@@ -15,7 +16,18 @@ from agent.state.helpers import add_message
 from agent.utils.monitoring import get_langfuse_handler
 from shared.config import get_settings
 from shared.logging_config import configure_logging
-from shared.redis_client import get_redis_client, publish_to_channel
+from shared.startup_validator import StartupValidationError, validate_startup_config
+from shared.redis_client import (
+    get_redis_client,
+    publish_to_channel,
+    # Redis Streams functions
+    create_consumer_group,
+    read_from_stream,
+    acknowledge_message,
+    move_to_dead_letter,
+    INCOMING_STREAM,
+    CONSUMER_GROUP,
+)
 
 # Configure structured JSON logging
 configure_logging()
@@ -52,6 +64,19 @@ async def subscribe_to_incoming_messages():
     """
     global batcher
 
+    # =========================================================================
+    # STARTUP VALIDATION (Fase 4 - Config Validation)
+    # =========================================================================
+    # Validate critical configuration before initializing services.
+    # This catches misconfigurations early (fail-fast) rather than at runtime.
+    logger.info("Running startup configuration validation...")
+    try:
+        await validate_startup_config()
+        logger.info("Startup configuration validation passed")
+    except StartupValidationError as e:
+        logger.critical(f"Startup blocked due to configuration errors: {e}")
+        raise  # Re-raise to stop the service
+
     client = get_redis_client()
     settings = get_settings()
 
@@ -71,12 +96,13 @@ async def subscribe_to_incoming_messages():
     graph = create_conversation_graph(checkpointer=checkpointer)
     logger.info("Conversation graph created successfully")
 
-    # Initialize message batcher with configurable window
+    # Initialize message batcher with configurable window and Redis for crash recovery
     batch_window = settings.MESSAGE_BATCH_WINDOW_SECONDS
-    batcher = MessageBatcher(window_seconds=batch_window)
+    batcher = MessageBatcher(window_seconds=batch_window, redis_client=client)
     logger.info(
         f"Message batcher initialized | window_seconds={batch_window} | "
-        f"batching={'enabled' if batch_window > 0 else 'disabled'}"
+        f"batching={'enabled' if batch_window > 0 else 'disabled'} | "
+        f"redis_persistence=enabled"
     )
 
     async def process_batch(conversation_id: str, messages: list[dict]) -> None:
@@ -278,83 +304,222 @@ async def subscribe_to_incoming_messages():
             extra={"conversation_id": conversation_id},
         )
 
+        # ================================================================
+        # ACK STREAM MESSAGES (Redis Streams only)
+        # ================================================================
+        # After successful processing, acknowledge all stream messages in the batch
+        # This removes them from the pending list (they won't be redelivered)
+        if settings.USE_REDIS_STREAMS:
+            stream_msg_ids = [
+                msg.get("_stream_msg_id") for msg in messages
+                if msg.get("_stream_msg_id")
+            ]
+            for stream_msg_id in stream_msg_ids:
+                try:
+                    await acknowledge_message(INCOMING_STREAM, CONSUMER_GROUP, stream_msg_id)
+                    logger.debug(
+                        f"ACK stream message {stream_msg_id} | conversation_id={conversation_id}"
+                    )
+                except Exception as ack_error:
+                    logger.warning(
+                        f"Failed to ACK message {stream_msg_id}: {ack_error}",
+                        extra={"conversation_id": conversation_id},
+                    )
+
     # Set the callback for when batches expire
     batcher.set_callback(process_batch)
 
-    logger.info("Subscribing to 'incoming_messages' channel...")
+    # =========================================================================
+    # BATCH RECOVERY (Phase 6 - Crash Recovery)
+    # =========================================================================
+    # Recover any pending batches from a previous crash
+    recovered_count = await batcher.recover_pending_batches()
+    if recovered_count > 0:
+        logger.info(f"Recovered {recovered_count} pending message batches from Redis")
 
-    # Subscribe to channel
-    pubsub = client.pubsub()
-    await pubsub.subscribe("incoming_messages")
+    # ========================================================================
+    # MESSAGE SUBSCRIPTION (Redis Streams or Pub/Sub based on config)
+    # ========================================================================
 
-    logger.info("Subscribed to 'incoming_messages' channel")
+    if settings.USE_REDIS_STREAMS:
+        # ====================================================================
+        # REDIS STREAMS MODE: Persistent with acknowledgment
+        # ====================================================================
+        consumer_name = f"agent-{os.getpid()}"
 
-    try:
-        async for message in pubsub.listen():
-            # Skip subscription confirmation messages
-            if message["type"] != "message":
-                continue
+        logger.info(
+            f"Initializing Redis Streams consumer | stream={INCOMING_STREAM} | "
+            f"group={CONSUMER_GROUP} | consumer={consumer_name}"
+        )
 
-            try:
-                # Parse message JSON
-                data = json.loads(message["data"])
-                conversation_id = data.get("conversation_id")
-                customer_phone = data.get("customer_phone")
-                message_text = data.get("message_text")
-                customer_name = data.get("customer_name")
+        # Create consumer group if it doesn't exist
+        await create_consumer_group(INCOMING_STREAM, CONSUMER_GROUP)
 
-                logger.info(
-                    f"Message received: conversation_id={conversation_id}, "
-                    f"phone={customer_phone}, name={customer_name}",
-                    extra={
-                        "conversation_id": conversation_id,
-                        "customer_phone": customer_phone,
-                        "customer_name": customer_name,
-                    },
-                )
+        logger.info(
+            f"Redis Streams consumer ready | stream={INCOMING_STREAM} | "
+            f"consumer={consumer_name}"
+        )
 
-                # Log full incoming message for debugging
-                logger.debug(
-                    f"Full incoming message: '{message_text}'",
-                    extra={
-                        "conversation_id": conversation_id,
-                        "message_length": len(message_text) if message_text else 0,
-                    }
-                )
+        try:
+            while not shutdown_event.is_set():
+                try:
+                    # Read messages from stream (blocks for 5 seconds if no messages)
+                    messages = await read_from_stream(
+                        INCOMING_STREAM,
+                        CONSUMER_GROUP,
+                        consumer_name,
+                        count=10,  # Process up to 10 messages at a time
+                        block_ms=5000,  # 5 second block
+                    )
 
-                # Add message to batcher (will be processed after window expires)
-                await batcher.add_message(
-                    conversation_id=conversation_id,
-                    message_data=data,
-                )
+                    for stream_msg_id, data in messages:
+                        try:
+                            conversation_id = data.get("conversation_id")
+                            customer_phone = data.get("customer_phone")
+                            message_text = data.get("message_text")
+                            customer_name = data.get("customer_name")
 
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON in message: {e}")
-                continue
+                            logger.info(
+                                f"Stream message received: conversation_id={conversation_id}, "
+                                f"phone={customer_phone}, stream_msg_id={stream_msg_id}",
+                                extra={
+                                    "conversation_id": conversation_id,
+                                    "customer_phone": customer_phone,
+                                    "stream_msg_id": stream_msg_id,
+                                },
+                            )
 
-            except Exception as e:
-                logger.error(
-                    f"Error adding message to batch: {e}",
-                    extra={
-                        "conversation_id": data.get("conversation_id") if "data" in locals() else "unknown",
-                    },
-                    exc_info=True,
-                )
-                continue
+                            # Log full incoming message for debugging
+                            logger.debug(
+                                f"Full incoming message: '{message_text}'",
+                                extra={
+                                    "conversation_id": conversation_id,
+                                    "message_length": len(message_text) if message_text else 0,
+                                }
+                            )
 
-    except asyncio.CancelledError:
-        logger.info("Incoming message subscriber cancelled")
-        # Flush pending batches before shutting down
-        if batcher:
-            logger.info("Flushing pending batches before shutdown...")
-            await batcher.flush_all()
-        await pubsub.unsubscribe("incoming_messages")
-        await pubsub.close()
-        raise
+                            # Add stream_msg_id to message data for ACK after processing
+                            data["_stream_msg_id"] = stream_msg_id
 
-    except Exception as e:
-        logger.error(f"Fatal error in incoming message subscriber: {e}", exc_info=True)
-        raise
+                            # Add message to batcher (will be processed after window expires)
+                            await batcher.add_message(
+                                conversation_id=conversation_id,
+                                message_data=data,
+                            )
+
+                        except Exception as e:
+                            logger.error(
+                                f"Error processing stream message {stream_msg_id}: {e}",
+                                exc_info=True,
+                            )
+                            # Move to dead letter queue for later inspection
+                            try:
+                                await move_to_dead_letter(
+                                    INCOMING_STREAM,
+                                    CONSUMER_GROUP,
+                                    stream_msg_id,
+                                    data,
+                                    str(e),
+                                )
+                            except Exception as dlq_error:
+                                logger.error(f"Failed to move to DLQ: {dlq_error}")
+                            continue
+
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error reading from stream: {e}", exc_info=True)
+                    # Brief backoff on error before retrying
+                    await asyncio.sleep(1)
+
+        except asyncio.CancelledError:
+            logger.info("Stream consumer cancelled")
+            if batcher:
+                logger.info("Flushing pending batches before shutdown...")
+                await batcher.flush_all()
+            raise
+
+        except Exception as e:
+            logger.error(f"Fatal error in stream consumer: {e}", exc_info=True)
+            raise
+
+    else:
+        # ====================================================================
+        # LEGACY PUB/SUB MODE: Fire-and-forget (backward compatibility)
+        # ====================================================================
+        logger.info("Subscribing to 'incoming_messages' channel (pub/sub mode)...")
+
+        pubsub = client.pubsub()
+        await pubsub.subscribe("incoming_messages")
+
+        logger.info("Subscribed to 'incoming_messages' channel")
+
+        try:
+            async for message in pubsub.listen():
+                # Skip subscription confirmation messages
+                if message["type"] != "message":
+                    continue
+
+                try:
+                    # Parse message JSON
+                    data = json.loads(message["data"])
+                    conversation_id = data.get("conversation_id")
+                    customer_phone = data.get("customer_phone")
+                    message_text = data.get("message_text")
+                    customer_name = data.get("customer_name")
+
+                    logger.info(
+                        f"Message received: conversation_id={conversation_id}, "
+                        f"phone={customer_phone}, name={customer_name}",
+                        extra={
+                            "conversation_id": conversation_id,
+                            "customer_phone": customer_phone,
+                            "customer_name": customer_name,
+                        },
+                    )
+
+                    # Log full incoming message for debugging
+                    logger.debug(
+                        f"Full incoming message: '{message_text}'",
+                        extra={
+                            "conversation_id": conversation_id,
+                            "message_length": len(message_text) if message_text else 0,
+                        }
+                    )
+
+                    # Add message to batcher (will be processed after window expires)
+                    await batcher.add_message(
+                        conversation_id=conversation_id,
+                        message_data=data,
+                    )
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON in message: {e}")
+                    continue
+
+                except Exception as e:
+                    logger.error(
+                        f"Error adding message to batch: {e}",
+                        extra={
+                            "conversation_id": data.get("conversation_id") if "data" in locals() else "unknown",
+                        },
+                        exc_info=True,
+                    )
+                    continue
+
+        except asyncio.CancelledError:
+            logger.info("Incoming message subscriber cancelled")
+            # Flush pending batches before shutting down
+            if batcher:
+                logger.info("Flushing pending batches before shutdown...")
+                await batcher.flush_all()
+            await pubsub.unsubscribe("incoming_messages")
+            await pubsub.close()
+            raise
+
+        except Exception as e:
+            logger.error(f"Fatal error in incoming message subscriber: {e}", exc_info=True)
+            raise
 
 
 async def subscribe_to_outgoing_messages():

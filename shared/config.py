@@ -28,6 +28,11 @@ class Settings(BaseSettings):
         default="redis://redis:6379/0",
         description="Redis connection string"
     )
+    USE_REDIS_STREAMS: bool = Field(
+        default=True,
+        description="Use Redis Streams instead of Pub/Sub for message delivery. "
+                    "Streams provide persistence and acknowledgment. Set to False to use legacy Pub/Sub."
+    )
 
     # Google Calendar API
     GOOGLE_SERVICE_ACCOUNT_JSON: str = Field(
@@ -97,6 +102,26 @@ class Settings(BaseSettings):
         ge=0,
         le=120,
         description="Message batching window in seconds. Collects messages within this window and processes them as one. Set to 0 to disable batching."
+    )
+
+    # Admin Panel Authentication
+    ADMIN_USERNAME: str = Field(
+        default="admin",
+        description="Admin panel username"
+    )
+    ADMIN_PASSWORD: str = Field(
+        default="",
+        description="Admin panel password (min 12 chars recommended for production)"
+    )
+    ADMIN_JWT_SECRET: str = Field(
+        default="",
+        description="JWT secret key for admin panel authentication (min 32 chars)"
+    )
+
+    # CORS Origins for API
+    CORS_ORIGINS: str = Field(
+        default="http://localhost:3000,http://localhost:8000,http://api:8000",
+        description="Comma-separated list of allowed origins for CORS (e.g., 'http://localhost:3000,https://admin.domain.com')"
     )
 
     class Config:

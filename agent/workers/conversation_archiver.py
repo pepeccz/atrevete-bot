@@ -105,9 +105,11 @@ async def find_expired_checkpoints(redis_client: Redis) -> list[tuple[str, str, 
     logger.info(f"Searching for checkpoints older than {cutoff_time.isoformat()}")
 
     try:
-        # Query all checkpoint keys
-        # Note: keys() is synchronous in redis-py, but should be fast for checkpoint patterns
-        keys = redis_client.keys("langgraph:checkpoint:*")
+        # Query all checkpoint keys using SCAN (non-blocking)
+        # Note: scan_iter() is non-blocking and processes keys in batches,
+        # allowing other Redis commands to execute between iterations.
+        # This prevents Redis from being blocked when there are many keys.
+        keys = list(redis_client.scan_iter(match="langgraph:checkpoint:*", count=1000))
         logger.debug(f"Found {len(keys)} total checkpoint keys")
 
         expired_keys = []
