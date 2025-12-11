@@ -50,6 +50,7 @@ class IntentRouter:
         IntentType.FAQ,
         IntentType.ESCALATE,
         IntentType.UNKNOWN,
+        IntentType.UPDATE_NAME,  # Name update in IDLE state
     }
 
     @staticmethod

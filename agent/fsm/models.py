@@ -41,6 +41,7 @@ class IntentType(str, Enum):
     FAQ = "faq"
     CHECK_AVAILABILITY = "check_availability"
     ESCALATE = "escalate"
+    UPDATE_NAME = "update_name"  # User updates their name in IDLE state
     UNKNOWN = "unknown"
 
 

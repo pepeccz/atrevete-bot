@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
-from rapidfuzz import fuzz, process
+from rapidfuzz import fuzz
 from sqlalchemy import select
 
 from database.connection import get_async_session
@@ -94,6 +94,49 @@ def _expand_synonyms(query: str) -> str:
         logger.info(f"Synonym expansion: '{query}' → '{result}'")
 
     return result
+
+
+def _calculate_service_score(query: str, service: "Service") -> float:
+    """
+    Calculate weighted score prioritizing name matches over description matches.
+
+    This fixes the bug where "corte" returned "Pack Óleo Pigmento" instead of
+    "Corte + Peinado" because the old algorithm combined name+description
+    without weighting.
+
+    Scoring algorithm:
+    1. Exact substring match in name: +30 boost
+    2. Fuzzy match on name: 70% weight
+    3. Fuzzy match on description: 30% weight
+    4. Final score capped at 100
+
+    Args:
+        query: Search query (already expanded with synonyms)
+        service: Service object to score
+
+    Returns:
+        Float score 0-100, higher = better match
+    """
+    query_lower = query.lower().strip()
+    name_lower = service.name.lower()
+
+    # Exact substring match in name gets big boost
+    # This ensures "corte" matches "Corte + Peinado" over "Pack Óleo Pigmento"
+    substring_boost = 30 if query_lower in name_lower else 0
+
+    # Fuzzy match on name (weight: 70%)
+    # token_set_ratio handles word order: "peinado corte" matches "Corte + Peinado"
+    name_score = fuzz.token_set_ratio(query_lower, name_lower)
+
+    # Fuzzy match on description (weight: 30%)
+    desc_score = 0
+    if service.description:
+        desc_score = fuzz.token_set_ratio(query_lower, service.description.lower()[:150])
+
+    # Weighted final score
+    final_score = (name_score * 0.7) + (desc_score * 0.3) + substring_boost
+
+    return min(final_score, 100)  # Cap at 100
 
 
 class SearchServicesSchema(BaseModel):
@@ -242,42 +285,32 @@ async def search_services(
                 "message": "No hay servicios disponibles en este momento"
             }
 
-        # Prepare choices for fuzzy matching: include name + description for better matching
-        # This allows "mechas" to match services where description mentions "mechas"
-        # Format: "Service Name | Description excerpt..." for search, mapped back to service
-        search_strings: dict[str, Service] = {}
-        for s in services:
-            # Combine name + description (truncated) for comprehensive matching
-            if s.description:
-                search_text = f"{s.name} | {s.description[:100]}"
-            else:
-                search_text = s.name
-            search_strings[search_text] = s
-
         # Apply synonym expansion (fallback for LLM normalization)
         # This handles cases like "teñir pelo" → "tinte color" if LLM didn't normalize
         expanded_query = _expand_synonyms(query)
 
-        # Use WRatio scorer: best for natural language queries with fuzzy matching
-        # WRatio automatically selects the best comparison method and handles:
-        # - Natural variations: "cortarme el pelo" → "Corte de Caballero"
-        # - Short queries: "corte" → "Corte de Caballero"
-        # - Typos and partial matches
-        matches = process.extract(
-            expanded_query,  # Use expanded query with synonyms applied
-            search_strings.keys(),  # Compare against name + description
-            scorer=fuzz.WRatio,
-            score_cutoff=55,  # Balanced threshold: filters noise while allowing fuzzy matches
-            limit=max_results
-        )
+        # Calculate weighted scores for all services
+        # Uses _calculate_service_score() which prioritizes name matches over description
+        # This fixes the bug where "corte" returned "Pack Óleo Pigmento" instead of "Corte + Peinado"
+        scored_services: list[tuple[Service, float]] = []
+        for service in services:
+            score = _calculate_service_score(expanded_query, service)
+            if score >= 65:  # Stricter cutoff (was 55)
+                scored_services.append((service, score))
+
+        # Sort by score descending (best matches first)
+        scored_services.sort(key=lambda x: x[1], reverse=True)
+
+        # Take top max_results
+        top_matches = scored_services[:max_results]
 
         logger.info(
-            f"Found {len(matches)} fuzzy matches | original='{query}' | expanded='{expanded_query}' | "
-            f"scorer=WRatio | score_cutoff=55 | limit={max_results}"
+            f"Found {len(top_matches)} matches | original='{query}' | expanded='{expanded_query}' | "
+            f"scorer=weighted(name:70%,desc:30%,substring_boost:+30) | cutoff=65 | limit={max_results}"
         )
 
         # Step 3: Format results
-        if not matches:
+        if not top_matches:
             return {
                 "services": [],
                 "count": 0,
@@ -287,11 +320,7 @@ async def search_services(
 
         # Extract matched services and scores (v3.2: simplified output to save tokens)
         matched_services = []
-        for match in matches:
-            search_text = match[0]  # Matched search string (name | description)
-            match_score = match[1]  # Fuzzy match score
-            service_obj = search_strings[search_text]  # Get service object from mapping
-
+        for service_obj, match_score in top_matches:
             matched_services.append({
                 "name": service_obj.name,
                 "description": service_obj.description[:150] if service_obj.description else None,

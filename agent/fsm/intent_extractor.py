@@ -330,6 +330,7 @@ def _build_state_context(
             ("start_booking", "Usuario quiere hacer una reserva/cita"),
             ("greeting", "Saludo sin intención de reserva"),
             ("faq", "Pregunta sobre horarios, servicios, precios, ubicación"),
+            ("update_name", "Usuario corrige o proporciona su nombre (ej: 'Llamame X', 'Mi nombre es Y', 'Soy Z')"),
             ("escalate", "Quiere hablar con una persona o está frustrado"),
         ],
         BookingState.SERVICE_SELECTION: [
@@ -402,6 +403,15 @@ def _build_state_context(
 
     # State-specific disambiguation hints (Bug #1 fix: expanded variations)
     disambiguation_hints: dict[BookingState, str] = {
+        BookingState.IDLE: (
+            "DISTINGUIR entre:\n"
+            "1. ACTUALIZACIÓN DE NOMBRE: 'Llamame X', 'Mi nombre es Y', 'Soy Z', 'No, me llamo W'\n"
+            "   → intent: update_name, entities: {first_name: X/Y/Z/W}\n"
+            "2. RESERVA: 'Quiero una cita', 'Reservar corte', 'Agendar peinado'\n"
+            "   → intent: start_booking\n"
+            "3. SALUDO SIMPLE: 'Hola', 'Buenos días' (sin mención de nombre ni servicio)\n"
+            "   → intent: greeting\n"
+        ),
         BookingState.SERVICE_SELECTION: (
             "IMPORTANTE: Un número (1, 2, 3...) puede ser:\n"
             "- Selección de SERVICIO si la lista mostrada es de servicios\n"
@@ -687,6 +697,7 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
             IntentType.CONFIRM_BOOKING: set(),  # No entities - just confirmation
             IntentType.CANCEL_BOOKING: {"reason"},  # Optional reason
             IntentType.UNKNOWN: set(),  # No entities for unknown
+            IntentType.UPDATE_NAME: {"first_name", "last_name"},  # Name update in IDLE state
         }
 
         allowed_entities = INTENT_ALLOWED_ENTITIES.get(intent_type, set())

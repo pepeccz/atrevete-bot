@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
-from agent.fsm.models import Intent
+from agent.fsm.models import Intent, IntentType
 
 if TYPE_CHECKING:
     from agent.fsm import BookingFSM
@@ -69,6 +69,10 @@ class NonBookingHandler:
             f"NonBookingHandler.handle | intent={intent.type.value} | "
             f"fsm_state={self.fsm.state.value}"
         )
+
+        # Handle UPDATE_NAME intent explicitly to ensure name is updated
+        if intent.type == IntentType.UPDATE_NAME:
+            return await self._handle_update_name(intent)
 
         # Import safe tools (no booking tools, but manage_customer for name updates)
         from agent.tools import escalate_to_human, manage_customer, query_info, search_services
@@ -148,7 +152,7 @@ DEBES:
 4. Cuando te dé su nombre, usa manage_customer para actualizarlo
 
 Ejemplo de respuesta:
-"¡Hola! 🌸 Soy Maite, la asistente virtual de Atrévete Peluquería.
+"¡Hola! 🌸 Soy Maite, la asistente virtual con IA de Atrévete Peluquería.
 ¿Con quién tengo el gusto de hablar?"
 """
             else:
@@ -161,7 +165,7 @@ DEBES:
 3. Preguntar en qué puedes ayudar
 
 Ejemplo de respuesta:
-"¡Hola! 🌸 Soy Maite, la asistente virtual de Atrévete Peluquería.
+"¡Hola! 🌸 Soy Maite, la asistente virtual con IA de Atrévete Peluquería.
 ¿Puedo llamarte *{customer_first_name}*? ¿En qué puedo ayudarte hoy?"
 """
         else:
@@ -267,3 +271,98 @@ IMPORTANTE:
                 exc_info=True,
             )
             return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    async def _handle_update_name(self, intent: Intent) -> str:
+        """
+        Handle UPDATE_NAME intent - update customer name in database.
+
+        This is called when user says "Llamame X", "Mi nombre es Y", "Soy Z" in IDLE state.
+        Directly updates the database via manage_customer tool.
+
+        Args:
+            intent: Intent with entities containing first_name (and optionally last_name)
+
+        Returns:
+            Confirmation response with updated name
+        """
+        from agent.tools import manage_customer
+
+        first_name = intent.entities.get("first_name", "").strip()
+        last_name = intent.entities.get("last_name", "").strip()
+        customer_id = self.state.get("customer_id")
+        customer_phone = self.state.get("customer_phone", "")
+
+        if not first_name:
+            logger.warning("UPDATE_NAME intent without first_name entity, falling back to LLM")
+            # Fall back to standard conversational handling
+            return await self._handle_fallback(intent)
+
+        if not customer_id or not customer_phone:
+            logger.warning(
+                f"UPDATE_NAME intent missing state data | "
+                f"customer_id={customer_id} | customer_phone={customer_phone}"
+            )
+            return "Lo siento, ha habido un problema al actualizar tu nombre. ¿Puedes intentarlo de nuevo?"
+
+        logger.info(
+            f"Handling UPDATE_NAME | customer_id={customer_id} | "
+            f"first_name={first_name} | last_name={last_name or '(none)'}"
+        )
+
+        # Call manage_customer to update the database
+        try:
+            update_data = {
+                "customer_id": customer_id,
+                "first_name": first_name,
+            }
+            if last_name:
+                update_data["last_name"] = last_name
+
+            result = await manage_customer.ainvoke({
+                "action": "update",
+                "phone": customer_phone,
+                "data": update_data,
+            })
+
+            if isinstance(result, dict) and result.get("error"):
+                logger.error(f"manage_customer update failed: {result.get('error')}")
+                return f"Lo siento, no pude actualizar tu nombre. ¿Puedes intentarlo de nuevo?"
+
+            logger.info(f"Customer name updated successfully: {first_name}")
+
+            # Generate friendly confirmation response
+            display_name = f"{first_name} {last_name}".strip() if last_name else first_name
+            return f"¡Perfecto, {display_name}! 😊 ¿En qué puedo ayudarte?"
+
+        except Exception as e:
+            logger.error(f"Error updating customer name: {e}", exc_info=True)
+            return "Lo siento, ha habido un problema al actualizar tu nombre. ¿Puedes intentarlo de nuevo?"
+
+    async def _handle_fallback(self, intent: Intent) -> str:
+        """
+        Fallback to standard LLM handling when explicit handler cannot process.
+
+        Args:
+            intent: User intent
+
+        Returns:
+            LLM-generated response
+        """
+        from agent.tools import escalate_to_human, manage_customer, query_info, search_services
+
+        SAFE_TOOLS = [query_info, search_services, manage_customer, escalate_to_human]
+        llm_with_tools = self.llm.bind_tools(SAFE_TOOLS)
+
+        messages = self._build_messages(intent)
+        response = await llm_with_tools.ainvoke(messages)
+
+        if response.tool_calls:
+            messages.append(response)
+            for tool_call in response.tool_calls:
+                result = await self._execute_tool(tool_call)
+                messages.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
+
+            final_response = await llm_with_tools.ainvoke(messages)
+            return final_response.content
+
+        return response.content
