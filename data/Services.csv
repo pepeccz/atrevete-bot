@@ -1,7 +1,7 @@
 ID,Nombre,Categoría,Descripcion,Duracion,Disponible
 1,Tratamiento + Peinado Largo,Peluquería,"Tratamientos personalizado, lavado dermocapila, ritual facial y peinado",60,Si
 2,Tratamiento + Peinado Extra,Peluquería,"Tratamientos personalizado, lavado dermocapilar,ritual facial y peinado",90,Si
-3, Tratamiento + Peinado corto/medio,Peluquería,"tratamientos personalizado, lavado dermocapilar,ritual facial y peinado",60,Si
+3,Tratamiento + Peinado corto/medio,Peluquería,"tratamientos personalizado, lavado dermocapilar,ritual facial y peinado",60,Si
 4,Peinado Largo,Peluquería,"Lavado dermo capilar,ritual facial y peinado",60,Si
 5,Peinado Extra,Peluquería,"Lavado dermo capilar,ritual facial y peinado",90,Si
 6,Peinado Corto – Medio,Peluquería,"Lavado dermo capilar,ritual facial y peinado",60,Si
@@ -26,45 +26,45 @@ ID,Nombre,Categoría,Descripcion,Duracion,Disponible
 25,Corte + Peinado Largo,Peluquería,"Lavado dermo capilar, ritual facial  corte y peinado",60,Si
 26,Corte + Peinado Extra,Peluquería,"Lavado dermo capilar, ritual facial corte y peinado ",120,Si
 27,Corte + Peinado Corto – Medio,Peluquería,"Lavado dermo capilar, ritual facial y cortar peinado",60,Si
-28,Tinte de Pestañas,Estética,,60,Si
-29,Tinte + Permanente de Pestañas,Estética,,150,Si
-30,Permanente de Pestañas,Estética,,60,Si
-31,Peeling Corporal,Estética,,60,Si
-32,Pedicura Permanente + Bioterapia,Estética,,90,Si
-33,Masaje 60 min,Estética,,60,Si
-34,Masaje 30 min,Estética,,30,Si
-35,Maquillaje,Estética,,60,Si
-36,Manicura Permanente + Bioterapia de Manos,Estética,,60,Si
-37,Limar + Pintar Uñas de los Pies Permanente,Estética,,60,Si
-38,Limar + Pintar Uñas de los Pies,Estética,,30,Si
-39,Limar + Pintar Uñas de las Manos Permanente,Estética,,60,Si
-40,Limar + Pintar Uñas de las Manos,Estética,,30,Si
-41,Higiene de Espalda,Estética,,60,Si
-42,Depilación Pubis Completo,Estética,,30,Si
-43,Depilación Piernas Enteras,Estética,,60,Si
-44,Depilación Pecho,Estética,,30,Si
-45,Depilación Muslos,Estética,,30,Si
-46,Depilación Medias Piernas,Estética,,30,Si
-47,Depilación Lumbar,Estética,,30,Si
-48,Depilación Labios,Estética,,30,Si
-49,Depilación Ingles Brasileñas,Estética,,30,Si
-50,Depilación Ingles,Estética,,30,Si
-51,Depilación Glúteos,Estética,,30,Si
-52,Depilación Espalda,Estética,,30,Si
-53,Depilación Cejas,Estética,,30,Si
-54,Depilación Brazos Completos,Estética,,30,Si
-55,Depilación Brazo Medio,Estética,,30,Si
-56,Depilación Axilas,Estética,,30,Si
-57,Depilación Abdomen,Estética,,30,Si
-58,Bioterapia Vitalizadora,Estética,,60,Si
-59,Bioterapia Sensitiva,Estética,,60,Si
-60,Bioterapia Sculptor Completo,Estética,,60,Si
-61,Bioterapia Sculptor + Radiofrecuencia 30 min,Estética,,90,Si
-62,Bioterapia Podal,Estética,,60,Si
-63,Bioterapia Piernas Perfectas + Presoterapia,Estética,,90,Si
-64,Bioterapia Iluminante,Estética,,60,Si
-65,Bioterapia Detox,Estética,,60,Si
-66,Bioterapia de Senos,Estética,,60,Si
-67,Bioterapia de Manos,Estética,,30,Si
-68,Bioterapia + Radiofrecuencia 30 min,Estética,  ,90,Si
-69,Bioterapia + Radiofrecuencia 15 min,Estética,,90,Si
+28,Tinte de Pestañas,Estética,"Tratamiento para dar color a las pestañas de forma duradera",60,Si
+29,Tinte + Permanente de Pestañas,Estética,"Tratamiento combinado para dar color y curvatura a las pestañas",150,Si
+30,Permanente de Pestañas,Estética,"Tratamiento para dar curvatura natural y duradera a las pestañas",60,Si
+31,Peeling Corporal,Estética,"Exfoliación corporal profunda para renovar y suavizar la piel",60,Si
+32,Pedicura Permanente + Bioterapia,Estética,"Servicio de pedicura con esmalte permanente y tratamiento hidratante para pies",90,Si
+33,Masaje 60 min,Estética,"Masaje corporal relajante de 60 minutos para aliviar tensiones y estrés",60,Si
+34,Masaje 30 min,Estética,"Masaje corporal relajante de 30 minutos para aliviar tensiones",30,Si
+35,Maquillaje,Estética,"Servicio de maquillaje profesional para eventos y ocasiones especiales",60,Si
+36,Manicura Permanente + Bioterapia de Manos,Estética,"Servicio de manicura con esmalte permanente y tratamiento hidratante para manos",60,Si
+37,Limar + Pintar Uñas de los Pies Permanente,Estética,"Servicio de limado y esmaltado permanente de uñas de los pies",60,Si
+38,Limar + Pintar Uñas de los Pies,Estética,"Servicio básico de limado y esmaltado de uñas de los pies",30,Si
+39,Limar + Pintar Uñas de las Manos Permanente,Estética,"Servicio de limado y esmaltado permanente de uñas de las manos",60,Si
+40,Limar + Pintar Uñas de las Manos,Estética,"Servicio básico de limado y esmaltado de uñas de las manos",30,Si
+41,Higiene de Espalda,Estética,"Limpieza especializada y profunda de la zona de la espalda",60,Si
+42,Depilación Pubis Completo,Estética,"Depilación con cera de la zona del pubis completo",30,Si
+43,Depilación Piernas Enteras,Estética,"Depilación con cera de las piernas completas",60,Si
+44,Depilación Pecho,Estética,"Depilación con cera de la zona del pecho",30,Si
+45,Depilación Muslos,Estética,"Depilación con cera de la zona de los muslos",30,Si
+46,Depilación Medias Piernas,Estética,"Depilación con cera de las medias piernas",30,Si
+47,Depilación Lumbar,Estética,"Depilación con cera de la zona lumbar",30,Si
+48,Depilación Labios,Estética,"Depilación con cera del labio superior",30,Si
+49,Depilación Ingles Brasileñas,Estética,"Depilación con cera de la zona de ingles estilo brasileño",30,Si
+50,Depilación Ingles,Estética,"Depilación con cera de la zona de las ingles",30,Si
+51,Depilación Glúteos,Estética,"Depilación con cera de la zona de los glúteos",30,Si
+52,Depilación Espalda,Estética,"Depilación con cera de la zona de la espalda",30,Si
+53,Depilación Cejas,Estética,"Depilación con cera para dar forma a las cejas",30,Si
+54,Depilación Brazos Completos,Estética,"Depilación con cera de los brazos completos",30,Si
+55,Depilación Brazo Medio,Estética,"Depilación con cera de medio brazo",30,Si
+56,Depilación Axilas,Estética,"Depilación con cera de la zona de las axilas",30,Si
+57,Depilación Abdomen,Estética,"Depilación con cera de la zona del abdomen",30,Si
+58,Bioterapia Vitalizadora,Estética,"Tratamiento facial para generar vitalidad y energía a nivel celular. Alisa la piel, reduce arrugas, minimiza poros y aporta elasticidad",60,Si
+59,Bioterapia Sensitiva,Estética,"Tratamiento que refuerza la función protectora de la piel en casos sensibles o irritados. Calma, hidrata y equilibra el tono cutáneo",60,Si
+60,Bioterapia Sculptor Completo,Estética,"Reduce visiblemente los nódulos grasos de la celulitis. Estiliza la figura y minimiza la retención de líquidos",60,Si
+61,Bioterapia Sculptor + Radiofrecuencia 30 min,Estética,"Tratamiento anticelulítico combinado con radiofrecuencia de 30 minutos para potenciar resultados",90,Si
+62,Bioterapia Podal,Estética,"Tratamiento específico para pies cansados y fatigados. Hidrata y revitaliza",60,Si
+63,Bioterapia Piernas Perfectas + Presoterapia,Estética,"Drena toxinas, descongestiona, calma y reafirma las piernas combinando bioterapia con presoterapia",90,Si
+64,Bioterapia Iluminante,Estética,"Reduce o elimina manchas cutáneas de forma progresiva. Aclara pieles oscurecidas y regula la melanina",60,Si
+65,Bioterapia Detox,Estética,"Reequilibra los desórdenes provocados por exceso de grasa y deshidratación. Depura toxinas, regula seborrea y oxigena la piel",60,Si
+66,Bioterapia de Senos,Estética,"Aumenta de forma natural y progresiva el volumen del seno mejorando la hidratación e impulso energético",60,Si
+67,Bioterapia de Manos,Estética,"Tratamiento específico para hidratar y rejuvenecer las manos",30,Si
+68,Bioterapia + Radiofrecuencia 30 min,Estética,"Tratamiento facial combinado con radiofrecuencia de 30 minutos para potenciar resultados anti-edad",90,Si
+69,Bioterapia + Radiofrecuencia 15 min,Estética,"Tratamiento facial combinado con radiofrecuencia de 15 minutos para potenciar resultados anti-edad",90,Si
