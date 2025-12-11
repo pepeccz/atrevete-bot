@@ -28,6 +28,10 @@ class Settings(BaseSettings):
         default="redis://redis:6379/0",
         description="Redis connection string"
     )
+    REDIS_PASSWORD: str = Field(
+        default="",
+        description="Redis password for authentication (required in production)"
+    )
     USE_REDIS_STREAMS: bool = Field(
         default=True,
         description="Use Redis Streams instead of Pub/Sub for message delivery. "
@@ -111,7 +115,12 @@ class Settings(BaseSettings):
     )
     ADMIN_PASSWORD: str = Field(
         default="",
-        description="Admin panel password (min 12 chars recommended for production)"
+        description="Admin panel password in plain text (DEPRECATED: use ADMIN_PASSWORD_HASH instead)"
+    )
+    ADMIN_PASSWORD_HASH: str = Field(
+        default="",
+        description="Bcrypt hash of admin password. Generate with: "
+                    "python -c \"from passlib.hash import bcrypt; print(bcrypt.hash('your_password'))\""
     )
     ADMIN_JWT_SECRET: str = Field(
         default="",

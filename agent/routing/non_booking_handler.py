@@ -70,11 +70,12 @@ class NonBookingHandler:
             f"fsm_state={self.fsm.state.value}"
         )
 
-        # Import safe tools (no booking tools)
-        from agent.tools import escalate_to_human, query_info, search_services
+        # Import safe tools (no booking tools, but manage_customer for name updates)
+        from agent.tools import escalate_to_human, manage_customer, query_info, search_services
 
         # Bind safe tools only - no booking tools available
-        SAFE_TOOLS = [query_info, search_services, escalate_to_human]
+        # manage_customer is needed to update customer name when they provide it
+        SAFE_TOOLS = [query_info, search_services, manage_customer, escalate_to_human]
         llm_with_tools = self.llm.bind_tools(SAFE_TOOLS)
 
         # Build message history with FSM context
@@ -120,13 +121,66 @@ con el booking, mantén el contexto y recuérdale suavemente que puede continuar
 cuando esté listo.
 """
 
+        # Build first interaction context
+        is_first_interaction = self.state.get("is_first_interaction", False)
+        customer_needs_name = self.state.get("customer_needs_name", False)
+        customer_first_name = self.state.get("customer_first_name")
+        customer_phone = self.state.get("customer_phone", "")
+
+        first_interaction_context = f"""
+DATOS DEL CLIENTE:
+- Teléfono: {customer_phone}
+- Nombre actual: {customer_first_name or "(sin nombre)"}
+- is_first_interaction: {is_first_interaction}
+- customer_needs_name: {customer_needs_name}
+
+REGLAS DE SALUDO:
+"""
+        if is_first_interaction:
+            if customer_needs_name:
+                first_interaction_context += """
+⚠️ PRIMERA INTERACCIÓN - NOMBRE NO LEGIBLE
+El nombre de WhatsApp del usuario contiene números o emojis, no es un nombre real.
+DEBES:
+1. Presentarte como Maite
+2. Preguntar: "¿Con quién tengo el gusto de hablar?"
+3. NO ofrecer servicios aún, espera a que te dé su nombre
+4. Cuando te dé su nombre, usa manage_customer para actualizarlo
+
+Ejemplo de respuesta:
+"¡Hola! 🌸 Soy Maite, la asistente virtual de Atrévete Peluquería.
+¿Con quién tengo el gusto de hablar?"
+"""
+            else:
+                first_interaction_context += f"""
+⚠️ PRIMERA INTERACCIÓN - NOMBRE LEGIBLE
+El nombre de WhatsApp parece legible: {customer_first_name}
+DEBES:
+1. Presentarte como Maite
+2. Confirmar el nombre: "¿Puedo llamarte *{customer_first_name}*?"
+3. Preguntar en qué puedes ayudar
+
+Ejemplo de respuesta:
+"¡Hola! 🌸 Soy Maite, la asistente virtual de Atrévete Peluquería.
+¿Puedo llamarte *{customer_first_name}*? ¿En qué puedo ayudarte hoy?"
+"""
+        else:
+            first_interaction_context += f"""
+✅ CLIENTE RECURRENTE
+El usuario ya ha interactuado antes. Nombre: {customer_first_name or "Cliente"}
+Saluda de forma natural: "¡Hola de nuevo, {customer_first_name or 'amigo'}! 😊 ¿En qué puedo ayudarte?"
+"""
+
         # System message with role and context
         system_prompt = f"""Eres Maite, asistente virtual amigable de la Peluquería Atrévete.
+
+{first_interaction_context}
 
 RESPONSABILIDADES:
 - Responder preguntas sobre servicios, horarios, políticas (usa query_info)
 - Buscar servicios específicos si el usuario pregunta (usa search_services)
 - Escalar a humano si es necesario (usa escalate_to_human)
+- ACTUALIZAR NOMBRE: Si el usuario te dice su nombre, usa manage_customer con action="update"
 
 IMPORTANTE:
 - NO puedes hacer reservas directamente (eso requiere intención de booking)
@@ -168,12 +222,13 @@ IMPORTANTE:
         """
         import json
 
-        from agent.tools import escalate_to_human, query_info, search_services
+        from agent.tools import escalate_to_human, manage_customer, query_info, search_services
 
         # Map tool names to implementations
         tool_map = {
             "query_info": query_info,
             "search_services": search_services,
+            "manage_customer": manage_customer,
             "escalate_to_human": escalate_to_human,
         }
 

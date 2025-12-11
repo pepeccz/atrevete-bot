@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
+# Minimum days in advance required for booking
+# Business rule: Bookings must be made at least 3 days in advance
+MINIMUM_DAYS = 3
+
 
 async def validate_category_consistency(service_ids: list[UUID]) -> dict:
     """
@@ -273,8 +277,6 @@ async def validate_3_day_rule(requested_date: datetime) -> dict:
 
     # Calculate days until appointment
     days_until = (requested_date_midnight - now).days
-
-    MINIMUM_DAYS = 3
 
     if days_until < MINIMUM_DAYS:
         logger.warning(

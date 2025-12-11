@@ -14,6 +14,7 @@ by Claude through tool calling. No explicit state transitions or routing logic n
 """
 
 import logging
+import re
 from typing import Any
 from uuid import UUID
 
@@ -29,6 +30,9 @@ from agent.state.schemas import ConversationState
 from agent.state.helpers import add_message, should_summarize
 from database.connection import get_async_session
 from database.models import Customer
+
+# Regex pattern for "readable" names (only letters, spaces, accents)
+NAME_READABLE_PATTERN = re.compile(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s]+$')
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -145,11 +149,17 @@ async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
     field (set by agent/main.py) and adds it to the messages history using
     add_message() helper, which handles FIFO windowing.
 
+    Also detects first interaction and validates customer name for greeting flow.
+
     Args:
         state: Current conversation state (with checkpoint loaded by LangGraph)
 
     Returns:
-        Updated state with new user message added to history
+        Updated state with:
+        - New user message added to history
+        - is_first_interaction: True if this is customer's first message
+        - customer_needs_name: True if name is not readable (numbers/emojis)
+        - customer_first_name: Current first_name from database
     """
     user_message = state.get("user_message")
     conversation_id = state.get("conversation_id", "unknown")
@@ -161,12 +171,17 @@ async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
         )
         return {}
 
+    # Detect first interaction BEFORE adding message to history
+    existing_messages = state.get("messages", [])
+    is_first_interaction = len(existing_messages) == 0
+
     logger.info(
         f"Processing incoming message for conversation {conversation_id}",
         extra={
             "conversation_id": conversation_id,
             "message_preview": user_message[:50],
-            "existing_messages_count": len(state.get("messages", []))
+            "existing_messages_count": len(existing_messages),
+            "is_first_interaction": is_first_interaction
         }
     )
 
@@ -175,6 +190,9 @@ async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
 
     # Ensure customer exists in database (auto-create if first interaction)
     customer_phone = state.get("customer_phone")
+    customer_first_name = None
+    customer_needs_name = False
+
     if customer_phone and not state.get("customer_id"):
         # Extract WhatsApp name from state (set by agent/main.py from Chatwoot webhook)
         whatsapp_name = state.get("customer_name", "Cliente")
@@ -182,12 +200,32 @@ async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
         try:
             customer_id = await ensure_customer_exists(customer_phone, whatsapp_name)
             updated_state["customer_id"] = customer_id
+
+            # Fetch customer data to get first_name for greeting
+            async with get_async_session() as session:
+                stmt = select(Customer).where(Customer.id == UUID(customer_id))
+                result = await session.execute(stmt)
+                customer = result.scalar_one_or_none()
+
+                if customer:
+                    customer_first_name = customer.first_name
+                    # Check if name is "readable" (only letters/spaces/accents)
+                    name_is_readable = bool(
+                        customer_first_name
+                        and NAME_READABLE_PATTERN.match(customer_first_name)
+                    )
+                    # Need name if first interaction AND name is not readable
+                    customer_needs_name = is_first_interaction and not name_is_readable
+
             logger.info(
                 f"Customer ensured for conversation {conversation_id}",
                 extra={
                     "customer_id": str(customer_id),
                     "phone": customer_phone,
-                    "whatsapp_name": whatsapp_name
+                    "whatsapp_name": whatsapp_name,
+                    "customer_first_name": customer_first_name,
+                    "is_first_interaction": is_first_interaction,
+                    "customer_needs_name": customer_needs_name
                 }
             )
         except Exception as e:
@@ -196,6 +234,27 @@ async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
                 extra={"conversation_id": conversation_id}
             )
             # Continue processing - don't block the conversation
+    else:
+        # Customer already exists in state, fetch current first_name
+        customer_id = state.get("customer_id")
+        if customer_id:
+            try:
+                async with get_async_session() as session:
+                    stmt = select(Customer).where(Customer.id == UUID(str(customer_id)))
+                    result = await session.execute(stmt)
+                    customer = result.scalar_one_or_none()
+                    if customer:
+                        customer_first_name = customer.first_name
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch customer first_name: {e}",
+                    extra={"conversation_id": conversation_id}
+                )
+
+    # Set first interaction detection fields
+    updated_state["is_first_interaction"] = is_first_interaction
+    updated_state["customer_needs_name"] = customer_needs_name
+    updated_state["customer_first_name"] = customer_first_name
 
     # Clear user_message field after processing
     updated_state["user_message"] = None

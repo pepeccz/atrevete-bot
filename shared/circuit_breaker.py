@@ -183,7 +183,13 @@ async def call_with_breaker(
     Call async function with circuit breaker protection (native asyncio).
 
     pybreaker's call_async() requires Tornado which we don't use.
-    This provides equivalent functionality using native asyncio.
+    This provides simplified fail-fast functionality for asyncio.
+
+    Note: pybreaker doesn't have public methods for manual success/failure
+    tracking. This implementation provides basic circuit breaker behavior:
+    - Fail fast when circuit is OPEN
+    - On repeated failures, manually open the circuit
+    - Circuit auto-resets after reset_timeout via pybreaker internals
 
     Args:
         breaker: CircuitBreaker instance to use
@@ -200,40 +206,37 @@ async def call_with_breaker(
     """
     # Check if circuit is open (fail fast)
     if breaker.current_state == pybreaker.STATE_OPEN:
-        # Notify listeners of circuit breaker error
-        for listener in breaker._listeners:
-            listener.before_call(breaker, func)
+        logger.warning(f"Circuit breaker '{breaker.name}' is OPEN, failing fast")
         raise pybreaker.CircuitBreakerError(breaker)
-
-    # Notify listeners before call
-    for listener in breaker._listeners:
-        listener.before_call(breaker, func)
 
     try:
         # Execute the async function
         result = await func(*args, **kwargs)
 
-        # Record success
-        breaker.call_succeeded()
-
-        # Notify listeners of success
-        for listener in breaker._listeners:
-            listener.success(breaker)
+        # On success, close the circuit if it was half-open
+        if breaker.current_state == pybreaker.STATE_HALF_OPEN:
+            breaker.close()
+            logger.info(f"Circuit breaker '{breaker.name}' recovered, closing circuit")
 
         return result
 
     except pybreaker.CircuitBreakerError:
-        # Circuit breaker error - don't count as failure
+        # Circuit breaker error - just re-raise
         raise
 
     except Exception as e:
-        # Check if exception should be excluded from failure count
-        if breaker._is_system_error(e):
-            breaker.call_failed()
+        # Check if exception should count as failure
+        if breaker.is_system_error(e):
+            # Log the failure
+            logger.warning(
+                f"Circuit breaker '{breaker.name}' recorded failure: "
+                f"{type(e).__name__}: {e}"
+            )
 
-            # Notify listeners of failure
-            for listener in breaker._listeners:
-                listener.failure(breaker, e)
+            # If we're in half-open state and got a failure, open the circuit
+            if breaker.current_state == pybreaker.STATE_HALF_OPEN:
+                breaker.open()
+                logger.warning(f"Circuit breaker '{breaker.name}' reopened after failure in half-open state")
 
         raise
 

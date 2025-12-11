@@ -59,17 +59,25 @@ def get_redis_client() -> "redis.Redis[str]":
     settings = get_settings()
 
     try:
-        client = redis.from_url(
-            settings.REDIS_URL,
-            max_connections=20,  # Sufficient for 3 containers (api, agent, workers)
-            decode_responses=True,  # Automatically decode bytes to strings
-            retry_on_timeout=True,  # Retry on transient network timeouts
-            health_check_interval=30,  # Ping Redis every 30s to detect failures
-        )
+        # Build connection kwargs
+        conn_kwargs = {
+            "max_connections": 20,  # Sufficient for 3 containers (api, agent, workers)
+            "decode_responses": True,  # Automatically decode bytes to strings
+            "retry_on_timeout": True,  # Retry on transient network timeouts
+            "health_check_interval": 30,  # Ping Redis every 30s to detect failures
+        }
 
+        # Add password if configured (required in production)
+        if settings.REDIS_PASSWORD:
+            conn_kwargs["password"] = settings.REDIS_PASSWORD
+
+        client = redis.from_url(settings.REDIS_URL, **conn_kwargs)
+
+        # Log connection info (mask password presence)
+        auth_status = "with password" if settings.REDIS_PASSWORD else "NO PASSWORD (insecure)"
         logger.info(
             f"Redis client initialized: {settings.REDIS_URL} "
-            f"(max_connections=20, retry_on_timeout=True, health_check_interval=30s)"
+            f"({auth_status}, max_connections=20, retry_on_timeout=True, health_check_interval=30s)"
         )
         return client
 
@@ -330,10 +338,11 @@ async def read_from_stream(
         ) from e
 
     except RedisResponseError as e:
-        # Handle case where group doesn't exist yet
+        # Handle case where group doesn't exist yet - auto-create it
         if "NOGROUP" in str(e):
-            logger.warning(f"Consumer group '{group}' doesn't exist for stream '{stream}'")
-            return []
+            logger.warning(f"Consumer group '{group}' doesn't exist for stream '{stream}', creating it...")
+            await create_consumer_group(stream, group)
+            return []  # Return empty, next iteration will work
         raise
 
     except Exception as e:

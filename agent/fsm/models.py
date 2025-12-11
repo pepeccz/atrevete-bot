@@ -110,6 +110,8 @@ class Intent:
         raw_message: Original user message
         requires_tool: Whether this intent requires a tool call
         tool_name: Name of the tool to call (if requires_tool is True)
+        service_query: Cleaned service keywords extracted by LLM for search
+                      (e.g., "mechas" from "Holaaa quiero hacerme las mechas")
     """
 
     type: IntentType
@@ -118,6 +120,7 @@ class Intent:
     raw_message: str = ""
     requires_tool: bool = False
     tool_name: str | None = None
+    service_query: str | None = None
 
 
 @dataclass

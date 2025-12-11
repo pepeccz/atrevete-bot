@@ -22,12 +22,13 @@ services:
       start_period: 10s
 
   # pgAdmin - PostgreSQL management tool
+  # SECURITY: Requires PGADMIN_EMAIL and PGADMIN_PASSWORD in .env (no defaults)
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: atrevete-pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     ports:
       - "5050:80"
@@ -42,6 +43,7 @@ services:
     restart: unless-stopped
 
   # Redis cache and pub/sub (with RedisSearch for LangGraph checkpointer)
+  # SECURITY: Requires REDIS_PASSWORD in .env
   redis:
     image: redis/redis-stack:latest  # Pinned for reproducibility (2025-01)
     container_name: atrevete-redis
@@ -49,7 +51,8 @@ services:
     # Backup location: /data/dump.rdb inside container, persisted to Docker volume
     # AOF disabled since RDB snapshots sufficient for checkpoint recovery
     # Using redis-stack-server instead of redis-server to load modules (RedisJSON, RedisSearch, etc.)
-    command: redis-stack-server --save 900 1 --appendonly no --protected-mode no
+    # SECURITY: --requirepass enables authentication, removed --protected-mode no
+    command: redis-stack-server --requirepass ${REDIS_PASSWORD} --save 900 1 --appendonly no
     ports:
       - "6379:6379"
     volumes:
@@ -58,7 +61,7 @@ services:
       - atrevete-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -110,7 +113,7 @@ services:
       - atrevete-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import redis; r=redis.Redis(host='redis', port=6379); r.ping()\" || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import os; import redis; r=redis.Redis(host='redis', port=6379, password=os.environ.get('REDIS_PASSWORD')); r.ping()\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

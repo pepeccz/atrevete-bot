@@ -134,14 +134,16 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             f"confidence={intent.confidence:.2f}"
         )
 
-        # Store user_message as service_query when starting a booking
-        # This allows search_services to use the original message for fuzzy matching
-        # instead of hardcoded "servicios" query (Bug fix: wrong services shown)
+        # Store cleaned service_query when starting a booking
+        # Uses LLM-extracted keywords (e.g., "mechas" from "Holaaa quiero hacerme las mechas")
+        # Falls back to user_message if LLM didn't extract service_query
         if intent.type == IntentType.START_BOOKING:
-            fsm._collected_data["service_query"] = user_message
+            # Prefer LLM-cleaned query, fallback to raw message
+            service_query = intent.service_query or user_message
+            fsm._collected_data["service_query"] = service_query
             logger.info(
                 f"Stored service_query | conversation_id={conversation_id} | "
-                f"query={user_message[:50]}..."
+                f"query={service_query[:50]}... | source={'llm' if intent.service_query else 'fallback'}"
             )
 
     except (ValueError, KeyError) as e:

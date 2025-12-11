@@ -97,6 +97,15 @@ class BlockingEventType(str, PyEnum):
     PERSONAL = "personal"     # Asunto propio
 
 
+class NotificationType(str, PyEnum):
+    """Type of admin panel notification."""
+
+    APPOINTMENT_CREATED = "appointment_created"
+    APPOINTMENT_CANCELLED = "appointment_cancelled"
+    APPOINTMENT_CONFIRMED = "appointment_confirmed"
+    APPOINTMENT_COMPLETED = "appointment_completed"
+
+
 # ============================================================================
 # Core Models
 # ============================================================================
@@ -760,3 +769,68 @@ class Holiday(Base):
 
     def __repr__(self) -> str:
         return f"<Holiday(id={self.id}, date={self.date}, name='{self.name}')>"
+
+
+# ============================================================================
+# Admin Panel Models
+# ============================================================================
+
+
+class Notification(Base):
+    """
+    Notification model - Admin panel notifications.
+
+    Tracks appointment-related events for the admin notification center.
+    Notifications are created automatically when appointments change status.
+    """
+
+    __tablename__ = "notifications"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Notification type
+    type: Mapped[NotificationType] = mapped_column(
+        SQLEnum(
+            NotificationType,
+            name="notification_type",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+    )
+
+    # Content
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Entity reference (for navigation)
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    entity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True
+    )
+
+    # Read status
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_notifications_is_read", "is_read"),
+        Index("idx_notifications_created_at_desc", "created_at", postgresql_ops={"created_at": "DESC"}),
+        Index("idx_notifications_entity", "entity_type", "entity_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Notification(id={self.id}, type='{self.type.value}', is_read={self.is_read})>"

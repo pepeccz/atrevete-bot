@@ -89,8 +89,14 @@ def get_redis_checkpointer() -> BaseCheckpointSaver[Any]:
 
     logger.info(f"Creating Redis checkpointer with URL: {redis_url}")
 
-    # Create Redis async client (decode_responses=False for binary checkpoint data)
-    redis_client = Redis.from_url(redis_url, decode_responses=False)
+    # Build connection kwargs (decode_responses=False for binary checkpoint data)
+    conn_kwargs: dict[str, Any] = {"decode_responses": False}
+    if settings.REDIS_PASSWORD:
+        conn_kwargs["password"] = settings.REDIS_PASSWORD
+        logger.info("Redis checkpointer: using password authentication")
+
+    # Create Redis async client
+    redis_client = Redis.from_url(redis_url, **conn_kwargs)
 
     # Create AsyncRedisSaver with TTL configuration
     # TTL of 86400 seconds (24 hours) for automatic checkpoint expiration

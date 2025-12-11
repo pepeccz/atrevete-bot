@@ -109,3 +109,8 @@
 .fc .fc-button-primary:active {
   color: white !important;
 }
+
+/* FullCalendar Selection Highlight - Golden/Mustard Theme */
+.fc .fc-highlight {
+  background-color: rgba(215, 183, 86, 0.4) !important; /* #d7b756 with opacity */
+}

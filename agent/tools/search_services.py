@@ -24,6 +24,77 @@ from database.models import Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# SPANISH SERVICE SYNONYMS (Fallback for LLM normalization)
+# ============================================================================
+# Maps common Spanish verb forms and colloquial terms to service nouns.
+# This is a fallback in case LLM doesn't normalize correctly in intent_extractor.
+# The LLM should handle most cases, but this provides defense-in-depth.
+SPANISH_SERVICE_SYNONYMS: dict[str, str] = {
+    # Verb forms → service nouns
+    "teñir": "tinte color",
+    "teñirme": "tinte color",
+    "teñirmelo": "tinte color",
+    "teñido": "tinte color",
+    "pintarme": "tinte color",
+    "pintármelo": "tinte color",
+    "cortar": "corte",
+    "cortarme": "corte",
+    "cortármelo": "corte",
+    "peinar": "peinado",
+    "peinarme": "peinado",
+    "depilar": "depilación",
+    "depilarme": "depilación",
+    "maquillar": "maquillaje",
+    "maquillarme": "maquillaje",
+    "alisar": "alisado",
+    "alisarme": "alisado",
+    "rizar": "permanente",
+    "rizarme": "permanente",
+    # Colloquial terms
+    "raparme": "corte rapado",
+    "pelo": "",  # Remove generic "pelo" as it adds noise
+    "cabello": "",  # Remove generic "cabello"
+}
+
+
+def _expand_synonyms(query: str) -> str:
+    """
+    Expand query terms using synonym mapping.
+
+    This is a fallback for cases where LLM didn't normalize verb forms
+    in the intent_extractor. It maps common Spanish verb forms to
+    service nouns for better fuzzy matching.
+
+    Args:
+        query: Original search query
+
+    Returns:
+        Expanded query with synonyms applied
+
+    Example:
+        >>> _expand_synonyms("teñir pelo")
+        "tinte color"
+    """
+    words = query.lower().split()
+    expanded = []
+
+    for word in words:
+        synonym = SPANISH_SERVICE_SYNONYMS.get(word)
+        if synonym is not None:
+            if synonym:  # Non-empty synonym
+                expanded.append(synonym)
+            # Empty synonym = skip word (e.g., "pelo")
+        else:
+            expanded.append(word)
+
+    result = " ".join(expanded)
+
+    if result != query.lower():
+        logger.info(f"Synonym expansion: '{query}' → '{result}'")
+
+    return result
+
 
 class SearchServicesSchema(BaseModel):
     """Schema for search_services tool parameters."""
@@ -171,8 +242,21 @@ async def search_services(
                 "message": "No hay servicios disponibles en este momento"
             }
 
-        # Prepare choices as dict for fuzzy matching: {service_name: service_object}
-        choices_dict = {s.name: s for s in services}
+        # Prepare choices for fuzzy matching: include name + description for better matching
+        # This allows "mechas" to match services where description mentions "mechas"
+        # Format: "Service Name | Description excerpt..." for search, mapped back to service
+        search_strings: dict[str, Service] = {}
+        for s in services:
+            # Combine name + description (truncated) for comprehensive matching
+            if s.description:
+                search_text = f"{s.name} | {s.description[:100]}"
+            else:
+                search_text = s.name
+            search_strings[search_text] = s
+
+        # Apply synonym expansion (fallback for LLM normalization)
+        # This handles cases like "teñir pelo" → "tinte color" if LLM didn't normalize
+        expanded_query = _expand_synonyms(query)
 
         # Use WRatio scorer: best for natural language queries with fuzzy matching
         # WRatio automatically selects the best comparison method and handles:
@@ -180,16 +264,16 @@ async def search_services(
         # - Short queries: "corte" → "Corte de Caballero"
         # - Typos and partial matches
         matches = process.extract(
-            query,
-            choices_dict.keys(),  # Compare against service names only
+            expanded_query,  # Use expanded query with synonyms applied
+            search_strings.keys(),  # Compare against name + description
             scorer=fuzz.WRatio,
-            score_cutoff=45,  # Lower threshold for better recall (natural language)
+            score_cutoff=55,  # Balanced threshold: filters noise while allowing fuzzy matches
             limit=max_results
         )
 
         logger.info(
-            f"Found {len(matches)} fuzzy matches for query='{query}' " +
-            f"(scorer=WRatio, score_cutoff=45, limit={max_results})"
+            f"Found {len(matches)} fuzzy matches | original='{query}' | expanded='{expanded_query}' | "
+            f"scorer=WRatio | score_cutoff=55 | limit={max_results}"
         )
 
         # Step 3: Format results
@@ -204,12 +288,13 @@ async def search_services(
         # Extract matched services and scores (v3.2: simplified output to save tokens)
         matched_services = []
         for match in matches:
-            service_name = match[0]  # Matched service name
+            search_text = match[0]  # Matched search string (name | description)
             match_score = match[1]  # Fuzzy match score
-            service_obj = choices_dict[service_name]  # Get service object from dict
+            service_obj = search_strings[search_text]  # Get service object from mapping
 
             matched_services.append({
                 "name": service_obj.name,
+                "description": service_obj.description[:150] if service_obj.description else None,
                 "duration_minutes": service_obj.duration_minutes,
                 "category": service_obj.category.value,
                 "match_score": int(match_score)  # Add fuzzy match score for transparency

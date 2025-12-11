@@ -10,16 +10,18 @@ Provides REST endpoints for:
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Annotated, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytz
 from dateutil.parser import parse as parse_datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
+from passlib.hash import bcrypt
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import JSONB
@@ -36,6 +38,8 @@ from database.models import (
     ConversationHistory,
     Customer,
     Holiday,
+    Notification,
+    NotificationType,
     Policy,
     Service,
     Stylist,
@@ -50,49 +54,168 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 # Security
 # =============================================================================
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)  # auto_error=False allows cookie fallback
 settings = get_settings()
 
 # JWT Configuration
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 24
+JWT_EXPIRATION_HOURS = 4  # Reduced from 24h for security
+JWT_COOKIE_NAME = "admin_token"  # HttpOnly cookie name
+JWT_COOKIE_SECURE = True  # Set to False for local development without HTTPS
+JWT_COOKIE_SAMESITE = "lax"  # "strict" may break some OAuth flows
 
 
 def get_jwt_secret() -> str:
-    """Get JWT secret from settings."""
+    """
+    Get JWT secret from settings.
+
+    Raises:
+        RuntimeError: If ADMIN_JWT_SECRET is not set in environment
+    """
     secret = getattr(settings, "ADMIN_JWT_SECRET", None)
     if not secret:
-        # Fallback for development - use a default secret
-        logger.warning("ADMIN_JWT_SECRET not set, using development fallback")
-        return "dev-secret-change-in-production-min-32-chars"
+        raise RuntimeError(
+            "ADMIN_JWT_SECRET must be set in environment variables. "
+            "Generate a secure secret with: openssl rand -hex 32"
+        )
     return secret
 
 
-def get_admin_credentials() -> tuple[str, str]:
-    """Get admin credentials from settings."""
-    username = getattr(settings, "ADMIN_USERNAME", "admin")
-    password = getattr(settings, "ADMIN_PASSWORD", None)
-    if not password:
-        # Fallback for development
-        logger.warning("ADMIN_PASSWORD not set, using development fallback")
-        password = "admin123"
-    return username, password
+def get_admin_credentials() -> tuple[str, str | None, str | None]:
+    """
+    Get admin credentials from settings.
+
+    Returns:
+        Tuple of (username, password_plain, password_hash)
+        - password_hash is preferred if set (more secure)
+        - password_plain is used as fallback (DEPRECATED, logs warning)
+
+    Raises:
+        RuntimeError: If ADMIN_USERNAME or neither password option is set
+    """
+    username = getattr(settings, "ADMIN_USERNAME", None)
+    password_plain = getattr(settings, "ADMIN_PASSWORD", None) or None
+    password_hash = getattr(settings, "ADMIN_PASSWORD_HASH", None) or None
+
+    if not username:
+        raise RuntimeError(
+            "ADMIN_USERNAME must be set in environment variables."
+        )
+
+    if not password_hash and not password_plain:
+        raise RuntimeError(
+            "Either ADMIN_PASSWORD_HASH (recommended) or ADMIN_PASSWORD must be set. "
+            "Generate hash with: python -c \"from passlib.hash import bcrypt; print(bcrypt.hash('your_password'))\""
+        )
+
+    if password_plain and not password_hash:
+        logger.warning(
+            "ADMIN_PASSWORD (plain text) is deprecated. "
+            "Use ADMIN_PASSWORD_HASH for secure password storage."
+        )
+
+    return username, password_plain, password_hash
 
 
-def create_access_token(username: str) -> str:
-    """Create JWT access token."""
-    expires = datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS)
+def verify_admin_password(password_input: str, password_plain: str | None, password_hash: str | None) -> bool:
+    """
+    Verify admin password using bcrypt hash or plain text fallback.
+
+    Args:
+        password_input: Password provided by user
+        password_plain: Plain text password (DEPRECATED)
+        password_hash: Bcrypt hash of password (preferred)
+
+    Returns:
+        True if password matches, False otherwise
+    """
+    # Prefer bcrypt hash verification (secure)
+    if password_hash:
+        try:
+            return bcrypt.verify(password_input, password_hash)
+        except Exception as e:
+            logger.error(f"Error verifying password hash: {e}")
+            return False
+
+    # Fallback to plain text comparison (insecure, deprecated)
+    if password_plain:
+        # Use constant-time comparison to prevent timing attacks
+        import hmac
+        return hmac.compare_digest(password_input, password_plain)
+
+    return False
+
+
+def create_access_token(username: str) -> tuple[str, str]:
+    """
+    Create JWT access token with proper Unix timestamps.
+
+    Returns:
+        Tuple of (encoded_token, jti) for potential token tracking/revocation
+    """
+    now = int(time.time())
+    expires = now + (JWT_EXPIRATION_HOURS * 3600)
+    jti = str(uuid4())  # Unique token ID for revocation support
+
     payload = {
         "sub": username,
-        "exp": expires,
-        "iat": datetime.utcnow(),
+        "exp": expires,  # Unix timestamp (required by JWT spec)
+        "iat": now,  # Unix timestamp (issued at)
+        "jti": jti,  # JWT ID for token revocation tracking
         "type": "admin",
     }
-    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+    token = jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+    return token, jti
+
+
+async def check_token_blacklist(jti: str) -> bool:
+    """Check if token JTI is blacklisted (revoked)."""
+    from shared.redis_client import get_redis_client
+
+    try:
+        redis_client = get_redis_client()
+        result = await redis_client.get(f"token_blacklist:{jti}")
+        return result is not None
+    except Exception as e:
+        logger.error(f"Error checking token blacklist: {e}")
+        # Fail open on Redis errors to avoid blocking all requests
+        return False
+
+
+async def add_token_to_blacklist(jti: str, exp: int) -> bool:
+    """
+    Add token JTI to blacklist with TTL until token expiration.
+
+    Args:
+        jti: JWT ID to blacklist
+        exp: Token expiration timestamp (Unix)
+
+    Returns:
+        True if added successfully, False otherwise
+    """
+    from shared.redis_client import get_redis_client
+    import time
+
+    try:
+        redis_client = get_redis_client()
+        ttl = max(0, exp - int(time.time()))  # Remaining time until expiration
+        if ttl > 0:
+            await redis_client.setex(f"token_blacklist:{jti}", ttl, "1")
+            logger.info(f"Token {jti[:8]}... added to blacklist (TTL: {ttl}s)")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Error adding token to blacklist: {e}")
+        return False
 
 
 def verify_token(token: str) -> dict[str, Any]:
-    """Verify JWT token and return payload."""
+    """
+    Verify JWT token and return payload.
+
+    Note: This is synchronous for compatibility with HTTPBearer dependency.
+    Blacklist check is done asynchronously in get_current_user.
+    """
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "admin":
@@ -109,10 +232,44 @@ def verify_token(token: str) -> dict[str, Any]:
 
 
 async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+    admin_token: Annotated[str | None, Cookie()] = None,
 ) -> dict[str, Any]:
-    """Dependency to get current authenticated user."""
-    return verify_token(credentials.credentials)
+    """
+    Dependency to get current authenticated user.
+
+    Supports two authentication methods (in priority order):
+    1. HttpOnly cookie (recommended, XSS-safe)
+    2. Authorization header (for API clients/mobile apps)
+
+    Verifies JWT signature and checks token blacklist for revoked tokens.
+    """
+    # Try to get token from cookie first (more secure)
+    token = admin_token
+
+    # Fall back to Authorization header
+    if not token and credentials:
+        token = credentials.credentials
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = verify_token(token)
+
+    # Check if token is blacklisted (revoked via logout)
+    jti = payload.get("jti")
+    if jti and await check_token_blacklist(jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+        )
+
+    return payload
 
 
 # =============================================================================
@@ -227,29 +384,128 @@ class PaginatedResponse(BaseModel):
 
 
 # =============================================================================
+# Search & Notification Models
+# =============================================================================
+
+
+class SearchResultItem(BaseModel):
+    id: str
+    type: str  # 'customer', 'appointment', 'service', 'stylist'
+    title: str
+    subtitle: str | None = None
+    url: str  # Frontend route to navigate to
+
+
+class GlobalSearchResponse(BaseModel):
+    customers: list[SearchResultItem]
+    appointments: list[SearchResultItem]
+    services: list[SearchResultItem]
+    stylists: list[SearchResultItem]
+    total: int
+
+
+class NotificationResponse(BaseModel):
+    id: str
+    type: str
+    title: str
+    message: str
+    entity_type: str
+    entity_id: str | None
+    is_read: bool
+    created_at: datetime
+    read_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class NotificationsListResponse(BaseModel):
+    items: list[NotificationResponse]
+    unread_count: int
+    total: int
+
+
+# =============================================================================
 # Auth Endpoints
 # =============================================================================
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
-    """Authenticate admin user and return JWT token."""
-    admin_username, admin_password = get_admin_credentials()
+async def login(request: LoginRequest, response: Response):
+    """
+    Authenticate admin user and return JWT token.
 
-    if request.username != admin_username or request.password != admin_password:
+    Sets HttpOnly cookie for browser-based clients (XSS-safe).
+    Also returns token in response body for API clients.
+    """
+    admin_username, password_plain, password_hash = get_admin_credentials()
+
+    # Verify username
+    if request.username != admin_username:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
 
-    token = create_access_token(request.username)
+    # Verify password using bcrypt hash (preferred) or plain text (deprecated)
+    if not verify_admin_password(request.password, password_plain, password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+
+    token, _jti = create_access_token(request.username)
+
+    # Set HttpOnly cookie for browser clients (XSS-safe)
+    response.set_cookie(
+        key=JWT_COOKIE_NAME,
+        value=token,
+        httponly=True,  # Not accessible via JavaScript
+        secure=JWT_COOKIE_SECURE,  # Only sent over HTTPS
+        samesite=JWT_COOKIE_SAMESITE,  # CSRF protection
+        max_age=JWT_EXPIRATION_HOURS * 3600,
+        path="/api/admin",  # Scope to admin routes only
+    )
+
+    # Also return token in body for API clients (mobile apps, etc.)
     return LoginResponse(access_token=token)
 
 
-@router.get("/auth/me", response_model=UserResponse)
-async def get_me(current_user: Annotated[dict, Depends(get_current_user)]):
-    """Get current authenticated user info."""
-    return UserResponse(username=current_user["sub"])
+@router.post("/auth/logout")
+async def logout(
+    response: Response,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Logout user by adding token to blacklist and clearing cookie.
+
+    The token's JTI (JWT ID) is added to Redis with TTL matching token expiration.
+    Subsequent requests with this token will be rejected.
+    """
+    jti = current_user.get("jti")
+    exp = current_user.get("exp")
+
+    # Clear the HttpOnly cookie
+    response.delete_cookie(
+        key=JWT_COOKIE_NAME,
+        path="/api/admin",
+        httponly=True,
+        secure=JWT_COOKIE_SECURE,
+        samesite=JWT_COOKIE_SAMESITE,
+    )
+
+    if not jti or not exp:
+        # Token doesn't have jti claim (old token format)
+        logger.warning("Logout attempted with token missing jti/exp claims")
+        return {"message": "Logged out (token will remain valid until expiration)"}
+
+    success = await add_token_to_blacklist(jti, exp)
+
+    if success:
+        return {"message": "Successfully logged out"}
+    else:
+        # Return success anyway - don't expose internal errors
+        return {"message": "Logged out"}
 
 
 # =============================================================================
@@ -1371,6 +1627,13 @@ async def create_appointment(
                 f"Google Calendar push error for appointment {new_appointment.id}: {e} (booking still valid)"
             )
 
+        # Create notification for new appointment
+        try:
+            await create_notification(session, NotificationType.APPOINTMENT_CREATED, new_appointment)
+            await session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to create notification for appointment {new_appointment.id}: {e}")
+
         return {
             "id": str(new_appointment.id),
             "customer_id": str(new_appointment.customer_id),
@@ -1477,6 +1740,9 @@ async def update_appointment(
         if not appointment:
             raise HTTPException(status_code=404, detail="Appointment not found")
 
+        # Track old status for notification
+        old_status = appointment.status
+
         # Update fields if provided
         if request.stylist_id is not None:
             # Verify stylist exists
@@ -1519,6 +1785,23 @@ async def update_appointment(
 
         await session.commit()
         await session.refresh(appointment)
+
+        # Create notification for status change
+        if request.status is not None and appointment.status != old_status:
+            notification_type = None
+            if appointment.status == AppointmentStatus.CONFIRMED and old_status != AppointmentStatus.CONFIRMED:
+                notification_type = NotificationType.APPOINTMENT_CONFIRMED
+            elif appointment.status == AppointmentStatus.CANCELLED:
+                notification_type = NotificationType.APPOINTMENT_CANCELLED
+            elif appointment.status == AppointmentStatus.COMPLETED:
+                notification_type = NotificationType.APPOINTMENT_COMPLETED
+
+            if notification_type:
+                try:
+                    await create_notification(session, notification_type, appointment)
+                    await session.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to create notification for appointment {appointment.id}: {e}")
 
         # Sync with Google Calendar if event exists
         if appointment.google_calendar_event_id:
@@ -2712,3 +2995,257 @@ async def get_conversation(
             "summary": conversation.summary,
             "created_at": conversation.created_at.isoformat(),
         }
+
+
+# =============================================================================
+# Global Search Endpoint
+# =============================================================================
+
+
+@router.get("/search", response_model=GlobalSearchResponse)
+async def global_search(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    q: str = "",
+    limit: int = 5,
+):
+    """
+    Global search across all entities.
+
+    Searches:
+    - Customers: phone, first_name, last_name
+    - Appointments: first_name, last_name, notes (last 90 days)
+    - Services: name
+    - Stylists: name
+
+    Returns top N results per category, grouped by type.
+    """
+    if not q or len(q) < 2:
+        return GlobalSearchResponse(
+            customers=[], appointments=[], services=[], stylists=[], total=0
+        )
+
+    search_pattern = f"%{q}%"
+    results = GlobalSearchResponse(
+        customers=[], appointments=[], services=[], stylists=[], total=0
+    )
+
+    async with get_async_session() as session:
+        # Search Customers
+        customers_query = select(Customer).where(
+            (Customer.phone.ilike(search_pattern))
+            | (Customer.first_name.ilike(search_pattern))
+            | (Customer.last_name.ilike(search_pattern))
+        ).limit(limit)
+
+        customers_result = await session.execute(customers_query)
+        for c in customers_result.scalars().all():
+            results.customers.append(SearchResultItem(
+                id=str(c.id),
+                type="customer",
+                title=f"{c.first_name} {c.last_name or ''}".strip(),
+                subtitle=c.phone,
+                url=f"/customers?highlight={c.id}",
+            ))
+
+        # Search Appointments (recent 90 days)
+        ninety_days_ago = datetime.utcnow() - timedelta(days=90)
+        appointments_query = (
+            select(Appointment)
+            .where(
+                Appointment.start_time >= ninety_days_ago,
+                (Appointment.first_name.ilike(search_pattern))
+                | (Appointment.last_name.ilike(search_pattern))
+                | (Appointment.notes.ilike(search_pattern))
+            )
+            .order_by(Appointment.start_time.desc())
+            .limit(limit)
+        )
+
+        appointments_result = await session.execute(appointments_query)
+        for a in appointments_result.scalars().all():
+            results.appointments.append(SearchResultItem(
+                id=str(a.id),
+                type="appointment",
+                title=f"{a.first_name} {a.last_name or ''}".strip(),
+                subtitle=a.start_time.strftime("%d/%m/%Y %H:%M"),
+                url=f"/appointments?highlight={a.id}",
+            ))
+
+        # Search Services
+        services_query = (
+            select(Service)
+            .where(
+                Service.is_active == True,
+                Service.name.ilike(search_pattern)
+            )
+            .limit(limit)
+        )
+
+        services_result = await session.execute(services_query)
+        for s in services_result.scalars().all():
+            results.services.append(SearchResultItem(
+                id=str(s.id),
+                type="service",
+                title=s.name,
+                subtitle=f"{s.duration_minutes} min - {s.category.value}",
+                url=f"/services?highlight={s.id}",
+            ))
+
+        # Search Stylists
+        stylists_query = (
+            select(Stylist)
+            .where(
+                Stylist.is_active == True,
+                Stylist.name.ilike(search_pattern)
+            )
+            .limit(limit)
+        )
+
+        stylists_result = await session.execute(stylists_query)
+        for st in stylists_result.scalars().all():
+            results.stylists.append(SearchResultItem(
+                id=str(st.id),
+                type="stylist",
+                title=st.name,
+                subtitle=st.category.value,
+                url=f"/stylists?highlight={st.id}",
+            ))
+
+        results.total = (
+            len(results.customers) + len(results.appointments) +
+            len(results.services) + len(results.stylists)
+        )
+
+        return results
+
+
+# =============================================================================
+# Notifications Endpoints
+# =============================================================================
+
+
+async def create_notification(
+    session: AsyncSession,
+    notification_type: NotificationType,
+    appointment: Appointment,
+) -> None:
+    """Create a notification for appointment events."""
+    titles = {
+        NotificationType.APPOINTMENT_CREATED: "Nueva cita",
+        NotificationType.APPOINTMENT_CANCELLED: "Cita cancelada",
+        NotificationType.APPOINTMENT_CONFIRMED: "Cita confirmada",
+        NotificationType.APPOINTMENT_COMPLETED: "Cita completada",
+    }
+
+    customer_name = f"{appointment.first_name} {appointment.last_name or ''}".strip()
+    date_str = appointment.start_time.strftime("%d/%m/%Y %H:%M")
+
+    messages = {
+        NotificationType.APPOINTMENT_CREATED: f"{customer_name} ha reservado una cita para el {date_str}",
+        NotificationType.APPOINTMENT_CANCELLED: f"La cita de {customer_name} del {date_str} ha sido cancelada",
+        NotificationType.APPOINTMENT_CONFIRMED: f"{customer_name} ha confirmado su cita del {date_str}",
+        NotificationType.APPOINTMENT_COMPLETED: f"La cita de {customer_name} del {date_str} ha sido completada",
+    }
+
+    notification = Notification(
+        type=notification_type,
+        title=titles[notification_type],
+        message=messages[notification_type],
+        entity_type="appointment",
+        entity_id=appointment.id,
+    )
+    session.add(notification)
+
+
+@router.get("/notifications", response_model=NotificationsListResponse)
+async def list_notifications(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    limit: int = 20,
+    include_read: bool = False,
+):
+    """
+    List notifications for the admin panel.
+
+    Returns notifications sorted by created_at DESC (newest first).
+    Unread notifications are returned first by default.
+    """
+    async with get_async_session() as session:
+        # Base query
+        query = select(Notification).order_by(
+            Notification.is_read.asc(),  # Unread first
+            Notification.created_at.desc()
+        )
+
+        if not include_read:
+            query = query.where(Notification.is_read == False)
+
+        query = query.limit(limit)
+
+        result = await session.execute(query)
+        notifications = result.scalars().all()
+
+        # Get unread count
+        unread_query = select(func.count(Notification.id)).where(
+            Notification.is_read == False
+        )
+        unread_result = await session.execute(unread_query)
+        unread_count = unread_result.scalar() or 0
+
+        return NotificationsListResponse(
+            items=[
+                NotificationResponse(
+                    id=str(n.id),
+                    type=n.type.value,
+                    title=n.title,
+                    message=n.message,
+                    entity_type=n.entity_type,
+                    entity_id=str(n.entity_id) if n.entity_id else None,
+                    is_read=n.is_read,
+                    created_at=n.created_at,
+                    read_at=n.read_at,
+                )
+                for n in notifications
+            ],
+            unread_count=unread_count,
+            total=len(notifications),
+        )
+
+
+@router.put("/notifications/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Mark a single notification as read."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Notification).where(Notification.id == notification_id)
+        )
+        notification = result.scalar_one_or_none()
+
+        if not notification:
+            raise HTTPException(status_code=404, detail="Notification not found")
+
+        notification.is_read = True
+        notification.read_at = datetime.utcnow()
+        await session.commit()
+
+        return {"success": True}
+
+
+@router.put("/notifications/mark-all-read")
+async def mark_all_notifications_read(
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Mark all unread notifications as read."""
+    from sqlalchemy import update
+
+    async with get_async_session() as session:
+        await session.execute(
+            update(Notification)
+            .where(Notification.is_read == False)
+            .values(is_read=True, read_at=datetime.utcnow())
+        )
+        await session.commit()
+
+        return {"success": True}

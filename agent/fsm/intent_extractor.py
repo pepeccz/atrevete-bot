@@ -532,7 +532,8 @@ FORMATO DE RESPUESTA (JSON estricto):
         "last_name": "apellido si aplica",
         "notes": "notas/preferencias si aplica"
     }},
-    "confidence": 0.95
+    "confidence": 0.95,
+    "service_query": "palabras clave del servicio (ver reglas abajo)"
 }}
 
 REGLAS DE EXTRACCIÓN DE ENTIDADES:
@@ -584,6 +585,30 @@ REGLAS DE EXTRACCIÓN DE ENTIDADES:
   * Si el usuario dice "no", "ninguna", "no tengo" cuando se le piden notas → entities vacío {{}}
   * NOTA: El FSM maneja internamente el tracking de fases, solo extrae los datos
 - Para otros intents: entities puede estar vacío {{}}
+
+EXTRACCIÓN DE service_query (SIEMPRE rellenar cuando intent=start_booking o intent=faq sobre servicios):
+- Extrae SOLO las palabras clave del servicio que el usuario quiere
+- ELIMINA saludos (hola, holaaa, buenos días), frases de cortesía, y verbos auxiliares
+- NORMALIZA verbos a sustantivos de servicios (IMPORTANTE para búsqueda):
+  * teñir/teñirme/teñido/pintarme → "tinte" o "color"
+  * cortar/cortarme/cortármelo → "corte"
+  * peinar/peinarme → "peinado"
+  * depilar/depilarme → "depilación"
+  * maquillar/maquillarme → "maquillaje"
+  * alisar/alisarme → "alisado"
+  * rizar/rizarme → "permanente"
+- MANTÉN descriptores útiles junto al sustantivo normalizado:
+  * "teñirme el pelo rubio" → service_query: "tinte rubio" o "color rubio"
+  * "cortarme el pelo corto" → service_query: "corte corto"
+  * "quiero hacerme las mechas" → service_query: "mechas"
+- Ejemplos completos:
+  * "Holaaa quiero hacerme las mechas" → service_query: "mechas"
+  * "Buenos días, quisiera cortarme el pelo" → service_query: "corte"
+  * "Hola! Quiero teñirme el pelo" → service_query: "tinte" o "color"
+  * "Me gustaría tratamiento keratina" → service_query: "tratamiento keratina"
+  * "Quiero hacerme las uñas" → service_query: "uñas manicura"
+  * "Quiero depilarme las cejas" → service_query: "depilación cejas"
+- Si no hay servicio específico mencionado, dejar vacío: service_query: ""
 
 Responde SOLO con el JSON, sin explicaciones adicionales."""
 
@@ -761,6 +786,12 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
         # Parse confidence
         confidence = float(data.get("confidence", 0.0))
 
+        # Parse service_query (cleaned keywords for search_services)
+        service_query = data.get("service_query", "")
+        if service_query:
+            service_query = service_query.strip()
+            logger.info(f"Extracted service_query: '{service_query}'")
+
         # If confidence below threshold, return UNKNOWN
         if confidence < MIN_CONFIDENCE_THRESHOLD:
             logger.info(
@@ -772,6 +803,7 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
                 entities={},
                 confidence=confidence,
                 raw_message=raw_message,
+                service_query=service_query or None,
             )
 
         return Intent(
@@ -779,6 +811,7 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
             entities=entities,
             confidence=confidence,
             raw_message=raw_message,
+            service_query=service_query or None,
         )
 
     except (json.JSONDecodeError, KeyError, TypeError) as e:

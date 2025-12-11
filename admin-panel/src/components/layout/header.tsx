@@ -1,9 +1,8 @@
 "use client";
 
 import { ReactNode } from "react";
-import { Bell, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { GlobalSearch } from "./global-search";
+import { NotificationCenter } from "./notification-center";
 
 interface HeaderProps {
   title: string;
@@ -25,23 +24,11 @@ export function Header({ title, description, action }: HeaderProps) {
         {/* Page action button */}
         {action}
 
-        {/* Search */}
-        <div className="relative hidden md:block">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Buscar..."
-            className="w-64 pl-8"
-          />
-        </div>
+        {/* Global Search */}
+        <GlobalSearch />
 
         {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative">
-          <Bell className="h-5 w-5" />
-          <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground">
-            3
-          </span>
-        </Button>
+        <NotificationCenter />
       </div>
     </header>
   );

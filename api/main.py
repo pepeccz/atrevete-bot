@@ -38,7 +38,7 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 # Include webhook routers
@@ -105,10 +105,10 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     # Get origin from request
     origin = request.headers.get("origin", "")
 
-    # Build response
+    # Build response - NO detail to avoid leaking internal information
     response = JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "detail": str(exc)},
+        content={"error": "Internal server error"},
     )
 
     # Add CORS headers if origin is allowed
