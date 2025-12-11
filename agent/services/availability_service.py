@@ -43,7 +43,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
-from database.models import Appointment, AppointmentStatus, BlockingEvent, Holiday, Stylist
+from database.models import Appointment, AppointmentStatus, BlockingEvent, Holiday, Service, Stylist
 from shared.business_hours_validator import get_business_hours_for_day, is_date_closed
 
 logger = logging.getLogger(__name__)
@@ -313,7 +313,8 @@ async def get_available_slots(
     stylist_id: UUID,
     target_date: date | datetime,
     service_duration_minutes: int,
-    slot_interval_minutes: int = 15,
+    slot_interval_minutes: int | None = None,
+    pack_slots: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Get all available time slots for a stylist on a specific date.
@@ -321,11 +322,16 @@ async def get_available_slots(
     Generates candidate slots based on business hours, then filters out
     slots that conflict with appointments or blocking events.
 
+    **v4.2 Enhancement:** Slots are now packed adjacent to existing appointments
+    to minimize dead time and use service duration as minimum interval.
+
     Args:
         stylist_id: UUID of the stylist
         target_date: Date to check availability
         service_duration_minutes: Duration of the service in minutes
-        slot_interval_minutes: Interval between slot start times (default: 15 min)
+        slot_interval_minutes: Interval between slot start times.
+            If None, uses service_duration_minutes to avoid overlapping options.
+        pack_slots: If True (default), prioritize slots adjacent to existing appointments.
 
     Returns:
         List of available slots:
@@ -335,6 +341,7 @@ async def get_available_slots(
                 "end_time": "11:30",
                 "full_datetime": "2025-12-15T10:00:00+01:00",
                 "stylist_id": str,
+                "adjacent_priority": int,  # Lower = higher priority (0 = adjacent to appointment)
             }
         ]
 
@@ -348,6 +355,11 @@ async def get_available_slots(
         8  # Depends on busy periods
     """
     available_slots = []
+
+    # Use service duration as interval to avoid showing overlapping slots
+    # e.g., for 70-min service, don't show 10:00 AND 10:30
+    if slot_interval_minutes is None:
+        slot_interval_minutes = service_duration_minutes
 
     # Normalize to date
     if isinstance(target_date, datetime):
@@ -392,6 +404,13 @@ async def get_available_slots(
         # Get all busy periods for the day
         busy_periods = await get_busy_periods(stylist_id, day_start, day_end)
 
+        # Calculate adjacent times (slots that start right after existing appointments)
+        adjacent_times = set()
+        if pack_slots and busy_periods:
+            for period in busy_periods:
+                # Add end time of each busy period as a preferred slot start
+                adjacent_times.add(period["end"])
+
         # Generate slots
         current_slot = day_start
         while current_slot + timedelta(minutes=service_duration_minutes) <= day_end:
@@ -405,25 +424,145 @@ async def get_available_slots(
                     break
 
             if is_available:
+                # Calculate adjacent priority (0 = adjacent to appointment, higher = less priority)
+                adjacent_priority = 1  # Default: not adjacent
+                if current_slot in adjacent_times:
+                    adjacent_priority = 0  # Highest priority: starts right after appointment
+
                 available_slots.append({
                     "time": current_slot.strftime("%H:%M"),
                     "end_time": slot_end.strftime("%H:%M"),
                     "full_datetime": current_slot.isoformat(),
                     "stylist_id": str(stylist_id),
+                    "adjacent_priority": adjacent_priority,
                 })
 
             # Move to next slot
             current_slot += timedelta(minutes=slot_interval_minutes)
 
+        # Sort by adjacent priority (adjacent slots first) then by time
+        if pack_slots:
+            available_slots.sort(key=lambda s: (s["adjacent_priority"], s["time"]))
+
         logger.info(
             f"Found {len(available_slots)} available slots for stylist {stylist_id} "
-            f"on {check_date}"
+            f"on {check_date} (interval={slot_interval_minutes}min, pack={pack_slots})"
         )
         return available_slots
 
     except Exception as e:
         logger.error(f"Error getting available slots: {e}", exc_info=True)
         return []
+
+
+async def get_soonest_slot_any_stylist(
+    category: "ServiceCategory",
+    service_duration_minutes: int,
+    search_days: int = 7,
+    excluded_stylist_id: UUID | None = None,
+) -> dict[str, Any] | None:
+    """
+    Find the soonest available slot across ALL stylists in a category.
+
+    This is used for the "PRÓXIMO DISPONIBLE" option that shows the earliest
+    available slot regardless of which stylist has it.
+
+    Args:
+        category: Service category (HAIRDRESSING or AESTHETICS)
+        service_duration_minutes: Duration of the service in minutes
+        search_days: Maximum number of days to search (default: 7, extends to 14 if empty)
+        excluded_stylist_id: Optional stylist ID to exclude from search (if we want truly different)
+
+    Returns:
+        Soonest available slot dict with stylist info, or None if nothing found:
+        {
+            "time": "10:00",
+            "end_time": "11:30",
+            "date": "2025-12-15",
+            "day_name": "lunes",
+            "full_datetime": "2025-12-15T10:00:00+01:00",
+            "stylist_id": str,
+            "stylist_name": str,
+        }
+
+    Example:
+        >>> slot = await get_soonest_slot_any_stylist(
+        ...     category=ServiceCategory.HAIRDRESSING,
+        ...     service_duration_minutes=90
+        ... )
+        >>> slot
+        {"time": "10:00", "stylist_name": "Ana", ...}
+    """
+    from agent.tools.calendar_tools import get_stylists_by_category
+    from agent.validators.transaction_validators import MINIMUM_DAYS
+
+    # Spanish day names
+    day_names_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+    try:
+        # Get all stylists in category
+        stylists = await get_stylists_by_category(category)
+        if excluded_stylist_id:
+            stylists = [s for s in stylists if s.id != excluded_stylist_id]
+
+        if not stylists:
+            logger.warning(f"No stylists found for category {category}")
+            return None
+
+        # Start from 3-day minimum
+        now = datetime.now(MADRID_TZ)
+        search_start = now + timedelta(days=MINIMUM_DAYS)
+
+        # Try first search_days, then extend to 14 if nothing found
+        for max_days in [search_days, 14]:
+            for day_offset in range(max_days):
+                current_date = search_start + timedelta(days=day_offset)
+
+                # Skip holidays
+                holiday_name = await is_holiday(current_date)
+                if holiday_name:
+                    continue
+
+                # Skip closed days
+                if await is_date_closed(current_date):
+                    continue
+
+                # Check all stylists for this date
+                for stylist in stylists:
+                    slots = await get_available_slots(
+                        stylist_id=stylist.id,
+                        target_date=current_date,
+                        service_duration_minutes=service_duration_minutes,
+                        pack_slots=True,  # Prefer packed slots
+                    )
+
+                    if slots:
+                        # Return the first available slot (already sorted by priority)
+                        first_slot = slots[0]
+                        logger.info(
+                            f"Soonest slot found: {first_slot['time']} on {current_date.date()} "
+                            f"with {stylist.name}"
+                        )
+                        return {
+                            "time": first_slot["time"],
+                            "end_time": first_slot["end_time"],
+                            "date": current_date.strftime("%Y-%m-%d"),
+                            "day_name": day_names_es[current_date.weekday()],
+                            "full_datetime": first_slot["full_datetime"],
+                            "stylist_id": str(stylist.id),
+                            "stylist_name": stylist.name,
+                        }
+
+            # If we searched 7 days and found nothing, try 14
+            if max_days == search_days:
+                logger.info(f"No slots found in {search_days} days, extending search to 14 days")
+
+        logger.warning(f"No slots found within 14 days for category {category}")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error finding soonest slot: {e}", exc_info=True)
+        return None
 
 
 async def get_stylist_by_id(stylist_id: UUID) -> Optional[Stylist]:
@@ -517,9 +656,36 @@ async def get_calendar_events_for_range(
                 start_madrid = appt.start_time.astimezone(MADRID_TZ)
                 end_madrid = appt_end.astimezone(MADRID_TZ)
 
+                # Get service names for this appointment
+                if appt.service_ids:
+                    service_result = await session.execute(
+                        select(Service.name).where(Service.id.in_(appt.service_ids))
+                    )
+                    service_names = ", ".join([row[0] for row in service_result.fetchall()])
+                else:
+                    service_names = ""
+
+                # Determine emoji based on status
+                if appt.status == AppointmentStatus.PENDING:
+                    emoji = "🟡"
+                elif appt.status == AppointmentStatus.CONFIRMED:
+                    emoji = "🟢"
+                else:
+                    emoji = ""
+
+                # Build title: Emoji Name LastName - Services
+                title_parts = []
+                if emoji:
+                    title_parts.append(emoji)
+                full_name = f"{appt.first_name} {appt.last_name or ''}".strip()
+                title_parts.append(full_name)
+                if service_names:
+                    title_parts.append(f"- {service_names}")
+                title = " ".join(title_parts)
+
                 events.append({
                     "id": f"appt-{appt.id}",
-                    "title": f"{appt.first_name} {appt.last_name or ''}".strip(),
+                    "title": title,
                     "start": start_madrid.isoformat(),
                     "end": end_madrid.isoformat(),
                     "backgroundColor": "#7C3AED",  # Default violet

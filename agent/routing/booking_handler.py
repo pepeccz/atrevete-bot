@@ -265,22 +265,17 @@ class BookingHandler:
                             )
 
                     # Special handling for find_next_available:
-                    # It returns {"available_stylists": [{"slots": [...]}]}
-                    # We need to flatten all slots into a single "slots" list
+                    # v4.2: Returns {"soonest_any": {...}, "selected_stylist_slots": [...], ...}
+                    # We need to extract both for the template
                     if tool_call.name == "find_next_available":
-                        all_slots = []
-                        available_stylists = result.get("available_stylists", [])
-                        for stylist_data in available_stylists:
-                            stylist_slots = stylist_data.get("slots", [])
-                            all_slots.extend(stylist_slots)
-
                         # Format dates in Spanish for better UX
-                        # Convert "2025-12-09" to "9 de diciembre"
                         month_names = [
                             "enero", "febrero", "marzo", "abril", "mayo", "junio",
                             "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
                         ]
-                        for slot in all_slots:
+
+                        def format_slot_date(slot: dict) -> None:
+                            """Convert date from YYYY-MM-DD to Spanish format."""
                             if "date" in slot and isinstance(slot["date"], str):
                                 try:
                                     date_obj = datetime.strptime(slot["date"], "%Y-%m-%d")
@@ -288,10 +283,44 @@ class BookingHandler:
                                 except ValueError:
                                     pass  # Keep original format if parsing fails
 
+                        # v4.2: Handle soonest_any slot
+                        soonest_any = result.get("soonest_any")
+                        if soonest_any:
+                            format_slot_date(soonest_any)
+                            results["soonest_any"] = soonest_any
+
+                        # v4.2: Handle selected_stylist_slots
+                        selected_stylist_slots = result.get("selected_stylist_slots", [])
+                        for slot in selected_stylist_slots:
+                            format_slot_date(slot)
+                        results["selected_stylist_slots"] = selected_stylist_slots
+
+                        # Legacy: Also flatten all slots for backwards compatibility
+                        all_slots = []
+                        available_stylists = result.get("available_stylists", [])
+                        for stylist_data in available_stylists:
+                            stylist_slots = stylist_data.get("slots", [])
+                            for slot in stylist_slots:
+                                format_slot_date(slot)
+                            all_slots.extend(stylist_slots)
                         results["slots"] = all_slots
+
+                        # Build combined slots_shown list for slot resolution
+                        # Includes soonest_any (if exists) + selected_stylist_slots
+                        slots_shown = []
+                        if soonest_any:
+                            # Add soonest_any as option 1
+                            slots_shown.append(soonest_any)
+                        slots_shown.extend(selected_stylist_slots)
+
+                        # Store slots_shown in FSM for later resolution of slot_time
+                        # When user says "a las 10:30", we need to match against these slots
+                        self.fsm._collected_data["slots_shown"] = slots_shown
+
                         logger.info(
-                            f"Flattened {len(all_slots)} slots from "
-                            f"{len(available_stylists)} stylists"
+                            f"v4.2: soonest_any={soonest_any is not None}, "
+                            f"selected_stylist_slots={len(selected_stylist_slots)}, "
+                            f"slots_shown={len(slots_shown)} (stored in FSM)"
                         )
 
                 logger.info(

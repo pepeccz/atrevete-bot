@@ -113,6 +113,7 @@ async def push_appointment_to_gcal(
     start_time: datetime,
     duration_minutes: int,
     status: str = "pending",
+    customer_phone: str | None = None,
 ) -> Optional[str]:
     """
     Push an appointment to Google Calendar as a fire-and-forget operation.
@@ -156,13 +157,14 @@ async def push_appointment_to_gcal(
         # Calculate end time
         end_time = start_time + timedelta(minutes=duration_minutes)
 
-        # Build event summary with status emoji
+        # Build event summary with status emoji and phone
+        phone_suffix = f" - {customer_phone}" if customer_phone else ""
         if status == "pending":
-            summary = f"🟡 {customer_name} - {service_names}"
+            summary = f"🟡 {customer_name} - {service_names}{phone_suffix}"
         elif status == "confirmed":
-            summary = f"🟢 {customer_name} - {service_names}"
+            summary = f"🟢 {customer_name} - {service_names}{phone_suffix}"
         else:
-            summary = f"{customer_name} - {service_names}"
+            summary = f"{customer_name} - {service_names}{phone_suffix}"
 
         # Build event description
         description = (
@@ -391,6 +393,7 @@ async def update_appointment_in_gcal(
     start_time: datetime,
     duration_minutes: int,
     status: str = "confirmed",
+    customer_phone: str | None = None,
 ) -> bool:
     """
     Update an existing appointment in Google Calendar.
@@ -423,13 +426,14 @@ async def update_appointment_in_gcal(
         # Calculate end time
         end_time = start_time + timedelta(minutes=duration_minutes)
 
-        # Build event summary with status emoji
+        # Build event summary with status emoji and phone
+        phone_suffix = f" - {customer_phone}" if customer_phone else ""
         if status == "pending":
-            summary = f"🟡 {customer_name} - {service_names}"
+            summary = f"🟡 {customer_name} - {service_names}{phone_suffix}"
         elif status == "confirmed":
-            summary = f"🟢 {customer_name} - {service_names}"
+            summary = f"🟢 {customer_name} - {service_names}{phone_suffix}"
         else:
-            summary = f"{customer_name} - {service_names}"
+            summary = f"{customer_name} - {service_names}{phone_suffix}"
 
         # Build event description
         description = (

@@ -1569,7 +1569,7 @@ async def create_appointment(
             service_ids=request.service_ids,
             start_time=request.start_time,
             duration_minutes=total_duration,
-            status=AppointmentStatus.CONFIRMED,
+            status=AppointmentStatus.PENDING,
             first_name=request.first_name,
             last_name=request.last_name,
             notes=request.notes,
@@ -1605,7 +1605,7 @@ async def create_appointment(
                 service_names=service_names,
                 start_time=request.start_time,
                 duration_minutes=total_duration,
-                status="confirmed",  # Admin crea citas auto-confirmadas
+                status="pending",  # Admin crea citas pendientes (como WhatsApp)
             )
 
             if google_event_id:

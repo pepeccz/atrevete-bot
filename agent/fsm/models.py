@@ -28,6 +28,7 @@ class IntentType(str, Enum):
     CONFIRM_SERVICES = "confirm_services"
     SELECT_STYLIST = "select_stylist"
     SELECT_SLOT = "select_slot"
+    CONFIRM_STYLIST_CHANGE = "confirm_stylist_change"  # v4.2: Confirm when choosing different stylist
     PROVIDE_CUSTOMER_DATA = "provide_customer_data"
     USE_CUSTOMER_NAME = "use_customer_name"  # v6.0: User wants to use their name
     PROVIDE_THIRD_PARTY_BOOKING = "provide_third_party_booking"  # v6.0: Booking for someone else without name

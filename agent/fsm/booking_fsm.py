@@ -75,6 +75,8 @@ class BookingFSM:
             IntentType.SELECT_SLOT: BookingState.CUSTOMER_DATA,
             # Allow re-checking availability with different dates while in slot selection
             IntentType.CHECK_AVAILABILITY: BookingState.SLOT_SELECTION,
+            # v4.2: Confirm stylist change when selecting soonest_any with different stylist
+            IntentType.CONFIRM_STYLIST_CHANGE: BookingState.CUSTOMER_DATA,
         },
         BookingState.CUSTOMER_DATA: {
             # Self-loop to accumulate data in enhanced 3-phase flow (v6.0):
@@ -365,6 +367,33 @@ class BookingFSM:
                 validation_errors=validation_errors,
             )
 
+        # v4.2: Handle CONFIRM_STYLIST_CHANGE intent
+        # This is triggered when user confirms they want to book with a different stylist
+        if (
+            self._state == BookingState.SLOT_SELECTION
+            and intent.type == IntentType.CONFIRM_STYLIST_CHANGE
+        ):
+            # Apply the pending stylist change
+            pending_slot = self._collected_data.get("pending_slot")
+            pending_stylist_id = self._collected_data.get("pending_stylist_id")
+            pending_stylist_name = self._collected_data.get("pending_stylist_name")
+
+            if pending_slot and pending_stylist_id:
+                # Update stylist to the new one and set the slot
+                self._collected_data["stylist_id"] = pending_stylist_id
+                self._collected_data["stylist_name"] = pending_stylist_name
+                self._collected_data["slot"] = pending_slot
+                # Clear pending flags
+                self._collected_data.pop("pending_stylist_change", None)
+                self._collected_data.pop("pending_slot", None)
+                self._collected_data.pop("pending_stylist_id", None)
+                self._collected_data.pop("pending_stylist_name", None)
+                logger.info(
+                    f"Stylist change confirmed | new_stylist={pending_stylist_name} | "
+                    f"conversation_id={self._conversation_id}"
+                )
+            # Transition will continue to CUSTOMER_DATA as defined in TRANSITIONS
+
         # SLOT VALIDATION: Centralized validation via SlotValidator
         # This checks structure, closed days, and 3-day rule
         if (
@@ -373,9 +402,60 @@ class BookingFSM:
         ):
             slot = intent.entities.get("slot", self._collected_data.get("slot"))
             if slot:
+                # Resolve slot_time to full start_time using slots_shown context
+                # This handles "a las 10:30" where LLM only extracts the time
+                if "slot_time" in slot and "start_time" not in slot:
+                    slot_time = slot["slot_time"]
+                    slots_shown = self._collected_data.get("slots_shown", [])
+                    resolved = False
+                    for shown_slot in slots_shown:
+                        if shown_slot.get("time") == slot_time:
+                            slot["start_time"] = shown_slot.get("full_datetime")
+                            slot.pop("slot_time", None)
+                            resolved = True
+                            logger.info(
+                                f"Resolved slot_time '{slot_time}' to start_time '{slot['start_time']}' "
+                                f"from slots_shown | conversation_id={self._conversation_id}"
+                            )
+                            break
+                    if not resolved:
+                        logger.warning(
+                            f"Could not resolve slot_time '{slot_time}' against slots_shown "
+                            f"(available times: {[s.get('time') for s in slots_shown]}) | "
+                            f"conversation_id={self._conversation_id}"
+                        )
+                    # Update entities with resolved slot
+                    intent.entities["slot"] = slot
+
+                # v4.2: Check if this slot is from soonest_any with different stylist
+                # If so, require confirmation before proceeding
+                slot_stylist_id = slot.get("stylist_id")
+                current_stylist_id = str(self._collected_data.get("stylist_id", ""))
+                is_from_soonest_any = slot.get("is_soonest_any", False)
+
+                if slot_stylist_id and current_stylist_id and slot_stylist_id != current_stylist_id:
+                    # User selected a slot with a different stylist
+                    self._collected_data["pending_stylist_change"] = True
+                    self._collected_data["pending_slot"] = slot
+                    self._collected_data["pending_stylist_id"] = slot_stylist_id
+                    self._collected_data["pending_stylist_name"] = slot.get("stylist_name") or slot.get("stylist")
+                    logger.info(
+                        f"Stylist change detected | current={current_stylist_id} | "
+                        f"new={slot_stylist_id} | name={slot.get('stylist_name')} | "
+                        f"conversation_id={self._conversation_id}"
+                    )
+                    # Return success but stay in SLOT_SELECTION to ask for confirmation
+                    return FSMResult(
+                        success=True,
+                        new_state=BookingState.SLOT_SELECTION,
+                        collected_data=self._collected_data.copy(),
+                        next_action="confirm_stylist_change",
+                        validation_errors=[],
+                    )
+
                 # Async validation against DB rules
                 validation = await SlotValidator.validate_complete(slot)
-                
+
                 if not validation.valid:
                     logger.warning(
                         "FSM slot validation failed: %s -> CUSTOMER_DATA | error=%s | conversation_id=%s",
@@ -1432,13 +1512,38 @@ class BookingFSM:
         Build action for SLOT_SELECTION state.
 
         Logic:
+        - Check if stylist change confirmation is pending
         - Check if date preference has been requested
         - If not requested → ask for date preference (no tool)
         - If requested → call find_next_available to show slots
 
+        v4.2 Enhancement:
+        - Pass service_duration_minutes for proper slot spacing
+        - Template shows 4 options: soonest_any + 3 selected stylist slots
+        - Handle pending stylist change confirmation
+
         Returns:
             FSMAction with tool call (find_next_available) or response generation
         """
+        # v4.2: Check for pending stylist change confirmation
+        pending_stylist_change = self._collected_data.get("pending_stylist_change", False)
+        if pending_stylist_change:
+            pending_stylist_name = self._collected_data.get("pending_stylist_name", "otro estilista")
+            current_stylist_name = self._collected_data.get("stylist_name", "el estilista original")
+            pending_slot = self._collected_data.get("pending_slot", {})
+            slot_time = pending_slot.get("time", "")
+            slot_date = pending_slot.get("date", "")
+
+            return FSMAction(
+                action_type=ActionType.GENERATE_RESPONSE,
+                response_template=(
+                    f"El hueco más próximo es el {slot_date} a las {slot_time}, "
+                    f"pero sería con {pending_stylist_name} en lugar de {current_stylist_name}.\n\n"
+                    "¿Te parece bien?"
+                ),
+                allow_llm_creativity=True,
+            )
+
         stylist_id = self._collected_data.get("stylist_id")
         total_duration = self._collected_data.get("total_duration_minutes", 60)
         date_preference_requested = self._collected_data.get("date_preference_requested", False)
@@ -1473,19 +1578,31 @@ class BookingFSM:
                             "stylist_id": str(stylist_id) if stylist_id else None,
                             "max_days_to_search": 10,
                             "start_date": preferred_date,  # User's preferred date
+                            "service_duration_minutes": total_duration,  # v4.2: proper slot spacing
                         },
                         required=True,
                     )
                 ],
+                # v4.2: Template shows soonest_any first, then selected stylist slots
                 response_template=(
                     "Aquí están los horarios disponibles:\n\n"
-                    "{% for slot in slots %}"
-                    "{{ loop.index }}. {{ slot.day_name }} {{ slot.date }} a las {{ slot.time }} "
+                    "{% if soonest_any %}"
+                    "1. ⚡ {{ soonest_any.day_name }} {{ soonest_any.date }} a las {{ soonest_any.time }} "
+                    "(con {{ soonest_any.stylist_name }}) - PRÓXIMO DISPONIBLE\n"
+                    "{% endif %}"
+                    "{% for slot in selected_stylist_slots %}"
+                    "{{ loop.index + 1 }}. {{ slot.day_name }} {{ slot.date }} a las {{ slot.time }} "
                     "(con {{ slot.stylist }})\n"
                     "{% endfor %}\n\n"
+                    "{% if soonest_any and soonest_any.is_different_stylist %}"
+                    "ℹ️ La opción 1 es con otro estilista. Si la eliges, te pediré confirmación.\n\n"
+                    "{% endif %}"
                     "¿Cuál prefieres? Puedes decirme el número."
                 ),
-                template_vars={"slots": []},  # Will be populated by flattened tool result
+                template_vars={
+                    "soonest_any": None,  # Will be populated by tool result
+                    "selected_stylist_slots": [],  # Will be populated by tool result
+                },
                 allow_llm_creativity=True,
             )
 

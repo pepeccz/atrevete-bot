@@ -31,13 +31,13 @@ from agent.validators.transaction_validators import (
     validate_slot_availability,
 )
 from database.connection import get_async_session
-from database.models import Appointment, AppointmentStatus, Service, Stylist
+from database.models import Appointment, AppointmentStatus, Customer, Service, Stylist
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# 10-minute buffer between appointments for cleanup/preparation
-BUFFER_MINUTES = 10
+# Buffer between appointments (set to 0 - exact service duration)
+BUFFER_MINUTES = 0
 
 
 class BookingTransaction:
@@ -255,7 +255,6 @@ class BookingTransaction:
 
                     # Update customer's chatwoot_conversation_id if provided
                     if conversation_id:
-                        from database.models import Customer
                         customer_stmt = select(Customer).where(Customer.id == customer_id)
                         customer_result = await session.execute(customer_stmt)
                         customer = customer_result.scalar_one_or_none()
@@ -284,12 +283,18 @@ class BookingTransaction:
                     # Push failures are logged but don't affect the booking
                     service_names = ", ".join(s.name for s in services)
 
+                    # Get customer phone for Google Calendar title
+                    phone_stmt = select(Customer.phone).where(Customer.id == customer_id)
+                    phone_result = await session.execute(phone_stmt)
+                    customer_phone = phone_result.scalar_one_or_none()
+
                     logger.info(
                         f"[{trace_id}] Pushing to Google Calendar with emoji 🟡 (fire-and-forget)",
                         extra={
                             "customer_name": first_name,
                             "services": service_names,
-                            "duration": duration_with_buffer
+                            "duration": total_duration,
+                            "phone": customer_phone
                         }
                     )
 
@@ -300,8 +305,9 @@ class BookingTransaction:
                         customer_name=first_name,
                         service_names=service_names,
                         start_time=start_time,
-                        duration_minutes=duration_with_buffer,
+                        duration_minutes=total_duration,
                         status="pending",  # Yellow emoji 🟡
+                        customer_phone=customer_phone,
                     )
 
                     if google_event_id:

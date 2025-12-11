@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from agent.services.availability_service import (
     check_slot_availability,
     get_available_slots,
+    get_soonest_slot_any_stylist,
     get_stylist_by_id,
     is_holiday,
 )
@@ -306,6 +307,14 @@ class FindNextAvailableSchema(BaseModel):
             "Accepts: 'mañana', 'viernes', '15 de diciembre', '2025-12-15'"
         )
     )
+    service_duration_minutes: int | None = Field(
+        default=None,
+        description=(
+            "Duration of the selected service in minutes. "
+            "Used to ensure proper slot spacing (e.g., 70-min service won't show 10:00 and 10:30). "
+            "If not provided, uses conservative 90-minute estimate."
+        )
+    )
 
 
 @tool(args_schema=FindNextAvailableSchema)
@@ -315,6 +324,7 @@ async def find_next_available(
     stylist_id: str | None = None,
     max_days_to_search: int = 10,
     start_date: str | None = None,
+    service_duration_minutes: int | None = None,
 ) -> dict[str, Any]:
     """
     Automatically search for next available slots across multiple dates.
@@ -324,7 +334,11 @@ async def find_next_available(
     multiple dates automatically and returns slots from the first 2-3 dates that have
     availability.
 
-    **v3.2 Optimization**: Returns maximum 5 slots per stylist to reduce token usage.
+    **v4.2 Enhancement**: When stylist_id is provided, returns 4 options:
+    - Option 1: SOONEST slot with ANY stylist (marked with is_soonest_any=True)
+    - Options 2-4: Slots with the SELECTED stylist
+
+    This allows users to choose between fastest availability or preferred stylist.
 
     WHEN TO USE:
     - Customer asks for "próxima disponibilidad" / "next available"
@@ -341,45 +355,52 @@ async def find_next_available(
         time_range: Optional time filter ("morning", "afternoon", or "14:00-18:00")
         stylist_id: Optional preferred stylist UUID
         max_days_to_search: Maximum days to search ahead (default: 10)
+        service_duration_minutes: Service duration for proper slot spacing (default: 90)
 
     Returns:
         Dict with:
             {
-                "available_stylists": [
+                "soonest_any": {  # v4.2: Slot más próximo con CUALQUIER estilista
+                    "time": "10:00",
+                    "date": "2025-11-08",
+                    "day_name": "viernes",
+                    "stylist": "Ana",
+                    "stylist_id": "uuid",
+                    "full_datetime": "2025-11-08T10:00:00+01:00",
+                    "is_soonest_any": True,
+                    "is_different_stylist": True  # True if different from selected stylist
+                },
+                "selected_stylist_slots": [  # v4.2: Slots del estilista elegido
                     {
-                        "stylist_name": "Ana",
-                        "stylist_id": "uuid",
-                        "slots": [
-                            {
-                                "time": "10:00",
-                                "end_time": "11:30",
-                                "date": "2025-11-08",
-                                "day_name": "viernes",
-                                "stylist": "Ana",
-                                "stylist_id": "uuid",
-                                "full_datetime": "2025-11-08T10:00:00+01:00"
-                            }
-                        ]
+                        "time": "11:00",
+                        "date": "2025-11-09",
+                        ...
                     }
                 ],
+                "selected_stylist_name": str,
+                "available_stylists": [...],  # Legacy format for backwards compat
                 "total_slots_found": int,
                 "dates_searched": int,
                 "error": str | None
             }
 
     Example:
-        >>> await find_next_available("Peluquería", time_range="afternoon")
+        >>> await find_next_available("Peluquería", stylist_id="uuid-pilar")
         {
-            "available_stylists": [
-                {"stylist_name": "Ana", "stylist_id": "...", "slots": [...]},
-                {"stylist_name": "Pilar", "stylist_id": "...", "slots": [...]},
-                {"stylist_name": "Rosa", "stylist_id": "...", "slots": [...]}
+            "soonest_any": {"time": "10:00", "stylist": "Ana", "is_different_stylist": True, ...},
+            "selected_stylist_slots": [
+                {"time": "11:00", "stylist": "Pilar", ...},
+                {"time": "14:00", "stylist": "Pilar", ...},
+                {"time": "16:00", "stylist": "Pilar", ...}
             ],
-            "total_slots_found": 6,
-            "dates_searched": 10
+            "selected_stylist_name": "Pilar",
+            ...
         }
     """
     try:
+        # Use service duration or default to conservative estimate
+        effective_duration = service_duration_minutes or CONSERVATIVE_SERVICE_DURATION_MINUTES
+
         # Convert service_category string to enum
         category_normalized = service_category.upper()
         if category_normalized in ["PELUQUERÍA", "PELUQUERIA", "HAIRDRESSING"]:
@@ -396,9 +417,9 @@ async def find_next_available(
             }
 
         # Get stylists for category
-        stylists = await get_stylists_by_category(category_enum)
+        all_stylists = await get_stylists_by_category(category_enum)
 
-        if not stylists:
+        if not all_stylists:
             logger.warning(f"No stylists found for category {service_category}")
             return {
                 "error": f"No hay estilistas disponibles para {service_category}",
@@ -407,15 +428,23 @@ async def find_next_available(
                 "dates_searched": 0,
             }
 
-        # Filter by preferred stylist if specified
+        # v4.2: If stylist_id provided, find soonest_any + selected_stylist_slots
+        selected_stylist = None
+        selected_stylist_uuid = None
         if stylist_id:
             try:
-                stylist_uuid = UUID(stylist_id)
-                stylists = [s for s in stylists if s.id == stylist_uuid]
-                if not stylists:
+                selected_stylist_uuid = UUID(stylist_id)
+                for s in all_stylists:
+                    if s.id == selected_stylist_uuid:
+                        selected_stylist = s
+                        break
+                if not selected_stylist:
                     logger.warning(f"Preferred stylist {stylist_id} not found or wrong category")
             except ValueError:
                 logger.error(f"Invalid stylist_id format: {stylist_id}")
+
+        # For searching, use selected stylist only if provided
+        stylists = [selected_stylist] if selected_stylist else all_stylists
 
         # Spanish day names for formatting
         day_names_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
@@ -474,17 +503,36 @@ async def find_next_available(
 
         search_start = earliest_valid.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Collect ALL slots from ALL stylists across multiple dates (DB-first)
+        # v4.2: Get soonest slot with ANY stylist (if a specific stylist was selected)
+        soonest_any = None
+        if selected_stylist:
+            soonest_any = await get_soonest_slot_any_stylist(
+                category=category_enum,
+                service_duration_minutes=effective_duration,
+                search_days=max_days_to_search,
+            )
+            if soonest_any:
+                # Check if it's a different stylist than selected
+                soonest_any["is_soonest_any"] = True
+                soonest_any["is_different_stylist"] = (
+                    soonest_any["stylist_id"] != str(selected_stylist_uuid)
+                )
+                logger.info(
+                    f"Soonest any slot: {soonest_any['time']} on {soonest_any['date']} "
+                    f"with {soonest_any['stylist_name']} (different={soonest_any['is_different_stylist']})"
+                )
+
+        # Collect ALL slots from selected stylist(s) across multiple dates (DB-first)
         all_slots_by_stylist = {stylist.id: [] for stylist in stylists}
         dates_searched = 0
-        MAX_SLOTS_PER_STYLIST = 2  # Return 2 slots per stylist
+        MAX_SLOTS_PER_STYLIST = 3  # v4.2: Return 3 slots per stylist for options 2-4
 
         # Iterate through days
         for day_offset in range(max_days_to_search):
             current_date = search_start + timedelta(days=day_offset)
             dates_searched += 1
 
-            # Check if we have enough slots for all stylists (2 per stylist)
+            # Check if we have enough slots for all stylists (3 per stylist for v4.2)
             if all(len(slots) >= MAX_SLOTS_PER_STYLIST for slots in all_slots_by_stylist.values()):
                 logger.info(f"Found {MAX_SLOTS_PER_STYLIST} slots for all stylists, stopping search")
                 break
@@ -510,11 +558,13 @@ async def find_next_available(
                     continue
 
                 # Get available slots from DB (queries appointments + blocking_events)
+                # v4.2: Use effective_duration for proper spacing (no overlapping options)
                 available_slots = await get_available_slots(
                     stylist_id=stylist.id,
                     target_date=current_date,
-                    service_duration_minutes=CONSERVATIVE_SERVICE_DURATION_MINUTES,
-                    slot_interval_minutes=30,
+                    service_duration_minutes=effective_duration,
+                    # slot_interval_minutes defaults to service duration for proper spacing
+                    pack_slots=True,  # Prioritize slots adjacent to appointments
                 )
 
                 # Convert to output format and add to results (slots already have correct string format)
@@ -540,16 +590,16 @@ async def find_next_available(
 
                     all_slots_by_stylist[stylist.id].append(slot_data)
 
-        # Format results by stylist (group slots by stylist, v3.2: truncate to 5 per stylist)
+        # Format results by stylist (group slots by stylist, v4.2: 3 slots for selected stylist)
         available_stylists = []
         total_slots_found = 0
-        max_slots_per_stylist = 5  # Limit slots to reduce token usage
+        selected_stylist_slots = []
 
         for stylist in stylists:
             stylist_slots = all_slots_by_stylist[stylist.id]
             if stylist_slots:
-                # Truncate to first 5 slots per stylist
-                truncated_slots = stylist_slots[:max_slots_per_stylist]
+                # v4.2: Use 3 slots for selected stylist (options 2-4)
+                truncated_slots = stylist_slots[:MAX_SLOTS_PER_STYLIST]
 
                 # Simplify slot output: keep essential fields for display and booking
                 simplified_slots = [
@@ -573,9 +623,12 @@ async def find_next_available(
                 })
                 total_slots_found += len(stylist_slots)
 
+                # v4.2: Store selected stylist's slots separately
+                if selected_stylist and stylist.id == selected_stylist.id:
+                    selected_stylist_slots = simplified_slots
+
                 logger.info(
-                    f"Found {len(simplified_slots)}/{len(stylist_slots)} slots for {stylist.name} "
-                    f"(truncated to {max_slots_per_stylist})"
+                    f"Found {len(simplified_slots)}/{len(stylist_slots)} slots for {stylist.name}"
                 )
 
         logger.info(
@@ -583,12 +636,22 @@ async def find_next_available(
             f"{len(available_stylists)} stylists (searched {dates_searched} days)"
         )
 
-        return {
+        # v4.2: Build response with new fields
+        result = {
             "error": None,
-            "available_stylists": available_stylists,  # Changed from available_dates to available_stylists
+            "available_stylists": available_stylists,  # Legacy format for backwards compat
             "total_slots_found": total_slots_found,
             "dates_searched": dates_searched,
         }
+
+        # v4.2: Add soonest_any and selected_stylist fields when a stylist was selected
+        if selected_stylist:
+            result["soonest_any"] = soonest_any  # May be None if nothing found
+            result["selected_stylist_slots"] = selected_stylist_slots
+            result["selected_stylist_name"] = selected_stylist.name
+            result["selected_stylist_id"] = str(selected_stylist.id)
+
+        return result
 
     except Exception as e:
         logger.error(f"Error in find_next_available: {e}", exc_info=True)

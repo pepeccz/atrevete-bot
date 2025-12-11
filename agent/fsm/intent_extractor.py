@@ -351,6 +351,7 @@ def _build_state_context(
         ],
         BookingState.SLOT_SELECTION: [
             ("select_slot", "Usuario selecciona una hora/fecha (número o texto)"),
+            ("confirm_stylist_change", "Usuario confirma cambio de estilista: 'sí', 'vale', 'de acuerdo'"),  # v4.2
             ("check_availability", "Quiere ver más opciones de horarios"),
             ("cancel_booking", "Usuario quiere cancelar la reserva"),
             ("faq", "Pregunta sobre horarios"),
@@ -427,11 +428,14 @@ def _build_state_context(
             "Un nombre como 'Maria' o 'con quien sea' = select_stylist"
         ),
         BookingState.SLOT_SELECTION: (
-            "IMPORTANTE: Distinguir entre CHECK_AVAILABILITY y SELECT_SLOT:\n\n"
+            "IMPORTANTE: Distinguir entre CHECK_AVAILABILITY, SELECT_SLOT y CONFIRM_STYLIST_CHANGE:\n\n"
             "✅ SELECT_SLOT requiere selección CONCRETA de la lista mostrada:\n"
             "- Un NÚMERO de slot (ej: '3', 'el segundo', 'opción 2')\n"
             "- Una HORA ESPECÍFICA que aparezca en la lista (ej: '10:00', '14:30')\n"
-            "- Confirmación de slot mostrado ('sí', 'ese', 'perfecto')\n\n"
+            "- Confirmación de slot mostrado ('sí', 'ese', 'perfecto') cuando hay slots listados\n\n"
+            "✅ CONFIRM_STYLIST_CHANGE (v4.2) cuando el bot pregunta si acepta otro estilista:\n"
+            "- 'sí', 'vale', 'de acuerdo', 'me parece bien', 'ok' → CONFIRM_STYLIST_CHANGE\n"
+            "- Solo aplica cuando el contexto muestra pregunta sobre cambio de estilista\n\n"
             "❌ CHECK_AVAILABILITY cuando usuario menciona:\n"
             "- UNA FECHA SIN HORA (ej: 'diciembre 7', 'el viernes', 'mañana')\n"
             "  → Usuario quiere VER slots disponibles, NO seleccionar\n"
@@ -792,6 +796,18 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
             logger.info(
                 f"Converted start_time to slot dict: raw='{raw_start_time}', "
                 f"normalized='{normalized_start_time}' (duration=0, will be synced by FSM)"
+            )
+
+        # Convert slot_time to slot dict (when user says "a las 10:30" without full datetime)
+        # The FSM will resolve this against the slots_shown list to get the full datetime
+        if "slot_time" in entities and "slot" not in entities:
+            slot_time = entities.pop("slot_time")
+            entities["slot"] = {
+                "slot_time": slot_time,  # Will be resolved by FSM using slots_shown context
+                "duration_minutes": 0,
+            }
+            logger.info(
+                f"Converted slot_time '{slot_time}' to slot dict (needs FSM resolution against slots_shown)"
             )
 
         # Parse confidence
