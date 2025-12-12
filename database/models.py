@@ -100,10 +100,18 @@ class BlockingEventType(str, PyEnum):
 class NotificationType(str, PyEnum):
     """Type of admin panel notification."""
 
+    # Appointment lifecycle
     APPOINTMENT_CREATED = "appointment_created"
     APPOINTMENT_CANCELLED = "appointment_cancelled"
     APPOINTMENT_CONFIRMED = "appointment_confirmed"
     APPOINTMENT_COMPLETED = "appointment_completed"
+
+    # Confirmation system
+    CONFIRMATION_SENT = "confirmation_sent"           # 48h confirmation request sent
+    CONFIRMATION_RECEIVED = "confirmation_received"   # Customer confirmed appointment
+    AUTO_CANCELLED = "auto_cancelled"                 # Auto-cancelled due to no response
+    CONFIRMATION_FAILED = "confirmation_failed"       # Failed to send confirmation template
+    REMINDER_SENT = "reminder_sent"                   # 2h reminder sent
 
 
 # ============================================================================
@@ -834,3 +842,214 @@ class Notification(Base):
 
     def __repr__(self) -> str:
         return f"<Notification(id={self.id}, type='{self.type.value}', is_read={self.is_read})>"
+
+
+# ============================================================================
+# System Settings Models
+# ============================================================================
+
+
+class SettingValueType(str, PyEnum):
+    """Type of setting value for validation."""
+
+    STRING = "string"
+    INT = "int"
+    FLOAT = "float"
+    BOOLEAN = "boolean"
+    ENUM = "enum"
+
+
+class SettingCategory(str, PyEnum):
+    """Category grouping for system settings."""
+
+    CONFIRMATION = "confirmation"
+    BOOKING = "booking"
+    LLM = "llm"
+    RATE_LIMITING = "rate_limiting"
+    CACHE = "cache"
+    ARCHIVAL = "archival"
+    GCAL_SYNC = "gcal_sync"
+
+
+class SystemSetting(Base):
+    """
+    System-wide configuration settings stored in database.
+
+    Enables runtime configuration changes without code deployment.
+    Settings are grouped by category and support typed validation.
+
+    Features:
+    - JSONB value storage for type flexibility
+    - Min/max validation for numeric types
+    - Allowed values for enum types
+    - Audit trail via SystemSettingsHistory
+    - requires_restart flag for settings needing service restart
+    """
+
+    __tablename__ = "system_settings"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Categorization
+    category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+
+    # Value storage (JSONB for type flexibility)
+    value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    value_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    default_value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    # Validation constraints
+    min_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    max_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    allowed_values: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+    # Documentation
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Metadata
+    requires_restart: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_system_settings_category", "category"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SystemSetting(key='{self.key}', value={self.value})>"
+
+
+class SystemSettingsHistory(Base):
+    """
+    Audit trail for system settings changes.
+
+    Records every change made to system settings including:
+    - Previous and new values
+    - Who made the change
+    - Optional reason for the change
+    - Timestamp
+    """
+
+    __tablename__ = "system_settings_history"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Reference to setting
+    setting_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("system_settings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    setting_key: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )  # Denormalized for historical queries
+
+    # Change tracking
+    previous_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    new_value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    changed_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    change_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamp
+    changed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_settings_history_setting_id", "setting_id"),
+        Index(
+            "idx_settings_history_changed_at",
+            "changed_at",
+            postgresql_ops={"changed_at": "DESC"},
+        ),
+        Index("idx_settings_history_key", "setting_key"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SystemSettingsHistory(setting_key='{self.setting_key}', changed_by='{self.changed_by}')>"
+
+
+class GCalSyncState(Base):
+    """
+    Google Calendar sync state per stylist.
+
+    Stores the sync token for incremental sync with Google Calendar API.
+    Each stylist has their own sync token to track changes since last sync.
+
+    The sync token is returned by Google Calendar API after each list/sync
+    and should be used in the next request to only get changes.
+    """
+
+    __tablename__ = "gcal_sync_state"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Foreign key to stylist (one sync state per stylist)
+    stylist_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("stylists.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    # Google Calendar sync token for incremental sync
+    sync_token: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Last successful sync timestamp
+    last_sync_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    # Sync statistics
+    events_synced: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    # Relationship
+    stylist: Mapped["Stylist"] = relationship("Stylist")
+
+    def __repr__(self) -> str:
+        return f"<GCalSyncState(stylist_id={self.stylist_id}, last_sync={self.last_sync_at})>"

@@ -108,6 +108,42 @@ class Settings(BaseSettings):
         description="Message batching window in seconds. Collects messages within this window and processes them as one. Set to 0 to disable batching."
     )
 
+    # Appointment Confirmation System
+    CONFIRMATION_TEMPLATE_NAME: str = Field(
+        default="appointment_confirmation_48h",
+        description="WhatsApp template name for 48h confirmation request"
+    )
+    AUTO_CANCEL_TEMPLATE_NAME: str = Field(
+        default="appointment_auto_cancelled",
+        description="WhatsApp template name for auto-cancellation notification"
+    )
+    CUSTOMER_CANCEL_TEMPLATE_NAME: str = Field(
+        default="appointment_cancelled_by_customer",
+        description="WhatsApp template name when customer declines appointment"
+    )
+    REMINDER_TEMPLATE_NAME: str = Field(
+        default="appointment_reminder_2h",
+        description="WhatsApp template name for 2h reminder"
+    )
+    CONFIRMATION_HOURS_BEFORE: int = Field(
+        default=48,
+        ge=24,
+        le=72,
+        description="Hours before appointment to send confirmation request"
+    )
+    AUTO_CANCEL_HOURS_BEFORE: int = Field(
+        default=24,
+        ge=12,
+        le=48,
+        description="Hours before appointment to auto-cancel if no confirmation received"
+    )
+    REMINDER_HOURS_BEFORE: int = Field(
+        default=2,
+        ge=1,
+        le=24,
+        description="Hours before appointment to send reminder for confirmed appointments"
+    )
+
     # Admin Panel Authentication
     ADMIN_USERNAME: str = Field(
         default="admin",

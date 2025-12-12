@@ -387,28 +387,34 @@ export default function ServicesPage() {
       cell: ({ row }) => {
         const service = row.original;
         return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-8 w-8 p-0">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleEdit(service)}>
-                <Edit className="mr-2 h-4 w-4" />
-                Editar
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  setServiceToDelete(service.id);
-                  setDeleteDialogOpen(true);
-                }}
-                className="text-destructive"
-              >
-                Eliminar
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => handleEdit(service)}
+            >
+              <Edit className="h-4 w-4" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="h-8 w-8 p-0">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => {
+                    setServiceToDelete(service.id);
+                    setDeleteDialogOpen(true);
+                  }}
+                  className="text-destructive"
+                >
+                  Eliminar
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         );
       },
     },

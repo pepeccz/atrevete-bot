@@ -51,6 +51,9 @@ class IntentRouter:
         IntentType.ESCALATE,
         IntentType.UNKNOWN,
         IntentType.UPDATE_NAME,  # Name update in IDLE state
+        # Appointment confirmation intents (48h confirmation flow)
+        IntentType.CONFIRM_APPOINTMENT,
+        IntentType.DECLINE_APPOINTMENT,
     }
 
     @staticmethod

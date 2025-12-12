@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import { useRouter } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -71,7 +71,12 @@ interface EditingBlockingEvent {
   stylist_id: string;
 }
 
-export function CalendarView() {
+// Ref interface for external control
+export interface CalendarViewRef {
+  refresh: () => void;
+}
+
+export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_props, ref) {
   const router = useRouter();
   const calendarRef = useRef<FullCalendar>(null);
   const [selectedStylistIds, setSelectedStylistIds] = useState<string[]>([]);
@@ -228,6 +233,17 @@ export function CalendarView() {
       fetchEvents(view.activeStart, view.activeEnd || new Date());
     }
   }, [selectedStylistIds, fetchEvents]);
+
+  // Expose refresh method via ref
+  useImperativeHandle(ref, () => ({
+    refresh: () => {
+      if (calendarRef.current) {
+        const calendarApi = calendarRef.current.getApi();
+        const view = calendarApi.view;
+        fetchEvents(view.activeStart, view.activeEnd || new Date());
+      }
+    },
+  }), [fetchEvents]);
 
   // Handle date set (when calendar view changes)
   const handleDatesSet = (arg: { start: Date; end: Date }) => {
@@ -491,4 +507,4 @@ export function CalendarView() {
       />
     </div>
   );
-}
+});

@@ -10,7 +10,8 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from api.middleware.rate_limiting import RateLimitMiddleware
-from api.routes import admin, chatwoot, conversations
+from api.routes import admin, chatwoot, conversations, system
+from api.routes import settings as settings_routes
 from shared.config import get_settings
 from shared.logging_config import configure_logging
 from shared.startup_validator import StartupValidationError, validate_startup_config
@@ -49,6 +50,12 @@ app.include_router(conversations.router, tags=["conversations"])
 
 # Include admin panel router
 app.include_router(admin.router, tags=["admin"])
+
+# Include system settings router
+app.include_router(settings_routes.router, tags=["settings"])
+
+# Include system management router (services, logs)
+app.include_router(system.router, tags=["system"])
 
 
 # =========================================================================

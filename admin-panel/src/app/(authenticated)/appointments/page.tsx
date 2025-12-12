@@ -20,6 +20,7 @@ import {
   X,
   Loader2,
   Edit,
+  RefreshCw,
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
@@ -1139,6 +1140,26 @@ export default function AppointmentsPage() {
     stylist_id: "",
     status: "",
   });
+  const [syncing, setSyncing] = useState(false);
+
+  // Handle manual GCal sync
+  const handleGcalSync = async () => {
+    setSyncing(true);
+    try {
+      const result = await api.triggerGcalSync();
+      if (result.success) {
+        toast.success(result.message);
+        // Reload appointments after sync
+        await loadData();
+      } else {
+        toast.error(result.message);
+      }
+    } catch (error) {
+      toast.error("Error al sincronizar con Google Calendar");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Create stylist and service maps for display
   const stylistMap = Object.fromEntries(stylists.map((s) => [s.id, s.name]));
@@ -1239,10 +1260,35 @@ export default function AppointmentsPage() {
       header: "Servicios",
       cell: ({ row }) => {
         const serviceIds = row.getValue("service_ids") as string[];
-        const names = serviceIds
-          .map((id) => serviceMap[id])
-          .filter(Boolean)
-          .join(", ");
+        if (!serviceIds || serviceIds.length === 0) {
+          return <span className="text-muted-foreground">Sin servicios</span>;
+        }
+
+        const resolved = serviceIds.map((id) => serviceMap[id]);
+        const validNames = resolved.filter(Boolean);
+        const orphanCount = resolved.length - validNames.length;
+
+        if (orphanCount > 0 && validNames.length === 0) {
+          return (
+            <Badge variant="destructive" className="text-xs">
+              {orphanCount} servicio(s) no encontrado(s)
+            </Badge>
+          );
+        }
+
+        if (orphanCount > 0) {
+          const names = validNames.join(", ");
+          return (
+            <div className="flex items-center gap-1">
+              <span>{names.length > 25 ? names.substring(0, 25) + "..." : names}</span>
+              <Badge variant="destructive" className="text-xs">
+                +{orphanCount}
+              </Badge>
+            </div>
+          );
+        }
+
+        const names = validNames.join(", ");
         return names.length > 40 ? names.substring(0, 40) + "..." : names;
       },
     },
@@ -1268,30 +1314,34 @@ export default function AppointmentsPage() {
       cell: ({ row }) => {
         const appointment = row.original;
         return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-8 w-8 p-0">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() => router.push(`/appointments/${appointment.id}`)}
-              >
-                <Edit className="mr-2 h-4 w-4" />
-                Editar
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  setAppointmentToDelete(appointment.id);
-                  setDeleteDialogOpen(true);
-                }}
-                className="text-destructive"
-              >
-                Eliminar
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => router.push(`/appointments/${appointment.id}`)}
+            >
+              <Edit className="h-4 w-4" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="h-8 w-8 p-0">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => {
+                    setAppointmentToDelete(appointment.id);
+                    setDeleteDialogOpen(true);
+                  }}
+                  className="text-destructive"
+                >
+                  Eliminar
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         );
       },
     },
@@ -1303,10 +1353,16 @@ export default function AppointmentsPage() {
         title="Citas"
         description="Gestion de citas del salon"
         action={
-          <Button onClick={() => setCreateModalOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Nueva Cita
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleGcalSync} disabled={syncing}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              Sync GCal
+            </Button>
+            <Button onClick={() => setCreateModalOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Nueva Cita
+            </Button>
+          </div>
         }
       />
 

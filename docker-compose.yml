@@ -76,6 +76,7 @@ services:
     env_file: .env
     volumes:
       - ./service-account-key.json:/app/service-account-key.json:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8000:8000"
     depends_on:
@@ -142,6 +143,58 @@ services:
       retries: 3
       start_period: 120s
 
+  # Confirmation worker: Sends 48h confirmations, auto-cancels, 2h reminders
+  confirmation-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: atrevete-confirmation-worker
+    command: python -m agent.workers.confirmation_worker
+    env_file: .env
+    environment:
+      - TZ=Europe/Madrid
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - atrevete-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'python -m agent.workers.confirmation_worker' || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # GCal Sync worker: Bidirectional sync with Google Calendar
+  gcal-sync-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: atrevete-gcal-sync-worker
+    command: python -m agent.workers.gcal_sync_worker
+    env_file: .env
+    environment:
+      - TZ=Europe/Madrid
+    volumes:
+      - ./service-account-key.json:/app/service-account-key.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - atrevete-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'python -m agent.workers.gcal_sync_worker' || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
   # Admin Panel: NextJS 15 + ShadCN modern admin interface
   admin-panel:
     build:
@@ -150,6 +203,7 @@ services:
     container_name: atrevete-admin-panel
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_CHATWOOT_URL=${CHATWOOT_API_URL:-http://localhost:3000}
     ports:
       - "8001:3000"
     depends_on:
@@ -159,7 +213,7 @@ services:
       - atrevete-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://0.0.0.0:3000 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

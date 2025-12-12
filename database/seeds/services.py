@@ -7,14 +7,44 @@ Este archivo contiene los 69 servicios oficiales de Atrévete Peluquería:
 
 Datos y descripciones actualizados desde atrevetepeluqueria.com (2024-12).
 Can be run standalone: python -m database.seeds.services
+
+IMPORTANTE: Los servicios usan UUIDs determinísticos basados en el nombre.
+Esto garantiza que el mismo servicio siempre tenga el mismo UUID,
+evitando problemas de service_ids huérfanos en citas existentes.
 """
 
 import asyncio
+import hashlib
+from uuid import UUID
 
 from sqlalchemy import select
 
 from database.connection import get_async_session
 from database.models import Service, ServiceCategory
+
+
+# Namespace fijo para generar UUIDs determinísticos
+SERVICE_UUID_NAMESPACE = "atrevete-peluqueria-services"
+
+
+def generate_service_uuid(service_name: str) -> UUID:
+    """
+    Genera un UUID determinístico basado en el nombre del servicio.
+
+    Esto garantiza que el mismo servicio siempre tenga el mismo UUID,
+    independientemente de cuántas veces se ejecute el seed.
+
+    Args:
+        service_name: Nombre del servicio
+
+    Returns:
+        UUID determinístico y único para ese nombre de servicio
+    """
+    # Crear hash SHA-256 del namespace + nombre
+    combined = f"{SERVICE_UUID_NAMESPACE}:{service_name}"
+    hash_bytes = hashlib.sha256(combined.encode("utf-8")).hexdigest()
+    # Usar los primeros 32 caracteres del hash como UUID
+    return UUID(hash_bytes[:32])
 
 # ============================================================================
 # SERVICIOS DE PELUQUERÍA (27 servicios)
@@ -484,23 +514,44 @@ ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
 
 async def seed_services() -> None:
     """
-    Seed services table with the 69 official services from data/Services.csv.
+    Seed services table with the 69 official services.
 
-    DESTRUCTIVE: Deletes all existing services and replaces with the catalog.
-    This ensures the database matches exactly the CSV file.
+    Usa UPSERT para preservar UUIDs existentes y evitar romper referencias en citas.
+    Los UUIDs son determinísticos basados en el nombre del servicio.
     """
     async with get_async_session() as session:
-        from sqlalchemy import delete
+        created_count = 0
+        updated_count = 0
 
-        # Step 1: Delete ALL existing services
-        delete_stmt = delete(Service)
-        result = await session.execute(delete_stmt)
-        deleted_count = result.rowcount
-
-        # Step 2: Insert all services from catalog
         for service_data in ALL_SERVICES:
-            service = Service(**service_data)
-            session.add(service)
+            # Generar UUID determinístico basado en nombre
+            service_uuid = generate_service_uuid(service_data["name"])
+
+            # Buscar servicio existente por UUID determinístico
+            existing = await session.execute(
+                select(Service).where(Service.id == service_uuid)
+            )
+            service = existing.scalar_one_or_none()
+
+            if service:
+                # Actualizar servicio existente
+                service.category = service_data["category"]
+                service.duration_minutes = service_data["duration_minutes"]
+                service.description = service_data.get("description")
+                service.is_active = True
+                updated_count += 1
+            else:
+                # Crear nuevo servicio con UUID determinístico
+                new_service = Service(
+                    id=service_uuid,
+                    name=service_data["name"],
+                    category=service_data["category"],
+                    duration_minutes=service_data["duration_minutes"],
+                    description=service_data.get("description"),
+                    is_active=True,
+                )
+                session.add(new_service)
+                created_count += 1
 
         await session.commit()
 
@@ -510,8 +561,9 @@ async def seed_services() -> None:
         total_aesthetics = len(AESTHETICS_SERVICES)
 
         print(f"✓ Services seed completed:")
-        print(f"  - Deleted: {deleted_count} old services")
-        print(f"  - Created: {total_services} new services")
+        print(f"  - Created: {created_count} new services")
+        print(f"  - Updated: {updated_count} existing services")
+        print(f"  - Total: {total_services} services")
         print(f"  - Peluquería: {total_hair}")
         print(f"  - Estética: {total_aesthetics}")
 

@@ -31,7 +31,7 @@ from agent.validators.transaction_validators import (
     validate_slot_availability,
 )
 from database.connection import get_async_session
-from database.models import Appointment, AppointmentStatus, Customer, Service, Stylist
+from database.models import Appointment, AppointmentStatus, Customer, Notification, NotificationType, Service, Stylist
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -361,6 +361,26 @@ class BookingTransaction:
                         description=f"Servicios: {service_names}\nEstilista: {stylist.name}",
                         location=settings.SALON_ADDRESS,
                     )
+
+                    # Create notification for admin panel
+                    try:
+                        notification = Notification(
+                            type=NotificationType.APPOINTMENT_CREATED,
+                            title="Nueva cita desde WhatsApp",
+                            message=f"{first_name} ha reservado {service_names} para el {friendly_date}",
+                            entity_type="appointment",
+                            entity_id=new_appointment.id,
+                        )
+                        session.add(notification)
+                        await session.commit()
+                        logger.info(
+                            f"[{trace_id}] Notification created for admin panel",
+                            extra={"notification_type": "APPOINTMENT_CREATED"}
+                        )
+                    except Exception as notif_error:
+                        logger.warning(
+                            f"[{trace_id}] Failed to create notification: {notif_error}"
+                        )
 
                     # Return success
                     return {

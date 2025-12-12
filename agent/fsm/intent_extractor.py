@@ -332,6 +332,8 @@ def _build_state_context(
             ("faq", "Pregunta sobre horarios, servicios, precios, ubicación"),
             ("update_name", "Usuario corrige o proporciona su nombre (ej: 'Llamame X', 'Mi nombre es Y', 'Soy Z')"),
             ("escalate", "Quiere hablar con una persona o está frustrado"),
+            ("confirm_appointment", "Usuario confirma asistencia a cita pendiente (sí, confirmo, de acuerdo)"),
+            ("decline_appointment", "Usuario dice que no puede asistir a cita (no, no puedo, cancela)"),
         ],
         BookingState.SERVICE_SELECTION: [
             ("select_service", "Usuario SELECCIONA un servicio por número o nombre EXACTO de la lista"),
@@ -406,11 +408,14 @@ def _build_state_context(
     disambiguation_hints: dict[BookingState, str] = {
         BookingState.IDLE: (
             "DISTINGUIR entre:\n"
-            "1. ACTUALIZACIÓN DE NOMBRE: 'Llamame X', 'Mi nombre es Y', 'Soy Z', 'No, me llamo W'\n"
+            "1. CONFIRMACIÓN DE CITA (si usuario tiene cita pendiente de confirmación):\n"
+            "   'sí', 'si', 'confirmo', 'ok', 'de acuerdo', 'vale' → confirm_appointment\n"
+            "   'no', 'no puedo', 'cancela', 'cancelar' → decline_appointment\n"
+            "2. ACTUALIZACIÓN DE NOMBRE: 'Llamame X', 'Mi nombre es Y', 'Soy Z', 'No, me llamo W'\n"
             "   → intent: update_name, entities: {first_name: X/Y/Z/W}\n"
-            "2. RESERVA: 'Quiero una cita', 'Reservar corte', 'Agendar peinado'\n"
+            "3. RESERVA: 'Quiero una cita', 'Reservar corte', 'Agendar peinado'\n"
             "   → intent: start_booking\n"
-            "3. SALUDO SIMPLE: 'Hola', 'Buenos días' (sin mención de nombre ni servicio)\n"
+            "4. SALUDO SIMPLE: 'Hola', 'Buenos días' (sin mención de nombre ni servicio)\n"
             "   → intent: greeting\n"
         ),
         BookingState.SERVICE_SELECTION: (
@@ -702,6 +707,9 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
             IntentType.CANCEL_BOOKING: {"reason"},  # Optional reason
             IntentType.UNKNOWN: set(),  # No entities for unknown
             IntentType.UPDATE_NAME: {"first_name", "last_name"},  # Name update in IDLE state
+            # Appointment confirmation intents (48h confirmation flow)
+            IntentType.CONFIRM_APPOINTMENT: set(),  # No entities - just confirmation
+            IntentType.DECLINE_APPOINTMENT: set(),  # No entities - just decline
         }
 
         allowed_entities = INTENT_ALLOWED_ENTITIES.get(intent_type, set())

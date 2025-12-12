@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Header } from "@/components/layout/header";
 import {
   Card,
@@ -9,8 +10,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Calendar, Users, Clock, TrendingUp } from "lucide-react";
+import { Calendar, Users, Clock, TrendingUp, Bell, Check, X, CheckCheck } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+import { es } from "date-fns/locale";
 import api from "@/lib/api";
+import type { Notification, NotificationsListResponse } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { AppointmentTrendChart } from "@/components/charts/appointments-trend-chart";
 import { TopServicesChart } from "@/components/charts/top-services-chart";
 import { HoursWorkedChart } from "@/components/charts/hours-worked-chart";
@@ -57,11 +62,37 @@ function KPICard({
   );
 }
 
+// Notification icon mapping
+const notificationIcons: Record<string, typeof Calendar> = {
+  appointment_created: Calendar,
+  appointment_cancelled: X,
+  appointment_confirmed: Check,
+  appointment_completed: CheckCheck,
+};
+
+const notificationColors: Record<string, string> = {
+  appointment_created: "text-green-500",
+  appointment_cancelled: "text-red-500",
+  appointment_confirmed: "text-blue-500",
+  appointment_completed: "text-gray-500",
+};
+
 export default function DashboardPage() {
+  const router = useRouter();
   const [kpis, setKpis] = useState<KPIs | null>(null);
   const [chartData, setChartData] = useState<ChartData | null>(null);
+  const [notifications, setNotifications] = useState<NotificationsListResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const response = await api.getNotifications(5, false); // Solo no leídas, máximo 5
+      setNotifications(response);
+    } catch (error) {
+      console.error("Failed to fetch notifications:", error);
+    }
+  }, []);
 
   useEffect(() => {
     async function fetchData() {
@@ -116,6 +147,27 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
+  // Fetch notifications and set up polling
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000); // Poll every 30 seconds
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
+
+  const handleNotificationClick = async (notification: Notification) => {
+    // Mark as read
+    try {
+      await api.markNotificationRead(notification.id);
+      fetchNotifications(); // Refresh
+    } catch (error) {
+      console.error("Failed to mark notification as read:", error);
+    }
+    // Navigate to appointment
+    if (notification.entity_type === "appointment" && notification.entity_id) {
+      router.push(`/appointments?highlight=${notification.entity_id}`);
+    }
+  };
+
   return (
     <div className="flex flex-col">
       <Header
@@ -155,6 +207,54 @@ export default function DashboardPage() {
             icon={TrendingUp}
           />
         </div>
+
+        {/* Notifications Widget */}
+        {notifications && notifications.unread_count > 0 && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <div>
+                <CardTitle className="text-base font-semibold flex items-center gap-2">
+                  <Bell className="h-4 w-4" />
+                  Notificaciones Recientes
+                </CardTitle>
+                <CardDescription>
+                  {notifications.unread_count} sin leer
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {notifications.items.slice(0, 5).map((notification) => {
+                  const Icon = notificationIcons[notification.type] || Bell;
+                  const colorClass = notificationColors[notification.type] || "text-gray-500";
+                  return (
+                    <button
+                      key={notification.id}
+                      onClick={() => handleNotificationClick(notification)}
+                      className="w-full flex items-start gap-3 p-2 rounded-md hover:bg-accent text-left transition-colors"
+                    >
+                      <div className={cn("mt-0.5", colorClass)}>
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium">{notification.title}</p>
+                        <p className="text-xs text-muted-foreground line-clamp-1">
+                          {notification.message}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDistanceToNow(new Date(notification.created_at), {
+                            addSuffix: true,
+                            locale: es,
+                          })}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {error && (
           <Card className="border-amber-200 bg-amber-50">

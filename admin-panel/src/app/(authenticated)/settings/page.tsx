@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, Activity, Users, Scissors, CalendarX } from "lucide-react";
+import { Clock, Activity, Users, Scissors, CalendarX, Settings2 } from "lucide-react";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,6 +41,13 @@ const configSections = [
     icon: Activity,
     href: "/system",
     color: "bg-green-500",
+  },
+  {
+    title: "Configuraci\u00f3n del Sistema",
+    description: "Ajusta par\u00e1metros del agente, confirmaciones, cache y m\u00e1s",
+    icon: Settings2,
+    href: "/settings/system",
+    color: "bg-orange-500",
   },
 ];
 

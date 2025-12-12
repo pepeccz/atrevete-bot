@@ -14,6 +14,8 @@ import {
   UserCog,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
+  MessageCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -28,6 +30,12 @@ import { useAuth } from "@/contexts/auth-context";
 import { useSidebar } from "@/contexts/sidebar-context";
 
 interface NavItem {
+  title: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+interface ExternalLinkItem {
   title: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -82,6 +90,15 @@ const configNav: NavItem[] = [
   },
 ];
 
+// External links section - opens in new tab
+const externalLinks: ExternalLinkItem[] = [
+  {
+    title: "Chatwoot",
+    href: process.env.NEXT_PUBLIC_CHATWOOT_URL || "http://localhost:3000",
+    icon: MessageCircle,
+  },
+];
+
 function NavSection({
   title,
   items,
@@ -130,6 +147,68 @@ function NavSection({
                 </TooltipTrigger>
                 {isCollapsed && (
                   <TooltipContent side="right">{item.title}</TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ExternalLinksSection({
+  title,
+  items,
+  isCollapsed,
+}: {
+  title: string;
+  items: ExternalLinkItem[];
+  isCollapsed: boolean;
+}) {
+  return (
+    <div className={cn("py-2", isCollapsed ? "px-2" : "px-3")}>
+      {!isCollapsed && (
+        <h2 className="mb-2 px-4 text-xs font-semibold tracking-tight text-muted-foreground uppercase">
+          {title}
+        </h2>
+      )}
+      <div className="space-y-1">
+        {items.map((item) => {
+          const Icon = item.icon;
+
+          return (
+            <TooltipProvider key={item.href} delayDuration={0}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <a
+                    href={item.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Button
+                      variant="ghost"
+                      className={cn(
+                        "w-full",
+                        isCollapsed ? "justify-center px-2" : "justify-start"
+                      )}
+                    >
+                      <Icon
+                        className={cn("h-4 w-4", !isCollapsed && "mr-2")}
+                      />
+                      {!isCollapsed && (
+                        <>
+                          <span className="truncate flex-1">{item.title}</span>
+                          <ExternalLink className="h-3 w-3 ml-1 text-muted-foreground" />
+                        </>
+                      )}
+                    </Button>
+                  </a>
+                </TooltipTrigger>
+                {isCollapsed && (
+                  <TooltipContent side="right">
+                    {item.title} (abre en nueva pestaña)
+                  </TooltipContent>
                 )}
               </Tooltip>
             </TooltipProvider>
@@ -203,6 +282,8 @@ export function Sidebar() {
         <NavSection title="Gestion" items={managementNav} isCollapsed={isCollapsed} />
         <Separator className="my-2" />
         <NavSection title="Configuracion" items={configNav} isCollapsed={isCollapsed} />
+        <Separator className="my-2" />
+        <ExternalLinksSection title="Herramientas" items={externalLinks} isCollapsed={isCollapsed} />
       </div>
 
       {/* User section */}

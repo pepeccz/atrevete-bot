@@ -45,6 +45,10 @@ class IntentType(str, Enum):
     UPDATE_NAME = "update_name"  # User updates their name in IDLE state
     UNKNOWN = "unknown"
 
+    # Appointment confirmation intents (48h confirmation flow)
+    CONFIRM_APPOINTMENT = "confirm_appointment"  # User confirms upcoming appointment
+    DECLINE_APPOINTMENT = "decline_appointment"  # User says can't attend appointment
+
 
 class BookingState(str, Enum):
     """States of the booking flow FSM."""

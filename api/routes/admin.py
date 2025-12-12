@@ -59,9 +59,9 @@ settings = get_settings()
 
 # JWT Configuration
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 4  # Reduced from 24h for security
+JWT_EXPIRATION_HOURS = 24  # 24h for convenience during development
 JWT_COOKIE_NAME = "admin_token"  # HttpOnly cookie name
-JWT_COOKIE_SECURE = True  # Set to False for local development without HTTPS
+JWT_COOKIE_SECURE = False  # Set to True in production with HTTPS
 JWT_COOKIE_SAMESITE = "lax"  # "strict" may break some OAuth flows
 
 
@@ -140,8 +140,12 @@ def verify_admin_password(password_input: str, password_plain: str | None, passw
     # Fallback to plain text comparison (insecure, deprecated)
     if password_plain:
         # Use constant-time comparison to prevent timing attacks
+        # Encode to bytes to support non-ASCII characters
         import hmac
-        return hmac.compare_digest(password_input, password_plain)
+        return hmac.compare_digest(
+            password_input.encode("utf-8"),
+            password_plain.encode("utf-8")
+        )
 
     return False
 

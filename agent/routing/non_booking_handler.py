@@ -70,6 +70,10 @@ class NonBookingHandler:
             f"fsm_state={self.fsm.state.value}"
         )
 
+        # Handle appointment confirmation/decline intents (48h confirmation flow)
+        if intent.type in (IntentType.CONFIRM_APPOINTMENT, IntentType.DECLINE_APPOINTMENT):
+            return await self._handle_appointment_confirmation(intent)
+
         # Handle UPDATE_NAME intent explicitly to ensure name is updated
         if intent.type == IntentType.UPDATE_NAME:
             return await self._handle_update_name(intent)
@@ -337,6 +341,115 @@ IMPORTANTE:
         except Exception as e:
             logger.error(f"Error updating customer name: {e}", exc_info=True)
             return "Lo siento, ha habido un problema al actualizar tu nombre. ¿Puedes intentarlo de nuevo?"
+
+    async def _handle_appointment_confirmation(self, intent: Intent) -> str:
+        """
+        Handle appointment confirmation/decline responses (48h confirmation flow).
+
+        Processes customer responses to confirmation requests sent 48h before appointments.
+        - CONFIRM_APPOINTMENT: Customer confirms attendance → update status to CONFIRMED
+        - DECLINE_APPOINTMENT: Customer says can't attend → update status to CANCELLED
+
+        Args:
+            intent: Intent with type CONFIRM_APPOINTMENT or DECLINE_APPOINTMENT
+
+        Returns:
+            Response text (template or LLM-generated based on message complexity)
+        """
+        from agent.services.confirmation_service import handle_confirmation_response
+
+        customer_phone = self.state.get("customer_phone", "")
+
+        if not customer_phone:
+            logger.warning("Confirmation intent without customer_phone in state")
+            return "Lo siento, ha habido un problema. Por favor, intenta de nuevo."
+
+        logger.info(
+            f"Handling appointment confirmation | intent={intent.type.value} | "
+            f"customer_phone={customer_phone}"
+        )
+
+        try:
+            # Process the confirmation response
+            result = await handle_confirmation_response(
+                customer_phone=customer_phone,
+                intent_type=intent.type,
+                message_text=intent.raw_message,
+            )
+
+            if not result.success:
+                # No pending appointment or other error
+                logger.info(
+                    f"Confirmation handling failed | error={result.error_message}"
+                )
+                return result.error_message or "Lo siento, no pude procesar tu respuesta."
+
+            # Check response type
+            if result.response_type == "template" and result.response_text:
+                # Simple message - use pre-generated template response
+                logger.info(
+                    f"Confirmation processed (template) | appointment_id={result.appointment_id} | "
+                    f"intent={intent.type.value}"
+                )
+                return result.response_text
+
+            # Complex message - generate LLM response with context
+            logger.info(
+                f"Confirmation processed (LLM) | appointment_id={result.appointment_id} | "
+                f"intent={intent.type.value}"
+            )
+            return await self._generate_confirmation_response(intent, result)
+
+        except Exception as e:
+            logger.exception(f"Error handling appointment confirmation: {e}")
+            return "Lo siento, ha habido un problema al procesar tu respuesta. Por favor, intenta de nuevo."
+
+    async def _generate_confirmation_response(self, intent: Intent, result) -> str:
+        """
+        Generate LLM response for complex confirmation messages.
+
+        When the customer's message is more than a simple "sí" or "no",
+        we let the LLM generate a contextual response.
+
+        Args:
+            intent: User intent
+            result: ConfirmationResult with appointment data
+
+        Returns:
+            LLM-generated response text
+        """
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        # Build context for LLM
+        action = "confirmada" if intent.type == IntentType.CONFIRM_APPOINTMENT else "cancelada"
+
+        system_prompt = f"""Eres Maite, asistente virtual de Peluquería Atrévete.
+
+El cliente acaba de responder a una solicitud de confirmación de cita.
+
+CONTEXTO DE LA CITA:
+- Fecha: {result.appointment_date}
+- Hora: {result.appointment_time}
+- Estilista: {result.stylist_name}
+- Servicios: {result.service_names}
+- Estado: La cita ha sido {action}
+
+INSTRUCCIONES:
+- Responde de forma natural al mensaje del cliente
+- Confirma que la cita ha sido {action}
+- Si la cita fue cancelada, ofrece ayuda para reservar otra fecha
+- Mantén un tono profesional pero cercano
+- Responde en español
+- NO uses emojis excesivamente, máximo 1-2
+"""
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=intent.raw_message),
+        ]
+
+        response = await self.llm.ainvoke(messages)
+        return response.content
 
     async def _handle_fallback(self, intent: Intent) -> str:
         """
