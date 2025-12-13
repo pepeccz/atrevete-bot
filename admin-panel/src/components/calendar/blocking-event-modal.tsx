@@ -105,11 +105,11 @@ export function BlockingEventModal({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Extract time as displayed on calendar grid (for CREATE mode)
-  // FullCalendar (without timezone plugin) sets Date's local time to match visual position
-  // Using getHours/getMinutes directly avoids incorrect timezone conversion
+  // FullCalendar with named timezone uses UTC-coercion: visual time is stored as UTC value
+  // Per FullCalendar docs: "use UTC-flavored methods" when using named timezone without plugin
   const getVisualTime = (date: Date): string => {
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const hours = date.getUTCHours().toString().padStart(2, '0');
+    const minutes = date.getUTCMinutes().toString().padStart(2, '0');
     return `${hours}:${minutes}`;
   };
 

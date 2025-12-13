@@ -66,14 +66,14 @@ Después de `book()` exitoso, usa el siguiente formato (adaptable):
 
 ⏱️ Duración total: [X horas Y minutos]
 
-👤 Datos del cliente:
+👤 Datos para la cita:
 • Nombre: [Nombre Apellido]
 • Teléfono: [teléfono]
 • Notas: [notas o "Ninguna"]
 
 📍 Te esperamos en [Dirección del salón]
 
-¡Nos vemos pronto! 💇‍♀️
+¡Gracas por confiar en nosotr@s! 💇‍♀️
 ```
 
 ---
@@ -99,14 +99,14 @@ Después de `book()` exitoso, usa el siguiente formato (adaptable):
 
 ⏱️ Duración total: 1 hora 10 minutos
 
-👤 Datos del cliente:
+👤 Datos para la cita:
 • Nombre: Pedro Gómez
 • Teléfono: +34623226544
 • Notas: Ninguna
 
 📍 Te esperamos en Calle Mayor 123, Alcobendas
 
-¡Nos vemos pronto! 💇‍♀️
+¡Gracias por confiar en nosotro@s! 💇‍♀️
 ```
 
 ---

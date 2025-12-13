@@ -286,6 +286,34 @@ export function Sidebar() {
         <ExternalLinksSection title="Herramientas" items={externalLinks} isCollapsed={isCollapsed} />
       </div>
 
+      {/* Powered by Zanovix */}
+      <div className={cn("px-3 py-2", isCollapsed && "px-2")}>
+        <a
+          href="https://zanovix.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "flex items-center text-xs text-muted-foreground hover:text-foreground transition-colors",
+            isCollapsed ? "justify-center" : "justify-center"
+          )}
+        >
+          {isCollapsed ? (
+            <TooltipProvider delayDuration={0}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="font-medium">Z</span>
+                </TooltipTrigger>
+                <TooltipContent side="right">Powered by Zanovix</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : (
+            <span>
+              Powered by <span className="font-medium hover:underline">Zanovix</span>
+            </span>
+          )}
+        </a>
+      </div>
+
       {/* User section */}
       <div className="border-t p-2">
         {isCollapsed ? (

@@ -131,7 +131,7 @@ Perfecto, [Nombre]. Aquí está el resumen de tu reserva:
 - [Servicio 1] ([X] min)
 - [Servicio 2] ([X] min)
 
-👤 A nombre de: [Nombre Apellido]
+👤 La cita es para: [Nombre Apellido]
 
 ¿Confirmas esta reserva?
 ```
