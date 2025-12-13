@@ -45,11 +45,15 @@ from database.models import (
     GCalSyncState,
     Notification,
     NotificationType,
+    Service,
     Stylist,
 )
 from shared.config import get_settings
 from shared.settings_service import get_settings_service
-from agent.services.gcal_push_service import push_appointment_to_gcal
+from agent.services.gcal_push_service import (
+    push_appointment_to_gcal,
+    push_blocking_event_to_gcal,
+)
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -614,6 +618,159 @@ async def sync_stylist_calendar(
         return stats
 
 
+async def recover_missing_gcal_pushes(session) -> dict[str, int]:
+    """
+    Find appointments and blocking_events that were never pushed to GCal
+    (google_calendar_event_id is NULL) and push them.
+
+    This is different from recreate_appointment() which handles events that
+    were deleted externally from Google Calendar. This function handles cases
+    where the initial push failed (timeout, rate limit, etc.) and the event
+    was never created in GCal.
+
+    Returns:
+        Dict with counts: appointments_recovered, blocking_events_recovered, errors
+    """
+    stats = {"appointments_recovered": 0, "blocking_events_recovered": 0, "errors": 0}
+
+    # =========================================================================
+    # Recover Appointments
+    # =========================================================================
+    try:
+        # Find appointments without GCal event ID (created in last 7 days, not cancelled)
+        query = (
+            select(Appointment)
+            .options(selectinload(Appointment.customer))
+            .where(
+                and_(
+                    Appointment.google_calendar_event_id.is_(None),
+                    Appointment.status.in_(
+                        [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]
+                    ),
+                    Appointment.created_at > datetime.now(MADRID_TZ) - timedelta(days=7),
+                )
+            )
+        )
+        result = await session.execute(query)
+        appointments = result.scalars().all()
+
+        if appointments:
+            logger.info(f"Found {len(appointments)} appointments without GCal event ID")
+
+        for appointment in appointments:
+            try:
+                # Get service names
+                services_result = await session.execute(
+                    select(Service).where(Service.id.in_(appointment.service_ids))
+                )
+                services = services_result.scalars().all()
+                service_names = ", ".join([s.name for s in services]) if services else "Servicio"
+
+                # Get customer name
+                customer_name = (
+                    appointment.first_name
+                    or (appointment.customer.name if appointment.customer else None)
+                    or "Cliente"
+                )
+
+                # Get customer phone
+                customer_phone = (
+                    appointment.customer.phone if appointment.customer else None
+                )
+
+                # Push to Google Calendar
+                event_id = await push_appointment_to_gcal(
+                    appointment_id=appointment.id,
+                    stylist_id=appointment.stylist_id,
+                    customer_name=customer_name,
+                    service_names=service_names,
+                    start_time=appointment.start_time,
+                    duration_minutes=appointment.duration_minutes,
+                    status=appointment.status.value,
+                    customer_phone=customer_phone,
+                )
+
+                if event_id:
+                    appointment.google_calendar_event_id = event_id
+                    await session.commit()
+                    stats["appointments_recovered"] += 1
+                    logger.info(
+                        f"Recovered appointment {appointment.id} → GCal event {event_id}"
+                    )
+                else:
+                    stats["errors"] += 1
+                    logger.warning(
+                        f"Failed to recover appointment {appointment.id} - push returned None"
+                    )
+
+            except Exception as e:
+                stats["errors"] += 1
+                logger.error(
+                    f"Error recovering appointment {appointment.id}: {e}", exc_info=True
+                )
+
+    except Exception as e:
+        stats["errors"] += 1
+        logger.error(f"Error querying appointments for recovery: {e}", exc_info=True)
+
+    # =========================================================================
+    # Recover Blocking Events
+    # =========================================================================
+    try:
+        # Find blocking events without GCal event ID (created in last 7 days)
+        query = select(BlockingEvent).where(
+            and_(
+                BlockingEvent.google_calendar_event_id.is_(None),
+                BlockingEvent.created_at > datetime.now(MADRID_TZ) - timedelta(days=7),
+            )
+        )
+        result = await session.execute(query)
+        blocking_events = result.scalars().all()
+
+        if blocking_events:
+            logger.info(
+                f"Found {len(blocking_events)} blocking events without GCal event ID"
+            )
+
+        for event in blocking_events:
+            try:
+                # Push to Google Calendar
+                event_id = await push_blocking_event_to_gcal(
+                    blocking_event_id=event.id,
+                    stylist_id=event.stylist_id,
+                    title=event.title,
+                    description=event.description,
+                    start_time=event.start_time,
+                    end_time=event.end_time,
+                    event_type=event.event_type.value,
+                )
+
+                if event_id:
+                    event.google_calendar_event_id = event_id
+                    await session.commit()
+                    stats["blocking_events_recovered"] += 1
+                    logger.info(
+                        f"Recovered blocking event {event.id} → GCal event {event_id}"
+                    )
+                else:
+                    stats["errors"] += 1
+                    logger.warning(
+                        f"Failed to recover blocking event {event.id} - push returned None"
+                    )
+
+            except Exception as e:
+                stats["errors"] += 1
+                logger.error(
+                    f"Error recovering blocking event {event.id}: {e}", exc_info=True
+                )
+
+    except Exception as e:
+        stats["errors"] += 1
+        logger.error(f"Error querying blocking events for recovery: {e}", exc_info=True)
+
+    return stats
+
+
 async def run_gcal_sync() -> None:
     """
     Main sync job - syncs all stylist calendars.
@@ -636,11 +793,29 @@ async def run_gcal_sync() -> None:
         "skipped": 0,
         "errors": 0,
         "stylists_synced": 0,
+        "appointments_recovered": 0,
+        "blocking_events_recovered": 0,
     }
 
     try:
         async with get_async_session() as session:
-            # Get all active stylists
+            # Step 1: Recover any failed pushes (appointments/blocking events without GCal ID)
+            try:
+                recovery_stats = await recover_missing_gcal_pushes(session)
+                total_stats["appointments_recovered"] = recovery_stats["appointments_recovered"]
+                total_stats["blocking_events_recovered"] = recovery_stats["blocking_events_recovered"]
+                total_stats["errors"] += recovery_stats["errors"]
+
+                if recovery_stats["appointments_recovered"] > 0 or recovery_stats["blocking_events_recovered"] > 0:
+                    logger.info(
+                        f"Recovery complete: appointments={recovery_stats['appointments_recovered']}, "
+                        f"blocking_events={recovery_stats['blocking_events_recovered']}"
+                    )
+            except Exception as e:
+                logger.error(f"Error in recovery phase: {e}", exc_info=True)
+                total_stats["errors"] += 1
+
+            # Step 2: Get all active stylists for bidirectional sync
             result = await session.execute(
                 select(Stylist).where(Stylist.is_active == True)
             )
@@ -686,6 +861,8 @@ async def run_gcal_sync() -> None:
         f"stylists={total_stats['stylists_synced']}, "
         f"created={total_stats['created']}, updated={total_stats['updated']}, "
         f"deleted={total_stats['deleted']}, recreated={total_stats['recreated']}, "
+        f"recovered_appts={total_stats['appointments_recovered']}, "
+        f"recovered_blocks={total_stats['blocking_events_recovered']}, "
         f"errors={total_stats['errors']}"
     )
 
@@ -718,6 +895,8 @@ async def update_health_check(
         "events_updated": stats.get("updated", 0),
         "events_deleted": stats.get("deleted", 0),
         "appointments_recreated": stats.get("recreated", 0),
+        "appointments_recovered": stats.get("appointments_recovered", 0),
+        "blocking_events_recovered": stats.get("blocking_events_recovered", 0),
         "errors": stats.get("errors", 0),
         "last_updated": datetime.now(MADRID_TZ).isoformat(),
     }

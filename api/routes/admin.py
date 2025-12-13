@@ -58,6 +58,28 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 
+# =============================================================================
+# GCal Fire-and-Forget Helpers
+# =============================================================================
+
+
+async def _safe_delete_gcal_event(stylist_id: UUID, event_id: str) -> None:
+    """
+    Fire-and-forget wrapper for GCal event deletion.
+
+    This function is designed to be used with asyncio.create_task() to avoid
+    blocking the HTTP response while waiting for Google Calendar API calls.
+    Failures are logged but don't affect the caller.
+    """
+    from agent.services.gcal_push_service import delete_gcal_event
+
+    try:
+        await delete_gcal_event(stylist_id, event_id)
+        logger.info(f"GCal event {event_id} deleted successfully")
+    except Exception as e:
+        logger.warning(f"Failed to delete GCal event {event_id}: {e}")
+
+
 def parse_datetime_as_madrid(v: Any) -> datetime | None:
     """
     Parse datetime string/object and ensure Madrid timezone.
@@ -1908,8 +1930,6 @@ async def delete_appointment(
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
     """Delete an appointment."""
-    from agent.services.gcal_push_service import delete_gcal_event
-
     async with get_async_session() as session:
         result = await session.execute(
             select(Appointment).where(Appointment.id == appointment_id)
@@ -1919,15 +1939,14 @@ async def delete_appointment(
         if not appointment:
             raise HTTPException(status_code=404, detail="Appointment not found")
 
-        # Delete from Google Calendar if it was synced
+        # Fire-and-forget: Delete from Google Calendar without blocking
         if appointment.google_calendar_event_id:
-            try:
-                await delete_gcal_event(
+            asyncio.create_task(
+                _safe_delete_gcal_event(
                     appointment.stylist_id,
                     appointment.google_calendar_event_id
                 )
-            except Exception as e:
-                logger.warning(f"Failed to delete Google Calendar event: {e}")
+            )
 
         await session.delete(appointment)
         await session.commit()
@@ -2730,8 +2749,6 @@ async def delete_blocking_event(
     event_id: UUID,
 ):
     """Delete a blocking event."""
-    from agent.services.gcal_push_service import delete_gcal_event
-
     async with get_async_session() as session:
         result = await session.execute(
             select(BlockingEvent).where(BlockingEvent.id == event_id)
@@ -2741,9 +2758,11 @@ async def delete_blocking_event(
         if not event:
             raise HTTPException(status_code=404, detail="Blocking event not found")
 
-        # Delete from Google Calendar if it was synced
+        # Fire-and-forget: Delete from Google Calendar without blocking
         if event.google_calendar_event_id:
-            await delete_gcal_event(event.stylist_id, event.google_calendar_event_id)
+            asyncio.create_task(
+                _safe_delete_gcal_event(event.stylist_id, event.google_calendar_event_id)
+            )
 
         await session.delete(event)
         await session.commit()
