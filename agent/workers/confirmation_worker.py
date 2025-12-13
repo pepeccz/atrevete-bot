@@ -291,6 +291,11 @@ async def send_confirmations() -> None:
                         "6": deadline_str,
                     }
 
+                    # Mark confirmation_sent_at BEFORE sending (intent-to-send)
+                    # This prevents duplicate sends if the job runs again before next cycle
+                    appointment.confirmation_sent_at = now
+                    await session.commit()
+
                     # Send template message
                     template_name = dynamic_settings["confirmation_template_name"]
                     success = await chatwoot.send_template_message(
@@ -306,11 +311,7 @@ async def send_confirmations() -> None:
                     )
 
                     if success:
-                        # Update appointment
-                        appointment.confirmation_sent_at = now
-                        await session.commit()
-
-                        # Create notification
+                        # Create success notification
                         await create_notification(
                             session,
                             NotificationType.CONFIRMATION_SENT,
@@ -327,7 +328,7 @@ async def send_confirmations() -> None:
                             f"for appointment {appointment.id}"
                         )
                     else:
-                        # Mark as failed
+                        # Mark as failed (confirmation_sent_at already set, won't retry)
                         appointment.notification_failed = True
                         await session.commit()
 
@@ -421,7 +422,7 @@ async def process_auto_cancellations() -> None:
                         Appointment.status == AppointmentStatus.PENDING,
                         Appointment.confirmation_sent_at.is_not(None),
                         Appointment.start_time <= deadline,
-                        Appointment.start_time >= now,  # Not in the past
+                        Appointment.start_time > now,  # Strictly greater - don't cancel appointments in progress
                     )
                 )
             )

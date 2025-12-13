@@ -27,6 +27,7 @@ from agent.services.confirmation_service import (
     format_date_spanish,
     get_customer_by_phone,
     get_pending_confirmation,
+    get_pending_confirmations,
     handle_confirmation_response,
     has_pending_confirmation,
 )
@@ -117,12 +118,72 @@ class TestGetCustomerByPhone:
             assert result is None
 
 
+class TestGetPendingConfirmations:
+    """Test pending appointments lookup (returns list)."""
+
+    @pytest.mark.asyncio
+    async def test_pending_appointments_found(self):
+        """Verify list of pending appointments is returned."""
+        customer_id = uuid4()
+        appt_id1 = uuid4()
+        appt_id2 = uuid4()
+
+        mock_appointment1 = MagicMock()
+        mock_appointment1.id = appt_id1
+        mock_appointment1.customer_id = customer_id
+        mock_appointment1.status = AppointmentStatus.PENDING
+        mock_appointment1.confirmation_sent_at = datetime.now(MADRID_TZ)
+        mock_appointment1.start_time = datetime.now(MADRID_TZ) + timedelta(days=2)
+
+        mock_appointment2 = MagicMock()
+        mock_appointment2.id = appt_id2
+        mock_appointment2.customer_id = customer_id
+        mock_appointment2.status = AppointmentStatus.PENDING
+        mock_appointment2.confirmation_sent_at = datetime.now(MADRID_TZ)
+        mock_appointment2.start_time = datetime.now(MADRID_TZ) + timedelta(days=3)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_appointment1, mock_appointment2]
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "agent.services.confirmation_service.get_async_session"
+        ) as mock_get_session:
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            result = await get_pending_confirmations(customer_id)
+
+            assert len(result) == 2
+            assert result[0].id == appt_id1
+            assert result[1].id == appt_id2
+
+    @pytest.mark.asyncio
+    async def test_no_pending_appointments(self):
+        """Verify empty list when no pending appointments."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "agent.services.confirmation_service.get_async_session"
+        ) as mock_get_session:
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            result = await get_pending_confirmations(uuid4())
+
+            assert result == []
+
+
 class TestGetPendingConfirmation:
-    """Test pending appointment lookup."""
+    """Test pending appointment lookup (single appointment, backwards compatible)."""
 
     @pytest.mark.asyncio
     async def test_pending_appointment_found(self):
-        """Verify pending appointment is returned."""
+        """Verify first pending appointment is returned."""
         customer_id = uuid4()
         appt_id = uuid4()
 
@@ -133,36 +194,29 @@ class TestGetPendingConfirmation:
         mock_appointment.confirmation_sent_at = datetime.now(MADRID_TZ)
         mock_appointment.start_time = datetime.now(MADRID_TZ) + timedelta(days=2)
 
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = mock_appointment
-
-        mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
+        # Mock get_pending_confirmations to return list with one appointment
         with patch(
-            "agent.services.confirmation_service.get_async_session"
-        ) as mock_get_session:
-            mock_get_session.return_value.__aenter__.return_value = mock_session
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new_callable=AsyncMock,
+        ) as mock_get_pending_confirmations:
+            mock_get_pending_confirmations.return_value = [mock_appointment]
 
             result = await get_pending_confirmation(customer_id)
 
             assert result is not None
             assert result.id == appt_id
             assert result.status == AppointmentStatus.PENDING
+            mock_get_pending_confirmations.assert_called_once_with(customer_id)
 
     @pytest.mark.asyncio
     async def test_no_pending_appointment(self):
         """Verify None when no pending appointment."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = None
-
-        mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
+        # Mock get_pending_confirmations to return empty list
         with patch(
-            "agent.services.confirmation_service.get_async_session"
-        ) as mock_get_session:
-            mock_get_session.return_value.__aenter__.return_value = mock_session
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new_callable=AsyncMock,
+        ) as mock_get_pending_confirmations:
+            mock_get_pending_confirmations.return_value = []
 
             result = await get_pending_confirmation(uuid4())
 
@@ -270,10 +324,10 @@ class TestHandleConfirmationResponse:
             mock_get_customer.return_value = mock_customer
 
             with patch(
-                "agent.services.confirmation_service.get_pending_confirmation",
+                "agent.services.confirmation_service.get_pending_confirmations",
                 new_callable=AsyncMock,
             ) as mock_get_pending:
-                mock_get_pending.return_value = None
+                mock_get_pending.return_value = []  # Empty list = no pending appointments
 
                 result = await handle_confirmation_response(
                     customer_phone="+34612345678",
@@ -283,6 +337,52 @@ class TestHandleConfirmationResponse:
 
                 assert result.success is False
                 assert result.error_message is not None
+                assert "pendiente" in result.error_message.lower()
+
+    @pytest.mark.asyncio
+    async def test_multiple_pending_appointments_error(self):
+        """Verify error result when customer has multiple pending appointments."""
+        mock_customer = MagicMock()
+        mock_customer.id = uuid4()
+
+        # Create two mock appointments
+        mock_appointment1 = MagicMock()
+        mock_appointment1.id = uuid4()
+        mock_appointment1.start_time = datetime.now(MADRID_TZ) + timedelta(days=2)
+        mock_stylist1 = MagicMock()
+        mock_stylist1.name = "Ana"
+        mock_appointment1.stylist = mock_stylist1
+
+        mock_appointment2 = MagicMock()
+        mock_appointment2.id = uuid4()
+        mock_appointment2.start_time = datetime.now(MADRID_TZ) + timedelta(days=3)
+        mock_stylist2 = MagicMock()
+        mock_stylist2.name = "Carmen"
+        mock_appointment2.stylist = mock_stylist2
+
+        with patch(
+            "agent.services.confirmation_service.get_customer_by_phone",
+            new_callable=AsyncMock,
+        ) as mock_get_customer:
+            mock_get_customer.return_value = mock_customer
+
+            with patch(
+                "agent.services.confirmation_service.get_pending_confirmations",
+                new_callable=AsyncMock,
+            ) as mock_get_pending:
+                mock_get_pending.return_value = [mock_appointment1, mock_appointment2]
+
+                result = await handle_confirmation_response(
+                    customer_phone="+34612345678",
+                    intent_type=IntentType.CONFIRM_APPOINTMENT,
+                    message_text="sí",
+                )
+
+                assert result.success is False
+                assert result.error_message is not None
+                # Should mention there are 2 pending appointments
+                assert "2" in result.error_message
+                assert "citas" in result.error_message.lower()
                 assert "pendiente" in result.error_message.lower()
 
 
@@ -413,10 +513,10 @@ class TestConfirmAppointmentFlow:
             mock_get_customer.return_value = mock_customer
 
             with patch(
-                "agent.services.confirmation_service.get_pending_confirmation",
+                "agent.services.confirmation_service.get_pending_confirmations",
                 new_callable=AsyncMock,
             ) as mock_get_pending:
-                mock_get_pending.return_value = mock_appointment
+                mock_get_pending.return_value = [mock_appointment]  # Return list with single appointment
 
                 with patch(
                     "agent.services.confirmation_service.get_async_session"
@@ -508,10 +608,10 @@ class TestDeclineAppointmentFlow:
             mock_get_customer.return_value = mock_customer
 
             with patch(
-                "agent.services.confirmation_service.get_pending_confirmation",
+                "agent.services.confirmation_service.get_pending_confirmations",
                 new_callable=AsyncMock,
             ) as mock_get_pending:
-                mock_get_pending.return_value = mock_appointment
+                mock_get_pending.return_value = [mock_appointment]  # Return list with single appointment
 
                 with patch(
                     "agent.services.confirmation_service.get_async_session"

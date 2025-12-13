@@ -49,6 +49,63 @@ logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
+# Retry configuration for GCal API calls
+GCAL_MAX_RETRIES = 3
+GCAL_RETRY_BASE_DELAY = 1.0  # seconds
+
+
+async def _retry_with_backoff(
+    operation: callable,
+    operation_name: str,
+    max_retries: int = GCAL_MAX_RETRIES,
+    base_delay: float = GCAL_RETRY_BASE_DELAY,
+) -> Any:
+    """
+    Execute an operation with exponential backoff retry.
+
+    Args:
+        operation: Async callable to execute
+        operation_name: Name for logging
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds (doubles each retry)
+
+    Returns:
+        Result of the operation
+
+    Raises:
+        Last exception if all retries fail
+    """
+    last_exception = None
+
+    for attempt in range(max_retries):
+        try:
+            return await operation()
+        except HttpError as e:
+            # Don't retry 404 (not found) or 400 (bad request)
+            if e.resp.status in (400, 404):
+                raise
+            last_exception = e
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    f"GCal {operation_name} failed (attempt {attempt + 1}/{max_retries}), "
+                    f"retrying in {delay}s: {e}"
+                )
+                await asyncio.sleep(delay)
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    f"GCal {operation_name} failed (attempt {attempt + 1}/{max_retries}), "
+                    f"retrying in {delay}s: {e}"
+                )
+                await asyncio.sleep(delay)
+
+    logger.error(f"GCal {operation_name} failed after {max_retries} attempts")
+    raise last_exception
+
+
 # Event color codes for Google Calendar
 EVENT_COLORS = {
     "pending": "5",      # Yellow
@@ -192,18 +249,22 @@ async def push_appointment_to_gcal(
             "colorId": color_id,
         }
 
-        # Create event in Google Calendar (blocking call, run in executor)
+        # Create event in Google Calendar with retry
         service = _get_calendar_service()
-
-        def create_event():
-            return service.events().insert(
-                calendarId=calendar_id,
-                body=event_body,
-            ).execute()
-
-        # Run in thread pool to not block the event loop
         loop = asyncio.get_event_loop()
-        event = await loop.run_in_executor(None, create_event)
+
+        async def create_event_with_retry():
+            def create_event():
+                return service.events().insert(
+                    calendarId=calendar_id,
+                    body=event_body,
+                ).execute()
+            return await loop.run_in_executor(None, create_event)
+
+        event = await _retry_with_backoff(
+            create_event_with_retry,
+            f"push appointment {appointment_id}",
+        )
 
         event_id = event.get("id")
         logger.info(
@@ -396,7 +457,11 @@ async def update_appointment_in_gcal(
     customer_phone: str | None = None,
 ) -> bool:
     """
-    Update an existing appointment in Google Calendar.
+    Update an existing appointment in Google Calendar (full update).
+
+    USE THIS FUNCTION when you need to update time, services, stylist, etc.
+    (e.g., admin panel edits). Use update_gcal_event_status() when you only
+    need to change the status/emoji (e.g., confirmation flow).
 
     Uses service.events().patch() to update only changed fields.
 
@@ -667,6 +732,9 @@ async def update_gcal_event_status(
     """
     Update the status (color and emoji) of a Google Calendar event.
 
+    USE THIS FUNCTION when you only need to change the status/emoji (e.g., confirmation flow).
+    Use update_appointment_in_gcal() when you need to update time, services, etc.
+
     Args:
         stylist_id: UUID of the stylist
         event_id: Google Calendar event ID
@@ -699,27 +767,35 @@ async def update_gcal_event_status(
 
         color_id = EVENT_COLORS.get(new_status, "5")
 
-        # Update event in Google Calendar
+        # Update event in Google Calendar with retry
         service = _get_calendar_service()
-
-        def update_event():
-            return service.events().patch(
-                calendarId=calendar_id,
-                eventId=event_id,
-                body={
-                    "summary": summary,
-                    "colorId": color_id,
-                },
-            ).execute()
-
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, update_event)
+
+        async def update_event_with_retry():
+            def update_event():
+                return service.events().patch(
+                    calendarId=calendar_id,
+                    eventId=event_id,
+                    body={
+                        "summary": summary,
+                        "colorId": color_id,
+                    },
+                ).execute()
+            return await loop.run_in_executor(None, update_event)
+
+        await _retry_with_backoff(
+            update_event_with_retry,
+            f"update status for event {event_id}",
+        )
 
         logger.info(f"Updated Google Calendar event {event_id} to status: {new_status}")
         return True
 
     except HttpError as e:
-        logger.error(f"Google Calendar API error updating event {event_id}: {e}")
+        if e.resp.status == 404:
+            logger.warning(f"Event {event_id} not found in Google Calendar")
+        else:
+            logger.error(f"Google Calendar API error updating event {event_id}: {e}")
         return False
     except Exception as e:
         logger.error(f"Error updating Google Calendar event {event_id}: {e}", exc_info=True)

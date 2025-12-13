@@ -468,6 +468,7 @@ export default function StylistsPage() {
 
       {/* Create/Edit Modal */}
       <StylistModal
+        key={editingStylist?.id ?? 'new'}
         open={modalOpen}
         onOpenChange={setModalOpen}
         onSuccess={loadData}

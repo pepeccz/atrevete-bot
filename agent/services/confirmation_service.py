@@ -82,9 +82,9 @@ class ConfirmationResult:
     error_message: Optional[str] = None
 
 
-async def get_pending_confirmation(customer_id: UUID) -> Optional[Appointment]:
+async def get_pending_confirmations(customer_id: UUID) -> list[Appointment]:
     """
-    Get the appointment awaiting confirmation for a customer.
+    Get ALL appointments awaiting confirmation for a customer.
 
     Finds PENDING appointments where confirmation_sent_at IS NOT NULL,
     ordered by start_time (soonest first).
@@ -93,7 +93,7 @@ async def get_pending_confirmation(customer_id: UUID) -> Optional[Appointment]:
         customer_id: UUID of the customer
 
     Returns:
-        Appointment object if found, None otherwise
+        List of Appointment objects (empty list if none found)
     """
     try:
         async with get_async_session() as session:
@@ -111,13 +111,29 @@ async def get_pending_confirmation(customer_id: UUID) -> Optional[Appointment]:
                     )
                 )
                 .order_by(Appointment.start_time.asc())
-                .limit(1)
             )
-            return result.scalars().first()
+            return list(result.scalars().all())
 
     except Exception as e:
-        logger.error(f"Error fetching pending confirmation for customer {customer_id}: {e}")
-        return None
+        logger.error(f"Error fetching pending confirmations for customer {customer_id}: {e}")
+        return []
+
+
+async def get_pending_confirmation(customer_id: UUID) -> Optional[Appointment]:
+    """
+    Get the appointment awaiting confirmation for a customer.
+
+    DEPRECATED: Use get_pending_confirmations() to handle multiple appointments.
+    This function is kept for backwards compatibility.
+
+    Args:
+        customer_id: UUID of the customer
+
+    Returns:
+        First appointment if found, None otherwise
+    """
+    appointments = await get_pending_confirmations(customer_id)
+    return appointments[0] if appointments else None
 
 
 async def get_customer_by_phone(phone_number: str) -> Optional[Customer]:
@@ -196,14 +212,40 @@ async def handle_confirmation_response(
             error_message="No encontramos tu perfil. Por favor, contacta con nosotros.",
         )
 
-    # Get pending appointment
-    appointment = await get_pending_confirmation(customer.id)
-    if not appointment:
+    # Get ALL pending appointments
+    pending_appointments = await get_pending_confirmations(customer.id)
+    if not pending_appointments:
         logger.info(f"No pending confirmation found for customer {customer.id}")
         return ConfirmationResult(
             success=False,
             error_message="No tienes ninguna cita pendiente de confirmación.",
         )
+
+    # Check for multiple pending appointments
+    if len(pending_appointments) > 1:
+        # Build list of appointments for the user
+        appt_list = []
+        for i, appt in enumerate(pending_appointments, 1):
+            appt_time = appt.start_time.astimezone(MADRID_TZ)
+            fecha = format_date_spanish(appt_time)
+            hora = appt_time.strftime("%H:%M")
+            stylist = appt.stylist.name if appt.stylist else "tu estilista"
+            appt_list.append(f"{i}. {fecha} a las {hora} con {stylist}")
+
+        appointments_str = "\n".join(appt_list)
+        logger.info(f"Customer {customer.id} has {len(pending_appointments)} pending confirmations")
+        return ConfirmationResult(
+            success=False,
+            error_message=(
+                f"Tienes {len(pending_appointments)} citas pendientes de confirmación:\n\n"
+                f"{appointments_str}\n\n"
+                f"Por favor, indica cuál deseas confirmar o cancelar "
+                f"(ej: 'confirma la cita del lunes' o 'cancela la del martes')."
+            ),
+        )
+
+    # Single appointment - proceed with confirmation/cancellation
+    appointment = pending_appointments[0]
 
     # Get service names
     try:
@@ -258,14 +300,21 @@ async def handle_confirmation_response(
                 await session.commit()
 
                 # Update Google Calendar (yellow -> green)
+                # Fire-and-forget: GCal failure doesn't rollback DB (already committed)
                 if appt.google_calendar_event_id:
-                    await update_gcal_event_status(
-                        stylist_id=appt.stylist_id,
-                        event_id=appt.google_calendar_event_id,
-                        new_status="confirmed",
-                        customer_name=customer.name or appt.first_name,
-                        service_names=service_names,
-                    )
+                    try:
+                        await update_gcal_event_status(
+                            stylist_id=appt.stylist_id,
+                            event_id=appt.google_calendar_event_id,
+                            new_status="confirmed",
+                            customer_name=customer.name or appt.first_name,
+                            service_names=service_names,
+                        )
+                    except Exception as gcal_error:
+                        logger.warning(
+                            f"GCal update failed for appointment {appt.id} "
+                            f"(DB already committed to CONFIRMED): {gcal_error}"
+                        )
 
                 # Create admin notification
                 notification = Notification(
@@ -308,11 +357,18 @@ async def handle_confirmation_response(
                 await session.commit()
 
                 # Delete Google Calendar event
+                # Fire-and-forget: GCal failure doesn't rollback DB (already committed)
                 if appt.google_calendar_event_id:
-                    await delete_gcal_event(
-                        stylist_id=appt.stylist_id,
-                        event_id=appt.google_calendar_event_id,
-                    )
+                    try:
+                        await delete_gcal_event(
+                            stylist_id=appt.stylist_id,
+                            event_id=appt.google_calendar_event_id,
+                        )
+                    except Exception as gcal_error:
+                        logger.warning(
+                            f"GCal delete failed for appointment {appt.id} "
+                            f"(DB already committed to CANCELLED): {gcal_error}"
+                        )
 
                 # Create admin notification
                 notification = Notification(

@@ -23,7 +23,7 @@ STYLISTS_DATA: list[dict[str, Any]] = [
     {
         "name": "Victor",
         "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "02ac48c0a2b9ed4e3b82b48ff92c951c2369519401c88ace2f14e024f57b59d1@group.calendar.google.com",
+        "google_calendar_id": "2eda3449b5832c981f72fc4c3cee8eac296868ea889aba41e507c7cb550cef4b@group.calendar.google.com",
         "is_active": True,
         "metadata_": {},
     },
@@ -51,14 +51,14 @@ STYLISTS_DATA: list[dict[str, Any]] = [
     {
         "name": "Pilar",
         "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "3b266f75917395ff0cfe7ed47703a5f9c8a8a14a8f680882693df6da80122c39@group.calendar.google.com",
+        "google_calendar_id": "39024c9b23eb5ce41489b48a2c843b064821085bc99ac5b06317f1c01ceb194f@group.calendar.google.com",
         "is_active": True,
         "metadata_": {},
     },
     {
         "name": "Rosa",
         "category": ServiceCategory.AESTHETICS,
-        "google_calendar_id": "2eda3449b5832c981f72fc4c3cee8eac296868ea889aba41e507c7cb550cef4b@group.calendar.google.com",
+        "google_calendar_id": "3b266f75917395ff0cfe7ed47703a5f9c8a8a14a8f680882693df6da80122c39@group.calendar.google.com",
         "is_active": True,
         "metadata_": {},
     },

@@ -12,6 +12,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -22,7 +23,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +50,36 @@ from shared.config import get_settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+# =============================================================================
+# Timezone Handling
+# =============================================================================
+
+MADRID_TZ = ZoneInfo("Europe/Madrid")
+
+
+def parse_datetime_as_madrid(v: Any) -> datetime | None:
+    """
+    Parse datetime string/object and ensure Madrid timezone.
+
+    This handles the case where frontend sends naive datetime strings
+    (e.g., "2024-12-12T10:30:00") without timezone info. We assume
+    these are in Madrid time since the app is for a Spanish salon.
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        # Parse ISO string, handle 'Z' suffix (UTC marker)
+        dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            # Naive datetime → assume Madrid timezone
+            return dt.replace(tzinfo=MADRID_TZ)
+        return dt
+    if isinstance(v, datetime):
+        if v.tzinfo is None:
+            return v.replace(tzinfo=MADRID_TZ)
+        return v
+    return v
 
 # =============================================================================
 # Security
@@ -873,6 +904,7 @@ async def list_stylists(
                     "category": s.category.value,
                     "google_calendar_id": s.google_calendar_id,
                     "is_active": s.is_active,
+                    "color": s.color,
                     "created_at": s.created_at.isoformat(),
                     "updated_at": s.updated_at.isoformat(),
                 }
@@ -906,6 +938,7 @@ async def get_stylist(
             "category": stylist.category.value,
             "google_calendar_id": stylist.google_calendar_id,
             "is_active": stylist.is_active,
+            "color": stylist.color,
             "created_at": stylist.created_at.isoformat(),
             "updated_at": stylist.updated_at.isoformat(),
         }
@@ -934,6 +967,7 @@ async def create_stylist(
             category=category_enum,
             google_calendar_id=request.google_calendar_id,
             is_active=request.is_active,
+            color=request.color,
         )
         session.add(stylist)
         await session.commit()
@@ -945,6 +979,7 @@ async def create_stylist(
             "category": stylist.category.value,
             "google_calendar_id": stylist.google_calendar_id,
             "is_active": stylist.is_active,
+            "color": stylist.color,
             "created_at": stylist.created_at.isoformat(),
             "updated_at": stylist.updated_at.isoformat(),
         }
@@ -983,6 +1018,8 @@ async def update_stylist(
             stylist.google_calendar_id = request.google_calendar_id
         if request.is_active is not None:
             stylist.is_active = request.is_active
+        if request.color is not None:
+            stylist.color = request.color
 
         await session.commit()
         await session.refresh(stylist)
@@ -993,6 +1030,7 @@ async def update_stylist(
             "category": stylist.category.value,
             "google_calendar_id": stylist.google_calendar_id,
             "is_active": stylist.is_active,
+            "color": stylist.color,
             "created_at": stylist.created_at.isoformat(),
             "updated_at": stylist.updated_at.isoformat(),
         }
@@ -1502,7 +1540,7 @@ async def list_appointments(
                     "customer_id": str(a.customer_id),
                     "stylist_id": str(a.stylist_id),
                     "service_ids": [str(sid) for sid in a.service_ids],
-                    "start_time": a.start_time.isoformat(),
+                    "start_time": a.start_time.astimezone(MADRID_TZ).isoformat(),
                     "duration_minutes": a.duration_minutes,
                     "status": a.status.value,
                     "google_calendar_event_id": a.google_calendar_event_id,
@@ -1529,6 +1567,11 @@ class CreateAppointmentRequest(BaseModel):
     first_name: str
     last_name: str | None = None
     notes: str | None = None
+
+    @field_validator("start_time", mode="before")
+    @classmethod
+    def ensure_madrid_tz(cls, v):
+        return parse_datetime_as_madrid(v)
 
 
 @router.post("/appointments")
@@ -1643,7 +1686,7 @@ async def create_appointment(
             "customer_id": str(new_appointment.customer_id),
             "stylist_id": str(new_appointment.stylist_id),
             "service_ids": [str(sid) for sid in new_appointment.service_ids],
-            "start_time": new_appointment.start_time.isoformat(),
+            "start_time": new_appointment.start_time.astimezone(MADRID_TZ).isoformat(),
             "duration_minutes": new_appointment.duration_minutes,
             "status": new_appointment.status.value,
             "google_calendar_event_id": new_appointment.google_calendar_event_id,
@@ -1687,7 +1730,7 @@ async def get_appointment(
             "id": str(appointment.id),
             "customer_id": str(appointment.customer_id),
             "stylist_id": str(appointment.stylist_id),
-            "start_time": appointment.start_time.isoformat(),
+            "start_time": appointment.start_time.astimezone(MADRID_TZ).isoformat(),
             "duration_minutes": appointment.duration_minutes,
             "status": appointment.status.value,
             "first_name": appointment.first_name,
@@ -1726,6 +1769,11 @@ class UpdateAppointmentRequest(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     notes: str | None = None
+
+    @field_validator("start_time", mode="before")
+    @classmethod
+    def ensure_madrid_tz(cls, v):
+        return parse_datetime_as_madrid(v)
 
 
 @router.put("/appointments/{appointment_id}")
@@ -1842,7 +1890,7 @@ async def update_appointment(
             "customer_id": str(appointment.customer_id),
             "stylist_id": str(appointment.stylist_id),
             "service_ids": [str(sid) for sid in appointment.service_ids],
-            "start_time": appointment.start_time.isoformat(),
+            "start_time": appointment.start_time.astimezone(MADRID_TZ).isoformat(),
             "duration_minutes": appointment.duration_minutes,
             "status": appointment.status.value,
             "google_calendar_event_id": appointment.google_calendar_event_id,
@@ -2432,6 +2480,11 @@ class CreateBlockingEventRequest(BaseModel):
     end_time: datetime
     event_type: str = Field(default="general")  # vacation, meeting, break, general
 
+    @field_validator("start_time", "end_time", mode="before")
+    @classmethod
+    def ensure_madrid_tz(cls, v):
+        return parse_datetime_as_madrid(v)
+
 
 class UpdateBlockingEventRequest(BaseModel):
     """Request schema for updating a blocking event."""
@@ -2440,6 +2493,11 @@ class UpdateBlockingEventRequest(BaseModel):
     start_time: datetime | None = None
     end_time: datetime | None = None
     event_type: str | None = None
+
+    @field_validator("start_time", "end_time", mode="before")
+    @classmethod
+    def ensure_madrid_tz(cls, v):
+        return parse_datetime_as_madrid(v)
 
 
 @router.get("/blocking-events")
@@ -2457,6 +2515,12 @@ async def list_blocking_events(
         start: Optional start date range
         end: Optional end date range
     """
+    # Ensure timezone for query params (FastAPI doesn't support Pydantic validators on query params)
+    if start and start.tzinfo is None:
+        start = start.replace(tzinfo=MADRID_TZ)
+    if end and end.tzinfo is None:
+        end = end.replace(tzinfo=MADRID_TZ)
+
     async with get_async_session() as session:
         query = select(BlockingEvent)
 
@@ -2481,8 +2545,8 @@ async def list_blocking_events(
                     "stylist_id": str(e.stylist_id),
                     "title": e.title,
                     "description": e.description,
-                    "start_time": e.start_time.isoformat(),
-                    "end_time": e.end_time.isoformat(),
+                    "start_time": e.start_time.astimezone(MADRID_TZ).isoformat(),
+                    "end_time": e.end_time.astimezone(MADRID_TZ).isoformat(),
                     "event_type": e.event_type.value,
                     "google_calendar_event_id": e.google_calendar_event_id,
                     "created_at": e.created_at.isoformat(),
@@ -2574,8 +2638,8 @@ async def create_blocking_event(
                     "stylist_id": str(event.stylist_id),
                     "title": event.title,
                     "description": event.description,
-                    "start_time": event.start_time.isoformat(),
-                    "end_time": event.end_time.isoformat(),
+                    "start_time": event.start_time.astimezone(MADRID_TZ).isoformat(),
+                    "end_time": event.end_time.astimezone(MADRID_TZ).isoformat(),
                     "event_type": event.event_type.value,
                     "created_at": event.created_at.isoformat(),
                 }
@@ -2654,8 +2718,8 @@ async def update_blocking_event(
             "stylist_id": str(event.stylist_id),
             "title": event.title,
             "description": event.description,
-            "start_time": event.start_time.isoformat(),
-            "end_time": event.end_time.isoformat(),
+            "start_time": event.start_time.astimezone(MADRID_TZ).isoformat(),
+            "end_time": event.end_time.astimezone(MADRID_TZ).isoformat(),
             "event_type": event.event_type.value,
         }
 

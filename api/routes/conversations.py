@@ -8,8 +8,11 @@ from PostgreSQL (conversations older than 24 hours).
 import logging
 from datetime import datetime
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 from api.routes.admin import get_current_user
 from shared.archive_retrieval import (
@@ -141,6 +144,12 @@ async def list_conversations(
     **Errors:**
     - **500**: Internal server error
     """
+    # Ensure timezone for query params (FastAPI doesn't support Pydantic validators on query params)
+    if start_date and start_date.tzinfo is None:
+        start_date = start_date.replace(tzinfo=MADRID_TZ)
+    if end_date and end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=MADRID_TZ)
+
     try:
         result = await list_archived_conversations(
             customer_phone=customer_phone,

@@ -80,17 +80,26 @@ export function CreateBlockingEventModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Extract time as displayed on calendar grid (for CREATE mode)
+  // FullCalendar (without timezone plugin) sets Date's local time to match visual position
+  // Using getHours/getMinutes directly avoids incorrect timezone conversion
+  const getVisualTime = (date: Date): string => {
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+
   // Calculate default times from drag selection or use defaults
   const getDefaultStartTime = () => {
     if (selectedStartTime) {
-      return format(selectedStartTime, "HH:mm");
+      return getVisualTime(selectedStartTime);
     }
     return "09:00";
   };
 
   const getDefaultEndTime = () => {
     if (selectedEndTime) {
-      return format(selectedEndTime, "HH:mm");
+      return getVisualTime(selectedEndTime);
     }
     return "14:00";
   };

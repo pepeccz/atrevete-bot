@@ -104,17 +104,37 @@ export function BlockingEventModal({
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Extract time as displayed on calendar grid (for CREATE mode)
+  // FullCalendar (without timezone plugin) sets Date's local time to match visual position
+  // Using getHours/getMinutes directly avoids incorrect timezone conversion
+  const getVisualTime = (date: Date): string => {
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+
+  // Convert ISO-parsed Date to Madrid time for display (for EDIT mode)
+  // Backend sends proper ISO strings, so we need proper timezone conversion
+  const formatTimeInMadrid = (date: Date): string => {
+    return new Intl.DateTimeFormat('es-ES', {
+      timeZone: 'Europe/Madrid',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(date);
+  };
+
   // Calculate default times from drag selection or use defaults
   const getDefaultStartTime = () => {
     if (selectedStartTime) {
-      return format(selectedStartTime, "HH:mm");
+      return getVisualTime(selectedStartTime);
     }
     return "09:00";
   };
 
   const getDefaultEndTime = () => {
     if (selectedEndTime) {
-      return format(selectedEndTime, "HH:mm");
+      return getVisualTime(selectedEndTime);
     }
     return "14:00";
   };
@@ -136,8 +156,8 @@ export function BlockingEventModal({
         const endDate = parseISO(blockingEvent.end_time);
 
         setBlockingDate(startDate);
-        setStartTime(format(startDate, "HH:mm"));
-        setEndTime(format(endDate, "HH:mm"));
+        setStartTime(formatTimeInMadrid(startDate));
+        setEndTime(formatTimeInMadrid(endDate));
         setSelectedStylistIds([blockingEvent.stylist_id]);
       } else {
         // Create mode: use defaults
