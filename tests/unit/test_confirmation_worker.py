@@ -195,7 +195,7 @@ class TestSendConfirmationsJob:
         # Mock customer relationship
         mock_customer = MagicMock()
         mock_customer.phone = "+34612345678"
-        mock_customer.name = "María García"
+        mock_customer.first_name = "María García"
         appt.customer = mock_customer
 
         # Mock stylist relationship
@@ -301,7 +301,7 @@ class TestProcessAutoCancellationsJob:
         # Mock customer
         mock_customer = MagicMock()
         mock_customer.phone = "+34698765432"
-        mock_customer.name = "Pedro López"
+        mock_customer.first_name = "Pedro López"
         appt.customer = mock_customer
 
         # Mock stylist
@@ -396,7 +396,7 @@ class TestSendRemindersJob:
         # Mock customer
         mock_customer = MagicMock()
         mock_customer.phone = "+34611223344"
-        mock_customer.name = "Laura Martínez"
+        mock_customer.first_name = "Laura Martínez"
         appt.customer = mock_customer
 
         # Mock stylist

@@ -24,7 +24,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -1581,6 +1581,73 @@ async def list_appointments(
         }
 
 
+@router.get("/appointments/pending-actions")
+async def get_pending_actions(
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Get appointments that have passed but are still pending/confirmed
+    (not marked as completed or no_show).
+
+    These are appointments that require action from the admin/stylist.
+    """
+    now = datetime.now(MADRID_TZ)
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Appointment)
+            .options(
+                selectinload(Appointment.customer),
+                selectinload(Appointment.stylist),
+            )
+            .where(
+                and_(
+                    Appointment.start_time < now,  # Already passed
+                    Appointment.status.in_([
+                        AppointmentStatus.PENDING,
+                        AppointmentStatus.CONFIRMED
+                    ]),
+                )
+            )
+            .order_by(Appointment.start_time.desc())
+            .limit(50)
+        )
+        appointments = list(result.scalars().all())
+
+        # Get service names for each appointment
+        items = []
+        for appt in appointments:
+            # Fetch services
+            services_result = await session.execute(
+                select(Service).where(Service.id.in_(appt.service_ids))
+            )
+            services = list(services_result.scalars().all())
+
+            items.append({
+                "id": str(appt.id),
+                "customer_id": str(appt.customer_id),
+                "stylist_id": str(appt.stylist_id),
+                "start_time": appt.start_time.astimezone(MADRID_TZ).isoformat(),
+                "duration_minutes": appt.duration_minutes,
+                "status": appt.status.value,
+                "first_name": appt.first_name or (appt.customer.first_name if appt.customer else "Cliente"),
+                "last_name": appt.last_name,
+                "stylist": {
+                    "id": str(appt.stylist.id),
+                    "name": appt.stylist.name,
+                } if appt.stylist else None,
+                "services": [
+                    {"id": str(s.id), "name": s.name}
+                    for s in services
+                ],
+            })
+
+        return {
+            "items": items,
+            "total": len(items),
+        }
+
+
 class CreateAppointmentRequest(BaseModel):
     customer_id: UUID
     stylist_id: UUID
@@ -1877,20 +1944,20 @@ async def update_appointment(
                 except Exception as e:
                     logger.warning(f"Failed to create notification for appointment {appointment.id}: {e}")
 
-        # Sync with Google Calendar if event exists
+        # Sync with Google Calendar
+        # Get customer name and service names for Google Calendar
+        customer_name = f"{appointment.first_name} {appointment.last_name or ''}".strip()
+
+        services_result = await session.execute(
+            select(Service).where(Service.id.in_(appointment.service_ids))
+        )
+        services = services_result.scalars().all()
+        service_names = ", ".join(s.name for s in services)
+
         if appointment.google_calendar_event_id:
+            # Update existing event (fire-and-forget)
             from agent.services.gcal_push_service import update_appointment_in_gcal
 
-            # Get customer name and service names for Google Calendar
-            customer_name = f"{appointment.first_name} {appointment.last_name or ''}".strip()
-
-            services_result = await session.execute(
-                select(Service).where(Service.id.in_(appointment.service_ids))
-            )
-            services = services_result.scalars().all()
-            service_names = ", ".join(s.name for s in services)
-
-            # Fire-and-forget update to Google Calendar
             asyncio.create_task(
                 update_appointment_in_gcal(
                     appointment_id=appointment.id,
@@ -1906,6 +1973,34 @@ async def update_appointment(
             logger.info(
                 f"Triggered Google Calendar update for appointment {appointment.id}"
             )
+        else:
+            # Create new event if missing (immediate push)
+            from agent.services.gcal_push_service import push_appointment_to_gcal
+
+            try:
+                event_id = await push_appointment_to_gcal(
+                    appointment_id=appointment.id,
+                    stylist_id=appointment.stylist_id,
+                    customer_name=customer_name,
+                    service_names=service_names,
+                    start_time=appointment.start_time,
+                    duration_minutes=appointment.duration_minutes,
+                    status=appointment.status.value,
+                )
+                if event_id:
+                    appointment.google_calendar_event_id = event_id
+                    await session.commit()
+                    logger.info(
+                        f"Created GCal event {event_id} for appointment {appointment.id}"
+                    )
+                else:
+                    logger.warning(
+                        f"GCal push returned None for appointment {appointment.id}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Failed to create GCal event for appointment {appointment.id}: {e}"
+                )
 
         return {
             "id": str(appointment.id),

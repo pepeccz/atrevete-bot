@@ -222,6 +222,11 @@ IMPORTANTE:
         """
         Execute a single tool call from LLM.
 
+        For escalate_to_human, injects conversation context (conversation_id,
+        customer_phone, recent messages) so the escalation service can:
+        1. Disable bot in Chatwoot
+        2. Create notification with full context
+
         Args:
             tool_call: Tool call dict from LLM response
 
@@ -254,6 +259,20 @@ IMPORTANTE:
                 error_msg = f"Tool not found: {tool_name}"
                 logger.error(error_msg)
                 return json.dumps({"error": error_msg}, ensure_ascii=False)
+
+            # Inject conversation context for escalate_to_human
+            # This enables the escalation service to disable bot in Chatwoot
+            # and create notification with full context
+            if tool_name == "escalate_to_human":
+                tool_args["_conversation_id"] = self.state.get("conversation_id")
+                tool_args["_customer_phone"] = self.state.get("customer_phone")
+                # Get last 5 messages for context
+                messages = self.state.get("messages", [])
+                tool_args["_conversation_context"] = messages[-5:] if messages else []
+                logger.info(
+                    f"Injecting escalation context | conversation_id={tool_args['_conversation_id']} | "
+                    f"customer_phone={tool_args['_customer_phone']}"
+                )
 
             # Execute tool
             result = await tool.ainvoke(tool_args)

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
@@ -311,3 +311,114 @@ async def validate_3_day_rule(requested_date: datetime) -> dict:
         "days_until_appointment": days_until,
         "minimum_required_days": MINIMUM_DAYS
     }
+
+
+async def validate_appointment_limit(customer_id: UUID) -> dict:
+    """
+    Validate that customer has not exceeded maximum pending appointments limit.
+
+    Business rule: Customers can only have N pending/confirmed future appointments
+    at any time (default: 3). This prevents abuse and ensures fair access.
+
+    Counts appointments where:
+    - customer_id matches (appointments FOR the customer)
+    - OR booked_by_customer_id matches (appointments MADE BY customer for others)
+    - AND start_time > NOW() (future appointments only)
+    - AND status IN ('pending', 'confirmed')
+
+    Args:
+        customer_id: Customer UUID to check
+
+    Returns:
+        dict with validation result:
+            {
+                "valid": bool,
+                "error_code": str | None,  # "APPOINTMENT_LIMIT_EXCEEDED" if invalid
+                "error_message": str | None,
+                "current_count": int,
+                "max_allowed": int
+            }
+
+    Example:
+        Valid (under limit):
+        >>> await validate_appointment_limit(customer_uuid)
+        {"valid": True, "error_code": None, "current_count": 2, "max_allowed": 3}
+
+        Invalid (at limit):
+        >>> await validate_appointment_limit(customer_uuid)
+        {
+            "valid": False,
+            "error_code": "APPOINTMENT_LIMIT_EXCEEDED",
+            "error_message": "Ya tienes 3 citas programadas...",
+            "current_count": 3,
+            "max_allowed": 3
+        }
+    """
+    # Import here to avoid circular imports
+    from shared.settings_service import get_settings_service
+
+    # Get configurable limit from settings
+    settings_service = await get_settings_service()
+    max_appointments = await settings_service.get("max_pending_appointments_per_customer", 3)
+
+    async with get_async_session() as session:
+        try:
+            # Count future pending/confirmed appointments for this customer
+            # Includes: appointments FOR the customer OR appointments MADE BY the customer
+            now = datetime.now(MADRID_TZ)
+
+            stmt = select(func.count()).select_from(Appointment).where(
+                or_(
+                    Appointment.customer_id == customer_id,
+                    Appointment.booked_by_customer_id == customer_id
+                ),
+                Appointment.start_time > now,
+                Appointment.status.in_([
+                    AppointmentStatus.PENDING.value,
+                    AppointmentStatus.CONFIRMED.value
+                ])
+            )
+
+            result = await session.execute(stmt)
+            current_count = result.scalar() or 0
+
+            if current_count >= max_appointments:
+                logger.warning(
+                    f"Appointment limit exceeded: customer has {current_count} appointments (max: {max_appointments})",
+                    extra={
+                        "customer_id": str(customer_id),
+                        "current_count": current_count,
+                        "max_allowed": max_appointments
+                    }
+                )
+
+                return {
+                    "valid": False,
+                    "error_code": "APPOINTMENT_LIMIT_EXCEEDED",
+                    "error_message": (
+                        f"Ya tienes {current_count} citas programadas. "
+                        f"Puedes cancelar una existente o esperar a que se complete para agendar otra."
+                    ),
+                    "current_count": current_count,
+                    "max_allowed": max_appointments
+                }
+
+            logger.info(
+                f"Appointment limit check passed: {current_count}/{max_appointments}",
+                extra={
+                    "customer_id": str(customer_id),
+                    "current_count": current_count
+                }
+            )
+
+            return {
+                "valid": True,
+                "error_code": None,
+                "error_message": None,
+                "current_count": current_count,
+                "max_allowed": max_appointments
+            }
+
+        except Exception as e:
+            logger.error(f"Database error during appointment limit validation: {e}", exc_info=True)
+            raise

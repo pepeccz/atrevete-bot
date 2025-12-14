@@ -29,7 +29,6 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-import schedule
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -348,7 +347,7 @@ async def recreate_appointment(
 
         # Get customer name
         customer_name = (
-            appointment.customer.name
+            appointment.customer.first_name + " " + appointment.customer.last_name
             if appointment.customer
             else appointment.first_name or "Cliente"
         )
@@ -669,7 +668,7 @@ async def recover_missing_gcal_pushes(session) -> dict[str, int]:
                 # Get customer name
                 customer_name = (
                     appointment.first_name
-                    or (appointment.customer.name if appointment.customer else None)
+                    or (appointment.customer.first_name if appointment.customer else None)
                     or "Cliente"
                 )
 
@@ -909,11 +908,71 @@ async def update_health_check(
         logger.error(f"Failed to write health check file: {e}", exc_info=True)
 
 
-def run_gcal_sync_worker() -> None:
+async def async_main() -> None:
     """
-    Main worker entry point - runs GCal sync on schedule.
+    Main async entry point - runs GCal sync on schedule using a single event loop.
+
+    IMPORTANT: Uses asyncio.sleep() instead of schedule + asyncio.run() to avoid
+    event loop corruption. Each asyncio.run() creates a new event loop, but
+    SQLAlchemy's asyncpg connections keep references to the previous loop,
+    causing "Future attached to a different loop" errors.
 
     Handles graceful shutdown on SIGTERM/SIGINT.
+    """
+    global shutdown_requested
+
+    # Load dynamic settings
+    dynamic_settings = await get_dynamic_settings()
+    sync_interval = dynamic_settings.get("gcal_sync_interval_minutes", 5)
+
+    logger.info("GCal sync worker starting...")
+    logger.info(f"Configuration: sync_interval={sync_interval} minutes")
+
+    # Write initial health check
+    await update_health_check(
+        last_run=datetime.now(MADRID_TZ),
+        status="starting",
+        stats={},
+    )
+
+    # Run once immediately on startup
+    logger.info("Running initial sync...")
+    await run_gcal_sync()
+
+    logger.info(f"GCal sync worker scheduled: every {sync_interval} minutes")
+
+    # Main loop with asyncio.sleep (single event loop, no schedule library)
+    while not shutdown_requested:
+        # Sleep for sync_interval minutes (checking shutdown flag every 30s)
+        sleep_seconds = sync_interval * 60
+        for _ in range(sleep_seconds // 30):
+            if shutdown_requested:
+                break
+            await asyncio.sleep(30)
+
+        if shutdown_requested:
+            break
+
+        # Reload settings in case they changed
+        try:
+            dynamic_settings = await get_dynamic_settings()
+            new_interval = dynamic_settings.get("gcal_sync_interval_minutes", 5)
+            if new_interval != sync_interval:
+                logger.info(f"Sync interval changed: {sync_interval} -> {new_interval} minutes")
+                sync_interval = new_interval
+        except Exception as e:
+            logger.warning(f"Failed to reload settings: {e}")
+
+        # Run sync
+        await run_gcal_sync()
+
+    logger.info("GCal sync worker shutting down gracefully...")
+
+
+def run_gcal_sync_worker() -> None:
+    """
+    Synchronous entry point that sets up logging and signal handlers,
+    then runs the async main function.
     """
     # Configure logging
     logging.basicConfig(
@@ -924,37 +983,8 @@ def run_gcal_sync_worker() -> None:
         ],
     )
 
-    # Load dynamic settings
-    dynamic_settings = asyncio.run(get_dynamic_settings())
-    sync_interval = dynamic_settings.get("gcal_sync_interval_minutes", 5)
-
-    logger.info("GCal sync worker starting...")
-    logger.info(f"Configuration: sync_interval={sync_interval} minutes")
-
-    # Write initial health check
-    asyncio.run(
-        update_health_check(
-            last_run=datetime.now(MADRID_TZ),
-            status="starting",
-            stats={},
-        )
-    )
-
-    # Schedule sync job
-    schedule.every(sync_interval).minutes.do(lambda: asyncio.run(run_gcal_sync()))
-
-    # Run once immediately on startup
-    logger.info("Running initial sync...")
-    asyncio.run(run_gcal_sync())
-
-    logger.info(f"GCal sync worker scheduled: every {sync_interval} minutes")
-
-    # Run scheduler loop
-    while not shutdown_requested:
-        schedule.run_pending()
-        time.sleep(30)  # Check every 30 seconds
-
-    logger.info("GCal sync worker shutting down gracefully...")
+    # Run the async main with a single event loop
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":

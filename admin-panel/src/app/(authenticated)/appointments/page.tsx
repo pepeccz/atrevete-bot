@@ -65,6 +65,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { PendingActionsCard } from "@/components/appointments/pending-actions-card";
 import type {
   Appointment,
   Stylist,
@@ -1366,7 +1367,10 @@ export default function AppointmentsPage() {
         }
       />
 
-      <div className="flex-1 p-6">
+      <div className="flex-1 p-6 space-y-6">
+        {/* Pending Actions Card */}
+        <PendingActionsCard />
+
         <Card>
           <CardContent className="pt-6">
             {/* Filters */}

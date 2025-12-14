@@ -159,7 +159,7 @@ SYSTEM_SETTINGS = [
         "display_order": 9,
     },
 
-    # ========== BOOKING SETTINGS (5) ==========
+    # ========== BOOKING SETTINGS (6) ==========
     {
         "category": SettingCategory.BOOKING.value,
         "key": "minimum_booking_days_advance",
@@ -229,6 +229,20 @@ SYSTEM_SETTINGS = [
         "description": "Duración por defecto de un servicio si no está especificada.",
         "requires_restart": False,
         "display_order": 14,
+    },
+    {
+        "category": SettingCategory.BOOKING.value,
+        "key": "max_pending_appointments_per_customer",
+        "value": 3,
+        "value_type": SettingValueType.INT.value,
+        "default_value": 3,
+        "min_value": 1,
+        "max_value": 10,
+        "allowed_values": None,
+        "label": "Citas pendientes máx. por cliente",
+        "description": "Número máximo de citas futuras (pendientes o confirmadas) que un cliente puede tener activas. Solo aplica a reservas desde WhatsApp.",
+        "requires_restart": False,
+        "display_order": 15,
     },
 
     # ========== LLM SETTINGS (6) ==========

@@ -20,6 +20,7 @@ from agent.validators.transaction_validators import (
     validate_category_consistency,
     validate_slot_availability,
     validate_3_day_rule,
+    validate_appointment_limit,
     MADRID_TZ,
 )
 from database.models import ServiceCategory, AppointmentStatus
@@ -504,3 +505,206 @@ class TestEdgeCases:
         result = await validate_3_day_rule(future_date)
 
         assert result["valid"] is True
+
+
+# ============================================================================
+# Test validate_appointment_limit()
+# ============================================================================
+
+
+class TestValidateAppointmentLimit:
+    """Test appointment limit validation per customer."""
+
+    @pytest.fixture
+    def customer_id(self):
+        """Sample customer UUID."""
+        return uuid4()
+
+    @pytest.mark.asyncio
+    async def test_under_limit_is_valid(self, customer_id):
+        """Test that customer under limit passes validation."""
+        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+            with patch("shared.settings_service.get_settings_service") as mock_settings:
+                mock_service = AsyncMock()
+                mock_service.get = AsyncMock(return_value=3)
+                mock_settings.return_value = mock_service
+
+                mock_session = MagicMock()
+                mock_result = MagicMock()
+                mock_result.scalar.return_value = 2  # 2 existing appointments
+                mock_session.execute = AsyncMock(return_value=mock_result)
+                mock_session_ctx.return_value.__aenter__.return_value = mock_session
+
+                result = await validate_appointment_limit(customer_id)
+
+        assert result["valid"] is True
+        assert result["error_code"] is None
+        assert result["current_count"] == 2
+        assert result["max_allowed"] == 3
+
+    @pytest.mark.asyncio
+    async def test_at_limit_is_invalid(self, customer_id):
+        """Test that customer at limit fails validation."""
+        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+            with patch("shared.settings_service.get_settings_service") as mock_settings:
+                mock_service = AsyncMock()
+                mock_service.get = AsyncMock(return_value=3)
+                mock_settings.return_value = mock_service
+
+                mock_session = MagicMock()
+                mock_result = MagicMock()
+                mock_result.scalar.return_value = 3  # At limit
+                mock_session.execute = AsyncMock(return_value=mock_result)
+                mock_session_ctx.return_value.__aenter__.return_value = mock_session
+
+                result = await validate_appointment_limit(customer_id)
+
+        assert result["valid"] is False
+        assert result["error_code"] == "APPOINTMENT_LIMIT_EXCEEDED"
+        assert "3 citas programadas" in result["error_message"]
+        assert result["current_count"] == 3
+        assert result["max_allowed"] == 3
+
+    @pytest.mark.asyncio
+    async def test_over_limit_is_invalid(self, customer_id):
+        """Test that customer over limit fails validation."""
+        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+            with patch("shared.settings_service.get_settings_service") as mock_settings:
+                mock_service = AsyncMock()
+                mock_service.get = AsyncMock(return_value=3)
+                mock_settings.return_value = mock_service
+
+                mock_session = MagicMock()
+                mock_result = MagicMock()
+                mock_result.scalar.return_value = 5  # Over limit
+                mock_session.execute = AsyncMock(return_value=mock_result)
+                mock_session_ctx.return_value.__aenter__.return_value = mock_session
+
+                result = await validate_appointment_limit(customer_id)
+
+        assert result["valid"] is False
+        assert result["error_code"] == "APPOINTMENT_LIMIT_EXCEEDED"
+        assert result["current_count"] == 5
+
+    @pytest.mark.asyncio
+    async def test_zero_appointments_is_valid(self, customer_id):
+        """Test that new customer with zero appointments is valid."""
+        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+            with patch("shared.settings_service.get_settings_service") as mock_settings:
+                mock_service = AsyncMock()
+                mock_service.get = AsyncMock(return_value=3)
+                mock_settings.return_value = mock_service
+
+                mock_session = MagicMock()
+                mock_result = MagicMock()
+                mock_result.scalar.return_value = 0
+                mock_session.execute = AsyncMock(return_value=mock_result)
+                mock_session_ctx.return_value.__aenter__.return_value = mock_session
+
+                result = await validate_appointment_limit(customer_id)
+
+        assert result["valid"] is True
+        assert result["current_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_configurable_limit_respected(self, customer_id):
+        """Test that configured limit is respected."""
+        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+            with patch("shared.settings_service.get_settings_service") as mock_settings:
+                mock_service = AsyncMock()
+                mock_service.get = AsyncMock(return_value=5)  # Custom limit of 5
+                mock_settings.return_value = mock_service
+
+                mock_session = MagicMock()
+                mock_result = MagicMock()
+                mock_result.scalar.return_value = 4  # Under custom limit
+                mock_session.execute = AsyncMock(return_value=mock_result)
+                mock_session_ctx.return_value.__aenter__.return_value = mock_session
+
+                result = await validate_appointment_limit(customer_id)
+
+        assert result["valid"] is True
+        assert result["max_allowed"] == 5
+
+    @pytest.mark.asyncio
+    async def test_error_message_in_spanish(self, customer_id):
+        """Test that error message is in Spanish."""
+        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+            with patch("shared.settings_service.get_settings_service") as mock_settings:
+                mock_service = AsyncMock()
+                mock_service.get = AsyncMock(return_value=3)
+                mock_settings.return_value = mock_service
+
+                mock_session = MagicMock()
+                mock_result = MagicMock()
+                mock_result.scalar.return_value = 3
+                mock_session.execute = AsyncMock(return_value=mock_result)
+                mock_session_ctx.return_value.__aenter__.return_value = mock_session
+
+                result = await validate_appointment_limit(customer_id)
+
+        assert "Ya tienes" in result["error_message"]
+        assert "cancelar una existente" in result["error_message"]
+        assert "esperar a que se complete" in result["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_limit_check_logs_warning_on_exceed(self, customer_id):
+        """Test that exceeding limit logs a warning."""
+        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+            with patch("shared.settings_service.get_settings_service") as mock_settings:
+                mock_service = AsyncMock()
+                mock_service.get = AsyncMock(return_value=3)
+                mock_settings.return_value = mock_service
+
+                mock_session = MagicMock()
+                mock_result = MagicMock()
+                mock_result.scalar.return_value = 3
+                mock_session.execute = AsyncMock(return_value=mock_result)
+                mock_session_ctx.return_value.__aenter__.return_value = mock_session
+
+                with patch("agent.validators.transaction_validators.logger") as mock_logger:
+                    await validate_appointment_limit(customer_id)
+
+                    mock_logger.warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_limit_check_logs_info_on_pass(self, customer_id):
+        """Test that passing limit check logs info."""
+        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+            with patch("shared.settings_service.get_settings_service") as mock_settings:
+                mock_service = AsyncMock()
+                mock_service.get = AsyncMock(return_value=3)
+                mock_settings.return_value = mock_service
+
+                mock_session = MagicMock()
+                mock_result = MagicMock()
+                mock_result.scalar.return_value = 1
+                mock_session.execute = AsyncMock(return_value=mock_result)
+                mock_session_ctx.return_value.__aenter__.return_value = mock_session
+
+                with patch("agent.validators.transaction_validators.logger") as mock_logger:
+                    await validate_appointment_limit(customer_id)
+
+                    mock_logger.info.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_default_limit_used_when_setting_missing(self, customer_id):
+        """Test that default limit (3) is used when setting is not found."""
+        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+            with patch("shared.settings_service.get_settings_service") as mock_settings:
+                mock_service = AsyncMock()
+                # Return default value (simulating missing setting)
+                mock_service.get = AsyncMock(return_value=3)
+                mock_settings.return_value = mock_service
+
+                mock_session = MagicMock()
+                mock_result = MagicMock()
+                mock_result.scalar.return_value = 2
+                mock_session.execute = AsyncMock(return_value=mock_result)
+                mock_session_ctx.return_value.__aenter__.return_value = mock_session
+
+                result = await validate_appointment_limit(customer_id)
+
+        # Verify default of 3 was used
+        mock_service.get.assert_called_once_with("max_pending_appointments_per_customer", 3)
+        assert result["max_allowed"] == 3

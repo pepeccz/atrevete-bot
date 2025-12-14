@@ -113,6 +113,13 @@ class NotificationType(str, PyEnum):
     CONFIRMATION_FAILED = "confirmation_failed"       # Failed to send confirmation template
     REMINDER_SENT = "reminder_sent"                   # 2h reminder sent
 
+    # Escalation system (human handoff)
+    ESCALATION_MANUAL = "escalation_manual"           # User explicitly requested human
+    ESCALATION_TECHNICAL = "escalation_technical"     # Technical error triggered escalation
+    ESCALATION_AUTO = "escalation_auto"               # Auto-escalation (error_count >= 3)
+    ESCALATION_MEDICAL = "escalation_medical"         # Medical consultation requires human
+    ESCALATION_AMBIGUITY = "escalation_ambiguity"     # Ambiguous request after multiple attempts
+
 
 # ============================================================================
 # Core Models

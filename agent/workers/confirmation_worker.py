@@ -26,7 +26,6 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-import schedule
 from sqlalchemy import select, and_, update
 from sqlalchemy.orm import selectinload
 
@@ -276,7 +275,7 @@ async def send_confirmations() -> None:
 
                     # Get customer name
                     customer_name = (
-                        appointment.customer.name
+                        appointment.customer.first_name
                         or appointment.first_name
                         or "Cliente"
                     )
@@ -298,11 +297,19 @@ async def send_confirmations() -> None:
 
                     # Send template message
                     template_name = dynamic_settings["confirmation_template_name"]
+                    # Use existing conversation_id from customer if available
+                    conv_id = None
+                    if appointment.customer.chatwoot_conversation_id:
+                        try:
+                            conv_id = int(appointment.customer.chatwoot_conversation_id)
+                        except (ValueError, TypeError):
+                            pass
                     success = await chatwoot.send_template_message(
                         customer_phone=appointment.customer.phone,
                         template_name=template_name,
                         body_params=body_params,
                         customer_name=customer_name,
+                        conversation_id=conv_id,
                         fallback_content=(
                             f"Recordatorio de cita: {fecha} a las {hora} "
                             f"con {appointment.stylist.name}. "
@@ -450,7 +457,7 @@ async def process_auto_cancellations() -> None:
 
                     # Get customer name
                     customer_name = (
-                        appointment.customer.name
+                        appointment.customer.first_name
                         or appointment.first_name
                         or "Cliente"
                     )
@@ -475,11 +482,19 @@ async def process_auto_cancellations() -> None:
                     }
 
                     template_name = dynamic_settings["auto_cancel_template_name"]
+                    # Use existing conversation_id from customer if available
+                    conv_id = None
+                    if appointment.customer.chatwoot_conversation_id:
+                        try:
+                            conv_id = int(appointment.customer.chatwoot_conversation_id)
+                        except (ValueError, TypeError):
+                            pass
                     await chatwoot.send_template_message(
                         customer_phone=appointment.customer.phone,
                         template_name=template_name,
                         body_params=body_params,
                         customer_name=customer_name,
+                        conversation_id=conv_id,
                         fallback_content=(
                             f"Tu cita del {fecha} a las {hora} ha sido cancelada "
                             f"automáticamente al no recibir confirmación."
@@ -607,7 +622,7 @@ async def send_reminders() -> None:
 
                     # Get customer name
                     customer_name = (
-                        appointment.customer.name
+                        appointment.customer.first_name
                         or appointment.first_name
                         or "Cliente"
                     )
@@ -622,11 +637,19 @@ async def send_reminders() -> None:
 
                     # Send reminder template
                     template_name = dynamic_settings["reminder_template_name"]
+                    # Use existing conversation_id from customer if available
+                    conv_id = None
+                    if appointment.customer.chatwoot_conversation_id:
+                        try:
+                            conv_id = int(appointment.customer.chatwoot_conversation_id)
+                        except (ValueError, TypeError):
+                            pass
                     success = await chatwoot.send_template_message(
                         customer_phone=appointment.customer.phone,
                         template_name=template_name,
                         body_params=body_params,
                         customer_name=customer_name,
+                        conversation_id=conv_id,
                         fallback_content=(
                             f"Recordatorio: Tu cita es hoy a las {hora}. "
                             f"Te esperamos en Peluquería Atrévete."
@@ -751,28 +774,26 @@ async def update_health_check(
 # Main Entry Point
 # =============================================================================
 
-def run_confirmation_worker() -> None:
+async def async_main() -> None:
     """
-    Main worker entry point - runs confirmation jobs on schedule.
+    Main async entry point - runs confirmation jobs on schedule using a single event loop.
+
+    IMPORTANT: Uses asyncio.sleep() instead of schedule + asyncio.run() to avoid
+    event loop corruption. Each asyncio.run() creates a new event loop, but
+    SQLAlchemy's asyncpg connections keep references to the previous loop,
+    causing "Future attached to a different loop" errors.
 
     Schedule:
-    - send_confirmations: Daily at 10:00 AM Madrid time
-    - process_auto_cancellations: Daily at 10:00 AM Madrid time
-    - send_reminders: Hourly at :00
+    - send_confirmations: Daily at configured time (default 10:00 AM Madrid)
+    - process_auto_cancellations: Daily at configured time (default 10:00 AM Madrid)
+    - send_reminders: Based on interval setting (hourly or every 30min)
 
     Handles graceful shutdown on SIGTERM/SIGINT.
     """
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-        ],
-    )
+    global shutdown_requested
 
     # Load dynamic settings from database
-    dynamic_settings = asyncio.run(get_dynamic_settings())
+    dynamic_settings = await get_dynamic_settings()
 
     logger.info("Appointment confirmation worker starting...")
     logger.info(
@@ -784,41 +805,19 @@ def run_confirmation_worker() -> None:
     )
 
     # Write initial health check file
-    asyncio.run(
-        update_health_check(
-            job_name="startup",
-            last_run=datetime.now(MADRID_TZ),
-            status="healthy",
-            processed=0,
-            errors=0,
-        )
+    await update_health_check(
+        job_name="startup",
+        last_run=datetime.now(MADRID_TZ),
+        status="healthy",
+        processed=0,
+        errors=0,
     )
     logger.info("Initial health check file written")
 
-    # Get job times from settings (require restart to change)
-    confirmation_time = dynamic_settings["confirmation_job_time"]
-    auto_cancel_time = dynamic_settings["auto_cancel_job_time"]
-    reminder_interval = dynamic_settings["reminder_job_interval"]
-
-    # Schedule daily confirmation job
-    schedule.every().day.at(confirmation_time).do(
-        lambda: asyncio.run(send_confirmations())
-    )
-
-    # Schedule daily auto-cancellation job
-    schedule.every().day.at(auto_cancel_time).do(
-        lambda: asyncio.run(process_auto_cancellations())
-    )
-
-    # Schedule reminders based on interval setting
-    if reminder_interval == "30min":
-        schedule.every(30).minutes.do(
-            lambda: asyncio.run(send_reminders())
-        )
-    else:  # Default: hourly
-        schedule.every().hour.at(":00").do(
-            lambda: asyncio.run(send_reminders())
-        )
+    # Get job times from settings
+    confirmation_time = dynamic_settings["confirmation_job_time"]  # "10:00"
+    auto_cancel_time = dynamic_settings["auto_cancel_job_time"]    # "10:00"
+    reminder_interval = dynamic_settings["reminder_job_interval"]  # "hourly" or "30min"
 
     logger.info(
         f"Confirmation worker scheduled:\n"
@@ -827,12 +826,76 @@ def run_confirmation_worker() -> None:
         f"  - send_reminders: {reminder_interval}"
     )
 
-    # Run scheduler loop
+    # Track last execution times to avoid running jobs multiple times
+    last_daily_run: str | None = None  # Format: "YYYY-MM-DD"
+    last_reminder_run: datetime | None = None
+
+    # Calculate reminder interval in minutes
+    reminder_minutes = 30 if reminder_interval == "30min" else 60
+
+    # Main loop - check every minute
     while not shutdown_requested:
-        schedule.run_pending()
-        time.sleep(60)  # Check every minute
+        now = datetime.now(MADRID_TZ)
+        current_time = now.strftime("%H:%M")
+        current_date = now.strftime("%Y-%m-%d")
+
+        # Check if we should run daily jobs (confirmation + auto-cancel)
+        # Run if: correct time AND haven't run today
+        if current_time == confirmation_time and last_daily_run != current_date:
+            logger.info(f"Running daily jobs at {current_time}")
+            try:
+                await send_confirmations()
+            except Exception as e:
+                logger.error(f"Error in send_confirmations: {e}", exc_info=True)
+
+            try:
+                await process_auto_cancellations()
+            except Exception as e:
+                logger.error(f"Error in process_auto_cancellations: {e}", exc_info=True)
+
+            last_daily_run = current_date
+
+        # Check if we should run reminders
+        # Run if: enough time has passed since last run
+        should_run_reminders = False
+        if last_reminder_run is None:
+            # First run - run immediately
+            should_run_reminders = True
+        else:
+            minutes_since_last = (now - last_reminder_run).total_seconds() / 60
+            if minutes_since_last >= reminder_minutes:
+                should_run_reminders = True
+
+        if should_run_reminders:
+            logger.info(f"Running send_reminders at {now.strftime('%H:%M:%S')}")
+            try:
+                await send_reminders()
+            except Exception as e:
+                logger.error(f"Error in send_reminders: {e}", exc_info=True)
+            last_reminder_run = now
+
+        # Sleep for 1 minute before checking again
+        await asyncio.sleep(60)
 
     logger.info("Confirmation worker shutting down gracefully...")
+
+
+def run_confirmation_worker() -> None:
+    """
+    Synchronous entry point that sets up logging and signal handlers,
+    then runs the async main function.
+    """
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
+
+    # Run the async main with a single event loop
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":

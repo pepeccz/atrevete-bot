@@ -17,19 +17,23 @@ Architecture (v5.0 - ADR-013):
 
 Flow:
 1. Load FSM state from checkpoint
-2. Extract intent using LLM (state-aware disambiguation)
-3. Validate transition with FSM
-4. Route via IntentRouter (NEW - replaces LLM tool binding)
-5. Persist FSM state
+2. Check for auto-escalation (error_count >= threshold)
+3. Extract intent using LLM (state-aware disambiguation)
+4. Validate transition with FSM
+5. Route via IntentRouter (NEW - replaces LLM tool binding)
+6. Persist FSM state
+7. Reset error_count on success
 
 Changes from v4.0:
 - REMOVED: LLM tool binding (replaced with FSM prescription)
 - REMOVED: tool_validation.py (997 lines of defensive code)
 - REMOVED: response_validator.py (reactive validation)
 - ADDED: IntentRouter with BookingHandler + NonBookingHandler
+- ADDED: Auto-escalation after consecutive errors (error_count >= 3)
 - REDUCED: 1,583 lines → ~400 lines (75% reduction)
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -46,6 +50,9 @@ from agent.state.schemas import ConversationState
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Auto-escalation threshold: after this many consecutive errors, escalate to human
+AUTO_ESCALATION_THRESHOLD = 3
 
 
 async def conversational_agent(state: ConversationState) -> dict[str, Any]:
@@ -88,6 +95,44 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         f"Processing message | conversation_id={conversation_id} | "
         f"message_length={len(user_message)}"
     )
+
+    # ============================================================================
+    # STEP 0: Check for auto-escalation (error_count >= threshold)
+    # ============================================================================
+    # If too many consecutive errors have occurred, auto-escalate to human
+    # This prevents the bot from getting stuck in error loops
+
+    error_count = state.get("error_count", 0)
+
+    if error_count >= AUTO_ESCALATION_THRESHOLD:
+        logger.warning(
+            f"Auto-escalating due to error_count | conversation_id={conversation_id} | "
+            f"error_count={error_count} | threshold={AUTO_ESCALATION_THRESHOLD}"
+        )
+
+        # Trigger auto-escalation (fire-and-forget)
+        from agent.services.escalation_service import trigger_escalation
+
+        asyncio.create_task(
+            trigger_escalation(
+                reason="auto_escalation",
+                conversation_id=conversation_id,
+                customer_phone=state.get("customer_phone", ""),
+                conversation_context=messages[-5:] if messages else [],
+            )
+        )
+
+        response_text = (
+            "Disculpa, estoy teniendo dificultades tecnicas. "
+            "Te paso con un companero humano que te ayudara enseguida."
+        )
+
+        # Reset error count and set escalation flags
+        state["error_count"] = 0
+        state["escalation_triggered"] = True
+        state["escalation_reason"] = "auto_escalation"
+
+        return add_message(state, "assistant", response_text)
 
     # ============================================================================
     # STEP 1: Load FSM from checkpoint (ADR-011: single source of truth)
@@ -292,12 +337,29 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             f"OpenRouter circuit breaker OPEN | conversation_id={conversation_id} | "
             f"escalating to human"
         )
+
+        # Trigger escalation (fire-and-forget)
+        from agent.services.escalation_service import trigger_escalation
+
+        asyncio.create_task(
+            trigger_escalation(
+                reason="technical_error",
+                conversation_id=conversation_id,
+                customer_phone=state.get("customer_phone", ""),
+                conversation_context=messages[-5:] if messages else [],
+            )
+        )
+
         response_text = (
-            "Disculpa, estoy teniendo problemas técnicos en este momento. "
-            "Te paso con un compañero humano que te ayudará enseguida."
+            "Disculpa, estoy teniendo problemas tecnicos en este momento. "
+            "Te paso con un companero humano que te ayudara enseguida."
         )
         # Mark for escalation so Chatwoot can route to human agent
         state["escalated"] = True
+        state["escalation_triggered"] = True
+        state["escalation_reason"] = "technical_error"
+        # Increment error count for tracking
+        state["error_count"] = error_count + 1
 
     except (ValueError, KeyError) as e:
         # Handler execution error (expected - invalid tool args, missing data)
@@ -307,6 +369,8 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
 
         # Fallback response
         response_text = _generate_fallback_response(fsm)
+        # Increment error count for potential auto-escalation
+        state["error_count"] = error_count + 1
 
     except AttributeError as e:
         # Configuration error (unexpected - LLM/handler misconfigured)
@@ -318,6 +382,8 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
 
         # Fallback response for configuration errors (don't crash user session)
         response_text = _generate_fallback_response(fsm)
+        # Increment error count for potential auto-escalation
+        state["error_count"] = error_count + 1
 
     except Exception as e:
         # Unexpected error (network, database, tool execution failure)
@@ -329,9 +395,21 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
 
         # Fallback response (avoid crashing the conversation)
         response_text = _generate_fallback_response(fsm)
+        # Increment error count for potential auto-escalation
+        state["error_count"] = error_count + 1
 
     # ============================================================================
-    # STEP 5: Persist FSM state to checkpoint
+    # STEP 5: Reset error count on successful response
+    # ============================================================================
+    # Only reset if we didn't encounter an error in this iteration
+    # (error handlers already increment error_count, so if it's unchanged, reset it)
+
+    if state.get("error_count", 0) == error_count:
+        # No error occurred in this iteration - reset error count
+        state["error_count"] = 0
+
+    # ============================================================================
+    # STEP 6: Persist FSM state to checkpoint
     # ============================================================================
 
     state["fsm_state"] = fsm.to_dict()
@@ -339,11 +417,12 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     logger.info(
         f"FSM persisted | conversation_id={conversation_id} | "
         f"state={fsm.state.value} | "
-        f"data_fields={list(fsm.collected_data.keys())}"
+        f"data_fields={list(fsm.collected_data.keys())} | "
+        f"error_count={state.get('error_count', 0)}"
     )
 
     # ============================================================================
-    # STEP 6: Return updated state with response
+    # STEP 7: Return updated state with response
     # ============================================================================
 
     return add_message(state, "assistant", response_text)

@@ -27,6 +27,7 @@ from agent.services.gcal_push_service import push_appointment_to_gcal
 from agent.utils.calendar_link import generate_google_calendar_link
 from agent.validators.transaction_validators import (
     validate_3_day_rule,
+    validate_appointment_limit,
     validate_category_consistency,
     validate_slot_availability,
 )
@@ -141,6 +142,26 @@ class BookingTransaction:
                     "details": {
                         "days_until_appointment": validation_3day["days_until_appointment"],
                         "minimum_required_days": validation_3day["minimum_required_days"]
+                    }
+                }
+
+            # Step 1b: Validate appointment limit per customer
+            validation_limit = await validate_appointment_limit(customer_id)
+            if not validation_limit["valid"]:
+                logger.warning(
+                    f"[{trace_id}] Appointment limit validation failed",
+                    extra={
+                        "current_count": validation_limit["current_count"],
+                        "max_allowed": validation_limit["max_allowed"]
+                    }
+                )
+                return {
+                    "success": False,
+                    "error_code": validation_limit["error_code"],
+                    "error_message": validation_limit["error_message"],
+                    "details": {
+                        "current_count": validation_limit["current_count"],
+                        "max_allowed": validation_limit["max_allowed"]
                     }
                 }
 

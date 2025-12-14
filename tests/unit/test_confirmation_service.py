@@ -68,7 +68,7 @@ class TestGetCustomerByPhone:
         mock_customer = MagicMock()
         mock_customer.id = uuid4()
         mock_customer.phone = "+34612345678"
-        mock_customer.name = "María García"
+        mock_customer.first_name = "María García"
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.first.return_value = mock_customer
@@ -495,7 +495,7 @@ class TestConfirmAppointmentFlow:
         customer = MagicMock()
         customer.id = uuid4()
         customer.phone = "+34612345678"
-        customer.name = "María García"
+        customer.first_name = "María García"
         return customer
 
     @pytest.mark.asyncio
@@ -590,7 +590,7 @@ class TestDeclineAppointmentFlow:
         customer = MagicMock()
         customer.id = uuid4()
         customer.phone = "+34612345678"
-        customer.name = "María García"
+        customer.first_name = "María García"
         return customer
 
     @pytest.mark.asyncio

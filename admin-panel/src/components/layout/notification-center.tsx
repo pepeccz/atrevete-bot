@@ -2,7 +2,21 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, Check, CheckCheck, Calendar, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Bell,
+  Check,
+  CheckCheck,
+  Calendar,
+  Clock,
+  HeartPulse,
+  HelpCircle,
+  Send,
+  UserX,
+  X,
+  XCircle,
+  Zap,
+} from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
@@ -19,17 +33,43 @@ import { cn } from "@/lib/utils";
 const POLL_INTERVAL = 30000; // 30 seconds
 
 const notificationIcons: Record<string, typeof Calendar> = {
+  // Appointment lifecycle
   appointment_created: Calendar,
   appointment_cancelled: X,
   appointment_confirmed: Check,
   appointment_completed: CheckCheck,
+  // Confirmation system
+  confirmation_sent: Send,
+  confirmation_received: CheckCheck,
+  auto_cancelled: XCircle,
+  confirmation_failed: XCircle,
+  reminder_sent: Clock,
+  // Escalation system (human handoff) - URGENT attention needed
+  escalation_manual: UserX,
+  escalation_technical: Zap,
+  escalation_auto: AlertTriangle,
+  escalation_medical: HeartPulse,
+  escalation_ambiguity: HelpCircle,
 };
 
 const notificationColors: Record<string, string> = {
+  // Appointment lifecycle
   appointment_created: "text-green-500",
   appointment_cancelled: "text-red-500",
   appointment_confirmed: "text-blue-500",
   appointment_completed: "text-gray-500",
+  // Confirmation system
+  confirmation_sent: "text-blue-400",
+  confirmation_received: "text-green-500",
+  auto_cancelled: "text-red-400",
+  confirmation_failed: "text-red-500",
+  reminder_sent: "text-amber-500",
+  // Escalation system - Use warm/urgent colors for attention
+  escalation_manual: "text-orange-500",
+  escalation_technical: "text-red-600",
+  escalation_auto: "text-red-500",
+  escalation_medical: "text-purple-500",
+  escalation_ambiguity: "text-yellow-500",
 };
 
 function NotificationItem({
