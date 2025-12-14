@@ -197,7 +197,7 @@ services:
       retries: 3
       start_period: 120s
 
-  # Admin Panel: NextJS 15 + ShadCN modern admin interface
+  # Admin Panel: NextJS 16 + React 19 + ShadCN modern admin interface
   admin-panel:
     build:
       context: .

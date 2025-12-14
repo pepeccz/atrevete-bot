@@ -1,5 +1,9 @@
 "use client";
 
+import { useEffect, useMemo } from "react";
+import { format, addMonths } from "date-fns";
+import { es } from "date-fns/locale";
+import { CalendarIcon, AlertTriangle } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
@@ -9,6 +13,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import {
+  expandRecurrence,
+  calculateOccurrenceCount,
+} from "@/lib/recurrence-utils";
 
 // Day names in Spanish (short)
 const DAY_NAMES = ["L", "M", "X", "J", "V", "S", "D"];
@@ -20,7 +36,8 @@ export interface RecurrenceConfig {
   interval: number;
   daysOfWeek: number[]; // 0=Monday, 6=Sunday
   daysOfMonth: number[];
-  count: number;
+  count: number; // Calculated from endDate, used by backend
+  endDate?: Date; // User-friendly end date
 }
 
 interface RecurrenceSelectorProps {
@@ -34,12 +51,59 @@ export function RecurrenceSelector({
   value,
   onChange,
 }: RecurrenceSelectorProps) {
+  // Calculate default end date (1 month from selected date)
+  const defaultEndDate = useMemo(() => {
+    return addMonths(selectedDate, 1);
+  }, [selectedDate]);
+
+  // Calculate occurrences when endDate or pattern changes
+  const calculatedDates = useMemo(() => {
+    if (!value.enabled || !value.endDate) return [];
+
+    const hasDays = value.frequency === "WEEKLY"
+      ? value.daysOfWeek.length > 0
+      : value.daysOfMonth.length > 0;
+
+    if (!hasDays) return [];
+
+    return expandRecurrence(
+      selectedDate,
+      value.endDate,
+      {
+        frequency: value.frequency,
+        interval: value.interval,
+        daysOfWeek: value.daysOfWeek,
+        daysOfMonth: value.daysOfMonth,
+      },
+      52
+    );
+  }, [selectedDate, value.enabled, value.endDate, value.frequency, value.interval, value.daysOfWeek, value.daysOfMonth]);
+
+  // Check if count exceeds limit
+  const exceedsLimit = calculatedDates.length > 52;
+  const actualCount = Math.min(calculatedDates.length, 52);
+
+  // Update count when dates change
+  useEffect(() => {
+    if (value.enabled && actualCount !== value.count && actualCount > 0) {
+      onChange({
+        ...value,
+        count: actualCount,
+      });
+    }
+  }, [actualCount, value, onChange]);
+
   const handleToggle = (enabled: boolean) => {
     onChange({
       ...value,
       enabled,
       // Reset to defaults when enabling
-      ...(enabled ? { daysOfWeek: [], count: 4 } : {}),
+      ...(enabled ? {
+        daysOfWeek: [],
+        daysOfMonth: [],
+        endDate: defaultEndDate,
+        count: 0,
+      } : {}),
     });
   };
 
@@ -70,11 +134,13 @@ export function RecurrenceSelector({
     });
   };
 
-  const handleCountChange = (count: string) => {
-    onChange({
-      ...value,
-      count: parseInt(count, 10),
-    });
+  const handleEndDateChange = (endDate: Date | undefined) => {
+    if (endDate) {
+      onChange({
+        ...value,
+        endDate,
+      });
+    }
   };
 
   const handleMonthDayToggle = (day: number) => {
@@ -188,47 +254,87 @@ export function RecurrenceSelector({
             </div>
           )}
 
-          {/* Count */}
-          <div className="flex items-center gap-2">
-            <Label className="text-sm whitespace-nowrap">Durante</Label>
-            <Select
-              value={value.count.toString()}
-              onValueChange={handleCountChange}
-            >
-              <SelectTrigger className="w-16">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 52].map((n) => (
-                  <SelectItem key={n} value={n.toString()}>
-                    {n}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <span className="text-sm text-muted-foreground">repeticiones</span>
+          {/* End Date Picker */}
+          <div className="space-y-2">
+            <Label className="text-sm">Hasta:</Label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    "w-full justify-start text-left font-normal",
+                    !value.endDate && "text-muted-foreground"
+                  )}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {value.endDate ? (
+                    format(value.endDate, "d 'de' MMMM 'de' yyyy", { locale: es })
+                  ) : (
+                    <span>Seleccionar fecha fin</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={value.endDate}
+                  onSelect={handleEndDateChange}
+                  locale={es}
+                  disabled={(date) => date <= selectedDate}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
           </div>
 
+          {/* Limit warning */}
+          {exceedsLimit && (
+            <div className="flex items-start gap-2 text-sm text-amber-600 bg-amber-50 p-2 rounded">
+              <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>
+                El rango genera más de 52 repeticiones. Se limitará a las primeras 52.
+              </span>
+            </div>
+          )}
+
           {/* Summary */}
-          {(value.daysOfWeek.length > 0 || value.daysOfMonth.length > 0) && (
+          {(value.daysOfWeek.length > 0 || value.daysOfMonth.length > 0) && actualCount > 0 && (
             <div className="text-sm text-muted-foreground p-2 bg-muted rounded">
               {value.frequency === "WEEKLY" ? (
                 <>
-                  Se crearán bloqueos cada{" "}
+                  Se crearán <strong>{actualCount}</strong> bloqueos cada{" "}
                   {value.interval > 1 ? `${value.interval} semanas` : "semana"} los{" "}
                   <strong>
                     {value.daysOfWeek.map((d) => FULL_DAY_NAMES[d]).join(", ")}
                   </strong>
-                  , durante <strong>{value.count}</strong> repeticiones.
+                  {value.endDate && (
+                    <>, hasta el <strong>{format(value.endDate, "d 'de' MMMM", { locale: es })}</strong></>
+                  )}
+                  .
                 </>
               ) : (
                 <>
-                  Se crearán bloqueos cada{" "}
+                  Se crearán <strong>{actualCount}</strong> bloqueos cada{" "}
                   {value.interval > 1 ? `${value.interval} meses` : "mes"} los días{" "}
-                  <strong>{value.daysOfMonth.join(", ")}</strong>, durante{" "}
-                  <strong>{value.count}</strong> repeticiones.
+                  <strong>{value.daysOfMonth.join(", ")}</strong>
+                  {value.endDate && (
+                    <>, hasta el <strong>{format(value.endDate, "d 'de' MMMM", { locale: es })}</strong></>
+                  )}
+                  .
                 </>
               )}
+            </div>
+          )}
+
+          {/* No days selected hint */}
+          {value.frequency === "WEEKLY" && value.daysOfWeek.length === 0 && (
+            <div className="text-sm text-muted-foreground italic">
+              Selecciona al menos un día de la semana
+            </div>
+          )}
+          {value.frequency === "MONTHLY" && value.daysOfMonth.length === 0 && (
+            <div className="text-sm text-muted-foreground italic">
+              Selecciona al menos un día del mes
             </div>
           )}
         </div>

@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { format, parseISO } from "date-fns";
+import { format, parseISO, addMonths } from "date-fns";
 import { es } from "date-fns/locale";
 import { CalendarIcon, Trash2, Loader2 } from "lucide-react";
 import { RecurrenceSelector, type RecurrenceConfig } from "./recurrence-selector";
+import { RecurrencePreviewCalendar } from "./recurrence-preview-calendar";
 import { ConflictWarning, type ConflictInfo } from "./conflict-warning";
+import { expandRecurrence } from "@/lib/recurrence-utils";
 import {
   Dialog,
   DialogContent,
@@ -120,7 +122,8 @@ export function BlockingEventModal({
     interval: 1,
     daysOfWeek: [],
     daysOfMonth: [],
-    count: 4,
+    count: 0,
+    endDate: undefined,
   });
   const [preview, setPreview] = useState<{
     total_instances: number;
@@ -411,7 +414,12 @@ export function BlockingEventModal({
 
     setIsSubmitting(true);
     try {
-      await api.deleteBlockingEvent(blockingEvent.id);
+      // If editScope is set and not "this_only", use series-aware delete
+      if (editScope && editScope !== "this_only") {
+        await api.deleteBlockingEventWithScope(blockingEvent.id, editScope);
+      } else {
+        await api.deleteBlockingEvent(blockingEvent.id);
+      }
       onSuccess();
       onClose();
     } catch (err) {
@@ -440,7 +448,13 @@ export function BlockingEventModal({
         )}>
           <DialogHeader>
             <DialogTitle>
-              {mode === "edit" ? "Editar evento de bloqueo" : "Crear evento de bloqueo"}
+              {mode === "edit"
+                ? editScope === "all"
+                  ? "Editar toda la serie"
+                  : editScope === "this_and_future"
+                  ? "Editar este y siguientes"
+                  : "Editar evento de bloqueo"
+                : "Crear evento de bloqueo"}
             </DialogTitle>
           </DialogHeader>
 
@@ -600,27 +614,60 @@ export function BlockingEventModal({
               />
             )}
 
-            {/* Preview info and conflicts */}
-            {mode === "create" && recurrence.enabled && (
+            {/* Preview mini calendar and conflicts */}
+            {mode === "create" && recurrence.enabled && blockingDate && recurrence.endDate && (
               <div className="space-y-3">
+                {/* Mini calendar preview - calculated locally for instant feedback */}
+                {(() => {
+                  const hasDays = recurrence.frequency === "WEEKLY"
+                    ? recurrence.daysOfWeek.length > 0
+                    : recurrence.daysOfMonth.length > 0;
+
+                  if (!hasDays) return null;
+
+                  const previewDates = expandRecurrence(
+                    blockingDate,
+                    recurrence.endDate,
+                    {
+                      frequency: recurrence.frequency,
+                      interval: recurrence.interval,
+                      daysOfWeek: recurrence.daysOfWeek,
+                      daysOfMonth: recurrence.daysOfMonth,
+                    },
+                    52
+                  );
+
+                  if (previewDates.length === 0) return null;
+
+                  return (
+                    <RecurrencePreviewCalendar
+                      blockedDates={previewDates}
+                      startDate={blockingDate}
+                      endDate={recurrence.endDate}
+                      conflicts={preview?.conflicts || []}
+                      monthsToShow={3}
+                    />
+                  );
+                })()}
+
+                {/* Loading indicator for backend conflict check */}
                 {isLoadingPreview && (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Calculando fechas...
+                    Verificando conflictos...
                   </div>
                 )}
-                {!isLoadingPreview && preview && (
-                  <>
-                    <div className="text-sm text-muted-foreground p-2 bg-muted rounded">
-                      Se crearán <strong>{preview.total_instances}</strong> bloqueos en total
-                      {preview.total_instances > 0 && selectedStylistIds.length > 1 && (
-                        <> ({Math.ceil(preview.total_instances / selectedStylistIds.length)} fechas × {selectedStylistIds.length} estilistas)</>
-                      )}
-                    </div>
-                    {preview.conflicts.length > 0 && (
-                      <ConflictWarning conflicts={preview.conflicts} />
-                    )}
-                  </>
+
+                {/* Conflict warnings from backend */}
+                {!isLoadingPreview && preview && preview.conflicts.length > 0 && (
+                  <ConflictWarning conflicts={preview.conflicts} />
+                )}
+
+                {/* Stylist multiplier info */}
+                {preview && preview.total_instances > 0 && selectedStylistIds.length > 1 && (
+                  <div className="text-xs text-muted-foreground">
+                    Total con {selectedStylistIds.length} estilistas: {preview.total_instances} bloqueos
+                  </div>
                 )}
               </div>
             )}
@@ -676,9 +723,19 @@ export function BlockingEventModal({
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Eliminar este bloqueo?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {editScope === "all"
+                ? "¿Eliminar toda la serie?"
+                : editScope === "this_and_future"
+                ? "¿Eliminar este y los siguientes bloqueos?"
+                : "¿Eliminar este bloqueo?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción no se puede deshacer. El bloqueo &quot;{blockingEvent?.title}&quot; será eliminado permanentemente.
+              {editScope === "all"
+                ? `Esta acción no se puede deshacer. Se eliminarán TODOS los bloqueos de la serie "${blockingEvent?.title}".`
+                : editScope === "this_and_future"
+                ? `Esta acción no se puede deshacer. Se eliminará este bloqueo y todos los siguientes de la serie "${blockingEvent?.title}".`
+                : `Esta acción no se puede deshacer. El bloqueo "${blockingEvent?.title}" será eliminado permanentemente.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -688,7 +745,13 @@ export function BlockingEventModal({
               disabled={isSubmitting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {isSubmitting ? "Eliminando..." : "Eliminar"}
+              {isSubmitting
+                ? "Eliminando..."
+                : editScope === "all"
+                ? "Eliminar serie"
+                : editScope === "this_and_future"
+                ? "Eliminar estos"
+                : "Eliminar"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

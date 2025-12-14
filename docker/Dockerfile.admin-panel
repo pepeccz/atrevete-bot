@@ -1,5 +1,5 @@
 # =============================================================================
-# Dockerfile for NextJS 15 Admin Panel
+# Dockerfile for NextJS 16 Admin Panel (React 19)
 # Multi-stage build for optimized production image
 # =============================================================================
 
