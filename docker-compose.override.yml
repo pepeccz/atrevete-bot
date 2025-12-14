@@ -49,8 +49,7 @@ services:
       - ./database:/app/database
       - ./service-account-key.json:/app/service-account-key.json:ro
 
-  # Admin Panel with Next.js dev server (hot-reload)
-  # NOTE: Using Webpack instead of Turbopack due to ESM-only module issues (react-day-picker@9.x)
+  # Admin Panel with Next.js dev server (hot-reload + Turbopack)
   admin-panel:
     build:
       context: .
@@ -59,7 +58,7 @@ services:
       - ./admin-panel/src:/app/src
       - ./admin-panel/public:/app/public
       # Don't mount node_modules - use container's version
-    command: npm run dev
+    command: npm run dev -- --turbo
     environment:
       - NODE_ENV=development
       - NEXT_PUBLIC_API_URL=http://localhost:8000
