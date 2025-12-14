@@ -209,13 +209,15 @@ export function BlockingEventModal({
       setError(null);
       // Reset recurrence when opening create mode
       if (mode === "create") {
+        const defaultEndDate = selectedDate ? addMonths(selectedDate, 1) : addMonths(new Date(), 1);
         setRecurrence({
           enabled: false,
           frequency: "WEEKLY",
           interval: 1,
           daysOfWeek: [],
           daysOfMonth: [],
-          count: 4,
+          count: 0,
+          endDate: defaultEndDate,
         });
         setPreview(null);
       }
