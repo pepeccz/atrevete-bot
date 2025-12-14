@@ -159,7 +159,7 @@ SYSTEM_SETTINGS = [
         "display_order": 9,
     },
 
-    # ========== BOOKING SETTINGS (6) ==========
+    # ========== BOOKING SETTINGS (7) ==========
     {
         "category": SettingCategory.BOOKING.value,
         "key": "minimum_booking_days_advance",
@@ -243,6 +243,20 @@ SYSTEM_SETTINGS = [
         "description": "Número máximo de citas futuras (pendientes o confirmadas) que un cliente puede tener activas. Solo aplica a reservas desde WhatsApp.",
         "requires_restart": False,
         "display_order": 15,
+    },
+    {
+        "category": SettingCategory.BOOKING.value,
+        "key": "cancellation_window_hours",
+        "value": 48,
+        "value_type": SettingValueType.INT.value,
+        "default_value": 48,
+        "min_value": 1,
+        "max_value": 168,
+        "allowed_values": None,
+        "label": "Ventana de cancelación (horas)",
+        "description": "Horas mínimas de antelación requeridas para cancelar una cita por WhatsApp. Si la cita está más próxima, el cliente debe contactar al equipo.",
+        "requires_restart": False,
+        "display_order": 16,
     },
 
     # ========== LLM SETTINGS (6) ==========

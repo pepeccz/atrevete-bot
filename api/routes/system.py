@@ -415,3 +415,56 @@ async def trigger_gcal_sync(
             success=False,
             message=f"Error en la sincronización: {str(e)}"
         )
+
+
+@router.post("/cache/clear", response_model=ServiceActionResponse)
+async def clear_system_cache(
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> ServiceActionResponse:
+    """
+    Clear all system caches.
+
+    Clears:
+    - Settings service cache (60s TTL)
+    - Stylist context cache (10m TTL)
+
+    This forces fresh data to be loaded from the database on next access.
+    """
+    username = current_user.get("username", "unknown")
+    logger.info(f"System cache clear requested by {username}")
+
+    errors = []
+
+    # 1. Clear Settings Service cache
+    try:
+        from shared.settings_service import SettingsService
+
+        # Get singleton instance if it exists and clear its cache
+        if SettingsService._instance is not None:
+            SettingsService._instance.clear_cache()
+            logger.info("Settings service cache cleared")
+        else:
+            logger.info("Settings service not initialized, skipping cache clear")
+    except Exception as e:
+        logger.error(f"Error clearing settings cache: {e}")
+        errors.append(f"Settings: {str(e)}")
+
+    # 2. Clear Stylist Context cache
+    try:
+        from shared.stylist_cache import clear_stylist_context_cache
+
+        clear_stylist_context_cache()
+    except Exception as e:
+        logger.error(f"Error clearing stylist context cache: {e}")
+        errors.append(f"Stylist context: {str(e)}")
+
+    if errors:
+        return ServiceActionResponse(
+            success=False,
+            message=f"Cache parcialmente limpiada. Errores: {', '.join(errors)}"
+        )
+
+    return ServiceActionResponse(
+        success=True,
+        message="Cache del sistema limpiada correctamente"
+    )

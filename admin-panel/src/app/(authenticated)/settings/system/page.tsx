@@ -166,6 +166,7 @@ export default function SystemSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
   const [pendingRestartCategories, setPendingRestartCategories] = useState<Set<SettingCategory>>(new Set());
 
   useEffect(() => {
@@ -315,6 +316,27 @@ export default function SystemSettingsPage() {
     }
   };
 
+  const handleClearCache = async () => {
+    try {
+      setClearingCache(true);
+      const result = await api.clearSystemCache();
+
+      if (result.success) {
+        toast.success(result.message);
+        // Reload settings to show fresh data
+        await loadSettings();
+      } else {
+        toast.error(result.message);
+      }
+    } catch (error) {
+      toast.error(
+        `Error al limpiar cache: ${error instanceof Error ? error.message : "Error desconocido"}`
+      );
+    } finally {
+      setClearingCache(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col">
@@ -336,6 +358,14 @@ export default function SystemSettingsPage() {
         description="Ajusta los parámetros del bot, confirmaciones, caché y más"
         action={
           <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={handleClearCache}
+              disabled={clearingCache || loading}
+            >
+              <RotateCcw className={`h-4 w-4 mr-2 ${clearingCache ? "animate-spin" : ""}`} />
+              Refrescar Sistema
+            </Button>
             <Button variant="outline" onClick={loadSettings} disabled={loading}>
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
               Recargar

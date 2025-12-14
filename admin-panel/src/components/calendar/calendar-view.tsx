@@ -14,6 +14,8 @@ import { Label } from "@/components/ui/label";
 import { Plus, Calendar, Ban } from "lucide-react";
 import api from "@/lib/api";
 import { BlockingEventModal } from "./blocking-event-modal";
+import { SeriesEditDialog, type SeriesEditScope } from "./series-edit-dialog";
+import { ExceptionWarningDialog } from "./exception-warning-dialog";
 
 // Color palette for stylists (8 distinct colors)
 const STYLIST_COLORS = [
@@ -50,6 +52,9 @@ interface CalendarEvent {
     description?: string | null;
     event_type?: string;
     type: "appointment" | "blocking_event" | "holiday";
+    // Recurring series info
+    recurring_series_id?: string | null;
+    occurrence_index?: number | null;
   };
 }
 
@@ -95,6 +100,37 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   // Edit mode states
   const [blockingModalMode, setBlockingModalMode] = useState<"create" | "edit">("create");
   const [editingBlockingEvent, setEditingBlockingEvent] = useState<EditingBlockingEvent | null>(null);
+
+  // Series edit dialog states
+  const [isSeriesDialogOpen, setIsSeriesDialogOpen] = useState(false);
+  const [seriesDialogAction, setSeriesDialogAction] = useState<"edit" | "delete">("edit");
+  const [seriesInfo, setSeriesInfo] = useState<{
+    series_id: string;
+    total_instances: number;
+    instance_index: number;
+    remaining_instances: number;
+    frequency: string;
+    interval: number;
+    days: string | null;
+  } | null>(null);
+  const [pendingSeriesEvent, setPendingSeriesEvent] = useState<{
+    id: string;
+    title: string;
+    props: Record<string, unknown>;
+    startStr: string;
+    endStr: string;
+  } | null>(null);
+  const [isSeriesLoading, setIsSeriesLoading] = useState(false);
+
+  // Exception warning dialog states (for series edits)
+  const [isExceptionDialogOpen, setIsExceptionDialogOpen] = useState(false);
+  const [exceptionsInfo, setExceptionsInfo] = useState<{
+    has_exceptions: boolean;
+    exception_count: number;
+    exceptions: Array<{ id: string; title: string; start_time: string; occurrence_index: number }>;
+  } | null>(null);
+  const [pendingEditScope, setPendingEditScope] = useState<SeriesEditScope | null>(null);
+  const [pendingOverwriteExceptions, setPendingOverwriteExceptions] = useState<boolean>(false);
 
   // Generate darker border color from background color
   const getDarkerColor = (hex: string): string => {
@@ -251,28 +287,154 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   };
 
   // Handle event click
-  const handleEventClick = (info: { event: { id: string; title: string; startStr: string; endStr: string; extendedProps: Record<string, unknown> } }) => {
+  const handleEventClick = async (info: { event: { id: string; title: string; startStr: string; endStr: string; extendedProps: Record<string, unknown> } }) => {
     const props = info.event.extendedProps;
     console.log("Event clicked:", info.event.id, props);
 
     if (props.type === "blocking_event") {
-      // Open blocking event edit modal
-      setEditingBlockingEvent({
-        id: props.blocking_event_id as string,
-        title: info.event.title,
-        description: props.description as string | null,
-        event_type: props.event_type as string,
-        start_time: info.event.startStr,
-        end_time: info.event.endStr,
-        stylist_id: props.stylist_id as string,
-      });
-      setBlockingModalMode("edit");
-      setIsBlockingModalOpen(true);
+      const blockingEventId = props.blocking_event_id as string;
+      const recurringSeriesId = props.recurring_series_id as string | null;
+
+      if (recurringSeriesId) {
+        // This is a recurring event - fetch series info and show dialog
+        setPendingSeriesEvent({
+          id: blockingEventId,
+          title: info.event.title,
+          props,
+          startStr: info.event.startStr,
+          endStr: info.event.endStr,
+        });
+        setSeriesDialogAction("edit");
+        setIsSeriesLoading(true);
+
+        try {
+          const series = await api.getBlockingEventSeries(blockingEventId);
+          setSeriesInfo(series);
+          setIsSeriesDialogOpen(true);
+        } catch (error) {
+          console.error("Error fetching series info:", error);
+          // Fallback: open normal edit modal for this single event
+          openBlockingEditModal(blockingEventId, info.event.title, props, info.event.startStr, info.event.endStr);
+        } finally {
+          setIsSeriesLoading(false);
+        }
+      } else {
+        // Normal single blocking event - open edit modal directly
+        openBlockingEditModal(blockingEventId, info.event.title, props, info.event.startStr, info.event.endStr);
+      }
     } else if (props.type === "appointment" && props.appointment_id) {
       // Navigate to appointment detail page
       router.push(`/appointments/${props.appointment_id}`);
     }
     // Holidays: no action on click
+  };
+
+  // Helper to open blocking event edit modal
+  const openBlockingEditModal = (
+    id: string,
+    title: string,
+    props: Record<string, unknown>,
+    startStr: string,
+    endStr: string
+  ) => {
+    setEditingBlockingEvent({
+      id,
+      title,
+      description: props.description as string | null,
+      event_type: props.event_type as string,
+      start_time: startStr,
+      end_time: endStr,
+      stylist_id: props.stylist_id as string,
+    });
+    setBlockingModalMode("edit");
+    setIsBlockingModalOpen(true);
+  };
+
+  // Handle series edit dialog confirm
+  const handleSeriesEditConfirm = async (scope: SeriesEditScope) => {
+    if (!pendingSeriesEvent || !seriesInfo) return;
+
+    setIsSeriesLoading(true);
+
+    try {
+      if (seriesDialogAction === "delete") {
+        // Delete with scope
+        await api.deleteBlockingEventWithScope(pendingSeriesEvent.id, scope);
+        handleEventCreated(); // Refresh calendar
+      } else {
+        // Edit action
+        if (scope === "this_only") {
+          // Simple case: open modal, it will use regular update endpoint
+          openBlockingEditModal(
+            pendingSeriesEvent.id,
+            pendingSeriesEvent.title,
+            pendingSeriesEvent.props,
+            pendingSeriesEvent.startStr,
+            pendingSeriesEvent.endStr
+          );
+        } else {
+          // For this_and_future or all, check for exceptions first
+          const exceptions = await api.checkSeriesExceptions(
+            pendingSeriesEvent.id,
+            scope as "this_and_future" | "all"
+          );
+
+          if (exceptions.has_exceptions) {
+            // Show exception warning dialog
+            setExceptionsInfo(exceptions);
+            setPendingEditScope(scope);
+            setIsExceptionDialogOpen(true);
+            // Don't close series dialog yet - wait for exception choice
+          } else {
+            // No exceptions, proceed directly to edit modal with scope
+            openBlockingEditModalWithScope(scope, false);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error handling series action:", error);
+      alert(error instanceof Error ? error.message : "Error procesando la acción");
+    } finally {
+      setIsSeriesLoading(false);
+      setIsSeriesDialogOpen(false);
+      // Note: We don't clear pendingSeriesEvent and seriesInfo here
+      // because they may be needed by the exception dialog
+      if (seriesDialogAction === "delete") {
+        setPendingSeriesEvent(null);
+        setSeriesInfo(null);
+      }
+    }
+  };
+
+  // Handle exception warning dialog confirm
+  const handleExceptionDialogConfirm = (overwriteExceptions: boolean) => {
+    if (!pendingEditScope) return;
+
+    setPendingOverwriteExceptions(overwriteExceptions);
+    setIsExceptionDialogOpen(false);
+    setExceptionsInfo(null);
+
+    // Open the edit modal with scope
+    openBlockingEditModalWithScope(pendingEditScope, overwriteExceptions);
+  };
+
+  // Helper to open blocking edit modal with scope
+  const openBlockingEditModalWithScope = (scope: SeriesEditScope, overwriteExceptions: boolean) => {
+    if (!pendingSeriesEvent) return;
+
+    setEditingBlockingEvent({
+      id: pendingSeriesEvent.id,
+      title: pendingSeriesEvent.title,
+      description: pendingSeriesEvent.props.description as string | null,
+      event_type: pendingSeriesEvent.props.event_type as string,
+      start_time: pendingSeriesEvent.startStr,
+      end_time: pendingSeriesEvent.endStr,
+      stylist_id: pendingSeriesEvent.props.stylist_id as string,
+    });
+    setPendingEditScope(scope);
+    setPendingOverwriteExceptions(overwriteExceptions);
+    setBlockingModalMode("edit");
+    setIsBlockingModalOpen(true);
   };
 
   // Handle drag-select (for creating blocking events)
@@ -494,6 +656,10 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           setIsBlockingModalOpen(false);
           setEditingBlockingEvent(null);
           setBlockingModalMode("create");
+          setPendingEditScope(null);
+          setPendingOverwriteExceptions(false);
+          setPendingSeriesEvent(null);
+          setSeriesInfo(null);
         }}
         mode={blockingModalMode}
         blockingEvent={editingBlockingEvent}
@@ -504,6 +670,39 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         selectedEndTime={selectedEndTime}
         stylists={stylists.filter(s => selectedStylistIds.includes(s.id))}
         onSuccess={handleEventCreated}
+        editScope={pendingEditScope}
+        overwriteExceptions={pendingOverwriteExceptions}
+      />
+
+      {/* Series Edit Dialog (for recurring events) */}
+      {seriesInfo && pendingSeriesEvent && (
+        <SeriesEditDialog
+          isOpen={isSeriesDialogOpen}
+          onClose={() => {
+            setIsSeriesDialogOpen(false);
+            setPendingSeriesEvent(null);
+            setSeriesInfo(null);
+          }}
+          action={seriesDialogAction}
+          eventTitle={pendingSeriesEvent.title}
+          seriesInfo={seriesInfo}
+          onConfirm={handleSeriesEditConfirm}
+          isLoading={isSeriesLoading}
+        />
+      )}
+
+      {/* Exception Warning Dialog (when editing series with modified instances) */}
+      <ExceptionWarningDialog
+        isOpen={isExceptionDialogOpen}
+        onClose={() => {
+          setIsExceptionDialogOpen(false);
+          setExceptionsInfo(null);
+          setPendingEditScope(null);
+          setPendingSeriesEvent(null);
+          setSeriesInfo(null);
+        }}
+        exceptionCount={exceptionsInfo?.exception_count || 0}
+        onConfirm={handleExceptionDialogConfirm}
       />
     </div>
   );

@@ -7,6 +7,7 @@ import { es } from "date-fns/locale";
 import {
   ArrowLeft,
   Calendar,
+  CalendarClock,
   Clock,
   User,
   Scissors,
@@ -41,7 +42,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import api from "@/lib/api";
-import type { Stylist, AppointmentStatus } from "@/lib/types";
+import type { Stylist, AppointmentStatus, ServiceCategory } from "@/lib/types";
+import { RescheduleModal } from "@/components/appointments/reschedule-modal";
 
 // Status badge component
 function StatusBadge({ status }: { status: AppointmentStatus }) {
@@ -80,7 +82,7 @@ interface AppointmentDetail {
   services: Array<{
     id: string;
     name: string;
-    category: string;
+    category: ServiceCategory;
     duration_minutes: number;
   }>;
   customer: {
@@ -108,6 +110,7 @@ export default function AppointmentDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
 
   // Form state
   const [selectedStylistId, setSelectedStylistId] = useState("");
@@ -417,6 +420,14 @@ export default function AppointmentDetailPage() {
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
+                    onClick={() => setRescheduleModalOpen(true)}
+                    disabled={isSaving || status === "cancelled" || status === "completed"}
+                  >
+                    <CalendarClock className="h-4 w-4 mr-2" />
+                    Reagendar
+                  </Button>
+                  <Button
+                    variant="outline"
                     onClick={() => router.push("/appointments")}
                     disabled={isSaving}
                   >
@@ -463,6 +474,17 @@ export default function AppointmentDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Reschedule Modal */}
+      {appointment && (
+        <RescheduleModal
+          open={rescheduleModalOpen}
+          onOpenChange={setRescheduleModalOpen}
+          appointment={appointment}
+          stylists={stylists}
+          onSuccess={fetchData}
+        />
+      )}
     </div>
   );
 }

@@ -334,6 +334,8 @@ def _build_state_context(
             ("escalate", "Quiere hablar con una persona o está frustrado"),
             ("confirm_appointment", "Usuario confirma asistencia a cita pendiente (sí, confirmo, de acuerdo)"),
             ("decline_appointment", "Usuario dice que no puede asistir a cita (no, no puedo, cancela)"),
+            ("initiate_cancellation", "Usuario quiere cancelar una cita existente (cancelar mi cita, anular cita)"),
+            ("check_my_appointments", "Usuario pregunta por sus citas (¿cuáles son mis citas?, ¿tengo cita?, mis reservas)"),
         ],
         BookingState.SERVICE_SELECTION: [
             ("select_service", "Usuario SELECCIONA un servicio por número o nombre EXACTO de la lista"),
@@ -378,6 +380,8 @@ def _build_state_context(
             ("faq", "Pregunta sobre la cita confirmada"),
             ("escalate", "Quiere hablar con una persona"),
             ("start_booking", "Quiere hacer una NUEVA reserva (además de la existente)"),
+            ("initiate_cancellation", "Usuario quiere cancelar una cita existente (cancelar mi cita, anular cita)"),
+            ("check_my_appointments", "Usuario pregunta por sus citas (¿cuáles son mis citas?, ¿tengo cita?, mis reservas)"),
         ],
     }
 
@@ -410,12 +414,21 @@ def _build_state_context(
             "DISTINGUIR entre:\n"
             "1. CONFIRMACIÓN DE CITA (si usuario tiene cita pendiente de confirmación):\n"
             "   'sí', 'si', 'confirmo', 'ok', 'de acuerdo', 'vale' → confirm_appointment\n"
-            "   'no', 'no puedo', 'cancela', 'cancelar' → decline_appointment\n"
-            "2. ACTUALIZACIÓN DE NOMBRE: 'Llamame X', 'Mi nombre es Y', 'Soy Z', 'No, me llamo W'\n"
+            "   'no', 'no puedo' (respuesta a pregunta de confirmación) → decline_appointment\n"
+            "2. CANCELACIÓN DE CITA EXISTENTE (usuario inicia la cancelación proactivamente):\n"
+            "   'quiero cancelar mi cita', 'cancelar cita', 'anular mi reserva', 'eliminar cita'\n"
+            "   → intent: initiate_cancellation\n"
+            "   ⚠️ DISTINGUIR: 'decline_appointment' es respuesta a confirmación del sistema.\n"
+            "                 'initiate_cancellation' es cuando el usuario INICIA la cancelación.\n"
+            "3. CONSULTA DE CITAS (usuario quiere saber sus citas programadas):\n"
+            "   '¿cuáles son mis citas?', '¿tengo cita?', 'mis reservas', 'qué citas tengo'\n"
+            "   → intent: check_my_appointments\n"
+            "   ⚠️ DISTINGUIR: NO es lo mismo que start_booking (quiere VER citas, no CREAR)\n"
+            "4. ACTUALIZACIÓN DE NOMBRE: 'Llamame X', 'Mi nombre es Y', 'Soy Z', 'No, me llamo W'\n"
             "   → intent: update_name, entities: {first_name: X/Y/Z/W}\n"
-            "3. RESERVA: 'Quiero una cita', 'Reservar corte', 'Agendar peinado'\n"
+            "5. RESERVA: 'Quiero una cita', 'Reservar corte', 'Agendar peinado'\n"
             "   → intent: start_booking\n"
-            "4. SALUDO SIMPLE: 'Hola', 'Buenos días' (sin mención de nombre ni servicio)\n"
+            "6. SALUDO SIMPLE: 'Hola', 'Buenos días' (sin mención de nombre ni servicio)\n"
             "   → intent: greeting\n"
         ),
         BookingState.SERVICE_SELECTION: (
@@ -710,6 +723,14 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
             # Appointment confirmation intents (48h confirmation flow)
             IntentType.CONFIRM_APPOINTMENT: set(),  # No entities - just confirmation
             IntentType.DECLINE_APPOINTMENT: set(),  # No entities - just decline
+            # Appointment cancellation intents (customer-initiated)
+            IntentType.INITIATE_CANCELLATION: set(),  # No entities - just signals intent
+            IntentType.SELECT_CANCELLATION: {"selection_number"},  # User selects which appointment
+            IntentType.CONFIRM_CANCELLATION: set(),  # No entities - just confirmation
+            IntentType.ABORT_CANCELLATION: set(),  # No entities - just abort
+            IntentType.INSIST_CANCELLATION: {"reason"},  # Optional reason for insisting
+            # Appointment query intent (customer checks their appointments)
+            IntentType.CHECK_MY_APPOINTMENTS: set(),  # No entities - just signals intent to view appointments
         }
 
         allowed_entities = INTENT_ALLOWED_ENTITIES.get(intent_type, set())

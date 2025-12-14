@@ -1,0 +1,65 @@
+# =============================================================================
+# Development Overrides - Hot-Reload Configuration
+# =============================================================================
+# This file is automatically loaded by docker-compose alongside docker-compose.yml
+# It enables hot-reload for faster development iteration.
+#
+# Usage:
+#   Development: docker-compose up -d          (auto-loads this override)
+#   Production:  docker-compose -f docker-compose.yml up -d --build
+# =============================================================================
+
+services:
+  # API service with hot-reload
+  api:
+    volumes:
+      - ./api:/app/api
+      - ./shared:/app/shared
+      - ./database:/app/database
+      - ./agent:/app/agent
+      - ./service-account-key.json:/app/service-account-key.json:ro
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/api --reload-dir /app/shared --reload-dir /app/database
+
+  # Agent service with volume mounts (manual restart needed for agent changes)
+  agent:
+    volumes:
+      - ./agent:/app/agent
+      - ./shared:/app/shared
+      - ./database:/app/database
+      - ./service-account-key.json:/app/service-account-key.json:ro
+
+  # Workers with volume mounts (manual restart needed)
+  archiver:
+    volumes:
+      - ./agent:/app/agent
+      - ./shared:/app/shared
+      - ./database:/app/database
+
+  confirmation-worker:
+    volumes:
+      - ./agent:/app/agent
+      - ./shared:/app/shared
+      - ./database:/app/database
+      - ./service-account-key.json:/app/service-account-key.json:ro
+
+  gcal-sync-worker:
+    volumes:
+      - ./agent:/app/agent
+      - ./shared:/app/shared
+      - ./database:/app/database
+      - ./service-account-key.json:/app/service-account-key.json:ro
+
+  # Admin Panel with Next.js dev server (hot-reload + Turbopack)
+  admin-panel:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.admin-panel.dev
+    volumes:
+      - ./admin-panel/src:/app/src
+      - ./admin-panel/public:/app/public
+      # Don't mount node_modules - use container's version
+    command: npm run dev -- --turbo
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - WATCHPACK_POLLING=true

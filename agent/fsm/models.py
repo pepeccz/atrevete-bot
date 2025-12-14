@@ -49,6 +49,16 @@ class IntentType(str, Enum):
     CONFIRM_APPOINTMENT = "confirm_appointment"  # User confirms upcoming appointment
     DECLINE_APPOINTMENT = "decline_appointment"  # User says can't attend appointment
 
+    # Appointment cancellation intents (customer-initiated cancellation)
+    INITIATE_CANCELLATION = "initiate_cancellation"  # User wants to cancel appointment
+    SELECT_CANCELLATION = "select_cancellation"  # User selects appointment by number
+    CONFIRM_CANCELLATION = "confirm_cancellation"  # User confirms cancellation
+    ABORT_CANCELLATION = "abort_cancellation"  # User aborts cancellation flow
+    INSIST_CANCELLATION = "insist_cancellation"  # User insists despite window restriction
+
+    # Appointment query intent (customer checks their appointments)
+    CHECK_MY_APPOINTMENTS = "check_my_appointments"  # User asks about their appointments
+
 
 class BookingState(str, Enum):
     """States of the booking flow FSM."""

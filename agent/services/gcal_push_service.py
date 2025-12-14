@@ -225,10 +225,10 @@ async def push_appointment_to_gcal(
 
         # Build event description
         description = (
-            f"Customer: {customer_name}\n"
-            f"Services: {service_names}\n"
-            f"Status: {status}\n"
-            f"Appointment ID: {appointment_id}"
+            f"Cliente: {customer_name}\n"
+            f"Servicios: {service_names}\n"
+            f"Estado: {status}\n"
+            f"ID de la cita: {appointment_id}"
         )
 
         # Determine color based on status

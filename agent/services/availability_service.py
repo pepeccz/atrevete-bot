@@ -742,6 +742,9 @@ async def get_calendar_events_for_range(
                         "description": block.description,
                         "event_type": block.event_type.value,
                         "type": "blocking_event",
+                        # Include recurring series info if available
+                        "recurring_series_id": str(block.recurring_series_id) if block.recurring_series_id else None,
+                        "occurrence_index": block.occurrence_index,
                     },
                 })
 

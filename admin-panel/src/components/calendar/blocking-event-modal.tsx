@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
-import { CalendarIcon, Trash2 } from "lucide-react";
+import { CalendarIcon, Trash2, Loader2 } from "lucide-react";
+import { RecurrenceSelector, type RecurrenceConfig } from "./recurrence-selector";
+import { ConflictWarning, type ConflictInfo } from "./conflict-warning";
 import {
   Dialog,
   DialogContent,
@@ -58,6 +60,8 @@ interface EditingBlockingEvent {
   stylist_id: string;
 }
 
+type SeriesEditScope = "this_only" | "this_and_future" | "all";
+
 interface BlockingEventModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -70,6 +74,9 @@ interface BlockingEventModalProps {
   selectedEndTime?: Date | null;
   stylists?: Stylist[];
   onSuccess: () => void;
+  // For series-aware edits
+  editScope?: SeriesEditScope | null;
+  overwriteExceptions?: boolean;
 }
 
 const EVENT_TYPES = [
@@ -92,6 +99,8 @@ export function BlockingEventModal({
   selectedEndTime,
   stylists = [],
   onSuccess,
+  editScope = null,
+  overwriteExceptions = false,
 }: BlockingEventModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -103,6 +112,23 @@ export function BlockingEventModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // Recurrence state
+  const [recurrence, setRecurrence] = useState<RecurrenceConfig>({
+    enabled: false,
+    frequency: "WEEKLY",
+    interval: 1,
+    daysOfWeek: [],
+    daysOfMonth: [],
+    count: 4,
+  });
+  const [preview, setPreview] = useState<{
+    total_instances: number;
+    dates: string[];
+    conflicts: ConflictInfo[];
+    instances_with_conflicts: number;
+  } | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   // Extract time as displayed on calendar grid (for CREATE mode)
   // FullCalendar with named timezone uses UTC-coercion: visual time is stored as UTC value
@@ -178,8 +204,69 @@ export function BlockingEventModal({
         setEventType("general");
       }
       setError(null);
+      // Reset recurrence when opening create mode
+      if (mode === "create") {
+        setRecurrence({
+          enabled: false,
+          frequency: "WEEKLY",
+          interval: 1,
+          daysOfWeek: [],
+          daysOfMonth: [],
+          count: 4,
+        });
+        setPreview(null);
+      }
     }
   }, [isOpen, mode, blockingEvent, selectedDate, selectedStartTime, selectedEndTime, initialStylistId, stylists]);
+
+  // Generate preview when recurrence changes
+  const generatePreview = useCallback(async () => {
+    if (!recurrence.enabled || !blockingDate || selectedStylistIds.length === 0) {
+      setPreview(null);
+      return;
+    }
+
+    // Need days selected for the pattern to work
+    if (recurrence.frequency === "WEEKLY" && recurrence.daysOfWeek.length === 0) {
+      setPreview(null);
+      return;
+    }
+    if (recurrence.frequency === "MONTHLY" && recurrence.daysOfMonth.length === 0) {
+      setPreview(null);
+      return;
+    }
+
+    setIsLoadingPreview(true);
+    try {
+      const result = await api.previewRecurringBlockingEvent({
+        stylist_ids: selectedStylistIds,
+        title: title || "Preview",
+        event_type: eventType,
+        start_date: format(blockingDate, "yyyy-MM-dd"),
+        start_time: startTime,
+        end_time: endTime,
+        recurrence: {
+          frequency: recurrence.frequency,
+          interval: recurrence.interval,
+          days_of_week: recurrence.daysOfWeek.length > 0 ? recurrence.daysOfWeek : undefined,
+          days_of_month: recurrence.daysOfMonth.length > 0 ? recurrence.daysOfMonth : undefined,
+          count: recurrence.count,
+        },
+      });
+      setPreview(result);
+    } catch (err) {
+      console.error("Failed to generate preview:", err);
+      setPreview(null);
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  }, [recurrence, blockingDate, selectedStylistIds, title, eventType, startTime, endTime]);
+
+  // Debounce preview generation
+  useEffect(() => {
+    const timeout = setTimeout(generatePreview, 500);
+    return () => clearTimeout(timeout);
+  }, [generatePreview]);
 
   // Toggle individual stylist selection (only in create mode)
   const toggleStylist = (stylistId: string) => {
@@ -241,15 +328,65 @@ export function BlockingEventModal({
     try {
       if (mode === "edit" && blockingEvent) {
         // Update existing blocking event
-        await api.updateBlockingEvent(blockingEvent.id, {
-          title: title.trim(),
-          description: description.trim() || undefined,
-          start_time: startDateTime,
-          end_time: endDateTime,
-          event_type: eventType,
-        });
+        if (editScope && editScope !== "this_only") {
+          // Use series-aware update
+          await api.updateBlockingEventWithScope(
+            blockingEvent.id,
+            {
+              title: title.trim(),
+              description: description.trim() || undefined,
+              start_time: startDateTime,
+              end_time: endDateTime,
+              event_type: eventType,
+            },
+            editScope,
+            overwriteExceptions
+          );
+        } else {
+          // Regular single-event update (marks as exception automatically if part of series)
+          await api.updateBlockingEvent(blockingEvent.id, {
+            title: title.trim(),
+            description: description.trim() || undefined,
+            start_time: startDateTime,
+            end_time: endDateTime,
+            event_type: eventType,
+          });
+        }
+      } else if (recurrence.enabled) {
+        // Create recurring blocking events
+        // Validate recurrence has days selected
+        if (recurrence.frequency === "WEEKLY" && recurrence.daysOfWeek.length === 0) {
+          setError("Selecciona al menos un día de la semana");
+          setIsSubmitting(false);
+          return;
+        }
+        if (recurrence.frequency === "MONTHLY" && recurrence.daysOfMonth.length === 0) {
+          setError("Selecciona al menos un día del mes");
+          setIsSubmitting(false);
+          return;
+        }
+
+        await api.createRecurringBlockingEvent(
+          {
+            stylist_ids: selectedStylistIds,
+            title: title.trim(),
+            description: description.trim() || undefined,
+            event_type: eventType,
+            start_date: dateStr,
+            start_time: startTime,
+            end_time: endTime,
+            recurrence: {
+              frequency: recurrence.frequency,
+              interval: recurrence.interval,
+              days_of_week: recurrence.daysOfWeek.length > 0 ? recurrence.daysOfWeek : undefined,
+              days_of_month: recurrence.daysOfMonth.length > 0 ? recurrence.daysOfMonth : undefined,
+              count: recurrence.count,
+            },
+          },
+          preview?.conflicts && preview.conflicts.length > 0 // ignoreConflicts if there are conflicts
+        );
       } else {
-        // Create new blocking event
+        // Create single blocking event
         await api.createBlockingEvent({
           stylist_ids: selectedStylistIds,
           title: title.trim(),
@@ -297,7 +434,10 @@ export function BlockingEventModal({
   return (
     <>
       <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className={cn(
+          "sm:max-w-[425px] max-h-[85vh] overflow-y-auto",
+          mode === "create" && recurrence.enabled && "sm:max-w-[520px]"
+        )}>
           <DialogHeader>
             <DialogTitle>
               {mode === "edit" ? "Editar evento de bloqueo" : "Crear evento de bloqueo"}
@@ -451,6 +591,40 @@ export function BlockingEventModal({
               />
             </div>
 
+            {/* Recurrence selector - only in create mode */}
+            {mode === "create" && blockingDate && (
+              <RecurrenceSelector
+                selectedDate={blockingDate}
+                value={recurrence}
+                onChange={setRecurrence}
+              />
+            )}
+
+            {/* Preview info and conflicts */}
+            {mode === "create" && recurrence.enabled && (
+              <div className="space-y-3">
+                {isLoadingPreview && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Calculando fechas...
+                  </div>
+                )}
+                {!isLoadingPreview && preview && (
+                  <>
+                    <div className="text-sm text-muted-foreground p-2 bg-muted rounded">
+                      Se crearán <strong>{preview.total_instances}</strong> bloqueos en total
+                      {preview.total_instances > 0 && selectedStylistIds.length > 1 && (
+                        <> ({Math.ceil(preview.total_instances / selectedStylistIds.length)} fechas × {selectedStylistIds.length} estilistas)</>
+                      )}
+                    </div>
+                    {preview.conflicts.length > 0 && (
+                      <ConflictWarning conflicts={preview.conflicts} />
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Error message */}
             {error && (
               <div className="text-sm text-red-500 bg-red-50 p-2 rounded">
@@ -487,6 +661,8 @@ export function BlockingEventModal({
                   ? mode === "edit" ? "Guardando..." : "Creando..."
                   : mode === "edit"
                   ? "Guardar cambios"
+                  : recurrence.enabled && preview
+                  ? `Crear ${preview.total_instances} bloqueos`
                   : selectedStylistIds.length > 1
                   ? `Crear bloqueo (${selectedStylistIds.length})`
                   : "Crear bloqueo"}

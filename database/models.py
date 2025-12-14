@@ -14,7 +14,7 @@ All models use:
 - Proper indexes and constraints
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum as PyEnum
 from typing import Any, Optional
@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     ARRAY,
     DATE,
+    TIME,
     TIMESTAMP,
     Boolean,
     CheckConstraint,
@@ -95,6 +96,13 @@ class BlockingEventType(str, PyEnum):
     BREAK = "break"           # Descanso programado
     GENERAL = "general"       # Bloqueo general
     PERSONAL = "personal"     # Asunto propio
+
+
+class RecurrenceFrequency(str, PyEnum):
+    """Frequency type for recurring events (RFC 5545 compatible)."""
+
+    WEEKLY = "WEEKLY"    # Repetir cada N semanas
+    MONTHLY = "MONTHLY"  # Repetir cada N meses
 
 
 class NotificationType(str, PyEnum):
@@ -419,6 +427,7 @@ class Appointment(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     notification_failed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
@@ -659,6 +668,130 @@ class BusinessHours(Base):
 # ============================================================================
 
 
+class RecurringBlockingSeries(Base):
+    """
+    RecurringBlockingSeries model - Defines recurrence patterns for blocking events.
+
+    Stores the recurrence rule definition (RFC 5545 compatible) for generating
+    multiple BlockingEvent instances. Individual instances are created in the
+    blocking_events table and linked back to this series via recurring_series_id.
+
+    Supported patterns:
+    - Weekly: Every N weeks on specific days (e.g., every Monday and Wednesday)
+    - Monthly: Every N months on specific days of the month (e.g., 15th and 30th)
+    """
+
+    __tablename__ = "recurring_blocking_series"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Foreign key to stylist
+    stylist_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("stylists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Template for generated instances
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Event type for instances
+    event_type: Mapped[BlockingEventType] = mapped_column(
+        SQLEnum(
+            BlockingEventType,
+            name="blocking_event_type",
+            create_type=False,  # Already created by BlockingEvent
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=BlockingEventType.GENERAL,
+        nullable=False,
+    )
+
+    # Time template (hour:minute of day, applied to each occurrence date)
+    start_time_of_day: Mapped[time] = mapped_column(TIME, nullable=False)
+    end_time_of_day: Mapped[time] = mapped_column(TIME, nullable=False)
+
+    # RFC 5545 RRULE components (simplified)
+    rrule_frequency: Mapped[RecurrenceFrequency] = mapped_column(
+        SQLEnum(
+            RecurrenceFrequency,
+            name="recurrence_frequency",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=RecurrenceFrequency.WEEKLY,
+        nullable=False,
+    )
+    rrule_interval: Mapped[int] = mapped_column(
+        Integer, default=1, nullable=False
+    )  # Every N weeks/months
+    rrule_byday: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # e.g., 'MO,WE,FR' for days of week
+    rrule_bymonthday: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # e.g., '15,30' for days of month
+    rrule_count: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )  # Number of occurrences (1-52)
+
+    # Series metadata
+    original_start_date: Mapped[date] = mapped_column(
+        DATE, nullable=False
+    )  # First occurrence date
+    instances_created: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )  # Track how many were created
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    # Relationships
+    stylist: Mapped["Stylist"] = relationship("Stylist")
+    instances: Mapped[list["BlockingEvent"]] = relationship(
+        "BlockingEvent", back_populates="recurring_series"
+    )
+
+    # Constraints and indexes
+    __table_args__ = (
+        # End time must be after start time
+        CheckConstraint(
+            "end_time_of_day > start_time_of_day",
+            name="check_series_end_after_start"
+        ),
+        # Count must be between 1 and 52
+        CheckConstraint(
+            "rrule_count > 0 AND rrule_count <= 52",
+            name="check_series_count_range"
+        ),
+        # Interval must be positive
+        CheckConstraint(
+            "rrule_interval > 0 AND rrule_interval <= 12",
+            name="check_series_interval_range"
+        ),
+        # Index for querying by stylist
+        Index("idx_recurring_series_stylist", "stylist_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<RecurringBlockingSeries(id={self.id}, title='{self.title}', frequency={self.rrule_frequency.value}, count={self.rrule_count})>"
+
+
 class BlockingEvent(Base):
     """
     BlockingEvent model - Calendar blocking events for stylists.
@@ -712,6 +845,20 @@ class BlockingEvent(Base):
         String(255), nullable=True
     )
 
+    # Recurrence fields (optional - for events belonging to a recurring series)
+    recurring_series_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("recurring_blocking_series.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    occurrence_index: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )  # 1, 2, 3... position in series
+    is_exception: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )  # True if modified from original pattern
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -725,8 +872,11 @@ class BlockingEvent(Base):
         nullable=False,
     )
 
-    # Relationship
+    # Relationships
     stylist: Mapped["Stylist"] = relationship("Stylist")
+    recurring_series: Mapped["RecurringBlockingSeries | None"] = relationship(
+        "RecurringBlockingSeries", back_populates="instances"
+    )
 
     # Constraints and indexes
     __table_args__ = (
@@ -739,10 +889,13 @@ class BlockingEvent(Base):
             "start_time",
             "end_time",
         ),
+        # Index for querying instances by series
+        Index("idx_blocking_events_series", "recurring_series_id"),
     )
 
     def __repr__(self) -> str:
-        return f"<BlockingEvent(id={self.id}, stylist_id={self.stylist_id}, title='{self.title}', type='{self.event_type.value}')>"
+        series_info = f", series={self.recurring_series_id}" if self.recurring_series_id else ""
+        return f"<BlockingEvent(id={self.id}, stylist_id={self.stylist_id}, title='{self.title}', type='{self.event_type.value}'{series_info})>"
 
 
 class Holiday(Base):

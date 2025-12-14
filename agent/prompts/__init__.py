@@ -14,15 +14,16 @@ from database.connection import get_async_session
 from database.models import Stylist, ServiceCategory
 from sqlalchemy import select
 
+# Import shared cache (safe for both API and Agent)
+from shared.stylist_cache import get_cache, clear_stylist_context_cache
+
 logger = logging.getLogger(__name__)
 
 # Global cache for stylist context with TTL (10 minutes)
 # This reduces database queries and improves OpenRouter cache hit rate
-_STYLIST_CONTEXT_CACHE = {
-    "data": None,
-    "expires_at": None,
-    "lock": asyncio.Lock()
-}
+# Cache data is stored in shared module, lock is local to agent
+_STYLIST_CONTEXT_CACHE = get_cache()
+_STYLIST_CONTEXT_CACHE["lock"] = asyncio.Lock()
 
 
 def load_maite_system_prompt() -> str:
@@ -332,4 +333,4 @@ def load_contextual_prompt(state: dict) -> str:
     return final_prompt
 
 
-__all__ = ["load_maite_system_prompt", "load_stylist_context", "load_contextual_prompt"]
+__all__ = ["load_maite_system_prompt", "load_stylist_context", "load_contextual_prompt", "clear_stylist_context_cache"]

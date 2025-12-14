@@ -11,9 +11,10 @@ Provides REST endpoints for:
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
+from enum import Enum
 from zoneinfo import ZoneInfo
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 import pytz
@@ -42,10 +43,21 @@ from database.models import (
     Notification,
     NotificationType,
     Policy,
+    RecurringBlockingSeries,
+    RecurrenceFrequency,
     Service,
     Stylist,
 )
 from shared.config import get_settings
+from agent.services.recurrence_service import (
+    expand_recurrence,
+    check_conflicts_for_dates,
+    get_business_hours_summary,
+    get_remaining_week_days,
+    format_byday,
+    format_bymonthday,
+    parse_byday,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2614,6 +2626,88 @@ class UpdateBlockingEventRequest(BaseModel):
         return parse_datetime_as_madrid(v)
 
 
+# =============================================================================
+# Recurring Blocking Events Schemas
+# =============================================================================
+
+
+class RecurrencePattern(BaseModel):
+    """Recurrence pattern definition (RFC 5545 compatible)."""
+    frequency: Literal["WEEKLY", "MONTHLY"] = Field(
+        default="WEEKLY",
+        description="Recurrence frequency"
+    )
+    interval: int = Field(
+        default=1,
+        ge=1,
+        le=12,
+        description="Every N weeks/months"
+    )
+    days_of_week: list[int] | None = Field(
+        default=None,
+        description="List of weekdays (0=Monday, 6=Sunday) for WEEKLY frequency"
+    )
+    days_of_month: list[int] | None = Field(
+        default=None,
+        description="List of month days (1-31) for MONTHLY frequency"
+    )
+    count: int = Field(
+        ...,
+        ge=1,
+        le=52,
+        description="Number of occurrences to create"
+    )
+
+
+class CreateRecurringBlockingEventRequest(BaseModel):
+    """Request schema for creating recurring blocking events."""
+    stylist_ids: list[UUID] = Field(..., min_length=1)
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str | None = None
+    event_type: str = Field(default="general")
+    start_date: date = Field(..., description="First occurrence date (YYYY-MM-DD)")
+    start_time: str = Field(..., description="Start time (HH:MM)")
+    end_time: str = Field(..., description="End time (HH:MM)")
+    recurrence: RecurrencePattern
+
+
+class ConflictInfo(BaseModel):
+    """Information about a scheduling conflict."""
+    date: str
+    stylist_id: str
+    stylist_name: str
+    conflict_type: str  # "appointment" or "blocking_event"
+    conflict_title: str
+    start_time: str
+    end_time: str
+
+
+class RecurringEventPreview(BaseModel):
+    """Preview of instances that will be created."""
+    total_instances: int
+    dates: list[str]
+    conflicts: list[ConflictInfo]
+    instances_with_conflicts: int
+
+
+class SeriesEditScope(str, Enum):
+    """Scope of edit/delete operation on a recurring series."""
+    THIS_ONLY = "this_only"
+    THIS_AND_FUTURE = "this_and_future"
+    ALL = "all"
+
+
+class SeriesInfo(BaseModel):
+    """Information about a recurring series."""
+    series_id: str
+    total_instances: int
+    instance_index: int
+    remaining_instances: int
+    frequency: str
+    interval: int
+    days: str | None  # "MO,WE,FR" or "15,30"
+
+
 @router.get("/blocking-events")
 async def list_blocking_events(
     current_user: Annotated[dict, Depends(get_current_user)],
@@ -2803,6 +2897,11 @@ async def update_blocking_event(
                 detail="end_time must be after start_time"
             )
 
+        # Mark as exception if this event is part of a recurring series
+        # (it's now different from the series template)
+        if event.recurring_series_id:
+            event.is_exception = True
+
         await session.commit()
         await session.refresh(event)
 
@@ -2860,6 +2959,694 @@ async def delete_blocking_event(
             )
 
         await session.delete(event)
+        await session.commit()
+
+
+# =============================================================================
+# Recurring Blocking Events Endpoints
+# =============================================================================
+
+
+@router.get("/business-hours/summary")
+async def get_business_hours_summary_endpoint(
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Get business hours summary for all days of the week.
+
+    Returns:
+        Dict mapping day_of_week (0=Monday, 6=Sunday) to:
+        - {"open": "HH:MM", "close": "HH:MM"} if open
+        - null if closed
+    """
+    return await get_business_hours_summary()
+
+
+@router.get("/blocking-events/remaining-week")
+async def get_remaining_week_days_endpoint(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    from_date: date,
+):
+    """
+    Get the remaining days of the week from a given date.
+    Only includes days when the salon is open.
+
+    Args:
+        from_date: Start date (YYYY-MM-DD)
+
+    Returns:
+        List of available days with date, day_of_week (0=Mon), and name
+    """
+    business_hours = await get_business_hours_summary()
+    remaining = await get_remaining_week_days(from_date, business_hours)
+
+    return {
+        "from_date": from_date.isoformat(),
+        "days": [
+            {
+                "date": d["date"].isoformat(),
+                "day_of_week": d["day_of_week"],
+                "name": d["name"],
+            }
+            for d in remaining
+        ],
+    }
+
+
+@router.post("/blocking-events/recurring/preview")
+async def preview_recurring_blocking_event(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    request: CreateRecurringBlockingEventRequest,
+):
+    """
+    Preview what instances will be created and detect conflicts.
+
+    Returns dates for all occurrences and any conflicts with
+    existing appointments or blocking events.
+    """
+    # Parse times
+    try:
+        start_time = dt_time.fromisoformat(request.start_time)
+        end_time = dt_time.fromisoformat(request.end_time)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid time format: {e}")
+
+    if end_time <= start_time:
+        raise HTTPException(status_code=400, detail="End time must be after start time")
+
+    # Validate event type
+    valid_types = ["vacation", "meeting", "break", "general", "personal"]
+    if request.event_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid event_type. Must be one of: {valid_types}"
+        )
+
+    # Expand recurrence to get all dates
+    dates = expand_recurrence(
+        start_date=request.start_date,
+        frequency=request.recurrence.frequency,
+        interval=request.recurrence.interval,
+        days_of_week=request.recurrence.days_of_week,
+        days_of_month=request.recurrence.days_of_month,
+        count=request.recurrence.count,
+    )
+
+    # Check conflicts for each stylist
+    all_conflicts: list[dict] = []
+    async with get_async_session() as session:
+        for stylist_id in request.stylist_ids:
+            conflicts = await check_conflicts_for_dates(
+                stylist_id=stylist_id,
+                dates=dates,
+                start_time=start_time,
+                end_time=end_time,
+                session=session,
+            )
+            all_conflicts.extend(conflicts)
+
+    # Count unique dates with conflicts
+    dates_with_conflicts = set(c["date"] for c in all_conflicts)
+
+    return RecurringEventPreview(
+        total_instances=len(dates) * len(request.stylist_ids),
+        dates=[d.isoformat() for d in dates],
+        conflicts=[ConflictInfo(**c) for c in all_conflicts],
+        instances_with_conflicts=len(dates_with_conflicts),
+    )
+
+
+@router.post("/blocking-events/recurring", status_code=status.HTTP_201_CREATED)
+async def create_recurring_blocking_event(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    request: CreateRecurringBlockingEventRequest,
+    ignore_conflicts: bool = False,
+):
+    """
+    Create recurring blocking events.
+
+    Creates a RecurringBlockingSeries and individual BlockingEvent instances.
+    Optionally ignores conflicts if ignore_conflicts=true.
+    """
+    from agent.services.gcal_push_service import fire_and_forget_push_blocking_event
+
+    # Parse times
+    try:
+        start_time = dt_time.fromisoformat(request.start_time)
+        end_time = dt_time.fromisoformat(request.end_time)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid time format: {e}")
+
+    if end_time <= start_time:
+        raise HTTPException(status_code=400, detail="End time must be after start time")
+
+    # Validate event type
+    valid_types = ["vacation", "meeting", "break", "general", "personal"]
+    if request.event_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid event_type. Must be one of: {valid_types}"
+        )
+
+    # Expand recurrence to get all dates
+    dates = expand_recurrence(
+        start_date=request.start_date,
+        frequency=request.recurrence.frequency,
+        interval=request.recurrence.interval,
+        days_of_week=request.recurrence.days_of_week,
+        days_of_month=request.recurrence.days_of_month,
+        count=request.recurrence.count,
+    )
+
+    if not dates:
+        raise HTTPException(status_code=400, detail="No dates generated from recurrence pattern")
+
+    created_series: list[dict] = []
+    created_events: list[dict] = []
+
+    async with get_async_session() as session:
+        # Verify all stylists exist
+        for stylist_id in request.stylist_ids:
+            result = await session.execute(
+                select(Stylist).where(Stylist.id == stylist_id)
+            )
+            if not result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Stylist {stylist_id} not found"
+                )
+
+        # Create one series per stylist
+        for stylist_id in request.stylist_ids:
+            # Format days for storage
+            byday = None
+            bymonthday = None
+            if request.recurrence.frequency == "WEEKLY" and request.recurrence.days_of_week:
+                byday = format_byday(request.recurrence.days_of_week)
+            elif request.recurrence.frequency == "MONTHLY" and request.recurrence.days_of_month:
+                bymonthday = format_bymonthday(request.recurrence.days_of_month)
+
+            # Create the series
+            series = RecurringBlockingSeries(
+                stylist_id=stylist_id,
+                title=request.title,
+                description=request.description,
+                event_type=BlockingEventType(request.event_type),
+                start_time_of_day=start_time,
+                end_time_of_day=end_time,
+                rrule_frequency=RecurrenceFrequency(request.recurrence.frequency),
+                rrule_interval=request.recurrence.interval,
+                rrule_byday=byday,
+                rrule_bymonthday=bymonthday,
+                rrule_count=request.recurrence.count,
+                original_start_date=request.start_date,
+                instances_created=len(dates),
+            )
+            session.add(series)
+            await session.flush()  # Get series.id
+
+            created_series.append({
+                "series_id": str(series.id),
+                "stylist_id": str(stylist_id),
+            })
+
+            # Create individual blocking events
+            for idx, event_date in enumerate(dates, start=1):
+                start_dt = datetime.combine(event_date, start_time, tzinfo=MADRID_TZ)
+                end_dt = datetime.combine(event_date, end_time, tzinfo=MADRID_TZ)
+
+                event = BlockingEvent(
+                    stylist_id=stylist_id,
+                    title=request.title,
+                    description=request.description,
+                    start_time=start_dt,
+                    end_time=end_dt,
+                    event_type=BlockingEventType(request.event_type),
+                    recurring_series_id=series.id,
+                    occurrence_index=idx,
+                    is_exception=False,
+                )
+                session.add(event)
+                await session.flush()
+
+                created_events.append({
+                    "id": str(event.id),
+                    "stylist_id": str(stylist_id),
+                    "title": event.title,
+                    "start_time": start_dt.isoformat(),
+                    "end_time": end_dt.isoformat(),
+                    "event_type": event.event_type.value,
+                    "series_id": str(series.id),
+                    "occurrence_index": idx,
+                })
+
+        await session.commit()
+
+        # Fire-and-forget: Push all events to Google Calendar
+        for event_data in created_events:
+            asyncio.create_task(
+                fire_and_forget_push_blocking_event(
+                    blocking_event_id=UUID(event_data["id"]),
+                    stylist_id=UUID(event_data["stylist_id"]),
+                    title=event_data["title"],
+                    description=request.description,
+                    start_time=datetime.fromisoformat(event_data["start_time"]),
+                    end_time=datetime.fromisoformat(event_data["end_time"]),
+                    event_type=event_data["event_type"],
+                )
+            )
+
+    return {
+        "created_series": len(created_series),
+        "created_events": len(created_events),
+        "series": created_series,
+        "events": created_events,
+    }
+
+
+@router.get("/blocking-events/{event_id}/series")
+async def get_blocking_event_series(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    event_id: UUID,
+):
+    """
+    Get series information if the event belongs to a recurring series.
+
+    Returns None if the event is not part of a series.
+    """
+    async with get_async_session() as session:
+        # Get the event with its series
+        result = await session.execute(
+            select(BlockingEvent).where(BlockingEvent.id == event_id)
+        )
+        event = result.scalar_one_or_none()
+
+        if not event:
+            raise HTTPException(status_code=404, detail="Blocking event not found")
+
+        if not event.recurring_series_id:
+            return None  # Not part of a series
+
+        # Get series info
+        series_result = await session.execute(
+            select(RecurringBlockingSeries).where(
+                RecurringBlockingSeries.id == event.recurring_series_id
+            )
+        )
+        series = series_result.scalar_one_or_none()
+
+        if not series:
+            return None
+
+        # Count remaining instances (including this one)
+        count_result = await session.execute(
+            select(func.count(BlockingEvent.id)).where(
+                and_(
+                    BlockingEvent.recurring_series_id == series.id,
+                    BlockingEvent.occurrence_index >= event.occurrence_index,
+                )
+            )
+        )
+        remaining = count_result.scalar() or 0
+
+        return SeriesInfo(
+            series_id=str(series.id),
+            total_instances=series.instances_created,
+            instance_index=event.occurrence_index or 0,
+            remaining_instances=remaining,
+            frequency=series.rrule_frequency.value,
+            interval=series.rrule_interval,
+            days=series.rrule_byday or series.rrule_bymonthday,
+        )
+
+
+@router.get("/blocking-events/{event_id}/series/exceptions")
+async def check_series_exceptions(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    event_id: UUID,
+    scope: SeriesEditScope = SeriesEditScope.ALL,
+):
+    """
+    Check for exceptions (previously modified instances) in a series scope.
+
+    Returns information about which instances have been modified individually
+    so the frontend can warn the user before bulk updates.
+    """
+    async with get_async_session() as session:
+        # Get the event
+        result = await session.execute(
+            select(BlockingEvent).where(BlockingEvent.id == event_id)
+        )
+        event = result.scalar_one_or_none()
+
+        if not event:
+            raise HTTPException(status_code=404, detail="Blocking event not found")
+
+        if not event.recurring_series_id:
+            return {
+                "has_exceptions": False,
+                "exception_count": 0,
+                "exceptions": [],
+            }
+
+        # Build query based on scope
+        if scope == SeriesEditScope.THIS_AND_FUTURE:
+            query = select(BlockingEvent).where(
+                and_(
+                    BlockingEvent.recurring_series_id == event.recurring_series_id,
+                    BlockingEvent.occurrence_index >= event.occurrence_index,
+                    BlockingEvent.is_exception == True,
+                )
+            )
+        else:  # ALL
+            query = select(BlockingEvent).where(
+                and_(
+                    BlockingEvent.recurring_series_id == event.recurring_series_id,
+                    BlockingEvent.is_exception == True,
+                )
+            )
+
+        result = await session.execute(query)
+        exceptions = list(result.scalars().all())
+
+        return {
+            "has_exceptions": len(exceptions) > 0,
+            "exception_count": len(exceptions),
+            "exceptions": [
+                {
+                    "id": str(exc.id),
+                    "title": exc.title,
+                    "start_time": exc.start_time.astimezone(MADRID_TZ).isoformat(),
+                    "occurrence_index": exc.occurrence_index,
+                }
+                for exc in exceptions
+            ],
+        }
+
+
+@router.put("/blocking-events/{event_id}/series")
+async def update_blocking_event_with_scope(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    event_id: UUID,
+    request: UpdateBlockingEventRequest,
+    scope: SeriesEditScope = SeriesEditScope.THIS_ONLY,
+    overwrite_exceptions: bool = False,
+):
+    """
+    Update blocking event(s) with series awareness.
+
+    Scope options:
+    - this_only: Update only this instance (marks as exception)
+    - this_and_future: Update this and all future instances
+    - all: Update entire series
+
+    When overwrite_exceptions is True, previously modified instances will be
+    updated and their is_exception flag reset. When False, they are skipped.
+    """
+    async with get_async_session() as session:
+        # Get the clicked event
+        result = await session.execute(
+            select(BlockingEvent).where(BlockingEvent.id == event_id)
+        )
+        event = result.scalar_one_or_none()
+
+        if not event:
+            raise HTTPException(status_code=404, detail="Blocking event not found")
+
+        # For non-series events or this_only scope, just update single event
+        if not event.recurring_series_id or scope == SeriesEditScope.THIS_ONLY:
+            # Apply updates
+            if request.title is not None:
+                event.title = request.title
+            if request.description is not None:
+                event.description = request.description
+            if request.start_time is not None:
+                event.start_time = request.start_time
+            if request.end_time is not None:
+                event.end_time = request.end_time
+            if request.event_type is not None:
+                try:
+                    event.event_type = BlockingEventType(request.event_type)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid event_type: {request.event_type}"
+                    )
+
+            # Validate times
+            if event.end_time <= event.start_time:
+                raise HTTPException(
+                    status_code=400,
+                    detail="end_time must be after start_time"
+                )
+
+            # Mark as exception since it differs from series
+            if event.recurring_series_id:
+                event.is_exception = True
+
+            await session.commit()
+            await session.refresh(event)
+
+            # Fire-and-forget GCal update
+            if event.google_calendar_event_id:
+                from agent.services.gcal_push_service import update_blocking_event_in_gcal
+                asyncio.create_task(
+                    update_blocking_event_in_gcal(
+                        blocking_event_id=event.id,
+                        stylist_id=event.stylist_id,
+                        event_id=event.google_calendar_event_id,
+                        title=event.title,
+                        description=event.description,
+                        start_time=event.start_time,
+                        end_time=event.end_time,
+                        event_type=event.event_type.value,
+                    )
+                )
+
+            return {
+                "updated_count": 1,
+                "skipped_exceptions": 0,
+                "events": [{
+                    "id": str(event.id),
+                    "title": event.title,
+                    "start_time": event.start_time.astimezone(MADRID_TZ).isoformat(),
+                    "end_time": event.end_time.astimezone(MADRID_TZ).isoformat(),
+                }],
+            }
+
+        # For series-aware updates, get affected events
+        if scope == SeriesEditScope.THIS_AND_FUTURE:
+            query = select(BlockingEvent).where(
+                and_(
+                    BlockingEvent.recurring_series_id == event.recurring_series_id,
+                    BlockingEvent.occurrence_index >= event.occurrence_index,
+                )
+            ).order_by(BlockingEvent.occurrence_index)
+        else:  # ALL
+            query = select(BlockingEvent).where(
+                BlockingEvent.recurring_series_id == event.recurring_series_id
+            ).order_by(BlockingEvent.occurrence_index)
+
+        result = await session.execute(query)
+        affected_events = list(result.scalars().all())
+
+        # Calculate time deltas based on the clicked event
+        start_delta = None
+        end_delta = None
+        if request.start_time is not None:
+            original_start = event.start_time.astimezone(MADRID_TZ)
+            new_start = request.start_time.astimezone(MADRID_TZ)
+            start_delta = new_start - original_start
+
+        if request.end_time is not None:
+            original_end = event.end_time.astimezone(MADRID_TZ)
+            new_end = request.end_time.astimezone(MADRID_TZ)
+            end_delta = new_end - original_end
+
+        # Apply updates
+        updated_events = []
+        skipped_count = 0
+
+        for evt in affected_events:
+            # Skip exceptions if not overwriting
+            if evt.is_exception and not overwrite_exceptions:
+                skipped_count += 1
+                continue
+
+            # Apply field updates
+            if request.title is not None:
+                evt.title = request.title
+            if request.description is not None:
+                evt.description = request.description
+            if request.event_type is not None:
+                try:
+                    evt.event_type = BlockingEventType(request.event_type)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid event_type: {request.event_type}"
+                    )
+
+            # Apply time deltas (preserves each event's date but changes time)
+            if start_delta is not None:
+                evt.start_time = evt.start_time + start_delta
+            if end_delta is not None:
+                evt.end_time = evt.end_time + end_delta
+
+            # Validate times
+            if evt.end_time <= evt.start_time:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"end_time must be after start_time for event on {evt.start_time.date()}"
+                )
+
+            # Reset exception flag since it now matches the update
+            evt.is_exception = False
+
+            updated_events.append(evt)
+
+        await session.commit()
+
+        # Fire-and-forget GCal updates for all updated events
+        from agent.services.gcal_push_service import update_blocking_event_in_gcal
+        for evt in updated_events:
+            if evt.google_calendar_event_id:
+                asyncio.create_task(
+                    update_blocking_event_in_gcal(
+                        blocking_event_id=evt.id,
+                        stylist_id=evt.stylist_id,
+                        event_id=evt.google_calendar_event_id,
+                        title=evt.title,
+                        description=evt.description,
+                        start_time=evt.start_time,
+                        end_time=evt.end_time,
+                        event_type=evt.event_type.value,
+                    )
+                )
+
+        # Update series template if scope is ALL
+        if scope == SeriesEditScope.ALL:
+            series_result = await session.execute(
+                select(RecurringBlockingSeries).where(
+                    RecurringBlockingSeries.id == event.recurring_series_id
+                )
+            )
+            series = series_result.scalar_one_or_none()
+            if series:
+                if request.title is not None:
+                    series.title = request.title
+                if request.event_type is not None:
+                    try:
+                        series.event_type = BlockingEventType(request.event_type)
+                    except ValueError:
+                        pass  # Already validated above
+                # Note: We don't update series time templates as each instance
+                # may be on different dates. The time delta approach handles this.
+                await session.commit()
+
+        return {
+            "updated_count": len(updated_events),
+            "skipped_exceptions": skipped_count,
+            "events": [
+                {
+                    "id": str(evt.id),
+                    "title": evt.title,
+                    "start_time": evt.start_time.astimezone(MADRID_TZ).isoformat(),
+                    "end_time": evt.end_time.astimezone(MADRID_TZ).isoformat(),
+                }
+                for evt in updated_events
+            ],
+        }
+
+
+@router.delete("/blocking-events/{event_id}/series", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_blocking_event_with_scope(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    event_id: UUID,
+    scope: SeriesEditScope = SeriesEditScope.THIS_ONLY,
+):
+    """
+    Delete blocking event(s) with series awareness.
+
+    Scope options:
+    - this_only: Delete only this instance
+    - this_and_future: Delete this and all future instances
+    - all: Delete entire series
+    """
+    logger.info(f"Delete blocking event with scope: {scope}, event_id: {event_id}")
+
+    async with get_async_session() as session:
+        # Get the event
+        result = await session.execute(
+            select(BlockingEvent).where(BlockingEvent.id == event_id)
+        )
+        event = result.scalar_one_or_none()
+
+        if not event:
+            raise HTTPException(status_code=404, detail="Blocking event not found")
+
+        logger.info(
+            f"Event found: recurring_series_id={event.recurring_series_id}, "
+            f"occurrence_index={event.occurrence_index}, start_time={event.start_time}"
+        )
+
+        events_to_delete: list[BlockingEvent] = []
+
+        if not event.recurring_series_id or scope == SeriesEditScope.THIS_ONLY:
+            # Single event or not part of series
+            events_to_delete = [event]
+        elif scope == SeriesEditScope.THIS_AND_FUTURE:
+            # Delete this and all future instances
+            # Handle NULL occurrence_index by using start_time comparison as fallback
+            if event.occurrence_index is not None:
+                result = await session.execute(
+                    select(BlockingEvent).where(
+                        and_(
+                            BlockingEvent.recurring_series_id == event.recurring_series_id,
+                            BlockingEvent.occurrence_index >= event.occurrence_index,
+                        )
+                    )
+                )
+            else:
+                # Fallback: use start_time comparison if occurrence_index is NULL
+                result = await session.execute(
+                    select(BlockingEvent).where(
+                        and_(
+                            BlockingEvent.recurring_series_id == event.recurring_series_id,
+                            BlockingEvent.start_time >= event.start_time,
+                        )
+                    )
+                )
+            events_to_delete = list(result.scalars().all())
+        elif scope == SeriesEditScope.ALL:
+            # Delete entire series
+            result = await session.execute(
+                select(BlockingEvent).where(
+                    BlockingEvent.recurring_series_id == event.recurring_series_id
+                )
+            )
+            events_to_delete = list(result.scalars().all())
+
+            # Also delete the series itself
+            series_result = await session.execute(
+                select(RecurringBlockingSeries).where(
+                    RecurringBlockingSeries.id == event.recurring_series_id
+                )
+            )
+            series = series_result.scalar_one_or_none()
+            if series:
+                await session.delete(series)
+
+        logger.info(f"Events to delete count: {len(events_to_delete)}")
+
+        # Fire-and-forget: Delete from Google Calendar
+        for evt in events_to_delete:
+            if evt.google_calendar_event_id:
+                asyncio.create_task(
+                    _safe_delete_gcal_event(evt.stylist_id, evt.google_calendar_event_id)
+                )
+            await session.delete(evt)
+
         await session.commit()
 
 

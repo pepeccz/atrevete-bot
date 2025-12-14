@@ -1,0 +1,31 @@
+# =============================================================================
+# Development Dockerfile for NextJS 15 Admin Panel
+# Optimized for hot-reload during development
+# =============================================================================
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies needed for node-gyp and file watching
+RUN apk add --no-cache libc6-compat
+
+# Copy package files and install dependencies
+COPY admin-panel/package*.json ./
+RUN npm install
+
+# Copy source files (will be overridden by volume mount)
+COPY admin-panel/ ./
+
+# Disable Next.js telemetry
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=development
+
+# Enable polling for file changes (needed for Docker on Windows/WSL)
+ENV WATCHPACK_POLLING=true
+ENV CHOKIDAR_USEPOLLING=true
+
+EXPOSE 3000
+
+# Run Next.js dev server with hot-reload
+CMD ["npm", "run", "dev"]

@@ -74,6 +74,20 @@ class NonBookingHandler:
         if intent.type in (IntentType.CONFIRM_APPOINTMENT, IntentType.DECLINE_APPOINTMENT):
             return await self._handle_appointment_confirmation(intent)
 
+        # Handle cancellation intents (customer-initiated cancellation)
+        if intent.type in (
+            IntentType.INITIATE_CANCELLATION,
+            IntentType.SELECT_CANCELLATION,
+            IntentType.CONFIRM_CANCELLATION,
+            IntentType.ABORT_CANCELLATION,
+            IntentType.INSIST_CANCELLATION,
+        ):
+            return await self._handle_cancellation(intent)
+
+        # Handle appointment query intent (customer checks their appointments)
+        if intent.type == IntentType.CHECK_MY_APPOINTMENTS:
+            return await self._handle_appointment_query()
+
         # Handle UPDATE_NAME intent explicitly to ensure name is updated
         if intent.type == IntentType.UPDATE_NAME:
             return await self._handle_update_name(intent)
@@ -469,6 +483,189 @@ INSTRUCCIONES:
 
         response = await self.llm.ainvoke(messages)
         return response.content
+
+    async def _handle_cancellation(self, intent: Intent) -> str:
+        """
+        Handle customer-initiated appointment cancellation.
+
+        Processes customer requests to cancel their appointments:
+        - INITIATE_CANCELLATION: Start flow, show appointments
+        - SELECT_CANCELLATION: User selects appointment by number
+        - CONFIRM_CANCELLATION: Execute cancellation
+        - ABORT_CANCELLATION: Abort cancellation flow
+        - INSIST_CANCELLATION: User insists despite window -> escalate
+
+        Args:
+            intent: Intent with type related to cancellation
+
+        Returns:
+            Response text to send to customer
+        """
+        from agent.services.cancellation_service import (
+            initiate_cancellation_flow,
+            select_appointment_for_cancellation,
+            execute_cancellation,
+            detect_number_selection,
+        )
+        from agent.tools import escalate_to_human
+
+        customer_phone = self.state.get("customer_phone", "")
+        conversation_id = self.state.get("conversation_id")
+        pending_cancellation_id = self.state.get("pending_cancellation_id")
+
+        if not customer_phone:
+            logger.warning("Cancellation intent without customer_phone in state")
+            return "Lo siento, ha habido un problema. Por favor, intenta de nuevo."
+
+        logger.info(
+            f"Handling cancellation | intent={intent.type.value} | "
+            f"customer_phone={customer_phone} | pending_id={pending_cancellation_id}"
+        )
+
+        try:
+            if intent.type == IntentType.INITIATE_CANCELLATION:
+                result = await initiate_cancellation_flow(customer_phone)
+
+                if not result.success:
+                    if result.within_window:
+                        # Store appointment ID for potential insist
+                        logger.info(
+                            f"Cancellation blocked (within window) | "
+                            f"appointment_id={result.appointment_id}"
+                        )
+                    return result.error_message or result.response_text
+
+                # Store pending appointment ID if single appointment
+                if result.appointment_id and not result.multiple_appointments:
+                    # Note: State update would be handled by the calling node
+                    logger.info(f"Single appointment for cancellation: {result.appointment_id}")
+
+                return result.response_text
+
+            elif intent.type == IntentType.SELECT_CANCELLATION:
+                # User selected a specific appointment by number
+                selection = detect_number_selection(intent.raw_message)
+                if selection:
+                    result = await select_appointment_for_cancellation(
+                        customer_phone, selection
+                    )
+                    if not result.success:
+                        return result.error_message
+                    # Store selected appointment ID
+                    logger.info(f"Appointment selected for cancellation: {result.appointment_id}")
+                    return result.response_text
+                else:
+                    return (
+                        "No entendí qué cita quieres cancelar. "
+                        "Por favor, responde con el número (1, 2, 3...)."
+                    )
+
+            elif intent.type == IntentType.CONFIRM_CANCELLATION:
+                # User confirmed cancellation
+                if pending_cancellation_id:
+                    from uuid import UUID
+                    try:
+                        appt_uuid = UUID(pending_cancellation_id)
+                        # Extract reason if user provided one
+                        reason = None
+                        if len(intent.raw_message.split()) > 3:
+                            reason = intent.raw_message
+                        result = await execute_cancellation(
+                            appt_uuid, reason=reason, conversation_id=conversation_id
+                        )
+                        if not result.success:
+                            return result.error_message
+                        return result.response_text
+                    except ValueError:
+                        logger.error(f"Invalid appointment UUID: {pending_cancellation_id}")
+                        return "Ha ocurrido un error. Por favor, intenta de nuevo."
+                else:
+                    # No pending appointment - might be single appointment flow
+                    from agent.services.cancellation_service import (
+                        get_customer_by_phone,
+                        get_cancellable_appointments,
+                    )
+                    customer = await get_customer_by_phone(customer_phone)
+                    if customer:
+                        appointments = await get_cancellable_appointments(customer.id)
+                        if len(appointments) == 1:
+                            result = await execute_cancellation(
+                                appointments[0].id, conversation_id=conversation_id
+                            )
+                            if not result.success:
+                                return result.error_message
+                            return result.response_text
+                    return (
+                        "No hay ninguna cita seleccionada para cancelar. "
+                        "¿Qué cita quieres cancelar?"
+                    )
+
+            elif intent.type == IntentType.ABORT_CANCELLATION:
+                return "Entendido, no cancelaré ninguna cita. ¿En qué más puedo ayudarte?"
+
+            elif intent.type == IntentType.INSIST_CANCELLATION:
+                # User insists despite window restriction -> escalate
+                logger.info(
+                    f"Customer insisting on cancellation within window | "
+                    f"phone={customer_phone}"
+                )
+                # Execute escalation
+                result = await escalate_to_human.ainvoke({
+                    "reason": "manual_request",
+                    "_conversation_id": conversation_id,
+                    "_customer_phone": customer_phone,
+                    "_conversation_context": self.state.get("messages", [])[-5:],
+                })
+                return (
+                    "Entiendo que necesitas cancelar urgentemente. "
+                    "Te conecto con el equipo para que te ayuden."
+                )
+
+            else:
+                logger.warning(f"Unexpected cancellation intent: {intent.type}")
+                return "No entendí tu respuesta. ¿Quieres cancelar una cita?"
+
+        except Exception as e:
+            logger.exception(f"Error handling cancellation: {e}")
+            return "Ha ocurrido un error al procesar tu solicitud. Por favor, intenta de nuevo."
+
+    async def _handle_appointment_query(self) -> str:
+        """
+        Handle customer appointment query (CHECK_MY_APPOINTMENTS).
+
+        Processes customer requests to view their upcoming appointments.
+        Returns formatted list of appointments or appropriate message if none.
+
+        Returns:
+            Response text with appointment list or no-appointments message
+        """
+        from agent.services.appointment_query_service import get_upcoming_appointments
+
+        customer_phone = self.state.get("customer_phone", "")
+
+        if not customer_phone:
+            logger.warning("Appointment query without customer_phone in state")
+            return "Lo siento, ha habido un problema. Por favor, intenta de nuevo."
+
+        logger.info(f"Handling appointment query | customer_phone={customer_phone}")
+
+        try:
+            result = await get_upcoming_appointments(customer_phone)
+
+            if not result.success:
+                # Database error - offer escalation
+                logger.error(f"Appointment query failed: {result.error_message}")
+                return result.error_message
+
+            # Return the formatted response (whether has appointments or not)
+            return result.response_text
+
+        except Exception as e:
+            logger.exception(f"Error handling appointment query: {e}")
+            return (
+                "Lo siento, no he podido consultar tus citas en este momento. "
+                "¿Quieres que te conecte con el equipo para ayudarte?"
+            )
 
     async def _handle_fallback(self, intent: Intent) -> str:
         """

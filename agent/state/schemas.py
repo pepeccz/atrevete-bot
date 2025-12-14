@@ -37,7 +37,7 @@ class ConversationState(TypedDict, total=False):
     CUSTOMER_DATA, BOOKING_CONFIRMATION, BOOKING_EXECUTION, POST_BOOKING)
     for focused prompt loading.
 
-    Fields (24 total):
+    Fields (27 total):
         # Core Metadata (5 fields)
         conversation_id: LangGraph thread_id for checkpointing
         customer_phone: E.164 phone (e.g., +34612345678)
@@ -80,6 +80,11 @@ class ConversationState(TypedDict, total=False):
         is_first_interaction: True if customer's first message ever (messages empty)
         customer_needs_name: True if WhatsApp name contains numbers/emojis
         customer_first_name: Current first_name from database Customer record
+
+        # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
+        cancellation_in_progress: True when in cancellation flow
+        pending_cancellation_id: UUID string of appointment selected for cancellation
+        cancellation_appointments: List of appointment dicts shown for selection
 
         # Deprecated Fields (2 fields - kept for backward compatibility, will be removed)
         customer_id: DEPRECATED - tools handle customer identification internally
@@ -139,6 +144,13 @@ class ConversationState(TypedDict, total=False):
     is_first_interaction: bool  # True if this is the customer's first message ever
     customer_needs_name: bool  # True if WhatsApp name is not readable (numbers/emojis)
     customer_first_name: str | None  # Current customer first_name from database
+
+    # ============================================================================
+    # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
+    # ============================================================================
+    cancellation_in_progress: bool  # True when in cancellation flow
+    pending_cancellation_id: str | None  # UUID of appointment selected for cancellation
+    cancellation_appointments: list[dict[str, Any]] | None  # Appointments shown for selection
 
     # ============================================================================
     # Deprecated Fields (kept for backward compatibility - will be removed)
