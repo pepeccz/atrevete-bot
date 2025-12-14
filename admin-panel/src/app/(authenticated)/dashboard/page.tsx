@@ -82,15 +82,19 @@ export default function DashboardPage() {
   const [kpis, setKpis] = useState<KPIs | null>(null);
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [notifications, setNotifications] = useState<NotificationsListResponse | null>(null);
+  const [notificationError, setNotificationError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchNotifications = useCallback(async () => {
     try {
-      const response = await api.getNotifications(5, false); // Solo no leídas, máximo 5
+      const response = await api.getNotifications(5, false); // Solo no leidas, maximo 5
       setNotifications(response);
-    } catch (error) {
-      console.error("Failed to fetch notifications:", error);
+      setNotificationError(null); // Clear previous error on success
+    } catch (err) {
+      console.error("Failed to fetch notifications:", err);
+      setNotificationError("No se pudieron cargar las notificaciones");
+      // Keep previous notifications data if available
     }
   }, []);
 
@@ -147,11 +151,9 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
-  // Fetch notifications and set up polling
+  // Fetch notifications on mount (no polling - NotificationCenter in header handles that)
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000); // Poll every 30 seconds
-    return () => clearInterval(interval);
   }, [fetchNotifications]);
 
   const handleNotificationClick = async (notification: Notification) => {
@@ -209,6 +211,14 @@ export default function DashboardPage() {
         </div>
 
         {/* Notifications Widget */}
+        {notificationError && (
+          <Card className="border-amber-200 bg-amber-50">
+            <CardContent className="pt-6 flex items-center gap-2">
+              <Bell className="h-4 w-4 text-amber-600" />
+              <p className="text-sm text-amber-800">{notificationError}</p>
+            </CardContent>
+          </Card>
+        )}
         {notifications && notifications.unread_count > 0 && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
