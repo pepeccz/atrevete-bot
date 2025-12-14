@@ -135,7 +135,6 @@ pytest --cov=agent --cov=shared --cov=database \
 - **End-to-end tests**: 90% for booking flow
 
 ### Excluded from Coverage
-- `admin/*` - Django admin (deferred to Epic 7)
 - `*/tests/*` - Test code itself
 - `*/migrations/*` - Database migrations
 - `*/__pycache__/*` - Python cache
