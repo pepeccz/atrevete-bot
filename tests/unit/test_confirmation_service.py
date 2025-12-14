@@ -24,12 +24,17 @@ import pytest
 from agent.fsm.models import IntentType
 from agent.services.confirmation_service import (
     ConfirmationResult,
+    check_decline_timeout,
     format_date_spanish,
+    get_appointment_by_id,
     get_customer_by_phone,
     get_pending_confirmation,
     get_pending_confirmations,
     handle_confirmation_response,
+    handle_decline_second_confirmation,
+    handle_topic_change_with_pending_decline,
     has_pending_confirmation,
+    is_emphatic_decline,
 )
 from database.models import AppointmentStatus
 
@@ -650,3 +655,336 @@ class TestDeclineAppointmentFlow:
                         assert result.response_type == "template"
                         assert mock_appointment.status == AppointmentStatus.CANCELLED
                         assert mock_appointment.cancelled_at is not None
+
+
+# ============================================================================
+# DOUBLE CONFIRMATION TESTS (v3.5)
+# ============================================================================
+
+
+class TestIsEmphaticDecline:
+    """Test emphatic decline pattern detection."""
+
+    def test_emphatic_certainty_expressions(self):
+        """Verify certainty expressions are detected as emphatic."""
+        emphatic_messages = [
+            "estoy seguro que no puedo ir",
+            "estoy segura de que no iré",
+            "seguro que no voy",
+            "definitivamente no puedo",
+        ]
+        for msg in emphatic_messages:
+            assert is_emphatic_decline(msg) is True, f"'{msg}' should be emphatic"
+
+    def test_emphatic_direct_cancellation(self):
+        """Verify direct cancellation requests are detected as emphatic."""
+        emphatic_messages = [
+            "cancélala ya",
+            "cancelala ya por favor",
+            "si cancela la cita",
+            "confirmo cancelar",
+            "necesito cancelar urgente",
+        ]
+        for msg in emphatic_messages:
+            assert is_emphatic_decline(msg) is True, f"'{msg}' should be emphatic"
+
+    def test_emphatic_multiple_markers(self):
+        """Verify multiple certainty markers trigger emphatic detection."""
+        # Has both "seguro" and "claro que"
+        msg = "claro que estoy seguro"
+        assert is_emphatic_decline(msg) is True
+
+    def test_non_emphatic_simple_decline(self):
+        """Verify simple declines are NOT emphatic."""
+        non_emphatic_messages = [
+            "no",
+            "no puedo",
+            "cancela",
+            "no voy a poder ir",
+            "creo que no",
+        ]
+        for msg in non_emphatic_messages:
+            assert is_emphatic_decline(msg) is False, f"'{msg}' should NOT be emphatic"
+
+    def test_case_insensitive(self):
+        """Verify detection is case-insensitive."""
+        assert is_emphatic_decline("ESTOY SEGURO") is True
+        assert is_emphatic_decline("Definitivamente No") is True
+
+
+class TestCheckDeclineTimeout:
+    """Test decline timeout check (24 hours)."""
+
+    def test_timeout_not_expired(self):
+        """Verify timeout not expired within 24 hours."""
+        recent_time = datetime.now(MADRID_TZ) - timedelta(hours=1)
+        assert check_decline_timeout(recent_time.isoformat()) is False
+
+    def test_timeout_expired_after_24h(self):
+        """Verify timeout expired after 24 hours."""
+        old_time = datetime.now(MADRID_TZ) - timedelta(hours=25)
+        assert check_decline_timeout(old_time.isoformat()) is True
+
+    def test_timeout_exactly_24h(self):
+        """Verify timeout expired at exactly 24 hours."""
+        exactly_24h = datetime.now(MADRID_TZ) - timedelta(hours=24)
+        assert check_decline_timeout(exactly_24h.isoformat()) is True
+
+    def test_invalid_timestamp_treated_as_expired(self):
+        """Verify invalid timestamp is treated as expired."""
+        assert check_decline_timeout("invalid-timestamp") is True
+        assert check_decline_timeout("") is True
+
+
+class TestGetAppointmentById:
+    """Test appointment lookup by ID."""
+
+    @pytest.mark.asyncio
+    async def test_appointment_found(self):
+        """Verify appointment is returned when found."""
+        appt_id = uuid4()
+        mock_appointment = MagicMock()
+        mock_appointment.id = appt_id
+        mock_appointment.status = AppointmentStatus.PENDING
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = mock_appointment
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "agent.services.confirmation_service.get_async_session"
+        ) as mock_get_session:
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            result = await get_appointment_by_id(appt_id)
+
+            assert result is not None
+            assert result.id == appt_id
+
+    @pytest.mark.asyncio
+    async def test_appointment_not_found(self):
+        """Verify None is returned when appointment not found."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "agent.services.confirmation_service.get_async_session"
+        ) as mock_get_session:
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            result = await get_appointment_by_id(uuid4())
+
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_database_error_handled(self):
+        """Verify database errors are handled gracefully."""
+        with patch(
+            "agent.services.confirmation_service.get_async_session"
+        ) as mock_get_session:
+            mock_get_session.return_value.__aenter__.side_effect = Exception("DB error")
+
+            result = await get_appointment_by_id(uuid4())
+
+            assert result is None
+
+
+class TestHandleDeclineSecondConfirmation:
+    """Test second confirmation handling for decline flow."""
+
+    @pytest.fixture
+    def mock_appointment(self):
+        """Create mock appointment for testing."""
+        appt = MagicMock()
+        appt.id = uuid4()
+        appt.customer_id = uuid4()
+        appt.stylist_id = uuid4()
+        appt.status = AppointmentStatus.PENDING
+        appt.start_time = datetime.now(MADRID_TZ) + timedelta(days=2)
+        appt.google_calendar_event_id = "gcal_event_123"
+        appt.service_ids = [uuid4()]
+        appt.first_name = "María"
+        appt.cancelled_at = None
+
+        mock_stylist = MagicMock()
+        mock_stylist.name = "Ana"
+        appt.stylist = mock_stylist
+
+        return appt
+
+    @pytest.fixture
+    def mock_customer(self):
+        """Create mock customer for testing."""
+        customer = MagicMock()
+        customer.id = uuid4()
+        customer.phone = "+34612345678"
+        customer.first_name = "María García"
+        return customer
+
+    @pytest.mark.asyncio
+    async def test_customer_not_found_error(self):
+        """Verify error when customer not found."""
+        with patch(
+            "agent.services.confirmation_service.get_customer_by_phone",
+            new_callable=AsyncMock,
+        ) as mock_get_customer:
+            mock_get_customer.return_value = None
+
+            result = await handle_decline_second_confirmation(
+                customer_phone="+34999999999",
+                intent_type=IntentType.CONFIRM_DECLINE,
+                appointment_id=str(uuid4()),
+            )
+
+            assert result.success is False
+            assert result.error_message is not None
+            assert result.state_updates is not None
+            assert result.state_updates["pending_decline_appointment_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_invalid_appointment_id_error(self):
+        """Verify error when appointment ID is invalid."""
+        mock_customer = MagicMock()
+        mock_customer.id = uuid4()
+
+        with patch(
+            "agent.services.confirmation_service.get_customer_by_phone",
+            new_callable=AsyncMock,
+        ) as mock_get_customer:
+            mock_get_customer.return_value = mock_customer
+
+            result = await handle_decline_second_confirmation(
+                customer_phone="+34612345678",
+                intent_type=IntentType.CONFIRM_DECLINE,
+                appointment_id="invalid-uuid",
+            )
+
+            assert result.success is False
+            assert result.state_updates is not None
+
+    @pytest.mark.asyncio
+    async def test_abort_decline_keeps_appointment(self, mock_customer, mock_appointment):
+        """Verify ABORT_DECLINE keeps the appointment."""
+        with patch(
+            "agent.services.confirmation_service.get_customer_by_phone",
+            new_callable=AsyncMock,
+        ) as mock_get_customer:
+            mock_get_customer.return_value = mock_customer
+
+            with patch(
+                "agent.services.confirmation_service.get_appointment_by_id",
+                new_callable=AsyncMock,
+            ) as mock_get_appt:
+                mock_get_appt.return_value = mock_appointment
+
+                with patch(
+                    "agent.services.confirmation_service._get_service_names",
+                    new_callable=AsyncMock,
+                ) as mock_get_services:
+                    mock_get_services.return_value = "Corte de pelo"
+
+                    result = await handle_decline_second_confirmation(
+                        customer_phone="+34612345678",
+                        intent_type=IntentType.ABORT_DECLINE,
+                        appointment_id=str(mock_appointment.id),
+                    )
+
+                    assert result.success is True
+                    assert result.response_type == "template"
+                    assert "sigue en pie" in result.response_text
+                    assert result.state_updates is not None
+                    assert result.state_updates["pending_decline_appointment_id"] is None
+
+
+class TestHandleTopicChangeWithPendingDecline:
+    """Test topic change handling when pending decline is active."""
+
+    @pytest.mark.asyncio
+    async def test_topic_change_clears_state(self):
+        """Verify topic change clears pending decline state."""
+        mock_appointment = MagicMock()
+        mock_appointment.id = uuid4()
+        mock_appointment.start_time = datetime.now(MADRID_TZ) + timedelta(days=2)
+
+        mock_stylist = MagicMock()
+        mock_stylist.name = "Ana"
+        mock_appointment.stylist = mock_stylist
+
+        with patch(
+            "agent.services.confirmation_service.get_appointment_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get_appt:
+            mock_get_appt.return_value = mock_appointment
+
+            prefix, state_updates = await handle_topic_change_with_pending_decline(
+                appointment_id=str(mock_appointment.id),
+            )
+
+            assert "sigue en pie" in prefix
+            assert state_updates["pending_decline_appointment_id"] is None
+            assert state_updates["pending_decline_initiated_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_topic_change_invalid_appointment(self):
+        """Verify topic change handles invalid appointment gracefully."""
+        prefix, state_updates = await handle_topic_change_with_pending_decline(
+            appointment_id="invalid-uuid",
+        )
+
+        assert "sigue en pie" in prefix
+        assert state_updates["pending_decline_appointment_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_topic_change_appointment_not_found(self):
+        """Verify topic change handles missing appointment gracefully."""
+        with patch(
+            "agent.services.confirmation_service.get_appointment_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get_appt:
+            mock_get_appt.return_value = None
+
+            prefix, state_updates = await handle_topic_change_with_pending_decline(
+                appointment_id=str(uuid4()),
+            )
+
+            assert "sigue en pie" in prefix
+            assert state_updates["pending_decline_appointment_id"] is None
+
+
+class TestConfirmationResultDoubleConfirm:
+    """Test ConfirmationResult dataclass with double confirm fields."""
+
+    def test_result_with_state_updates(self):
+        """Test result with state updates for double confirmation."""
+        result = ConfirmationResult(
+            success=True,
+            appointment_id=uuid4(),
+            response_type="template",
+            response_text="Lamentamos que no puedas asistir...",
+            requires_double_confirm=True,
+            state_updates={
+                "pending_decline_appointment_id": "some-uuid",
+                "pending_decline_initiated_at": "2025-12-14T10:00:00+01:00",
+            },
+        )
+
+        assert result.requires_double_confirm is True
+        assert result.state_updates is not None
+        assert result.state_updates["pending_decline_appointment_id"] == "some-uuid"
+
+    def test_result_without_double_confirm(self):
+        """Test result without double confirmation (default)."""
+        result = ConfirmationResult(
+            success=True,
+            appointment_id=uuid4(),
+            response_type="template",
+            response_text="Tu cita está confirmada",
+        )
+
+        assert result.requires_double_confirm is False
+        assert result.state_updates is None

@@ -334,6 +334,8 @@ def _build_state_context(
             ("escalate", "Quiere hablar con una persona o está frustrado"),
             ("confirm_appointment", "Usuario confirma asistencia a cita pendiente (sí, confirmo, de acuerdo)"),
             ("decline_appointment", "Usuario dice que no puede asistir a cita (no, no puedo, cancela)"),
+            ("confirm_decline", "Usuario CONFIRMA cancelación tras pregunta '¿estás seguro?' (sí, cancela, confirmo)"),
+            ("abort_decline", "Usuario ABORTA cancelación tras pregunta '¿estás seguro?' (no, mejor no, lo dejo)"),
             ("initiate_cancellation", "Usuario quiere cancelar una cita existente (cancelar mi cita, anular cita)"),
             ("check_my_appointments", "Usuario pregunta por sus citas (¿cuáles son mis citas?, ¿tengo cita?, mis reservas)"),
         ],
@@ -415,20 +417,25 @@ def _build_state_context(
             "1. CONFIRMACIÓN DE CITA (si usuario tiene cita pendiente de confirmación):\n"
             "   'sí', 'si', 'confirmo', 'ok', 'de acuerdo', 'vale' → confirm_appointment\n"
             "   'no', 'no puedo' (respuesta a pregunta de confirmación) → decline_appointment\n"
-            "2. CANCELACIÓN DE CITA EXISTENTE (usuario inicia la cancelación proactivamente):\n"
+            "2. DOBLE CONFIRMACIÓN DE CANCELACIÓN (si el bot preguntó '¿Estás seguro que deseas cancelarla?'):\n"
+            "   ⚠️ CONTEXTO CLAVE: Revisar si el mensaje anterior del bot contiene pregunta de confirmación\n"
+            "   'sí', 'cancela', 'cancélala', 'confirmo', 'sí, cancela' → confirm_decline\n"
+            "   'no', 'mejor no', 'lo dejo', 'no, la dejo', 'me arrepentí' → abort_decline\n"
+            "   Cualquier otro tema (pregunta diferente, saludo, etc.) → tema diferente, usar intent apropiado\n"
+            "3. CANCELACIÓN DE CITA EXISTENTE (usuario inicia la cancelación proactivamente):\n"
             "   'quiero cancelar mi cita', 'cancelar cita', 'anular mi reserva', 'eliminar cita'\n"
             "   → intent: initiate_cancellation\n"
             "   ⚠️ DISTINGUIR: 'decline_appointment' es respuesta a confirmación del sistema.\n"
             "                 'initiate_cancellation' es cuando el usuario INICIA la cancelación.\n"
-            "3. CONSULTA DE CITAS (usuario quiere saber sus citas programadas):\n"
+            "4. CONSULTA DE CITAS (usuario quiere saber sus citas programadas):\n"
             "   '¿cuáles son mis citas?', '¿tengo cita?', 'mis reservas', 'qué citas tengo'\n"
             "   → intent: check_my_appointments\n"
             "   ⚠️ DISTINGUIR: NO es lo mismo que start_booking (quiere VER citas, no CREAR)\n"
-            "4. ACTUALIZACIÓN DE NOMBRE: 'Llamame X', 'Mi nombre es Y', 'Soy Z', 'No, me llamo W'\n"
+            "5. ACTUALIZACIÓN DE NOMBRE: 'Llamame X', 'Mi nombre es Y', 'Soy Z', 'No, me llamo W'\n"
             "   → intent: update_name, entities: {first_name: X/Y/Z/W}\n"
-            "5. RESERVA: 'Quiero una cita', 'Reservar corte', 'Agendar peinado'\n"
+            "6. RESERVA: 'Quiero una cita', 'Reservar corte', 'Agendar peinado'\n"
             "   → intent: start_booking\n"
-            "6. SALUDO SIMPLE: 'Hola', 'Buenos días' (sin mención de nombre ni servicio)\n"
+            "7. SALUDO SIMPLE: 'Hola', 'Buenos días' (sin mención de nombre ni servicio)\n"
             "   → intent: greeting\n"
         ),
         BookingState.SERVICE_SELECTION: (
@@ -723,6 +730,9 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
             # Appointment confirmation intents (48h confirmation flow)
             IntentType.CONFIRM_APPOINTMENT: set(),  # No entities - just confirmation
             IntentType.DECLINE_APPOINTMENT: set(),  # No entities - just decline
+            # Double confirmation intents (decline flow) - v3.5
+            IntentType.CONFIRM_DECLINE: set(),  # No entities - confirms cancellation after double-confirm
+            IntentType.ABORT_DECLINE: set(),  # No entities - aborts cancellation after double-confirm
             # Appointment cancellation intents (customer-initiated)
             IntentType.INITIATE_CANCELLATION: set(),  # No entities - just signals intent
             IntentType.SELECT_CANCELLATION: {"selection_number"},  # User selects which appointment

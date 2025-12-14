@@ -54,6 +54,9 @@ class IntentRouter:
         # Appointment confirmation intents (48h confirmation flow)
         IntentType.CONFIRM_APPOINTMENT,
         IntentType.DECLINE_APPOINTMENT,
+        # Double confirmation intents (decline flow) - v3.5
+        IntentType.CONFIRM_DECLINE,
+        IntentType.ABORT_DECLINE,
     }
 
     @staticmethod
@@ -62,7 +65,7 @@ class IntentRouter:
         fsm: "BookingFSM",
         state: "ConversationState",
         llm: "ChatOpenAI",
-    ) -> str:
+    ) -> tuple[str, dict | None]:
         """
         Route intent to appropriate handler.
 
@@ -73,7 +76,9 @@ class IntentRouter:
             llm: LLM client for response generation
 
         Returns:
-            Assistant response text
+            Tuple of (response_text, state_updates)
+            - response_text: Assistant response text
+            - state_updates: Dict of state fields to update (or None)
         """
         is_booking = intent.type in IntentRouter.BOOKING_INTENTS
 
@@ -87,10 +92,11 @@ class IntentRouter:
             from agent.routing.booking_handler import BookingHandler
 
             handler = BookingHandler(fsm, state, llm)
-            return await handler.handle(intent)
+            return await handler.handle(intent), None
         else:
             # Conversational flow: LLM handles with safe tools
             from agent.routing.non_booking_handler import NonBookingHandler
 
             handler = NonBookingHandler(state, llm, fsm)
+            # NonBookingHandler returns (response, state_updates)
             return await handler.handle(intent)

@@ -52,7 +52,7 @@ class NonBookingHandler:
         self.llm = llm
         self.fsm = fsm
 
-    async def handle(self, intent: Intent) -> str:
+    async def handle(self, intent: Intent) -> tuple[str, dict | None]:
         """
         Handle non-booking intent conversationally.
 
@@ -63,12 +63,27 @@ class NonBookingHandler:
             intent: User intent (GREETING, FAQ, ESCALATE, UNKNOWN)
 
         Returns:
-            Assistant response text
+            Tuple of (response_text, state_updates)
+            - response_text: Assistant response text
+            - state_updates: Dict of state fields to update (or None)
         """
         logger.info(
             f"NonBookingHandler.handle | intent={intent.type.value} | "
             f"fsm_state={self.fsm.state.value}"
         )
+
+        # Check for pending decline state FIRST (double confirmation flow)
+        pending_decline_id = self.state.get("pending_decline_appointment_id")
+        if pending_decline_id:
+            return await self._handle_pending_decline(intent, pending_decline_id)
+
+        # Handle double confirmation intents (without pending state - shouldn't happen)
+        if intent.type in (IntentType.CONFIRM_DECLINE, IntentType.ABORT_DECLINE):
+            logger.warning(
+                f"Received {intent.type.value} without pending decline state, "
+                "treating as unknown"
+            )
+            # Fall through to normal handling
 
         # Handle appointment confirmation/decline intents (48h confirmation flow)
         if intent.type in (IntentType.CONFIRM_APPOINTMENT, IntentType.DECLINE_APPOINTMENT):
@@ -82,15 +97,18 @@ class NonBookingHandler:
             IntentType.ABORT_CANCELLATION,
             IntentType.INSIST_CANCELLATION,
         ):
-            return await self._handle_cancellation(intent)
+            response = await self._handle_cancellation(intent)
+            return (response, None)
 
         # Handle appointment query intent (customer checks their appointments)
         if intent.type == IntentType.CHECK_MY_APPOINTMENTS:
-            return await self._handle_appointment_query()
+            response = await self._handle_appointment_query()
+            return (response, None)
 
         # Handle UPDATE_NAME intent explicitly to ensure name is updated
         if intent.type == IntentType.UPDATE_NAME:
-            return await self._handle_update_name(intent)
+            response = await self._handle_update_name(intent)
+            return (response, None)
 
         # Import safe tools (no booking tools, but manage_customer for name updates)
         from agent.tools import escalate_to_human, manage_customer, query_info, search_services
@@ -115,9 +133,9 @@ class NonBookingHandler:
 
             # Get final response after tool execution
             final_response = await llm_with_tools.ainvoke(messages)
-            return final_response.content
+            return (final_response.content, None)
 
-        return response.content
+        return (response.content, None)
 
     def _build_messages(self, intent: Intent) -> list:
         """
@@ -375,19 +393,162 @@ IMPORTANTE:
             logger.error(f"Error updating customer name: {e}", exc_info=True)
             return "Lo siento, ha habido un problema al actualizar tu nombre. ¿Puedes intentarlo de nuevo?"
 
-    async def _handle_appointment_confirmation(self, intent: Intent) -> str:
+    async def _handle_pending_decline(
+        self, intent: Intent, pending_decline_id: str
+    ) -> tuple[str, dict | None]:
+        """
+        Handle response when user has a pending decline awaiting confirmation.
+
+        Three scenarios:
+        1. CONFIRM_DECLINE → cancel the appointment
+        2. ABORT_DECLINE → keep the appointment
+        3. Any other intent → topic change, keep appointment + answer query
+
+        Args:
+            intent: User intent
+            pending_decline_id: UUID string of appointment pending decline
+
+        Returns:
+            Tuple of (response_text, state_updates)
+        """
+        from agent.services.confirmation_service import (
+            check_decline_timeout,
+            handle_decline_second_confirmation,
+            handle_topic_change_with_pending_decline,
+        )
+
+        customer_phone = self.state.get("customer_phone", "")
+        initiated_at = self.state.get("pending_decline_initiated_at")
+
+        logger.info(
+            f"Handling pending decline | intent={intent.type.value} | "
+            f"appointment_id={pending_decline_id} | initiated_at={initiated_at}"
+        )
+
+        # Check timeout (24h)
+        if initiated_at and check_decline_timeout(initiated_at):
+            logger.info(
+                f"Pending decline timeout expired | appointment_id={pending_decline_id}"
+            )
+            # Timeout expired - treat as topic change
+            prefix_message, state_updates = await handle_topic_change_with_pending_decline(
+                pending_decline_id
+            )
+            # Process the original intent normally (without prefix for timeout)
+            original_response, _ = await self._process_intent_normally(intent)
+            return (original_response, state_updates)
+
+        # Handle CONFIRM_DECLINE
+        if intent.type == IntentType.CONFIRM_DECLINE:
+            result = await handle_decline_second_confirmation(
+                customer_phone=customer_phone,
+                intent_type=intent.type,
+                appointment_id=pending_decline_id,
+            )
+            return (result.response_text or result.error_message, result.state_updates)
+
+        # Handle ABORT_DECLINE
+        if intent.type == IntentType.ABORT_DECLINE:
+            result = await handle_decline_second_confirmation(
+                customer_phone=customer_phone,
+                intent_type=intent.type,
+                appointment_id=pending_decline_id,
+            )
+            return (result.response_text or result.error_message, result.state_updates)
+
+        # Any other intent = topic change
+        # Keep appointment and answer their new query
+        logger.info(
+            f"Topic change detected while pending decline | "
+            f"new_intent={intent.type.value} | appointment_id={pending_decline_id}"
+        )
+
+        prefix_message, state_updates = await handle_topic_change_with_pending_decline(
+            pending_decline_id
+        )
+
+        # Process the original intent normally
+        original_response, original_updates = await self._process_intent_normally(intent)
+
+        # Merge state updates (topic change updates take precedence)
+        if original_updates:
+            state_updates.update(original_updates)
+
+        # Combine: appointment kept message + answer to new query
+        combined_response = prefix_message + original_response
+
+        return (combined_response, state_updates)
+
+    async def _process_intent_normally(self, intent: Intent) -> tuple[str, dict | None]:
+        """
+        Process an intent using normal handling (without pending decline check).
+
+        This is used by _handle_pending_decline for topic change handling.
+
+        Args:
+            intent: User intent
+
+        Returns:
+            Tuple of (response_text, state_updates)
+        """
+        # Handle appointment confirmation/decline intents
+        if intent.type in (IntentType.CONFIRM_APPOINTMENT, IntentType.DECLINE_APPOINTMENT):
+            return await self._handle_appointment_confirmation(intent)
+
+        # Handle cancellation intents
+        if intent.type in (
+            IntentType.INITIATE_CANCELLATION,
+            IntentType.SELECT_CANCELLATION,
+            IntentType.CONFIRM_CANCELLATION,
+            IntentType.ABORT_CANCELLATION,
+            IntentType.INSIST_CANCELLATION,
+        ):
+            response = await self._handle_cancellation(intent)
+            return (response, None)
+
+        # Handle appointment query
+        if intent.type == IntentType.CHECK_MY_APPOINTMENTS:
+            response = await self._handle_appointment_query()
+            return (response, None)
+
+        # Handle UPDATE_NAME
+        if intent.type == IntentType.UPDATE_NAME:
+            response = await self._handle_update_name(intent)
+            return (response, None)
+
+        # Default: LLM conversational handling
+        from agent.tools import escalate_to_human, manage_customer, query_info, search_services
+
+        SAFE_TOOLS = [query_info, search_services, manage_customer, escalate_to_human]
+        llm_with_tools = self.llm.bind_tools(SAFE_TOOLS)
+
+        messages = self._build_messages(intent)
+        response = await llm_with_tools.ainvoke(messages)
+
+        if response.tool_calls:
+            messages.append(response)
+            for tool_call in response.tool_calls:
+                result = await self._execute_tool(tool_call)
+                messages.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
+
+            final_response = await llm_with_tools.ainvoke(messages)
+            return (final_response.content, None)
+
+        return (response.content, None)
+
+    async def _handle_appointment_confirmation(self, intent: Intent) -> tuple[str, dict | None]:
         """
         Handle appointment confirmation/decline responses (48h confirmation flow).
 
         Processes customer responses to confirmation requests sent 48h before appointments.
         - CONFIRM_APPOINTMENT: Customer confirms attendance → update status to CONFIRMED
-        - DECLINE_APPOINTMENT: Customer says can't attend → update status to CANCELLED
+        - DECLINE_APPOINTMENT: Customer says can't attend → double confirmation or cancel
 
         Args:
             intent: Intent with type CONFIRM_APPOINTMENT or DECLINE_APPOINTMENT
 
         Returns:
-            Response text (template or LLM-generated based on message complexity)
+            Tuple of (response_text, state_updates)
         """
         from agent.services.confirmation_service import handle_confirmation_response
 
@@ -395,7 +556,7 @@ IMPORTANTE:
 
         if not customer_phone:
             logger.warning("Confirmation intent without customer_phone in state")
-            return "Lo siento, ha habido un problema. Por favor, intenta de nuevo."
+            return ("Lo siento, ha habido un problema. Por favor, intenta de nuevo.", None)
 
         logger.info(
             f"Handling appointment confirmation | intent={intent.type.value} | "
@@ -415,7 +576,17 @@ IMPORTANTE:
                 logger.info(
                     f"Confirmation handling failed | error={result.error_message}"
                 )
-                return result.error_message or "Lo siento, no pude procesar tu respuesta."
+                return (
+                    result.error_message or "Lo siento, no pude procesar tu respuesta.",
+                    result.state_updates,
+                )
+
+            # Check if this is a double confirmation prompt (pending decline)
+            if result.requires_double_confirm:
+                logger.info(
+                    f"Double confirmation required | appointment_id={result.appointment_id}"
+                )
+                return (result.response_text, result.state_updates)
 
             # Check response type
             if result.response_type == "template" and result.response_text:
@@ -424,18 +595,22 @@ IMPORTANTE:
                     f"Confirmation processed (template) | appointment_id={result.appointment_id} | "
                     f"intent={intent.type.value}"
                 )
-                return result.response_text
+                return (result.response_text, result.state_updates)
 
             # Complex message - generate LLM response with context
             logger.info(
                 f"Confirmation processed (LLM) | appointment_id={result.appointment_id} | "
                 f"intent={intent.type.value}"
             )
-            return await self._generate_confirmation_response(intent, result)
+            response = await self._generate_confirmation_response(intent, result)
+            return (response, result.state_updates)
 
         except Exception as e:
             logger.exception(f"Error handling appointment confirmation: {e}")
-            return "Lo siento, ha habido un problema al procesar tu respuesta. Por favor, intenta de nuevo."
+            return (
+                "Lo siento, ha habido un problema al procesar tu respuesta. Por favor, intenta de nuevo.",
+                None,
+            )
 
     async def _generate_confirmation_response(self, intent: Intent, result) -> str:
         """

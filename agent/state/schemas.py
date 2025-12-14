@@ -37,7 +37,7 @@ class ConversationState(TypedDict, total=False):
     CUSTOMER_DATA, BOOKING_CONFIRMATION, BOOKING_EXECUTION, POST_BOOKING)
     for focused prompt loading.
 
-    Fields (27 total):
+    Fields (29 total):
         # Core Metadata (5 fields)
         conversation_id: LangGraph thread_id for checkpointing
         customer_phone: E.164 phone (e.g., +34612345678)
@@ -85,6 +85,10 @@ class ConversationState(TypedDict, total=False):
         cancellation_in_progress: True when in cancellation flow
         pending_cancellation_id: UUID string of appointment selected for cancellation
         cancellation_appointments: List of appointment dicts shown for selection
+
+        # Pending Decline State (2 fields) - v3.5 double confirmation for cancellation
+        pending_decline_appointment_id: UUID of appointment awaiting decline confirmation
+        pending_decline_initiated_at: ISO 8601 timestamp when decline was initiated
 
         # Deprecated Fields (2 fields - kept for backward compatibility, will be removed)
         customer_id: DEPRECATED - tools handle customer identification internally
@@ -151,6 +155,12 @@ class ConversationState(TypedDict, total=False):
     cancellation_in_progress: bool  # True when in cancellation flow
     pending_cancellation_id: str | None  # UUID of appointment selected for cancellation
     cancellation_appointments: list[dict[str, Any]] | None  # Appointments shown for selection
+
+    # ============================================================================
+    # Pending Decline State (2 fields) - v3.5 double confirmation for cancellation
+    # ============================================================================
+    pending_decline_appointment_id: str | None  # UUID of appointment pending decline confirmation
+    pending_decline_initiated_at: str | None  # ISO 8601 timestamp when decline was initiated
 
     # ============================================================================
     # Deprecated Fields (kept for backward compatibility - will be removed)

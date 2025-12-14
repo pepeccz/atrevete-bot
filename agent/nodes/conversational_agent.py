@@ -316,7 +316,7 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         # BookingHandler: FSM prescribes tools (prescriptive)
         # NonBookingHandler: LLM decides from safe tools (conversational)
         # Circuit breaker protects against OpenRouter outages
-        response_text = await call_with_breaker(
+        response_text, state_updates = await call_with_breaker(
             openrouter_breaker,
             IntentRouter.route,
             intent=intent,
@@ -324,6 +324,15 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
             state=state,
             llm=llm,
         )
+
+        # Apply state updates from handler (e.g., pending_decline state)
+        if state_updates:
+            for key, value in state_updates.items():
+                state[key] = value
+            logger.debug(
+                f"State updates applied | conversation_id={conversation_id} | "
+                f"updates={list(state_updates.keys())}"
+            )
 
         logger.info(
             f"Response generated | conversation_id={conversation_id} | "

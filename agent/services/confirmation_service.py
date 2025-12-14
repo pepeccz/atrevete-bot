@@ -67,10 +67,77 @@ MONTHS_ES = [
     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
 ]
 
+# Double confirmation timeout in hours
+DECLINE_TIMEOUT_HOURS = 24
+
+# Emphatic decline patterns - skip double confirmation for clear/certain messages
+EMPHATIC_DECLINE_PATTERNS = {
+    # Explicit certainty expressions
+    "estoy seguro", "estoy segura", "seguro que no", "segura que no",
+    "definitivamente no", "definitivamente", "segurísimo", "segurísima",
+    # Direct cancellation requests
+    "cancelala ya", "cancélala ya", "cancelalo ya", "cancélalo ya",
+    "si cancela", "sí cancela", "confirmo cancelar", "confirmo que no",
+    # Strong expressions
+    "no voy a poder", "imposible asistir", "imposible ir", "no me es posible",
+    "por favor cancela", "necesito cancelar", "urgente cancelar",
+    "no puedo ir seguro", "no puedo ir segura",
+    # Multiple confirmation in same message
+    "si estoy seguro", "sí estoy seguro", "si estoy segura", "sí estoy segura",
+}
+
 
 def format_date_spanish(dt: datetime) -> str:
     """Format datetime to Spanish date string."""
     return f"{WEEKDAYS_ES[dt.weekday()]} {dt.day} de {MONTHS_ES[dt.month - 1]}"
+
+
+def is_emphatic_decline(message: str) -> bool:
+    """
+    Detect if user's decline message is emphatic/certain.
+
+    Emphatic messages skip double confirmation because the user is clearly certain.
+
+    Args:
+        message: User's raw message text
+
+    Returns:
+        True if message indicates strong certainty about cancellation
+    """
+    msg_lower = message.lower().strip()
+
+    # Check for emphatic patterns
+    for pattern in EMPHATIC_DECLINE_PATTERNS:
+        if pattern in msg_lower:
+            return True
+
+    # Check for multiple certainty markers
+    certainty_markers = ["seguro", "segura", "definitivamente", "claro que", "por supuesto"]
+    marker_count = sum(1 for m in certainty_markers if m in msg_lower)
+    if marker_count >= 2:
+        return True
+
+    return False
+
+
+def check_decline_timeout(initiated_at_iso: str) -> bool:
+    """
+    Check if pending decline has timed out (24 hours).
+
+    Args:
+        initiated_at_iso: ISO 8601 timestamp when decline was initiated
+
+    Returns:
+        True if timeout has expired (24+ hours have passed)
+    """
+    try:
+        initiated_at = datetime.fromisoformat(initiated_at_iso)
+        now = datetime.now(MADRID_TZ)
+        hours_elapsed = (now - initiated_at).total_seconds() / 3600
+        return hours_elapsed >= DECLINE_TIMEOUT_HOURS
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Invalid decline timestamp '{initiated_at_iso}': {e}")
+        return True  # Treat invalid timestamp as expired
 
 
 def detect_multi_selection(message: str) -> tuple[bool, bool, Optional[int]]:
@@ -123,6 +190,8 @@ class ConfirmationResult:
         service_names: Comma-separated service names
         error_message: Error message if success is False
         multiple_processed: Number of appointments processed (for batch operations)
+        state_updates: Dict of state fields to update (for double confirmation flow)
+        requires_double_confirm: True if this is a double confirmation prompt
     """
     success: bool
     appointment_id: Optional[UUID] = None
@@ -135,6 +204,8 @@ class ConfirmationResult:
     service_names: Optional[str] = None
     error_message: Optional[str] = None
     multiple_processed: int = 0
+    state_updates: Optional[dict] = None
+    requires_double_confirm: bool = False
 
 
 async def get_pending_confirmations(customer_id: UUID) -> list[Appointment]:
@@ -267,6 +338,305 @@ async def _get_service_names(service_ids: list[UUID]) -> str:
         return "servicios"
 
 
+async def _execute_cancellation(
+    session,
+    appt: Appointment,
+    customer: Customer,
+    fecha: str,
+    hora: str,
+    stylist_name: str,
+    service_names: str,
+    now: datetime,
+    is_simple_message: bool,
+    offer_reschedule: bool = True,
+) -> ConfirmationResult:
+    """
+    Execute the actual cancellation of an appointment.
+
+    This helper function is extracted to be reused by:
+    - Emphatic declines (skip double confirmation)
+    - Second confirmation (CONFIRM_DECLINE)
+
+    Args:
+        session: Database session (already open)
+        appt: Appointment to cancel
+        customer: Customer object
+        fecha: Formatted Spanish date
+        hora: Formatted time
+        stylist_name: Name of the stylist
+        service_names: Comma-separated service names
+        now: Current timestamp
+        is_simple_message: Whether to use template response
+        offer_reschedule: Whether to offer rescheduling in response
+
+    Returns:
+        ConfirmationResult with cancellation outcome
+    """
+    # Update appointment status
+    appt.status = AppointmentStatus.CANCELLED
+    appt.cancelled_at = now
+    await session.commit()
+
+    # Delete Google Calendar event
+    if appt.google_calendar_event_id:
+        try:
+            await delete_gcal_event(
+                stylist_id=appt.stylist_id,
+                event_id=appt.google_calendar_event_id,
+            )
+        except Exception as gcal_error:
+            logger.warning(
+                f"GCal delete failed for appointment {appt.id} "
+                f"(DB already committed to CANCELLED): {gcal_error}"
+            )
+
+    # Create admin notification
+    notification = Notification(
+        type=NotificationType.APPOINTMENT_CANCELLED,
+        title=f"{customer.first_name or appt.first_name} canceló su cita",
+        message=f"Cita del {fecha} a las {hora} cancelada por el cliente.",
+        entity_type="appointment",
+        entity_id=appt.id,
+    )
+    session.add(notification)
+    await session.commit()
+
+    logger.info(f"Appointment {appt.id} cancelled by customer {customer.id}")
+
+    # Build response
+    if is_simple_message:
+        if offer_reschedule:
+            response_text = (
+                f"Entendido. Tu cita del {fecha} a las {hora} ha sido cancelada. "
+                f"¿Te gustaría agendar una nueva cita?"
+            )
+        else:
+            response_text = (
+                f"Tu cita del {fecha} a las {hora} ha sido cancelada. "
+                f"¡Hasta pronto!"
+            )
+    else:
+        response_text = None
+
+    return ConfirmationResult(
+        success=True,
+        appointment_id=appt.id,
+        response_type="template" if is_simple_message else "llm",
+        response_text=response_text,
+        appointment_date=fecha,
+        appointment_time=hora,
+        stylist_name=stylist_name,
+        service_names=service_names,
+        state_updates={
+            "pending_decline_appointment_id": None,
+            "pending_decline_initiated_at": None,
+        },
+    )
+
+
+async def get_appointment_by_id(appointment_id: UUID) -> Optional[Appointment]:
+    """
+    Get appointment by ID with stylist loaded.
+
+    Args:
+        appointment_id: UUID of the appointment
+
+    Returns:
+        Appointment object if found, None otherwise
+    """
+    try:
+        async with get_async_session() as session:
+            result = await session.execute(
+                select(Appointment)
+                .options(
+                    selectinload(Appointment.stylist),
+                    selectinload(Appointment.customer),
+                )
+                .where(Appointment.id == appointment_id)
+            )
+            return result.scalars().first()
+    except Exception as e:
+        logger.error(f"Error fetching appointment {appointment_id}: {e}")
+        return None
+
+
+async def handle_decline_second_confirmation(
+    customer_phone: str,
+    intent_type: IntentType,
+    appointment_id: str,
+) -> ConfirmationResult:
+    """
+    Handle second confirmation (confirm or abort decline).
+
+    Called when user responds to double confirmation prompt.
+
+    Args:
+        customer_phone: E.164 formatted phone number
+        intent_type: CONFIRM_DECLINE or ABORT_DECLINE
+        appointment_id: UUID string of the pending decline appointment
+
+    Returns:
+        ConfirmationResult with outcome
+    """
+    now = datetime.now(MADRID_TZ)
+
+    # Get customer
+    customer = await get_customer_by_phone(customer_phone)
+    if not customer:
+        logger.warning(f"Customer not found for phone {customer_phone}")
+        return ConfirmationResult(
+            success=False,
+            error_message="No encontramos tu perfil. Por favor, contacta con nosotros.",
+            state_updates={
+                "pending_decline_appointment_id": None,
+                "pending_decline_initiated_at": None,
+            },
+        )
+
+    # Get appointment
+    try:
+        appt_uuid = UUID(appointment_id)
+    except ValueError:
+        logger.error(f"Invalid appointment ID: {appointment_id}")
+        return ConfirmationResult(
+            success=False,
+            error_message="Error interno. Por favor, intenta de nuevo.",
+            state_updates={
+                "pending_decline_appointment_id": None,
+                "pending_decline_initiated_at": None,
+            },
+        )
+
+    appointment = await get_appointment_by_id(appt_uuid)
+    if not appointment:
+        logger.warning(f"Appointment {appointment_id} not found for second confirmation")
+        return ConfirmationResult(
+            success=False,
+            error_message="No encontramos la cita. Es posible que ya haya sido procesada.",
+            state_updates={
+                "pending_decline_appointment_id": None,
+                "pending_decline_initiated_at": None,
+            },
+        )
+
+    # Format appointment details
+    appt_time = appointment.start_time.astimezone(MADRID_TZ)
+    fecha = format_date_spanish(appt_time)
+    hora = appt_time.strftime("%H:%M")
+    stylist_name = appointment.stylist.name if appointment.stylist else "tu estilista"
+    service_names = await _get_service_names(appointment.service_ids)
+
+    if intent_type == IntentType.CONFIRM_DECLINE:
+        # User confirmed cancellation - proceed with cancellation
+        logger.info(f"User confirmed decline for appointment {appointment_id}")
+        async with get_async_session() as session:
+            # Re-fetch in this session
+            appt_result = await session.execute(
+                select(Appointment)
+                .options(selectinload(Appointment.stylist))
+                .where(Appointment.id == appt_uuid)
+            )
+            appt = appt_result.scalars().first()
+
+            if not appt:
+                return ConfirmationResult(
+                    success=False,
+                    error_message="Error interno. Por favor, intenta de nuevo.",
+                    state_updates={
+                        "pending_decline_appointment_id": None,
+                        "pending_decline_initiated_at": None,
+                    },
+                )
+
+            return await _execute_cancellation(
+                session=session,
+                appt=appt,
+                customer=customer,
+                fecha=fecha,
+                hora=hora,
+                stylist_name=stylist_name,
+                service_names=service_names,
+                now=now,
+                is_simple_message=True,
+                offer_reschedule=True,
+            )
+
+    elif intent_type == IntentType.ABORT_DECLINE:
+        # User changed mind - keep appointment
+        logger.info(f"User aborted decline for appointment {appointment_id}")
+
+        response_text = (
+            f"Perfecto, tu cita del {fecha} a las {hora} con {stylist_name} "
+            f"sigue en pie. ¡Te esperamos!"
+        )
+
+        return ConfirmationResult(
+            success=True,
+            appointment_id=appt_uuid,
+            response_type="template",
+            response_text=response_text,
+            appointment_date=fecha,
+            appointment_time=hora,
+            stylist_name=stylist_name,
+            service_names=service_names,
+            state_updates={
+                "pending_decline_appointment_id": None,
+                "pending_decline_initiated_at": None,
+            },
+        )
+
+    else:
+        logger.warning(f"Unexpected intent type for second confirmation: {intent_type}")
+        return ConfirmationResult(
+            success=False,
+            error_message="No entendí tu respuesta. ¿Deseas cancelar la cita (sí/no)?",
+        )
+
+
+async def handle_topic_change_with_pending_decline(
+    appointment_id: str,
+) -> tuple[str, dict]:
+    """
+    Handle topic change when pending decline is active.
+
+    Called when user sends a message unrelated to the pending decline.
+    The appointment is kept and the pending decline state is cleared.
+
+    Args:
+        appointment_id: UUID string of the pending decline appointment
+
+    Returns:
+        Tuple of (prefix_message, state_updates)
+        - prefix_message: Text to prepend to the response about the other topic
+        - state_updates: State fields to clear pending decline
+    """
+    state_updates = {
+        "pending_decline_appointment_id": None,
+        "pending_decline_initiated_at": None,
+    }
+
+    # Get appointment details
+    try:
+        appt_uuid = UUID(appointment_id)
+        appointment = await get_appointment_by_id(appt_uuid)
+    except (ValueError, Exception) as e:
+        logger.warning(f"Error getting appointment {appointment_id} for topic change: {e}")
+        return "Tu cita sigue en pie. ", state_updates
+
+    if not appointment:
+        return "Tu cita sigue en pie. ", state_updates
+
+    # Format appointment details
+    appt_time = appointment.start_time.astimezone(MADRID_TZ)
+    fecha = format_date_spanish(appt_time)
+    hora = appt_time.strftime("%H:%M")
+
+    prefix_message = f"Tu cita del {fecha} a las {hora} sigue en pie. "
+    logger.info(f"Topic change detected, keeping appointment {appointment_id}")
+
+    return prefix_message, state_updates
+
+
 async def _process_single_appointment(
     customer: Customer,
     appointment: Appointment,
@@ -381,56 +751,50 @@ async def _process_single_appointment(
                 )
 
             elif intent_type == IntentType.DECLINE_APPOINTMENT:
-                # Update appointment status
-                appt.status = AppointmentStatus.CANCELLED
-                appt.cancelled_at = now
-                await session.commit()
-
-                # Delete Google Calendar event
-                if appt.google_calendar_event_id:
-                    try:
-                        await delete_gcal_event(
-                            stylist_id=appt.stylist_id,
-                            event_id=appt.google_calendar_event_id,
-                        )
-                    except Exception as gcal_error:
-                        logger.warning(
-                            f"GCal delete failed for appointment {appt.id} "
-                            f"(DB already committed to CANCELLED): {gcal_error}"
-                        )
-
-                # Create admin notification
-                notification = Notification(
-                    type=NotificationType.APPOINTMENT_CANCELLED,
-                    title=f"{customer.first_name or appt.first_name} canceló su cita",
-                    message=f"Cita del {fecha} a las {hora} cancelada por el cliente.",
-                    entity_type="appointment",
-                    entity_id=appt.id,
-                )
-                session.add(notification)
-                await session.commit()
-
-                logger.info(f"Appointment {appt.id} cancelled by customer {customer.id}")
-
-                # Build response
-                if is_simple_message:
-                    response_text = (
-                        f"Tu cita del {fecha} a las {hora} ha sido cancelada. "
-                        f"Si deseas reservar para otra fecha, solo dímelo. "
-                        f"¡Hasta pronto!"
+                # Check if message is emphatic (skip double confirmation)
+                if is_emphatic_decline(message_text):
+                    # Emphatic message - cancel immediately
+                    logger.info(
+                        f"Emphatic decline detected for appointment {appt.id}, "
+                        f"skipping double confirmation"
                     )
-                else:
-                    response_text = None
+                    return await _execute_cancellation(
+                        session=session,
+                        appt=appt,
+                        customer=customer,
+                        fecha=fecha,
+                        hora=hora,
+                        stylist_name=stylist_name,
+                        service_names=service_names,
+                        now=now,
+                        is_simple_message=is_simple_message,
+                    )
+
+                # Not emphatic - require double confirmation
+                logger.info(
+                    f"Non-emphatic decline for appointment {appt.id}, "
+                    f"requesting double confirmation"
+                )
+
+                response_text = (
+                    f"Lamentamos que no puedas asistir a tu cita del {fecha} a las {hora}. "
+                    f"¿Estás seguro/a de que deseas cancelarla?"
+                )
 
                 return ConfirmationResult(
                     success=True,
                     appointment_id=appt.id,
-                    response_type="template" if is_simple_message else "llm",
+                    response_type="template",
                     response_text=response_text,
                     appointment_date=fecha,
                     appointment_time=hora,
                     stylist_name=stylist_name,
                     service_names=service_names,
+                    requires_double_confirm=True,
+                    state_updates={
+                        "pending_decline_appointment_id": str(appt.id),
+                        "pending_decline_initiated_at": now.isoformat(),
+                    },
                 )
 
             else:

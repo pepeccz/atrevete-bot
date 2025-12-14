@@ -56,6 +56,10 @@ class IntentType(str, Enum):
     ABORT_CANCELLATION = "abort_cancellation"  # User aborts cancellation flow
     INSIST_CANCELLATION = "insist_cancellation"  # User insists despite window restriction
 
+    # Double confirmation intents (decline flow) - v3.5
+    CONFIRM_DECLINE = "confirm_decline"  # User confirms cancellation after double-confirm prompt
+    ABORT_DECLINE = "abort_decline"  # User changes mind after double-confirm prompt
+
     # Appointment query intent (customer checks their appointments)
     CHECK_MY_APPOINTMENTS = "check_my_appointments"  # User asks about their appointments
 
