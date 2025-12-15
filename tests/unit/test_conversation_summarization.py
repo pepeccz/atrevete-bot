@@ -23,31 +23,63 @@ from agent.state.schemas import ConversationState
 
 
 class TestShouldSummarize:
-    """Tests for should_summarize function."""
+    """Tests for should_summarize function.
 
-    def test_triggers_at_20_messages(self):
-        """Verify summarization triggers at 20 messages."""
+    NOTE: should_summarize is called from route_entry() AFTER user message
+    is added but BEFORE assistant response. It triggers at 19, 29, 39...
+    (odd numbers) so that after assistant response, count will be 20, 30, 40...
+    """
+
+    def test_triggers_at_19_messages(self):
+        """Verify summarization triggers at 19 messages (before assistant makes 20)."""
+        state: ConversationState = {
+            "conversation_id": "test-001",
+            "total_message_count": 19,
+            "messages": [],
+        }
+        assert should_summarize(state) is True
+
+    def test_triggers_at_29_messages(self):
+        """Verify summarization triggers at 29 messages (before assistant makes 30)."""
+        state: ConversationState = {
+            "conversation_id": "test-001",
+            "total_message_count": 29,
+            "messages": [],
+        }
+        assert should_summarize(state) is True
+
+    def test_triggers_at_39_messages(self):
+        """Verify summarization triggers at 39 messages (before assistant makes 40)."""
+        state: ConversationState = {
+            "conversation_id": "test-001",
+            "total_message_count": 39,
+            "messages": [],
+        }
+        assert should_summarize(state) is True
+
+    def test_does_not_trigger_at_20_messages(self):
+        """Verify summarization does NOT trigger at 20 (already processed)."""
         state: ConversationState = {
             "conversation_id": "test-001",
             "total_message_count": 20,
             "messages": [],
         }
-        assert should_summarize(state) is True
-
-    def test_triggers_at_30_messages(self):
-        """Verify summarization triggers at 30 messages."""
-        state: ConversationState = {
-            "conversation_id": "test-001",
-            "total_message_count": 30,
-            "messages": [],
-        }
-        assert should_summarize(state) is True
+        assert should_summarize(state) is False
 
     def test_does_not_trigger_at_10_messages(self):
-        """Verify summarization does NOT trigger at 10 messages."""
+        """Verify summarization does NOT trigger at 10 messages (too early)."""
         state: ConversationState = {
             "conversation_id": "test-001",
             "total_message_count": 10,
+            "messages": [],
+        }
+        assert should_summarize(state) is False
+
+    def test_does_not_trigger_at_9_messages(self):
+        """Verify summarization does NOT trigger at 9 messages (too early, need >= 19)."""
+        state: ConversationState = {
+            "conversation_id": "test-001",
+            "total_message_count": 9,
             "messages": [],
         }
         assert should_summarize(state) is False
@@ -140,7 +172,7 @@ class TestSummarizeConversation:
         """Verify node creates summary when should_summarize is True."""
         state: ConversationState = {
             "conversation_id": "test-001",
-            "total_message_count": 20,
+            "total_message_count": 19,  # Triggers at 19 (before assistant makes 20)
             "messages": [
                 {"role": "user", "content": "Hola, necesito una cita"},
                 {"role": "assistant", "content": "Claro, ¿para qué servicio?"},
@@ -167,7 +199,7 @@ class TestSummarizeConversation:
         """Verify new summary is combined with existing summary."""
         state: ConversationState = {
             "conversation_id": "test-001",
-            "total_message_count": 30,  # Second summarization trigger
+            "total_message_count": 29,  # Second trigger at 29 (before assistant makes 30)
             "messages": [
                 {"role": "user", "content": "¿Hay disponibilidad mañana?"},
                 {"role": "assistant", "content": "Sí, a las 10am"},
@@ -198,7 +230,7 @@ class TestSummarizeConversation:
         """Verify node returns unchanged state if Claude API fails."""
         state: ConversationState = {
             "conversation_id": "test-001",
-            "total_message_count": 20,
+            "total_message_count": 19,  # Trigger point
             "messages": [{"role": "user", "content": "Hola"}],
         }
 

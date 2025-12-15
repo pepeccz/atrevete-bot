@@ -986,6 +986,12 @@ class Notification(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
 
+    # Starred/important status
+    is_starred: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    starred_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -998,6 +1004,8 @@ class Notification(Base):
         Index("idx_notifications_is_read", "is_read"),
         Index("idx_notifications_created_at_desc", "created_at", postgresql_ops={"created_at": "DESC"}),
         Index("idx_notifications_entity", "entity_type", "entity_id"),
+        Index("idx_notifications_is_starred", "is_starred"),
+        Index("idx_notifications_type", "type"),
     )
 
     def __repr__(self) -> str:

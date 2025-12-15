@@ -1,12 +1,19 @@
 "use client";
 
-import { Clock, Activity, Users, Scissors, CalendarX, Settings2 } from "lucide-react";
+import { Clock, Activity, Users, Scissors, CalendarX, Settings2, Bell } from "lucide-react";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 const configSections = [
+  {
+    title: "Centro de Notificaciones",
+    description: "Historial completo, estadisticas y gestion de notificaciones",
+    icon: Bell,
+    href: "/settings/notifications",
+    color: "bg-amber-500",
+  },
   {
     title: "Horarios de Apertura",
     description: "Gestiona los horarios de apertura del salón por día de la semana",

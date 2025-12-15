@@ -528,8 +528,10 @@ class NotificationResponse(BaseModel):
     entity_type: str
     entity_id: str | None
     is_read: bool
+    is_starred: bool
     created_at: datetime
     read_at: datetime | None
+    starred_at: datetime | None
 
     class Config:
         from_attributes = True
@@ -539,6 +541,57 @@ class NotificationsListResponse(BaseModel):
     items: list[NotificationResponse]
     unread_count: int
     total: int
+
+
+class NotificationsPaginatedResponse(BaseModel):
+    """Paginated notifications response with full filter support."""
+    items: list[NotificationResponse]
+    total: int
+    page: int
+    page_size: int
+    has_more: bool
+    unread_count: int
+    starred_count: int
+
+
+class NotificationStatsResponse(BaseModel):
+    """Statistics for notification charts."""
+    by_type: dict[str, int]
+    by_category: dict[str, int]
+    trend: list[dict[str, Any]]
+    total: int
+    unread: int
+    starred: int
+
+
+class NotificationBulkRequest(BaseModel):
+    """Request for bulk operations on notifications."""
+    ids: list[UUID]
+
+
+# Notification categories mapping
+NOTIFICATION_CATEGORIES = {
+    "citas": [
+        "appointment_created",
+        "appointment_cancelled",
+        "appointment_confirmed",
+        "appointment_completed",
+    ],
+    "confirmaciones": [
+        "confirmation_sent",
+        "confirmation_received",
+        "auto_cancelled",
+        "confirmation_failed",
+        "reminder_sent",
+    ],
+    "escalaciones": [
+        "escalation_manual",
+        "escalation_technical",
+        "escalation_auto",
+        "escalation_medical",
+        "escalation_ambiguity",
+    ],
+}
 
 
 # =============================================================================
@@ -4252,8 +4305,10 @@ async def list_notifications(
                     entity_type=n.entity_type,
                     entity_id=str(n.entity_id) if n.entity_id else None,
                     is_read=n.is_read,
+                    is_starred=n.is_starred,
                     created_at=n.created_at,
                     read_at=n.read_at,
+                    starred_at=n.starred_at,
                 )
                 for n in notifications
             ],
@@ -4300,3 +4355,430 @@ async def mark_all_notifications_read(
         await session.commit()
 
         return {"success": True}
+
+
+@router.get("/notifications/paginated", response_model=NotificationsPaginatedResponse)
+async def list_notifications_paginated(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    page: int = 1,
+    page_size: int = 20,
+    types: str | None = None,
+    category: str | None = None,
+    is_read: bool | None = None,
+    is_starred: bool | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    search: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+):
+    """
+    List notifications with full pagination and filter support.
+
+    Args:
+        page: Page number (1-indexed)
+        page_size: Items per page (max 100)
+        types: Comma-separated list of notification types
+        category: Category filter (citas, confirmaciones, escalaciones)
+        is_read: Filter by read status
+        is_starred: Filter by starred status
+        date_from: Filter from date
+        date_to: Filter to date
+        search: Search in title and message
+        sort_by: Sort field (created_at, type)
+        sort_order: Sort order (asc, desc)
+    """
+    from sqlalchemy import or_, and_, cast, Date
+
+    async with get_async_session() as session:
+        # Validate page_size
+        page_size = min(page_size, 100)
+        offset = (page - 1) * page_size
+
+        # Build base query
+        query = select(Notification)
+
+        # Apply filters
+        conditions = []
+
+        # Type filter (comma-separated list)
+        if types:
+            type_list = [t.strip() for t in types.split(",")]
+            conditions.append(Notification.type.in_(type_list))
+
+        # Category filter
+        if category and category in NOTIFICATION_CATEGORIES:
+            category_types = NOTIFICATION_CATEGORIES[category]
+            conditions.append(Notification.type.in_(category_types))
+
+        # Read status filter
+        if is_read is not None:
+            conditions.append(Notification.is_read == is_read)
+
+        # Starred filter
+        if is_starred is not None:
+            conditions.append(Notification.is_starred == is_starred)
+
+        # Date range filter
+        if date_from:
+            conditions.append(cast(Notification.created_at, Date) >= date_from)
+        if date_to:
+            conditions.append(cast(Notification.created_at, Date) <= date_to)
+
+        # Search filter
+        if search:
+            search_term = f"%{search}%"
+            conditions.append(
+                or_(
+                    Notification.title.ilike(search_term),
+                    Notification.message.ilike(search_term),
+                )
+            )
+
+        if conditions:
+            query = query.where(and_(*conditions))
+
+        # Get total count before pagination
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await session.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Apply sorting
+        if sort_by == "type":
+            sort_column = Notification.type
+        else:
+            sort_column = Notification.created_at
+
+        if sort_order == "asc":
+            query = query.order_by(sort_column.asc())
+        else:
+            query = query.order_by(sort_column.desc())
+
+        # Apply pagination
+        query = query.offset(offset).limit(page_size)
+
+        result = await session.execute(query)
+        notifications = result.scalars().all()
+
+        # Get unread count (global)
+        unread_query = select(func.count(Notification.id)).where(
+            Notification.is_read == False
+        )
+        unread_result = await session.execute(unread_query)
+        unread_count = unread_result.scalar() or 0
+
+        # Get starred count (global)
+        starred_query = select(func.count(Notification.id)).where(
+            Notification.is_starred == True
+        )
+        starred_result = await session.execute(starred_query)
+        starred_count = starred_result.scalar() or 0
+
+        return NotificationsPaginatedResponse(
+            items=[
+                NotificationResponse(
+                    id=str(n.id),
+                    type=n.type.value,
+                    title=n.title,
+                    message=n.message,
+                    entity_type=n.entity_type,
+                    entity_id=str(n.entity_id) if n.entity_id else None,
+                    is_read=n.is_read,
+                    is_starred=n.is_starred,
+                    created_at=n.created_at,
+                    read_at=n.read_at,
+                    starred_at=n.starred_at,
+                )
+                for n in notifications
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_more=(offset + len(notifications)) < total,
+            unread_count=unread_count,
+            starred_count=starred_count,
+        )
+
+
+@router.get("/notifications/stats", response_model=NotificationStatsResponse)
+async def get_notification_stats(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    days: int = 30,
+):
+    """
+    Get notification statistics for charts.
+
+    Args:
+        days: Number of days for trend data (default 30)
+    """
+    from sqlalchemy import cast, Date
+    from datetime import timedelta
+
+    async with get_async_session() as session:
+        # Count by type
+        type_query = select(
+            Notification.type,
+            func.count(Notification.id)
+        ).group_by(Notification.type)
+        type_result = await session.execute(type_query)
+        by_type = {row[0].value: row[1] for row in type_result.fetchall()}
+
+        # Count by category
+        by_category = {}
+        for category_name, types in NOTIFICATION_CATEGORIES.items():
+            count = sum(by_type.get(t, 0) for t in types)
+            by_category[category_name] = count
+
+        # Trend data (last N days)
+        start_date = datetime.utcnow() - timedelta(days=days)
+        trend_query = select(
+            cast(Notification.created_at, Date).label("date"),
+            func.count(Notification.id).label("count")
+        ).where(
+            Notification.created_at >= start_date
+        ).group_by(
+            cast(Notification.created_at, Date)
+        ).order_by(
+            cast(Notification.created_at, Date)
+        )
+        trend_result = await session.execute(trend_query)
+        trend = [
+            {"date": str(row.date), "count": row.count}
+            for row in trend_result.fetchall()
+        ]
+
+        # Total count
+        total_query = select(func.count(Notification.id))
+        total_result = await session.execute(total_query)
+        total = total_result.scalar() or 0
+
+        # Unread count
+        unread_query = select(func.count(Notification.id)).where(
+            Notification.is_read == False
+        )
+        unread_result = await session.execute(unread_query)
+        unread = unread_result.scalar() or 0
+
+        # Starred count
+        starred_query = select(func.count(Notification.id)).where(
+            Notification.is_starred == True
+        )
+        starred_result = await session.execute(starred_query)
+        starred = starred_result.scalar() or 0
+
+        return NotificationStatsResponse(
+            by_type=by_type,
+            by_category=by_category,
+            trend=trend,
+            total=total,
+            unread=unread,
+            starred=starred,
+        )
+
+
+@router.put("/notifications/{notification_id}/star")
+async def toggle_notification_star(
+    notification_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Toggle starred status of a notification."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Notification).where(Notification.id == notification_id)
+        )
+        notification = result.scalar_one_or_none()
+
+        if not notification:
+            raise HTTPException(status_code=404, detail="Notification not found")
+
+        notification.is_starred = not notification.is_starred
+        notification.starred_at = datetime.utcnow() if notification.is_starred else None
+        await session.commit()
+
+        return {
+            "success": True,
+            "is_starred": notification.is_starred,
+            "starred_at": notification.starred_at.isoformat() if notification.starred_at else None,
+        }
+
+
+@router.put("/notifications/{notification_id}/unread")
+async def mark_notification_unread(
+    notification_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Mark a notification as unread."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Notification).where(Notification.id == notification_id)
+        )
+        notification = result.scalar_one_or_none()
+
+        if not notification:
+            raise HTTPException(status_code=404, detail="Notification not found")
+
+        notification.is_read = False
+        notification.read_at = None
+        await session.commit()
+
+        return {"success": True}
+
+
+@router.delete("/notifications/{notification_id}")
+async def delete_notification(
+    notification_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Delete a single notification."""
+    from sqlalchemy import delete as sql_delete
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Notification).where(Notification.id == notification_id)
+        )
+        notification = result.scalar_one_or_none()
+
+        if not notification:
+            raise HTTPException(status_code=404, detail="Notification not found")
+
+        await session.execute(
+            sql_delete(Notification).where(Notification.id == notification_id)
+        )
+        await session.commit()
+
+        return {"success": True}
+
+
+@router.delete("/notifications/bulk")
+async def bulk_delete_notifications(
+    request: NotificationBulkRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Delete multiple notifications."""
+    from sqlalchemy import delete as sql_delete
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            sql_delete(Notification).where(Notification.id.in_(request.ids))
+        )
+        await session.commit()
+
+        return {"success": True, "deleted": result.rowcount}
+
+
+@router.get("/notifications/export")
+async def export_notifications(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    types: str | None = None,
+    category: str | None = None,
+    is_read: bool | None = None,
+    is_starred: bool | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    search: str | None = None,
+):
+    """
+    Export notifications as CSV.
+
+    Applies same filters as the paginated list endpoint.
+    """
+    from fastapi.responses import StreamingResponse
+    from sqlalchemy import or_, and_, cast, Date
+    import csv
+    import io
+
+    async with get_async_session() as session:
+        # Build query with same filters as paginated endpoint
+        query = select(Notification)
+
+        conditions = []
+
+        if types:
+            type_list = [t.strip() for t in types.split(",")]
+            conditions.append(Notification.type.in_(type_list))
+
+        if category and category in NOTIFICATION_CATEGORIES:
+            category_types = NOTIFICATION_CATEGORIES[category]
+            conditions.append(Notification.type.in_(category_types))
+
+        if is_read is not None:
+            conditions.append(Notification.is_read == is_read)
+
+        if is_starred is not None:
+            conditions.append(Notification.is_starred == is_starred)
+
+        if date_from:
+            conditions.append(cast(Notification.created_at, Date) >= date_from)
+        if date_to:
+            conditions.append(cast(Notification.created_at, Date) <= date_to)
+
+        if search:
+            search_term = f"%{search}%"
+            conditions.append(
+                or_(
+                    Notification.title.ilike(search_term),
+                    Notification.message.ilike(search_term),
+                )
+            )
+
+        if conditions:
+            query = query.where(and_(*conditions))
+
+        query = query.order_by(Notification.created_at.desc())
+
+        result = await session.execute(query)
+        notifications = result.scalars().all()
+
+        # Generate CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Header
+        writer.writerow([
+            "ID",
+            "Tipo",
+            "Categoria",
+            "Titulo",
+            "Mensaje",
+            "Entidad",
+            "ID Entidad",
+            "Leida",
+            "Favorita",
+            "Fecha Creacion",
+            "Fecha Lectura",
+            "Fecha Favorita",
+        ])
+
+        # Get category for each type
+        def get_category(notification_type: str) -> str:
+            for cat_name, cat_types in NOTIFICATION_CATEGORIES.items():
+                if notification_type in cat_types:
+                    return cat_name
+            return "otro"
+
+        # Data rows
+        for n in notifications:
+            writer.writerow([
+                str(n.id),
+                n.type.value,
+                get_category(n.type.value),
+                n.title,
+                n.message,
+                n.entity_type,
+                str(n.entity_id) if n.entity_id else "",
+                "Si" if n.is_read else "No",
+                "Si" if n.is_starred else "No",
+                n.created_at.isoformat() if n.created_at else "",
+                n.read_at.isoformat() if n.read_at else "",
+                n.starred_at.isoformat() if n.starred_at else "",
+            ])
+
+        output.seek(0)
+
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=notificaciones_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+            },
+        )

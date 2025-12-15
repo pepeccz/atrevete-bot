@@ -286,6 +286,14 @@ export function NotificationCenter() {
             </div>
           )}
         </ScrollArea>
+
+        <div className="border-t p-2">
+          <a href="/settings/notifications" className="block">
+            <Button variant="ghost" className="w-full text-sm text-muted-foreground">
+              Ver todas las notificaciones
+            </Button>
+          </a>
+        </div>
       </PopoverContent>
     </Popover>
   );

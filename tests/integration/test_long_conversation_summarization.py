@@ -125,11 +125,12 @@ async def test_long_conversation_with_summarization():
             f"Expected 10 messages in windowed state, got {len(state['messages'])}"
         )
 
-        # Manually trigger summarization at message 20 to verify behavior
-        # (In real flow, this would be triggered by the graph routing)
+        # Manually trigger summarization at message 19 to verify behavior
+        # (In real flow, this would be triggered by the graph routing at 19, before
+        # assistant response makes it 20)
         summarization_test_state: ConversationState = {
             **state,
-            "total_message_count": 20,  # Simulate being at message 20
+            "total_message_count": 19,  # Trigger point (before assistant makes 20)
             "messages": state["messages"][:10],  # Take first 10 for this test
         }
 
@@ -198,7 +199,7 @@ async def test_summarization_combines_multiple_batches():
     Test that summarization correctly combines multiple summary batches.
 
     This simulates a very long conversation (40+ messages) where summarization
-    triggers twice (at message 20 and 30), and verifies summaries are combined.
+    triggers twice (at message 19 and 29), and verifies summaries are combined.
     """
     mock_summary_1 = MagicMock()
     mock_summary_1.content = "Primera parte: Cliente reserva cita para corte."
@@ -225,28 +226,28 @@ async def test_summarization_combines_multiple_batches():
         # Import summarization node
         from agent.nodes.summarization import summarize_conversation
 
-        # Create initial state at message 20 (first summarization)
-        state_20: ConversationState = {
+        # Create initial state at message 19 (first summarization trigger)
+        state_19: ConversationState = {
             "conversation_id": "test-multi-summary",
-            "total_message_count": 20,
+            "total_message_count": 19,  # Triggers at 19 (before assistant makes 20)
             "messages": [{"role": "user", "content": f"Message {i}"} for i in range(10)],
             "conversation_summary": None,
         }
 
         # First summarization
-        state_after_first = await summarize_conversation(state_20)
+        state_after_first = await summarize_conversation(state_19)
 
         assert state_after_first["conversation_summary"] == "Primera parte: Cliente reserva cita para corte."
 
-        # Create state at message 30 (second summarization)
-        state_30: ConversationState = {
+        # Create state at message 29 (second summarization trigger)
+        state_29: ConversationState = {
             **state_after_first,
-            "total_message_count": 30,
+            "total_message_count": 29,  # Triggers at 29 (before assistant makes 30)
             "messages": [{"role": "user", "content": f"Message {i+20}"} for i in range(10)],
         }
 
         # Second summarization
-        state_after_second = await summarize_conversation(state_30)
+        state_after_second = await summarize_conversation(state_29)
 
         # Verify summaries are combined with newline separator
         expected_combined = (

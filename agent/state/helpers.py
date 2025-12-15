@@ -115,8 +115,13 @@ def should_summarize(state: ConversationState) -> bool:
     Determine if conversation should be summarized based on message count.
 
     This function checks if summarization should be triggered. Summarization
-    occurs after every 10 messages beyond the first 10 messages (at message counts
-    20, 30, 40, etc.) to compress older messages and maintain manageable context size.
+    occurs after every 10 messages beyond the first 10 messages to compress
+    older messages and maintain manageable context size.
+
+    IMPORTANT: This function is called from route_entry() AFTER the user message
+    is added but BEFORE the assistant response is added. Since each interaction
+    adds 2 messages (user + assistant), we trigger when count is 19, 29, 39...
+    (odd numbers) so that after the assistant response, the count will be 20, 30, 40...
 
     Args:
         state: Current conversation state
@@ -125,16 +130,15 @@ def should_summarize(state: ConversationState) -> bool:
         True if summarization should be triggered, False otherwise.
 
     Logic:
-        - Returns True if total_message_count % 10 == 0 AND total_message_count > 10
+        - Returns True if (total_message_count + 1) % 10 == 0 AND count >= 19
+        - This triggers at counts 19, 29, 39... (before assistant makes it 20, 30, 40...)
         - Returns False if total_message_count field is missing (backwards compatibility)
-        - Triggers at message counts: 20, 30, 40, 50, etc.
-        - Does NOT trigger at: 10, 15, 25, 35, etc.
 
     Example:
-        >>> state = {"total_message_count": 20}
+        >>> state = {"total_message_count": 19}
         >>> should_summarize(state)
         True
-        >>> state = {"total_message_count": 15}
+        >>> state = {"total_message_count": 20}
         >>> should_summarize(state)
         False
     """
@@ -145,14 +149,16 @@ def should_summarize(state: ConversationState) -> bool:
     if total_message_count == 0:
         return False
 
-    # Trigger summarization every 10 messages after first 10
-    # (at 20, 30, 40, 50, etc.)
-    should_trigger = (total_message_count % 10 == 0 and total_message_count > 10)
+    # Trigger summarization when count is 19, 29, 39, etc.
+    # This anticipates the assistant response that will make it 20, 30, 40...
+    # The +1 accounts for the upcoming assistant message
+    should_trigger = ((total_message_count + 1) % 10 == 0 and total_message_count >= 19)
 
     if should_trigger:
         conversation_id = state.get("conversation_id", "unknown")
         logger.info(
             f"Summarization triggered at {total_message_count} messages "
+            f"(will be {total_message_count + 1} after assistant response) "
             f"for conversation {conversation_id}"
         )
 
