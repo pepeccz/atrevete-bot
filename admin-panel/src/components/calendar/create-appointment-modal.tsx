@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import api from "@/lib/api";
 
 interface Customer {
@@ -60,6 +61,7 @@ export function CreateAppointmentModal({
   const [lastName, setLastName] = useState("");
   const [notes, setNotes] = useState("");
   const [startTime, setStartTime] = useState("");
+  const [sendNotification, setSendNotification] = useState(true);
 
   // Load customers and services on mount
   useEffect(() => {
@@ -125,6 +127,7 @@ export function CreateAppointmentModal({
         first_name: firstName,
         last_name: lastName || null,
         notes: notes || null,
+        send_notification: sendNotification,
       });
 
       // Reset form
@@ -134,6 +137,7 @@ export function CreateAppointmentModal({
       setLastName("");
       setNotes("");
       setStartTime("");
+      setSendNotification(true);
 
       onSuccess();
       onClose();
@@ -272,6 +276,18 @@ export function CreateAppointmentModal({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Notas adicionales (opcional)"
+            />
+          </div>
+
+          {/* Send Notification Switch */}
+          <div className="flex items-center justify-between py-2">
+            <Label htmlFor="send-notification" className="text-sm font-medium">
+              Enviar notificación al cliente
+            </Label>
+            <Switch
+              id="send-notification"
+              checked={sendNotification}
+              onCheckedChange={setSendNotification}
             />
           </div>
         </div>

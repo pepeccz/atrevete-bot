@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -85,10 +85,18 @@ function NotificationItem({
   const colorClass = notificationColors[notification.type] || "text-gray-500";
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onClick(notification)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick(notification);
+        }
+      }}
       className={cn(
-        "w-full flex items-start gap-3 p-3 rounded-md hover:bg-accent text-left transition-colors",
+        "w-full flex items-start gap-3 p-3 rounded-md hover:bg-accent text-left transition-colors cursor-pointer",
         !notification.is_read && "bg-accent/50"
       )}
     >
@@ -123,7 +131,7 @@ function NotificationItem({
           <Check className="h-3 w-3 text-muted-foreground" />
         </button>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -132,12 +140,27 @@ export function NotificationCenter() {
   const [data, setData] = useState<NotificationsListResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const fetchNotifications = useCallback(async () => {
+    // Abort any pending request before starting a new one
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     try {
-      const response = await api.getNotifications(20, true);
+      const response = await api.getNotifications(
+        20,
+        true,
+        abortControllerRef.current.signal
+      );
       setData(response);
     } catch (error) {
+      // Silently ignore aborted requests (component unmounted or new request started)
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
       console.error("Failed to fetch notifications:", error);
     }
   }, []);
@@ -147,7 +170,13 @@ export function NotificationCenter() {
     fetchNotifications();
 
     const interval = setInterval(fetchNotifications, POLL_INTERVAL);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      // Abort any pending request on unmount
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [fetchNotifications]);
 
   // Refresh when popover opens

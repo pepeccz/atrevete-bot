@@ -69,6 +69,18 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
+# Spanish date formatting constants
+WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+MONTHS_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+]
+
+
+def format_date_spanish(dt: datetime) -> str:
+    """Format datetime to Spanish date string like 'lunes 15 de diciembre'."""
+    return f"{WEEKDAYS_ES[dt.weekday()]} {dt.day} de {MONTHS_ES[dt.month - 1]}"
+
 
 # =============================================================================
 # GCal Fire-and-Forget Helpers
@@ -90,6 +102,41 @@ async def _safe_delete_gcal_event(stylist_id: UUID, event_id: str) -> None:
         logger.info(f"GCal event {event_id} deleted successfully")
     except Exception as e:
         logger.warning(f"Failed to delete GCal event {event_id}: {e}")
+
+
+async def _safe_send_admin_appointment_template(
+    customer_phone: str,
+    template_name: str,
+    body_params: dict[str, str],
+    customer_name: str | None,
+    conversation_id: int | None,
+    appointment_id: UUID,
+) -> None:
+    """
+    Fire-and-forget wrapper for sending WhatsApp template for admin-created appointments.
+
+    This function is designed to be used with asyncio.create_task() to avoid
+    blocking the HTTP response while waiting for Chatwoot API calls.
+    Failures are logged but don't affect the caller.
+    """
+    from shared.chatwoot_client import ChatwootClient
+
+    try:
+        chatwoot = ChatwootClient()
+        success = await chatwoot.send_template_message(
+            customer_phone=customer_phone,
+            template_name=template_name,
+            body_params=body_params,
+            customer_name=customer_name,
+            conversation_id=conversation_id,
+            fallback_content=f"Nueva cita reservada: {body_params.get('2', '')} a las {body_params.get('3', '')}",
+        )
+        if success:
+            logger.info(f"Admin appointment template sent for appointment {appointment_id}")
+        else:
+            logger.warning(f"Failed to send admin appointment template for appointment {appointment_id}")
+    except Exception as e:
+        logger.warning(f"Error sending admin appointment template for appointment {appointment_id}: {e}")
 
 
 def parse_datetime_as_madrid(v: Any) -> datetime | None:
@@ -1668,6 +1715,7 @@ class CreateAppointmentRequest(BaseModel):
     first_name: str
     last_name: str | None = None
     notes: str | None = None
+    send_notification: bool = True
 
     @field_validator("start_time", mode="before")
     @classmethod
@@ -1781,6 +1829,40 @@ async def create_appointment(
             await session.commit()
         except Exception as e:
             logger.warning(f"Failed to create notification for appointment {new_appointment.id}: {e}")
+
+        # Send WhatsApp notification to customer (fire-and-forget)
+        if request.send_notification and customer.phone:
+            conv_id = None
+            if customer.chatwoot_conversation_id:
+                try:
+                    conv_id = int(customer.chatwoot_conversation_id)
+                except (ValueError, TypeError):
+                    pass
+
+            appt_time = request.start_time.astimezone(MADRID_TZ)
+            fecha = format_date_spanish(appt_time)
+            hora = appt_time.strftime("%H:%M")
+            display_name = request.first_name or customer.first_name or "Cliente"
+
+            body_params = {
+                "1": display_name,
+                "2": fecha,
+                "3": hora,
+                "4": stylist.name,
+                "5": service_names,  # Already computed above for GCal
+            }
+
+            settings = get_settings()
+            asyncio.create_task(
+                _safe_send_admin_appointment_template(
+                    customer_phone=customer.phone,
+                    template_name=settings.ADMIN_APPOINTMENT_TEMPLATE_NAME,
+                    body_params=body_params,
+                    customer_name=display_name,
+                    conversation_id=conv_id,
+                    appointment_id=new_appointment.id,
+                )
+            )
 
         return {
             "id": str(new_appointment.id),

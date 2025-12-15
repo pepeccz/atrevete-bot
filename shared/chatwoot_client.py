@@ -193,6 +193,100 @@ class ChatwootClient:
         retry=retry_if_exception_type(httpx.HTTPError),
         reraise=True,
     )
+    async def _create_conversation_with_template(
+        self,
+        contact_id: int,
+        phone: str,
+        template_name: str,
+        body_params: dict[str, str],
+        category: str = "UTILITY",
+        language: str = "es",
+        fallback_content: str | None = None,
+    ) -> tuple[int, bool]:
+        """
+        Create a new conversation with an initial template message.
+
+        This method creates the conversation and sends the template message in a single
+        API call, which is required when the contact has no prior conversation.
+
+        Args:
+            contact_id: Chatwoot contact ID
+            phone: Customer phone number (E.164 format, will be used as source_id)
+            template_name: Name of the approved template in Meta Business Suite
+            body_params: Dynamic variables for template body
+            category: Template category (UTILITY, MARKETING, etc.)
+            language: BCP 47 language code (default: "es")
+            fallback_content: Fallback text for non-WhatsApp channels
+
+        Returns:
+            Tuple of (conversation_id, success)
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                # For WhatsApp, source_id is the phone number without + prefix
+                # Chatwoot will automatically create the contact_inbox relationship
+                # https://github.com/orgs/chatwoot/discussions/2198
+                source_id = phone.lstrip("+")
+
+                payload: dict[str, Any] = {
+                    "source_id": source_id,
+                    "inbox_id": int(self.inbox_id),
+                    "contact_id": contact_id,
+                    "status": "open",
+                    "message": {
+                        "content": fallback_content or f"Template: {template_name}",
+                        "template_params": {
+                            "name": template_name,
+                            "category": category,
+                            "language": language,
+                            "processed_params": {
+                                "body": body_params,
+                            },
+                        },
+                    },
+                }
+
+                logger.debug(
+                    f"Creating conversation with template for contact {contact_id}: {payload}"
+                )
+
+                response = await client.post(
+                    f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations",
+                    json=payload,
+                    headers=self.headers,
+                    timeout=15.0,
+                )
+                response.raise_for_status()
+
+                result = response.json()
+                conversation_id = cast(int, result.get("id"))
+
+                logger.info(
+                    f"Created conversation {conversation_id} with template {template_name} "
+                    f"for contact {contact_id}"
+                )
+                return (conversation_id, True)
+
+            except httpx.HTTPError as e:
+                logger.error(
+                    f"HTTP error creating conversation with template: {e}",
+                    extra={
+                        "contact_id": contact_id,
+                        "template_name": template_name,
+                        "response_body": getattr(e.response, "text", None)
+                        if hasattr(e, "response")
+                        else None,
+                    },
+                    exc_info=True,
+                )
+                raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(httpx.HTTPError),
+        reraise=True,
+    )
     async def update_conversation_attributes(
         self,
         conversation_id: int,
@@ -414,65 +508,56 @@ class ChatwootClient:
                 f"Sending template message to {customer_phone}, template={template_name}"
             )
 
-            # Resolve conversation_id if not provided
-            if conversation_id is None:
-                contact = await self._find_contact_by_phone(customer_phone)
-                if not contact:
-                    logger.info(f"Creating new contact for {customer_phone}")
-                    contact = await self._create_contact(customer_phone, customer_name)
+            # If conversation_id provided, send template to existing conversation
+            if conversation_id is not None:
+                logger.info(f"Using existing conversation_id={conversation_id}")
+                return await self._send_template_to_conversation(
+                    conversation_id=conversation_id,
+                    customer_phone=customer_phone,
+                    template_name=template_name,
+                    body_params=body_params,
+                    category=category,
+                    language=language,
+                    fallback_content=fallback_content,
+                )
 
-                contact_id = contact.get("id")
-                if not contact_id:
-                    logger.error(f"No contact ID found for {customer_phone}")
-                    return False
+            # No conversation_id - need to find/create contact and create conversation with template
+            contact = await self._find_contact_by_phone(customer_phone)
+            if not contact:
+                logger.info(f"Creating new contact for {customer_phone}")
+                contact = await self._create_contact(customer_phone, customer_name)
 
-                conversation_id = await self._get_or_create_conversation(contact_id)
+            contact_id = contact.get("id")
+            if not contact_id:
+                logger.error(f"No contact ID found for {customer_phone}")
+                return False
 
-            # Build template payload per Chatwoot API docs
-            # https://developers.chatwoot.com/api-reference/messages/create-new-message
-            api_payload: dict[str, Any] = {
-                "content": fallback_content or f"Template: {template_name}",
-                "message_type": "outgoing",
-                "template_params": {
-                    "name": template_name,
-                    "category": category,
-                    "language": language,
-                    "processed_params": {
-                        "body": body_params,
-                    },
-                },
-            }
-
-            logger.debug(
-                f"Chatwoot template API payload: {api_payload}",
-                extra={
-                    "conversation_id": conversation_id,
-                    "customer_phone": customer_phone,
-                    "template_name": template_name,
-                }
+            logger.info(
+                f"Creating conversation with template for contact: "
+                f"contact_id={contact_id}, phone={customer_phone}"
             )
 
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}/messages",
-                    json=api_payload,
-                    headers=self.headers,
-                    timeout=15.0,  # Slightly longer timeout for template messages
-                )
-                response.raise_for_status()
-
-                logger.info(
-                    f"Template message sent successfully to {customer_phone}, "
-                    f"conversation_id={conversation_id}, template={template_name}"
-                )
-                return True
+            # Create conversation WITH template message in one API call
+            # Phone number is used as source_id for WhatsApp (Chatwoot handles the rest)
+            _, success = await self._create_conversation_with_template(
+                contact_id=contact_id,
+                phone=customer_phone,
+                template_name=template_name,
+                body_params=body_params,
+                category=category,
+                language=language,
+                fallback_content=fallback_content,
+            )
+            return success
 
         except httpx.HTTPError as e:
             logger.error(
                 f"Failed to send template message to {customer_phone}: {e}",
                 extra={
                     "template_name": template_name,
-                    "response_body": getattr(e.response, "text", None) if hasattr(e, "response") else None,
+                    "response_body": getattr(e.response, "text", None)
+                    if hasattr(e, "response")
+                    else None,
                 },
                 exc_info=True,
             )
@@ -484,3 +569,66 @@ class ChatwootClient:
                 exc_info=True,
             )
             return False
+
+    async def _send_template_to_conversation(
+        self,
+        conversation_id: int,
+        customer_phone: str,
+        template_name: str,
+        body_params: dict[str, str],
+        category: str = "UTILITY",
+        language: str = "es",
+        fallback_content: str | None = None,
+    ) -> bool:
+        """
+        Send template message to an existing conversation.
+
+        Args:
+            conversation_id: Existing Chatwoot conversation ID
+            customer_phone: Customer phone for logging
+            template_name: Name of the approved template
+            body_params: Dynamic variables for template body
+            category: Template category
+            language: BCP 47 language code
+            fallback_content: Fallback text for non-WhatsApp channels
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        # Build template payload per Chatwoot API docs
+        api_payload: dict[str, Any] = {
+            "content": fallback_content or f"Template: {template_name}",
+            "message_type": "outgoing",
+            "template_params": {
+                "name": template_name,
+                "category": category,
+                "language": language,
+                "processed_params": {
+                    "body": body_params,
+                },
+            },
+        }
+
+        logger.debug(
+            f"Chatwoot template API payload: {api_payload}",
+            extra={
+                "conversation_id": conversation_id,
+                "customer_phone": customer_phone,
+                "template_name": template_name,
+            }
+        )
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}/messages",
+                json=api_payload,
+                headers=self.headers,
+                timeout=15.0,
+            )
+            response.raise_for_status()
+
+            logger.info(
+                f"Template message sent successfully to {customer_phone}, "
+                f"conversation_id={conversation_id}, template={template_name}"
+            )
+            return True

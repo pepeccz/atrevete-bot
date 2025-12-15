@@ -62,6 +62,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -128,6 +129,7 @@ interface WizardState {
   firstName: string;  // Appointment-specific name (defaults to customer name)
   lastName: string;   // Appointment-specific last name (defaults to customer last name)
   notes: string;
+  sendNotification: boolean;
 }
 
 // Step 1: Customer Selection
@@ -733,9 +735,11 @@ function ConfirmationStep({
   firstName,
   lastName,
   notes,
+  sendNotification,
   onFirstNameChange,
   onLastNameChange,
   onNotesChange,
+  onSendNotificationChange,
 }: {
   customer: Customer;
   services: Service[];
@@ -743,9 +747,11 @@ function ConfirmationStep({
   firstName: string;
   lastName: string;
   notes: string;
+  sendNotification: boolean;
   onFirstNameChange: (firstName: string) => void;
   onLastNameChange: (lastName: string) => void;
   onNotesChange: (notes: string) => void;
+  onSendNotificationChange: (sendNotification: boolean) => void;
 }) {
   const totalDuration = services.reduce(
     (sum, s) => sum + s.duration_minutes,
@@ -848,6 +854,18 @@ function ConfirmationStep({
           rows={3}
         />
       </div>
+
+      {/* Send Notification Switch */}
+      <div className="flex items-center justify-between py-2">
+        <Label htmlFor="send-notification" className="text-sm font-medium">
+          Enviar notificación al cliente
+        </Label>
+        <Switch
+          id="send-notification"
+          checked={sendNotification}
+          onCheckedChange={onSendNotificationChange}
+        />
+      </div>
     </div>
   );
 }
@@ -884,6 +902,7 @@ function AppointmentWizardModal({
     firstName: "",
     lastName: "",
     notes: "",
+    sendNotification: true,
   });
 
   // Reset state when modal closes
@@ -899,6 +918,7 @@ function AppointmentWizardModal({
         firstName: "",
         lastName: "",
         notes: "",
+        sendNotification: true,
       });
     }
   }, [open]);
@@ -950,6 +970,7 @@ function AppointmentWizardModal({
         first_name: trimmedFirstName,
         last_name: state.lastName.trim() || null,
         notes: state.notes || null,
+        send_notification: state.sendNotification,
       });
 
       toast.success("Cita creada correctamente");
@@ -1068,6 +1089,7 @@ function AppointmentWizardModal({
               firstName={state.firstName}
               lastName={state.lastName}
               notes={state.notes}
+              sendNotification={state.sendNotification}
               onFirstNameChange={(firstName) =>
                 setState((prev) => ({ ...prev, firstName }))
               }
@@ -1075,6 +1097,9 @@ function AppointmentWizardModal({
                 setState((prev) => ({ ...prev, lastName }))
               }
               onNotesChange={(notes) => setState((prev) => ({ ...prev, notes }))}
+              onSendNotificationChange={(sendNotification) =>
+                setState((prev) => ({ ...prev, sendNotification }))
+              }
             />
           )}
         </div>

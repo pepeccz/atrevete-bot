@@ -125,6 +125,10 @@ class Settings(BaseSettings):
         default="appointment_reminder_2h",
         description="WhatsApp template name for 2h reminder"
     )
+    ADMIN_APPOINTMENT_TEMPLATE_NAME: str = Field(
+        default="appointment_booked_by_admin",
+        description="WhatsApp template name for admin-created appointment notification"
+    )
     CONFIRMATION_HOURS_BEFORE: int = Field(
         default=48,
         ge=24,
