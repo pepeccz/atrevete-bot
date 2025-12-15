@@ -34,6 +34,7 @@ class IntentType(str, Enum):
     PROVIDE_THIRD_PARTY_BOOKING = "provide_third_party_booking"  # v6.0: Booking for someone else without name
     CONFIRM_NAME = "confirm_name"  # v6.0: User confirms shown name
     CORRECT_NAME = "correct_name"  # v6.0: User corrects their name
+    PROVIDE_NAME = "provide_name"  # v6.1: User provides name ("me llamo X", "soy X")
     CONFIRM_BOOKING = "confirm_booking"
     CANCEL_BOOKING = "cancel_booking"
 

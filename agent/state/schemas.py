@@ -37,7 +37,7 @@ class ConversationState(TypedDict, total=False):
     CUSTOMER_DATA, BOOKING_CONFIRMATION, BOOKING_EXECUTION, POST_BOOKING)
     for focused prompt loading.
 
-    Fields (29 total):
+    Fields (31 total):
         # Core Metadata (5 fields)
         conversation_id: LangGraph thread_id for checkpointing
         customer_phone: E.164 phone (e.g., +34612345678)
@@ -76,10 +76,13 @@ class ConversationState(TypedDict, total=False):
         created_at: Conversation start (Europe/Madrid)
         updated_at: Last modification (Europe/Madrid)
 
-        # First Interaction Detection (3 fields) - v3.3 customer greeting
+        # First Interaction Detection (6 fields) - v3.3 customer greeting, v6.1 name confirmation, v6.2 deferred customer creation
         is_first_interaction: True if customer's first message ever (messages empty)
         customer_needs_name: True if WhatsApp name contains numbers/emojis
         customer_first_name: Current first_name from database Customer record
+        name_confirmation_pending: v6.1 True while waiting for name confirmation
+        pending_intent: v6.1 Stores user message if they express intent before confirming name
+        pending_whatsapp_name: v6.2 WhatsApp name stored for customer creation after name confirmation
 
         # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
         cancellation_in_progress: True when in cancellation flow
@@ -143,11 +146,14 @@ class ConversationState(TypedDict, total=False):
     updated_at: datetime
 
     # ============================================================================
-    # First Interaction Detection (3 fields) - v3.3 customer greeting
+    # First Interaction Detection (6 fields) - v3.3 customer greeting, v6.1 name confirmation, v6.2 deferred customer creation
     # ============================================================================
     is_first_interaction: bool  # True if this is the customer's first message ever
     customer_needs_name: bool  # True if WhatsApp name is not readable (numbers/emojis)
     customer_first_name: str | None  # Current customer first_name from database
+    name_confirmation_pending: bool  # v6.1: True while waiting for user to confirm/provide name
+    pending_intent: str | None  # v6.1: Stores user message if they express intent before confirming name
+    pending_whatsapp_name: str | None  # v6.2: WhatsApp name stored for customer creation after name confirmation
 
     # ============================================================================
     # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation

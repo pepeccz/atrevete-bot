@@ -6,6 +6,7 @@ that can be injected into prompts at runtime. Supports caching to reduce DB load
 
 Variables loaded:
 - minimum_booking_days_advance: From system_settings table
+- cancellation_window_hours: From system_settings table (default 48)
 - salon_address: From config (SALON_ADDRESS)
 - business_hours: From business_hours table
 - upcoming_holidays: From holidays table (next 30 days)
@@ -68,6 +69,7 @@ async def load_dynamic_context(force_refresh: bool = False) -> dict[str, Any]:
     Returns:
         dict with:
         - minimum_booking_days_advance: int (from system_settings)
+        - cancellation_window_hours: int (from system_settings, default 48)
         - salon_address: str (from config)
         - business_hours: list[dict] with day_name, is_closed, start, end
         - upcoming_holidays: list[dict] with date, name (next 30 days)
@@ -105,6 +107,7 @@ async def load_dynamic_context(force_refresh: bool = False) -> dict[str, Any]:
             logger.info(
                 f"Dynamic context cached (TTL: {CACHE_TTL_MINUTES} min, "
                 f"min_days={context['minimum_booking_days_advance']}, "
+                f"cancel_window_h={context['cancellation_window_hours']}, "
                 f"holidays={len(context['upcoming_holidays'])})"
             )
             return context
@@ -120,6 +123,7 @@ async def _load_context_from_db() -> dict[str, Any]:
 
     context = {
         "minimum_booking_days_advance": 3,  # Default
+        "cancellation_window_hours": 48,  # Default
         "salon_address": settings.SALON_ADDRESS,
         "business_hours": [],
         "upcoming_holidays": [],
@@ -141,7 +145,20 @@ async def _load_context_from_db() -> dict[str, Any]:
             else:
                 context["minimum_booking_days_advance"] = setting.value
 
-        # 2. Load business hours
+        # 2. Load cancellation_window_hours from system_settings
+        stmt = select(SystemSetting).where(
+            SystemSetting.key == "cancellation_window_hours"
+        )
+        result = await session.execute(stmt)
+        setting = result.scalar_one_or_none()
+
+        if setting and setting.value is not None:
+            if isinstance(setting.value, dict):
+                context["cancellation_window_hours"] = setting.value.get("value", setting.value)
+            else:
+                context["cancellation_window_hours"] = setting.value
+
+        # 3. Load business hours
         stmt = select(BusinessHours).order_by(BusinessHours.day_of_week)
         result = await session.execute(stmt)
         hours = result.scalars().all()
@@ -167,7 +184,7 @@ async def _load_context_from_db() -> dict[str, Any]:
 
             context["business_hours"].append(day_info)
 
-        # 3. Load upcoming holidays (next 30 days)
+        # 4. Load upcoming holidays (next 30 days)
         today = date.today()
         thirty_days_later = today + timedelta(days=30)
 
@@ -227,6 +244,7 @@ def _get_fallback_context() -> dict[str, Any]:
 
     return {
         "minimum_booking_days_advance": 3,
+        "cancellation_window_hours": 48,
         "salon_address": settings.SALON_ADDRESS,
         "business_hours": [],
         "upcoming_holidays": [],

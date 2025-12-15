@@ -75,6 +75,11 @@ class NonBookingHandler:
             f"fsm_state={self.fsm.state.value}"
         )
 
+        # v6.1: Check for pending name confirmation FIRST (first interaction flow)
+        name_confirmation_pending = self.state.get("name_confirmation_pending", False)
+        if name_confirmation_pending:
+            return await self._handle_name_confirmation(intent)
+
         # Check for pending decline state FIRST (double confirmation flow)
         pending_decline_id = self.state.get("pending_decline_appointment_id")
         if pending_decline_id:
@@ -174,6 +179,7 @@ cuando esté listo.
 
         # Build dynamic business context
         min_days = dynamic_context.get("minimum_booking_days_advance", 3)
+        cancellation_hours = dynamic_context.get("cancellation_window_hours", 48)
         salon_address = dynamic_context.get("salon_address", "")
         current_datetime = dynamic_context.get("current_datetime", "")
         business_hours = dynamic_context.get("business_hours", [])
@@ -199,6 +205,7 @@ CONTEXTO DEL NEGOCIO:
 - Fecha y hora actual: {current_datetime}
 - Dirección del salón: {salon_address}
 - Regla de reserva: Se requieren {min_days} días de antelación mínimo
+- Ventana de cancelación: {cancellation_hours} horas de antelación para cancelar citas
 
 Horarios de apertura:
 {hours_str}
@@ -227,13 +234,12 @@ REGLAS DE SALUDO:
 El nombre de WhatsApp del usuario contiene números o emojis, no es un nombre real.
 DEBES:
 1. Presentarte como Maite
-2. Preguntar: "¿Con quién tengo el gusto de hablar?"
-3. NO ofrecer servicios aún, espera a que te dé su nombre
-4. Cuando te dé su nombre, usa manage_customer para actualizarlo
+2. Preguntar SOLO por el nombre: "¿Me puedes facilitar cómo te llamas?"
+3. NO preguntar "¿En qué puedo ayudarte?" en este mensaje - espera a que confirme su nombre
 
 Ejemplo de respuesta:
 "¡Hola! 🌸 Soy Maite, la asistenta virtual de Atrévete Peluquería.
-¿Con quién tengo el gusto de hablar?"
+¿Me puedes facilitar cómo te llamas?"
 """
             else:
                 first_interaction_context += f"""
@@ -241,12 +247,12 @@ Ejemplo de respuesta:
 El nombre de WhatsApp parece legible: {customer_first_name}
 DEBES:
 1. Presentarte como Maite
-2. Confirmar el nombre: "¿Puedo llamarte *{customer_first_name}*?"
-3. Preguntar en qué puedes ayudar
+2. Confirmar el nombre con sugerencia
+3. NO preguntar "¿En qué puedo ayudarte?" en este mensaje - espera a que confirme su nombre
 
 Ejemplo de respuesta:
 "¡Hola! 🌸 Soy Maite, la asistenta virtual de Atrévete Peluquería.
-¿Puedo llamarte *{customer_first_name}*? ¿En qué puedo ayudarte hoy?"
+¿Me puedes facilitar cómo te llamas? Por lo que me ha llegado te llamas *{customer_first_name}*, ¿es correcto?"
 """
         else:
             first_interaction_context += f"""
@@ -438,6 +444,245 @@ IMPORTANTE:
         except Exception as e:
             logger.error(f"Error updating customer name: {e}", exc_info=True)
             return "Lo siento, ha habido un problema al actualizar tu nombre. ¿Puedes intentarlo de nuevo?"
+
+    async def _handle_name_confirmation(self, intent: Intent) -> tuple[str, dict | None]:
+        """
+        Handle name confirmation response after first greeting (v6.1).
+
+        This is called when name_confirmation_pending=True. Handles three scenarios:
+        - CONFIRM_NAME ("Sí", "Claro"): Keep suggested name, ask how to help
+        - PROVIDE_NAME ("Me llamo X", "Soy Y"): Use new name, ask how to help
+        - Other intent: Insist on name confirmation first, save pending intent
+
+        Args:
+            intent: User intent extracted from message
+
+        Returns:
+            Tuple of (response_text, state_updates)
+        """
+        customer_first_name = self.state.get("customer_first_name", "")
+        customer_needs_name = self.state.get("customer_needs_name", False)
+        customer_phone = self.state.get("customer_phone", "")
+        customer_id = self.state.get("customer_id")
+        pending_intent = self.state.get("pending_intent")
+
+        logger.info(
+            f"Handling name confirmation | intent={intent.type.value} | "
+            f"customer_first_name={customer_first_name} | "
+            f"customer_needs_name={customer_needs_name}"
+        )
+
+        # Scenario 1: User confirms name ("Sí", "Claro", "Correcto")
+        if intent.type == IntentType.CONFIRM_NAME:
+            logger.info(f"User confirmed name: {customer_first_name}")
+
+            # v6.2: CREATE CUSTOMER NOW with confirmed name from WhatsApp
+            pending_whatsapp_name = self.state.get("pending_whatsapp_name", "Cliente")
+            name_parts = pending_whatsapp_name.strip().split(maxsplit=1)
+            first_name = name_parts[0] if name_parts else customer_first_name or "Cliente"
+            last_name = name_parts[1] if len(name_parts) > 1 else None
+
+            try:
+                new_customer_id = await self._create_customer(
+                    phone=customer_phone,
+                    first_name=first_name,
+                    last_name=last_name,
+                )
+            except Exception as e:
+                logger.error(f"Failed to create customer: {e}", exc_info=True)
+                return (
+                    "Lo siento, ha habido un problema. ¿Puedes intentarlo de nuevo?",
+                    None
+                )
+
+            # Check if there was a pending intent to process
+            if pending_intent:
+                logger.info(f"Processing pending intent after name confirmation: {pending_intent}")
+                return (
+                    f"¡Perfecto, {first_name}! 😊 Entiendo que {pending_intent.lower()}. ¿En qué puedo ayudarte?",
+                    {
+                        "name_confirmation_pending": False,
+                        "pending_intent": None,
+                        "is_first_interaction": False,
+                        "customer_id": new_customer_id,
+                        "customer_first_name": first_name,
+                    }
+                )
+
+            return (
+                f"¡Perfecto, {first_name}! 😊 ¿En qué puedo ayudarte hoy?",
+                {
+                    "name_confirmation_pending": False,
+                    "is_first_interaction": False,
+                    "customer_id": new_customer_id,
+                    "customer_first_name": first_name,
+                }
+            )
+
+        # Scenario 2: User provides name ("Me llamo X", "Soy Y", "No, me llamo Z")
+        if intent.type == IntentType.PROVIDE_NAME:
+            new_name = intent.entities.get("first_name", "").strip()
+            new_last_name = intent.entities.get("last_name", "").strip()
+
+            if not new_name:
+                # Couldn't extract name from message - ask again
+                logger.warning(f"PROVIDE_NAME intent without first_name entity")
+                if customer_needs_name:
+                    return (
+                        "Lo siento, no entendí tu nombre. ¿Me puedes decir cómo te llamas?",
+                        None
+                    )
+                else:
+                    return (
+                        f"Lo siento, no entendí. ¿Tu nombre es {customer_first_name}?",
+                        None
+                    )
+
+            # v6.2: CREATE CUSTOMER NOW with provided name
+            try:
+                new_customer_id = await self._create_customer(
+                    phone=customer_phone,
+                    first_name=new_name,
+                    last_name=new_last_name if new_last_name else None,
+                )
+            except Exception as e:
+                logger.error(f"Failed to create customer: {e}", exc_info=True)
+                return (
+                    "Lo siento, ha habido un problema. ¿Puedes intentarlo de nuevo?",
+                    None
+                )
+
+            display_name = f"{new_name} {new_last_name}".strip() if new_last_name else new_name
+
+            # Check if there was a pending intent to process
+            if pending_intent:
+                logger.info(f"Processing pending intent after name provided: {pending_intent}")
+                return (
+                    f"¡Encantada, {display_name}! 😊 Entiendo que {pending_intent.lower()}. ¿En qué puedo ayudarte?",
+                    {
+                        "name_confirmation_pending": False,
+                        "pending_intent": None,
+                        "is_first_interaction": False,
+                        "customer_id": new_customer_id,
+                        "customer_first_name": new_name,
+                    }
+                )
+
+            return (
+                f"¡Encantada, {display_name}! 😊 ¿En qué puedo ayudarte hoy?",
+                {
+                    "name_confirmation_pending": False,
+                    "is_first_interaction": False,
+                    "customer_id": new_customer_id,
+                    "customer_first_name": new_name,
+                }
+            )
+
+        # Scenario 3: User expresses OTHER intent before confirming name
+        # → Insist on name confirmation first, save pending intent
+        logger.info(
+            f"User expressed intent before confirming name | "
+            f"intent={intent.type.value} | saving as pending"
+        )
+
+        if customer_needs_name:
+            # No suggested name - just ask for name again
+            return (
+                "Antes de continuar, ¿me puedes decir cómo te llamas?",
+                {"pending_intent": intent.raw_message}
+            )
+        else:
+            # We have a suggested name - confirm it
+            return (
+                f"Entendido. Antes de continuar, ¿puedo llamarte {customer_first_name}?",
+                {"pending_intent": intent.raw_message}
+            )
+
+    async def _update_customer_name_in_db(
+        self,
+        customer_id: str | None,
+        customer_phone: str,
+        first_name: str,
+        last_name: str | None = None
+    ) -> bool:
+        """
+        Update customer name in database.
+
+        Args:
+            customer_id: Customer UUID string (or None to lookup by phone)
+            customer_phone: Customer phone for lookup
+            first_name: New first name
+            last_name: Optional new last name
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        from agent.tools import manage_customer
+
+        try:
+            update_data = {"first_name": first_name}
+            if customer_id:
+                update_data["customer_id"] = customer_id
+            if last_name:
+                update_data["last_name"] = last_name
+
+            result = await manage_customer.ainvoke({
+                "action": "update",
+                "phone": customer_phone,
+                "data": update_data,
+            })
+
+            if isinstance(result, dict) and result.get("error"):
+                logger.error(f"manage_customer update failed: {result.get('error')}")
+                return False
+
+            logger.info(f"Customer name updated successfully: {first_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error updating customer name: {e}", exc_info=True)
+            return False
+
+    async def _create_customer(
+        self,
+        phone: str,
+        first_name: str,
+        last_name: str | None = None
+    ) -> str:
+        """
+        Create new customer in database after name confirmation.
+
+        v6.2: This method creates customers AFTER name confirmation instead of
+        auto-creating them on first message. This ensures the customer record
+        has the confirmed/provided name.
+
+        Args:
+            phone: Customer phone in E.164 format
+            first_name: Confirmed first name
+            last_name: Optional last name
+
+        Returns:
+            Customer UUID string
+        """
+        from database.connection import get_async_session
+        from database.models import Customer
+
+        async with get_async_session() as session:
+            customer = Customer(
+                phone=phone,
+                first_name=first_name,
+                last_name=last_name,
+            )
+            session.add(customer)
+            await session.commit()
+            await session.refresh(customer)
+
+            logger.info(
+                f"Customer created after name confirmation | "
+                f"customer_id={customer.id} | name={first_name} | phone={phone}"
+            )
+
+            return str(customer.id)
 
     async def _handle_pending_decline(
         self, intent: Intent, pending_decline_id: str

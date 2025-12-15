@@ -1169,26 +1169,19 @@ class BookingFSM:
                     context_hint="Datos del cliente completos. Mostrar resumen y confirmar.",
                 )
 
-        # For SLOT_SELECTION, customize based on whether date preference requested
+        # For SLOT_SELECTION, v4.3: Always show availability directly
         elif self._state == BookingState.SLOT_SELECTION:
-            date_requested = self._collected_data.get("date_preference_requested", False)
-
-            if not date_requested:
-                # Sub-fase 1: Preguntar por fecha
-                guidance = ResponseGuidance(
-                    must_show=[],
-                    must_ask="¿Para qué día te gustaría la cita? (ej: mañana, el viernes, el 1 de diciembre, o lo antes posible)",
-                    forbidden=["horarios", "10:00", "14:30", "disponibilidad específica"],
-                    context_hint="IMPORTANTE: PREGUNTAR por preferencia temporal. NO buscar horarios aún.",
-                )
-            else:
-                # Sub-fase 2: Mostrar horarios (después de tener preferencia)
-                guidance = ResponseGuidance(
-                    must_show=["horarios disponibles del estilista"],
-                    must_ask="¿Qué horario te viene mejor?",
-                    forbidden=["confirmación de cita"],
-                    context_hint="Usuario ya dio preferencia temporal. Mostrar horarios disponibles.",
-                )
+            # v4.3: Removed date_preference_requested sub-phase
+            # Now always show slots directly; user can request different dates after seeing options
+            guidance = ResponseGuidance(
+                must_show=["horarios disponibles del estilista"],
+                must_ask="¿Qué horario te viene mejor?",
+                forbidden=["confirmación de cita"],
+                context_hint=(
+                    "Mostrar horarios disponibles directamente. "
+                    "Al final, informar: 'Si prefieres buscar otro día, solo dímelo.'"
+                ),
+            )
 
         # Log guidance generation metrics (AC #8)
         generation_time_ms = (time.perf_counter() - start_time) * 1000

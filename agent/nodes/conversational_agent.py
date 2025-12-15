@@ -215,6 +215,52 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
         raise  # Don't silently continue on unexpected errors
 
     # ============================================================================
+    # STEP 2b: Check name_confirmation_pending BEFORE any routing (v6.1 FIX)
+    # ============================================================================
+    # If user hasn't confirmed their name yet, route to NonBookingHandler
+    # regardless of what intent they expressed (name confirmation has priority)
+
+    name_confirmation_pending = state.get("name_confirmation_pending", False)
+    if name_confirmation_pending:
+        logger.info(
+            f"Name confirmation pending - routing to NonBookingHandler | "
+            f"conversation_id={conversation_id} | "
+            f"original_intent={intent.type.value}"
+        )
+
+        # Create LLM client for NonBookingHandler
+        llm = ChatOpenAI(
+            model=settings.LLM_MODEL,
+            base_url="https://openrouter.ai/api/v1",
+            api_key=settings.OPENROUTER_API_KEY,
+            temperature=0.3,
+            request_timeout=30.0,
+            max_retries=2,
+        )
+
+        # Import handler here to avoid circular imports
+        from agent.routing.non_booking_handler import NonBookingHandler
+
+        # Route to name confirmation handler
+        handler = NonBookingHandler(state, llm, fsm)
+        response_text, state_updates = await handler._handle_name_confirmation(intent)
+
+        # Apply state updates from handler
+        if state_updates:
+            for key, value in state_updates.items():
+                state[key] = value
+            logger.debug(
+                f"Name confirmation state updates applied | "
+                f"conversation_id={conversation_id} | "
+                f"updates={list(state_updates.keys())}"
+            )
+
+        # Persist FSM state (unchanged for name confirmation)
+        state["fsm_state"] = fsm.to_dict()
+
+        return add_message(state, "assistant", response_text)
+
+    # ============================================================================
     # STEP 3: FSM validates and executes transition (BOOKING INTENTS ONLY)
     # ============================================================================
 

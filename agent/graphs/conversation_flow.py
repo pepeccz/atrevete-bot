@@ -61,84 +61,39 @@ def get_maite_system_prompt() -> str:
 MAITE_SYSTEM_PROMPT = get_maite_system_prompt
 
 
-async def ensure_customer_exists(phone: str, whatsapp_name: str) -> UUID:
+async def check_customer_exists(phone: str) -> tuple[bool, Customer | None]:
     """
-    Ensure customer exists in database. Create if not found using WhatsApp name.
+    Check if customer exists in database WITHOUT creating.
 
-    This function is called at the start of every conversation to guarantee that
-    the customer record exists before any booking flow begins. It uses the WhatsApp
-    display name for initial customer creation and can be updated later by the agent.
+    v6.2: This function replaces ensure_customer_exists() to support deferred
+    customer creation. Customers are now created AFTER name confirmation,
+    not automatically on first message.
 
     Args:
         phone: Customer phone number in E.164 format (e.g., +34623226544)
-        whatsapp_name: Display name from WhatsApp (fallback: "Cliente")
 
     Returns:
-        UUID: Customer ID (existing or newly created)
+        Tuple of (exists: bool, customer: Customer | None)
 
     Example:
-        >>> customer_id = await ensure_customer_exists("+34612345678", "Pepe Cabeza")
-        >>> # Returns existing customer_id or creates new customer with name "Pepe" "Cabeza"
+        >>> exists, customer = await check_customer_exists("+34612345678")
+        >>> if exists:
+        ...     print(f"Welcome back, {customer.first_name}!")
+        ... else:
+        ...     print("New customer - trigger name confirmation")
     """
     async with get_async_session() as session:
         try:
-            # Step 1: Check if customer exists by phone
             stmt = select(Customer).where(Customer.phone == phone)
             result = await session.execute(stmt)
-            existing_customer = result.scalar_one_or_none()
-
-            if existing_customer:
-                logger.debug(
-                    f"Customer already exists for phone {phone}",
-                    extra={"customer_id": str(existing_customer.id), "phone": phone}
-                )
-                return str(existing_customer.id)
-
-            # Step 2: Customer doesn't exist - create new one
-            # Parse WhatsApp name into first_name and last_name
-            name_parts = whatsapp_name.strip().split(maxsplit=1)
-            first_name = name_parts[0] if name_parts else "Cliente"
-            last_name = name_parts[1] if len(name_parts) > 1 else None
-
-            logger.info(
-                f"Creating new customer for phone {phone}",
-                extra={
-                    "phone": phone,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "whatsapp_name": whatsapp_name
-                }
-            )
-
-            # Step 3: Create new customer
-            new_customer = Customer(
-                phone=phone,
-                first_name=first_name,
-                last_name=last_name
-            )
-
-            session.add(new_customer)
-            await session.commit()
-            await session.refresh(new_customer)
-
-            logger.info(
-                f"Customer created successfully",
-                extra={
-                    "customer_id": str(new_customer.id),
-                    "phone": phone,
-                    "first_name": first_name
-                }
-            )
-
-            return str(new_customer.id)
-
+            customer = result.scalar_one_or_none()
+            return (customer is not None, customer)
         except Exception as e:
             logger.error(
-                f"Error ensuring customer exists for phone {phone}: {e}",
+                f"Error checking customer exists for phone {phone}: {e}",
                 exc_info=True
             )
-            await session.rollback()
-            raise
+            return (False, None)
 
 
 async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
@@ -188,73 +143,66 @@ async def process_incoming_message(state: ConversationState) -> dict[str, Any]:
     # Add user message to conversation history
     updated_state = add_message(state, "user", user_message)
 
-    # Ensure customer exists in database (auto-create if first interaction)
+    # v6.2: Check if customer exists in database WITHOUT auto-creating
+    # Customer creation is deferred until after name confirmation
     customer_phone = state.get("customer_phone")
     customer_first_name = None
     customer_needs_name = False
+    customer_id = state.get("customer_id")
 
-    if customer_phone and not state.get("customer_id"):
-        # Extract WhatsApp name from state (set by agent/main.py from Chatwoot webhook)
-        whatsapp_name = state.get("customer_name", "Cliente")
+    # Get WhatsApp name for potential later use in customer creation
+    whatsapp_name = state.get("customer_name", "Cliente")
 
+    if customer_phone:
         try:
-            customer_id = await ensure_customer_exists(customer_phone, whatsapp_name)
-            updated_state["customer_id"] = customer_id
+            customer_exists, customer = await check_customer_exists(customer_phone)
 
-            # Fetch customer data to get first_name for greeting
-            async with get_async_session() as session:
-                stmt = select(Customer).where(Customer.id == UUID(customer_id))
-                result = await session.execute(stmt)
-                customer = result.scalar_one_or_none()
+            if customer_exists and customer:
+                # RETURNING CUSTOMER - skip name confirmation, load their data
+                customer_id = str(customer.id)
+                customer_first_name = customer.first_name
+                updated_state["customer_id"] = customer_id
+                updated_state["customer_first_name"] = customer_first_name
+                updated_state["name_confirmation_pending"] = False
 
-                if customer:
-                    customer_first_name = customer.first_name
-                    # Check if name is "readable" (only letters/spaces/accents)
-                    name_is_readable = bool(
-                        customer_first_name
-                        and NAME_READABLE_PATTERN.match(customer_first_name)
-                    )
-                    # Need name if first interaction AND name is not readable
-                    customer_needs_name = is_first_interaction and not name_is_readable
-
-            logger.info(
-                f"Customer ensured for conversation {conversation_id}",
-                extra={
-                    "customer_id": str(customer_id),
-                    "phone": customer_phone,
-                    "whatsapp_name": whatsapp_name,
-                    "customer_first_name": customer_first_name,
-                    "is_first_interaction": is_first_interaction,
-                    "customer_needs_name": customer_needs_name
-                }
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to ensure customer exists for {customer_phone}: {e}",
-                extra={"conversation_id": conversation_id}
-            )
-            # Continue processing - don't block the conversation
-    else:
-        # Customer already exists in state, fetch current first_name
-        customer_id = state.get("customer_id")
-        if customer_id:
-            try:
-                async with get_async_session() as session:
-                    stmt = select(Customer).where(Customer.id == UUID(str(customer_id)))
-                    result = await session.execute(stmt)
-                    customer = result.scalar_one_or_none()
-                    if customer:
-                        customer_first_name = customer.first_name
-            except Exception as e:
-                logger.warning(
-                    f"Failed to fetch customer first_name: {e}",
-                    extra={"conversation_id": conversation_id}
+                logger.info(
+                    f"Returning customer detected | conversation_id={conversation_id} | "
+                    f"customer_id={customer_id} | name={customer_first_name}"
+                )
+            else:
+                # NEW CUSTOMER - trigger name confirmation, DON'T create yet
+                # Check if WhatsApp name is readable (only letters/spaces/accents)
+                first_name_from_whatsapp = whatsapp_name.split()[0] if whatsapp_name else "Cliente"
+                name_is_readable = bool(
+                    first_name_from_whatsapp
+                    and first_name_from_whatsapp != "Cliente"
+                    and NAME_READABLE_PATTERN.match(first_name_from_whatsapp)
                 )
 
-    # Set first interaction detection fields
+                # Store WhatsApp name for later customer creation
+                updated_state["customer_first_name"] = first_name_from_whatsapp if name_is_readable else None
+                updated_state["customer_needs_name"] = not name_is_readable
+                updated_state["pending_whatsapp_name"] = whatsapp_name
+                updated_state["name_confirmation_pending"] = True
+                updated_state["pending_intent"] = None
+
+                logger.info(
+                    f"New customer detected - name confirmation required | "
+                    f"conversation_id={conversation_id} | "
+                    f"whatsapp_name={whatsapp_name} | "
+                    f"name_is_readable={name_is_readable}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to check customer exists for {customer_phone}: {e}",
+                extra={"conversation_id": conversation_id}
+            )
+            # On error, default to name confirmation flow
+            updated_state["name_confirmation_pending"] = True
+
+    # Set first interaction detection field
     updated_state["is_first_interaction"] = is_first_interaction
-    updated_state["customer_needs_name"] = customer_needs_name
-    updated_state["customer_first_name"] = customer_first_name
 
     # Clear user_message field after processing
     updated_state["user_message"] = None

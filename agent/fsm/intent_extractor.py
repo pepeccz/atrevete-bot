@@ -727,6 +727,9 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
             IntentType.CANCEL_BOOKING: {"reason"},  # Optional reason
             IntentType.UNKNOWN: set(),  # No entities for unknown
             IntentType.UPDATE_NAME: {"first_name", "last_name"},  # Name update in IDLE state
+            IntentType.PROVIDE_NAME: {"first_name", "last_name"},  # v6.1: User provides name
+            IntentType.CONFIRM_NAME: set(),  # v6.0: User confirms shown name
+            IntentType.CORRECT_NAME: {"first_name", "last_name"},  # v6.0: User corrects their name
             # Appointment confirmation intents (48h confirmation flow)
             IntentType.CONFIRM_APPOINTMENT: set(),  # No entities - just confirmation
             IntentType.DECLINE_APPOINTMENT: set(),  # No entities - just decline
