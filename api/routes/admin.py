@@ -4045,6 +4045,15 @@ async def list_conversations(
             has_more = len(rows) > page_size
             items = rows[:page_size]
 
+            # Helper to extract summary from SYSTEM message
+            def extract_summary(messages: list | None) -> str | None:
+                if not messages:
+                    return None
+                for msg in messages:
+                    if msg.get("role") == "system":
+                        return msg.get("content")
+                return None
+
             return {
                 "items": [
                     {
@@ -4054,7 +4063,7 @@ async def list_conversations(
                         "ended_at": row.ended_at.isoformat() if row.ended_at else None,
                         "message_count": row.message_count or 0,
                         "messages": row.messages if row.messages else [],
-                        "summary": None,  # Could be computed from messages
+                        "summary": extract_summary(row.messages),
                         "created_at": row.started_at.isoformat() if row.started_at else None,
                     }
                     for row in items
@@ -4624,6 +4633,23 @@ async def mark_notification_unread(
         return {"success": True}
 
 
+@router.delete("/notifications/bulk")
+async def bulk_delete_notifications(
+    request: NotificationBulkRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Delete multiple notifications."""
+    from sqlalchemy import delete as sql_delete
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            sql_delete(Notification).where(Notification.id.in_(request.ids))
+        )
+        await session.commit()
+
+        return {"success": True, "deleted": result.rowcount}
+
+
 @router.delete("/notifications/{notification_id}")
 async def delete_notification(
     notification_id: UUID,
@@ -4647,23 +4673,6 @@ async def delete_notification(
         await session.commit()
 
         return {"success": True}
-
-
-@router.delete("/notifications/bulk")
-async def bulk_delete_notifications(
-    request: NotificationBulkRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
-):
-    """Delete multiple notifications."""
-    from sqlalchemy import delete as sql_delete
-
-    async with get_async_session() as session:
-        result = await session.execute(
-            sql_delete(Notification).where(Notification.id.in_(request.ids))
-        )
-        await session.commit()
-
-        return {"success": True, "deleted": result.rowcount}
 
 
 @router.get("/notifications/export")

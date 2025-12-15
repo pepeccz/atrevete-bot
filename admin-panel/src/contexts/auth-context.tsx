@@ -61,7 +61,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (payload) {
       setUser({ username: payload.sub, role: "admin" });
     }
-    router.push("/dashboard");
+    // Volver a la URL original o al dashboard
+    const returnTo = sessionStorage.getItem("returnTo");
+    sessionStorage.removeItem("returnTo");
+    router.push(returnTo || "/dashboard");
   };
 
   const logout = () => {

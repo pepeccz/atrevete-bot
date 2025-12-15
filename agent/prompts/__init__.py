@@ -2,7 +2,9 @@
 Prompt loading utilities for the Maite agent.
 
 This module provides functions to load system prompts from disk and
-inject dynamic context (e.g., stylist team data) from the database.
+inject dynamic context (e.g., stylist team data, business settings) from the database.
+
+v4.0: Added modular prompt system with Jinja2 templating and dynamic variable injection.
 """
 
 import asyncio
@@ -10,12 +12,16 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from jinja2 import Template
 from database.connection import get_async_session
 from database.models import Stylist, ServiceCategory
 from sqlalchemy import select
 
 # Import shared cache (safe for both API and Agent)
 from shared.stylist_cache import get_cache, clear_stylist_context_cache
+
+# Import dynamic context loader
+from agent.prompts.dynamic_context import load_dynamic_context, clear_dynamic_context_cache
 
 logger = logging.getLogger(__name__)
 
@@ -247,18 +253,20 @@ def _detect_booking_state(state: dict) -> str:
     return "GENERAL"
 
 
-def load_contextual_prompt(state: dict) -> str:
+async def load_contextual_prompt(state: dict) -> str:
     """
-    Load modular prompts based on conversation state (v3.2 granular state detection).
+    Load modular prompts based on conversation state with dynamic variable injection.
 
     This function reduces prompt size from 27KB to ~7-10KB by loading only relevant sections
     based on the exact booking state. Optimized for OpenRouter's automatic caching (GPT-4.1-mini).
+
+    v4.0: Added async support and Jinja2 templating for dynamic variables from database.
 
     Args:
         state: Conversation state dict containing flags (customer_data_collected, service_selected, etc.)
 
     Returns:
-        str: Assembled prompt with core + relevant step-specific sections
+        str: Assembled prompt with core + relevant step-specific sections, variables injected
 
     Prompt Structure (7 states):
         - core.md: Always loaded (~5KB) - Rules, identity, error handling
@@ -269,25 +277,43 @@ def load_contextual_prompt(state: dict) -> str:
         - step3_5_confirmation.md: BOOKING_CONFIRMATION state - Wait for user confirmation
         - step4_booking.md: BOOKING_EXECUTION state - Execute book()
         - step5_post_booking.md: POST_BOOKING state - Confirmations, modifications
+
+    Dynamic Variables Injected:
+        - minimum_booking_days_advance: From system_settings table
+        - salon_address: From config
+        - business_hours: From business_hours table
+        - upcoming_holidays: From holidays table (next 30 days)
+        - current_datetime: Current datetime in Europe/Madrid
     """
     prompt_dir = Path(__file__).parent
     prompt_parts = []
 
-    # 1. Always load core prompt (rules, identity, error handling)
+    # 1. Load dynamic context from database (cached for 5 minutes)
+    dynamic_context = await load_dynamic_context()
+
+    # 2. Always load core prompt (rules, identity, error handling)
     try:
         core_path = prompt_dir / "core.md"
         with open(core_path, "r", encoding="utf-8") as f:
-            prompt_parts.append(f.read())
+            core_template = f.read()
         logger.debug("Loaded core.md")
     except Exception as e:
         logger.error(f"Error loading core.md: {e}")
         # Fallback to old prompt if core missing
         return load_maite_system_prompt()
 
-    # 2. Detect current booking state
+    # 3. Render core template with dynamic variables
+    try:
+        rendered_core = Template(core_template).render(**dynamic_context)
+        prompt_parts.append(rendered_core)
+    except Exception as e:
+        logger.warning(f"Error rendering core.md template: {e}, using raw content")
+        prompt_parts.append(core_template)
+
+    # 4. Detect current booking state
     booking_state = _detect_booking_state(state)
 
-    # 3. Map states to prompt files
+    # 5. Map states to prompt files
     state_to_file = {
         "GENERAL": "general.md",
         "SERVICE_SELECTION": "step1_service.md",
@@ -300,11 +326,12 @@ def load_contextual_prompt(state: dict) -> str:
 
     step_file = state_to_file.get(booking_state, "general.md")
 
-    # 4. Load the step-specific prompt
+    # 6. Load the step-specific prompt
+    step_template = None
     try:
         step_path = prompt_dir / step_file
         with open(step_path, "r", encoding="utf-8") as f:
-            prompt_parts.append(f.read())
+            step_template = f.read()
         logger.debug(f"Loaded {step_file} for state={booking_state}")
     except FileNotFoundError:
         logger.warning(
@@ -315,22 +342,38 @@ def load_contextual_prompt(state: dict) -> str:
         try:
             general_path = prompt_dir / "general.md"
             with open(general_path, "r", encoding="utf-8") as f:
-                prompt_parts.append(f.read())
+                step_template = f.read()
         except Exception:
             # If even general.md fails, continue with core only
             logger.error("Could not load general.md fallback")
     except Exception as e:
         logger.warning(f"Error loading {step_file}: {e}, using core only")
 
-    # 5. Assemble final prompt
+    # 7. Render step template with dynamic variables
+    if step_template:
+        try:
+            rendered_step = Template(step_template).render(**dynamic_context)
+            prompt_parts.append(rendered_step)
+        except Exception as e:
+            logger.warning(f"Error rendering {step_file} template: {e}, using raw content")
+            prompt_parts.append(step_template)
+
+    # 8. Assemble final prompt
     final_prompt = "\n\n---\n\n".join(prompt_parts)
 
     logger.info(
         f"Loaded contextual prompt: {len(final_prompt)} chars "
-        f"(state={booking_state}, file={step_file})"
+        f"(state={booking_state}, file={step_file}, "
+        f"min_days={dynamic_context.get('minimum_booking_days_advance', 'N/A')})"
     )
 
     return final_prompt
 
 
-__all__ = ["load_maite_system_prompt", "load_stylist_context", "load_contextual_prompt", "clear_stylist_context_cache"]
+__all__ = [
+    "load_maite_system_prompt",
+    "load_stylist_context",
+    "load_contextual_prompt",
+    "clear_stylist_context_cache",
+    "clear_dynamic_context_cache",
+]

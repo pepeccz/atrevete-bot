@@ -36,12 +36,14 @@
 
 ### Parte B: Mostrar Disponibilidad del Estilista Seleccionado
 
-5. **Decidir qué herramienta usar según la solicitud del cliente:**
-   - ✅ **Si el cliente menciona una fecha ESPECÍFICA** (ej: "el 27 de noviembre", "el viernes", "mañana")
-     → Llama `check_availability(service_category="...", date="fecha mencionada", stylist_id="{stylist_id seleccionado}")`
-   - ✅ **Si el cliente NO menciona fecha específica**
-     → **IMPORTANTE:** PREGUNTA primero "¿Para qué día te gustaría la cita?"
-     → Después de que usuario responda, llama `check_availability()` o `find_next_available()` según corresponda
+5. **IMPORTANTE: Siempre muestra disponibilidad DIRECTAMENTE después de seleccionar estilista**
+   - NO preguntes "¿Para qué día te gustaría la cita?" - muestra horarios disponibles inmediatamente
+   - Usa `find_next_available(stylist_id="...", max_results=5)` para mostrar los próximos horarios
+   - Al final del mensaje, añade: "Si prefieres buscar otro día que te venga mejor, solo dímelo."
+
+   **Excepciones (solo si el cliente YA mencionó una fecha específica):**
+   - ✅ Cliente dice "quiero el 27 de noviembre" → Llama `check_availability(date="27 de noviembre", stylist_id="...")`
+   - ✅ Cliente dice "para el viernes" → Llama `check_availability(date="viernes", stylist_id="...")`
 
 6. **Presentar horarios disponibles en lista numerada (máximo 5)**
    - Informa: "Déjame buscar los próximos horarios disponibles con {nombre_estilista} para tus servicios ({duración_total} minutos)."

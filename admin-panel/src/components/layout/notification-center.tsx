@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   AlertTriangle,
   Bell,
@@ -288,11 +289,11 @@ export function NotificationCenter() {
         </ScrollArea>
 
         <div className="border-t p-2">
-          <a href="/settings/notifications" className="block">
+          <Link href="/settings/notifications" className="block">
             <Button variant="ghost" className="w-full text-sm text-muted-foreground">
               Ver todas las notificaciones
             </Button>
-          </a>
+          </Link>
         </div>
       </PopoverContent>
     </Popover>

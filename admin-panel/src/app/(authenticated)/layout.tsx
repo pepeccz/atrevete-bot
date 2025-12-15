@@ -15,6 +15,11 @@ export default function AuthenticatedLayout({
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
+      // Guardar URL actual para volver después del login
+      if (typeof window !== "undefined") {
+        const currentPath = window.location.pathname + window.location.search;
+        sessionStorage.setItem("returnTo", currentPath);
+      }
       router.replace("/login");
     }
   }, [isAuthenticated, isLoading, router]);

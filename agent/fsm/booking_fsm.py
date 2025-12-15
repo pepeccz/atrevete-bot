@@ -1546,65 +1546,52 @@ class BookingFSM:
 
         stylist_id = self._collected_data.get("stylist_id")
         total_duration = self._collected_data.get("total_duration_minutes", 60)
-        date_preference_requested = self._collected_data.get("date_preference_requested", False)
 
-        if not date_preference_requested:
-            # Sub-phase 1: Ask for date preference (no tool call yet)
-            return FSMAction(
-                action_type=ActionType.GENERATE_RESPONSE,
-                response_template=(
-                    "¿Para qué día te gustaría la cita? Puedes decirme:\n"
-                    "- 'mañana' o 'pasado mañana'\n"
-                    "- Un día de la semana ('el lunes', 'el viernes')\n"
-                    "- Una fecha específica ('el 15 de diciembre')\n"
-                    "- O 'lo antes posible' para ver los próximos disponibles"
-                ),
-                allow_llm_creativity=True,
-            )
-        else:
-            # Sub-phase 2: Show availability (MUST call find_next_available)
-            # Derive service_category from selected services (default: Peluquería)
-            service_category = self._collected_data.get("service_category", "Peluquería")
-            # Get user's preferred date (if provided) to pass to find_next_available
-            preferred_date = self._collected_data.get("date")
+        # v4.3: Always show availability directly after stylist selection
+        # (removed date_preference_requested sub-phase - user can request different dates after seeing options)
+        service_category = self._collected_data.get("service_category", "Peluquería")
+        # Get user's preferred date (if provided) to pass to find_next_available
+        preferred_date = self._collected_data.get("date")
 
-            return FSMAction(
-                action_type=ActionType.CALL_TOOLS_SEQUENCE,
-                tool_calls=[
-                    ToolCall(
-                        name="find_next_available",
-                        args={
-                            "service_category": service_category,
-                            "stylist_id": str(stylist_id) if stylist_id else None,
-                            "max_days_to_search": 10,
-                            "start_date": preferred_date,  # User's preferred date
-                            "service_duration_minutes": total_duration,  # v4.2: proper slot spacing
-                        },
-                        required=True,
-                    )
-                ],
-                # v4.2: Template shows soonest_any first, then selected stylist slots
-                response_template=(
-                    "Aquí están los horarios disponibles:\n\n"
-                    "{% if soonest_any %}"
-                    "1. ⚡ {{ soonest_any.day_name }} {{ soonest_any.date }} a las {{ soonest_any.time }} "
-                    "(con {{ soonest_any.stylist_name }}) - PRÓXIMO DISPONIBLE\n"
-                    "{% endif %}"
-                    "{% for slot in selected_stylist_slots %}"
-                    "{{ loop.index + 1 }}. {{ slot.day_name }} {{ slot.date }} a las {{ slot.time }} "
-                    "(con {{ slot.stylist }})\n"
-                    "{% endfor %}\n\n"
-                    "{% if soonest_any and soonest_any.is_different_stylist %}"
-                    "ℹ️ La opción 1 es con otro estilista. Si la eliges, te pediré confirmación.\n\n"
-                    "{% endif %}"
-                    "¿Cuál prefieres? Puedes decirme el número."
-                ),
-                template_vars={
-                    "soonest_any": None,  # Will be populated by tool result
-                    "selected_stylist_slots": [],  # Will be populated by tool result
-                },
-                allow_llm_creativity=True,
-            )
+        return FSMAction(
+            action_type=ActionType.CALL_TOOLS_SEQUENCE,
+            tool_calls=[
+                ToolCall(
+                    name="find_next_available",
+                    args={
+                        "service_category": service_category,
+                        "stylist_id": str(stylist_id) if stylist_id else None,
+                        "max_days_to_search": 10,
+                        "start_date": preferred_date,  # User's preferred date
+                        "service_duration_minutes": total_duration,  # v4.2: proper slot spacing
+                    },
+                    required=True,
+                )
+            ],
+            # v4.3: Template shows soonest_any first, then selected stylist slots
+            # Added message at end about searching other dates
+            response_template=(
+                "Aquí están los horarios disponibles:\n\n"
+                "{% if soonest_any %}"
+                "1. ⚡ {{ soonest_any.day_name }} {{ soonest_any.date }} a las {{ soonest_any.time }} "
+                "(con {{ soonest_any.stylist_name }}) - PRÓXIMO DISPONIBLE\n"
+                "{% endif %}"
+                "{% for slot in selected_stylist_slots %}"
+                "{{ loop.index + 1 }}. {{ slot.day_name }} {{ slot.date }} a las {{ slot.time }} "
+                "(con {{ slot.stylist }})\n"
+                "{% endfor %}\n\n"
+                "{% if soonest_any and soonest_any.is_different_stylist %}"
+                "ℹ️ La opción 1 es con otro estilista. Si la eliges, te pediré confirmación.\n\n"
+                "{% endif %}"
+                "¿Cuál prefieres? Puedes decirme el número.\n\n"
+                "Si prefieres buscar otro día que te venga mejor, solo dímelo."
+            ),
+            template_vars={
+                "soonest_any": None,  # Will be populated by tool result
+                "selected_stylist_slots": [],  # Will be populated by tool result
+            },
+            allow_llm_creativity=True,
+        )
 
     def _action_customer_data(self) -> FSMAction:
         """
@@ -1622,10 +1609,10 @@ class BookingFSM:
         notes_asked = self._collected_data.get("notes_asked", False)
 
         if not first_name:
-            # Phase 1: Collect name
+            # Phase 1: Collect name and surname for booking
             return FSMAction(
                 action_type=ActionType.GENERATE_RESPONSE,
-                response_template="¿Me puedes dar tu nombre para la reserva?",
+                response_template="¿A qué nombre y apellidos agendo la reserva?",
                 allow_llm_creativity=True,
             )
         elif not notes_asked:

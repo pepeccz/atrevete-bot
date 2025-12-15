@@ -510,7 +510,7 @@ def _generate_fallback_response(fsm: BookingFSM) -> str:
             "¿Para qué día y hora te gustaría la cita? Puedo mostrarte horarios disponibles."
         ),
         BookingState.CUSTOMER_DATA: (
-            "¿Me puedes dar tu nombre para la reserva?"
+            "¿A qué nombre y apellidos agendo la reserva?"
         ),
         BookingState.CONFIRMATION: (
             "¿Confirmas la reserva con los datos que tenemos?"

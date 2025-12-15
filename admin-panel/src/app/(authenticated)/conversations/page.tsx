@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { MessageSquare, User, Clock, Eye } from "lucide-react";
+import { MessageSquare, User, Clock, Eye, Info } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -263,7 +263,36 @@ export default function ConversationsPage() {
         description="Historial de conversaciones con el bot (solo lectura)"
       />
 
-      <div className="flex-1 p-6">
+      <div className="flex-1 p-6 space-y-6">
+        {/* Explicacion del sistema de resumen */}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-start gap-3">
+              <Info className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Sistema de Resumen de Conversaciones</p>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <p>
+                    El bot mantiene solo los <strong>ultimos 10 mensajes</strong> en memoria (ventana FIFO).
+                    Cuando una conversacion alcanza <strong>20+ mensajes</strong>, se genera automaticamente
+                    un resumen de los mensajes anteriores usando IA.
+                  </p>
+                  <ul className="list-disc ml-6 space-y-1">
+                    <li>Mensajes 1-10: Se mantienen en memoria sin resumen</li>
+                    <li>Mensaje 19: Se genera primer resumen de mensajes 1-9</li>
+                    <li>Mensaje 29, 39...: Se acumula nuevo resumen al anterior</li>
+                  </ul>
+                  <p className="text-xs text-muted-foreground/70">
+                    El resumen permite al bot mantener contexto de conversaciones largas sin exceder
+                    limites de tokens. Las conversaciones se archivan automaticamente despues de 24 horas.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Tabla de conversaciones */}
         <Card>
           <CardContent className="pt-6">
             <DataTable

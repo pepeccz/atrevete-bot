@@ -14,15 +14,18 @@ Safe tools:
 - escalate_to_human: Human handoff
 
 No booking tools available → no hallucination risk
+
+v4.3: Added dynamic context injection (minimum_booking_days_advance, etc.)
 """
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from agent.fsm.models import Intent, IntentType
+from agent.prompts.dynamic_context import load_dynamic_context
 
 if TYPE_CHECKING:
     from agent.fsm import BookingFSM
@@ -118,8 +121,11 @@ class NonBookingHandler:
         SAFE_TOOLS = [query_info, search_services, manage_customer, escalate_to_human]
         llm_with_tools = self.llm.bind_tools(SAFE_TOOLS)
 
-        # Build message history with FSM context
-        messages = self._build_messages(intent)
+        # v4.3: Load dynamic context from database (cached for 5 min)
+        dynamic_context = await load_dynamic_context()
+
+        # Build message history with FSM context and dynamic context
+        messages = self._build_messages(intent, dynamic_context)
 
         # Invoke LLM with safe tools
         response = await llm_with_tools.ainvoke(messages)
@@ -137,16 +143,21 @@ class NonBookingHandler:
 
         return (response.content, None)
 
-    def _build_messages(self, intent: Intent) -> list:
+    def _build_messages(self, intent: Intent, dynamic_context: dict[str, Any] | None = None) -> list:
         """
-        Build message history for LLM with FSM context.
+        Build message history for LLM with FSM context and dynamic business context.
 
         Args:
             intent: User intent
+            dynamic_context: Dynamic context from database (minimum_booking_days, etc.)
 
         Returns:
             List of LangChain messages (SystemMessage, HumanMessage, AIMessage)
         """
+        # Default dynamic context if not provided
+        if dynamic_context is None:
+            dynamic_context = {}
+
         # Build FSM context for system message
         fsm_context = ""
         if self.fsm.state.value != "idle":
@@ -159,6 +170,39 @@ CONTEXTO DE RESERVA ACTUAL:
 IMPORTANTE: El usuario tiene una reserva en progreso. Si responde preguntas no relacionadas
 con el booking, mantén el contexto y recuérdale suavemente que puede continuar con su reserva
 cuando esté listo.
+"""
+
+        # Build dynamic business context
+        min_days = dynamic_context.get("minimum_booking_days_advance", 3)
+        salon_address = dynamic_context.get("salon_address", "")
+        current_datetime = dynamic_context.get("current_datetime", "")
+        business_hours = dynamic_context.get("business_hours", [])
+        upcoming_holidays = dynamic_context.get("upcoming_holidays", [])
+
+        # Format business hours
+        hours_str = ""
+        for day in business_hours:
+            if day.get("is_closed"):
+                hours_str += f"- {day.get('day_name', '')}: CERRADO\n"
+            else:
+                hours_str += f"- {day.get('day_name', '')}: {day.get('start', '')} - {day.get('end', '')}\n"
+
+        # Format holidays
+        holidays_str = ""
+        if upcoming_holidays:
+            holidays_str = "Próximos festivos (salón cerrado):\n"
+            for holiday in upcoming_holidays:
+                holidays_str += f"- {holiday.get('date', '')}: {holiday.get('name', '')}\n"
+
+        business_context = f"""
+CONTEXTO DEL NEGOCIO:
+- Fecha y hora actual: {current_datetime}
+- Dirección del salón: {salon_address}
+- Regla de reserva: Se requieren {min_days} días de antelación mínimo
+
+Horarios de apertura:
+{hours_str}
+{holidays_str}
 """
 
         # Build first interaction context
@@ -188,7 +232,7 @@ DEBES:
 4. Cuando te dé su nombre, usa manage_customer para actualizarlo
 
 Ejemplo de respuesta:
-"¡Hola! 🌸 Soy Maite, la asistente virtual con IA de Atrévete Peluquería.
+"¡Hola! 🌸 Soy Maite, la asistenta virtual de Atrévete Peluquería.
 ¿Con quién tengo el gusto de hablar?"
 """
             else:
@@ -201,7 +245,7 @@ DEBES:
 3. Preguntar en qué puedes ayudar
 
 Ejemplo de respuesta:
-"¡Hola! 🌸 Soy Maite, la asistente virtual con IA de Atrévete Peluquería.
+"¡Hola! 🌸 Soy Maite, la asistenta virtual de Atrévete Peluquería.
 ¿Puedo llamarte *{customer_first_name}*? ¿En qué puedo ayudarte hoy?"
 """
         else:
@@ -213,6 +257,8 @@ Saluda de forma natural: "¡Hola de nuevo, {customer_first_name or 'amigo'}! �
 
         # System message with role and context
         system_prompt = f"""Eres Maite, asistente virtual amigable de la Peluquería Atrévete.
+
+{business_context}
 
 {first_interaction_context}
 
