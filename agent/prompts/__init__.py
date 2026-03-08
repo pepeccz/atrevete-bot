@@ -12,7 +12,6 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from jinja2 import Template
 from database.connection import get_async_session
 from database.models import Stylist, ServiceCategory
 from sqlalchemy import select
@@ -20,8 +19,8 @@ from sqlalchemy import select
 # Import shared cache (safe for both API and Agent)
 from shared.stylist_cache import get_cache, clear_stylist_context_cache
 
-# Import dynamic context loader
-from agent.prompts.dynamic_context import load_dynamic_context, clear_dynamic_context_cache
+# Import dynamic context cache clearer
+from agent.prompts.dynamic_context import clear_dynamic_context_cache
 
 logger = logging.getLogger(__name__)
 
@@ -200,180 +199,9 @@ async def load_stylist_context() -> str:
             return fallback
 
 
-def _detect_booking_state(state: dict) -> str:
-    """
-    Detect the exact booking state based on state flags and message history.
-
-    Returns one of 7 booking states:
-    - GENERAL: Greetings, FAQs, general inquiries (no booking intent)
-    - SERVICE_SELECTION: User wants to book but hasn't selected service yet
-    - AVAILABILITY_CHECK: Service selected, needs to check availability
-    - CUSTOMER_DATA: Slot selected, needs customer data (name, allergies)
-    - BOOKING_CONFIRMATION: Customer data collected, waiting for confirmation
-    - BOOKING_EXECUTION: Customer confirmed, ready to execute book()
-    - POST_BOOKING: Booking completed, handling confirmations/modifications
-
-    Args:
-        state: Conversation state dict with flags and message history
-
-    Returns:
-        str: One of the 7 booking states
-    """
-    # Check flags in order of booking flow progression
-    if state.get("appointment_created"):
-        return "POST_BOOKING"
-
-    if state.get("booking_confirmed"):
-        return "BOOKING_EXECUTION"
-
-    if state.get("customer_data_collected"):
-        return "BOOKING_CONFIRMATION"
-
-    if state.get("slot_selected"):
-        return "CUSTOMER_DATA"
-
-    if state.get("service_selected"):
-        return "AVAILABILITY_CHECK"
-
-    # Check for booking intent in last message
-    messages = state.get("messages", [])
-    if messages:
-        last_message = messages[-1].get("content", "").lower()
-
-        # Keywords indicating booking intent
-        booking_keywords = [
-            "cita", "reserva", "turno", "hora", "día", "reservar",
-            "corte", "tinte", "manicura", "depilación", "masaje",
-            "peluquería", "estética", "quiero", "necesito"
-        ]
-
-        if any(keyword in last_message for keyword in booking_keywords):
-            return "SERVICE_SELECTION"
-
-    return "GENERAL"
-
-
-async def load_contextual_prompt(state: dict) -> str:
-    """
-    Load modular prompts based on conversation state with dynamic variable injection.
-
-    This function reduces prompt size from 27KB to ~7-10KB by loading only relevant sections
-    based on the exact booking state. Optimized for OpenRouter's automatic caching (GPT-4.1-mini).
-
-    v4.0: Added async support and Jinja2 templating for dynamic variables from database.
-
-    Args:
-        state: Conversation state dict containing flags (customer_data_collected, service_selected, etc.)
-
-    Returns:
-        str: Assembled prompt with core + relevant step-specific sections, variables injected
-
-    Prompt Structure (7 states):
-        - core.md: Always loaded (~5KB) - Rules, identity, error handling
-        - general.md: GENERAL state - FAQs, greetings, no booking intent
-        - step1_service.md: SERVICE_SELECTION state - Help select service
-        - step2_availability.md: AVAILABILITY_CHECK state - Check availability
-        - step3_customer.md: CUSTOMER_DATA state - Collect customer info
-        - step3_5_confirmation.md: BOOKING_CONFIRMATION state - Wait for user confirmation
-        - step4_booking.md: BOOKING_EXECUTION state - Execute book()
-        - step5_post_booking.md: POST_BOOKING state - Confirmations, modifications
-
-    Dynamic Variables Injected:
-        - minimum_booking_days_advance: From system_settings table
-        - salon_address: From config
-        - business_hours: From business_hours table
-        - upcoming_holidays: From holidays table (next 30 days)
-        - current_datetime: Current datetime in Europe/Madrid
-    """
-    prompt_dir = Path(__file__).parent
-    prompt_parts = []
-
-    # 1. Load dynamic context from database (cached for 5 minutes)
-    dynamic_context = await load_dynamic_context()
-
-    # 2. Always load core prompt (rules, identity, error handling)
-    try:
-        core_path = prompt_dir / "core.md"
-        with open(core_path, "r", encoding="utf-8") as f:
-            core_template = f.read()
-        logger.debug("Loaded core.md")
-    except Exception as e:
-        logger.error(f"Error loading core.md: {e}")
-        # Fallback to old prompt if core missing
-        return load_maite_system_prompt()
-
-    # 3. Render core template with dynamic variables
-    try:
-        rendered_core = Template(core_template).render(**dynamic_context)
-        prompt_parts.append(rendered_core)
-    except Exception as e:
-        logger.warning(f"Error rendering core.md template: {e}, using raw content")
-        prompt_parts.append(core_template)
-
-    # 4. Detect current booking state
-    booking_state = _detect_booking_state(state)
-
-    # 5. Map states to prompt files
-    state_to_file = {
-        "GENERAL": "general.md",
-        "SERVICE_SELECTION": "step1_service.md",
-        "AVAILABILITY_CHECK": "step2_availability.md",
-        "CUSTOMER_DATA": "step3_customer.md",
-        "BOOKING_CONFIRMATION": "step3_5_confirmation.md",
-        "BOOKING_EXECUTION": "step4_booking.md",
-        "POST_BOOKING": "step5_post_booking.md"
-    }
-
-    step_file = state_to_file.get(booking_state, "general.md")
-
-    # 6. Load the step-specific prompt
-    step_template = None
-    try:
-        step_path = prompt_dir / step_file
-        with open(step_path, "r", encoding="utf-8") as f:
-            step_template = f.read()
-        logger.debug(f"Loaded {step_file} for state={booking_state}")
-    except FileNotFoundError:
-        logger.warning(
-            f"Step file {step_file} not found for state={booking_state}, "
-            f"falling back to general.md"
-        )
-        # Fallback to general.md if specific step file missing
-        try:
-            general_path = prompt_dir / "general.md"
-            with open(general_path, "r", encoding="utf-8") as f:
-                step_template = f.read()
-        except Exception:
-            # If even general.md fails, continue with core only
-            logger.error("Could not load general.md fallback")
-    except Exception as e:
-        logger.warning(f"Error loading {step_file}: {e}, using core only")
-
-    # 7. Render step template with dynamic variables
-    if step_template:
-        try:
-            rendered_step = Template(step_template).render(**dynamic_context)
-            prompt_parts.append(rendered_step)
-        except Exception as e:
-            logger.warning(f"Error rendering {step_file} template: {e}, using raw content")
-            prompt_parts.append(step_template)
-
-    # 8. Assemble final prompt
-    final_prompt = "\n\n---\n\n".join(prompt_parts)
-
-    logger.info(
-        f"Loaded contextual prompt: {len(final_prompt)} chars "
-        f"(state={booking_state}, file={step_file}, "
-        f"min_days={dynamic_context.get('minimum_booking_days_advance', 'N/A')})"
-    )
-
-    return final_prompt
-
-
 __all__ = [
     "load_maite_system_prompt",
     "load_stylist_context",
-    "load_contextual_prompt",
     "clear_stylist_context_cache",
     "clear_dynamic_context_cache",
 ]
