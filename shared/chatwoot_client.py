@@ -6,8 +6,11 @@ Chatwoot API, including sending WhatsApp messages and updating conversation
 attributes.
 """
 
+import asyncio
 import logging
+from datetime import datetime
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import httpx
 from tenacity import (
@@ -17,7 +20,9 @@ from tenacity import (
     wait_exponential,
 )
 
+from shared.circuit_breaker import call_with_breaker, chatwoot_breaker
 from shared.config import get_settings
+from shared.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,41 @@ class ChatwootClient:
         }
 
         logger.info(f"ChatwootClient initialized: {self.api_url}, account_id={self.account_id}")
+
+    async def _acquire_rate_limit(self) -> None:
+        """
+        Enforce per-minute rate limit on outbound Chatwoot API calls.
+
+        Uses Redis INCR+EXPIRE sliding-window counter with key pattern
+        ``chatwoot:rate_limit:{YYYYMMDD_HHMM}``.  When the per-minute
+        counter exceeds the configured limit the coroutine sleeps until
+        the next minute boundary before returning.
+
+        Fails open: any Redis error is logged as a warning and the call
+        proceeds without throttling.
+        """
+        limit = get_settings().CHATWOOT_RATE_LIMIT_PER_MINUTE
+        if limit == 0:
+            return
+
+        try:
+            redis = get_redis_client()
+            now = datetime.now(ZoneInfo("Europe/Madrid"))
+            key = f"chatwoot:rate_limit:{now.strftime('%Y%m%d_%H%M')}"
+            count = await redis.incr(key)
+            if count == 1:
+                await redis.expire(key, 60)
+            if count > limit:
+                seconds_remaining = 60 - now.second - now.microsecond / 1_000_000
+                logger.warning(
+                    f"Chatwoot rate limit reached ({count}/{limit}), "
+                    f"sleeping {seconds_remaining:.1f}s until next minute"
+                )
+                await asyncio.sleep(seconds_remaining)
+        except Exception as exc:
+            logger.warning(
+                f"Rate limiter unavailable (Redis error: {exc}), proceeding without limiting"
+            )
 
     @retry(
         stop=stop_after_attempt(3),
@@ -399,6 +439,9 @@ class ChatwootClient:
                 # Get or create conversation
                 conversation_id = await self._get_or_create_conversation(contact_id)
 
+            # Enforce rate limit before the outbound POST
+            await self._acquire_rate_limit()
+
             # Send message
             async with httpx.AsyncClient() as client:
                 api_payload = {
@@ -422,6 +465,17 @@ class ChatwootClient:
                     headers=self.headers,
                     timeout=10.0,
                 )
+
+                # Handle 429 explicitly: respect Retry-After before re-raising
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("Retry-After", 60))
+                    logger.warning(
+                        f"Chatwoot API returned 429 for conversation {conversation_id}, "
+                        f"sleeping {retry_after}s (Retry-After)"
+                    )
+                    await asyncio.sleep(retry_after)
+                    response.raise_for_status()
+
                 response.raise_for_status()
 
                 # Log API response for debugging
@@ -618,6 +672,9 @@ class ChatwootClient:
             }
         )
 
+        # Enforce rate limit before the outbound POST
+        await self._acquire_rate_limit()
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}/messages",
@@ -625,6 +682,17 @@ class ChatwootClient:
                 headers=self.headers,
                 timeout=15.0,
             )
+
+            # Handle 429 explicitly: respect Retry-After before re-raising
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", 60))
+                logger.warning(
+                    f"Chatwoot API returned 429 for conversation {conversation_id} "
+                    f"(template={template_name}), sleeping {retry_after}s (Retry-After)"
+                )
+                await asyncio.sleep(retry_after)
+                response.raise_for_status()
+
             response.raise_for_status()
 
             logger.info(

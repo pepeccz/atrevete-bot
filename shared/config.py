@@ -58,6 +58,11 @@ class Settings(BaseSettings):
         default="chatwoot_webhook_token_placeholder",
         description="Secret token for Chatwoot webhook URL authentication (min 24 chars recommended)"
     )
+    CHATWOOT_RATE_LIMIT_PER_MINUTE: int = Field(
+        default=60,
+        ge=0,
+        description="Maximum Chatwoot API requests per minute. 0 = disabled.",
+    )
 
     # OpenRouter (Unified LLM API)
     OPENROUTER_API_KEY: str = Field(default="sk-or-placeholder")
