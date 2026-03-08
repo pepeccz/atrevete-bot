@@ -253,11 +253,15 @@ async def push_appointment_to_gcal(
         service = _get_calendar_service()
         loop = asyncio.get_event_loop()
 
+        # requestId captured once here — stable across all retries (GCal deduplication)
+        request_id = str(appointment_id)
+
         async def create_event_with_retry():
             def create_event():
                 return service.events().insert(
                     calendarId=calendar_id,
                     body=event_body,
+                    requestId=request_id,
                 ).execute()
             return await loop.run_in_executor(None, create_event)
 
@@ -383,10 +387,14 @@ async def push_blocking_event_to_gcal(
         # Create event in Google Calendar
         service = _get_calendar_service()
 
+        # requestId enables GCal native deduplication for blocking events
+        blocking_request_id = str(blocking_event_id)
+
         def create_event():
             return service.events().insert(
                 calendarId=calendar_id,
                 body=event_body,
+                requestId=blocking_request_id,
             ).execute()
 
         loop = asyncio.get_event_loop()
