@@ -8,12 +8,14 @@ import logging
 import os
 import signal
 from datetime import UTC, datetime
+from typing import Callable
 
 from agent.batching.message_batcher import MessageBatcher
 from agent.graphs.conversation_flow import MAITE_SYSTEM_PROMPT, create_conversation_graph
 from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
 from agent.state.helpers import add_message
 from agent.utils.monitoring import get_langfuse_handler
+from agent.workers.cache_signal_listener import run_cache_signal_listener
 from shared.config import get_settings
 from shared.logging_config import configure_logging
 from shared.startup_validator import StartupValidationError, validate_startup_config
@@ -627,6 +629,26 @@ async def subscribe_to_outgoing_messages():
         raise
 
 
+def _task_supervisor(name: str) -> Callable[[asyncio.Task], None]:
+    """
+    Factory that returns a done-callback for an asyncio task.
+
+    On task exception: logs ERROR with full traceback and triggers shutdown_event
+    so Docker restarts the container via restart: unless-stopped.
+
+    On task cancellation: logs WARNING only (cancellation is expected during graceful
+    shutdown and should NOT trigger a container restart).
+    """
+    def callback(task: asyncio.Task) -> None:
+        if task.cancelled():
+            logger.warning(f"Task '{name}' was cancelled")
+            return
+        if exc := task.exception():
+            logger.error(f"Task '{name}' crashed with exception", exc_info=exc)
+            shutdown_event.set()
+    return callback
+
+
 async def main():
     """Agent worker main entry point"""
     logger.info("Agent service started")
@@ -649,9 +671,14 @@ async def main():
         # Windows doesn't support add_signal_handler, fallback to basic handling
         logger.warning("Signal handlers not supported on this platform")
 
-    # Start both workers concurrently
-    incoming_task = asyncio.create_task(subscribe_to_incoming_messages())
-    outgoing_task = asyncio.create_task(subscribe_to_outgoing_messages())
+    # Start all workers concurrently
+    incoming_task = asyncio.create_task(subscribe_to_incoming_messages(), name="incoming")
+    incoming_task.add_done_callback(_task_supervisor("incoming"))
+    outgoing_task = asyncio.create_task(subscribe_to_outgoing_messages(), name="outgoing")
+    outgoing_task.add_done_callback(_task_supervisor("outgoing"))
+    cache_signal_task = asyncio.create_task(
+        run_cache_signal_listener(), name="cache-signal-listener"
+    )
 
     try:
         # Wait for shutdown signal
@@ -662,8 +689,11 @@ async def main():
         logger.info("Shutting down agent service...")
         incoming_task.cancel()
         outgoing_task.cancel()
+        cache_signal_task.cancel()
         try:
-            await asyncio.gather(incoming_task, outgoing_task, return_exceptions=True)
+            await asyncio.gather(
+                incoming_task, outgoing_task, cache_signal_task, return_exceptions=True
+            )
         except asyncio.CancelledError:
             pass
         logger.info("Agent service stopped")

@@ -49,6 +49,7 @@ from database.models import (
     Stylist,
 )
 from shared.config import get_settings
+from shared.cache_signals import publish_cache_invalidation
 from agent.services.recurrence_service import (
     expand_recurrence,
     check_conflicts_for_dates,
@@ -1107,6 +1108,8 @@ async def create_stylist(
         await session.commit()
         await session.refresh(stylist)
 
+        await publish_cache_invalidation("stylists", "create")
+
         return {
             "id": str(stylist.id),
             "name": stylist.name,
@@ -1158,6 +1161,8 @@ async def update_stylist(
         await session.commit()
         await session.refresh(stylist)
 
+        await publish_cache_invalidation("stylists", "update")
+
         return {
             "id": str(stylist.id),
             "name": stylist.name,
@@ -1187,6 +1192,8 @@ async def delete_stylist(
 
         await session.delete(stylist)
         await session.commit()
+
+        await publish_cache_invalidation("stylists", "delete")
 
 
 # =============================================================================
