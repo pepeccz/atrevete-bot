@@ -119,6 +119,8 @@ class NotificationType(str, PyEnum):
     CONFIRMATION_RECEIVED = "confirmation_received"   # Customer confirmed appointment
     AUTO_CANCELLED = "auto_cancelled"                 # Auto-cancelled due to no response
     CONFIRMATION_FAILED = "confirmation_failed"       # Failed to send confirmation template
+    CONFIRMATION_RETRY = "confirmation_retry"         # Retry attempt for failed confirmation
+    CONFIRMATION_PERMANENTLY_FAILED = "confirmation_permanently_failed"  # All retries exhausted
     REMINDER_SENT = "reminder_sent"                   # 2h reminder sent
 
     # Escalation system (human handoff)
@@ -431,6 +433,12 @@ class Appointment(Base):
     notification_failed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    retry_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
     # Group booking support
     group_booking_id: Mapped[UUID | None] = mapped_column(
@@ -480,6 +488,14 @@ class Appointment(Base):
             "start_time",
             "reminder_sent",
             "status",
+        ),
+        # Partial index for retry worker queries (only notification_failed rows)
+        Index(
+            "idx_appointments_retry_eligible",
+            "notification_failed",
+            "retry_count",
+            "next_retry_at",
+            postgresql_where=text("notification_failed = true"),
         ),
     )
 
