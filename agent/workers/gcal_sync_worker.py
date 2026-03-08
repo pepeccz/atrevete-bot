@@ -223,7 +223,16 @@ async def fetch_calendar_events(
             raise
 
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _fetch)
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _fetch),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            f"GCal API call timed out after 30s for calendar {calendar_id[-10:]}, skipping"
+        )
+        return [], None
 
     if result[0] is None:
         # Sync token expired, retry with full sync
@@ -888,6 +897,7 @@ async def update_health_check(
 
     health_data = {
         "last_run": last_run.isoformat(),
+        "last_heartbeat": time.time(),
         "status": status,
         "stylists_synced": stats.get("stylists_synced", 0),
         "events_created": stats.get("created", 0),
@@ -943,6 +953,26 @@ async def async_main() -> None:
 
     # Main loop with asyncio.sleep (single event loop, no schedule library)
     while not shutdown_requested:
+        # Heartbeat: write loop timestamp on every iteration so Docker healthcheck
+        # can verify the loop is alive (not just that the process exists).
+        _health_dir = Path("/tmp/health")
+        _health_dir.mkdir(parents=True, exist_ok=True)
+        _heartbeat_file = _health_dir / "gcal_sync_worker_health.json"
+        _heartbeat_tmp = _health_dir / f"gcal_sync_worker_heartbeat.{int(time.time())}.tmp"
+        try:
+            _existing: dict = {}
+            if _heartbeat_file.exists():
+                try:
+                    _existing = json.loads(_heartbeat_file.read_text())
+                except Exception:
+                    pass
+            _existing["last_heartbeat"] = time.time()
+            _existing["status"] = "running"
+            _heartbeat_tmp.write_text(json.dumps(_existing))
+            _heartbeat_tmp.rename(_heartbeat_file)
+        except Exception as _hb_err:
+            logger.warning(f"Failed to write loop heartbeat: {_hb_err}")
+
         # Sleep for sync_interval minutes (checking shutdown flag every 30s)
         sleep_seconds = sync_interval * 60
         for _ in range(sleep_seconds // 30):

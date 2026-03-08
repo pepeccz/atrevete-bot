@@ -480,11 +480,14 @@ async def update_health_check(
         'checkpoints_archived': checkpoints_archived,
         'messages_archived': messages_archived,
         'errors': errors,
+        'last_heartbeat': time.time(),
     }
 
     # Write health check file atomically (temp file + rename)
-    health_file = Path('/var/health/archiver_health.json')  # Shared volume for Docker
-    temp_file = Path(f'/var/health/archiver_health.{int(time.time())}.tmp')
+    health_dir = Path('/tmp/health')
+    health_dir.mkdir(parents=True, exist_ok=True)
+    health_file = health_dir / 'archiver_health.json'
+    temp_file = health_dir / f'archiver_health.{int(time.time())}.tmp'
 
     try:
         temp_file.write_text(json.dumps(health_data, indent=2))
@@ -645,6 +648,26 @@ def run_archival_worker() -> None:
 
     # Run scheduler loop
     while not shutdown_requested:
+        # Heartbeat: write loop timestamp on every iteration so Docker healthcheck
+        # can verify the loop is alive (not just that the process exists).
+        _health_dir = Path('/tmp/health')
+        _health_dir.mkdir(parents=True, exist_ok=True)
+        _heartbeat_file = _health_dir / 'archiver_health.json'
+        _heartbeat_tmp = _health_dir / f'archiver_heartbeat.{int(time.time())}.tmp'
+        try:
+            _existing: dict = {}
+            if _heartbeat_file.exists():
+                try:
+                    _existing = json.loads(_heartbeat_file.read_text())
+                except Exception:
+                    pass
+            _existing['last_heartbeat'] = time.time()
+            _existing['status'] = 'running'
+            _heartbeat_tmp.write_text(json.dumps(_existing))
+            _heartbeat_tmp.rename(_heartbeat_file)
+        except Exception as _hb_err:
+            logger.warning(f'Failed to write loop heartbeat: {_hb_err}')
+
         schedule.run_pending()
         time.sleep(60)  # Check every minute
 
