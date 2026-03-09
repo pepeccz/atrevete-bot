@@ -14,6 +14,9 @@ from datetime import datetime
 from typing import Any, Literal, TypedDict
 from uuid import UUID
 
+from agent.resilience.retry_strategy import RetryState
+from agent.resilience.error_classifier import FallbackMetrics
+
 
 class ConversationState(TypedDict, total=False):
     """
@@ -28,7 +31,7 @@ class ConversationState(TypedDict, total=False):
     - Metadata for checkpointing
     - Escalation state
 
-    Fields (26 total):
+    Fields (28 total):
         # Core Metadata (5 fields)
         conversation_id: LangGraph thread_id for checkpointing
         customer_phone: E.164 phone (e.g., +34612345678)
@@ -80,6 +83,16 @@ class ConversationState(TypedDict, total=False):
         # Deprecated Fields (2 fields - kept for backward compatibility, will be removed)
         customer_id: DEPRECATED - tools handle customer identification internally
         customer_name: DEPRECATED - tools handle customer name internally
+
+        # Resilience Layer State (2 fields) - Phase 4 integration
+        retry_state: Optional retry tracking state for the current LLM call
+            Structure from RetryStrategy: {attempt_count, last_error_type, next_retry_at,
+            total_retries_used, budget_exhausted}
+            Reset to None after a successful response.
+        fallback_metrics: Optional metrics from FallbackChain on last provider switch
+            Structure: {primary_provider, fallback_provider, primary_error_type,
+            fallback_succeeded, latency_ms}
+            Populated when FallbackChain switches providers.
     """
 
     # ============================================================================
@@ -148,3 +161,9 @@ class ConversationState(TypedDict, total=False):
     # ============================================================================
     customer_id: UUID | None  # DEPRECATED: Tools manage customer_id internally
     customer_name: str | None  # DEPRECATED: Tools manage customer_name internally
+
+    # ============================================================================
+    # Resilience Layer State (2 fields) - Phase 4 integration
+    # ============================================================================
+    retry_state: RetryState | None  # Current LLM call retry progress; None on success
+    fallback_metrics: FallbackMetrics | None  # FallbackChain provider-switch metrics; None if no switch

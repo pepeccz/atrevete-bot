@@ -228,6 +228,117 @@ Próximo mensaje: FSM y checkpoint SIEMPRE en sync (garantizado)
 - `calendar_tools.check_holiday_closure()` → Use `availability_service.is_holiday()`
 - `calendar_tools.get_calendar_availability()` → Use `availability_tools.check_availability()`
 
+### Resilience Layer (v5.1) - LLM API Error Recovery
+
+> ✅ **Resilience Layer COMPLETE (2026-03-09):** Multi-provider fallback, progressive retry with exponential backoff, and per-conversation budget tracking fully implemented.
+
+**Problem:** Single LLM provider (OpenRouter/GPT-4.1-mini) has no automatic recovery from transient failures, rate limits, or provider outages.
+
+**Solution:** Layered resilience architecture with classification → retry decision → provider fallback:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                RESILIENCE LAYER (RESILIENCE_ENABLED=True)    │
+├──────────────────────────────────────────────────────────────┤
+│ Exception caught                                             │
+│     ↓                                                        │
+│ ErrorClassifier.classify(exc) → ErrorType                   │
+│     ↓                                                        │
+│ TRANSIENT/RATE_LIMIT → FallbackChain.call_with_fallback()   │
+│     ├─ primary   (openai/gpt-4o-mini)    → try first        │
+│     ├─ fallback  (deepseek/deepseek-chat) → on failure      │
+│     └─ emergency (meta-llama/llama-3.1-8b) → last resort   │
+│ PERMANENT → re-raise immediately (no fallback)               │
+│ All providers fail → FallbackExhaustedError → escalation    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Error Types (5 categories):**
+- `TRANSIENT` — Network glitches, 5xx server errors. Retry with exponential backoff (1s → 2s → 4s, max 3 retries).
+- `RATE_LIMIT` — HTTP 429. Retry once after `Retry-After` header delay (default: 60s).
+- `PERMANENT` — Auth failures (401/403), not found (404). Do NOT retry — will always fail.
+- `VALIDATION` — Schema/business rule violations. Do NOT retry — must fix data first.
+- `PARTIAL_FAILURE` — Some tool calls succeeded, others failed. Do NOT blindly retry (prevents double-booking).
+
+**Retry Policy:**
+- `TRANSIENT`: up to 3 retries, exponential backoff with ±10% jitter, capped at 4s
+- `RATE_LIMIT`: 1 retry, waits `Retry-After` seconds (or 60s default)
+- `PERMANENT/VALIDATION/PARTIAL_FAILURE`: 0 retries, fail immediately
+
+**Per-Conversation Retry Budget:**
+- `MAX_TOTAL_RETRIES = 5` per conversation (across all error types)
+- Budget tracked in-memory with `asyncio.Lock` (thread-safe)
+- Budget resets on successful response (`budget.reset(conversation_id)`)
+- Prevents runaway retry loops for bad conversations
+
+**Multi-Provider Fallback Chain:**
+- `primary` (priority=0): `LLM_MODEL` (default: `openai/gpt-4o-mini`)
+- `fallback` (priority=1): `LLM_FALLBACK_MODEL` (default: `deepseek/deepseek-chat`)
+- `emergency` (priority=2): `LLM_EMERGENCY_MODEL` (default: `meta-llama/llama-3.1-8b-instruct`)
+- Fallback only triggers for TRANSIENT/RATE_LIMIT errors (not PERMANENT)
+- Each provider has independent circuit breaker (via `pybreaker`)
+
+**Feature Flag — RESILIENCE_ENABLED:**
+- `True` (default): Full resilience path — FallbackChain + RetryBudget + ErrorClassifier
+- `False`: Legacy path — original single-provider + `openrouter_breaker` only (no changes)
+- Both paths coexist in `agent/nodes/conversational_agent.py`
+- Intent extractor also respects this flag (`agent/fsm/intent_extractor.py`)
+
+**New Environment Variables (all have defaults — no migration needed):**
+```bash
+RESILIENCE_ENABLED=true          # Feature flag (default: true)
+LLM_FALLBACK_MODEL=deepseek/deepseek-chat              # First fallback provider
+LLM_EMERGENCY_MODEL=meta-llama/llama-3.1-8b-instruct   # Emergency provider
+MAX_PROVIDER_FAILURES=3          # Failures before provider is skipped
+RETRY_BUDGET_PER_CONVERSATION=5  # Max retries per conversation
+```
+
+**Key Components:**
+- `agent/resilience/error_classifier.py` — `ErrorClassifier`, `ErrorType`, `ClassifiedError`
+- `agent/resilience/retry_strategy.py` — `RetryStrategy`, `RetryBudget`, `RetryState`
+- `agent/resilience/fallback_chain.py` — `FallbackChain`, `ProviderConfig`, `FallbackExhaustedError`
+- `agent/resilience/__init__.py` — Package exports (all public types)
+- `tests/mocks/mock_llm_providers.py` — Mock harness for resilience integration tests
+
+**Testing:**
+- `tests/unit/test_error_classifier.py` — ErrorClassifier (all 5 error types + edge cases)
+- `tests/unit/test_retry_strategy.py` — RetryStrategy + RetryBudget
+- `tests/unit/test_fallback_chain.py` — FallbackChain (all scenarios)
+- `tests/unit/test_resilience_feature_flag.py` — Feature flag unit tests
+- `tests/integration/test_resilience_integration.py` — End-to-end resilience flows (mocked)
+
+**Rollout Checklist (T-022):**
+
+Before enabling `RESILIENCE_ENABLED=true` in production, verify these steps:
+
+**1. Pre-deployment validation**
+- [ ] Run full test suite in Docker (Python 3.11): `docker exec atrevete-agent python -m pytest tests/unit/test_error_classifier.py tests/unit/test_retry_strategy.py tests/unit/test_fallback_chain.py tests/unit/test_resilience_feature_flag.py tests/integration/test_resilience_integration.py -v`
+- [ ] Confirm all 5 new env vars are set in production `.env` (or rely on defaults)
+- [ ] Verify DeepSeek and Llama API keys are valid on OpenRouter (fallback/emergency models)
+
+**2. Staged rollout (recommended)**
+- [ ] Deploy with `RESILIENCE_ENABLED=false` first (legacy path, no behavioral change)
+- [ ] Monitor logs for 24h to establish baseline error rate
+- [ ] Flip `RESILIENCE_ENABLED=true` with docker-compose restart
+- [ ] Watch agent logs for `FallbackChain` entries: `docker-compose logs -f agent | grep FallbackChain`
+
+**3. Key log signals to monitor**
+- `FallbackChain: selected fallback provider` — Primary failed, switching to DeepSeek ✅ expected
+- `FallbackChain: all providers exhausted` — All 3 failed → escalation triggered ⚠️ investigate
+- `RetryBudget: budget exhausted for conversation` — A single conversation hit 5 retries ⚠️ investigate
+- `FallbackChain: circuit OPEN for provider` — Circuit breaker tripped for a provider ⚠️ investigate
+
+**4. Rollback procedure**
+- Set `RESILIENCE_ENABLED=false` in `.env` and run `docker-compose restart agent`
+- No database migrations needed — feature is entirely in-memory
+- No state to clean up — RetryBudget is in-memory and resets on restart
+
+**5. Provider cost implications**
+- DeepSeek fallback: ~$0.14/1M tokens input (cheaper than primary)
+- Llama emergency: ~$0.06/1M tokens input (cheapest)
+- Budget: `RETRY_BUDGET_PER_CONVERSATION=5` limits worst-case retry cost per conversation
+- Monitor OpenRouter dashboard for unexpected token spikes after enabling
+
 ### FSM Hybrid Architecture (v4.0) - FOUNDATION FOR ADR-011
 
 **Base (v4.0):** FSM híbrida donde LLM solo maneja NLU y generación de lenguaje, mientras FSM controla flujo de conversación.

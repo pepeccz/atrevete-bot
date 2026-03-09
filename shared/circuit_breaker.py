@@ -140,6 +140,49 @@ def with_circuit_breaker(breaker: pybreaker.CircuitBreaker):
 
 
 # =============================================================================
+# PROVIDER-SPECIFIC CIRCUIT BREAKER FACTORY (Resilience Layer)
+# =============================================================================
+
+# Tuned thresholds per provider role — used by FallbackChain (agent/resilience/fallback_chain.py)
+_PROVIDER_BREAKER_CONFIG: dict[str, dict[str, int]] = {
+    "primary": {"fail_max": 5, "reset_timeout": 30},
+    "fallback": {"fail_max": 3, "reset_timeout": 60},
+    "emergency": {"fail_max": 3, "reset_timeout": 120},
+}
+
+
+def create_provider_breaker(provider_name: str) -> pybreaker.CircuitBreaker:
+    """
+    Get or create a circuit breaker tuned for a specific LLM provider role.
+
+    Thresholds are tuned by role:
+    - primary:   fail_max=5, reset_timeout=30s  (most tolerant — main provider)
+    - fallback:  fail_max=3, reset_timeout=60s
+    - emergency: fail_max=3, reset_timeout=120s (strictest — last resort)
+
+    Unknown provider names receive ``primary`` defaults.
+
+    The returned breaker is a singleton — calling this function multiple times
+    with the same provider_name returns the same CircuitBreaker instance.
+
+    Args:
+        provider_name: One of "primary", "fallback", "emergency" (or custom).
+
+    Returns:
+        pybreaker.CircuitBreaker instance for the given provider role.
+    """
+    config = _PROVIDER_BREAKER_CONFIG.get(
+        provider_name,
+        _PROVIDER_BREAKER_CONFIG["primary"],  # safe default for unknown roles
+    )
+    return get_circuit_breaker(
+        name=f"llm_provider_{provider_name}",
+        fail_max=config["fail_max"],
+        reset_timeout=config["reset_timeout"],
+    )
+
+
+# =============================================================================
 # PRE-CONFIGURED CIRCUIT BREAKERS FOR EXTERNAL SERVICES
 # =============================================================================
 # These are the main circuit breakers used throughout the application.

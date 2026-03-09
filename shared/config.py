@@ -79,6 +79,46 @@ class Settings(BaseSettings):
         description="Site name for OpenRouter rankings (optional)"
     )
 
+    # Resilience Layer (Multi-Provider Fallback + Retry)
+    RESILIENCE_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Feature flag for the LLM resilience layer. When True, enables multi-provider "
+            "fallback, progressive retry with exponential backoff, and enhanced circuit "
+            "breaker integration. Set to False to use the original single-provider path."
+        ),
+    )
+    LLM_FALLBACK_MODEL: str = Field(
+        default="deepseek/deepseek-chat",
+        description=(
+            "OpenRouter model slug used as the first fallback when the primary model "
+            "(LLM_MODEL) fails. Only used when RESILIENCE_ENABLED=True."
+        ),
+    )
+    LLM_EMERGENCY_MODEL: str = Field(
+        default="meta-llama/llama-3.1-8b-instruct",
+        description=(
+            "OpenRouter model slug used as the emergency last-resort fallback when both "
+            "primary and fallback providers fail. Only used when RESILIENCE_ENABLED=True."
+        ),
+    )
+    MAX_PROVIDER_FAILURES: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Number of consecutive failures allowed for a provider before it is "
+            "considered unhealthy and skipped in the fallback chain."
+        ),
+    )
+    RETRY_BUDGET_PER_CONVERSATION: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Maximum total retry attempts allowed per conversation across all error types. "
+            "Prevents runaway retry loops. Budget resets when a successful response is produced."
+        ),
+    )
+
     # Langfuse (Observability & Monitoring)
     LANGFUSE_PUBLIC_KEY: str = Field(
         default="pk-lf-placeholder",
