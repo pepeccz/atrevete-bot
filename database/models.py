@@ -88,6 +88,27 @@ class MessageRole(str, PyEnum):
     SYSTEM = "system"
 
 
+class ConversationMode(str, PyEnum):
+    """
+    Conversation mode for the mode-based architecture (v6.0).
+
+    Used for logging and archival purposes in conversation_history metadata.
+    The canonical definition lives in agent/state/schemas.py as a Literal type;
+    this enum mirrors it for database storage/querying.
+
+    Values:
+        GREETING: Initial contact / first interaction with the customer
+        BOOKING: Appointment booking flow (availability, confirmation, etc.)
+        GENERAL: Informational queries (FAQs, hours, services, prices)
+        ESCALATION: Human handoff triggered (complex or sensitive request)
+    """
+
+    GREETING = "GREETING"
+    BOOKING = "BOOKING"
+    GENERAL = "GENERAL"
+    ESCALATION = "ESCALATION"
+
+
 class BlockingEventType(str, PyEnum):
     """Type of calendar blocking event."""
 

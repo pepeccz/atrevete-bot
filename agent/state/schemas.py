@@ -1,169 +1,344 @@
 """
-ConversationState schema for LangGraph StateGraph - v5.0 FSM Architecture.
+ConversationState schema for LangGraph StateGraph - v6.0 Mode-Based Architecture.
 
-This module defines the typed state structure for v5.0 architecture with FSM-driven booking flow.
-The state is immutable - nodes must return new dicts rather than mutating the input state.
+This module defines the typed state structure for the agent-architecture-rebuild.
+State uses Annotated reducers for proper LangGraph checkpoint merging.
 
 Architecture:
-- Single conversational_agent node handles all conversation via GPT-4.1-mini + 8 consolidated tools
-- Booking delegated to BookingTransaction handler (atomic, no graph nodes)
-- FSM state consolidated in LangGraph checkpoint (ADR-011: Single Source of Truth)
+- Mode-based routing replaces FSM-driven booking flow
+- Reducers ensure fields persist correctly between conversation turns
+- Single source of truth: LangGraph checkpoint (Redis)
+- No FSM dependency — all flow control via mode + LLM reasoning
+
+Design principles:
+- Fields WITH reducers: persist between turns (merge, not replace)
+- Fields WITHOUT reducers: replaced each turn (transient data)
+- preserve_if_none: simple scalar values that should survive turns
+- merge_dicts: nested dicts that accumulate across turns
+- add (operator): append-only message list
 """
 
-from datetime import datetime
-from typing import Any, Literal, TypedDict
-from uuid import UUID
+from __future__ import annotations
 
-from agent.resilience.retry_strategy import RetryState
-from agent.resilience.error_classifier import FallbackMetrics
+from datetime import datetime
+from operator import add
+from typing import Annotated, Any, Literal, TypedDict
+from zoneinfo import ZoneInfo
+
+
+# ============================================================================
+# Reducer Functions
+# ============================================================================
+
+
+def preserve_if_none(current: Any, update: Any) -> Any:
+    """
+    Preserve checkpoint value if update is None.
+
+    Use for fields that should persist unless explicitly changed.
+    If the incoming update is None, keep the existing checkpoint value.
+
+    Args:
+        current: Value from checkpoint (previous turn)
+        update: Value from current node output
+
+    Returns:
+        update if not None, else current
+    """
+    if update is None:
+        return current
+    return update
+
+
+def merge_dicts(current: dict | None, update: dict | None) -> dict:
+    """
+    Shallow merge dictionaries, preserving existing keys.
+
+    Use for nested data structures that accumulate across turns:
+    - mode_context: Per-mode working data
+    - draft_contexts: Saved contexts from other modes
+
+    Behavior:
+    - If update is None → return current (preserve)
+    - If current is None → return update (initialize)
+    - Otherwise → shallow merge {**current, **update}
+
+    Args:
+        current: Value from checkpoint
+        update: Value from current node output
+
+    Returns:
+        Merged dict (never None)
+    """
+    if update is None:
+        return current or {}
+    if current is None:
+        return update or {}
+    return {**current, **update}
+
+
+def append_unique_list(current: list | None, update: list | None) -> list:
+    """
+    Append to list, avoiding duplicates.
+
+    Use for mode_history to track navigation without repeating entries.
+
+    Args:
+        current: List from checkpoint
+        update: List from current node output
+
+    Returns:
+        Combined list with unique items only
+    """
+    if update is None:
+        return current or []
+    if current is None:
+        return update or []
+    result = list(current)
+    for item in update:
+        if item not in result:
+            result.append(item)
+    return result
+
+
+# ============================================================================
+# Mode Definition
+# ============================================================================
+
+ConversationMode = Literal["GREETING", "BOOKING", "GENERAL", "ESCALATION"]
+"""
+Conversation modes for the mode-based architecture.
+
+- GREETING: Initial contact / first interaction
+- BOOKING: Appointment booking flow
+- GENERAL: Informational queries (FAQs, hours, services)
+- ESCALATION: Human handoff triggered
+"""
+
+
+# ============================================================================
+# Main State Schema
+# ============================================================================
 
 
 class ConversationState(TypedDict, total=False):
     """
-    State schema for v5.0 FSM architecture.
+    State schema for v6.0 mode-based architecture.
 
-    This TypedDict defines conversation context for the FSM-driven booking flow.
     All fields are optional (total=False) to allow partial state updates.
+    Nodes return dicts with only changed fields; reducers handle merging.
 
-    Core Principle: GPT-4.1-mini + tools handle all logic. State stores:
-    - Conversation history (messages)
-    - FSM state (ADR-011: Single Source of Truth in LangGraph checkpoint)
-    - Metadata for checkpointing
-    - Escalation state
+    CRITICAL — Reducer rules:
+    - Annotated[T, preserve_if_none]: scalar value persists unless explicitly set
+    - Annotated[dict, merge_dicts]: dict merges with checkpoint value
+    - Annotated[list, add]: list appends (from operator.add)
+    - Annotated[list, append_unique_list]: list appends without duplicates
+    - No annotation: field is REPLACED each turn (transient)
 
-    Fields (28 total):
-        # Core Metadata (5 fields)
-        conversation_id: LangGraph thread_id for checkpointing
-        customer_phone: E.164 phone (e.g., +34612345678)
-        messages: Recent conversation history (FIFO windowing)
+    Fields (22 total):
+
+    # Core Identity (4 fields)
+        conversation_id: LangGraph thread_id — stable across all turns
+        customer_phone: E.164 format (e.g., +34612345678)
+        customer_id: Database UUID (str) for the Customer record
+        customer_name: Display name for the customer
+
+    # Mode Management (5 fields)
+        current_mode: Active conversation mode (ConversationMode)
+        previous_mode: Mode before last transition (for context)
+        mode_history: Ordered list of visited modes (unique, append-only)
+        mode_context: Arbitrary per-mode working data (merged across turns)
+        draft_contexts: Saved context snapshots keyed by mode name
+
+    # Messages (3 fields)
+        messages: Append-only conversation history
             Format: [{"role": "user"|"assistant", "content": str, "timestamp": str}]
-            Use add_message() helper to ensure correct format
-        metadata: Flexible dict for custom data
-        user_message: Incoming message to process
+        user_message: Current incoming message (transient — replaced each turn)
+        conversation_summary: FIFO summary of older messages (for context compression)
 
-        # Message Management (2 fields)
-        conversation_summary: Summary for context window management
-        total_message_count: Total messages (including summarized)
+    # Message Metadata (2 fields)
+        total_message_count: Total messages including summarized ones
+        is_first_interaction: True only on the very first message of a conversation
 
-        # Escalation Tracking (3 fields)
-        escalation_triggered: Whether escalated to human
-        escalation_reason: Why escalated (e.g., "medical_consultation")
-        error_count: Consecutive errors (for auto-escalation)
+    # Escalation (3 fields)
+        escalation_triggered: True once escalation_to_human is called
+        escalation_reason: Why escalation was triggered
+        error_count: Consecutive LLM/tool errors (auto-escalates at threshold)
 
-        # FSM State - ADR-011: Single Source of Truth (1 field)
-        fsm_state: Consolidated FSM state from BookingFSM
-            Structure: {"state": str, "collected_data": dict, "last_updated": str}
-            Use BookingFSM.to_dict() to serialize, BookingFSM.from_dict() to deserialize
-            Replaces separate fsm:{conversation_id} Redis key (eliminated dual persistence)
+    # Resilience Layer (2 fields)
+        retry_state: Current LLM call retry progress; reset to None on success
+        fallback_metrics: Provider-switch metrics from FallbackChain; None if no switch
 
-        # Node Tracking (1 field)
-        last_node: Last executed node (for debugging)
+    # Timestamps (2 fields)
+        created_at: Conversation start time (ISO 8601, Europe/Madrid)
+        updated_at: Last state modification (ISO 8601, Europe/Madrid)
 
-        # Timestamps (2 fields)
-        created_at: Conversation start (Europe/Madrid)
-        updated_at: Last modification (Europe/Madrid)
-
-        # First Interaction Detection (6 fields) - v3.3 customer greeting, v6.1 name confirmation, v6.2 deferred customer creation
-        is_first_interaction: True if customer's first message ever (messages empty)
-        customer_needs_name: True if WhatsApp name contains numbers/emojis
-        customer_first_name: Current first_name from database Customer record
-        name_confirmation_pending: v6.1 True while waiting for name confirmation
-        pending_intent: v6.1 Stores user message if they express intent before confirming name
-        pending_whatsapp_name: v6.2 WhatsApp name stored for customer creation after name confirmation
-
-        # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
-        cancellation_in_progress: True when in cancellation flow
-        pending_cancellation_id: UUID string of appointment selected for cancellation
-        cancellation_appointments: List of appointment dicts shown for selection
-
-        # Pending Decline State (2 fields) - v3.5 double confirmation for cancellation
-        pending_decline_appointment_id: UUID of appointment awaiting decline confirmation
-        pending_decline_initiated_at: ISO 8601 timestamp when decline was initiated
-
-        # Deprecated Fields (2 fields - kept for backward compatibility, will be removed)
-        customer_id: DEPRECATED - tools handle customer identification internally
-        customer_name: DEPRECATED - tools handle customer name internally
-
-        # Resilience Layer State (2 fields) - Phase 4 integration
-        retry_state: Optional retry tracking state for the current LLM call
-            Structure from RetryStrategy: {attempt_count, last_error_type, next_retry_at,
-            total_retries_used, budget_exhausted}
-            Reset to None after a successful response.
-        fallback_metrics: Optional metrics from FallbackChain on last provider switch
-            Structure: {primary_provider, fallback_provider, primary_error_type,
-            fallback_succeeded, latency_ms}
-            Populated when FallbackChain switches providers.
+    # Debug (1 field)
+        last_node: Last executed LangGraph node name
     """
 
     # ============================================================================
-    # Core Metadata (5 fields)
+    # Core Identity (persisted via reducers)
     # ============================================================================
-    conversation_id: str
-    customer_phone: str
-    messages: list[dict[str, Any]]
-    metadata: dict[str, Any]
-    user_message: str | None
+    conversation_id: Annotated[str | None, preserve_if_none]
+    customer_phone: Annotated[str | None, preserve_if_none]
+    customer_id: Annotated[str | None, preserve_if_none]
+    customer_name: Annotated[str | None, preserve_if_none]
 
     # ============================================================================
-    # Message Management (2 fields)
+    # Mode Management (persisted via reducers)
     # ============================================================================
+    current_mode: Annotated[str | None, preserve_if_none]   # ConversationMode literal
+    previous_mode: Annotated[str | None, preserve_if_none]
+    mode_history: Annotated[list, append_unique_list]
+    mode_context: Annotated[dict, merge_dicts]
+    draft_contexts: Annotated[dict, merge_dicts]
+
+    # ============================================================================
+    # Messages
+    # ============================================================================
+    messages: Annotated[list, add]           # append-only via operator.add
+    user_message: str | None                 # transient — replaced each turn
     conversation_summary: str | None
-    total_message_count: int
 
     # ============================================================================
-    # Escalation Tracking (3 fields)
+    # Message Metadata
+    # ============================================================================
+    total_message_count: int
+    is_first_interaction: bool
+
+    # ============================================================================
+    # Escalation Tracking (persisted via reducers)
     # ============================================================================
     escalation_triggered: bool
     escalation_reason: str | None
     error_count: int
 
     # ============================================================================
-    # FSM State - ADR-011: Single Source of Truth (1 field)
+    # Resilience Layer (persisted via reducers)
     # ============================================================================
-    fsm_state: dict[str, Any] | None  # BookingFSM serialized state: {state, collected_data, last_updated}
+    retry_state: Annotated[dict | None, preserve_if_none]
+    fallback_metrics: Annotated[dict | None, preserve_if_none]
 
     # ============================================================================
-    # Node Tracking (1 field)
+    # Timestamps (persisted via reducers)
+    # ============================================================================
+    created_at: Annotated[str | None, preserve_if_none]
+    updated_at: str | None                   # transient — updated each turn
+
+    # ============================================================================
+    # Debug
     # ============================================================================
     last_node: str | None
 
-    # ============================================================================
-    # Timestamps (2 fields)
-    # ============================================================================
-    created_at: datetime
-    updated_at: datetime
 
-    # ============================================================================
-    # First Interaction Detection (6 fields) - v3.3 customer greeting, v6.1 name confirmation, v6.2 deferred customer creation
-    # ============================================================================
-    is_first_interaction: bool  # True if this is the customer's first message ever
-    customer_needs_name: bool  # True if WhatsApp name is not readable (numbers/emojis)
-    customer_first_name: str | None  # Current customer first_name from database
-    name_confirmation_pending: bool  # v6.1: True while waiting for user to confirm/provide name
-    pending_intent: str | None  # v6.1: Stores user message if they express intent before confirming name
-    pending_whatsapp_name: str | None  # v6.2: WhatsApp name stored for customer creation after name confirmation
+# ============================================================================
+# Factory Function
+# ============================================================================
 
-    # ============================================================================
-    # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
-    # ============================================================================
-    cancellation_in_progress: bool  # True when in cancellation flow
-    pending_cancellation_id: str | None  # UUID of appointment selected for cancellation
-    cancellation_appointments: list[dict[str, Any]] | None  # Appointments shown for selection
 
-    # ============================================================================
-    # Pending Decline State (2 fields) - v3.5 double confirmation for cancellation
-    # ============================================================================
-    pending_decline_appointment_id: str | None  # UUID of appointment pending decline confirmation
-    pending_decline_initiated_at: str | None  # ISO 8601 timestamp when decline was initiated
+def create_initial_state(
+    conversation_id: str,
+    customer_phone: str,
+) -> ConversationState:
+    """
+    Create a fully initialised ConversationState for a new conversation.
 
-    # ============================================================================
-    # Deprecated Fields (kept for backward compatibility - will be removed)
-    # ============================================================================
-    customer_id: UUID | None  # DEPRECATED: Tools manage customer_id internally
-    customer_name: str | None  # DEPRECATED: Tools manage customer_name internally
+    Args:
+        conversation_id: LangGraph thread_id (stable, used as checkpoint key)
+        customer_phone: Customer phone in E.164 format (e.g., +34612345678)
 
-    # ============================================================================
-    # Resilience Layer State (2 fields) - Phase 4 integration
-    # ============================================================================
-    retry_state: RetryState | None  # Current LLM call retry progress; None on success
-    fallback_metrics: FallbackMetrics | None  # FallbackChain provider-switch metrics; None if no switch
+    Returns:
+        Fully initialised ConversationState with sensible defaults.
+    """
+    now = datetime.now(ZoneInfo("Europe/Madrid")).isoformat()
+
+    return ConversationState(
+        # Core Identity
+        conversation_id=conversation_id,
+        customer_phone=customer_phone,
+        customer_id=None,
+        customer_name=None,
+        # Mode Management
+        current_mode="GREETING",
+        previous_mode=None,
+        mode_history=[],
+        mode_context={},
+        draft_contexts={},
+        # Messages
+        messages=[],
+        user_message=None,
+        conversation_summary=None,
+        # Message Metadata
+        total_message_count=0,
+        is_first_interaction=True,
+        # Escalation
+        escalation_triggered=False,
+        escalation_reason=None,
+        error_count=0,
+        # Resilience
+        retry_state=None,
+        fallback_metrics=None,
+        # Timestamps
+        created_at=now,
+        updated_at=now,
+        # Debug
+        last_node=None,
+    )
+
+
+# ============================================================================
+# Mode Transition Helper
+# ============================================================================
+
+
+def transition_mode(
+    current_state: ConversationState,
+    new_mode: str,
+    context_update: dict | None = None,
+) -> dict:
+    """
+    Build a partial state update dict for a mode transition.
+
+    This function does NOT mutate ``current_state``. It returns a dict
+    suitable for merging by LangGraph reducers.
+
+    Behavior:
+    1. Save current mode_context into draft_contexts under the old mode key.
+    2. Set previous_mode to the current mode.
+    3. Set current_mode to new_mode.
+    4. Reset mode_context to context_update (or empty dict if none provided).
+    5. Append old mode to mode_history.
+
+    Args:
+        current_state: Current conversation state (not mutated).
+        new_mode: Target ConversationMode to transition to.
+        context_update: Optional initial context for the new mode.
+
+    Returns:
+        Partial state update dict. Merge into LangGraph state via node return.
+
+    Example:
+        >>> update = transition_mode(state, "BOOKING", {"intent": "book_appointment"})
+        >>> # Return update from your node; reducers will merge it
+    """
+    now = datetime.now(ZoneInfo("Europe/Madrid")).isoformat()
+    old_mode = current_state.get("current_mode")
+    old_context = current_state.get("mode_context") or {}
+
+    # Save current context as draft if mode is changing
+    draft_update: dict = {}
+    if old_mode and old_mode != new_mode and old_context:
+        draft_update = {old_mode: old_context}
+
+    # Build mode_history entry (single item list — append_unique_list will merge)
+    history_entry: list = [old_mode] if old_mode else []
+
+    return {
+        "current_mode": new_mode,
+        "previous_mode": old_mode,
+        "mode_history": history_entry,
+        "mode_context": context_update or {},
+        "draft_contexts": draft_update,
+        "updated_at": now,
+    }

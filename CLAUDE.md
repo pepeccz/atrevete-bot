@@ -149,6 +149,62 @@ mypy .
 
 ## Architecture Overview
 
+> ✅ **Modes Architecture COMPLETE (2026-03-09):** Infinite greeting loop bug fixed. Replaced FSM mega-node with 4 independent modes (GREETING, BOOKING, GENERAL, ESCALATION). New files: `agent/routing/`, `agent/modes/`, `agent/prompts/modes/`.
+
+### Modes Architecture (v6.0) — COMPLETE
+
+**Bug Fixed:** Name confirmation infinite loop. The old `conversational_agent` mega-node (v5.0) would get stuck asking for the customer's name repeatedly because the FSM state and the LangGraph checkpoint could diverge, and the single-node design had no clear separation between "collect name" and "process booking" concerns.
+
+**Solution:** Replace the single FSM-driven mega-node with 4 independent mode nodes, each with its own prompt and tool set:
+
+```
+START → preprocess_node → router_node → mode_dispatcher
+    → [greeting_node | general_node | booking_node | escalation_node]
+    → summarize_node → END
+```
+
+**4 Modes:**
+- **GREETING**: First contact, name extraction. Fires ONCE per new customer. On confirmation, creates customer in DB and transitions to GENERAL/BOOKING.
+- **BOOKING**: Full multi-step appointment booking flow. Isolated from GREETING — no more infinite loop.
+- **GENERAL**: FAQs, service info, informational queries. Uses `query_info` and `search_services` (read-only tools, no booking risk).
+- **ESCALATION**: Human handoff. Sets `escalation_triggered=True` and calls `escalate_to_human`.
+
+**Routing Logic (router_node):**
+1. `escalation_triggered=True` → always ESCALATION
+2. `error_count >= 3` → auto-escalation to ESCALATION
+3. `is_first_interaction=True` OR `customer_name is None` → GREETING
+4. `intent == escalate` → ESCALATION
+5. Currently in BOOKING and not cancel/reject → stay BOOKING
+6. `intent == book` → BOOKING
+7. `intent == greet` and not in BOOKING → GREETING
+8. Everything else → GENERAL
+
+**New File Structure:**
+- `agent/routing/intent_router.py` — Keyword + LLM hybrid intent classifier (8 intents: greet, book, ask_info, confirm, reject, cancel, escalate, ambiguous)
+- `agent/modes/greeting_mode.py` — GreetingMode: name collection, customer creation
+- `agent/modes/booking_mode.py` — BookingMode: full booking flow with tools
+- `agent/modes/general_mode.py` — GeneralMode: read-only informational queries
+- `agent/modes/escalation_mode.py` — EscalationMode: human handoff
+- `agent/prompts/modes/` — Mode-specific prompts (greeting.md, booking.md, general.md, escalation.md)
+
+**What Was Removed:**
+- `agent/nodes/conversational_agent.py` — OLD mega-node (DEPRECATED, kept for backward compatibility only, not in v6.0 graph)
+- FSM states: `SERVICE_SELECTION`, `STYLIST_SELECTION`, `SLOT_SELECTION`, `CUSTOMER_DATA`, `CONFIRMATION`, `BOOKED` → replaced by `BookingMode` sub-steps
+- Parallel name confirmation flow (caused infinite loop)
+
+**State Schema Changes (v6.0):**
+- `current_mode: ConversationMode` — Active mode (GREETING/BOOKING/GENERAL/ESCALATION)
+- `is_first_interaction: bool` — True only on first message (set by preprocess_node)
+- `customer_name: str | None` — Name collected in GREETING mode
+- `mode_context: dict` — Mode-specific transient data (booking step, last intent, etc.)
+- `mode_history: list[str]` — Ordered list of mode transitions (for debugging)
+
+**Key Improvements:**
+- ✅ Infinite greeting loop: FIXED (GREETING fires once, then done)
+- ✅ Extensible: New feature = new mode (no mega-node modification needed)
+- ✅ Testable: Each mode tested independently with unit tests
+- ✅ Debuggable: `current_mode` always visible in state; `mode_history` shows transitions
+
 > ✅ **ADR-011 COMPLETE (2025-11-27):** Sistema 100% unificado en **single source of truth**. FSM state consolidado en LangGraph checkpoints. Eliminada dual persistence Redis + Checkpoint.
 
 ### FSM-LangGraph Single Source of Truth (ADR-011) - COMPLETE
@@ -481,33 +537,40 @@ This architecture eliminated the hybrid tier system, consolidating all logic int
 
 ### Key Components
 
-**LangGraph Flow (agent/graphs/conversation_flow.py)**
-- Main StateGraph: 3 nodes (process_incoming_message → conversational_agent → summarize)
-- Linear flow with conditional edges for conversation summarization
+**LangGraph Flow (agent/graphs/conversation_flow.py) - v6.0 Mode-Based**
+- Main StateGraph: 7 nodes — preprocess → router → [greeting|general|booking|escalation] → summarize
+- Mode-based routing with conditional edges via `mode_dispatcher()`
 - Checkpointing: AsyncRedisSaver with Redis Stack (requires RedisSearch/RedisJSON)
-- System prompts: Modular architecture with 8 files (core.md + 6 state-specific prompts + summarization)
+- Mode prompts: `agent/prompts/modes/` (greeting.md, booking.md, general.md, escalation.md)
 
-**Conversational Agent Node (agent/nodes/conversational_agent.py)**
-- Main workhorse: GPT-4.1-mini via OpenRouter with 8 bound tools
-- Tools available: query_info, search_services, manage_customer, get_customer_history, check_availability, find_next_available, book, escalate_to_human
-- **Customer Creation Flow:** Customers auto-created in `process_incoming_message` (first interaction), NOT during booking
-- **Booking Flow:** PASO 3 collects first_name, last_name, notes from user; PASO 4 calls `book()` with these fields
-- Uses LangChain's `ChatOpenAI` with tool binding (configured for OpenRouter API)
-- Converts state messages to LangChain format (SystemMessage, HumanMessage, AIMessage, ToolMessage)
-- Automatic prompt caching enabled (OpenRouter feature for prompts >1024 tokens)
-- Modular prompt loading: Detects booking state (6 states) and loads only relevant prompt files (core.md + state-specific)
+**Mode Nodes (agent/modes/) - v6.0**
+- `greeting_mode.py` — GreetingMode: name extraction, customer creation (fires ONCE per new customer)
+- `booking_mode.py` — BookingMode: full multi-step booking with all 8 tools
+- `general_mode.py` — GeneralMode: read-only FAQ/info queries (query_info, search_services only)
+- `escalation_mode.py` — EscalationMode: calls escalate_to_human, sets escalation_triggered=True
 
-**State Schema (agent/state/schemas.py) - v3.2 Enhanced**
-- `ConversationState` TypedDict: 19 fields total
+**Intent Router (agent/routing/intent_router.py) - v6.0**
+- Keyword + LLM hybrid intent classifier (8 intents: greet, book, ask_info, confirm, reject, cancel, escalate, ambiguous)
+- Fast path: keyword matching (no LLM) when confidence >= 0.8
+- Fallback: minimal LLM prompt with JSON response when keywords are ambiguous
+- Stateless — safe to share as module-level singleton
+
+**[DEPRECATED] Conversational Agent Node (agent/nodes/conversational_agent.py)**
+- OLD mega-node (v5.0 FSM architecture) — NOT used in v6.0 graph
+- Kept for backward compatibility (some old tests still import from it)
+- Do NOT add to new graphs — use mode nodes in conversation_flow.py instead
+
+**State Schema (agent/state/schemas.py) - v6.0**
+- `ConversationState` TypedDict with v6.0 mode fields
 - Message format: `{"role": "user"|"assistant", "content": str, "timestamp": str}`
 - IMPORTANT: Use `add_message()` helper from `agent/state/helpers.py` for correct format
 - FIFO windowing: Recent 10 messages kept, older messages summarized
-- **v3.2 fields for granular state detection (enables 6-state booking flow):**
-  - `customer_data_collected: bool` - Customer identified/created
-  - `service_selected: str | None` - Selected service name
-  - `slot_selected: dict | None` - Selected slot `{stylist_id, start_time, duration}`
-  - `appointment_created: bool` - Booking completed
-- These flags enable 6-state detection (GENERAL → SERVICE_SELECTION → AVAILABILITY_CHECK → CUSTOMER_DATA → BOOKING_EXECUTION → POST_BOOKING) for focused prompt loading
+- **v6.0 mode fields:**
+  - `current_mode: str` — Active mode (GREETING/BOOKING/GENERAL/ESCALATION)
+  - `is_first_interaction: bool` — True only on first message
+  - `customer_name: str | None` — Name collected in GREETING mode
+  - `mode_context: dict` — Mode-specific transient data (booking_step, last_intent, etc.)
+  - `mode_history: list[str]` — Ordered mode transition log (for debugging)
 
 **Database Models (database/models.py)**
 - Core tables: `customers`, `stylists`, `services`, `business_hours`, `policies`
@@ -628,6 +691,15 @@ endpoint = f"{api_url}/api/v1/accounts/{account_id}/conversations/{conversation_
 
 - `api/` - FastAPI webhook receiver with routes for Chatwoot webhooks
 - `agent/` - LangGraph orchestrator with graphs, nodes, tools, prompts, workers
+  - `agent/graphs/` - v6.0 StateGraph definition (conversation_flow.py)
+  - `agent/modes/` - v6.0 mode nodes (greeting, booking, general, escalation)
+  - `agent/routing/` - v6.0 intent router (keyword + LLM hybrid classifier)
+  - `agent/prompts/modes/` - v6.0 mode-specific system prompts
+  - `agent/nodes/` - Legacy nodes (conversational_agent.py DEPRECATED; summarization.py active)
+  - `agent/fsm/` - v5.0 FSM models (still used by routing handlers and services)
+  - `agent/resilience/` - v5.1 error classification, retry strategy, fallback chain
+  - `agent/tools/` - 8 LangChain tools (query_info, book, escalate, etc.)
+  - `agent/workers/` - Background workers (conversation archiver)
 - `database/` - SQLAlchemy models + Alembic migrations + seed data
 - `shared/` - Shared utilities: config, logging, Redis client, Chatwoot client
 - `admin/` - Django Admin interface (✅ Implemented Nov 6, 2025 - accessible at http://localhost:8001/admin)

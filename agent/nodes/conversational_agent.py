@@ -1,36 +1,38 @@
 """
-Conversational Agent Node - v5.0 Prescriptive FSM Architecture.
+[DEPRECATED v6.0] Conversational Agent Node - v5.0 Prescriptive FSM Architecture.
 
-This node implements the v5.0 prescriptive architecture where:
-- FSM prescribes exact tools to call (no LLM tool decisions)
-- LLM handles only: (1) intent extraction (NLU), (2) response formatting (generation)
-- IntentRouter separates booking (FSM-prescribed) from non-booking (LLM conversational)
+DEPRECATION NOTICE (2026-03-09):
+    This node is NO LONGER PART OF THE ACTIVE GRAPH as of v6.0.
+    The v6.0 mode-based architecture replaced this single mega-node with:
+        - preprocess_node  → agent/graphs/conversation_flow.py
+        - router_node      → agent/graphs/conversation_flow.py
+        - greeting_node    → agent/modes/greeting_mode.py
+        - general_node     → agent/modes/general_mode.py
+        - booking_node     → agent/modes/booking_mode.py
+        - escalation_node  → agent/modes/escalation_mode.py
+
+    This file is kept for reference and backward compatibility only.
+    It will be removed in a future cleanup after all tests that import it are updated.
+
+    Do NOT add this node to new graphs. Use the mode-based nodes instead.
+
+Original description (v5.0):
+    This node implements the v5.0 prescriptive architecture where:
+    - FSM prescribes exact tools to call (no LLM tool decisions)
+    - LLM handles only: (1) intent extraction (NLU), (2) response formatting (generation)
+    - IntentRouter separates booking (FSM-prescribed) from non-booking (LLM conversational)
 
 Model: openai/gpt-4.1-mini via OpenRouter (cost-optimized, automatic prompt caching)
 
-Architecture (v5.0 - ADR-013):
+Architecture (v5.0 - ADR-013) [SUPERSEDED by v6.0 mode-based]:
     LLM (NLU)          → Extract intent only
     FSM Control        → Validate transition + prescribe actions
     IntentRouter       → Route booking vs non-booking
         ├─ BookingHandler     → FSM prescribes tools (0% hallucinations)
         └─ NonBookingHandler  → LLM with safe tools (FAQs, escalate)
 
-Flow:
-1. Load FSM state from checkpoint
-2. Check for auto-escalation (error_count >= threshold)
-3. Extract intent using LLM (state-aware disambiguation)
-4. Validate transition with FSM
-5. Route via IntentRouter (NEW - replaces LLM tool binding)
-6. Persist FSM state
-7. Reset error_count on success
-
-Changes from v4.0:
-- REMOVED: LLM tool binding (replaced with FSM prescription)
-- REMOVED: tool_validation.py (997 lines of defensive code)
-- REMOVED: response_validator.py (reactive validation)
-- ADDED: IntentRouter with BookingHandler + NonBookingHandler
-- ADDED: Auto-escalation after consecutive errors (error_count >= 3)
-- REDUCED: 1,583 lines → ~400 lines (75% reduction)
+v6.0 replaces this with:
+    preprocess_node → router_node → [greeting|general|booking|escalation]_node → summarize_node
 """
 
 import asyncio

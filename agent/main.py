@@ -11,9 +11,10 @@ from datetime import UTC, datetime
 from typing import Callable
 
 from agent.batching.message_batcher import MessageBatcher
-from agent.graphs.conversation_flow import MAITE_SYSTEM_PROMPT, create_conversation_graph
+from agent.graphs.conversation_flow import create_graph, create_conversation_graph
 from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
 from agent.state.helpers import add_message
+from agent.state.schemas import create_initial_state
 from agent.utils.monitoring import get_langfuse_handler
 from agent.workers.cache_signal_listener import run_cache_signal_listener
 from shared.config import get_settings
@@ -95,8 +96,10 @@ async def subscribe_to_incoming_messages():
         logger.error(f"Failed to initialize Redis indexes: {e}")
         raise
 
-    graph = create_conversation_graph(checkpointer=checkpointer)
-    logger.info("Conversation graph created successfully")
+    # v6.0: Use create_graph() (mode-based architecture)
+    # create_conversation_graph() is kept as backward-compatible alias
+    graph = create_graph(checkpointer=checkpointer)
+    logger.info("Conversation graph created successfully (v6.0 mode-based)")
 
     # Initialize message batcher with configurable window and Redis for crash recovery
     batch_window = settings.MESSAGE_BATCH_WINDOW_SECONDS
@@ -152,16 +155,18 @@ async def subscribe_to_incoming_messages():
             }
         )
 
-        # Create initial ConversationState
-        # NOTE: Only pass essential fields. LangGraph will load messages, total_message_count,
-        # and other fields from the checkpoint (if thread_id exists in Redis).
-        state = {
-            "conversation_id": conversation_id,
-            "customer_phone": customer_phone,
-            "customer_name": customer_name,
-            "user_message": combined_text,
-            "updated_at": datetime.now(UTC),
-        }
+        # Create initial ConversationState using v6.0 schema factory.
+        # LangGraph merges this with the checkpoint (if thread_id exists in Redis),
+        # so existing fields (messages, current_mode, etc.) are preserved via reducers.
+        # We only pass the transient fields that change each turn.
+        state = create_initial_state(
+            conversation_id=conversation_id or "unknown",
+            customer_phone=customer_phone or "",
+        )
+        # Override with current-turn data (LangGraph merges via reducers)
+        state["customer_name"] = customer_name
+        state["user_message"] = combined_text
+        state["updated_at"] = datetime.now(UTC).isoformat()
 
         # Create Langfuse handler for tracing and token monitoring
         langfuse_handler = None

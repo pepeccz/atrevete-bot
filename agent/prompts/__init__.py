@@ -5,6 +5,7 @@ This module provides functions to load system prompts from disk and
 inject dynamic context (e.g., stylist team data, business settings) from the database.
 
 v4.0: Added modular prompt system with Jinja2 templating and dynamic variable injection.
+v6.0: Added load_mode_prompt() for loading mode-specific prompts from agent/prompts/modes/.
 """
 
 import asyncio
@@ -199,8 +200,76 @@ async def load_stylist_context() -> str:
             return fallback
 
 
+def load_mode_prompt(mode_name: str) -> str:
+    """
+    Load a mode-specific system prompt from agent/prompts/modes/{mode_name}.md.
+
+    Used by v6.0 mode-based architecture to load focused prompts per mode.
+    Falls back to a sensible default if the file is missing.
+
+    Args:
+        mode_name: Mode name (case-insensitive). One of:
+                   "greeting", "general", "booking", "escalation"
+
+    Returns:
+        str: Prompt content. Never raises — returns fallback on any error.
+
+    Example:
+        >>> prompt = load_mode_prompt("greeting")
+        >>> prompt = load_mode_prompt("BOOKING")   # case-insensitive
+    """
+    mode_lower = mode_name.lower()
+    prompt_path = Path(__file__).parent / "modes" / f"{mode_lower}.md"
+
+    _fallbacks = {
+        "greeting": (
+            "Eres Maite, asistenta virtual de Atrévete Peluquería. "
+            "Da la bienvenida al cliente y pregunta su nombre."
+        ),
+        "general": (
+            "Eres Maite, asistenta virtual de Atrévete Peluquería. "
+            "Responde preguntas sobre servicios, horarios y ubicación."
+        ),
+        "booking": (
+            "Eres Maite, asistenta virtual de Atrévete Peluquería. "
+            "Ayuda al cliente a reservar una cita paso a paso."
+        ),
+        "escalation": (
+            "Eres Maite, asistenta virtual de Atrévete Peluquería. "
+            "Informa al cliente que le conectas con el equipo humano."
+        ),
+    }
+    fallback = _fallbacks.get(mode_lower, "Eres Maite, asistenta virtual de Atrévete Peluquería.")
+
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        if len(content) < 50:
+            logger.warning(
+                f"Mode prompt for '{mode_name}' is too short ({len(content)} chars), using fallback"
+            )
+            return fallback
+
+        logger.debug(f"Loaded mode prompt '{mode_name}' ({len(content)} chars)")
+        return content
+
+    except FileNotFoundError:
+        logger.warning(f"Mode prompt not found: {prompt_path}, using fallback")
+        return fallback
+
+    except IOError as e:
+        logger.error(f"Error reading mode prompt '{mode_name}': {e}, using fallback")
+        return fallback
+
+    except Exception as e:
+        logger.error(f"Unexpected error loading mode prompt '{mode_name}': {e}, using fallback")
+        return fallback
+
+
 __all__ = [
     "load_maite_system_prompt",
+    "load_mode_prompt",
     "load_stylist_context",
     "clear_stylist_context_cache",
     "clear_dynamic_context_cache",
