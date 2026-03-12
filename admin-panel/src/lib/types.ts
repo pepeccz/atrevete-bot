@@ -61,6 +61,22 @@ export interface CalendarConflictError {
   stylist_names: string[];
 }
 
+// Calendar option classification for stylist modal
+export const CALENDAR_OPTION_STATUS = {
+  AVAILABLE: "available",
+  CURRENT: "current",
+  OCCUPIED: "occupied",
+} as const;
+
+export type CalendarOptionStatus =
+  (typeof CALENDAR_OPTION_STATUS)[keyof typeof CALENDAR_OPTION_STATUS];
+
+export interface CalendarOption {
+  calendar: GoogleCalendar;
+  status: CalendarOptionStatus;
+  ownerStylistName?: string;
+}
+
 export interface Customer {
   id: string;
   phone: string;

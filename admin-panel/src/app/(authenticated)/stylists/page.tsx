@@ -51,7 +51,9 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import api from "@/lib/api";
-import type { Stylist, ServiceCategory, GoogleCalendar } from "@/lib/types";
+import type { Stylist, ServiceCategory, GoogleCalendar, CalendarOption, CalendarOptionStatus } from "@/lib/types";
+import { CALENDAR_OPTION_STATUS } from "@/lib/types";
+import { ApiRequestError } from "@/lib/api";
 
 // Category badge
 function CategoryBadge({ category }: { category: ServiceCategory }) {
@@ -96,15 +98,18 @@ function StylistModal({
   onOpenChange,
   onSuccess,
   stylist,
+  allStylists,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
   stylist?: Stylist | null;
+  allStylists: Stylist[];
 }) {
   const [loading, setLoading] = useState(false);
   const [availableCalendars, setAvailableCalendars] = useState<GoogleCalendar[]>([]);
   const [loadingCalendars, setLoadingCalendars] = useState(false);
+  const [conflictError, setConflictError] = useState<{ message: string; stylistNames: string[] } | null>(null);
   const [formData, setFormData] = useState<StylistFormData>({
     name: "",
     category: "HAIRDRESSING",
@@ -131,6 +136,8 @@ function StylistModal({
         color: null,
       });
     }
+    // Clear conflict error when modal opens/closes or stylist changes
+    setConflictError(null);
   }, [stylist, open]);
 
   // Load available calendars when modal opens
@@ -143,6 +150,43 @@ function StylistModal({
       .finally(() => setLoadingCalendars(false));
   }, [open]);
 
+  // Build classified calendar options (available | current | occupied)
+  const buildCalendarOptions = (): CalendarOption[] => {
+    const currentStylistId = stylist?.id;
+    const currentCalendarId = stylist?.google_calendar_id;
+
+    // Build a map of calendar_id -> stylist name for quick lookup
+    const calendarOwners = new Map<string, string>();
+    allStylists.forEach((s) => {
+      if (s.google_calendar_id) {
+        calendarOwners.set(s.google_calendar_id, s.name);
+      }
+    });
+
+    return availableCalendars.map((cal) => {
+      const ownerName = calendarOwners.get(cal.id);
+
+      // Classify the calendar
+      let status: CalendarOptionStatus = CALENDAR_OPTION_STATUS.AVAILABLE;
+
+      if (cal.id === currentCalendarId) {
+        // This is the current stylist's own calendar
+        status = CALENDAR_OPTION_STATUS.CURRENT;
+      } else if (ownerName && ownerName !== stylist?.name) {
+        // This calendar is owned by a different stylist
+        status = CALENDAR_OPTION_STATUS.OCCUPIED;
+      }
+
+      return {
+        calendar: cal,
+        status,
+        ownerStylistName: ownerName,
+      };
+    });
+  };
+
+  const calendarOptions = buildCalendarOptions();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name) {
@@ -151,6 +195,8 @@ function StylistModal({
     }
 
     setLoading(true);
+    setConflictError(null);
+
     try {
       if (stylist) {
         await api.update("stylists", stylist.id, {
@@ -174,9 +220,20 @@ function StylistModal({
       onOpenChange(false);
       onSuccess();
     } catch (error) {
-      toast.error(
-        `Error: ${error instanceof Error ? error.message : "Unknown error"}`
-      );
+      // Handle 409 Conflict errors (calendar already assigned)
+      if (error instanceof ApiRequestError && error.status === 409) {
+        const stylistNames = error.stylistNames || [];
+        setConflictError({
+          message: error.message,
+          stylistNames,
+        });
+        // Don't close the modal - let user pick a different calendar
+        toast.error("El calendario seleccionado ya está en uso");
+      } else {
+        toast.error(
+          `Error: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -237,27 +294,63 @@ function StylistModal({
               <>
                 <Select
                   value={formData.google_calendar_id}
-                  onValueChange={(value) =>
+                  onValueChange={(value) => {
                     setFormData((prev) => ({
                       ...prev,
                       google_calendar_id: value,
-                    }))
-                  }
+                    }));
+                    // Clear conflict error when user changes selection
+                    setConflictError(null);
+                  }}
                   disabled={loadingCalendars}
                 >
                   <SelectTrigger id="google_calendar_id">
                     <SelectValue placeholder="Selecciona un calendario..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableCalendars.map((cal) => (
-                      <SelectItem key={cal.id} value={cal.id}>
-                        {cal.summary}
-                      </SelectItem>
-                    ))}
+                    {calendarOptions.map((option) => {
+                      const isOccupied = option.status === CALENDAR_OPTION_STATUS.OCCUPIED;
+                      const isCurrent = option.status === CALENDAR_OPTION_STATUS.CURRENT;
+
+                      return (
+                        <SelectItem
+                          key={option.calendar.id}
+                          value={option.calendar.id}
+                          disabled={isOccupied}
+                          className={isOccupied ? "text-muted-foreground" : undefined}
+                        >
+                          <div className="flex items-center justify-between w-full gap-4">
+                            <span>{option.calendar.summary}</span>
+                            {isCurrent && (
+                              <Badge variant="outline" className="text-xs">
+                                Actual
+                              </Badge>
+                            )}
+                            {isOccupied && option.ownerStylistName && (
+                              <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 border-red-200">
+                                Ocupado: {option.ownerStylistName}
+                              </Badge>
+                            )}
+                          </div>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
+                {conflictError && (
+                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 border border-red-200">
+                    <p className="font-medium">Conflicto de calendario</p>
+                    <p>{conflictError.message}</p>
+                    {conflictError.stylistNames.length > 0 && (
+                      <p className="mt-1 text-red-600">
+                        Asignado a: {conflictError.stylistNames.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs text-muted-foreground">
-                  Selecciona el calendario de Google de este estilista
+                  Selecciona el calendario de Google de este estilista.
+                  Los calendarios marcados como &quot;Ocupado&quot; ya están asignados a otro estilista.
                 </p>
               </>
             ) : (
@@ -265,15 +358,27 @@ function StylistModal({
                 <Input
                   id="google_calendar_id"
                   value={formData.google_calendar_id}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setFormData((prev) => ({
                       ...prev,
                       google_calendar_id: e.target.value,
-                    }))
-                  }
+                    }));
+                    setConflictError(null);
+                  }}
                   placeholder="calendario@group.calendar.google.com"
                   disabled={loadingCalendars}
                 />
+                {conflictError && (
+                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 border border-red-200">
+                    <p className="font-medium">Conflicto de calendario</p>
+                    <p>{conflictError.message}</p>
+                    {conflictError.stylistNames.length > 0 && (
+                      <p className="mt-1 text-red-600">
+                        Asignado a: {conflictError.stylistNames.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs text-muted-foreground">
                   ID del calendario de Google asociado a este estilista.{" "}
                   <a
@@ -523,6 +628,7 @@ export default function StylistsPage() {
         onOpenChange={setModalOpen}
         onSuccess={loadData}
         stylist={editingStylist}
+        allStylists={stylists}
       />
 
       {/* Delete Confirmation */}

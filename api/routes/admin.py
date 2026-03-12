@@ -1121,6 +1121,7 @@ async def create_stylist(
 ):
     """Create a new stylist."""
     from database.models import ServiceCategory
+    from sqlalchemy.exc import IntegrityError
 
     # Validate category
     try:
@@ -1132,6 +1133,13 @@ async def create_stylist(
         )
 
     async with get_async_session() as session:
+        # Pre-validation: Check if calendar is already assigned to another stylist
+        has_conflict, stylist_names = await _check_calendar_conflict(
+            session, request.google_calendar_id
+        )
+        if has_conflict:
+            raise _build_calendar_conflict_error(stylist_names)
+
         stylist = Stylist(
             name=request.name,
             category=category_enum,
@@ -1140,8 +1148,23 @@ async def create_stylist(
             color=request.color,
         )
         session.add(stylist)
-        await session.commit()
-        await session.refresh(stylist)
+
+        try:
+            await session.commit()
+            await session.refresh(stylist)
+        except IntegrityError as e:
+            await session.rollback()
+            error_msg = str(e)
+            if _is_unique_constraint_violation(error_msg):
+                # Race condition: Another request assigned this calendar
+                # Re-query to get the conflicting stylist names
+                has_conflict, stylist_names = await _check_calendar_conflict(
+                    session, request.google_calendar_id
+                )
+                if has_conflict:
+                    raise _build_calendar_conflict_error(stylist_names)
+            # Re-raise if it's not a calendar unique constraint violation
+            raise
 
         await publish_cache_invalidation("stylists", "create")
 
@@ -1165,6 +1188,7 @@ async def update_stylist(
 ):
     """Update an existing stylist."""
     from database.models import ServiceCategory
+    from sqlalchemy.exc import IntegrityError
 
     async with get_async_session() as session:
         result = await session.execute(
@@ -1174,6 +1198,14 @@ async def update_stylist(
 
         if not stylist:
             raise HTTPException(status_code=404, detail="Stylist not found")
+
+        # Pre-validation: Check if new calendar is already assigned to another stylist
+        if request.google_calendar_id is not None:
+            has_conflict, stylist_names = await _check_calendar_conflict(
+                session, request.google_calendar_id, exclude_stylist_id=stylist_id
+            )
+            if has_conflict:
+                raise _build_calendar_conflict_error(stylist_names)
 
         # Update fields if provided
         if request.name is not None:
@@ -1193,8 +1225,23 @@ async def update_stylist(
         if request.color is not None:
             stylist.color = request.color
 
-        await session.commit()
-        await session.refresh(stylist)
+        try:
+            await session.commit()
+            await session.refresh(stylist)
+        except IntegrityError as e:
+            await session.rollback()
+            error_msg = str(e)
+            if _is_unique_constraint_violation(error_msg):
+                # Race condition: Another request assigned this calendar
+                # Re-query to get the conflicting stylist names
+                if request.google_calendar_id is not None:
+                    has_conflict, stylist_names = await _check_calendar_conflict(
+                        session, request.google_calendar_id, exclude_stylist_id=stylist_id
+                    )
+                    if has_conflict:
+                        raise _build_calendar_conflict_error(stylist_names)
+            # Re-raise if it's not a calendar unique constraint violation
+            raise
 
         await publish_cache_invalidation("stylists", "update")
 
@@ -1237,6 +1284,80 @@ class AssignCalendarRequest(BaseModel):
     calendar_id: str = Field(..., min_length=1, description="Google Calendar ID to assign to this stylist")
 
 
+# =============================================================================
+# Calendar Conflict Validation Helpers
+# =============================================================================
+
+
+async def _check_calendar_conflict(
+    session: AsyncSession,
+    google_calendar_id: str,
+    exclude_stylist_id: UUID | None = None,
+) -> tuple[bool, list[str]]:
+    """
+    Check if a Google Calendar ID is already assigned to another stylist.
+
+    Args:
+        session: SQLAlchemy async session
+        google_calendar_id: The calendar ID to check
+        exclude_stylist_id: Optional stylist ID to exclude from check (for updates)
+
+    Returns:
+        Tuple of (has_conflict, list_of_stylist_names)
+    """
+    query = select(Stylist).where(Stylist.google_calendar_id == google_calendar_id)
+
+    if exclude_stylist_id:
+        query = query.where(Stylist.id != exclude_stylist_id)
+
+    result = await session.execute(query)
+    conflicting_stylists = result.scalars().all()
+
+    if conflicting_stylists:
+        names = [s.name for s in conflicting_stylists]
+        return True, names
+
+    return False, []
+
+
+def _build_calendar_conflict_error(stylist_names: list[str]) -> HTTPException:
+    """
+    Build a standardized 409 Conflict response for calendar ownership conflicts.
+
+    Args:
+        stylist_names: List of stylist names who own the calendar
+
+    Returns:
+        HTTPException with status 409 and structured detail
+    """
+    name_list = ", ".join(stylist_names)
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "message": f"Este calendario ya está asignado a: {name_list}",
+            "stylist_names": stylist_names,
+        },
+    )
+
+
+def _is_unique_constraint_violation(error_message: str) -> bool:
+    """
+    Check if an IntegrityError is related to the stylist calendar unique constraint.
+
+    Args:
+        error_message: The error message from the exception
+
+    Returns:
+        True if it's a stylist calendar unique constraint violation
+    """
+    error_lower = error_message.lower()
+    return (
+        "unique constraint" in error_lower
+        and "stylists" in error_lower
+        and "google_calendar_id" in error_lower
+    )
+
+
 @router.put("/stylists/{stylist_id}/calendar")
 async def assign_stylist_calendar(
     stylist_id: UUID,
@@ -1255,6 +1376,8 @@ async def assign_stylist_calendar(
         calendar_id (str): The newly assigned Google Calendar ID.
         updated (bool): Always True on success.
     """
+    from sqlalchemy.exc import IntegrityError
+
     async with get_async_session() as session:
         result = await session.execute(
             select(Stylist).where(Stylist.id == stylist_id)
@@ -1264,10 +1387,31 @@ async def assign_stylist_calendar(
         if not stylist:
             raise HTTPException(status_code=404, detail="Stylist not found")
 
+        # Pre-validation: Check if calendar is already assigned to another stylist
+        has_conflict, stylist_names = await _check_calendar_conflict(
+            session, request.calendar_id, exclude_stylist_id=stylist_id
+        )
+        if has_conflict:
+            raise _build_calendar_conflict_error(stylist_names)
+
         stylist.google_calendar_id = request.calendar_id
 
-        await session.commit()
-        await session.refresh(stylist)
+        try:
+            await session.commit()
+            await session.refresh(stylist)
+        except IntegrityError as e:
+            await session.rollback()
+            error_msg = str(e)
+            if _is_unique_constraint_violation(error_msg):
+                # Race condition: Another request assigned this calendar
+                # Re-query to get the conflicting stylist names
+                has_conflict, stylist_names = await _check_calendar_conflict(
+                    session, request.calendar_id, exclude_stylist_id=stylist_id
+                )
+                if has_conflict:
+                    raise _build_calendar_conflict_error(stylist_names)
+            # Re-raise if it's not a calendar unique constraint violation
+            raise
 
         await publish_cache_invalidation("stylists", "update")
 
