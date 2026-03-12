@@ -10,7 +10,9 @@ Provides REST endpoints for:
 
 import asyncio
 import logging
+import re
 import time
+import unicodedata
 from datetime import date, datetime, time as dt_time, timedelta
 from enum import Enum
 from zoneinfo import ZoneInfo
@@ -1033,7 +1035,7 @@ async def get_stylist_performance(
 class CreateStylistRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     category: str = Field(default="HAIRDRESSING")
-    google_calendar_id: str = Field(..., min_length=1)
+    google_calendar_id: str | None = Field(None, min_length=1)
     is_active: bool = True
     color: str | None = Field(None, min_length=7, max_length=7, pattern=r"^#[0-9A-Fa-f]{6}$")
 
@@ -1053,11 +1055,12 @@ async def list_stylists(
     page_size: int = 50,
     is_active: bool | None = None,
 ):
-    """List all stylists with optional filtering."""
+    """List all stylists with optional filtering. Defaults to active stylists only."""
     async with get_async_session() as session:
         query = select(Stylist)
-        if is_active is not None:
-            query = query.where(Stylist.is_active == is_active)
+        # Default to active-only when the query param is not explicitly provided
+        effective_is_active = is_active if is_active is not None else True
+        query = query.where(Stylist.is_active == effective_is_active)
         query = query.offset((page - 1) * page_size).limit(page_size + 1)
 
         result = await session.execute(query)
@@ -1142,6 +1145,7 @@ async def create_stylist(
 
         stylist = Stylist(
             name=request.name,
+            slug=_generate_slug(request.name),
             category=category_enum,
             google_calendar_id=request.google_calendar_id,
             is_active=request.is_active,
@@ -1155,6 +1159,11 @@ async def create_stylist(
         except IntegrityError as e:
             await session.rollback()
             error_msg = str(e)
+            if _is_slug_unique_constraint_violation(error_msg):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A stylist with the name '{request.name}' already exists (slug conflict).",
+                )
             if _is_unique_constraint_violation(error_msg):
                 # Race condition: Another request assigned this calendar
                 # Re-query to get the conflicting stylist names
@@ -1163,7 +1172,7 @@ async def create_stylist(
                 )
                 if has_conflict:
                     raise _build_calendar_conflict_error(stylist_names)
-            # Re-raise if it's not a calendar unique constraint violation
+            # Re-raise if it's not a known unique constraint violation
             raise
 
         await publish_cache_invalidation("stylists", "create")
@@ -1210,6 +1219,7 @@ async def update_stylist(
         # Update fields if provided
         if request.name is not None:
             stylist.name = request.name
+            stylist.slug = _generate_slug(request.name)
         if request.category is not None:
             try:
                 stylist.category = ServiceCategory(request.category)
@@ -1291,7 +1301,7 @@ class AssignCalendarRequest(BaseModel):
 
 async def _check_calendar_conflict(
     session: AsyncSession,
-    google_calendar_id: str,
+    google_calendar_id: str | None,
     exclude_stylist_id: UUID | None = None,
 ) -> tuple[bool, list[str]]:
     """
@@ -1299,12 +1309,15 @@ async def _check_calendar_conflict(
 
     Args:
         session: SQLAlchemy async session
-        google_calendar_id: The calendar ID to check
+        google_calendar_id: The calendar ID to check (None means no calendar assigned — no conflict)
         exclude_stylist_id: Optional stylist ID to exclude from check (for updates)
 
     Returns:
         Tuple of (has_conflict, list_of_stylist_names)
     """
+    if google_calendar_id is None:
+        return False, []
+
     query = select(Stylist).where(Stylist.google_calendar_id == google_calendar_id)
 
     if exclude_stylist_id:
@@ -1356,6 +1369,34 @@ def _is_unique_constraint_violation(error_message: str) -> bool:
         and "stylists" in error_lower
         and "google_calendar_id" in error_lower
     )
+
+
+def _is_slug_unique_constraint_violation(error_message: str) -> bool:
+    """Check if an IntegrityError is a slug uniqueness violation."""
+    error_lower = error_message.lower()
+    return (
+        "unique constraint" in error_lower or "uq_stylists_slug" in error_lower
+    ) and "slug" in error_lower
+
+
+def _generate_slug(name: str) -> str:
+    """
+    Generate a URL-safe slug from a stylist name.
+
+    Normalizes Unicode (NFD), removes diacritics, lowercases, replaces
+    non-alphanumeric characters with hyphens, and strips leading/trailing hyphens.
+
+    Examples:
+        "María José" → "maria-jose"
+        "Valeria" → "valeria"
+    """
+    # Normalize to NFD and strip combining marks (accents)
+    normalized = unicodedata.normalize("NFD", name)
+    ascii_name = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    # Lowercase and replace non-alphanumeric with hyphen
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower())
+    # Strip leading/trailing hyphens
+    return slug.strip("-")
 
 
 @router.put("/stylists/{stylist_id}/calendar")
@@ -4726,7 +4767,42 @@ async def delete_conversation_endpoint(
                     all_keys.append(k)
 
             if not all_keys:
-                raise HTTPException(status_code=404, detail="Active conversation not found in Redis")
+                # Redis keys not found — conversation may have been archived already.
+                # Fall back to DB lookup and delete.
+                from sqlalchemy import select as _select
+                from database.models import ConversationHistory as _ConvHistory
+
+                async with get_async_session() as session:
+                    db_result = await session.execute(
+                        _select(_ConvHistory).where(_ConvHistory.conversation_id == thread_id)
+                    )
+                    record = db_result.scalar_one_or_none()
+
+                if record is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Active conversation not found in Redis or database",
+                    )
+
+                # Record found in DB — delete it via the service
+                async with get_async_session() as session:
+                    del_result = await delete_conversation(
+                        conversation_uuid=record.id,
+                        session=session,
+                        redis_client=redis_client,
+                    )
+
+                if del_result.error == "ConversationHistory not found":
+                    raise HTTPException(status_code=404, detail="Conversation not found")
+
+                return {
+                    "conversation_uuid": str(record.id),
+                    "thread_id": thread_id,
+                    "db_deleted": del_result.db_deleted,
+                    "redis_keys_deleted": del_result.redis_keys_deleted,
+                    "redis_status": "already_archived",
+                    "error": del_result.error,
+                }
 
             deleted = await redis_client.delete(*all_keys)
             return {

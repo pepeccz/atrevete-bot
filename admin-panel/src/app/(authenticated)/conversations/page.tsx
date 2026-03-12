@@ -216,7 +216,7 @@ export default function ConversationsPage() {
     setDeleting(true);
     try {
       const result = await api.deleteConversation(conversationToDelete.id);
-      if (result.db_deleted) {
+      if (!result.error) {
         setConversations((prev) =>
           prev.filter((c) => c.id !== conversationToDelete.id)
         );
