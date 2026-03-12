@@ -1,754 +1,625 @@
 """
-BookingMode — Full appointment booking flow via sub-step state machine (v6.0).
+Booking Mode — v6.0 Mode-Based Architecture.
 
-This is the most complex mode. It manages the complete booking flow:
+Handles the full multi-step appointment booking flow. This mode is isolated from
+GREETING — it never asks for the customer name, eliminating the infinite loop bug.
 
-    service_selection
-        ↓
-    stylist_selection
-        ↓
-    slot_selection
-        ↓
-    customer_data  (first_name, last_name, notes)
-        ↓
-    confirmation   (show summary, ask for confirmation)
-        ↓
-    completed      (call book() tool, show confirmation, transition to GENERAL)
+Sub-steps (stored in mode_context["booking_step"]):
+1. service_selection — user selects a service
+2. stylist_selection — user selects a stylist (or any/no preference)
+3. slot_selection — user picks a date/time slot
+4. customer_data — collect first_name and optional notes
+5. confirmation — show summary, ask user to confirm
+6. completed — call book() tool, appointment created
 
-Sub-step state is tracked in `state["mode_context"]["booking_step"]` using the
-`merge_dicts` reducer, so it persists correctly between conversation turns.
+Routing between steps is handled by _determine_step() and _advance_step().
+Step transitions are conservative: only advance when we have enough data.
 
-Tools available (full set):
-- query_info: Services list, FAQs, hours
-- search_services: Fuzzy service search
-- check_availability: Check a specific date
-- find_next_available: Auto-search multiple dates
-- book: Create the appointment (atomic transaction)
-- manage_customer: Update customer name/notes
-- get_customer_history: Past appointments
-
-Mode transitions:
-- intent="cancel" at any step → confirm cancellation, return to GENERAL
-- intent="escalate" at any step → ESCALATION mode
-- booking "completed" → GENERAL mode
-
-Architecture decisions:
-    1. The LLM drives responses within each sub-step — BookingMode doesn't
-       generate hardcoded responses. Instead it gives the LLM a focused system
-       prompt for each sub-step and the LLM uses tools + conversation context
-       to produce the response.
-    2. Sub-step progression is tracked explicitly in mode_context["booking_step"].
-       The LLM cannot skip steps — BookingMode validates which step to be in
-       based on what data has been collected.
-    3. booking_step="completed" triggers the book() tool call directly (not via
-       the LLM agent loop), to prevent the LLM from hallucinating booking data.
+Tools used per step:
+- service_selection: [query_info, search_services]
+- stylist_selection: [list_stylists]
+- slot_selection: [check_availability, find_next_available]
+- customer_data: [] (no tools — just conversation)
+- confirmation: [] (no tools — show summary)
+- completed: call book() directly (not via agentic loop)
 """
 
-from __future__ import annotations
-
-import json
 import logging
 from typing import Any
 
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from agent.modes.base import BaseModeNode
-from agent.routing.intent_router import IntentResult
+from agent.modes.base import AgenticLoopResult, BaseModeNode
 from agent.state.helpers import add_message
-from agent.state.schemas import ConversationState, transition_mode
-from agent.tools.availability_tools import check_availability, find_next_available
-from agent.tools.booking_tools import book
-from agent.tools.customer_tools import get_customer_history, manage_customer
-from agent.tools.info_tools import list_stylists, query_info
-from agent.tools.search_services import search_services
+from agent.state.schemas import ConversationState
 
 logger = logging.getLogger(__name__)
 
+# ── Booking sub-steps ─────────────────────────────────────────────────────────
+STEP_SERVICE_SELECTION = "service_selection"
+STEP_STYLIST_SELECTION = "stylist_selection"
+STEP_SLOT_SELECTION = "slot_selection"
+STEP_CUSTOMER_DATA = "customer_data"
+STEP_CONFIRMATION = "confirmation"
+STEP_COMPLETED = "completed"
 
-# ============================================================================
-# Sub-step system prompts
-# ============================================================================
+# Ordered sequence of steps
+_STEP_ORDER = [
+    STEP_SERVICE_SELECTION,
+    STEP_STYLIST_SELECTION,
+    STEP_SLOT_SELECTION,
+    STEP_CUSTOMER_DATA,
+    STEP_CONFIRMATION,
+    STEP_COMPLETED,
+]
 
-_BOOKING_BASE = """Eres Maite, asistenta virtual de Atrévete Peluquería en Alcobendas.
+# ── System prompts per step ───────────────────────────────────────────────────
 
-## Reglas críticas
-- **NO narres acciones**: Llama herramientas silenciosamente, responde con los datos.
-- Mensajes concisos: 2-4 frases, máximo 150 palabras.
-- Español natural y conversacional, tono cálido (tú), emojis: 1-2 máximo.
-- Formato WhatsApp: *negrita*, listas numeradas para opciones.
+_SYSTEM_SERVICE_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
+El cliente quiere reservar una cita. Ayúdale a elegir el servicio.
+- Usa query_info para mostrar categorías de servicios disponibles.
+- Usa search_services si el cliente menciona un servicio específico.
+- Sé concisa (2-4 frases). No preguntes por fecha ni estilista todavía.
+- Una vez el cliente elija un servicio, confírmalo."""
 
-"""
+_SYSTEM_STYLIST_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
+El cliente ya eligió el servicio: {service_name}.
+Ahora debe elegir una estilista o indicar que no tiene preferencia.
+- Usa list_stylists para mostrar las estilistas disponibles.
+- Sé concisa. Pregunta si tiene preferencia o si cualquiera está bien."""
 
-_STEP_SERVICE_SELECTION = _BOOKING_BASE + """## Paso actual: Selección de servicio
+_SYSTEM_SLOT_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
+Servicio: {service_name} | Estilista: {stylist_name}
+Ahora el cliente debe elegir fecha y hora.
+- Usa find_next_available para mostrar los próximos huecos disponibles.
+- Usa check_availability si el cliente pide una fecha específica.
+- Sé concisa. Muestra máximo 5 opciones."""
 
-El cliente quiere reservar una cita. Necesitas averiguar qué servicio desea.
+_SYSTEM_CUSTOMER_DATA = """Eres Maite, asistenta de Atrévete Peluquería.
+Necesitamos el nombre del cliente para la reserva.
+Servicio: {service_name} | Estilista: {stylist_name} | Fecha: {slot_summary}
+Pide amablemente:
+1. Nombre (obligatorio)
+2. Alguna nota especial para la cita (opcional)
+No uses herramientas. Solo conversa."""
 
-Si ya mencionó un servicio → usa `search_services(query="...")` para confirmarlo y encontrar el servicio exacto.
-Si no mencionó servicio → pregunta educadamente qué servicio le interesa.
+_SYSTEM_CONFIRMATION = """Eres Maite, asistenta de Atrévete Peluquería.
+Muestra el resumen de la reserva y pide confirmación:
 
-Muestra máximo 5 opciones. Cuando el cliente confirme el servicio, indica que pasamos al siguiente paso.
+📋 Resumen:
+- Servicio: {service_name}
+- Estilista: {stylist_name}
+- Fecha/Hora: {slot_summary}
+- Nombre: {first_name}
+{notes_line}
 
-**Servicios mixtos PROHIBIDOS**: No agendar peluquería + estética en la misma cita.
-"""
+¿Confirmas la reserva? (Sí/No)"""
 
-_STEP_STYLIST_SELECTION = _BOOKING_BASE + """## Paso actual: Selección de estilista
+_SYSTEM_COMPLETED = """Eres Maite, asistenta de Atrévete Peluquería.
+La reserva ha sido creada exitosamente. Informa al cliente con entusiasmo.
+Detalles: {booking_details}
+Despídete amablemente y pregunta si necesita algo más."""
 
-El cliente ha elegido: {service_name}
-Categoría del servicio: {service_category}
-
-Usa `list_stylists(category="{service_category}")` para mostrar los estilistas disponibles.
-Pregunta con quién prefiere o si no tiene preferencia (cualquier estilista disponible).
-
-Muestra las opciones con número para que el cliente pueda elegir fácilmente.
-"""
-
-_STEP_SLOT_SELECTION = _BOOKING_BASE + """## Paso actual: Selección de horario
-
-Cliente: {customer_name_or_cliente}
-Servicio: {service_name}
-Estilista: {stylist_name} (ID: {stylist_id})
-
-Usa `find_next_available(service_category="{service_category}", stylist_id="{stylist_id}")` para mostrar disponibilidad.
-Si el cliente prefiere una fecha concreta → usa `check_availability(service_category="{service_category}", date="...", stylist_id="{stylist_id}")`.
-
-Muestra los slots con número (1., 2., 3.) para que el cliente pueda elegir.
-Cuando el cliente elija un slot, confirma el horario y avanza al siguiente paso.
-"""
-
-_STEP_CUSTOMER_DATA = _BOOKING_BASE + """## Paso actual: Datos del cliente
-
-Servicio: {service_name}
-Estilista: {stylist_name}
-Horario: {slot_time} del {slot_date}
-
-Necesito el nombre para la reserva. El cliente se llama {customer_name_or_cliente}.
-Pregunta:
-1. Nombre completo para la reserva (primer nombre + apellidos si los tiene)
-2. ¿Alguna nota especial? (alergias, preferencias, solicitudes especiales — opcional)
-
-Si ya tenemos el nombre del cliente, confirma si es el que quiere usar para la reserva.
-"""
-
-_STEP_CONFIRMATION = _BOOKING_BASE + """## Paso actual: Confirmación
-
-Muestra el resumen de la cita y pide confirmación:
-
-- **Servicio**: {service_name}
-- **Estilista**: {stylist_name}
-- **Fecha y hora**: {slot_time} del {slot_date}
-- **Nombre en la reserva**: {booking_first_name} {booking_last_name}
-- **Notas**: {booking_notes}
-
-Pregunta: "¿Confirmas la reserva con estos datos?" (sí/no)
-"""
-
-# Maximum tool iterations per step
-_MAX_TOOL_ITERATIONS = 5
+_SYSTEM_ERROR = """Eres Maite, asistenta de Atrévete Peluquería.
+Ha habido un problema al crear la reserva. Disculpa al cliente y ofrece alternativas:
+1. Intentar de nuevo
+2. Contactar con el equipo directamente
+Sé empática y concisa."""
 
 
 class BookingMode(BaseModeNode):
     """
-    Mode node for the BOOKING conversation flow.
+    Mode node for the full booking flow.
 
-    Manages a multi-step booking process via mode_context["booking_step"].
-    The LLM handles responses within each step; BookingMode tracks progression.
-
-    mode_context keys used:
-        booking_step: str — current sub-step
-        service_name: str — selected service name
-        service_category: str — "Peluquería" or "Estética"
-        stylist_id: str — selected stylist UUID
-        stylist_name: str — selected stylist name
-        slot_time: str — selected slot time (HH:MM)
-        slot_date: str — selected slot date (YYYY-MM-DD)
-        slot_full_datetime: str — ISO 8601 datetime for book() call
-        booking_first_name: str — name to use for the booking
-        booking_last_name: str — last name (optional)
-        booking_notes: str — special requests (optional)
-        pending_cancel: bool — user said "no" at confirmation step
+    Sub-steps progress from service_selection through to completed.
+    State is stored in mode_context dict (reset on mode transitions).
     """
 
     @property
     def mode_name(self) -> str:
         return "BOOKING"
 
-    async def handle(
-        self,
-        state: ConversationState,
-        intent: IntentResult,
-    ) -> dict:
+    async def handle(self, state: ConversationState, intent: object) -> dict:
         """
-        Process a turn in BOOKING mode.
+        Handle the current booking sub-step.
 
-        Dispatches to the appropriate sub-step handler based on
-        mode_context["booking_step"]. Handles cancel/escalate intents at any step.
+        Determines which step we're on, handles cancel/escalate intents early,
+        then runs the appropriate agentic loop for the current step.
+
+        Cancel/escalate rules:
+        - intent=escalate → always transition to ESCALATION
+        - intent=cancel → always go directly to GENERAL (no confirmation)
+        - intent=reject at service_selection (first step) → go to GENERAL (no confirmation)
+        - intent=reject at any other step (with no pending_cancel) → ask confirmation, set pending_cancel=True
+        - intent=reject when pending_cancel=True (confirmed cancellation) → go to GENERAL
 
         Args:
-            state: Current ConversationState (read-only).
-            intent: Classified intent from IntentRouter.
+            state: Current conversation state
+            intent: IntentResult from router (used for cancel/confirm detection)
 
         Returns:
-            Partial state update dict for LangGraph reducers.
+            Partial state update dict
         """
-        conversation_id = state.get("conversation_id", "unknown")
-        mode_context = state.get("mode_context") or {}
-        booking_step = mode_context.get("booking_step", "service_selection")
-        customer_name = state.get("customer_name")
+        from agent.state.schemas import transition_mode
 
-        logger.info(
-            "BookingMode.handle | conversation_id=%s | step=%s | intent=%s",
-            conversation_id,
-            booking_step,
-            intent.intent,
-        )
-
-        # ── Handle escalation at any step ──────────────────────────────────────
-        if intent.intent == "escalate":
-            logger.info(
-                "BookingMode: escalate intent, transitioning to ESCALATION | "
-                "conversation_id=%s | step=%s",
-                conversation_id,
-                booking_step,
-            )
-            return transition_mode(state, "ESCALATION")
-
-        # ── Handle cancel/reject at any step ───────────────────────────────────
-        if intent.intent in ("cancel", "reject"):
-            return await self._handle_cancel(state, intent, booking_step)
-
-        # ── Dispatch to sub-step handler ───────────────────────────────────────
-        step_handlers = {
-            "service_selection": self._step_service_selection,
-            "stylist_selection": self._step_stylist_selection,
-            "slot_selection": self._step_slot_selection,
-            "customer_data": self._step_customer_data,
-            "confirmation": self._step_confirmation,
-            "completed": self._step_completed,
-        }
-
-        handler = step_handlers.get(booking_step, self._step_service_selection)
-        return await handler(state, intent)
-
-    # ==========================================================================
-    # Sub-step handlers
-    # ==========================================================================
-
-    async def _step_service_selection(
-        self, state: ConversationState, intent: IntentResult
-    ) -> dict:
-        """
-        Step 1: Help customer select a service.
-        LLM uses search_services / query_info to find the right service.
-        Transitions to stylist_selection when service is chosen.
-        """
-        customer_name = state.get("customer_name")
-        conversation_id = state.get("conversation_id", "unknown")
-
-        system_prompt = _STEP_SERVICE_SELECTION
-        if customer_name:
-            system_prompt = f"El cliente se llama: {customer_name}\n\n" + system_prompt
-
-        tools = [query_info, search_services]
-        response_text = await self._run_agentic_loop(
-            state, tools, system_prompt, conversation_id
-        )
-
-        if not response_text:
-            response_text = "¿Qué servicio te gustaría hoy? Puedo mostrarte nuestro catálogo. 😊"
-
-        # Extract service info from context if present
-        # The LLM response will have guided the user to select a service.
-        # We check if the user message contains a service selection signal.
-        user_message = state.get("user_message") or ""
-        mode_context = state.get("mode_context") or {}
-
-        # Check if we should advance to next step
-        # We advance when the LLM response doesn't ask a question (implies selection made)
-        # This is a heuristic — in practice the orchestrator will call handle() again
-        # and the LLM will have updated mode_context via the conversation context.
-        return {
-            **add_message(state, "assistant", response_text),
-            "mode_context": {"booking_step": "service_selection"},
-        }
-
-    async def _step_stylist_selection(
-        self, state: ConversationState, intent: IntentResult
-    ) -> dict:
-        """
-        Step 2: Help customer select a stylist (or choose any available).
-        """
         conversation_id = state.get("conversation_id", "unknown")
         mode_context = state.get("mode_context") or {}
 
-        service_name = mode_context.get("service_name", "el servicio seleccionado")
-        service_category = mode_context.get("service_category", "Peluquería")
+        current_step = self._determine_step(mode_context)
+        intent_signal = getattr(intent, "intent", "") if intent else ""
 
-        system_prompt = _STEP_STYLIST_SELECTION.format(
-            service_name=service_name,
-            service_category=service_category,
-        )
-
-        tools = [list_stylists]
-        response_text = await self._run_agentic_loop(
-            state, tools, system_prompt, conversation_id
-        )
-
-        if not response_text:
-            response_text = "¿Con qué estilista prefieres la cita? Puedo mostrarte las opciones disponibles."
-
-        return add_message(state, "assistant", response_text)
-
-    async def _step_slot_selection(
-        self, state: ConversationState, intent: IntentResult
-    ) -> dict:
-        """
-        Step 3: Show available slots for the selected stylist and service.
-        """
-        conversation_id = state.get("conversation_id", "unknown")
-        mode_context = state.get("mode_context") or {}
-        customer_name = state.get("customer_name")
-
-        service_name = mode_context.get("service_name", "el servicio")
-        service_category = mode_context.get("service_category", "Peluquería")
-        stylist_id = mode_context.get("stylist_id", "")
-        stylist_name = mode_context.get("stylist_name", "cualquier estilista")
-
-        system_prompt = _STEP_SLOT_SELECTION.format(
-            customer_name_or_cliente=customer_name or "el cliente",
-            service_name=service_name,
-            service_category=service_category,
-            stylist_id=stylist_id,
-            stylist_name=stylist_name,
-        )
-
-        tools = [check_availability, find_next_available]
-        response_text = await self._run_agentic_loop(
-            state, tools, system_prompt, conversation_id
-        )
-
-        if not response_text:
-            response_text = "Buscando disponibilidad... ¿Tienes alguna fecha o franja horaria preferida?"
-
-        return add_message(state, "assistant", response_text)
-
-    async def _step_customer_data(
-        self, state: ConversationState, intent: IntentResult
-    ) -> dict:
-        """
-        Step 4: Collect booking name and optional notes.
-        The customer's name from state is pre-filled as default.
-        """
-        conversation_id = state.get("conversation_id", "unknown")
-        mode_context = state.get("mode_context") or {}
-        customer_name = state.get("customer_name")
-
-        service_name = mode_context.get("service_name", "el servicio")
-        stylist_name = mode_context.get("stylist_name", "el estilista")
-        slot_time = mode_context.get("slot_time", "la hora seleccionada")
-        slot_date = mode_context.get("slot_date", "la fecha seleccionada")
-
-        system_prompt = _STEP_CUSTOMER_DATA.format(
-            service_name=service_name,
-            stylist_name=stylist_name,
-            slot_time=slot_time,
-            slot_date=slot_date,
-            customer_name_or_cliente=customer_name or "el cliente",
-        )
-
-        # No tools needed in this step — purely conversational
-        tools: list = []
-        response_text = await self._run_agentic_loop(
-            state, tools, system_prompt, conversation_id
-        )
-
-        if not response_text:
-            name_hint = customer_name or "tu nombre"
-            response_text = (
-                f"¿A qué nombre agendamos la cita? "
-                f"{'Tu nombre registrado es ' + customer_name + '. ¿Lo usamos?' if customer_name else '¿Me dices tu nombre completo?'}"
-            )
-
-        return add_message(state, "assistant", response_text)
-
-    async def _step_confirmation(
-        self, state: ConversationState, intent: IntentResult
-    ) -> dict:
-        """
-        Step 5: Show booking summary and ask for confirmation.
-        If user confirms → advance to completed.
-        If user rejects → offer to restart or cancel.
-        """
-        conversation_id = state.get("conversation_id", "unknown")
-        mode_context = state.get("mode_context") or {}
-
-        service_name = mode_context.get("service_name", "servicio")
-        stylist_name = mode_context.get("stylist_name", "estilista")
-        slot_time = mode_context.get("slot_time", "")
-        slot_date = mode_context.get("slot_date", "")
-        booking_first_name = mode_context.get("booking_first_name", "")
-        booking_last_name = mode_context.get("booking_last_name", "") or ""
-        booking_notes = mode_context.get("booking_notes", "") or "Ninguna"
-
-        # Check if user confirmed (intent=confirm)
-        if intent.intent == "confirm":
-            logger.info(
-                "BookingMode._step_confirmation: user confirmed, advancing to completed | "
-                "conversation_id=%s",
-                conversation_id,
-            )
-            return {
-                "mode_context": {"booking_step": "completed"},
-            }
-
-        # Show confirmation summary
-        system_prompt = _STEP_CONFIRMATION.format(
-            service_name=service_name,
-            stylist_name=stylist_name,
-            slot_time=slot_time,
-            slot_date=slot_date,
-            booking_first_name=booking_first_name,
-            booking_last_name=booking_last_name,
-            booking_notes=booking_notes,
-        )
-
-        tools: list = []
-        response_text = await self._run_agentic_loop(
-            state, tools, system_prompt, conversation_id
-        )
-
-        if not response_text:
-            response_text = (
-                f"Resumen de tu cita:\n"
-                f"- *Servicio*: {service_name}\n"
-                f"- *Estilista*: {stylist_name}\n"
-                f"- *Fecha y hora*: {slot_time} del {slot_date}\n"
-                f"- *Nombre*: {booking_first_name} {booking_last_name}\n\n"
-                f"¿Confirmas la reserva? 😊"
-            )
-
-        return add_message(state, "assistant", response_text)
-
-    async def _step_completed(
-        self, state: ConversationState, intent: IntentResult
-    ) -> dict:
-        """
-        Step 6: Execute the booking by calling book() tool directly.
-        On success → transition to GENERAL.
-        On failure → show error, offer to retry or escalate.
-        """
-        conversation_id = state.get("conversation_id", "unknown")
-        mode_context = state.get("mode_context") or {}
-        customer_id = state.get("customer_id")
-
-        logger.info(
-            "BookingMode._step_completed: executing book() | conversation_id=%s",
-            conversation_id,
-        )
-
-        # Validate required booking data
-        required_fields = [
-            "service_name", "stylist_id", "slot_full_datetime", "booking_first_name"
-        ]
-        missing = [f for f in required_fields if not mode_context.get(f)]
-
-        if missing:
-            logger.error(
-                "BookingMode._step_completed: missing required fields | "
-                "conversation_id=%s | missing=%s",
-                conversation_id,
-                missing,
-            )
-            # Something went wrong — we're missing booking data. Go back to service selection.
-            response = (
-                "Lo siento, hubo un problema con los datos de la reserva. "
-                "Vamos a empezar de nuevo. ¿Qué servicio te gustaría reservar?"
-            )
-            return {
-                **add_message(state, "assistant", response),
-                "mode_context": {"booking_step": "service_selection"},
-            }
-
-        if not customer_id:
-            logger.error(
-                "BookingMode._step_completed: customer_id missing | conversation_id=%s",
-                conversation_id,
-            )
-            response = (
-                "Lo siento, no pude encontrar tu perfil de cliente. "
-                "¿Puedo conectarte con el equipo para ayudarte? 💕"
-            )
-            return {
-                **add_message(state, "assistant", response),
-                **transition_mode(state, "ESCALATION"),
-            }
-
-        # Call book() tool directly (not via LLM agent loop)
-        try:
-            book_args = {
-                "customer_id": customer_id,
-                "first_name": mode_context["booking_first_name"],
-                "last_name": mode_context.get("booking_last_name") or None,
-                "notes": mode_context.get("booking_notes") or None,
-                "services": [mode_context["service_name"]],
-                "stylist_id": mode_context["stylist_id"],
-                "start_time": mode_context["slot_full_datetime"],
-                "conversation_id": conversation_id,
-            }
-
-            logger.info(
-                "BookingMode._step_completed: calling book() | conversation_id=%s | args=%s",
-                conversation_id,
-                {k: v for k, v in book_args.items() if k != "customer_id"},
-            )
-
-            result = await book.ainvoke(book_args)
-
-            if result.get("success"):
-                appointment_id = result.get("appointment_id", "")
-                response = (
-                    f"¡Perfecto! Tu cita ha sido confirmada. 🌸\n\n"
-                    f"- *Servicio*: {mode_context.get('service_name')}\n"
-                    f"- *Estilista*: {mode_context.get('stylist_name')}\n"
-                    f"- *Fecha y hora*: {mode_context.get('slot_time')} del {mode_context.get('slot_date')}\n\n"
-                    f"¡Hasta pronto! 😊 ¿Hay algo más en lo que pueda ayudarte?"
-                )
-                logger.info(
-                    "BookingMode._step_completed: booking successful | "
-                    "conversation_id=%s | appointment_id=%s",
-                    conversation_id,
-                    appointment_id,
-                )
-
-                msg_update = add_message(state, "assistant", response)
-                # Transition to GENERAL, clear booking context
-                transition = transition_mode(state, "GENERAL", {})
-                return {**transition, **msg_update}
-
-            else:
-                # Booking failed
-                error_code = result.get("error_code", "UNKNOWN")
-                error_message = result.get("error_message", "Error desconocido")
-                logger.warning(
-                    "BookingMode._step_completed: booking failed | "
-                    "conversation_id=%s | error_code=%s | error_message=%s",
-                    conversation_id,
-                    error_code,
-                    error_message,
-                )
-
-                if error_code == "AMBIGUOUS_SERVICE":
-                    # Ask user to clarify service
-                    options = result.get("details", {}).get("options", [])
-                    options_text = "\n".join(
-                        f"{i+1}. {opt['name']} ({opt.get('duration_minutes', '?')} min)"
-                        for i, opt in enumerate(options[:5])
-                    )
-                    response = (
-                        f"El servicio '{mode_context.get('service_name')}' puede ser varios. "
-                        f"¿Cuál de estos quieres?\n{options_text}"
-                    )
-                    return {
-                        **add_message(state, "assistant", response),
-                        "mode_context": {"booking_step": "service_selection"},
-                    }
-
-                elif error_code == "SLOT_TAKEN":
-                    response = (
-                        "Lo siento, ese horario ya no está disponible 😔. "
-                        "¿Te busco otro horario?"
-                    )
-                    return {
-                        **add_message(state, "assistant", response),
-                        "mode_context": {"booking_step": "slot_selection"},
-                    }
-
-                else:
-                    response = (
-                        f"Lo siento, no pude completar la reserva: {error_message} "
-                        "¿Te conecto con el equipo para ayudarte? 💕"
-                    )
-                    return {
-                        **add_message(state, "assistant", response),
-                        **transition_mode(state, "ESCALATION"),
-                    }
-
-        except Exception as exc:
-            logger.error(
-                "BookingMode._step_completed: book() raised exception | "
-                "conversation_id=%s | error=%s",
-                conversation_id,
-                exc,
-                exc_info=True,
-            )
-            response = (
-                "Lo siento, tuve un problema técnico al procesar la reserva. "
-                "Te conecto con el equipo para ayudarte. 💕"
-            )
-            return {
-                **add_message(state, "assistant", response),
-                **transition_mode(state, "ESCALATION"),
-            }
-
-    async def _handle_cancel(
-        self,
-        state: ConversationState,
-        intent: IntentResult,
-        current_step: str,
-    ) -> dict:
-        """
-        Handle cancel/reject intent at any booking step.
-
-        - At "service_selection" (first step): user didn't want to book → go to GENERAL
-        - At any other step: confirm with user if they want to cancel the booking in progress
-        - If confirmed cancel → clear booking context, go to GENERAL
-        """
-        conversation_id = state.get("conversation_id", "unknown")
-        mode_context = state.get("mode_context") or {}
-        pending_cancel = mode_context.get("pending_cancel", False)
-
-        logger.info(
-            "BookingMode._handle_cancel | conversation_id=%s | step=%s | "
-            "intent=%s | pending_cancel=%s",
+        self.logger.info(
+            "BookingMode.handle | conversation=%s | step=%s | intent=%s | context_keys=%s",
             conversation_id,
             current_step,
-            intent.intent,
-            pending_cancel,
+            intent_signal,
+            list(mode_context.keys()),
         )
 
-        # If at the very first step, just go to GENERAL without asking
-        if current_step == "service_selection":
-            response = "De acuerdo, cuando quieras reservar una cita, dímelo. 😊 ¿En qué más puedo ayudarte?"
+        # ── Early exit: escalate intent → always ESCALATION ────────────────
+        if intent_signal == "escalate":
+            self.logger.info("BookingMode: escalate intent → transitioning to ESCALATION")
             return {
-                **add_message(state, "assistant", response),
-                **transition_mode(state, "GENERAL"),
+                **transition_mode(state, "ESCALATION"),
+                "last_node": "booking",
+                "user_message": None,
             }
 
-        # If cancel was already pending (user confirmed), clear and go to GENERAL
-        if pending_cancel or intent.intent == "cancel":
-            response = (
-                "Entendido, he cancelado el proceso de reserva. "
-                "Cuando quieras, volvemos a empezar. 😊 ¿En qué más puedo ayudarte?"
-            )
+        # ── Early exit: cancel/reject handling ─────────────────────────────
+        pending_cancel = mode_context.get("pending_cancel", False)
+
+        if intent_signal == "cancel":
+            # 'cancel' always goes directly to GENERAL (no confirmation dialog)
+            self.logger.info("BookingMode: cancel intent → transitioning to GENERAL")
             return {
-                **add_message(state, "assistant", response),
                 **transition_mode(state, "GENERAL"),
+                **add_message(state, "assistant", "De acuerdo, he cancelado la reserva. ¿En qué más puedo ayudarte?"),
+                "last_node": "booking",
+                "user_message": None,
             }
 
-        # First rejection at a non-first step → ask for confirmation
-        response = "¿Seguro que quieres cancelar la reserva? Responde *sí* para confirmar o *no* para continuar."
-        return {
-            **add_message(state, "assistant", response),
-            "mode_context": {"pending_cancel": True},
+        if intent_signal == "reject":
+            if current_step == STEP_SERVICE_SELECTION or pending_cancel:
+                # At the first step OR confirmed cancellation → go to GENERAL directly
+                self.logger.info(
+                    "BookingMode: reject intent (step=%s, pending_cancel=%s) → GENERAL",
+                    current_step, pending_cancel,
+                )
+                return {
+                    **transition_mode(state, "GENERAL"),
+                    **add_message(state, "assistant", "De acuerdo, he cancelado la reserva. ¿En qué más puedo ayudarte?"),
+                    "last_node": "booking",
+                    "user_message": None,
+                }
+            else:
+                # At a non-initial step with no pending confirmation → ask to confirm
+                self.logger.info("BookingMode: reject intent at mid-step → asking confirmation")
+                updated_context = {**mode_context, "last_intent": intent_signal, "pending_cancel": True}
+                return {
+                    **add_message(state, "assistant", "¿Seguro que quieres cancelar la reserva? Responde 'no' para cancelar o continúa con la reserva."),
+                    "mode_context": updated_context,
+                    "last_node": "booking",
+                    "user_message": None,
+                }
+
+        # Store intent signal in mode_context for confirmation step
+        mode_context = {**mode_context, "last_intent": str(intent_signal)}
+
+        # Dispatch to step handler
+        handler_map = {
+            STEP_SERVICE_SELECTION: self._handle_service_selection,
+            STEP_STYLIST_SELECTION: self._handle_stylist_selection,
+            STEP_SLOT_SELECTION: self._handle_slot_selection,
+            STEP_CUSTOMER_DATA: self._handle_customer_data,
+            STEP_CONFIRMATION: self._handle_confirmation,
+            STEP_COMPLETED: self._handle_completed,
         }
 
-    # ==========================================================================
-    # Agentic loop (shared by all sub-steps)
-    # ==========================================================================
+        handler = handler_map.get(current_step, self._handle_service_selection)
+        return await handler(state, mode_context)
 
-    async def _run_agentic_loop(
-        self,
-        state: ConversationState,
-        tools: list,
-        system_prompt: str,
-        conversation_id: str,
-    ) -> str:
+    # ── Step handlers ─────────────────────────────────────────────────────────
+
+    async def _handle_service_selection(
+        self, state: ConversationState, mode_context: dict
+    ) -> dict:
+        """Step 1: Help customer select a service."""
+        from agent.tools.info_tools import query_info
+        from agent.tools.search_services import search_services
+
+        if self._use_optimized_prompts():
+            messages = await self._build_layered_messages(
+                state, mode_context, step_name=STEP_SERVICE_SELECTION
+            )
+        else:
+            messages = self._build_messages(state, _SYSTEM_SERVICE_SELECTION)
+        result = await self._run_agentic_loop(
+            messages, tools=[query_info, search_services]
+        )
+
+        # Check if a service was identified
+        next_step, updated_context = self._advance_step(
+            result, STEP_SERVICE_SELECTION, mode_context
+        )
+
+        return {
+            **add_message(state, "assistant", result.response_text),
+            "mode_context": {**updated_context, "booking_step": next_step},
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+    async def _handle_stylist_selection(
+        self, state: ConversationState, mode_context: dict
+    ) -> dict:
+        """Step 2: Help customer select a stylist."""
+        from agent.tools.info_tools import list_stylists
+
+        service_name = mode_context.get("service_name", "el servicio solicitado")
+
+        if self._use_optimized_prompts():
+            messages = await self._build_layered_messages(
+                state, mode_context, step_name=STEP_STYLIST_SELECTION
+            )
+        else:
+            system = _SYSTEM_STYLIST_SELECTION.format(service_name=service_name)
+            messages = self._build_messages(state, system)
+        result = await self._run_agentic_loop(messages, tools=[list_stylists])
+
+        next_step, updated_context = self._advance_step(
+            result, STEP_STYLIST_SELECTION, mode_context
+        )
+
+        return {
+            **add_message(state, "assistant", result.response_text),
+            "mode_context": {**updated_context, "booking_step": next_step},
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+    async def _handle_slot_selection(
+        self, state: ConversationState, mode_context: dict
+    ) -> dict:
+        """Step 3: Help customer select a date/time slot."""
+        from agent.tools.availability_tools import check_availability, find_next_available
+
+        if self._use_optimized_prompts():
+            messages = await self._build_layered_messages(
+                state, mode_context, step_name=STEP_SLOT_SELECTION
+            )
+        else:
+            service_name = mode_context.get("service_name", "el servicio")
+            stylist_name = mode_context.get("stylist_name", "cualquier estilista")
+            system = _SYSTEM_SLOT_SELECTION.format(
+                service_name=service_name,
+                stylist_name=stylist_name,
+            )
+            messages = self._build_messages(state, system)
+        result = await self._run_agentic_loop(
+            messages, tools=[check_availability, find_next_available]
+        )
+
+        next_step, updated_context = self._advance_step(
+            result, STEP_SLOT_SELECTION, mode_context
+        )
+
+        return {
+            **add_message(state, "assistant", result.response_text),
+            "mode_context": {**updated_context, "booking_step": next_step},
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+    async def _handle_customer_data(
+        self, state: ConversationState, mode_context: dict
+    ) -> dict:
+        """Step 4: Collect customer name and optional notes."""
+        if self._use_optimized_prompts():
+            messages = await self._build_layered_messages(
+                state, mode_context, step_name=STEP_CUSTOMER_DATA
+            )
+        else:
+            service_name = mode_context.get("service_name", "el servicio")
+            stylist_name = mode_context.get("stylist_name", "la estilista")
+            slot_summary = mode_context.get("slot_summary", "la fecha seleccionada")
+            system = _SYSTEM_CUSTOMER_DATA.format(
+                service_name=service_name,
+                stylist_name=stylist_name,
+                slot_summary=slot_summary,
+            )
+            messages = self._build_messages(state, system)
+        result = await self._run_agentic_loop(messages, tools=[])
+
+        # Extract name/notes from latest user message
+        updated_context = self._extract_customer_data(state, mode_context)
+
+        next_step, updated_context = self._advance_step(
+            result, STEP_CUSTOMER_DATA, updated_context
+        )
+
+        return {
+            **add_message(state, "assistant", result.response_text),
+            "mode_context": {**updated_context, "booking_step": next_step},
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+    async def _handle_confirmation(
+        self, state: ConversationState, mode_context: dict
+    ) -> dict:
+        """Step 5: Show booking summary and wait for confirmation."""
+        if self._use_optimized_prompts():
+            messages = await self._build_layered_messages(
+                state, mode_context, step_name=STEP_CONFIRMATION
+            )
+        else:
+            service_name = mode_context.get("service_name", "el servicio")
+            stylist_name = mode_context.get("stylist_name", "la estilista")
+            slot_summary = mode_context.get("slot_summary", "la fecha")
+            first_name = mode_context.get("first_name", "Cliente")
+            notes = mode_context.get("notes", "")
+            notes_line = f"- Notas: {notes}" if notes else ""
+
+            system = _SYSTEM_CONFIRMATION.format(
+                service_name=service_name,
+                stylist_name=stylist_name,
+                slot_summary=slot_summary,
+                first_name=first_name,
+                notes_line=notes_line,
+            )
+            messages = self._build_messages(state, system)
+        result = await self._run_agentic_loop(messages, tools=[])
+
+        next_step, updated_context = self._advance_step(
+            result, STEP_CONFIRMATION, mode_context
+        )
+
+        return {
+            **add_message(state, "assistant", result.response_text),
+            "mode_context": {**updated_context, "booking_step": next_step},
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+    async def _handle_completed(
+        self, state: ConversationState, mode_context: dict
+    ) -> dict:
+        """Step 6: Execute book() tool and confirm booking."""
+        from agent.tools.booking_tools import book
+
+        service_name = mode_context.get("service_name", "")
+        service_id = mode_context.get("service_id")
+        stylist_id = mode_context.get("stylist_id")
+        selected_slot = mode_context.get("selected_slot", {})
+        first_name = mode_context.get("first_name", "")
+        notes = mode_context.get("notes", "")
+        customer_phone = state.get("customer_phone", "")
+
+        booking_result: dict[str, Any] = {}
+        error_text: str | None = None
+
+        try:
+            booking_result = await book.ainvoke({
+                "service_name": service_name,
+                "service_id": service_id,
+                "stylist_id": stylist_id,
+                "start_time": selected_slot.get("start_time", ""),
+                "customer_phone": customer_phone,
+                "first_name": first_name,
+                "notes": notes,
+            })
+
+            if "error" in booking_result:
+                error_text = booking_result["error"]
+        except Exception as exc:
+            self.logger.error(
+                "BookingMode._handle_completed: book() failed: %s", exc
+            )
+            error_text = str(exc)
+
+        if error_text:
+            if self._use_optimized_prompts():
+                messages = await self._build_layered_messages(
+                    state, mode_context, step_name="error"
+                )
+            else:
+                messages = self._build_messages(state, _SYSTEM_ERROR)
+            result = await self._run_agentic_loop(messages, tools=[])
+            return {
+                **add_message(state, "assistant", result.response_text),
+                "mode_context": {**mode_context, "booking_step": STEP_CONFIRMATION},  # go back
+                "last_node": "booking",
+                "user_message": None,
+            }
+
+        # Success
+        if self._use_optimized_prompts():
+            messages = await self._build_layered_messages(
+                state, mode_context, step_name=STEP_COMPLETED
+            )
+        else:
+            booking_details = str(booking_result)
+            system = _SYSTEM_COMPLETED.format(booking_details=booking_details)
+            messages = self._build_messages(state, system)
+        result = await self._run_agentic_loop(messages, tools=[])
+
+        return {
+            **add_message(state, "assistant", result.response_text),
+            "mode_context": {**mode_context, "booking_step": STEP_COMPLETED, "booked": True},
+            "appointment_created": True,
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+    # ── Helper methods ────────────────────────────────────────────────────────
+
+    def _determine_step(self, mode_context: dict) -> str:
         """
-        Run an LLM + tool loop until a final text response is produced.
+        Determine the current booking sub-step from mode_context.
 
-        Similar to GeneralMode's agentic loop but uses the step-specific
-        system prompt and the booking mode's tool set.
+        Returns the booking_step value or defaults to service_selection.
+        """
+        step = mode_context.get("booking_step", STEP_SERVICE_SELECTION)
+        if step not in _STEP_ORDER:
+            self.logger.warning(
+                "BookingMode: unknown step %r, defaulting to service_selection", step
+            )
+            return STEP_SERVICE_SELECTION
+        return step
 
-        Args:
-            state: Current conversation state.
-            tools: Tools available for this sub-step.
-            system_prompt: Step-specific system prompt.
-            conversation_id: For logging.
+    def _advance_step(
+        self,
+        result: AgenticLoopResult,
+        current_step: str,
+        mode_context: dict,
+    ) -> tuple[str, dict]:
+        """
+        Decide whether to advance to the next step based on what was collected.
+
+        Conservative rules — only advance when we have clear evidence:
+        - service_selection → stylist_selection: service_name in mode_context
+        - stylist_selection → slot_selection: stylist_id in mode_context
+        - slot_selection → customer_data: selected_slot in mode_context
+        - customer_data → confirmation: first_name in mode_context
+        - confirmation → completed: last_intent is "confirm"
+        - completed → completed (terminal state)
+
+        Also extracts service/stylist info from tool results when available.
 
         Returns:
-            Final assistant response text (may be empty on critical failure).
+            Tuple of (next_step, updated_mode_context)
         """
-        tool_map: dict[str, Any] = {t.name: t for t in tools}
-        lc_messages = self._build_messages(state, system_prompt)
+        updated_context = dict(mode_context)
+        tool_results = result.tool_results
 
-        for iteration in range(_MAX_TOOL_ITERATIONS):
-            llm_result = await self._call_llm(lc_messages, tools=tools if tools else None)
+        # Extract service from tool results if single result
+        if "search_services" in tool_results:
+            services = tool_results["search_services"]
+            if isinstance(services, list) and len(services) == 1:
+                svc = services[0]
+                updated_context.setdefault("service_name", svc.get("name", ""))
+                updated_context.setdefault("service_id", svc.get("id"))
+                updated_context.setdefault("service_category", svc.get("category", ""))
+            elif isinstance(services, dict) and "name" in services:
+                updated_context.setdefault("service_name", services.get("name", ""))
+                updated_context.setdefault("service_id", services.get("id"))
 
-            if llm_result is None:
-                logger.error(
-                    "BookingMode._run_agentic_loop: LLM returned None | "
-                    "conversation_id=%s | iteration=%d",
-                    conversation_id,
-                    iteration,
-                )
-                return ""
+        # Extract stylist from tool results if single result
+        if "list_stylists" in tool_results:
+            stylists = tool_results["list_stylists"]
+            if isinstance(stylists, list) and len(stylists) == 1:
+                stylist = stylists[0]
+                updated_context.setdefault("stylist_id", str(stylist.get("id", "")))
+                updated_context.setdefault("stylist_name", stylist.get("name", ""))
 
-            tool_calls = getattr(llm_result, "tool_calls", None) or []
-
-            if not tool_calls:
-                response = (
-                    llm_result.content
-                    if hasattr(llm_result, "content")
-                    else str(llm_result)
-                )
-                logger.info(
-                    "BookingMode._run_agentic_loop: final response | "
-                    "conversation_id=%s | iterations=%d | length=%d",
-                    conversation_id,
-                    iteration + 1,
-                    len(response),
-                )
-                return response
-
-            logger.info(
-                "BookingMode._run_agentic_loop: executing %d tool calls | "
-                "conversation_id=%s | iteration=%d",
-                len(tool_calls),
-                conversation_id,
-                iteration,
-            )
-
-            lc_messages.append(llm_result)
-
-            for tool_call in tool_calls:
-                if isinstance(tool_call, dict):
-                    tc_name = tool_call.get("name", "")
-                    tc_args = tool_call.get("args", {})
-                    tc_id = tool_call.get("id", "tool_call_0")
-                else:
-                    tc_name = getattr(tool_call, "name", "")
-                    tc_args = getattr(tool_call, "args", {})
-                    tc_id = getattr(tool_call, "id", "tool_call_0")
-
-                tool_fn = tool_map.get(tc_name)
-                if tool_fn is None:
-                    logger.warning(
-                        "BookingMode: unknown tool '%s' | conversation_id=%s",
-                        tc_name,
-                        conversation_id,
+        # Extract slot from tool results
+        for slot_tool in ("check_availability", "find_next_available"):
+            if slot_tool in tool_results:
+                slots = tool_results[slot_tool]
+                if isinstance(slots, list) and slots:
+                    first_slot = slots[0]
+                    updated_context.setdefault("selected_slot", first_slot)
+                    updated_context.setdefault(
+                        "slot_summary",
+                        first_slot.get("start_time", "fecha seleccionada")
                     )
-                    tool_output = f"(herramienta '{tc_name}' no disponible en este paso)"
-                else:
-                    try:
-                        raw_result = await tool_fn.ainvoke(tc_args)
-                        tool_output = self._format_tool_response(raw_result)
-                    except Exception as exc:
-                        logger.error(
-                            "BookingMode: tool '%s' raised exception | "
-                            "conversation_id=%s | error=%s",
-                            tc_name,
-                            conversation_id,
-                            exc,
-                        )
-                        tool_output = f"(error al ejecutar '{tc_name}')"
+                elif isinstance(slots, dict) and "start_time" in slots:
+                    updated_context.setdefault("selected_slot", slots)
+                    updated_context.setdefault(
+                        "slot_summary",
+                        slots.get("start_time", "fecha seleccionada")
+                    )
 
-                lc_messages.append(
-                    ToolMessage(content=tool_output, tool_call_id=tc_id)
-                )
+        # Apply advancement rules
+        if current_step == STEP_SERVICE_SELECTION:
+            if updated_context.get("service_name"):
+                return STEP_STYLIST_SELECTION, updated_context
 
-        logger.warning(
-            "BookingMode._run_agentic_loop: max iterations (%d) reached | "
-            "conversation_id=%s",
-            _MAX_TOOL_ITERATIONS,
-            conversation_id,
-        )
-        return ""
+        elif current_step == STEP_STYLIST_SELECTION:
+            if updated_context.get("stylist_id"):
+                return STEP_SLOT_SELECTION, updated_context
+
+        elif current_step == STEP_SLOT_SELECTION:
+            if updated_context.get("selected_slot"):
+                return STEP_CUSTOMER_DATA, updated_context
+
+        elif current_step == STEP_CUSTOMER_DATA:
+            # Accept both "first_name" and "booking_first_name" as the name key
+            if updated_context.get("first_name") or updated_context.get("booking_first_name"):
+                return STEP_CONFIRMATION, updated_context
+
+        elif current_step == STEP_CONFIRMATION:
+            last_intent = str(updated_context.get("last_intent", "")).lower()
+            if last_intent in ("confirm", "confirmación", "sí", "si", "yes"):
+                return STEP_COMPLETED, updated_context
+
+        # No advancement — stay at current step
+        return current_step, updated_context
+
+    def _extract_customer_data(
+        self, state: ConversationState, mode_context: dict
+    ) -> dict:
+        """
+        Extract first_name and notes from the most recent user message.
+
+        Simple heuristic: treat the user message as the name if it's short (≤ 4 words)
+        or look for known patterns like "me llamo", "soy", "mi nombre es".
+
+        Returns updated mode_context with first_name and/or notes set.
+        """
+        updated_context = dict(mode_context)
+
+        # Find last user message
+        user_message = ""
+        for msg in reversed(state.get("messages", [])):
+            if msg.get("role") == "user":
+                user_message = msg.get("content", "")
+                break
+        if not user_message:
+            user_message = state.get("user_message") or ""
+
+        if not user_message.strip():
+            return updated_context
+
+        # If we don't have a name yet, try to extract it
+        if not updated_context.get("first_name"):
+            words = user_message.strip().split()
+            filler = {"me", "llamo", "soy", "mi", "nombre", "es", "el", "la"}
+            name_words = [w for w in words if w.lower() not in filler]
+            if name_words and len(name_words) <= 4:
+                candidate = name_words[0].capitalize()
+                if len(candidate) > 1:
+                    updated_context["first_name"] = candidate
+
+        # If name is already set, treat new message as notes
+        elif not updated_context.get("notes") and len(user_message.strip()) > 3:
+            # Ignore simple affirmative/negative words as notes
+            if user_message.strip().lower() not in {"no", "si", "sí", "nada", "ninguna"}:
+                updated_context["notes"] = user_message.strip()
+
+        return updated_context
+
+    def _build_messages(self, state: ConversationState, system_content: str) -> list:
+        """
+        Build a LangChain message list for the LLM call.
+
+        Includes:
+        1. SystemMessage with the step-specific prompt
+        2. Optional conversation summary as context
+        3. Recent 6 messages from history
+        """
+        system = system_content
+        if state.get("conversation_summary"):
+            system += f"\n\nContexto previo:\n{state['conversation_summary']}"
+
+        messages: list = [SystemMessage(content=system)]
+
+        for msg in state.get("messages", [])[-6:]:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content))
+
+        return messages

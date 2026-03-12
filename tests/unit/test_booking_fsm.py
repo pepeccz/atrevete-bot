@@ -1579,7 +1579,7 @@ class TestSlotSelectionSubPhases:
 
         # Transition to SLOT_SELECTION from STYLIST_SELECTION
         fsm._state = BookingState.STYLIST_SELECTION
-        fsm._collected_data["services"] = ["Corte + Peinado (Corto-Medio)"]
+        fsm._collected_data["services"] = ["Cortar", "Peinado"]
         fsm._collected_data["stylist_id"] = "stylist-123"
 
         intent = Intent(
@@ -1611,7 +1611,7 @@ class TestSlotSelectionSubPhases:
 
         # Setup SLOT_SELECTION state with date preference requested
         fsm._state = BookingState.SLOT_SELECTION
-        fsm._collected_data["services"] = ["Corte + Peinado (Corto-Medio)"]
+        fsm._collected_data["services"] = ["Cortar", "Peinado"]
         fsm._collected_data["stylist_id"] = "stylist-123"
         fsm._collected_data["date_preference_requested"] = True
 

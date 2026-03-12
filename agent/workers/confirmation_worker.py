@@ -109,11 +109,6 @@ MONTHS_ES = [
     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
 ]
 
-# Retry configuration for failed confirmation templates
-RETRY_BACKOFF_MINUTES = [30, 120, 360]  # retry 1→30min, 2→2h, 3→6h
-TIME_GUARD_HOURS = 6   # Don't retry if appointment is within 6h
-MAX_RETRIES = 3        # Max retry attempts before permanently failed
-
 
 def signal_handler(signum: int, frame: Any) -> None:
     """
@@ -340,47 +335,23 @@ async def send_confirmations() -> None:
                             f"for appointment {appointment.id}"
                         )
                     else:
-                        # Mark as failed and schedule retry (or escalate immediately if appointment is imminent)
+                        # Mark as failed (confirmation_sent_at already set, won't retry)
                         appointment.notification_failed = True
-                        now_utc = datetime.now(MADRID_TZ)
-                        time_until_appt = (
-                            appointment.start_time.astimezone(MADRID_TZ) - now_utc
-                        ).total_seconds() / 3600
+                        await session.commit()
 
-                        if time_until_appt < TIME_GUARD_HOURS:
-                            # Appointment too soon — skip retry queue, escalate immediately
-                            appointment.retry_count = MAX_RETRIES
-                            appointment.next_retry_at = None
-                            await session.commit()
-                            await create_notification(
-                                session,
-                                NotificationType.CONFIRMATION_PERMANENTLY_FAILED,
-                                f"Confirmación fallida (sin tiempo para reintentos): {customer_name}",
-                                f"No se pudo enviar confirmación para la cita del {fecha} a las {hora}. "
-                                f"La cita es en menos de {TIME_GUARD_HOURS}h. Intervención manual requerida.",
-                                entity_id=appointment.id,
-                            )
-                        else:
-                            # Schedule first retry in 30 minutes
-                            appointment.next_retry_at = now_utc + timedelta(
-                                minutes=RETRY_BACKOFF_MINUTES[0]
-                            )
-                            await session.commit()
-                            await create_notification(
-                                session,
-                                NotificationType.CONFIRMATION_FAILED,
-                                f"Error enviando confirmación a {customer_name} (reintento programado)",
-                                f"No se pudo enviar la confirmación para la cita del {fecha} a las {hora}. "
-                                f"Reintento programado en {RETRY_BACKOFF_MINUTES[0]} minutos.",
-                                entity_id=appointment.id,
-                            )
+                        await create_notification(
+                            session,
+                            NotificationType.CONFIRMATION_FAILED,
+                            f"Error enviando confirmación a {customer_name}",
+                            f"No se pudo enviar la confirmación para la cita "
+                            f"del {fecha} a las {hora}. Revisar manualmente.",
+                            entity_id=appointment.id,
+                        )
                         await session.commit()
 
                         errors += 1
                         logger.error(
-                            f"Failed to send confirmation to {appointment.customer.phone} "
-                            f"(time_until_appt={time_until_appt:.1f}h, "
-                            f"time_guard={'triggered' if time_until_appt < TIME_GUARD_HOURS else 'not triggered'})"
+                            f"Failed to send confirmation to {appointment.customer.phone}"
                         )
 
                 except Exception as e:
@@ -413,184 +384,7 @@ async def send_confirmations() -> None:
 
 
 # =============================================================================
-# Job 2a: Process Confirmation Retries (every loop iteration, every 60s)
-# =============================================================================
-
-async def process_confirmation_retries() -> None:
-    """
-    Retry failed WhatsApp confirmation templates with exponential backoff.
-
-    Runs on every worker loop iteration (every 60s).
-    Picks up appointments where:
-    - notification_failed = True
-    - retry_count < MAX_RETRIES (3)
-    - next_retry_at <= now (backoff window elapsed)
-    - start_time > now + TIME_GUARD_HOURS (enough time to retry)
-    - status in [PENDING, CONFIRMED]
-
-    Backoff schedule: 30min → 2h → 6h (RETRY_BACKOFF_MINUTES).
-    After MAX_RETRIES failures, creates CONFIRMATION_PERMANENTLY_FAILED notification.
-    """
-    now = datetime.now(MADRID_TZ)
-    retry_cutoff = now + timedelta(hours=TIME_GUARD_HOURS)
-    dynamic_settings = await get_dynamic_settings()
-    template_name = dynamic_settings["confirmation_template_name"]
-
-    retried = 0
-    errors = 0
-
-    try:
-        async with get_async_session() as session:
-            result = await session.execute(
-                select(Appointment)
-                .options(
-                    selectinload(Appointment.customer),
-                    selectinload(Appointment.stylist),
-                )
-                .where(
-                    and_(
-                        Appointment.notification_failed == True,
-                        Appointment.retry_count < MAX_RETRIES,
-                        Appointment.next_retry_at <= now,
-                        Appointment.start_time > retry_cutoff,
-                        Appointment.status.in_([
-                            AppointmentStatus.PENDING,
-                            AppointmentStatus.CONFIRMED,
-                        ]),
-                    )
-                )
-            )
-            appointments = list(result.scalars().all())
-
-            if not appointments:
-                return
-
-            logger.info(
-                f"process_confirmation_retries: found {len(appointments)} eligible appointments"
-            )
-
-            chatwoot = ChatwootClient()
-
-            for appointment in appointments:
-                try:
-                    services = await get_services_by_ids(session, appointment.service_ids)
-                    service_names = ", ".join([s.name for s in services])
-                    appt_time = appointment.start_time.astimezone(MADRID_TZ)
-                    fecha = format_date_spanish(appt_time)
-                    hora = appt_time.strftime("%H:%M")
-                    auto_cancel_hours = dynamic_settings["auto_cancel_hours_before"]
-                    deadline = appt_time - timedelta(hours=auto_cancel_hours)
-                    deadline_str = format_datetime_spanish(deadline)
-                    customer_name = (
-                        appointment.customer.first_name
-                        or appointment.first_name
-                        or "Cliente"
-                    )
-
-                    # Increment retry_count and set next_retry_at BEFORE API call
-                    # This is the anti-duplicate guard: if the process crashes mid-send,
-                    # retry_count is already committed so we won't re-attempt immediately.
-                    current_retry = appointment.retry_count + 1
-                    appointment.retry_count = current_retry
-                    if current_retry < MAX_RETRIES:
-                        appointment.next_retry_at = now + timedelta(
-                            minutes=RETRY_BACKOFF_MINUTES[current_retry]
-                        )
-                    else:
-                        appointment.next_retry_at = None  # No more retries after this attempt
-                    await session.commit()
-
-                    # Attempt the send
-                    body_params = {
-                        "1": customer_name,
-                        "2": fecha,
-                        "3": hora,
-                        "4": appointment.stylist.name,
-                        "5": service_names,
-                        "6": deadline_str,
-                    }
-                    conv_id = None
-                    if appointment.customer.chatwoot_conversation_id:
-                        try:
-                            conv_id = int(appointment.customer.chatwoot_conversation_id)
-                        except (ValueError, TypeError):
-                            pass
-
-                    success = await chatwoot.send_template_message(
-                        customer_phone=appointment.customer.phone,
-                        template_name=template_name,
-                        body_params=body_params,
-                        customer_name=customer_name,
-                        conversation_id=conv_id,
-                        fallback_content=(
-                            f"Recordatorio de cita: {fecha} a las {hora} "
-                            f"con {appointment.stylist.name}. "
-                            f"Responde SÍ para confirmar o NO para cancelar."
-                        ),
-                    )
-
-                    if success:
-                        appointment.notification_failed = False
-                        appointment.next_retry_at = None
-                        await session.commit()
-                        await create_notification(
-                            session,
-                            NotificationType.CONFIRMATION_SENT,
-                            f"Confirmación enviada (reintento {current_retry}): {customer_name}",
-                            f"Reintento {current_retry}/{MAX_RETRIES} exitoso para cita del "
-                            f"{fecha} a las {hora}.",
-                            entity_id=appointment.id,
-                        )
-                        await session.commit()
-                        retried += 1
-                        logger.info(
-                            f"Retry {current_retry}/{MAX_RETRIES} succeeded "
-                            f"for appointment {appointment.id}"
-                        )
-                    else:
-                        # Failed again
-                        if current_retry >= MAX_RETRIES:
-                            # Max retries exhausted — permanently failed, escalate to staff
-                            await create_notification(
-                                session,
-                                NotificationType.CONFIRMATION_PERMANENTLY_FAILED,
-                                f"Confirmación permanentemente fallida: {customer_name}",
-                                f"Se agotaron {MAX_RETRIES} intentos para la cita del {fecha} "
-                                f"a las {hora}. Intervención manual requerida.",
-                                entity_id=appointment.id,
-                            )
-                            await session.commit()
-                            logger.error(
-                                f"Appointment {appointment.id} permanently failed "
-                                f"after {MAX_RETRIES} retries"
-                            )
-                        else:
-                            logger.warning(
-                                f"Retry {current_retry}/{MAX_RETRIES} failed for appointment "
-                                f"{appointment.id}, next retry at "
-                                f"{appointment.next_retry_at.isoformat()}"
-                            )
-                        errors += 1
-
-                except Exception as e:
-                    errors += 1
-                    logger.error(
-                        f"Error processing retry for appointment {appointment.id}: {e}",
-                        exc_info=True,
-                    )
-                    await session.rollback()
-
-    except Exception as e:
-        logger.exception(f"Critical error in process_confirmation_retries: {e}")
-
-    if retried > 0 or errors > 0:
-        logger.info(
-            f"Completed process_confirmation_retries: retried={retried}, errors={errors}"
-        )
-
-
-# =============================================================================
-# Job 2b: Process Auto-Cancellations (24h before, no confirmation)
+# Job 2: Process Auto-Cancellations (24h before, no confirmation)
 # =============================================================================
 
 async def process_auto_cancellations() -> None:
@@ -636,11 +430,6 @@ async def process_auto_cancellations() -> None:
                         Appointment.confirmation_sent_at.is_not(None),
                         Appointment.start_time <= deadline,
                         Appointment.start_time > now,  # Strictly greater - don't cancel appointments in progress
-                        # Guard: do NOT cancel appointments whose confirmation failed but still have retries left
-                        ~and_(
-                            Appointment.notification_failed == True,
-                            Appointment.retry_count < MAX_RETRIES,
-                        ),
                     )
                 )
             )
@@ -1047,26 +836,6 @@ async def async_main() -> None:
 
     # Main loop - check every minute
     while not shutdown_requested:
-        # Heartbeat: write loop timestamp regardless of whether any job runs.
-        # Docker healthcheck checks this file's last_heartbeat field (age < 180s).
-        _health_dir = Path("/tmp/health")
-        _health_dir.mkdir(parents=True, exist_ok=True)
-        _heartbeat_file = _health_dir / "confirmation_worker_health.json"
-        _heartbeat_tmp = _health_dir / f"confirmation_worker_heartbeat.{int(time.time())}.tmp"
-        try:
-            _existing = {}
-            if _heartbeat_file.exists():
-                try:
-                    _existing = json.loads(_heartbeat_file.read_text())
-                except Exception:
-                    pass
-            _existing["last_heartbeat"] = time.time()
-            _existing["status"] = "running"
-            _heartbeat_tmp.write_text(json.dumps(_existing))
-            _heartbeat_tmp.rename(_heartbeat_file)
-        except Exception as _hb_err:
-            logger.warning(f"Failed to write loop heartbeat: {_hb_err}")
-
         now = datetime.now(MADRID_TZ)
         current_time = now.strftime("%H:%M")
         current_date = now.strftime("%Y-%m-%d")
@@ -1086,12 +855,6 @@ async def async_main() -> None:
                 logger.error(f"Error in process_auto_cancellations: {e}", exc_info=True)
 
             last_daily_run = current_date
-
-        # Run retry worker on every loop iteration (every 60s)
-        try:
-            await process_confirmation_retries()
-        except Exception as e:
-            logger.error(f"Error in process_confirmation_retries: {e}", exc_info=True)
 
         # Check if we should run reminders
         # Run if: enough time has passed since last run

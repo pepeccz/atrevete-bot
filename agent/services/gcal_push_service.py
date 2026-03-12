@@ -36,11 +36,11 @@ from typing import Any, Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from sqlalchemy import update
 
+from agent.services.gcal_credential_factory import get_google_credentials
 from database.connection import get_async_session
 from database.models import Appointment, BlockingEvent, Stylist
 from shared.config import get_settings
@@ -118,20 +118,20 @@ EVENT_COLORS = {
 }
 
 
-def _get_calendar_service():
+async def _get_calendar_service():
     """
-    Create a Google Calendar API service instance.
+    Create a Google Calendar API service instance using the credential factory.
+
+    Uses get_google_credentials() which resolves OAuth2 tokens from DB (when
+    configured) or falls back to the service account file. Opens a short-lived
+    AsyncSession to allow the factory to resolve OAuth2 tokens from the database.
 
     Returns:
         Google Calendar service object
     """
-    settings = get_settings()
-
     try:
-        credentials = service_account.Credentials.from_service_account_file(
-            settings.GOOGLE_SERVICE_ACCOUNT_JSON,
-            scopes=["https://www.googleapis.com/auth/calendar"]
-        )
+        async with get_async_session() as session:
+            credentials = await get_google_credentials(session=session)
         return build("calendar", "v3", credentials=credentials)
     except Exception as e:
         logger.error(f"Failed to create Google Calendar service: {e}")
@@ -250,7 +250,7 @@ async def push_appointment_to_gcal(
         }
 
         # Create event in Google Calendar with retry
-        service = _get_calendar_service()
+        service = await _get_calendar_service()
         loop = asyncio.get_event_loop()
 
         # requestId captured once here — stable across all retries (GCal deduplication)
@@ -385,7 +385,7 @@ async def push_blocking_event_to_gcal(
         }
 
         # Create event in Google Calendar
-        service = _get_calendar_service()
+        service = await _get_calendar_service()
 
         # requestId enables GCal native deduplication for blocking events
         blocking_request_id = str(blocking_event_id)
@@ -535,7 +535,7 @@ async def update_appointment_in_gcal(
         }
 
         # Update event in Google Calendar (use patch for partial update)
-        service = _get_calendar_service()
+        service = await _get_calendar_service()
 
         def update_event():
             return service.events().patch(
@@ -642,7 +642,7 @@ async def update_blocking_event_in_gcal(
         }
 
         # Update event in Google Calendar
-        service = _get_calendar_service()
+        service = await _get_calendar_service()
 
         def update_event():
             return service.events().patch(
@@ -705,7 +705,7 @@ async def delete_gcal_event(
             return False
 
         # Delete event from Google Calendar
-        service = _get_calendar_service()
+        service = await _get_calendar_service()
 
         def delete_event():
             service.events().delete(
@@ -776,7 +776,7 @@ async def update_gcal_event_status(
         color_id = EVENT_COLORS.get(new_status, "5")
 
         # Update event in Google Calendar with retry
-        service = _get_calendar_service()
+        service = await _get_calendar_service()
         loop = asyncio.get_event_loop()
 
         async def update_event_with_retry():

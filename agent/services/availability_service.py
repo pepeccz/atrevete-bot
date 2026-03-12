@@ -649,19 +649,6 @@ async def get_calendar_events_for_range(
                 if appt.start_time + timedelta(minutes=appt.duration_minutes) > start_time
             ]
 
-            # Pre-fetch all service names in a single batch query (fixes N+1)
-            all_service_ids = {sid for appt in appointments for sid in (appt.service_ids or [])}
-            service_name_map: dict[UUID, str] = {}
-            if all_service_ids:
-                svc_result = await session.execute(
-                    select(Service.id, Service.name).where(Service.id.in_(all_service_ids))
-                )
-                service_name_map = {row[0]: row[1] for row in svc_result.fetchall()}
-            logger.debug(
-                f"Service batch query: {len(all_service_ids)} unique service IDs loaded in 1 query "
-                f"(was {len(appointments)} queries)"
-            )
-
             for appt in appointments:
                 appt_end = appt.start_time + timedelta(minutes=appt.duration_minutes)
 
@@ -669,12 +656,14 @@ async def get_calendar_events_for_range(
                 start_madrid = appt.start_time.astimezone(MADRID_TZ)
                 end_madrid = appt_end.astimezone(MADRID_TZ)
 
-                # Get service names using pre-fetched batch map (no per-appointment query)
-                # Filter out empty strings to avoid trailing commas for deleted services
-                service_names = ", ".join(
-                    name for sid in (appt.service_ids or [])
-                    if (name := service_name_map.get(sid, ""))
-                )
+                # Get service names for this appointment
+                if appt.service_ids:
+                    service_result = await session.execute(
+                        select(Service.name).where(Service.id.in_(appt.service_ids))
+                    )
+                    service_names = ", ".join([row[0] for row in service_result.fetchall()])
+                else:
+                    service_names = ""
 
                 # Determine emoji based on status
                 if appt.status == AppointmentStatus.PENDING:

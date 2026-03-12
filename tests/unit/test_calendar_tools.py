@@ -300,7 +300,7 @@ class TestGetCalendarAvailability:
         mock_service.events.return_value.list.return_value = mock_events_list
 
         mock_calendar_client = MagicMock()
-        mock_calendar_client.get_service.return_value = mock_service
+        mock_calendar_client.get_service = AsyncMock(return_value=mock_service)
 
         with patch("agent.tools.calendar_tools.get_async_session", side_effect=create_mock_async_session(mock_session)), \
              patch("agent.tools.calendar_tools.get_calendar_client", return_value=mock_calendar_client):
@@ -347,7 +347,7 @@ class TestGetCalendarAvailability:
         mock_service.events.return_value.list.return_value = mock_events_list
 
         mock_calendar_client = MagicMock()
-        mock_calendar_client.get_service.return_value = mock_service
+        mock_calendar_client.get_service = AsyncMock(return_value=mock_service)
 
         with patch("agent.tools.calendar_tools.get_async_session", side_effect=create_mock_async_session(mock_session)), \
              patch("agent.tools.calendar_tools.get_calendar_client", return_value=mock_calendar_client):
@@ -396,7 +396,7 @@ class TestGetCalendarAvailability:
         mock_service.events.return_value.list.return_value = mock_events_list
 
         mock_calendar_client = MagicMock()
-        mock_calendar_client.get_service.return_value = mock_service
+        mock_calendar_client.get_service = AsyncMock(return_value=mock_service)
 
         with patch("agent.tools.calendar_tools.get_async_session", side_effect=create_mock_async_session(mock_session)), \
              patch("agent.tools.calendar_tools.get_calendar_client", return_value=mock_calendar_client):
@@ -436,7 +436,7 @@ class TestGetCalendarAvailability:
         mock_service.events.return_value.list.return_value.execute.side_effect = http_error
 
         mock_calendar_client = MagicMock()
-        mock_calendar_client.get_service.return_value = mock_service
+        mock_calendar_client.get_service = AsyncMock(return_value=mock_service)
 
         with patch("agent.tools.calendar_tools.get_async_session", side_effect=create_mock_async_session(mock_session)), \
              patch("agent.tools.calendar_tools.get_calendar_client", return_value=mock_calendar_client):
@@ -485,7 +485,7 @@ class TestCreateCalendarEvent:
         mock_service.events.return_value.insert.return_value = mock_insert
 
         mock_calendar_client = MagicMock()
-        mock_calendar_client.get_service.return_value = mock_service
+        mock_calendar_client.get_service = AsyncMock(return_value=mock_service)
 
         with patch("agent.tools.calendar_tools.get_async_session", side_effect=create_mock_async_session(mock_session)), \
              patch("agent.tools.calendar_tools.get_calendar_client", return_value=mock_calendar_client):
@@ -539,7 +539,7 @@ class TestCreateCalendarEvent:
         mock_service.events.return_value.insert.return_value = mock_insert
 
         mock_calendar_client = MagicMock()
-        mock_calendar_client.get_service.return_value = mock_service
+        mock_calendar_client.get_service = AsyncMock(return_value=mock_service)
 
         with patch("agent.tools.calendar_tools.get_async_session", side_effect=create_mock_async_session(mock_session)), \
              patch("agent.tools.calendar_tools.get_calendar_client", return_value=mock_calendar_client):
@@ -590,7 +590,7 @@ class TestDeleteCalendarEvent:
         mock_service.events.return_value.delete.return_value = mock_delete
 
         mock_calendar_client = MagicMock()
-        mock_calendar_client.get_service.return_value = mock_service
+        mock_calendar_client.get_service = AsyncMock(return_value=mock_service)
 
         with patch("agent.tools.calendar_tools.get_async_session", side_effect=create_mock_async_session(mock_session)), \
              patch("agent.tools.calendar_tools.get_calendar_client", return_value=mock_calendar_client):
@@ -629,7 +629,7 @@ class TestDeleteCalendarEvent:
         mock_service.events.return_value.delete.return_value.execute.side_effect = http_error
 
         mock_calendar_client = MagicMock()
-        mock_calendar_client.get_service.return_value = mock_service
+        mock_calendar_client.get_service = AsyncMock(return_value=mock_service)
 
         with patch("agent.tools.calendar_tools.get_async_session", side_effect=create_mock_async_session(mock_session)), \
              patch("agent.tools.calendar_tools.get_calendar_client", return_value=mock_calendar_client):
@@ -642,3 +642,145 @@ class TestDeleteCalendarEvent:
 
             # 404 should be treated as success (already deleted)
             assert result["success"] is True
+
+
+# ============================================================================
+# OAuth2 Wiring Tests — CalendarTools.get_service()
+# ============================================================================
+
+
+class TestCalendarToolsOAuthWiring:
+    """
+    Verify that CalendarTools.get_service() correctly wires the credential factory.
+
+    These tests focus on:
+    - session is passed to get_google_credentials (non-None)
+    - no caching: a second call to get_service() creates fresh credentials
+    - the AsyncSession context manager is exited before the service is returned
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_service_passes_session_to_factory(self):
+        """
+        get_service() must open a DB session and pass it (non-None) to
+        get_google_credentials(session=...).
+
+        Arrange:
+        - mock get_async_session to yield a fake AsyncSession
+        - mock get_google_credentials to return fake creds
+        - mock build() to return a fake service
+
+        Assert:
+        - get_google_credentials called once with a non-None session keyword arg
+        """
+        mock_session = AsyncMock()
+        mock_creds = MagicMock(name="FakeCreds")
+        mock_service = MagicMock(name="FakeService")
+
+        with patch(
+            "agent.tools.calendar_tools.get_async_session",
+            side_effect=create_mock_async_session(mock_session),
+        ), patch(
+            "agent.tools.calendar_tools.get_google_credentials",
+            new=AsyncMock(return_value=mock_creds),
+        ) as mock_get_creds, patch(
+            "agent.tools.calendar_tools.build",
+            return_value=mock_service,
+        ):
+            from agent.tools.calendar_tools import CalendarTools
+
+            tools = CalendarTools()
+            result = await tools.get_service()
+
+        mock_get_creds.assert_awaited_once()
+        call_args = mock_get_creds.call_args
+        passed_session = call_args.kwargs.get("session") or (
+            call_args.args[0] if call_args.args else None
+        )
+        assert passed_session is not None, (
+            "get_google_credentials() must receive a non-None session"
+        )
+        assert result is mock_service
+
+    @pytest.mark.asyncio
+    async def test_get_service_no_cache_on_second_call(self):
+        """
+        get_service() must NOT cache credentials between calls.
+        Calling get_service() twice must call get_google_credentials() twice.
+
+        This ensures that each call gets fresh credentials (important for token
+        rotation when OAuth2 access tokens expire).
+        """
+        mock_session = AsyncMock()
+        mock_creds = MagicMock(name="FakeCreds")
+        mock_service = MagicMock(name="FakeService")
+
+        with patch(
+            "agent.tools.calendar_tools.get_async_session",
+            side_effect=create_mock_async_session(mock_session),
+        ), patch(
+            "agent.tools.calendar_tools.get_google_credentials",
+            new=AsyncMock(return_value=mock_creds),
+        ) as mock_get_creds, patch(
+            "agent.tools.calendar_tools.build",
+            return_value=mock_service,
+        ):
+            from agent.tools.calendar_tools import CalendarTools
+
+            tools = CalendarTools()
+            await tools.get_service()
+            await tools.get_service()
+
+        assert mock_get_creds.await_count == 2, (
+            f"Expected get_google_credentials() called twice (no caching), "
+            f"got {mock_get_creds.await_count} calls"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_service_session_closed_before_return(self):
+        """
+        The AsyncSession context manager must be exited (session closed) before
+        the service object is returned to the caller.
+
+        We track call order via a call_log list:
+        - __aexit__ appends "session_closed"
+        - build() appends "build_called"
+
+        Assert: "session_closed" appears before "build_called".
+        """
+        session_mock = AsyncMock()
+        mock_creds = MagicMock(name="FakeCreds")
+        call_log: list[str] = []
+
+        @contextlib.asynccontextmanager
+        async def _ordered_session_ctx():
+            yield session_mock
+            call_log.append("session_closed")
+
+        def _fake_build(*args, **kwargs):
+            call_log.append("build_called")
+            return MagicMock(name="FakeService")
+
+        with patch(
+            "agent.tools.calendar_tools.get_async_session",
+            new=_ordered_session_ctx,
+        ), patch(
+            "agent.tools.calendar_tools.get_google_credentials",
+            new=AsyncMock(return_value=mock_creds),
+        ), patch(
+            "agent.tools.calendar_tools.build",
+            side_effect=_fake_build,
+        ):
+            from agent.tools.calendar_tools import CalendarTools
+
+            tools = CalendarTools()
+            await tools.get_service()
+
+        assert "session_closed" in call_log, "Session was never closed"
+        assert "build_called" in call_log, "build() was never called"
+        session_idx = call_log.index("session_closed")
+        build_idx = call_log.index("build_called")
+        assert session_idx < build_idx, (
+            f"Session must be closed before build() returns. "
+            f"Call order: {call_log}"
+        )

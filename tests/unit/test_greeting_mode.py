@@ -7,17 +7,20 @@ Coverage:
 - Name extraction: user gives name → customer_name set, transition to GENERAL
 - Failed name extraction: polite retry (stay in GREETING)
 - _heuristic_extract: various name patterns
+- T-003: user_message=None reads from messages history
+- T-004: customer DB creation after name extraction
 
 All LLM calls are mocked — tests do NOT require a real LLM.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agent.modes.greeting_mode import (
     GreetingMode,
     _NON_NAME_WORDS,
+    _WELCOME_CONFIRM_SUGGESTED,
     _WELCOME_NEEDS_NAME,
     _WELCOME_RETURNING,
     _is_valid_name,
@@ -164,6 +167,20 @@ class TestGreetingModeFirstInteraction:
         current = result.get("current_mode")
         assert current == "GREETING" or current is None
 
+    async def test_first_interaction_with_suggested_name_asks_for_confirmation(self):
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-001a", "+34612345678")
+        state["mode_context"] = {
+            "greeting_step": "confirm_suggested_name",
+            "suggested_name": "Pepe",
+        }
+
+        result = await mode.handle(state, make_intent())
+
+        content = result["messages"][0]["content"]
+        assert "Pepe" in content
+        assert _WELCOME_CONFIRM_SUGGESTED.format(name="Pepe") == content
+
 
 # =============================================================================
 # Name extraction (Turn 2: user replies with their name)
@@ -181,7 +198,10 @@ class TestGreetingModeNameExtraction:
         state["customer_name"] = None
         state["user_message"] = "Me llamo Juan"
 
-        result = await mode.handle(state, make_intent())
+        mock_result = {"id": "customer-uuid-001", "first_name": "Juan", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
 
         assert result.get("customer_name") is not None
         assert "Juan" in result.get("customer_name", "")
@@ -194,9 +214,28 @@ class TestGreetingModeNameExtraction:
         state["customer_name"] = None
         state["user_message"] = "Me llamo Juan"
 
-        result = await mode.handle(state, make_intent())
+        mock_result = {"id": "customer-uuid-001", "first_name": "Juan", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
 
         assert result.get("current_mode") == "GENERAL"
+
+    async def test_user_gives_name_sets_customer_id_in_state(self):
+        """After name extraction and DB creation, customer_id must be set in result."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-001", "+34612345678")
+        state["is_first_interaction"] = False
+        state["customer_name"] = None
+        state["user_message"] = "Juan"
+        state["customer_phone"] = "+34612345678"
+
+        mock_result = {"id": "customer-uuid-999", "first_name": "Juan", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
+
+        assert result.get("customer_id") == "customer-uuid-999"
 
     async def test_user_gives_short_name_no_llm_needed(self):
         """Short messages (1-3 words) use heuristic — LLM NOT called."""
@@ -208,7 +247,10 @@ class TestGreetingModeNameExtraction:
         state["customer_name"] = None
         state["user_message"] = "Pedro"  # Short — heuristic should handle it
 
-        result = await mode.handle(state, make_intent())
+        mock_result = {"id": "customer-uuid-002", "first_name": "Pedro", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
 
         # Name should be extracted without LLM call
         assert result.get("customer_name") is not None
@@ -224,7 +266,10 @@ class TestGreetingModeNameExtraction:
         state["customer_name"] = None
         state["user_message"] = "Me llamo Pedro"
 
-        result = await mode.handle(state, make_intent())
+        mock_result = {"id": "customer-uuid-003", "first_name": "Pedro", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
 
         extracted = result.get("customer_name", "")
         assert "Pedro" in extracted
@@ -237,13 +282,223 @@ class TestGreetingModeNameExtraction:
         state["customer_name"] = None
         state["user_message"] = "María García"
 
-        result = await mode.handle(state, make_intent())
+        mock_result = {"id": "customer-uuid-004", "first_name": "María", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
 
         messages = result.get("messages", [])
         assert len(messages) >= 1
         content = messages[0]["content"]
         # Should address the user by their name
         assert "María" in content or "García" in content
+
+    async def test_confirmation_reply_uses_suggested_name(self):
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-001b", "+34612345678")
+        state["is_first_interaction"] = False
+        state["customer_name"] = None
+        state["user_message"] = "Sí"
+        state["mode_context"] = {
+            "greeting_step": "confirm_suggested_name",
+            "suggested_name": "Pepe",
+            "last_intent": "confirm",
+            "last_intent_confidence": 0.99,
+        }
+
+        mock_result = {"id": "customer-uuid-005", "first_name": "Pepe", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent("confirm"))
+
+        assert result.get("customer_name") == "Pepe"
+        assert result.get("current_mode") == "GENERAL"
+
+    async def test_corrected_name_reply_overrides_suggested_name(self):
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-001c", "+34612345678")
+        state["is_first_interaction"] = False
+        state["customer_name"] = None
+        state["user_message"] = "No, soy Juan"
+        state["mode_context"] = {
+            "greeting_step": "confirm_suggested_name",
+            "suggested_name": "Pepe",
+            "last_intent": "reject",
+            "last_intent_confidence": 0.99,
+        }
+
+        mock_result = {"id": "customer-uuid-006", "first_name": "Juan", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent("reject"))
+
+        assert result.get("customer_name") == "Juan"
+        assert result.get("current_mode") == "GENERAL"
+
+    async def test_reject_without_new_name_switches_to_explicit_name_step(self):
+        mode = make_greeting_mode("UNKNOWN")
+        state = create_initial_state("conv-001d", "+34612345678")
+        state["is_first_interaction"] = False
+        state["customer_name"] = None
+        state["user_message"] = "No"
+        state["mode_context"] = {
+            "greeting_step": "confirm_suggested_name",
+            "suggested_name": "Pepe",
+            "last_intent": "reject",
+            "last_intent_confidence": 0.99,
+        }
+
+        result = await mode.handle(state, make_intent("reject"))
+
+        assert result.get("current_mode") == "GREETING"
+        assert result.get("mode_context", {}).get("greeting_step") == "ask_name"
+
+
+# =============================================================================
+# T-003: user_message=None reads from messages history
+# =============================================================================
+
+
+class TestGreetingModeReadsFromMessagesHistory:
+    """
+    Verify T-003: GreetingMode reads user message from messages history
+    when state["user_message"] is None (cleared by preprocess_node after T-001).
+    """
+
+    async def test_turn2_with_user_message_none_reads_from_history(self):
+        """
+        Turn 2: user_message=None but messages list has last user message.
+        GreetingMode must extract name from messages history, not user_message field.
+        """
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-010", "+34612345678")
+        state["is_first_interaction"] = False
+        state["customer_name"] = None
+        state["user_message"] = None  # Cleared by preprocess_node (T-001 fix)
+        # The actual user text is in messages history
+        state["messages"] = [
+            {"role": "assistant", "content": "¡Hola! ¿Con quién tengo el gusto?", "timestamp": "2026-01-01T10:00:00"},
+            {"role": "user", "content": "Me llamo Laura", "timestamp": "2026-01-01T10:00:05"},
+        ]
+
+        mock_result = {"id": "customer-uuid-010", "first_name": "Laura", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
+
+        # Name must be extracted from messages history even though user_message=None
+        assert result.get("customer_name") is not None, (
+            "Expected customer_name to be set but got None — "
+            "GreetingMode failed to read from messages history"
+        )
+        assert "Laura" in result.get("customer_name", ""), (
+            f"Expected 'Laura' in customer_name but got {result.get('customer_name')!r}"
+        )
+        assert result.get("current_mode") == "GENERAL"
+
+    async def test_fallback_to_user_message_when_no_messages_in_history(self):
+        """
+        If messages list is empty but user_message is set (edge case),
+        falls back to user_message field.
+        """
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-011", "+34612345678")
+        state["is_first_interaction"] = False
+        state["customer_name"] = None
+        state["user_message"] = "Soy Carlos"
+        state["messages"] = []  # Empty — fallback to user_message
+
+        mock_result = {"id": "customer-uuid-011", "first_name": "Carlos", "phone": "+34612345678"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
+
+        assert result.get("customer_name") is not None
+        assert "Carlos" in result.get("customer_name", "")
+
+
+# =============================================================================
+# T-004: Customer creation failure is handled gracefully
+# =============================================================================
+
+
+class TestGreetingModeCustomerCreation:
+    """
+    Verify T-004: Customer DB creation after name extraction.
+    Tests both happy path and failure handling.
+    """
+
+    async def test_customer_creation_failure_handled_gracefully(self):
+        """
+        If manage_customer raises an exception, GreetingMode must NOT propagate it.
+        customer_id should be None, name still set, mode transitions to GENERAL.
+        """
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-020", "+34612345678")
+        state["is_first_interaction"] = False
+        state["customer_name"] = None
+        state["user_message"] = "Ana"
+        state["customer_phone"] = "+34612345678"
+
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(side_effect=Exception("DB connection failed"))
+            result = await mode.handle(state, make_intent())
+
+        # Name must still be extracted despite DB failure
+        assert result.get("customer_name") is not None, (
+            "customer_name should be set even if DB creation fails"
+        )
+        # customer_id should be None (graceful degradation)
+        assert result.get("customer_id") is None, (
+            "customer_id should be None when creation fails"
+        )
+        # Mode must still transition to GENERAL (not blocked by DB error)
+        assert result.get("current_mode") == "GENERAL", (
+            "Mode should still transition to GENERAL after DB failure"
+        )
+
+    async def test_customer_creation_error_response_handled_gracefully(self):
+        """
+        If manage_customer returns an error dict (not raises), customer_id=None.
+        """
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-021", "+34612345678")
+        state["is_first_interaction"] = False
+        state["customer_name"] = None
+        state["user_message"] = "Roberto"
+        state["customer_phone"] = "+34612345678"
+
+        error_result = {"error": "Phone already exists", "exists": True}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=error_result)
+            result = await mode.handle(state, make_intent())
+
+        # Name still extracted
+        assert result.get("customer_name") is not None
+        # customer_id should be None when creation returned error
+        assert result.get("customer_id") is None
+
+    async def test_no_customer_phone_skips_db_creation(self):
+        """
+        If customer_phone is empty/None, skip DB creation entirely.
+        customer_id=None, name still extracted, no exception.
+        """
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-022", "")
+        state["is_first_interaction"] = False
+        state["customer_name"] = None
+        state["user_message"] = "Sofia"
+        state["customer_phone"] = ""  # No phone
+
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock()
+            result = await mode.handle(state, make_intent())
+
+            # manage_customer should NOT be called with empty phone
+            mock_mc.ainvoke.assert_not_called()
+
+        assert result.get("customer_name") is not None
+        assert result.get("customer_id") is None
 
 
 # =============================================================================

@@ -18,7 +18,7 @@ services:
       - ./database:/app/database
       - ./agent:/app/agent
       - ./service-account-key.json:/app/service-account-key.json:ro
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/api --reload-dir /app/shared --reload-dir /app/database
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/api --reload-dir /app/shared --reload-dir /app/database --reload-dir /app/agent
 
   # Agent service with volume mounts (manual restart needed for agent changes)
   agent:

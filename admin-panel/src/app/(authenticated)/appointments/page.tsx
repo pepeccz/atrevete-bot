@@ -67,12 +67,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { PendingActionsCard } from "@/components/appointments/pending-actions-card";
+import { OverlapConfirmDialog } from "@/components/calendar/overlap-confirm-dialog";
 import type {
   Appointment,
   Stylist,
   Service,
   Customer,
   AppointmentStatus,
+  OverlapConflict,
 } from "@/lib/types";
 
 // Format date for display
@@ -905,6 +907,11 @@ function AppointmentWizardModal({
     sendNotification: true,
   });
 
+  // Overlap check state
+  const [overlapDialogOpen, setOverlapDialogOpen] = useState(false);
+  const [overlapConflicts, setOverlapConflicts] = useState<OverlapConflict[]>([]);
+  const [allowOverlap, setAllowOverlap] = useState(false);
+
   // Reset state when modal closes
   useEffect(() => {
     if (!open) {
@@ -920,6 +927,10 @@ function AppointmentWizardModal({
         notes: "",
         sendNotification: true,
       });
+      // Reset overlap state
+      setOverlapDialogOpen(false);
+      setOverlapConflicts([]);
+      setAllowOverlap(false);
     }
   }, [open]);
 
@@ -950,7 +961,7 @@ function AppointmentWizardModal({
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (forceAllowOverlap = false) => {
     if (!state.customer || !state.selectedSlot) return;
 
     // Validate firstName is not empty
@@ -960,9 +971,41 @@ function AppointmentWizardModal({
       return;
     }
 
+    // Calculate total duration from selected services
+    const totalDurationMinutes = state.selectedServices.reduce(
+      (sum, s) => sum + s.duration_minutes,
+      0
+    );
+
+    // Step 1: Check for overlaps if not already allowed
+    if (!forceAllowOverlap && !allowOverlap) {
+      setLoading(true);
+      try {
+        const overlapResult = await api.checkOverlaps(
+          state.selectedSlot.stylist_id,
+          state.selectedSlot.full_datetime,
+          totalDurationMinutes
+        );
+
+        if (overlapResult.has_overlaps && overlapResult.conflicts.length > 0) {
+          // Show overlap confirmation dialog
+          setOverlapConflicts(overlapResult.conflicts);
+          setOverlapDialogOpen(true);
+          setLoading(false);
+          return; // Stop here, wait for user confirmation
+        }
+      } catch (error) {
+        // Log error but continue with submission (fail open)
+        console.warn("Error checking overlaps:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // Step 2: Create the appointment
     setLoading(true);
     try {
-      await api.create("appointments", {
+      const payload: Record<string, unknown> = {
         customer_id: state.customer.id,
         stylist_id: state.selectedSlot.stylist_id,
         service_ids: state.selectedServices.map((s) => s.id),
@@ -971,7 +1014,14 @@ function AppointmentWizardModal({
         last_name: state.lastName.trim() || null,
         notes: state.notes || null,
         send_notification: state.sendNotification,
-      });
+      };
+
+      // Add allow_overlap flag if user confirmed
+      if (forceAllowOverlap || allowOverlap) {
+        payload.allow_overlap = true;
+      }
+
+      await api.create("appointments", payload);
 
       toast.success("Cita creada correctamente");
       onOpenChange(false);
@@ -983,6 +1033,19 @@ function AppointmentWizardModal({
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleOverlapConfirm = () => {
+    setAllowOverlap(true);
+    setOverlapDialogOpen(false);
+    // Retry submission with allow_overlap=true
+    handleSubmit(true);
+  };
+
+  const handleOverlapCancel = () => {
+    setOverlapDialogOpen(false);
+    setOverlapConflicts([]);
+    // Stay on confirmation step (step 4)
   };
 
   const stepTitles = [
@@ -1126,7 +1189,7 @@ function AppointmentWizardModal({
               <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
           ) : (
-            <Button onClick={handleSubmit} disabled={loading || !canProceed()}>
+            <Button onClick={() => handleSubmit()} disabled={loading || !canProceed()}>
               {loading ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -1141,6 +1204,15 @@ function AppointmentWizardModal({
             </Button>
           )}
         </div>
+
+        {/* Overlap Confirmation Dialog */}
+        <OverlapConfirmDialog
+          isOpen={overlapDialogOpen}
+          onClose={handleOverlapCancel}
+          onConfirm={handleOverlapConfirm}
+          conflicts={overlapConflicts}
+          isSubmitting={loading}
+        />
       </DialogContent>
     </Dialog>
   );

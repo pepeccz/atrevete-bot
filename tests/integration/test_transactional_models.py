@@ -31,6 +31,7 @@ from database.models import (
     Appointment,
     AppointmentStatus,
     ConversationHistory,
+    ConversationMessage,
     Customer,
     MessageRole,
     # Pack,  # Removed - packs functionality eliminated
@@ -86,8 +87,8 @@ async def test_create_complete_appointment():
         result = await session.execute(select(Stylist).limit(1))
         stylist = result.scalar_one()
 
-        # Get a service (from seed data)
-        result = await session.execute(select(Service).where(Service.name == "MECHAS"))
+        # Get a service (from seed data) - using new PDF catalog service
+        result = await session.execute(select(Service).where(Service.name == "Mechas"))
         service = result.scalar_one()
 
         # Create appointment
@@ -97,7 +98,7 @@ async def test_create_complete_appointment():
             stylist_id=stylist.id,
             service_ids=[service.id],
             start_time=start_time,
-            duration_minutes=120,
+            duration_minutes=60,
             status=AppointmentStatus.CONFIRMED,
             first_name="Test",
             last_name="Customer",
@@ -262,7 +263,7 @@ async def test_policy_duplicate_key_unique_constraint():
 
 @pytest.mark.asyncio
 async def test_conversation_history_chronological_retrieval():
-    """Test retrieving conversation messages chronologically by conversation_id."""
+    """Test retrieving conversation messages chronologically by conversation_id (two-table schema)."""
     async with AsyncSessionLocal() as session:
         customer = Customer(phone="+34612345683", first_name="Test")
         session.add(customer)
@@ -271,56 +272,77 @@ async def test_conversation_history_chronological_retrieval():
         conversation_id = "thread-test-123"
 
         # Create 3 messages with different timestamps
+        tz = ZoneInfo("Europe/Madrid")
         timestamps = [
-            datetime.now(ZoneInfo("Europe/Madrid")),
-            datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(seconds=10),
-            datetime.now(ZoneInfo("Europe/Madrid")) + timedelta(seconds=20),
+            datetime.now(tz),
+            datetime.now(tz) + timedelta(seconds=10),
+            datetime.now(tz) + timedelta(seconds=20),
         ]
 
-        messages = [
-            ConversationHistory(
-                customer_id=customer.id,
-                conversation_id=conversation_id,
-                timestamp=timestamps[0],
-                message_role=MessageRole.USER,
-                message_content="Hello",
-                metadata_={"node_name": "router"},
+        # Step 1: Create the ConversationHistory parent row
+        parent = ConversationHistory(
+            customer_id=customer.id,
+            conversation_id=conversation_id,
+            started_at=timestamps[0],
+            ended_at=timestamps[2],
+            message_count=3,
+            metadata_={},
+        )
+        session.add(parent)
+        await session.flush()  # Populate parent.id
+
+        # Step 2: Create ConversationMessage child rows
+        child_messages = [
+            ConversationMessage(
+                conversation_history_id=parent.id,
+                role="user",
+                content="Hello",
+                created_at=timestamps[0],
             ),
-            ConversationHistory(
-                customer_id=customer.id,
-                conversation_id=conversation_id,
-                timestamp=timestamps[1],
-                message_role=MessageRole.ASSISTANT,
-                message_content="Hi, how can I help?",
-                metadata_={"node_name": "identify_customer"},
+            ConversationMessage(
+                conversation_history_id=parent.id,
+                role="assistant",
+                content="Hi, how can I help?",
+                created_at=timestamps[1],
             ),
-            ConversationHistory(
-                customer_id=customer.id,
-                conversation_id=conversation_id,
-                timestamp=timestamps[2],
-                message_role=MessageRole.USER,
-                message_content="I want to book an appointment",
-                metadata_={"node_name": "router"},
+            ConversationMessage(
+                conversation_history_id=parent.id,
+                role="user",
+                content="I want to book an appointment",
+                created_at=timestamps[2],
             ),
         ]
-
-        for msg in messages:
+        for msg in child_messages:
             session.add(msg)
         await session.commit()
 
-        # Query by conversation_id ordered by timestamp
-        stmt = (
+        # Query parent by conversation_id
+        parent_stmt = (
             select(ConversationHistory)
             .where(ConversationHistory.conversation_id == conversation_id)
-            .order_by(ConversationHistory.timestamp)
         )
-        result = await session.execute(stmt)
-        retrieved_messages = result.scalars().all()
+        parent_result = await session.execute(parent_stmt)
+        retrieved_parent = parent_result.scalar_one()
+
+        assert retrieved_parent.customer_id == customer.id
+        assert retrieved_parent.message_count == 3
+
+        # Query child messages ordered by created_at
+        msg_stmt = (
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_history_id == retrieved_parent.id)
+            .order_by(ConversationMessage.created_at)
+        )
+        msg_result = await session.execute(msg_stmt)
+        retrieved_messages = msg_result.scalars().all()
 
         assert len(retrieved_messages) == 3
-        assert retrieved_messages[0].message_content == "Hello"
-        assert retrieved_messages[1].message_content == "Hi, how can I help?"
-        assert retrieved_messages[2].message_content == "I want to book an appointment"
+        assert retrieved_messages[0].content == "Hello"
+        assert retrieved_messages[0].role == "user"
+        assert retrieved_messages[1].content == "Hi, how can I help?"
+        assert retrieved_messages[1].role == "assistant"
+        assert retrieved_messages[2].content == "I want to book an appointment"
+        assert retrieved_messages[2].role == "user"
 
 
 @pytest.mark.asyncio

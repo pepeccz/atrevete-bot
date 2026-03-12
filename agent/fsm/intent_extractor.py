@@ -31,23 +31,11 @@ from sqlalchemy import select
 from sqlalchemy.sql import func
 
 from agent.fsm.models import BookingState, Intent, IntentType
-from agent.resilience.error_classifier import ErrorClassifier, ErrorType
-from agent.resilience.retry_strategy import RetryStrategy, RetryState
 from database.connection import get_async_session
 from database.models import Stylist
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# Resilience singletons for intent extraction (module-level, thread-safe)
-# Lighter than the main agent — only TRANSIENT retry, no FallbackChain.
-# ============================================================================
-_ie_error_classifier = ErrorClassifier()
-_ie_retry_strategy = RetryStrategy()
-
-# Maximum retries for intent extraction (shorter than the main agent)
-_IE_MAX_RETRIES: int = 2
 
 # ============================================================================
 # DYNAMIC STYLIST CACHE (replaces hardcoded STYLIST_NAME_TO_ID)
@@ -905,103 +893,6 @@ async def _parse_llm_response(response_text: str, raw_message: str) -> Intent:
         )
 
 
-async def _invoke_llm_with_retry(
-    llm: ChatOpenAI,
-    prompt: str,
-    raw_message: str,
-    start_time: float,
-) -> Any:
-    """
-    Invoke the LLM for intent extraction with lightweight TRANSIENT retry logic.
-
-    Only retries TRANSIENT errors (network glitches, 5xx). PERMANENT errors,
-    RATE_LIMIT, and VALIDATION errors are not retried — the caller's outer
-    ``except`` block returns IntentType.UNKNOWN for those.
-
-    Unlike the main agent, there is NO FallbackChain here — intent extraction
-    uses only the configured primary model. If the primary is down, UNKNOWN
-    intent is the safe degraded behaviour (conversation continues but FSM stays
-    in current state).
-
-    Args:
-        llm: Configured ChatOpenAI client (from _get_llm_client).
-        prompt: Extraction prompt built by _build_extraction_prompt.
-        raw_message: Original user message (for UNKNOWN intent fallback).
-        start_time: time.time() at function entry (for latency logging).
-
-    Returns:
-        LLM response object (with .content attribute).
-
-    Raises:
-        Exception: On permanent failure (after retries exhausted).
-                   The caller's except block will return IntentType.UNKNOWN.
-    """
-    messages = [
-        SystemMessage(content="Eres un analizador de intenciones. Responde SOLO en JSON."),
-        HumanMessage(content=prompt),
-    ]
-
-    retry_state: RetryState = {
-        "attempt_count": 1,
-        "last_error_type": None,
-        "next_retry_at": None,
-        "total_retries_used": 0,
-        "budget_exhausted": False,
-    }
-
-    last_exc: Exception | None = None
-
-    while retry_state["attempt_count"] <= _IE_MAX_RETRIES + 1:
-        try:
-            return await llm.ainvoke(messages)
-
-        except Exception as exc:
-            last_exc = exc
-            classified = _ie_error_classifier.classify(exc)
-            latency_ms = (time.time() - start_time) * 1000
-
-            # Only retry TRANSIENT errors
-            if classified.error_type not in {ErrorType.TRANSIENT}:
-                logger.warning(
-                    f"Intent extraction: non-retryable error | "
-                    f"error_type={classified.error_type.value} | "
-                    f"attempt={retry_state['attempt_count']} | "
-                    f"latency={latency_ms:.0f}ms | error={exc}"
-                )
-                raise  # Let outer except return UNKNOWN
-
-            decision = _ie_retry_strategy.should_retry(classified, retry_state)
-
-            if not decision.should_retry:
-                logger.warning(
-                    f"Intent extraction: retry limit reached | "
-                    f"attempt={retry_state['attempt_count']} | "
-                    f"max={_IE_MAX_RETRIES} | error={exc}"
-                )
-                raise  # Let outer except return UNKNOWN
-
-            logger.info(
-                f"Intent extraction: TRANSIENT retry | "
-                f"attempt={retry_state['attempt_count']} | "
-                f"delay={decision.delay_seconds:.2f}s | error={exc}"
-            )
-            await asyncio.sleep(decision.delay_seconds)
-
-            # Update retry state for next iteration
-            retry_state = {
-                "attempt_count": retry_state["attempt_count"] + 1,
-                "last_error_type": classified.error_type,
-                "next_retry_at": None,
-                "total_retries_used": retry_state["total_retries_used"] + 1,
-                "budget_exhausted": False,
-            }
-
-    # Should never reach here, but satisfy type checker
-    if last_exc is not None:
-        raise last_exc
-    raise RuntimeError("_invoke_llm_with_retry: unexpected exit without result or exception")
-
-
 async def extract_intent(
     message: str,
     current_state: BookingState,
@@ -1051,24 +942,15 @@ async def extract_intent(
         # Get LLM client
         llm = _get_llm_client()
 
-        # ── Resilience-aware invocation ──────────────────────────────────────
-        # When RESILIENCE_ENABLED, wrap ainvoke() with lightweight retry logic
-        # (up to _IE_MAX_RETRIES attempts for TRANSIENT errors only).
-        # On all failures: fallback to IntentType.UNKNOWN — never raise.
-        settings = get_settings()
-
-        if settings.RESILIENCE_ENABLED:
-            response = await _invoke_llm_with_retry(llm, prompt, message, start_time)
-        else:
-            response = await llm.ainvoke(
-                [
-                    SystemMessage(
-                        content="Eres un analizador de intenciones. Responde SOLO en JSON."
-                    ),
-                    HumanMessage(content=prompt),
-                ]
-            )
-        # ─────────────────────────────────────────────────────────────────────
+        # Invoke LLM
+        response = await llm.ainvoke(
+            [
+                SystemMessage(
+                    content="Eres un analizador de intenciones. Responde SOLO en JSON."
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
 
         # Parse response (async to support dynamic stylist lookup)
         intent = await _parse_llm_response(response.content, message)

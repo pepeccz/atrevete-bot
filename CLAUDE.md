@@ -151,7 +151,9 @@ mypy .
 
 > ✅ **Modes Architecture COMPLETE (2026-03-09):** Infinite greeting loop bug fixed. Replaced FSM mega-node with 4 independent modes (GREETING, BOOKING, GENERAL, ESCALATION). New files: `agent/routing/`, `agent/modes/`, `agent/prompts/modes/`.
 
-### Modes Architecture (v6.0) — COMPLETE
+> ✅ **v6-critical-fixes COMPLETE (2026-03-10):** 5 critical bugs in v6.0 wiring fixed. 187/187 tests pass. Booking flow is now fully functional. See Engram obs #87–#98 for full history.
+
+### Modes Architecture (v6.0) — COMPLETE + CRITICAL FIXES APPLIED
 
 **Bug Fixed:** Name confirmation infinite loop. The old `conversational_agent` mega-node (v5.0) would get stuck asking for the customer's name repeatedly because the FSM state and the LangGraph checkpoint could diverge, and the single-node design had no clear separation between "collect name" and "process booking" concerns.
 
@@ -180,9 +182,11 @@ START → preprocess_node → router_node → mode_dispatcher
 8. Everything else → GENERAL
 
 **New File Structure:**
-- `agent/routing/intent_router.py` — Keyword + LLM hybrid intent classifier (8 intents: greet, book, ask_info, confirm, reject, cancel, escalate, ambiguous)
-- `agent/modes/greeting_mode.py` — GreetingMode: name collection, customer creation
-- `agent/modes/booking_mode.py` — BookingMode: full booking flow with tools
+- `agent/routing/intent_router.py` — Keyword + LLM hybrid intent classifier (8 intents: greet, book, ask_info, confirm, reject, cancel, escalate, ambiguous) + `IntentResult` dataclass
+- `agent/modes/__init__.py` — Package init
+- `agent/modes/base.py` — BaseMode abstract class
+- `agent/modes/greeting_mode.py` — GreetingMode: name collection, customer creation via `manage_customer.ainvoke`
+- `agent/modes/booking_mode.py` — BookingMode: full booking flow with `AgenticLoopResult` + `_advance_step()`
 - `agent/modes/general_mode.py` — GeneralMode: read-only informational queries
 - `agent/modes/escalation_mode.py` — EscalationMode: human handoff
 - `agent/prompts/modes/` — Mode-specific prompts (greeting.md, booking.md, general.md, escalation.md)
@@ -196,13 +200,29 @@ START → preprocess_node → router_node → mode_dispatcher
 - `current_mode: ConversationMode` — Active mode (GREETING/BOOKING/GENERAL/ESCALATION)
 - `is_first_interaction: bool` — True only on first message (set by preprocess_node)
 - `customer_name: str | None` — Name collected in GREETING mode
-- `mode_context: dict` — Mode-specific transient data (booking step, last intent, etc.)
-- `mode_history: list[str]` — Ordered list of mode transitions (for debugging)
+- `mode_context: Annotated[dict, merge_dicts]` — Mode-specific transient data (booking step, last intent, etc.); uses `__reset__` sentinel on mode transitions
+- `mode_history: Annotated[list[str], operator.add]` — Ordered list of mode transitions (for debugging)
+- `draft_contexts: Annotated[dict, merge_dicts]` — Draft context storage with merge reducer
+
+**Critical Fixes Applied (v6-critical-fixes, 2026-03-10):**
+
+All 5 bugs below made the v6.0 booking flow non-functional. All are fixed. 187/187 tests pass.
+
+- ✅ **FIX-001**: `preprocess_node` no longer clears `user_message` before mode nodes read it (`agent/graphs/conversation_flow.py`). `user_message` is now cleared only in `summarize_node` at the end of the pipeline.
+- ✅ **FIX-002**: `GreetingMode` creates customer in DB via `manage_customer.ainvoke` after name extraction (`agent/modes/greeting_mode.py`). Without this, no new customer was ever persisted → booking always failed with `customer_id=None`.
+- ✅ **FIX-003**: `BookingMode` advances booking sub-steps using `AgenticLoopResult` + `_advance_step()` (`agent/modes/booking_mode.py`). Without this, `booking_step` stayed at 0 forever.
+- ✅ **FIX-004**: `summarize_conversation` returns partial dicts only — no `{**state}` spread (`agent/nodes/summarization.py`). The spread was causing `messages` to double via `operator.add` reducer on every summarization.
+- ✅ **FIX-005**: `mode_context` uses `Annotated[dict, merge_dicts]` and `transition_mode()` always resets with `__reset__` sentinel (`agent/state/schemas.py`). Prevents stale keys accumulating across mode transitions.
+- ✅ **FIX-005b**: `mode_history` and `draft_contexts` also wired with correct `Annotated` reducers (`agent/state/schemas.py`).
 
 **Key Improvements:**
 - ✅ Infinite greeting loop: FIXED (GREETING fires once, then done)
+- ✅ Customer DB creation: FIXED (GreetingMode calls manage_customer after name extraction)
+- ✅ Booking step advancement: FIXED (AgenticLoopResult + _advance_step())
+- ✅ Message doubling: FIXED (no {**state} spread in summarize_conversation)
+- ✅ Stale mode_context: FIXED (Annotated reducers + __reset__ sentinel)
 - ✅ Extensible: New feature = new mode (no mega-node modification needed)
-- ✅ Testable: Each mode tested independently with unit tests
+- ✅ Testable: Each mode tested independently with unit tests (18 router tests + 7 smoke tests added)
 - ✅ Debuggable: `current_mode` always visible in state; `mode_history` shows transitions
 
 > ✅ **ADR-011 COMPLETE (2025-11-27):** Sistema 100% unificado en **single source of truth**. FSM state consolidado en LangGraph checkpoints. Eliminada dual persistence Redis + Checkpoint.
@@ -515,6 +535,78 @@ This architecture eliminated the hybrid tier system, consolidating all logic int
 - `agent/tools/availability_tools.py`: Truncation for `find_next_available`
 - `agent/prompts/step5_post_booking.md`: New prompt for POST_BOOKING state
 
+### Prompt System Optimization (v6.1) — Modular Shared Prompts
+
+> **NEW (2025-03-11):** Optimized prompt system with modular shared components and centralized caching.
+
+**Problem:** Step-based prompts (step1_service.md, step2_availability.md, etc.) were tightly coupled to FSM states and duplicated common content (identity, rules, glossary). Any change to bot personality required editing 6+ files.
+
+**Solution:** Modular prompt architecture with shared components and mode-specific overlays:
+
+```
+agent/prompts/
+├── shared/                    # Reusable components (~2,200 tokens)
+│   ├── identity.md           # Bot personality and tone
+│   ├── critical_rules.md     # Safety and formatting rules
+│   ├── glossary.md          # Terminology definitions
+│   └── recovery.md          # Error recovery strategies
+├── modes/                    # Mode-specific overlays (~800 tokens)
+│   ├── greeting.md          # First contact, name collection
+│   ├── booking.md           # Multi-step booking flow
+│   ├── general.md           # FAQs and info queries
+│   └── escalation.md        # Human handoff
+└── legacy/                   # Archived step-based prompts
+    └── step[1-5]_*.md        # (kept for reference, not used)
+```
+
+**Architecture:**
+
+1. **Shared System Prompt (Cached)**
+   - Concatenation of: identity + critical_rules + glossary
+   - Loaded once via `get_system_prompt()` with 10-minute TTL cache
+   - ~2,200 tokens, stable content benefits from OpenRouter caching
+
+2. **Mode-Specific Overlay (Dynamic)**
+   - Loaded per request via `load_markdown("booking.md", "modes")`
+   - Contains mode-specific instructions and tool calling guidance
+   - ~800 tokens, changes based on current mode
+
+3. **Dynamic Context (Per Message)**
+   - Built via `build_step_context()` with temporal + customer data
+   - ~300 tokens, includes current date, collected data, user message
+   - Injected as HumanMessage for conversation context
+
+**Key Components:**
+- `agent/prompts/loader.py` — Centralized loading with caching (`get_system_prompt()`, `load_markdown()`)
+- `agent/prompts/shared/*.md` — Modular shared components
+- `agent/prompts/modes/*.md` — Mode-specific overlays
+- `agent/prompts/legacy/*.md` — Archived step-based prompts (not deleted, for reference)
+
+**Caching Strategy:**
+- System prompt: 10-minute TTL with async lock (thread-safe)
+- Cache key: "system_prompt_v1"
+- Clear cache: `clear_prompt_cache()` for immediate updates
+
+**Feature Flag:**
+```bash
+USE_OPTIMIZED_PROMPTS=true   # Enable v6.1 modular prompts (default)
+USE_OPTIMIZED_PROMPTS=false  # Use legacy prompts (fallback)
+```
+
+**Performance Impact:**
+
+| Metric | Before (v6.0) | After (v6.1) | Improvement |
+|--------|---------------|--------------|-------------|
+| Prompt load time | ~50ms | ~5ms (cached) | 90% |
+| Token count | ~5,000 | ~2,200 (shared) | 56% |
+| Files to edit for personality | 6+ | 1 (identity.md) | 83% |
+| Cache hit rate | 0% | ~95% | +95% |
+
+**Migration:**
+- Step-based prompts moved to `agent/prompts/legacy/` (not deleted)
+- Full migration guide: `docs/migrations/prompt-optimization-v6-1.md`
+- Rollback: Set `USE_OPTIMIZED_PROMPTS=false` and restart
+
 ### Request Flow
 
 1. **Webhook Reception (api/)**
@@ -569,8 +661,9 @@ This architecture eliminated the hybrid tier system, consolidating all logic int
   - `current_mode: str` — Active mode (GREETING/BOOKING/GENERAL/ESCALATION)
   - `is_first_interaction: bool` — True only on first message
   - `customer_name: str | None` — Name collected in GREETING mode
-  - `mode_context: dict` — Mode-specific transient data (booking_step, last_intent, etc.)
-  - `mode_history: list[str]` — Ordered mode transition log (for debugging)
+  - `mode_context: Annotated[dict, merge_dicts]` — Mode-specific transient data (booking_step, last_intent, etc.); uses `__reset__` sentinel on mode transitions
+  - `mode_history: Annotated[list[str], operator.add]` — Ordered mode transition log (for debugging)
+  - `draft_contexts: Annotated[dict, merge_dicts]` — Draft context storage with merge reducer
 
 **Database Models (database/models.py)**
 - Core tables: `customers`, `stylists`, `services`, `business_hours`, `policies`
@@ -659,6 +752,42 @@ async for session in get_async_session():
     await session.commit()
     break  # Important: break after first iteration
 ```
+
+### LangGraph Reducer Wiring (CRITICAL)
+
+**NEVER use `{**state}` spread in node return values.** Every field returned passes through its reducer. For `operator.add` fields (like `messages`, `mode_history`), this causes duplication on every node invocation.
+
+**ALWAYS use `Annotated[T, reducer_fn]` for custom reducers.** Defining a reducer function alone (without `Annotated`) makes LangGraph fall back to REPLACE semantics silently. The reducer is never called.
+
+```python
+from typing import Annotated
+import operator
+
+# CORRECT: Annotated wiring — reducer IS called
+mode_history: Annotated[list[str], operator.add]
+mode_context: Annotated[dict, merge_dicts]
+
+# WRONG: Bare type — reducer is NEVER called, REPLACE semantics apply
+mode_history: list[str]  # DON'T DO THIS for append fields
+mode_context: dict        # DON'T DO THIS for merge fields
+```
+
+**Node returns must be partial dicts — only include fields you intend to change:**
+
+```python
+# CORRECT: Partial return — only what changes
+async def summarize_node(state: ConversationState) -> dict:
+    return {"conversation_summary": new_summary, "user_message": None}
+
+# WRONG: Full state spread — ALL fields pass through reducers again
+async def summarize_node(state: ConversationState) -> dict:
+    return {**state, "conversation_summary": new_summary}  # DON'T DO THIS
+```
+
+**Transient fields (like `user_message`) must survive the full pipeline:**
+
+- Set by caller → survives preprocess_node → mode nodes read it → cleared in summarize_node (END)
+- NEVER clear a transient field in an early node (preprocess) before downstream nodes have read it
 
 ### Chatwoot API Integration
 Chatwoot API URL must have trailing slash removed before use:

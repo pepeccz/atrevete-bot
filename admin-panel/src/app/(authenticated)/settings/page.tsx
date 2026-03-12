@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, Activity, Users, Scissors, CalendarX, Settings2, Bell } from "lucide-react";
+import { Clock, Activity, Users, Scissors, CalendarX, Settings2, Bell, Calendar } from "lucide-react";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +13,13 @@ const configSections = [
     icon: Bell,
     href: "/settings/notifications",
     color: "bg-amber-500",
+  },
+  {
+    title: "Google Calendar",
+    description: "Conecta tu cuenta de Google y asigna calendarios a los estilistas",
+    icon: Calendar,
+    href: "/settings/google-calendar",
+    color: "bg-blue-600",
   },
   {
     title: "Horarios de Apertura",

@@ -161,7 +161,7 @@ class TestServiceSelectionGuidance:
     def test_service_selection_with_services_already_selected(self, fsm):
         """Test guidance changes when services are already selected."""
         fsm._state = BookingState.SERVICE_SELECTION
-        fsm._collected_data = {"services": ["Corte de pelo"]}
+        fsm._collected_data = {"services": ["Cortar"]}
 
         guidance = fsm.get_response_guidance()
 

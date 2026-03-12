@@ -35,9 +35,9 @@ El cliente quiere cancelar una cita existente. Este flujo es diferente de:
 ```
 Tienes 3 citas futuras:
 
-1. Viernes 20 de diciembre a las 10:00 con María (Corte + Tinte)
+1. Viernes 20 de diciembre a las 10:00 con María (Cultura de Color)
 2. Lunes 23 de diciembre a las 16:00 con Ana (Manicura)
-3. Viernes 27 de diciembre a las 11:00 con Pilar (Mechas)
+3. Viernes 27 de diciembre a las 11:00 con Pilar (Corte Caballero)
 
 ¿Cuál quieres cancelar? Responde con el número.
 ```
@@ -47,7 +47,7 @@ Tienes 3 citas futuras:
 **SIEMPRE** pedir confirmación explícita antes de cancelar:
 ```
 ¿Estás seguro/a de que quieres cancelar tu cita del viernes 20 a las 10:00
-con María (Corte + Tinte)?
+con María (Cultura de Color)?
 ```
 
 #### 4. Motivo (Opcional)
@@ -87,7 +87,7 @@ Te conecto con el equipo para que te ayuden.
 ### Ejemplo 1: Cita única, permitida
 ```
 Usuario: "Quiero cancelar mi cita"
-Bot: "Tienes una cita el viernes 20 de diciembre a las 10:00 con María (Corte).
+Bot: "Tienes una cita el viernes 20 de diciembre a las 10:00 con María (Cortar).
       ¿Estás seguro/a de que quieres cancelarla?"
 Usuario: "Sí"
 Bot: "Tu cita ha sido cancelada. ¿Te gustaría reservar para otra fecha?"
@@ -107,8 +107,8 @@ Bot: "Entendido. Te conecto con el equipo ahora."
 ```
 Usuario: "Cancelar cita"
 Bot: "Tienes 2 citas futuras:
-      1. Viernes 20 a las 10:00 con María (Corte)
-      2. Lunes 23 a las 16:00 con Ana (Tinte)
+      1. Viernes 20 a las 10:00 con María (Cortar)
+      2. Lunes 23 a las 16:00 con Ana (Mechas)
       ¿Cuál quieres cancelar?"
 Usuario: "La primera"
 Bot: "¿Estás seguro/a de cancelar tu cita del viernes 20 a las 10:00?"

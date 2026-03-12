@@ -51,7 +51,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import api from "@/lib/api";
-import type { Stylist, ServiceCategory } from "@/lib/types";
+import type { Stylist, ServiceCategory, GoogleCalendar } from "@/lib/types";
 
 // Category badge
 function CategoryBadge({ category }: { category: ServiceCategory }) {
@@ -103,6 +103,8 @@ function StylistModal({
   stylist?: Stylist | null;
 }) {
   const [loading, setLoading] = useState(false);
+  const [availableCalendars, setAvailableCalendars] = useState<GoogleCalendar[]>([]);
+  const [loadingCalendars, setLoadingCalendars] = useState(false);
   const [formData, setFormData] = useState<StylistFormData>({
     name: "",
     category: "HAIRDRESSING",
@@ -116,7 +118,7 @@ function StylistModal({
       setFormData({
         name: stylist.name,
         category: stylist.category,
-        google_calendar_id: stylist.google_calendar_id,
+        google_calendar_id: stylist.google_calendar_id ?? "",
         is_active: stylist.is_active,
         color: stylist.color || null,
       });
@@ -131,10 +133,20 @@ function StylistModal({
     }
   }, [stylist, open]);
 
+  // Load available calendars when modal opens
+  useEffect(() => {
+    if (!open) return;
+    setLoadingCalendars(true);
+    api.getGoogleCalendars()
+      .then((data) => setAvailableCalendars(data.calendars))
+      .catch(() => setAvailableCalendars([]))
+      .finally(() => setLoadingCalendars(false));
+  }, [open]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.google_calendar_id) {
-      toast.error("Nombre y Google Calendar ID son requeridos");
+    if (!formData.name) {
+      toast.error("El nombre del estilista es requerido");
       return;
     }
 
@@ -220,22 +232,60 @@ function StylistModal({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="google_calendar_id">Google Calendar ID *</Label>
-            <Input
-              id="google_calendar_id"
-              value={formData.google_calendar_id}
-              onChange={(e) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  google_calendar_id: e.target.value,
-                }))
-              }
-              placeholder="calendario@group.calendar.google.com"
-              required
-            />
-            <p className="text-xs text-muted-foreground">
-              ID del calendario de Google asociado a este estilista
-            </p>
+            <Label htmlFor="google_calendar_id">Google Calendar</Label>
+            {availableCalendars.length > 0 ? (
+              <>
+                <Select
+                  value={formData.google_calendar_id}
+                  onValueChange={(value) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      google_calendar_id: value,
+                    }))
+                  }
+                  disabled={loadingCalendars}
+                >
+                  <SelectTrigger id="google_calendar_id">
+                    <SelectValue placeholder="Selecciona un calendario..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableCalendars.map((cal) => (
+                      <SelectItem key={cal.id} value={cal.id}>
+                        {cal.summary}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Selecciona el calendario de Google de este estilista
+                </p>
+              </>
+            ) : (
+              <>
+                <Input
+                  id="google_calendar_id"
+                  value={formData.google_calendar_id}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      google_calendar_id: e.target.value,
+                    }))
+                  }
+                  placeholder="calendario@group.calendar.google.com"
+                  disabled={loadingCalendars}
+                />
+                <p className="text-xs text-muted-foreground">
+                  ID del calendario de Google asociado a este estilista.{" "}
+                  <a
+                    href="/settings/google-calendar"
+                    className="underline hover:text-foreground"
+                  >
+                    Conecta Google Calendar en Ajustes
+                  </a>{" "}
+                  para ver los calendarios disponibles.
+                </p>
+              </>
+            )}
           </div>
 
           <div className="flex items-center space-x-2">

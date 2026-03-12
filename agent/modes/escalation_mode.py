@@ -1,200 +1,107 @@
 """
-EscalationMode — Human handoff for complex cases (v6.0).
+Escalation Mode — v6.0 Mode-Based Architecture.
 
-This mode handles the handoff to human agents when:
-- Customer explicitly requests a human ("quiero hablar con una persona")
-- Auto-escalation due to repeated errors (error_count >= threshold)
-- Booking failures that can't be recovered automatically
-- Medical consultations or allergy concerns
-- Any situation the AI cannot resolve
+Handles human handoff when:
+- Customer explicitly requests a human agent
+- Error count exceeds threshold (auto-escalation)
+- AI cannot handle the request
 
-Once in ESCALATION mode the bot:
-1. Calls the escalate_to_human tool (fire-and-forget) to disable the bot
-   in Chatwoot and notify the staff.
-2. Sends a warm handoff message to the customer.
-3. Stays in ESCALATION mode — does NOT auto-transition back to any other mode.
-   Human staff will take over the conversation.
-
-The escalation_triggered flag in state is set to True so other components
-(graphs, middleware) know the bot should not respond further.
-
-Tools available:
-- escalate_to_human: Triggers the Chatwoot bot-disable + staff notification
-
-Architecture note:
-    EscalationMode calls the escalate_to_human tool DIRECTLY (not via the LLM
-    agent loop). This avoids any LLM hallucinations about why we're escalating.
-    The escalation reason is inferred from mode_context or conversation context.
+Sets escalation_triggered=True in state and calls the escalate_to_human tool.
+Once triggered, stays in ESCALATION for remaining messages.
 """
-
-from __future__ import annotations
 
 import logging
 
 from agent.modes.base import BaseModeNode
-from agent.routing.intent_router import IntentResult
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
-from agent.tools.escalation_tools import escalate_to_human, ESCALATION_MESSAGES
 
 logger = logging.getLogger(__name__)
 
-
-# Default escalation reason when none can be inferred
-_DEFAULT_ESCALATION_REASON = "manual_request"
-
-# Customer-facing message when already escalated (bot should be silent, but just in case)
-_ALREADY_ESCALATED_MESSAGE = (
-    "Ya he notificado al equipo. Estarán contigo en breve. "
-    "Por favor, espera un momento. 💕"
+_ALREADY_ESCALATED = (
+    "Ya he contactado con nuestro equipo. Te atenderán en breve. 🙏 "
+    "¿Hay algo más en lo que pueda ayudarte mientras esperás?"
+)
+_ESCALATION_SUCCESS = (
+    "Entendido, {name}. He avisado a nuestro equipo y te atenderán "
+    "personalmente en breve. 🙏"
+)
+_ESCALATION_FALLBACK = (
+    "He notificado a nuestro equipo. Te contactarán en breve. 🙏"
 )
 
 
 class EscalationMode(BaseModeNode):
     """
-    Mode node for the ESCALATION phase — human handoff.
+    Mode node for human handoff.
 
-    Calls escalate_to_human tool directly, sets escalation state flags,
-    and sends a warm handoff message. Stays in ESCALATION mode permanently
-    (no auto-transition).
+    Calls escalate_to_human tool and sets escalation_triggered=True in state.
+    Subsequent messages in the same conversation will see escalation_triggered=True
+    and the router will route them here again, returning a simple "waiting" message.
     """
 
     @property
     def mode_name(self) -> str:
         return "ESCALATION"
 
-    async def handle(
-        self,
-        state: ConversationState,
-        intent: IntentResult,
-    ) -> dict:
+    async def handle(self, state: ConversationState, intent: object) -> dict:
         """
-        Process a turn in ESCALATION mode.
-
-        On first entry (escalation_triggered=False):
-        - Call escalate_to_human tool
-        - Set escalation_triggered=True, escalation_reason
-        - Send handoff message to customer
-
-        On subsequent turns (escalation_triggered=True):
-        - Bot is already escalated, human staff is handling it
-        - Return a polite "please wait" message (or be silent)
-        - Stay in ESCALATION mode
+        Handle escalation to human agent.
 
         Args:
-            state: Current ConversationState (read-only).
-            intent: Classified intent from IntentRouter.
+            state: Current conversation state
+            intent: IntentResult from router (not used — escalation is unconditional)
 
         Returns:
-            Partial state update dict for LangGraph reducers.
+            Partial state update dict with escalation_triggered=True
         """
         conversation_id = state.get("conversation_id", "unknown")
-        customer_phone = state.get("customer_phone")
-        escalation_triggered = state.get("escalation_triggered", False)
 
-        logger.info(
-            "EscalationMode.handle | conversation_id=%s | already_triggered=%s | intent=%s",
-            conversation_id,
-            escalation_triggered,
-            intent.intent,
-        )
-
-        # ── If already escalated, stay silent / brief message ─────────────────
-        # Human staff is already handling this. We don't want to confuse the
-        # customer with bot messages after escalation.
-        if escalation_triggered:
-            logger.info(
-                "EscalationMode: already escalated, staying silent | "
-                "conversation_id=%s",
-                conversation_id,
+        # If already escalated, just confirm and wait
+        if state.get("escalation_triggered"):
+            self.logger.info(
+                "EscalationMode: already escalated | conversation=%s", conversation_id
             )
-            # Return empty update — no new message, stay in ESCALATION
-            # This prevents the bot from interfering with the human handoff.
             return {
-                "current_mode": "ESCALATION",
+                **add_message(state, "assistant", _ALREADY_ESCALATED),
+                "last_node": "escalation",
+                "user_message": None,
             }
 
-        # ── First entry: trigger escalation ───────────────────────────────────
-        # Determine reason from mode_context or intent
-        mode_context = state.get("mode_context") or {}
-        reason = (
-            mode_context.get("escalation_reason")
-            or _infer_reason_from_intent(intent)
-        )
+        # Attempt to call escalate_to_human tool
+        customer_name = state.get("customer_name") or "Cliente"
+        customer_phone = state.get("customer_phone", "")
 
-        logger.info(
-            "EscalationMode: triggering escalation | "
-            "conversation_id=%s | reason=%s",
-            conversation_id,
-            reason,
-        )
+        response_text = _ESCALATION_FALLBACK
 
-        # Call escalate_to_human tool directly
-        # This handles: Chatwoot bot-disable + admin notification (fire-and-forget)
         try:
-            tool_result = await escalate_to_human.ainvoke({
-                "reason": reason,
-                "_conversation_id": conversation_id,
-                "_customer_phone": customer_phone or "",
-                "_conversation_context": state.get("messages", [])[-5:],
+            from agent.tools.escalation_tools import escalate_to_human
+
+            await escalate_to_human.ainvoke({
+                "reason": "customer_request",
+                "customer_name": customer_name,
+                "customer_phone": customer_phone,
+                "conversation_id": conversation_id,
             })
-
-            customer_message = tool_result.get(
-                "message",
-                ESCALATION_MESSAGES.get(reason, "Te conecto con el equipo ahora mismo.")
-            )
-
-            logger.info(
-                "EscalationMode: escalation triggered successfully | "
-                "conversation_id=%s | reason=%s | escalated=%s",
+            response_text = _ESCALATION_SUCCESS.format(name=customer_name)
+            self.logger.info(
+                "EscalationMode: escalation successful | conversation=%s | customer=%s",
                 conversation_id,
-                reason,
-                tool_result.get("escalated"),
+                customer_name,
             )
 
         except Exception as exc:
-            logger.error(
-                "EscalationMode: escalate_to_human failed | "
-                "conversation_id=%s | error=%s",
+            self.logger.error(
+                "EscalationMode: escalate_to_human failed | conversation=%s | error=%s",
                 conversation_id,
                 exc,
-                exc_info=True,
             )
-            # Tool failed, but we still set escalation state and send message
-            # Staff won't be notified automatically, but at least we tell the customer
-            customer_message = (
-                "Te conecto con el equipo ahora mismo. "
-                "Estarán contigo en breve. 💕"
-            )
-
-        # Build state update
-        msg_update = add_message(state, "assistant", customer_message)
+            # Still mark as escalated to avoid infinite retries
+            response_text = _ESCALATION_FALLBACK
 
         return {
-            **msg_update,
+            **add_message(state, "assistant", response_text),
             "escalation_triggered": True,
-            "escalation_reason": reason,
-            "current_mode": "ESCALATION",
+            "last_node": "escalation",
+            "user_message": None,
         }
-
-
-def _infer_reason_from_intent(intent: IntentResult) -> str:
-    """
-    Infer an escalation reason from the classified intent.
-
-    Maps IntentResult intents to escalation reason strings that the
-    escalate_to_human tool understands.
-
-    Args:
-        intent: Classified intent from IntentRouter.
-
-    Returns:
-        Escalation reason string compatible with escalate_to_human tool.
-    """
-    intent_to_reason: dict[str, str] = {
-        "escalate": "manual_request",
-        "ambiguous": "ambiguity",
-        "cancel": "manual_request",
-    }
-
-    return intent_to_reason.get(intent.intent, _DEFAULT_ESCALATION_REASON)

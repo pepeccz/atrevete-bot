@@ -18,7 +18,6 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from langchain_core.tools import tool
@@ -33,6 +32,7 @@ from tenacity import (
 )
 from zoneinfo import ZoneInfo
 
+from agent.services.gcal_credential_factory import get_google_credentials
 from database.connection import get_async_session
 from database.models import BusinessHours, ServiceCategory, Stylist
 from shared.config import get_settings
@@ -50,7 +50,7 @@ TIMEZONE = ZoneInfo("Europe/Madrid")
 # This constant serves as fallback if database is unavailable
 BUSINESS_HOURS = {
     "weekday": {"start": 10, "end": 20},  # Tuesday-Friday 10:00-20:00 (FALLBACK)
-    "saturday": {"start": 9, "end": 14},  # Saturday 9:00-14:00 (FALLBACK)
+    "saturday": {"start": 10, "end": 14},  # Saturday 10:00-14:00 (FALLBACK)
 }
 
 # Slot duration in minutes
@@ -133,38 +133,37 @@ class CalendarTools:
     """
     Google Calendar API client wrapper.
 
-    Initializes service account authentication and provides
-    access to Google Calendar API with automatic credential loading.
+    Uses lazy async initialization via get_service() so credentials are
+    resolved through the credential factory (OAuth2 or service account).
 
     Usage:
         tools = CalendarTools()
-        service = tools.get_service()
+        service = await tools.get_service()
         events = service.events().list(calendarId='...').execute()
     """
 
     def __init__(self):
-        """Initialize Google Calendar API client with service account credentials."""
-        settings = get_settings()
+        """Initialize CalendarTools (credentials resolved per-call via get_service())."""
+        pass  # no _service cache — credentials resolved per-call
 
+    async def get_service(self):
+        """
+        Get a fresh Calendar API service instance per call.
+
+        Resolves credentials through get_google_credentials() — prefers OAuth2 from
+        DB when configured, falls back to service account file. Opens a short-lived
+        AsyncSession on every call so the factory can read OAuth2 tokens from the DB.
+        No caching: each call creates a new service object with fresh credentials.
+        """
         try:
-            # Load service account credentials from JSON file
-            credentials = service_account.Credentials.from_service_account_file(
-                settings.GOOGLE_SERVICE_ACCOUNT_JSON,
-                scopes=["https://www.googleapis.com/auth/calendar"]
-            )
-
-            # Build Calendar API service
-            self.service = build("calendar", "v3", credentials=credentials)
-
+            async with get_async_session() as session:
+                credentials = await get_google_credentials(session=session)
+            service = build("calendar", "v3", credentials=credentials)
             logger.info("Google Calendar API client initialized successfully")
-
+            return service
         except Exception as e:
             logger.error(f"Failed to initialize Google Calendar API client: {e}")
             raise
-
-    def get_service(self):
-        """Get the Calendar API service instance."""
-        return self.service
 
 
 # Global calendar client instance
@@ -176,7 +175,7 @@ def get_calendar_client() -> CalendarTools:
     Get or create global CalendarTools instance.
 
     Returns:
-        CalendarTools: Singleton calendar client instance
+        CalendarTools: Singleton calendar client instance (credentials lazily resolved)
     """
     global _calendar_client
     if _calendar_client is None:
@@ -200,8 +199,8 @@ async def get_stylists_by_category(category: str) -> list[Stylist]:
         List of active Stylist model instances
     """
     try:
-        # Convert string to ServiceCategory enum
-        service_category = ServiceCategory(category)
+        # Convert string to ServiceCategory enum (accept both "Hairdressing" and "HAIRDRESSING")
+        service_category = ServiceCategory(category.upper())
     except ValueError:
         logger.error(f"Invalid service category: {category}")
         return []
@@ -561,6 +560,9 @@ async def fetch_calendar_events_async(
             f"Calendar API timeout ({timeout}s) fetching events for calendar_id={calendar_id}"
         )
         return []  # Graceful degradation: return empty list
+    except RetryError:
+        # Re-raise RetryError so callers can detect rate limit exhaustion
+        raise
     except Exception as e:
         logger.error(f"Error fetching calendar events: {e}")
         return []
@@ -771,7 +773,7 @@ async def get_calendar_availability(
 
         # Get calendar client
         calendar_client = get_calendar_client()
-        service = calendar_client.get_service()
+        service = await calendar_client.get_service()
 
         # Check for holiday closure across ALL calendars
         holiday_info = await check_holiday_closure(service, target_date, conversation_id)
@@ -950,8 +952,8 @@ async def create_calendar_event(
         elif status == "confirmed":
             summary = f"🟢 {customer_name} - {service_names}"
         elif status == "provisional":
-            # Legacy support for provisional status
-            summary = f"🟡 {customer_name} - {service_names}"
+            # Legacy support for provisional status — keep [PROVISIONAL] prefix for backwards compatibility
+            summary = f"[PROVISIONAL] {customer_name} - {service_names}"
         else:
             summary = f"{customer_name} - {service_names}"
 
@@ -989,7 +991,7 @@ async def create_calendar_event(
 
         # Get calendar client
         calendar_client = get_calendar_client()
-        service = calendar_client.get_service()
+        service = await calendar_client.get_service()
 
         # Create event with retry logic (NFR3: timeout 3s, retry 1x = 2 attempts total)
         @retry(
@@ -1118,7 +1120,7 @@ async def delete_calendar_event(
 
         # Get calendar client
         calendar_client = get_calendar_client()
-        service = calendar_client.get_service()
+        service = await calendar_client.get_service()
 
         # Delete event with retry logic
         @retry(
@@ -1253,9 +1255,10 @@ async def update_calendar_event_color(
     """
     try:
         client = get_calendar_client()
+        service = await client.get_service()
 
         # Fetch existing event
-        event = client.service.events().get(
+        event = service.events().get(
             calendarId=calendar_id,
             eventId=event_id
         ).execute()
@@ -1264,7 +1267,7 @@ async def update_calendar_event_color(
         event['colorId'] = color_id
 
         # Update event in calendar
-        client.service.events().update(
+        service.events().update(
             calendarId=calendar_id,
             eventId=event_id,
             body=event
@@ -1341,7 +1344,7 @@ async def update_calendar_event_status(
 
         # Get calendar client
         calendar_client = get_calendar_client()
-        service = calendar_client.get_service()
+        service = await calendar_client.get_service()
 
         # Fetch existing event
         try:

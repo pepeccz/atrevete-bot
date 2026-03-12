@@ -1,16 +1,16 @@
 """
-Seed data script for services table - VERSIÓN DEFINITIVA desde data/Services.csv
+Seed data script for services table - VERSIÓN ACTUALIZADA desde PDF oficial
 
-Este archivo contiene los 69 servicios oficiales de Atrévete Peluquería:
-- 27 servicios de Peluquería
-- 42 servicios de Estética
+Este archivo contiene los 77 servicios oficiales de Atrévete Peluquería:
+- 36 servicios de Peluquería
+- 41 servicios de Estética
 
-Datos y descripciones actualizados desde atrevetepeluqueria.com (2024-12).
+Datos actualizados desde el PDF oficial de servicios (2026).
 Can be run standalone: python -m database.seeds.services
 
 IMPORTANTE: Los servicios usan UUIDs determinísticos basados en el nombre.
 Esto garantiza que el mismo servicio siempre tenga el mismo UUID,
-evitando problemas de service_ids huérfanos en citas existentes.
+evitar problemas de service_ids huérfanos en citas existentes.
 """
 
 import asyncio
@@ -46,467 +46,484 @@ def generate_service_uuid(service_name: str) -> UUID:
     # Usar los primeros 32 caracteres del hash como UUID
     return UUID(hash_bytes[:32])
 
+
 # ============================================================================
-# SERVICIOS DE PELUQUERÍA (27 servicios)
+# SERVICIOS DE PELUQUERÍA (36 servicios)
 # ============================================================================
 
 HAIRDRESSING_SERVICES = [
-    # --- TRATAMIENTO + PEINADO ---
     {
-        "name": "Tratamiento + Peinado Largo",
+        "name": "Óleo Pigmento",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 30,
+        "description": "Tratamiento regulador de la porosidad capilar que equilibra el pH y mejora la salud del cabello",
+    },
+    {
+        "name": "Agua Tierra",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 25,
+        "description": "Tratamiento capilar detoxificante que purifica el cuero cabelludo y equilibra la grasa",
+    },
+    {
+        "name": "Corte de Flequillo",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 15,
+        "description": "Corte y modelado del flequillo para renovar tu look rápidamente",
+    },
+    {
+        "name": "Perilla",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 10,
+        "description": "Arreglo de la perilla (patillas) para un look limpio y pulcro",
+    },
+    {
+        "name": "Tratamiento Precolor",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 5,
+        "description": "Tratamiento previo al color que prepara el cabello para un mejor resultado",
+    },
+    {
+        "name": "Infoactivo Fuerza",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 30,
+        "description": "Tratamiento fortalecedor que activa la fuerza capilar desde la raíz",
+    },
+    {
+        "name": "Infoactivo Sensitivo",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 30,
+        "description": "Tratamiento específico para cabellos sensibles o irritados que calma y protege",
+    },
+    {
+        "name": "Mechas Localizadas",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 20,
+        "description": "Mechas en zonas específicas para aportar luz y dimensión al cabello",
+    },
+    {
+        "name": "Color Caballero",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 30,
+        "description": "Servicio de coloración específico para cabellos masculinos",
+    },
+    {
+        "name": "Moldeado",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 50,
+        "description": "Moldeado capilar con productos profesionales para dar forma y textura al cabello",
+    },
+    {
+        "name": "Recogido",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 60,
-        "description": "Tratamientos personalizado, lavado dermocapila, ritual facial y peinado",
+        "description": "Peinado recogido elegante para eventos y ocasiones especiales",
     },
     {
-        "name": "Tratamiento + Peinado Extra",
+        "name": "Semirecogido",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 90,
-        "description": "Tratamientos personalizado, lavado dermocapilar,ritual facial y peinado",
+        "duration_minutes": 40,
+        "description": "Peinado semirecogido que combina elegancia con un toque natural",
     },
     {
-        "name": "Tratamiento + Peinado corto/medio",
+        "name": "Recogido Novia",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 120,
+        "description": "Peinado de novia completo con prueba y ejecución el día de la boda",
+    },
+    {
+        "name": "Corte Bebé",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 20,
+        "description": "Corte capilar suave y rápido para los más pequeños de la casa",
+    },
+    {
+        "name": "Mechas",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 60,
-        "description": "tratamientos personalizado, lavado dermocapilar,ritual facial y peinado",
+        "description": "Servicio completo de mechas para iluminar y dar dimensión al cabello",
     },
-
-    # --- PEINADO ---
+    {
+        "name": "Mechas Extras",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 70,
+        "description": "Servicio de mechas extendido para cabellos largos o con mucha densidad",
+    },
+    {
+        "name": "Barro Gold",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 40,
+        "description": "Tratamiento de coloración con barro que nutre mientras aporta tonos dorados",
+    },
+    {
+        "name": "Mechas Localizadas Express",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 15,
+        "description": "Versión express de mechas localizadas para un toque de luz rápido",
+    },
+    {
+        "name": "Óleo Extra",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 40,
+        "description": "Tratamiento intensivo con óleos esenciales para cabello muy dañado o seco",
+    },
+    {
+        "name": "Barro Extra",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 40,
+        "description": "Tratamiento de barro intensivo para cabellos que necesitan nutrición profunda",
+    },
+    {
+        "name": "Barba",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 15,
+        "description": "Arreglo y modelado de barba para un look cuidado y masculino",
+    },
+    {
+        "name": "Moldeado Extra",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 70,
+        "description": "Moldeado extendido para cabellos largos o con tratamientos químicos previos",
+    },
+    {
+        "name": "Agua Lluvia",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 25,
+        "description": "Tratamiento hidratante que aporta brillo y suavidad como la lluvia fresca",
+    },
+    {
+        "name": "Cultura de Color Extra",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 50,
+        "description": "Servicio de coloración extendido para cambios drásticos o correcciones",
+    },
+    {
+        "name": "Prepigmentar",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 10,
+        "description": "Proceso de prepigmentación para preparar el cabello antes de ciertos colores",
+    },
+    {
+        "name": "Cortar",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 40,
+        "description": "Corte capilar completo con lavado incluido",
+    },
     {
         "name": "Peinado Largo",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 60,
-        "description": "Lavado dermo capilar,ritual facial y peinado",
+        "duration_minutes": 45,
+        "description": "Peinado profesional para cabello largo, incluye lavado ritual facial",
+    },
+    {
+        "name": "Barro",
+        "category": ServiceCategory.HAIRDRESSING,
+        "duration_minutes": 40,
+        "description": "Tratamiento de coloración con barro natural que nutre el cabello",
     },
     {
         "name": "Peinado Extra",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 90,
-        "description": "Lavado dermo capilar,ritual facial y peinado",
+        "duration_minutes": 70,
+        "description": "Peinado extendido para cabello muy largo o elaborado",
     },
     {
-        "name": "Peinado Corto - Medio",
+        "name": "Corte Niña",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 60,
-        "description": "Lavado dermo capilar,ritual facial y peinado",
-    },
-
-    # --- PACK ÓLEO PIGMENTO + PEINADO ---
-    {
-        "name": "Pack Óleo Pigmento + Peinado Largo",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 120,
-        "description": "Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado",
+        "duration_minutes": 30,
+        "description": "Corte especializado para niñas con técnicas adaptadas a su edad",
     },
     {
-        "name": "Pack Óleo Pigmento + Peinado Extra",
+        "name": "Cultura de Color",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 150,
-        "description": "regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado",
+        "duration_minutes": 40,
+        "description": "Servicio de coloración profesional con productos de alta calidad",
     },
     {
-        "name": "Pack Óleo Pigmento + Peinado Corto - Medio",
+        "name": "Peinado Niña Comunión",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 120,
-        "description": "regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado",
-    },
-
-    # --- PACK MOLDEADO ---
-    {
-        "name": "Pack Moldeado Largo",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 150,
-        "description": "regulador de la porosidad, servicio de moldeado, equibrador del Ph, ritual facial y peinado",
+        "duration_minutes": 70,
+        "description": "Peinado elegante para niñas en su Primera Comunión",
     },
     {
-        "name": "Pack Moldeado Extra",
+        "name": "Secado",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 150,
-        "description": "regulador de la porosidad, servicio de moldeado, equibrador del Ph, ritual facial y peinado",
+        "duration_minutes": 20,
+        "description": "Secado profesional del cabello para un acabado pulcro",
     },
     {
-        "name": "Pack Moldeado Corto - Medio",
+        "name": "Peinado",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 120,
-        "description": "regulador de la porosidad, servicio de moldeado, equibrador del Ph, ritual facial y peinado",
-    },
-
-    # --- PACK MECHAS ---
-    {
-        "name": "Pack Mechas Largo",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 180,
-        "description": "regulador de la porosidad, servicio de mechas, equibrador del Ph, ritual facial y peinado",
+        "duration_minutes": 40,
+        "description": "Peinado profesional para el día a día o eventos informales",
     },
     {
-        "name": "Pack Mechas Extra",
+        "name": "Corte Niño",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 210,
-        "description": "regulador de la porosidad, servicio de mechas, equibrador del Ph, ritual facial y peinado",
+        "duration_minutes": 30,
+        "description": "Corte especializado para niños con técnicas adaptadas a su edad",
     },
     {
-        "name": "Pack Mechas Corto - Medio",
+        "name": "Corte Caballero",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 180,
-        "description": "regulador de la porosidad, servicio de mechas, equibrador del Ph, ritual facial y peinado",
-    },
-
-    # --- PACK DUAL: MECHAS + COLOR ---
-    {
-        "name": "Pack Dual: Mechas + Color Largo",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 180,
-        "description": "regulador de la porosidad, servicio dual, equibrador del Ph, ritual facial y peinado",
-    },
-    {
-        "name": "Pack Dual: Mechas + Color Extra",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 210,
-        "description": "regulador de la porosidad, servicio dual, equibrador del Ph, ritual facial y peinado",
-    },
-    {
-        "name": "Pack Dual: Mechas + Color Corto - Medio",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 180,
-        "description": "regulador de la porosidad, servicio dual, equibrador del Ph, ritual facial y peinado",
-    },
-
-    # --- PACK CULTURA DE COLOR ---
-    {
-        "name": "Pack cultura de Color Largo",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 120,
-        "description": "Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado",
-    },
-    {
-        "name": "Pack Cultura de Color Extra",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 150,
-        "description": "Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado",
-    },
-    {
-        "name": "Pack cultura de Color Corto - Medio",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 120,
-        "description": "Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado",
-    },
-
-    # --- PACK BARRO GOLD ---
-    {
-        "name": "Pack Barro Gold Largo",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 120,
-        "description": "Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado",
-    },
-    {
-        "name": "Pack Barro Gold Extra",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 150,
-        "description": "Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado",
-    },
-    {
-        "name": "Pack Barro Gold Corto - Medio",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 120,
-        "description": "Regulador de la porosidad, servicio de color, equibrador del Ph, ritual facial y peinado",
-    },
-
-    # --- CORTE + PEINADO ---
-    {
-        "name": "Corte + Peinado Largo",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 60,
-        "description": "Lavado dermo capilar, ritual facial  corte y peinado",
-    },
-    {
-        "name": "Corte + Peinado Extra",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 120,
-        "description": "Lavado dermo capilar, ritual facial corte y peinado",
-    },
-    {
-        "name": "Corte + Peinado Corto - Medio",
-        "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 60,
-        "description": "Lavado dermo capilar, ritual facial y cortar peinado",
+        "duration_minutes": 40,
+        "description": "Corte capilar completo para caballeros con lavado incluido",
     },
 ]
 
+
 # ============================================================================
-# SERVICIOS DE ESTÉTICA (42 servicios)
+# SERVICIOS DE ESTÉTICA (41 servicios)
 # ============================================================================
 
 AESTHETICS_SERVICES = [
-    # --- PESTAÑAS ---
+    {
+        "name": "Masaje Corporal (60 min)",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 60,
+        "description": "Masaje corporal relajante de cuerpo completo para aliviar tensiones y estrés acumulado",
+    },
+    {
+        "name": "Maquillaje",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 60,
+        "description": "Servicio de maquillaje profesional para eventos, fiestas y ocasiones especiales",
+    },
     {
         "name": "Tinte de Pestañas",
         "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Tratamiento para dar color a las pestañas de forma duradera",
+        "duration_minutes": 40,
+        "description": "Tratamiento para dar color oscuro y duradero a las pestañas naturales",
     },
-    {
-        "name": "Tinte + Permanente de Pestañas",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 150,
-        "description": "Tratamiento combinado para dar color y curvatura a las pestañas",
-    },
-    {
-        "name": "Permanente de Pestañas",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Tratamiento para dar curvatura natural y duradera a las pestañas",
-    },
-
-    # --- CORPORAL ---
     {
         "name": "Peeling Corporal",
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 60,
-        "description": "Exfoliación corporal profunda para renovar y suavizar la piel",
+        "description": "Exfoliación corporal profunda que renueva la piel eliminando células muertas",
     },
     {
-        "name": "Masaje 60 min",
+        "name": "Tinte + Permanente de Pestañas",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 90,
+        "description": "Tratamiento combinado que da color y curvatura natural duradera a las pestañas",
+    },
+    {
+        "name": "Permanente de Pestañas",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 40,
+        "description": "Tratamiento para dar curvatura natural y duradera a las pestañas sin necesidad de rizador",
+    },
+    {
+        "name": "Bioterapia Facial + Radiofrecuencia (30 min)",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 90,
+        "description": "Tratamiento facial avanzado combinado con 30 minutos de radiofrecuencia para resultados anti-edad potenciados",
+    },
+    {
+        "name": "Bioterapia Facial + Radiofrecuencia (15 min)",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 75,
+        "description": "Tratamiento facial combinado con 15 minutos de radiofrecuencia para rejuvenecimiento facial",
+    },
+    {
+        "name": "Bioterapia Facial",
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 60,
-        "description": "Masaje corporal relajante de 60 minutos para aliviar tensiones y estrés",
+        "description": "Tratamiento facial personalizado según las necesidades específicas de tu piel",
     },
     {
-        "name": "Masaje 30 min",
+        "name": "Maquillaje Express",
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 30,
-        "description": "Masaje corporal relajante de 30 minutos para aliviar tensiones",
+        "description": "Maquillaje rápido y profesional para el día a día o eventos informales",
+    },
+    {
+        "name": "Brazos Completos o Pecho",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Depilación con cera de brazos completos o zona del pecho",
     },
     {
         "name": "Higiene de Espalda",
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 60,
-        "description": "Limpieza especializada y profunda de la zona de la espalda",
+        "description": "Limpieza facial especializada para la espalda, ideal para tratar impurezas y acné",
     },
-
-    # --- MAQUILLAJE ---
     {
-        "name": "Maquillaje",
+        "name": "Maquillaje Novia",
         "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Servicio de maquillaje profesional para eventos y ocasiones especiales",
+        "duration_minutes": 70,
+        "description": "Maquillaje profesional para novias con prueba previa y duración todo el evento",
     },
-
-    # --- MANICURA ---
     {
-        "name": "Manicura Permanente + Bioterapia de Manos",
+        "name": "Cejas",
         "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Servicio de manicura con esmalte permanente y tratamiento hidratante para manos",
+        "duration_minutes": 15,
+        "description": "Depilación con cera y diseño de cejas para enmarcar la mirada",
     },
     {
-        "name": "Limar + Pintar Uñas de las Manos Permanente",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Servicio de limado y esmaltado permanente de uñas de las manos",
-    },
-    {
-        "name": "Limar + Pintar Uñas de las Manos",
+        "name": "Ingles o Axilas",
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 30,
-        "description": "Servicio básico de limado y esmaltado de uñas de las manos",
+        "description": "Depilación con cera de la zona de ingles o axilas",
     },
-
-    # --- PEDICURA ---
     {
-        "name": "Pedicura Permanente + Bioterapia",
+        "name": "Manicura Permanente + Bio",
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 90,
-        "description": "Servicio de pedicura con esmalte permanente y tratamiento hidratante para pies",
-    },
-    {
-        "name": "Limar + Pintar Uñas de los Pies Permanente",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Servicio de limado y esmaltado permanente de uñas de los pies",
-    },
-    {
-        "name": "Limar + Pintar Uñas de los Pies",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Servicio básico de limado y esmaltado de uñas de los pies",
-    },
-
-    # --- DEPILACIÓN ---
-    {
-        "name": "Depilación Pubis Completo",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona del pubis completo",
-    },
-    {
-        "name": "Depilación Piernas Enteras",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Depilación con cera de las piernas completas",
-    },
-    {
-        "name": "Depilación Pecho",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona del pecho",
-    },
-    {
-        "name": "Depilación Muslos",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona de los muslos",
-    },
-    {
-        "name": "Depilación Medias Piernas",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de las medias piernas",
-    },
-    {
-        "name": "Depilación Lumbar",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona lumbar",
-    },
-    {
-        "name": "Depilación Labios",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera del labio superior",
-    },
-    {
-        "name": "Depilación Ingles Brasileñas",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona de ingles estilo brasileño",
-    },
-    {
-        "name": "Depilación Ingles",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona de las ingles",
-    },
-    {
-        "name": "Depilación Glúteos",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona de los glúteos",
-    },
-    {
-        "name": "Depilación Espalda",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona de la espalda",
-    },
-    {
-        "name": "Depilación Cejas",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera para dar forma a las cejas",
-    },
-    {
-        "name": "Depilación Brazos Completos",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de los brazos completos",
-    },
-    {
-        "name": "Depilación Brazo Medio",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de medio brazo",
-    },
-    {
-        "name": "Depilación Axilas",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona de las axilas",
-    },
-    {
-        "name": "Depilación Abdomen",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 30,
-        "description": "Depilación con cera de la zona del abdomen",
-    },
-
-    # --- BIOTERAPIA FACIAL ---
-    {
-        "name": "Bioterapia Vitalizadora",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Tratamiento facial para generar vitalidad y energía a nivel celular. Alisa la piel, reduce arrugas, minimiza poros y aporta elasticidad",
-    },
-    {
-        "name": "Bioterapia Sensitiva",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Tratamiento que refuerza la función protectora de la piel en casos sensibles o irritados. Calma, hidrata y equilibra el tono cutáneo",
-    },
-    {
-        "name": "Bioterapia Iluminante",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Reduce o elimina manchas cutáneas de forma progresiva. Aclara pieles oscurecidas y regula la melanina",
-    },
-    {
-        "name": "Bioterapia Detox",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Reequilibra los desórdenes provocados por exceso de grasa y deshidratación. Depura toxinas, regula seborrea y oxigena la piel",
-    },
-
-    # --- BIOTERAPIA + RADIOFRECUENCIA ---
-    {
-        "name": "Bioterapia + Radiofrecuencia 30 min",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 90,
-        "description": "Tratamiento facial combinado con radiofrecuencia de 30 minutos para potenciar resultados anti-edad",
-    },
-    {
-        "name": "Bioterapia + Radiofrecuencia 15 min",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 90,
-        "description": "Tratamiento facial combinado con radiofrecuencia de 15 minutos para potenciar resultados anti-edad",
-    },
-
-    # --- BIOTERAPIA CORPORAL ---
-    {
-        "name": "Bioterapia Sculptor Completo",
-        "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Reduce visiblemente los nódulos grasos de la celulitis. Estiliza la figura y minimiza la retención de líquidos",
+        "description": "Manicura con esmalte permanente combinado con tratamiento bioterapéutico para manos",
     },
     {
         "name": "Bioterapia Sculptor + Radiofrecuencia 30 min",
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 90,
-        "description": "Tratamiento anticelulítico combinado con radiofrecuencia de 30 minutos para potenciar resultados",
+        "description": "Tratamiento corporal anticelulítico combinado con 30 minutos de radiofrecuencia para resultados potenciados",
     },
     {
-        "name": "Bioterapia Piernas Perfectas + Presoterapia",
+        "name": "Limar y Pintar Manos Permanente",
         "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 90,
-        "description": "Drena toxinas, descongestiona, calma y reafirma las piernas combinando bioterapia con presoterapia",
+        "duration_minutes": 40,
+        "description": "Servicio de limado y esmaltado permanente de uñas de manos",
+    },
+    {
+        "name": "Brazos Medios",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Depilación con cera de media brazo (antebrazo o parte superior)",
     },
     {
         "name": "Bioterapia de Senos",
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 60,
-        "description": "Aumenta de forma natural y progresiva el volumen del seno mejorando la hidratación e impulso energético",
+        "description": "Tratamiento que aumenta naturalmente el volumen del seno mejorando hidratación y tonicidad",
+    },
+    {
+        "name": "Masaje Corporal (30 min)",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Masaje corporal relajante de 30 minutos para aliviar tensiones específicas",
+    },
+    {
+        "name": "Bono Bioterapia de Senos",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 60,
+        "description": "Bono de sesiones de bioterapia de senos con precio especial",
+    },
+    {
+        "name": "Quita Esmalte Permanente",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 25,
+        "description": "Servicio de retirada de esmalte permanente de uñas",
+    },
+    {
+        "name": "Medios Brazos",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 20,
+        "description": "Depilación con cera de media brazo (antebrazo o parte superior)",
+    },
+    {
+        "name": "Piernas Perfectas + Presoterapia (30 min)",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 90,
+        "description": "Tratamiento combinado que drena toxinas, descongestiona y reafirma las piernas",
+    },
+    {
+        "name": "Cera Enteras",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 40,
+        "description": "Depilación con cera de piernas enteras",
+    },
+    {
+        "name": "Cera Medias Piernas",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Depilación con cera de medias piernas",
+    },
+    {
+        "name": "Abdomen, Glúteos, Espalda o Pecho",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Depilación con cera de una zona a elegir: abdomen, glúteos, espalda o pecho",
+    },
+    {
+        "name": "Cera Muslos",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Depilación con cera de la zona de los muslos",
+    },
+    {
+        "name": "Pubis Completo",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Depilación con cera de la zona del pubis completo",
+    },
+    {
+        "name": "Ingles Brasileñas",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Depilación con cera de la zona de ingles al estilo brasileño",
+    },
+    {
+        "name": "Barro Gold Extra",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 40,
+        "description": "Tratamiento facial con barro dorado de alta gama para nutrición profunda",
+    },
+    {
+        "name": "Bioterapia Sculptor Completo",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 60,
+        "description": "Tratamiento corporal anticelulítico completo que reduce nódulos grasos y retención de líquidos",
     },
     {
         "name": "Bioterapia Podal",
         "category": ServiceCategory.AESTHETICS,
-        "duration_minutes": 60,
-        "description": "Tratamiento específico para pies cansados y fatigados. Hidrata y revitaliza",
+        "duration_minutes": 40,
+        "description": "Tratamiento específico para pies cansados y fatigados que hidrata y revitaliza",
+    },
+    {
+        "name": "Limar y Pintar Pies",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Servicio básico de limado y esmaltado de uñas de pies",
+    },
+    {
+        "name": "Limar y Pintar Pies Permanente",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 40,
+        "description": "Servicio de limado y esmaltado permanente de uñas de pies",
     },
     {
         "name": "Bioterapia de Manos",
         "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 45,
+        "description": "Tratamiento específico para hidratar, rejuvenecer y cuidar las manos",
+    },
+    {
+        "name": "Pedicura Permanente con Bioterapia",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 75,
+        "description": "Pedicura completa con esmalte permanente y tratamiento bioterapéutico para pies",
+    },
+    {
+        "name": "Manicura Caballero",
+        "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 30,
-        "description": "Tratamiento específico para hidratar y rejuvenecer las manos",
+        "description": "Manicura profesional para caballeros con limado, cutículas e hidratación",
+    },
+    {
+        "name": "Limar y Pintar Manos",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 30,
+        "description": "Servicio básico de limado y esmaltado de uñas de manos",
+    },
+    {
+        "name": "Labio",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 10,
+        "description": "Depilación con cera del labio superior o inferior",
     },
 ]
+
 
 # Consolidar todos los servicios
 ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
@@ -514,10 +531,13 @@ ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
 
 async def seed_services() -> None:
     """
-    Seed services table with the 69 official services.
+    Seed services table with the 77 official services.
 
     Usa UPSERT para preservar UUIDs existentes y evitar romper referencias en citas.
     Los UUIDs son determinísticos basados en el nombre del servicio.
+
+    IMPORTANTE: Este script NO elimina servicios existentes. Para la limpieza completa
+    (eliminar servicios no presentes en el PDF), usar el script de migración correspondiente.
     """
     async with get_async_session() as session:
         created_count = 0

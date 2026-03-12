@@ -19,7 +19,7 @@ interface ConflictInfo {
   date: string;
   stylist_id: string;
   stylist_name: string;
-  conflict_type: "appointment" | "blocking_event";
+  conflict_type: string;
   conflict_title: string;
   start_time: string;
   end_time: string;

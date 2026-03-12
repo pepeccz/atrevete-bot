@@ -1,38 +1,36 @@
 """
-[DEPRECATED v6.0] Conversational Agent Node - v5.0 Prescriptive FSM Architecture.
+Conversational Agent Node - v5.0 Prescriptive FSM Architecture.
 
-DEPRECATION NOTICE (2026-03-09):
-    This node is NO LONGER PART OF THE ACTIVE GRAPH as of v6.0.
-    The v6.0 mode-based architecture replaced this single mega-node with:
-        - preprocess_node  → agent/graphs/conversation_flow.py
-        - router_node      → agent/graphs/conversation_flow.py
-        - greeting_node    → agent/modes/greeting_mode.py
-        - general_node     → agent/modes/general_mode.py
-        - booking_node     → agent/modes/booking_mode.py
-        - escalation_node  → agent/modes/escalation_mode.py
-
-    This file is kept for reference and backward compatibility only.
-    It will be removed in a future cleanup after all tests that import it are updated.
-
-    Do NOT add this node to new graphs. Use the mode-based nodes instead.
-
-Original description (v5.0):
-    This node implements the v5.0 prescriptive architecture where:
-    - FSM prescribes exact tools to call (no LLM tool decisions)
-    - LLM handles only: (1) intent extraction (NLU), (2) response formatting (generation)
-    - IntentRouter separates booking (FSM-prescribed) from non-booking (LLM conversational)
+This node implements the v5.0 prescriptive architecture where:
+- FSM prescribes exact tools to call (no LLM tool decisions)
+- LLM handles only: (1) intent extraction (NLU), (2) response formatting (generation)
+- IntentRouter separates booking (FSM-prescribed) from non-booking (LLM conversational)
 
 Model: openai/gpt-4.1-mini via OpenRouter (cost-optimized, automatic prompt caching)
 
-Architecture (v5.0 - ADR-013) [SUPERSEDED by v6.0 mode-based]:
+Architecture (v5.0 - ADR-013):
     LLM (NLU)          → Extract intent only
     FSM Control        → Validate transition + prescribe actions
     IntentRouter       → Route booking vs non-booking
         ├─ BookingHandler     → FSM prescribes tools (0% hallucinations)
         └─ NonBookingHandler  → LLM with safe tools (FAQs, escalate)
 
-v6.0 replaces this with:
-    preprocess_node → router_node → [greeting|general|booking|escalation]_node → summarize_node
+Flow:
+1. Load FSM state from checkpoint
+2. Check for auto-escalation (error_count >= threshold)
+3. Extract intent using LLM (state-aware disambiguation)
+4. Validate transition with FSM
+5. Route via IntentRouter (NEW - replaces LLM tool binding)
+6. Persist FSM state
+7. Reset error_count on success
+
+Changes from v4.0:
+- REMOVED: LLM tool binding (replaced with FSM prescription)
+- REMOVED: tool_validation.py (997 lines of defensive code)
+- REMOVED: response_validator.py (reactive validation)
+- ADDED: IntentRouter with BookingHandler + NonBookingHandler
+- ADDED: Auto-escalation after consecutive errors (error_count >= 3)
+- REDUCED: 1,583 lines → ~400 lines (75% reduction)
 """
 
 import asyncio
@@ -46,15 +44,6 @@ from agent.fsm import BookingFSM, BookingState
 from shared.circuit_breaker import call_with_breaker, openrouter_breaker
 from agent.fsm.intent_extractor import extract_intent
 from agent.fsm.models import Intent, IntentType
-from agent.resilience import (
-    ErrorClassifier,
-    FallbackChain,
-    FallbackExhaustedError,
-    FallbackMetrics,
-    RetryBudget,
-    RetryStrategy,
-)
-from agent.resilience.retry_strategy import RetryState
 from agent.routing import IntentRouter
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
@@ -65,15 +54,12 @@ logger = logging.getLogger(__name__)
 # Auto-escalation threshold: after this many consecutive errors, escalate to human
 AUTO_ESCALATION_THRESHOLD = 3
 
-# ============================================================================
-# Resilience layer singletons (module-level — shared across all coroutines)
-# These are stateless (ErrorClassifier, RetryStrategy) or thread-safe
-# (RetryBudget via asyncio.Lock, FallbackChain via asyncio.Lock).
-# ============================================================================
-_error_classifier = ErrorClassifier()
-_retry_strategy = RetryStrategy()
-_retry_budget = RetryBudget()
-_fallback_chain = FallbackChain()
+
+def _legacy_name_confirmation_compat_enabled(state: ConversationState) -> bool:
+    """Allow legacy name confirmation only for direct v5 callers."""
+    return not any(
+        key in state for key in ("current_mode", "mode_context", "mode_history", "draft_contexts")
+    )
 
 
 async def conversational_agent(state: ConversationState) -> dict[str, Any]:
@@ -243,43 +229,51 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
 
     name_confirmation_pending = state.get("name_confirmation_pending", False)
     if name_confirmation_pending:
-        logger.info(
-            f"Name confirmation pending - routing to NonBookingHandler | "
-            f"conversation_id={conversation_id} | "
-            f"original_intent={intent.type.value}"
-        )
-
-        # Create LLM client for NonBookingHandler
-        llm = ChatOpenAI(
-            model=settings.LLM_MODEL,
-            base_url="https://openrouter.ai/api/v1",
-            api_key=settings.OPENROUTER_API_KEY,
-            temperature=0.3,
-            request_timeout=30.0,
-            max_retries=2,
-        )
-
-        # Import handler here to avoid circular imports
-        from agent.routing.non_booking_handler import NonBookingHandler
-
-        # Route to name confirmation handler
-        handler = NonBookingHandler(state, llm, fsm)
-        response_text, state_updates = await handler._handle_name_confirmation(intent)
-
-        # Apply state updates from handler
-        if state_updates:
-            for key, value in state_updates.items():
-                state[key] = value
-            logger.debug(
-                f"Name confirmation state updates applied | "
+        if _legacy_name_confirmation_compat_enabled(state):
+            logger.info(
+                f"Name confirmation pending - routing to NonBookingHandler | "
                 f"conversation_id={conversation_id} | "
-                f"updates={list(state_updates.keys())}"
+                f"original_intent={intent.type.value}"
             )
 
-        # Persist FSM state (unchanged for name confirmation)
-        state["fsm_state"] = fsm.to_dict()
+            # Create LLM client for NonBookingHandler
+            llm = ChatOpenAI(
+                model=settings.LLM_MODEL,
+                base_url="https://openrouter.ai/api/v1",
+                api_key=settings.OPENROUTER_API_KEY,
+                temperature=0.3,
+                request_timeout=30.0,
+                max_retries=2,
+            )
 
-        return add_message(state, "assistant", response_text)
+            # Import handler here to avoid circular imports
+            from agent.routing.non_booking_handler import NonBookingHandler
+
+            # Route to name confirmation handler
+            handler = NonBookingHandler(state, llm, fsm)
+            response_text, state_updates = await handler._handle_name_confirmation(intent)
+
+            # Apply state updates from handler
+            if state_updates:
+                for key, value in state_updates.items():
+                    state[key] = value
+                logger.debug(
+                    f"Name confirmation state updates applied | "
+                    f"conversation_id={conversation_id} | "
+                    f"updates={list(state_updates.keys())}"
+                )
+
+            # Persist FSM state (unchanged for name confirmation)
+            state["fsm_state"] = fsm.to_dict()
+
+            return add_message(state, "assistant", response_text)
+
+        logger.warning(
+            "Ignoring legacy name_confirmation_pending because the v6 mode runtime owns greeting | "
+            "conversation_id=%s | current_mode=%s",
+            conversation_id,
+            state.get("current_mode"),
+        )
 
     # ============================================================================
     # STEP 3: FSM validates and executes transition (BOOKING INTENTS ONLY)
@@ -368,30 +362,111 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     # ============================================================================
     # This replaces the old LLM tool binding with FSM-prescribed actions
 
-    if settings.RESILIENCE_ENABLED:
-        # ── Resilience path: FallbackChain + RetryBudget ──────────────────────
-        # FallbackChain manages provider rotation (primary → fallback → emergency)
-        # and per-provider circuit breakers automatically.
-        # The retry budget prevents runaway loops per conversation.
-        response_text = await _route_with_resilience(
+    try:
+        # Create LLM client for response generation
+        llm = ChatOpenAI(
+            model=settings.LLM_MODEL,
+            base_url="https://openrouter.ai/api/v1",
+            api_key=settings.OPENROUTER_API_KEY,
+            temperature=0.3,  # Creative but controlled
+            request_timeout=30.0,  # 30s timeout for conversation
+            max_retries=2,  # Retry 2x on transient failures
+        )
+
+        # Route to appropriate handler (wrapped with circuit breaker)
+        # BookingHandler: FSM prescribes tools (prescriptive)
+        # NonBookingHandler: LLM decides from safe tools (conversational)
+        # Circuit breaker protects against OpenRouter outages
+        response_text, state_updates = await call_with_breaker(
+            openrouter_breaker,
+            IntentRouter.route,
             intent=intent,
             fsm=fsm,
             state=state,
-            conversation_id=conversation_id,
-            messages=messages,
-            error_count=error_count,
+            llm=llm,
         )
-    else:
-        # ── Legacy path: original single-provider + openrouter_breaker ─────────
-        response_text = await _route_legacy(
-            intent=intent,
-            fsm=fsm,
-            state=state,
-            conversation_id=conversation_id,
-            messages=messages,
-            error_count=error_count,
-            settings=settings,
+
+        # Apply state updates from handler (e.g., pending_decline state)
+        if state_updates:
+            for key, value in state_updates.items():
+                state[key] = value
+            logger.debug(
+                f"State updates applied | conversation_id={conversation_id} | "
+                f"updates={list(state_updates.keys())}"
+            )
+
+        logger.info(
+            f"Response generated | conversation_id={conversation_id} | "
+            f"length={len(response_text)} | "
+            f"fsm_state={fsm.state.value}"
         )
+
+    except pybreaker.CircuitBreakerError:
+        # Circuit is OPEN - OpenRouter is down, fail fast and escalate
+        logger.error(
+            f"OpenRouter circuit breaker OPEN | conversation_id={conversation_id} | "
+            f"escalating to human"
+        )
+
+        # Trigger escalation (fire-and-forget)
+        from agent.services.escalation_service import trigger_escalation
+
+        asyncio.create_task(
+            trigger_escalation(
+                reason="technical_error",
+                conversation_id=conversation_id,
+                customer_phone=state.get("customer_phone", ""),
+                conversation_context=messages[-5:] if messages else [],
+            )
+        )
+
+        response_text = (
+            "Disculpa, estoy teniendo problemas tecnicos en este momento. "
+            "Te paso con un companero humano que te ayudara enseguida."
+        )
+        # Mark for escalation so Chatwoot can route to human agent
+        state["escalated"] = True
+        state["escalation_triggered"] = True
+        state["escalation_reason"] = "technical_error"
+        # Increment error count for tracking
+        state["error_count"] = error_count + 1
+
+    except (ValueError, KeyError) as e:
+        # Handler execution error (expected - invalid tool args, missing data)
+        logger.warning(
+            f"Handler execution error | conversation_id={conversation_id} | error={str(e)}"
+        )
+
+        # Fallback response
+        response_text = _generate_fallback_response(fsm)
+        # Increment error count for potential auto-escalation
+        state["error_count"] = error_count + 1
+
+    except AttributeError as e:
+        # Configuration error (unexpected - LLM/handler misconfigured)
+        logger.error(
+            f"Response generation configuration error | conversation_id={conversation_id} | "
+            f"error={str(e)}",
+            exc_info=True,
+        )
+
+        # Fallback response for configuration errors (don't crash user session)
+        response_text = _generate_fallback_response(fsm)
+        # Increment error count for potential auto-escalation
+        state["error_count"] = error_count + 1
+
+    except Exception as e:
+        # Unexpected error (network, database, tool execution failure)
+        logger.critical(
+            f"Response generation crashed | conversation_id={conversation_id} | "
+            f"error={str(e)} | intent={intent.type.value}",
+            exc_info=True,
+        )
+
+        # Fallback response (avoid crashing the conversation)
+        response_text = _generate_fallback_response(fsm)
+        # Increment error count for potential auto-escalation
+        state["error_count"] = error_count + 1
 
     # ============================================================================
     # STEP 5: Reset error count on successful response
@@ -421,286 +496,6 @@ async def conversational_agent(state: ConversationState) -> dict[str, Any]:
     # ============================================================================
 
     return add_message(state, "assistant", response_text)
-
-
-# ==============================================================================
-# ROUTING HELPERS: resilience path + legacy path
-# ==============================================================================
-
-
-async def _route_with_resilience(
-    intent: Intent,
-    fsm: BookingFSM,
-    state: ConversationState,
-    conversation_id: str,
-    messages: list[dict[str, Any]],
-    error_count: int,
-) -> str:
-    """
-    Route the intent using the resilience layer (FallbackChain + RetryBudget).
-
-    This is the RESILIENCE_ENABLED=True path. It wraps IntentRouter.route with
-    the FallbackChain which provides:
-    - Multi-provider fallback (primary → fallback → emergency)
-    - Per-provider circuit breakers (tuned thresholds)
-    - Automatic provider health tracking
-
-    The FallbackChain injects the ``llm`` keyword argument per-provider into
-    the async function it wraps. IntentRouter.route must accept ``llm=``.
-
-    Args:
-        intent: Extracted user intent
-        fsm: Current BookingFSM instance
-        state: Current ConversationState (mutable — side-effects written here)
-        conversation_id: For logging and budget tracking
-        messages: Recent conversation messages
-        error_count: Current error count (for auto-escalation)
-
-    Returns:
-        Response text string to send to the customer.
-    """
-    try:
-        response_text, state_updates = await _fallback_chain.call_with_fallback(
-            IntentRouter.route,
-            conversation_id=conversation_id,
-            intent=intent,
-            fsm=fsm,
-            state=state,
-        )
-
-        # Apply state updates from handler (e.g., pending_decline state)
-        if state_updates:
-            for key, value in state_updates.items():
-                state[key] = value
-            logger.debug(
-                f"State updates applied (resilience) | conversation_id={conversation_id} | "
-                f"updates={list(state_updates.keys())}"
-            )
-
-        # Success — clear retry_state and reset budget
-        state["retry_state"] = None
-        state["fallback_metrics"] = None
-        await _retry_budget.reset(conversation_id)
-
-        logger.info(
-            f"Response generated (resilience) | conversation_id={conversation_id} | "
-            f"length={len(response_text)} | fsm_state={fsm.state.value}"
-        )
-        return response_text
-
-    except FallbackExhaustedError as exc:
-        # All providers tried and failed — trigger auto-escalation
-        logger.error(
-            f"FallbackChain exhausted | conversation_id={conversation_id} | "
-            f"providers_tried={exc.providers_tried} | "
-            f"last_error={exc.last_error.error_type.value if exc.last_error else 'unknown'} | "
-            f"escalating to human"
-        )
-
-        # Trigger escalation (fire-and-forget)
-        from agent.services.escalation_service import trigger_escalation
-
-        asyncio.create_task(
-            trigger_escalation(
-                reason="technical_error",
-                conversation_id=conversation_id,
-                customer_phone=state.get("customer_phone", ""),
-                conversation_context=messages[-5:] if messages else [],
-            )
-        )
-
-        # Record fallback metrics in state for observability
-        if exc.last_error:
-            state["fallback_metrics"] = FallbackMetrics(
-                primary_provider="primary",
-                fallback_provider=exc.providers_tried[-1] if exc.providers_tried else None,
-                primary_error_type=exc.last_error.error_type,
-                fallback_succeeded=False,
-            )
-
-        state["escalation_triggered"] = True
-        state["escalation_reason"] = "technical_error"
-        state["error_count"] = error_count + 1
-
-        return (
-            "Disculpa, estoy teniendo problemas tecnicos en este momento. "
-            "Te paso con un companero humano que te ayudara enseguida."
-        )
-
-    except pybreaker.CircuitBreakerError:
-        # Should not reach here (FallbackChain handles breaker internally),
-        # but catch defensively for the openrouter_breaker still in scope.
-        logger.error(
-            f"Circuit breaker OPEN (resilience) | conversation_id={conversation_id} | "
-            f"escalating to human"
-        )
-
-        from agent.services.escalation_service import trigger_escalation
-
-        asyncio.create_task(
-            trigger_escalation(
-                reason="technical_error",
-                conversation_id=conversation_id,
-                customer_phone=state.get("customer_phone", ""),
-                conversation_context=messages[-5:] if messages else [],
-            )
-        )
-
-        state["escalation_triggered"] = True
-        state["escalation_reason"] = "technical_error"
-        state["error_count"] = error_count + 1
-
-        return (
-            "Disculpa, estoy teniendo problemas tecnicos en este momento. "
-            "Te paso con un companero humano que te ayudara enseguida."
-        )
-
-    except (ValueError, KeyError) as e:
-        # Handler execution error (expected - invalid tool args, missing data)
-        logger.warning(
-            f"Handler execution error (resilience) | conversation_id={conversation_id} | "
-            f"error={str(e)}"
-        )
-        state["error_count"] = error_count + 1
-        return _generate_fallback_response(fsm)
-
-    except Exception as e:
-        # Unexpected error — classify and update retry_state for observability
-        classified = _error_classifier.classify(e)
-        logger.critical(
-            f"Response generation crashed (resilience) | conversation_id={conversation_id} | "
-            f"error={str(e)} | error_type={classified.error_type.value} | "
-            f"intent={intent.type.value}",
-            exc_info=True,
-        )
-
-        # Persist retry_state for debugging
-        state["retry_state"] = RetryState(
-            attempt_count=1,
-            last_error_type=classified.error_type,
-            next_retry_at=None,
-            total_retries_used=0,
-            budget_exhausted=False,
-        )
-        state["error_count"] = error_count + 1
-        return _generate_fallback_response(fsm)
-
-
-async def _route_legacy(
-    intent: Intent,
-    fsm: BookingFSM,
-    state: ConversationState,
-    conversation_id: str,
-    messages: list[dict[str, Any]],
-    error_count: int,
-    settings: Any,
-) -> str:
-    """
-    Route the intent using the original single-provider path (RESILIENCE_ENABLED=False).
-
-    Preserves the exact original behavior: ChatOpenAI + openrouter_breaker +
-    call_with_breaker. No changes to existing error handling.
-
-    Args:
-        intent: Extracted user intent
-        fsm: Current BookingFSM instance
-        state: Current ConversationState (mutable — side-effects written here)
-        conversation_id: For logging
-        messages: Recent conversation messages
-        error_count: Current error count (for auto-escalation)
-        settings: Application settings (already loaded by caller)
-
-    Returns:
-        Response text string to send to the customer.
-    """
-    try:
-        # Create LLM client for response generation
-        llm = ChatOpenAI(
-            model=settings.LLM_MODEL,
-            base_url="https://openrouter.ai/api/v1",
-            api_key=settings.OPENROUTER_API_KEY,
-            temperature=0.3,  # Creative but controlled
-            request_timeout=30.0,  # 30s timeout for conversation
-            max_retries=2,  # Retry 2x on transient failures
-        )
-
-        # Route to appropriate handler (wrapped with circuit breaker)
-        response_text, state_updates = await call_with_breaker(
-            openrouter_breaker,
-            IntentRouter.route,
-            intent=intent,
-            fsm=fsm,
-            state=state,
-            llm=llm,
-        )
-
-        # Apply state updates from handler (e.g., pending_decline state)
-        if state_updates:
-            for key, value in state_updates.items():
-                state[key] = value
-            logger.debug(
-                f"State updates applied (legacy) | conversation_id={conversation_id} | "
-                f"updates={list(state_updates.keys())}"
-            )
-
-        logger.info(
-            f"Response generated (legacy) | conversation_id={conversation_id} | "
-            f"length={len(response_text)} | fsm_state={fsm.state.value}"
-        )
-        return response_text
-
-    except pybreaker.CircuitBreakerError:
-        # Circuit is OPEN - OpenRouter is down, fail fast and escalate
-        logger.error(
-            f"OpenRouter circuit breaker OPEN | conversation_id={conversation_id} | "
-            f"escalating to human"
-        )
-
-        from agent.services.escalation_service import trigger_escalation
-
-        asyncio.create_task(
-            trigger_escalation(
-                reason="technical_error",
-                conversation_id=conversation_id,
-                customer_phone=state.get("customer_phone", ""),
-                conversation_context=messages[-5:] if messages else [],
-            )
-        )
-
-        state["escalated"] = True
-        state["escalation_triggered"] = True
-        state["escalation_reason"] = "technical_error"
-        state["error_count"] = error_count + 1
-
-        return (
-            "Disculpa, estoy teniendo problemas tecnicos en este momento. "
-            "Te paso con un companero humano que te ayudara enseguida."
-        )
-
-    except (ValueError, KeyError) as e:
-        logger.warning(
-            f"Handler execution error | conversation_id={conversation_id} | error={str(e)}"
-        )
-        state["error_count"] = error_count + 1
-        return _generate_fallback_response(fsm)
-
-    except AttributeError as e:
-        logger.error(
-            f"Response generation configuration error | conversation_id={conversation_id} | "
-            f"error={str(e)}",
-            exc_info=True,
-        )
-        state["error_count"] = error_count + 1
-        return _generate_fallback_response(fsm)
-
-    except Exception as e:
-        logger.critical(
-            f"Response generation crashed | conversation_id={conversation_id} | "
-            f"error={str(e)} | intent={intent.type.value}",
-            exc_info=True,
-        )
-        state["error_count"] = error_count + 1
-        return _generate_fallback_response(fsm)
 
 
 # ==============================================================================

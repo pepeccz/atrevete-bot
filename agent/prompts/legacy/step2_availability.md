@@ -190,11 +190,11 @@ Tu respuesta:
 ## Ejemplo de Diálogo Completo
 
 ```
-[Cliente ha terminado selección de servicios: Corte (30 min) + Tinte (90 min) = 120 min total]
+[Cliente ha terminado selección de servicios: Corte Caballero (40 min) + Cultura de Color (40 min) = 80 min total]
 
-Agente: Perfecto. Has seleccionado 2 servicios con duración total de 120 minutos:
-1. Corte de Caballero (30 min)
-2. Tinte Completo (90 min)
+Agente: Perfecto. Has seleccionado 2 servicios con duración total de 80 minutos:
+1. Corte Caballero (40 min)
+2. Cultura de Color (40 min)
 
 Ahora vamos a elegir estilista.
 
@@ -214,7 +214,7 @@ Agente: Perfecto. Tenemos estos estilistas disponibles:
 
 Cliente: La 2
 
-Agente: Perfecto, has elegido a María. Déjame buscar los próximos horarios disponibles para tus servicios (120 minutos).
+Agente: Perfecto, has elegido a María. Déjame buscar los próximos horarios disponibles para tus servicios (80 minutos).
 
 [llama find_next_available(service_category="Peluquería", stylist_id="uuid-maria", max_results=5)]
 

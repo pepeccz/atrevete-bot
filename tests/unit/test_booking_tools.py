@@ -51,77 +51,122 @@ class TestGetServiceByName:
     """Test get_service_by_name function with exact and fuzzy search."""
 
     async def test_exact_search_mechas(self):
-        """Test exact search for 'mechas' matches 'MECHAS'."""
-        # Arrange: Query should find MECHAS service
+        """Test exact search for 'mechas' matches 'Mechas'."""
+        # Arrange: Query should find Mechas service (from PDF catalog)
         # (Service already exists from seed data)
 
         # Act
-        service = await get_service_by_name("mechas", fuzzy=False)
+        services = await get_service_by_name("mechas", fuzzy=False)
 
-        # Assert
-        assert service is not None, "Service 'MECHAS' should be found"
-        assert service.name == "MECHAS"
-        assert service.duration_minutes == 120
+        # Assert - function returns a list
+        assert len(services) > 0, "Service 'Mechas' should be found"
+        assert services[0].name == "Mechas"
+        assert services[0].duration_minutes == 60
 
     async def test_fuzzy_search_with_typo(self):
-        """Test fuzzy search with typo 'mecha' matches 'MECHAS'."""
+        """Test fuzzy search with typo 'mecha' matches 'Mechas'."""
         # Act
-        service = await get_service_by_name("mecha", fuzzy=True)
+        services = await get_service_by_name("mecha", fuzzy=True)
 
-        # Assert
-        assert service is not None, "Fuzzy search should find 'MECHAS'"
-        assert service.name == "MECHAS"
+        # Assert - function returns a list
+        assert len(services) > 0, "Fuzzy search should find 'Mechas'"
+        assert services[0].name == "Mechas"
 
     async def test_case_insensitive_search(self):
         """Test case-insensitive search with different casing."""
-        # Act
-        service = await get_service_by_name("CORTE DE PELO", fuzzy=False)
+        # Act - "Cortar" is the new name in PDF catalog (was "Corte de pelo")
+        services = await get_service_by_name("CORTAR", fuzzy=False)
 
-        # Assert
-        assert service is not None
-        assert service.name == "Corte de pelo"
+        # Assert - function returns a list
+        assert len(services) > 0
+        assert services[0].name == "Cortar"
 
     async def test_service_not_found(self):
-        """Test search returns None for non-existent service."""
+        """Test search returns empty list for non-existent service."""
         # Act
-        service = await get_service_by_name("nonexistent_service_xyz", fuzzy=False)
+        services = await get_service_by_name("nonexistent_service_xyz", fuzzy=False)
 
-        # Assert
-        assert service is None, "Non-existent service should return None"
+        # Assert - function returns empty list, not None
+        assert len(services) == 0, "Non-existent service should return empty list"
 
     async def test_fuzzy_search_no_match_below_threshold(self):
-        """Test fuzzy search returns None when similarity is below 0.6 threshold."""
+        """Test fuzzy search returns empty list when similarity is below threshold."""
         # Act: Search with very different string
-        service = await get_service_by_name("xyz123", fuzzy=True)
+        services = await get_service_by_name("xyz123", fuzzy=True)
 
-        # Assert
-        assert service is None, "Very different string should not match"
+        # Assert - function returns empty list, not None
+        assert len(services) == 0, "Very different string should not match"
 
-    async def test_verify_all_scenario_services_present(self):
-        """Test all expected services from scenarios.md are seeded."""
-        # Arrange: Expected service names from Story 3.1
+    async def test_verify_all_pdf_services_present(self):
+        """Test all expected services from PDF catalog are seeded."""
+        # Arrange: Expected service names from updated PDF catalog (77 services)
         expected_services = {
-            "MECHAS",
-            "Corte de pelo",
-            "Corte + Color",
-            "OLEO PIGMENTO",
-            "BARRO",
-            "BARRO GOLD",
-            "AGUA LLUVIA",
-            "PEINADO LARGO",
-            "CORTE CABALLERO",
+            # Peluquería services (sample of key services)
+            "Óleo Pigmento",
+            "Agua Tierra",
+            "Corte de Flequillo",
+            "Perilla",
+            "Tratamiento Precolor",
+            "Infoactivo Fuerza",
+            "Infoactivo Sensitivo",
+            "Mechas Localizadas",
+            "Color Caballero",
+            "Moldeado",
+            "Recogido",
+            "Semirecogido",
+            "Recogido Novia",
+            "Corte Bebé",
+            "Mechas",
+            "Mechas Extras",
+            "Barro Gold",
+            "Mechas Localizadas Express",
+            "Óleo Extra",
+            "Barro Extra",
+            "Barba",
+            "Moldeado Extra",
+            "Agua Lluvia",
+            "Cultura de Color Extra",
+            "Prepigmentar",
+            "Cortar",
+            "Peinado Largo",
+            "Barro",
+            "Peinado Extra",
+            "Corte Niña",
+            "Cultura de Color",
+            "Peinado Niña Comunión",
+            "Secado",
             "Peinado",
-            "MANICURA PERMANENTE",
-            "BIOTERAPIA FACIAL",
-            "Micropigmentación",
-            "CONSULTA GRATUITA",
-            "Consulta estética",
+            "Corte Niño",
+            "Corte Caballero",
+            # Estética services (sample of key services)
+            "Masaje Corporal (60 min)",
+            "Maquillaje",
+            "Tinte de Pestañas",
+            "Peeling Corporal",
+            "Tinte + Permanente de Pestañas",
+            "Permanente de Pestañas",
+            "Bioterapia Facial + Radiofrecuencia (30 min)",
+            "Bioterapia Facial",
+            "Maquillaje Express",
+            "Cejas",
+            "Manicura Permanente + Bio",
+            "Bioterapia Sculptor + Radiofrecuencia 30 min",
+            "Limar y Pintar Manos Permanente",
+            "Bioterapia de Senos",
+            "Piernas Perfectas + Presoterapia (30 min)",
+            "Cera Enteras",
+            "Pubis Completo",
+            "Bioterapia Sculptor Completo",
+            "Bioterapia Podal",
+            "Pedicura Permanente con Bioterapia",
+            "Manicura Caballero",
+            "Labio",
         }
 
         # Act: Query all active services
         from database.connection import get_async_session
 
-        async for session in get_async_session():
+        async with get_async_session() as session:
             stmt = select(Service.name).where(Service.is_active == True)
             result = await session.execute(stmt)
             actual_services = set(result.scalars().all())
@@ -129,7 +174,8 @@ class TestGetServiceByName:
         # Assert: All expected services are present
         missing_services = expected_services - actual_services
         assert not missing_services, f"Missing services: {missing_services}"
-        assert len(actual_services) >= 15, f"Expected at least 15 services, got {len(actual_services)}"
+        # Updated: 77 services in new catalog (was 69 in old catalog)
+        assert len(actual_services) == 77, f"Expected 77 services, got {len(actual_services)}"
 
     async def test_inactive_service_not_returned(self):
         """Test inactive services are not returned."""
@@ -137,7 +183,7 @@ class TestGetServiceByName:
 
         # Arrange: Create inactive service
         inactive_service_id = uuid4()
-        async for session in get_async_session():
+        async with get_async_session() as session:
             inactive_service = Service(
                 id=inactive_service_id,
                 name="INACTIVE_TEST_SERVICE",
@@ -150,10 +196,10 @@ class TestGetServiceByName:
             await session.commit()
 
         # Act
-        service = await get_service_by_name("INACTIVE_TEST_SERVICE", fuzzy=False)
+        services = await get_service_by_name("INACTIVE_TEST_SERVICE", fuzzy=False)
 
-        # Assert
-        assert service is None, "Inactive service should not be returned"
+        # Assert - function returns empty list for inactive services
+        assert len(services) == 0, "Inactive service should not be returned"
 
 
 # DISABLED PACK TESTS REMOVED: Packs functionality eliminated
@@ -215,12 +261,13 @@ class TestBookTool:
 
         with patch('agent.tools.calendar_tools.create_calendar_event', return_value=mock_calendar_response):
             # Act: Call book() tool using ainvoke
+            # Using "Cortar" from new PDF catalog (was "Cortar" in old catalog)
             result = await book.ainvoke({
                 "customer_id": str(customer_id),
                 "first_name": "María",
                 "last_name": "López",
                 "notes": "Cliente prefiere estilista Ana",
-                "services": ["CONSULTA GRATUITA"],
+                "services": ["Cortar"],
                 "stylist_id": str(stylist_id),
                 "start_time": start_time.isoformat(),
                 "conversation_id": "test_conv_123"
@@ -276,7 +323,7 @@ class TestBookTool:
         mock_service = AsyncMock()
         mock_service.events().insert().execute.return_value = {
             "id": "calendar_event_456",
-            "summary": "🟡 María - CONSULTA GRATUITA"
+            "summary": "🟡 María - Cortar"
         }
 
         with patch('agent.tools.calendar_tools.get_calendar_client') as mock_get_client:
@@ -290,7 +337,7 @@ class TestBookTool:
                 start_time=start_time.isoformat(),
                 duration_minutes=30,
                 customer_name="María",
-                service_names="CONSULTA GRATUITA",
+                service_names="Cortar",
                 status="pending",
                 conversation_id="test_conv"
             )
@@ -303,7 +350,7 @@ class TestBookTool:
         call_args = mock_service.events().insert.call_args
         event_body = call_args.kwargs["body"]
         assert "🟡" in event_body["summary"], f"Expected emoji 🟡 in summary: {event_body['summary']}"
-        assert event_body["summary"] == "🟡 María - CONSULTA GRATUITA"
+        assert event_body["summary"] == "🟡 María - Cortar"
 
     async def test_book_saves_chatwoot_conversation_id(self):
         """
@@ -357,7 +404,7 @@ class TestBookTool:
                 "first_name": "Pedro",
                 "last_name": None,
                 "notes": None,
-                "services": ["CONSULTA GRATUITA"],
+                "services": ["Cortar"],
                 "stylist_id": str(stylist_id),
                 "start_time": start_time.isoformat(),
                 "conversation_id": "chatwoot_conv_456"  # Provide conversation_id
@@ -422,7 +469,7 @@ class TestBookTool:
                 "first_name": "Ana",
                 "last_name": None,
                 "notes": None,
-                "services": ["CONSULTA GRATUITA"],
+                "services": ["Cortar"],
                 "stylist_id": str(stylist_id),
                 "start_time": start_time.isoformat()
             })

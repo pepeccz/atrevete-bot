@@ -8,8 +8,10 @@ process preserves customer interaction history for long-term storage and analysi
 Architecture:
     - Runs hourly via cron schedule
     - Archives checkpoints older than 23 hours (1-hour buffer before expiration)
-    - Stores messages in conversation_history table
-    - Deletes archived checkpoints from Redis
+    - Two-table write path (v2):
+        * ConversationHistory — one parent row per conversation (upserted by conversation_id)
+        * ConversationMessage — one child row per message (idempotent via timestamp+role+content)
+    - Deletes archived checkpoints from Redis after successful write
     - Implements retry logic for database failures
     - Provides health check monitoring
 
@@ -33,11 +35,11 @@ import schedule
 import redis
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
-from database.models import ConversationHistory, MessageRole
+from database.models import ConversationHistory, ConversationMessage
 from shared.config import get_settings
 
 # Configure logger
@@ -98,8 +100,9 @@ async def find_expired_checkpoints(redis_client: Redis) -> list[tuple[str, str, 
         Sorted by checkpoint_time (oldest first)
 
     Note:
-        Checkpoint key pattern: langgraph:checkpoint:{thread_id}:{checkpoint_ns}
-        The checkpoint_ns contains Unix timestamp (seconds since epoch)
+        Checkpoint key pattern: checkpoint:{thread_id}:{checkpoint_ns}:{uuid}
+        The checkpoint_ns is typically "__empty__" and the uuid contains timestamp info.
+        AsyncRedisSaver uses NO "langgraph:" prefix.
     """
     cutoff_time = datetime.now(TIMEZONE) - timedelta(hours=CUTOFF_HOURS)
     logger.info(f"Searching for checkpoints older than {cutoff_time.isoformat()}")
@@ -109,46 +112,36 @@ async def find_expired_checkpoints(redis_client: Redis) -> list[tuple[str, str, 
         # Note: scan_iter() is non-blocking and processes keys in batches,
         # allowing other Redis commands to execute between iterations.
         # This prevents Redis from being blocked when there are many keys.
-        keys = list(redis_client.scan_iter(match="langgraph:checkpoint:*", count=1000))
+        # AsyncRedisSaver uses "checkpoint:*" pattern (NO "langgraph:" prefix)
+        keys = list(redis_client.scan_iter(match="checkpoint:*", count=1000))
         logger.debug(f"Found {len(keys)} total checkpoint keys")
 
         expired_keys = []
 
         for key in keys:
             try:
-                # Parse key pattern: langgraph:checkpoint:{thread_id}:{checkpoint_ns}
-                # checkpoint_ns format may vary, but typically contains timestamp
+                # Real key format (verified against live Redis):
+                #   checkpoint:{thread_id}:__empty__:{uuid}
+                # where thread_id is the Chatwoot conversation_id (e.g. "1")
                 key_str = key.decode('utf-8') if isinstance(key, bytes) else key
                 parts = key_str.split(":")
 
-                if len(parts) < 3:
+                if len(parts) < 2:
                     logger.warning(f"Unexpected key format: {key_str}, skipping")
                     continue
 
-                # Extract thread_id (conversation_id) - may be multi-part
-                # Format: langgraph:checkpoint:{thread_id}:{checkpoint_ns}
-                # thread_id could contain colons, so we need to parse carefully
-                # We assume checkpoint_ns is the last part and is numeric
-                thread_id_parts = parts[2:-1]  # Everything between 'checkpoint:' and last part
-                conversation_id = ":".join(thread_id_parts) if thread_id_parts else parts[2]
-                checkpoint_ns = parts[-1]
+                # Extract thread_id: second part after "checkpoint"
+                # Format: checkpoint:{thread_id}:...
+                conversation_id = parts[1]
 
-                # Try to parse checkpoint_ns as Unix timestamp
-                # LangGraph AsyncRedisSaver uses format: {thread_id}:{checkpoint_ns}
-                # where checkpoint_ns may contain timestamp
+                # Age estimation via TTL (24h total TTL set by AsyncRedisSaver)
                 try:
-                    # If checkpoint_ns is numeric, treat as Unix timestamp
-                    if checkpoint_ns.isdigit():
-                        timestamp = int(checkpoint_ns)
-                        checkpoint_time = datetime.fromtimestamp(timestamp, tz=TIMEZONE)
-                    else:
-                        # checkpoint_ns may have other format, try to get TTL instead
-                        ttl = redis_client.ttl(key)
-                        if ttl <= 0:
-                            # Key expired or no TTL, skip
-                            continue
-                        # Calculate checkpoint time from TTL (24h total TTL)
-                        checkpoint_time = datetime.now(TIMEZONE) - timedelta(seconds=(86400 - ttl))
+                    ttl = redis_client.ttl(key)
+                    if ttl < 0:
+                        # Key has no TTL or already expired — skip
+                        continue
+                    # checkpoint_time = now - (24h - remaining_ttl)
+                    checkpoint_time = datetime.now(TIMEZONE) - timedelta(seconds=(86400 - ttl))
 
                     # Check if checkpoint is older than cutoff
                     if checkpoint_time < cutoff_time:
@@ -159,7 +152,7 @@ async def find_expired_checkpoints(redis_client: Redis) -> list[tuple[str, str, 
                         )
 
                 except (ValueError, TypeError) as e:
-                    logger.debug(f"Could not parse timestamp from checkpoint_ns '{checkpoint_ns}': {e}")
+                    logger.debug(f"Could not estimate age for key '{key_str}': {e}")
                     continue
 
             except Exception as e:
@@ -204,16 +197,16 @@ async def retrieve_and_parse_checkpoint(redis_client: Redis, key: str) -> dict[s
             return None
 
         # Try to deserialize (JSON first, then pickle)
+        state: dict[str, Any] | None = None
         try:
             # Attempt JSON deserialization
-            if isinstance(checkpoint_data, bytes):
-                checkpoint_data = checkpoint_data.decode('utf-8')
-            state = json.loads(checkpoint_data)
+            raw = checkpoint_data.decode('utf-8') if isinstance(checkpoint_data, bytes) else checkpoint_data
+            state = json.loads(raw)
             logger.debug(f"Checkpoint {key} deserialized as JSON")
         except (json.JSONDecodeError, UnicodeDecodeError):
             # Attempt pickle deserialization
             try:
-                state = pickle.loads(checkpoint_data)
+                state = pickle.loads(checkpoint_data)  # type: ignore[arg-type]
                 logger.debug(f"Checkpoint {key} deserialized as pickle")
             except Exception as e:
                 logger.error(
@@ -257,123 +250,161 @@ async def retrieve_and_parse_checkpoint(redis_client: Redis, key: str) -> dict[s
         return None
 
 
-async def insert_messages_to_db(
+def _parse_message_timestamp(timestamp_str: Any) -> datetime:
+    """Parse a message timestamp from various formats, defaulting to now."""
+    if timestamp_str is None:
+        return datetime.now(TIMEZONE)
+
+    if isinstance(timestamp_str, datetime):
+        return timestamp_str if timestamp_str.tzinfo else timestamp_str.replace(tzinfo=TIMEZONE)
+
+    if isinstance(timestamp_str, str):
+        try:
+            ts = datetime.fromisoformat(timestamp_str)
+            return ts if ts.tzinfo else ts.replace(tzinfo=TIMEZONE)
+        except (ValueError, TypeError):
+            pass
+
+    return datetime.now(TIMEZONE)
+
+
+async def upsert_conversation_to_db(
     session: AsyncSession,
     state: dict[str, Any],
 ) -> int:
     """
-    Insert conversation messages into conversation_history table.
+    Upsert a conversation into the two-table schema (ConversationHistory + ConversationMessage).
+
+    Strategy:
+        1. Get-or-create ConversationHistory parent by conversation_id (unique constraint).
+        2. Insert ConversationMessage children, skipping duplicates via
+           (conversation_history_id, role, content, created_at) comparison.
+        3. Update parent aggregate fields: started_at, ended_at, message_count, summary.
 
     Args:
         session: SQLAlchemy async session
-        state: Parsed checkpoint state dict
+        state: Parsed checkpoint state dict containing:
+            - conversation_id (str)
+            - customer_id (UUID | None)
+            - messages (list[dict])
+            - conversation_summary (str | None)
 
     Returns:
-        Number of messages inserted
+        Number of new ConversationMessage rows inserted.
 
     Raises:
-        Exception: If database insertion fails
+        Exception: If database operations fail (caller handles retries).
     """
-    conversation_id = state['conversation_id']
-    customer_id = state.get('customer_id')  # May be None for unidentified customers
-    messages = state.get('messages', [])
-    conversation_summary = state.get('conversation_summary')
+    conversation_id: str = state['conversation_id']
+    customer_id = state.get('customer_id')
+    messages: list[dict[str, Any]] = state.get('messages', [])
+    conversation_summary: str | None = state.get('conversation_summary')
 
     if not messages and not conversation_summary:
         logger.warning(f"No messages or summary to archive for conversation {conversation_id}")
         return 0
 
+    # -------------------------------------------------------------------------
+    # Step 1: Get-or-create ConversationHistory parent
+    # -------------------------------------------------------------------------
+    result = await session.execute(
+        select(ConversationHistory).where(
+            ConversationHistory.conversation_id == conversation_id
+        )
+    )
+    parent: ConversationHistory | None = result.scalar_one_or_none()
+
+    if parent is None:
+        parent = ConversationHistory(
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+            message_count=0,
+            metadata_={},
+        )
+        session.add(parent)
+        await session.flush()  # populate parent.id without committing
+        logger.debug(f"Created ConversationHistory parent for {conversation_id}")
+    else:
+        # Update customer_id if we now know it (was None on first insert)
+        if parent.customer_id is None and customer_id is not None:
+            parent.customer_id = customer_id
+
+    # -------------------------------------------------------------------------
+    # Step 2: Load existing message fingerprints to enable idempotent inserts
+    # -------------------------------------------------------------------------
+    existing_result = await session.execute(
+        select(
+            ConversationMessage.role,
+            ConversationMessage.content,
+            ConversationMessage.created_at,
+        ).where(ConversationMessage.conversation_history_id == parent.id)
+    )
+    existing_fingerprints: set[tuple[str, str, str]] = {
+        (row.role, row.content, row.created_at.isoformat())
+        for row in existing_result.all()
+    }
+
+    # -------------------------------------------------------------------------
+    # Step 3: Insert new ConversationMessage children (dedup by fingerprint)
+    # -------------------------------------------------------------------------
     inserted_count = 0
+    all_timestamps: list[datetime] = []
 
-    # Insert conversation messages
     for message in messages:
-        try:
-            # Parse message dict
-            role = message.get('role')
-            content = message.get('content')
-            timestamp_str = message.get('timestamp')
-            metadata = message.get('metadata', {})
+        role = message.get('role', '')
+        content = message.get('content', '')
+        timestamp = _parse_message_timestamp(message.get('timestamp'))
 
-            # Validate required fields
-            if not role or not content:
-                logger.warning(
-                    f"Skipping message with missing role or content: {message}"
-                )
-                continue
-
-            # Parse timestamp
-            if timestamp_str:
-                try:
-                    if isinstance(timestamp_str, str):
-                        timestamp = datetime.fromisoformat(timestamp_str)
-                        # Ensure timezone-aware
-                        if timestamp.tzinfo is None:
-                            timestamp = timestamp.replace(tzinfo=TIMEZONE)
-                    elif isinstance(timestamp_str, datetime):
-                        timestamp = timestamp_str
-                        if timestamp.tzinfo is None:
-                            timestamp = timestamp.replace(tzinfo=TIMEZONE)
-                    else:
-                        timestamp = datetime.now(TIMEZONE)
-                except Exception as e:
-                    logger.warning(f"Could not parse timestamp '{timestamp_str}': {e}")
-                    timestamp = datetime.now(TIMEZONE)
-            else:
-                timestamp = datetime.now(TIMEZONE)
-
-            # Map role to MessageRole enum
-            try:
-                message_role = MessageRole[role.upper()]
-            except (KeyError, AttributeError):
-                logger.warning(f"Invalid message role '{role}', defaulting to USER")
-                message_role = MessageRole.USER
-
-            # Create ConversationHistory record
-            history_record = ConversationHistory(
-                customer_id=customer_id,
-                conversation_id=conversation_id,
-                timestamp=timestamp,
-                message_role=message_role,
-                message_content=content,
-                metadata_=metadata,
-            )
-
-            session.add(history_record)
-            inserted_count += 1
-
-        except Exception as e:
-            logger.error(
-                f"Error creating history record for message in {conversation_id}: {e}",
-                exc_info=True
-            )
-            # Continue to next message (don't fail entire archival for one message)
+        if not role or not content:
+            logger.warning(f"Skipping message with missing role or content: {message}")
             continue
 
-    # Insert conversation summary as system message (if present)
-    if conversation_summary:
-        try:
-            summary_record = ConversationHistory(
-                customer_id=customer_id,
-                conversation_id=conversation_id,
-                timestamp=datetime.now(TIMEZONE),
-                message_role=MessageRole.SYSTEM,
-                message_content=conversation_summary,
-                metadata_={'type': 'conversation_summary'},
-            )
-            session.add(summary_record)
-            inserted_count += 1
-            logger.debug(f"Archived conversation summary for {conversation_id}")
-        except Exception as e:
-            logger.error(
-                f"Error creating summary record for {conversation_id}: {e}",
-                exc_info=True
-            )
+        # Normalise role to lowercase for storage consistency
+        role = role.lower()
 
-    # Commit transaction
+        fingerprint = (role, content, timestamp.isoformat())
+        if fingerprint in existing_fingerprints:
+            logger.debug(f"Skipping duplicate message for {conversation_id} at {timestamp.isoformat()}")
+            all_timestamps.append(timestamp)
+            continue
+
+        msg_record = ConversationMessage(
+            conversation_history_id=parent.id,
+            role=role,
+            content=content,
+            created_at=timestamp,
+        )
+        session.add(msg_record)
+        existing_fingerprints.add(fingerprint)
+        all_timestamps.append(timestamp)
+        inserted_count += 1
+
+    # Store summary in parent (overwrite if archiver runs again with updated summary)
+    if conversation_summary:
+        parent.summary = conversation_summary
+        logger.debug(f"Set conversation summary for {conversation_id}")
+
+    # -------------------------------------------------------------------------
+    # Step 4: Update parent aggregate metadata
+    # -------------------------------------------------------------------------
+    if all_timestamps:
+        parent.started_at = min(all_timestamps)
+        parent.ended_at = max(all_timestamps)
+
+    # Update message_count to reflect the full count (existing + newly inserted)
+    total_count_result = await session.execute(
+        select(func.count()).select_from(ConversationMessage).where(
+            ConversationMessage.conversation_history_id == parent.id
+        )
+    )
+    current_db_count = total_count_result.scalar() or 0
+    parent.message_count = current_db_count + inserted_count
+
     await session.commit()
 
     logger.info(
-        f"Archived {inserted_count} messages for conversation {conversation_id}"
+        f"Archived {inserted_count} new messages for conversation {conversation_id} "
+        f"(total in DB: {parent.message_count})"
     )
 
     return inserted_count
@@ -385,7 +416,7 @@ async def archive_checkpoint(
     conversation_id: str,
 ) -> dict[str, Any]:
     """
-    Archive a single checkpoint: retrieve, insert to DB, delete from Redis.
+    Archive a single checkpoint: retrieve, upsert to DB, delete from Redis.
 
     Args:
         redis_client: Redis client instance
@@ -399,7 +430,7 @@ async def archive_checkpoint(
             'error': str | None
         }
     """
-    result = {
+    result: dict[str, Any] = {
         'success': False,
         'messages_archived': 0,
         'error': None,
@@ -412,21 +443,19 @@ async def archive_checkpoint(
         result['error'] = 'Failed to retrieve or parse checkpoint'
         return result
 
-    # Step 2: Insert messages to database (with retry)
+    # Step 2: Upsert to database (with retry)
     for attempt in range(MAX_RETRY_ATTEMPTS):
         try:
             async with get_async_session() as session:
-                messages_archived = await insert_messages_to_db(session, state)
+                messages_archived = await upsert_conversation_to_db(session, state)
                 result['messages_archived'] = messages_archived
                 result['success'] = True
-
-            if result['success']:
-                break  # Success, exit retry loop
+            break  # Success, exit retry loop
 
         except Exception as e:
             if attempt < MAX_RETRY_ATTEMPTS - 1:
                 logger.warning(
-                    f"Database insert failed for {conversation_id} (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}), retrying: {e}"
+                    f"Database upsert failed for {conversation_id} (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}), retrying: {e}"
                 )
                 await asyncio.sleep(RETRY_DELAY_SECONDS)
             else:
@@ -434,22 +463,31 @@ async def archive_checkpoint(
                     f"Failed to archive {conversation_id} after {MAX_RETRY_ATTEMPTS} attempts, skipping: {e}",
                     exc_info=True
                 )
-                result['error'] = f'Database insert failed after {MAX_RETRY_ATTEMPTS} attempts'
+                result['error'] = f'Database upsert failed after {MAX_RETRY_ATTEMPTS} attempts'
                 return result  # Skip deletion from Redis
 
-    # Step 3: Delete checkpoint from Redis (only if DB insert succeeded)
+    # Step 3: Delete ALL Redis keys for this conversation_id (only if DB upsert succeeded)
+    # Cleans: checkpoint:*, checkpoint_write:*, write_keys_zset:*
     if result['success']:
         try:
-            deleted_count = redis_client.delete(key)
-            if deleted_count == 0:
-                logger.warning(
-                    f"Checkpoint {key} already deleted by another process"
+            patterns = [
+                f"checkpoint:{conversation_id}:*",
+                f"checkpoint_write:{conversation_id}:*",
+                f"write_keys_zset:{conversation_id}:*",
+            ]
+            keys_to_delete = []
+            for pattern in patterns:
+                keys_to_delete.extend(list(redis_client.scan_iter(match=pattern, count=200)))
+            if keys_to_delete:
+                deleted_count = redis_client.delete(*keys_to_delete)
+                logger.info(
+                    f"Deleted {deleted_count} Redis keys for conversation {conversation_id}"
                 )
             else:
-                logger.info(f"Deleted checkpoint {key} from Redis")
+                logger.warning(f"No Redis keys found for conversation {conversation_id}")
         except Exception as e:
             logger.error(
-                f"Error deleting checkpoint {key} from Redis: {e}",
+                f"Error deleting Redis keys for conversation {conversation_id}: {e}",
                 exc_info=True
             )
             # Don't mark as failure - messages are archived, Redis cleanup is secondary
@@ -475,12 +513,12 @@ async def update_health_check(
         errors: Number of errors encountered
     """
     health_data = {
+        'last_heartbeat': time.time(),
         'last_run': last_run.isoformat(),
         'status': status,
         'checkpoints_archived': checkpoints_archived,
         'messages_archived': messages_archived,
         'errors': errors,
-        'last_heartbeat': time.time(),
     }
 
     # Write health check file atomically (temp file + rename)
@@ -505,7 +543,7 @@ async def archive_expired_conversations() -> None:
         1. Queries Redis for checkpoints older than CUTOFF_HOURS
         2. For each expired checkpoint:
            - Retrieves and deserializes state
-           - Inserts messages into conversation_history table
+           - Upserts ConversationHistory parent + ConversationMessage children
            - Deletes checkpoint from Redis
         3. Implements retry logic for database failures
         4. Updates health check file with run statistics
@@ -648,26 +686,6 @@ def run_archival_worker() -> None:
 
     # Run scheduler loop
     while not shutdown_requested:
-        # Heartbeat: write loop timestamp on every iteration so Docker healthcheck
-        # can verify the loop is alive (not just that the process exists).
-        _health_dir = Path('/tmp/health')
-        _health_dir.mkdir(parents=True, exist_ok=True)
-        _heartbeat_file = _health_dir / 'archiver_health.json'
-        _heartbeat_tmp = _health_dir / f'archiver_heartbeat.{int(time.time())}.tmp'
-        try:
-            _existing: dict = {}
-            if _heartbeat_file.exists():
-                try:
-                    _existing = json.loads(_heartbeat_file.read_text())
-                except Exception:
-                    pass
-            _existing['last_heartbeat'] = time.time()
-            _existing['status'] = 'running'
-            _heartbeat_tmp.write_text(json.dumps(_existing))
-            _heartbeat_tmp.rename(_heartbeat_file)
-        except Exception as _hb_err:
-            logger.warning(f'Failed to write loop heartbeat: {_hb_err}')
-
         schedule.run_pending()
         time.sleep(60)  # Check every minute
 

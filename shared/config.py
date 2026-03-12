@@ -139,6 +139,16 @@ class Settings(BaseSettings):
         description="Groq API key for Whisper audio transcription (console.groq.com)"
     )
 
+    # Prompt System Optimization
+    USE_OPTIMIZED_PROMPTS: bool = Field(
+        default=True,
+        description=(
+            "Feature flag for the optimized prompt system. When True, uses layered prompts "
+            "(cached system content + dynamic context) for 25% token reduction. "
+            "When False, falls back to legacy inline prompts for backward compatibility."
+        ),
+    )
+
     # Application Settings
     TIMEZONE: str = Field(default="Europe/Madrid")
     LOG_LEVEL: str = Field(default="INFO")
@@ -212,11 +222,55 @@ class Settings(BaseSettings):
         description="JWT secret key for admin panel authentication (min 32 chars)"
     )
 
+    # Google OAuth2 (optional — system uses service account if not set)
+    # Configure these when using OAuth2 flow from admin panel instead of service account JSON.
+    # Leave empty to keep using service-account-key.json (legacy mode).
+    GOOGLE_OAUTH_CLIENT_ID: str = Field(
+        default="",
+        description=(
+            "Google OAuth2 client ID (from Google Cloud Console → Credentials). "
+            "Required for OAuth2 flow. Leave empty to use service account."
+        ),
+    )
+    GOOGLE_OAUTH_CLIENT_SECRET: str = Field(
+        default="",
+        description=(
+            "Google OAuth2 client secret (from Google Cloud Console → Credentials). "
+            "Required for OAuth2 flow. Leave empty to use service account."
+        ),
+    )
+    GOOGLE_OAUTH_REDIRECT_URI: str = Field(
+        default="",
+        description=(
+            "OAuth2 redirect URI — must match exactly what is registered in Google Cloud Console. "
+            "Example: http://localhost:8000/api/admin/google/callback"
+        ),
+    )
+
+    # Admin Panel URL (used for OAuth2 callback redirects)
+    ADMIN_PANEL_URL: str = Field(
+        default="http://localhost:8001",
+        description=(
+            "Base URL of the Django/Next.js admin panel. "
+            "Used by the Google OAuth2 callback to redirect back after connecting a Google account. "
+            "Example: http://localhost:8001 (dev) or https://admin.yourdomain.com (prod)"
+        ),
+    )
+
     # CORS Origins for API
     CORS_ORIGINS: str = Field(
         default="http://localhost:3000,http://localhost:8000,http://localhost:8001,http://api:8000",
         description="Comma-separated list of allowed origins for CORS (e.g., 'http://localhost:3000,https://admin.domain.com')"
     )
+
+    @property
+    def google_oauth_configured(self) -> bool:
+        """True if Google OAuth2 credentials are configured (OAuth2 mode active).
+
+        Returns False when the system should fall back to service account JSON auth.
+        Both client_id AND client_secret must be set for OAuth2 to be active.
+        """
+        return bool(self.GOOGLE_OAUTH_CLIENT_ID and self.GOOGLE_OAUTH_CLIENT_SECRET)
 
     class Config:
         env_file = ".env"

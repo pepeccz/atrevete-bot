@@ -1,287 +1,97 @@
 """
-GeneralMode — Handles FAQs, service info, hours, and all non-booking queries (v6.0).
+General Mode — v6.0 Mode-Based Architecture.
 
-This mode is the default "conversational" mode for the bot. When a customer is
-not actively booking an appointment, GeneralMode handles all informational queries:
-- Service catalog questions
-- Business hours
-- Location / address
-- General FAQs
-- Appointment cancellations (existing ones, not booking new ones)
+Handles informational queries: FAQs, service information, salon hours, policies.
+Uses only read-only tools (query_info, search_services) — no booking risk.
 
-Tools available:
-- query_info: Services list, FAQs, hours, location
-- search_services: Fuzzy search for specific services
-
-Mode transitions:
-- intent="book" → BOOKING mode
-- intent="escalate" → ESCALATION mode
-- Everything else → Stay in GENERAL (LLM responds with tools)
-
-Architecture note:
-    GeneralMode uses the LLM with tool-binding (agent loop). The LLM can call
-    query_info / search_services as needed to answer the question, then produce
-    a final text response. This is similar to the old NonBookingHandler but
-    cleaner and scoped only to this mode's tools.
+This is the default mode after GREETING completes and whenever the user asks
+an informational question during an active BOOKING flow.
 """
 
-from __future__ import annotations
-
-import json
 import logging
-from typing import Any
 
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agent.modes.base import BaseModeNode
-from agent.routing.intent_router import IntentResult
 from agent.state.helpers import add_message
-from agent.state.schemas import ConversationState, transition_mode
-from agent.tools.info_tools import query_info, list_stylists
-from agent.tools.search_services import search_services
+from agent.state.schemas import ConversationState
 
 logger = logging.getLogger(__name__)
 
+_GENERAL_SYSTEM = """Eres Maite, asistenta virtual de Atrévete Peluquería en Alcobendas.
 
-# ============================================================================
-# System prompt for GENERAL mode
-# ============================================================================
+Tu misión: responder preguntas sobre servicios, horarios, precios y políticas del salón de forma concisa y amigable.
 
-_GENERAL_SYSTEM_PROMPT = """Eres Maite, asistenta virtual de Atrévete Peluquería en Alcobendas.
+Reglas:
+- Responde en 2-4 frases máximo (a menos que sea una lista de servicios).
+- Sé cálida y usa emojis ocasionalmente (no en exceso).
+- Si el cliente quiere reservar una cita, anímale a hacerlo pero NO reserves en este modo.
+- Para información de servicios, usa la herramienta query_info.
+- Para buscar servicios específicos, usa search_services.
 
-## Reglas críticas
-1. **NO narres acciones**: Llama herramientas silenciosamente, luego responde con los datos.
-2. **Usa herramientas SIEMPRE** antes de responder sobre servicios, horarios, o ubicación.
-3. Si el cliente pregunta por servicios específicos → usa `search_services`
-4. Si el cliente pide ver todos los servicios o categorías → usa `query_info(type="services")`
-5. Si pregunta horarios → usa `query_info(type="hours")`
-6. Si pregunta ubicación → usa `query_info(type="location")`
-7. Si pregunta FAQs generales → usa `query_info(type="faqs")`
-8. Mensajes concisos: 2-4 frases, máximo 150 palabras.
-9. Español natural y conversacional, tono cálido (tú), emojis: 1-2 máximo.
-
-## Formato WhatsApp
-- *Negrita*: `*texto*`
-- Listas informativas: guiones (-)
-- Listas de opciones: números (1., 2., 3.)
-
-## Cuándo NO usar herramientas
-- Saludos simples → responde directamente sin herramienta
-- Confirmaciones de conversación → responde directamente
-
-Responde SOLO al último mensaje del usuario. No repitas información ya dada."""
-
-
-# Maximum tool call iterations to prevent infinite loops
-_MAX_TOOL_ITERATIONS = 5
+Idioma: español (tutear al cliente, estilo Rioplatense si el cliente lo usa)."""
 
 
 class GeneralMode(BaseModeNode):
     """
-    Mode node for the GENERAL conversation phase.
+    Mode node for informational queries (FAQs, services, hours, policies).
 
-    Handles all informational queries via LLM + tool binding (agentic loop).
-    Transitions to BOOKING or ESCALATION when appropriate intent is detected.
-
-    Tools: query_info, search_services, list_stylists
+    Uses query_info and search_services tools — read-only, no booking mutations.
+    Always stays in GENERAL mode (mode transitions are handled by router_node).
     """
 
     @property
     def mode_name(self) -> str:
         return "GENERAL"
 
-    async def handle(
-        self,
-        state: ConversationState,
-        intent: IntentResult,
-    ) -> dict:
+    async def handle(self, state: ConversationState, intent: object) -> dict:
         """
-        Process a turn in GENERAL mode.
-
-        1. Check intent — if "book" → transition to BOOKING
-        2. Check intent — if "escalate" → transition to ESCALATION
-        3. Otherwise → LLM agentic loop with tools to answer the question
+        Handle an informational query using read-only tools.
 
         Args:
-            state: Current ConversationState (read-only).
-            intent: Classified intent from IntentRouter.
+            state: Current conversation state
+            intent: IntentResult from router (not used directly — LLM decides tools)
 
         Returns:
-            Partial state update dict for LangGraph reducers.
+            Partial state update dict with assistant response appended
         """
-        conversation_id = state.get("conversation_id", "unknown")
-        customer_name = state.get("customer_name")
+        from agent.tools.info_tools import query_info
+        from agent.tools.search_services import search_services
 
-        logger.info(
-            "GeneralMode.handle | conversation_id=%s | intent=%s | confidence=%.2f",
-            conversation_id,
-            intent.intent,
-            intent.confidence,
-        )
+        customer_name = state.get("customer_name", "")
+        messages_history = state.get("messages", [])
 
-        # ── Mode transition: book ──────────────────────────────────────────────
-        if intent.intent == "book":
-            logger.info(
-                "GeneralMode: booking intent detected, transitioning to BOOKING | "
-                "conversation_id=%s",
-                conversation_id,
-            )
-            transition = transition_mode(state, "BOOKING")
-            # Don't add a message — the BOOKING mode will handle its first turn
-            return transition
-
-        # ── Mode transition: escalate ──────────────────────────────────────────
-        if intent.intent == "escalate":
-            logger.info(
-                "GeneralMode: escalate intent detected, transitioning to ESCALATION | "
-                "conversation_id=%s",
-                conversation_id,
-            )
-            transition = transition_mode(state, "ESCALATION")
-            return transition
-
-        # ── Default: LLM agentic loop with tools ───────────────────────────────
-        tools = [query_info, search_services, list_stylists]
-        response_text = await self._run_agentic_loop(state, tools, customer_name)
-
-        if not response_text:
-            response_text = (
-                "Lo siento, tuve un problema procesando tu consulta. "
-                "¿Puedo ayudarte con algo más? 💕"
-            )
-
-        return add_message(state, "assistant", response_text)
-
-    async def _run_agentic_loop(
-        self,
-        state: ConversationState,
-        tools: list,
-        customer_name: str | None,
-    ) -> str:
-        """
-        Run an LLM + tool loop until a final text response is produced.
-
-        The loop:
-        1. Build messages from state + system prompt
-        2. Call LLM with tool binding
-        3. If LLM returns tool calls → execute tools → feed results back → repeat
-        4. If LLM returns plain text → return it as final response
-        5. If max iterations exceeded → return generic fallback
-
-        Args:
-            state: Current conversation state.
-            tools: List of LangChain tools to bind.
-            customer_name: Customer's name for personalization.
-
-        Returns:
-            Final assistant response text.
-        """
-        conversation_id = state.get("conversation_id", "unknown")
-
-        # Build the tool name → callable mapping
-        tool_map: dict[str, Any] = {t.name: t for t in tools}
-
-        # Prepare system prompt (personalized if name known)
-        system_prompt = _GENERAL_SYSTEM_PROMPT
+        # Build system message with optional customer context
+        system_content = _GENERAL_SYSTEM
         if customer_name:
-            system_prompt = (
-                f"El nombre del cliente es: {customer_name}\n\n" + system_prompt
-            )
+            system_content += f"\n\nEl cliente se llama {customer_name}."
+        if state.get("conversation_summary"):
+            system_content += f"\n\nContexto previo de la conversación:\n{state['conversation_summary']}"
 
-        # Build initial LangChain messages from state
-        lc_messages = self._build_messages(state, system_prompt)
+        # Build LangChain message list from recent history (last 8 messages)
+        langchain_messages: list = [SystemMessage(content=system_content)]
+        for msg in messages_history[-8:]:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "user":
+                langchain_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                langchain_messages.append(AIMessage(content=content))
 
-        for iteration in range(_MAX_TOOL_ITERATIONS):
-            # Call LLM (with tool binding)
-            llm_result = await self._call_llm(lc_messages, tools=tools)
-
-            if llm_result is None:
-                logger.error(
-                    "GeneralMode._run_agentic_loop: LLM returned None | "
-                    "conversation_id=%s | iteration=%d",
-                    conversation_id,
-                    iteration,
-                )
-                return ""
-
-            # Check if LLM wants to call tools
-            tool_calls = getattr(llm_result, "tool_calls", None) or []
-
-            if not tool_calls:
-                # LLM produced a final text response
-                response = (
-                    llm_result.content
-                    if hasattr(llm_result, "content")
-                    else str(llm_result)
-                )
-                logger.info(
-                    "GeneralMode._run_agentic_loop: final response | "
-                    "conversation_id=%s | iterations=%d | length=%d",
-                    conversation_id,
-                    iteration + 1,
-                    len(response),
-                )
-                return response
-
-            # Execute tool calls
-            logger.info(
-                "GeneralMode._run_agentic_loop: executing %d tool calls | "
-                "conversation_id=%s | iteration=%d | tools=%s",
-                len(tool_calls),
-                conversation_id,
-                iteration,
-                [tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "?") for tc in tool_calls],
-            )
-
-            # Add AI message with tool calls to context
-            lc_messages.append(llm_result)
-
-            # Execute each tool call and append ToolMessage
-            for tool_call in tool_calls:
-                # Handle both dict and object tool_call formats
-                if isinstance(tool_call, dict):
-                    tc_name = tool_call.get("name", "")
-                    tc_args = tool_call.get("args", {})
-                    tc_id = tool_call.get("id", "tool_call_0")
-                else:
-                    tc_name = getattr(tool_call, "name", "")
-                    tc_args = getattr(tool_call, "args", {})
-                    tc_id = getattr(tool_call, "id", "tool_call_0")
-
-                tool_fn = tool_map.get(tc_name)
-                if tool_fn is None:
-                    logger.warning(
-                        "GeneralMode: unknown tool '%s' requested | conversation_id=%s",
-                        tc_name,
-                        conversation_id,
-                    )
-                    tool_output = f"(herramienta '{tc_name}' no disponible en este modo)"
-                else:
-                    try:
-                        raw_result = await tool_fn.ainvoke(tc_args)
-                        tool_output = self._format_tool_response(raw_result)
-                    except Exception as exc:
-                        logger.error(
-                            "GeneralMode: tool '%s' raised exception | "
-                            "conversation_id=%s | error=%s",
-                            tc_name,
-                            conversation_id,
-                            exc,
-                        )
-                        tool_output = f"(error al ejecutar herramienta '{tc_name}')"
-
-                lc_messages.append(
-                    ToolMessage(content=tool_output, tool_call_id=tc_id)
-                )
-
-        # Max iterations reached — return a fallback
-        logger.warning(
-            "GeneralMode._run_agentic_loop: max iterations (%d) reached | "
-            "conversation_id=%s",
-            _MAX_TOOL_ITERATIONS,
-            conversation_id,
+        # Run agentic loop with read-only tools
+        result = await self._run_agentic_loop(
+            langchain_messages,
+            tools=[query_info, search_services],
         )
-        return (
-            "Lo siento, tuve dificultades obteniendo la información. "
-            "¿Te puedo ayudar con algo más? 💕"
+
+        self.logger.info(
+            "GeneralMode.handle | conversation=%s | has_error=%s",
+            state.get("conversation_id", "unknown"),
+            bool(result.error),
         )
+
+        return {
+            **add_message(state, "assistant", result.response_text),
+            "last_node": "general",
+            "user_message": None,
+        }

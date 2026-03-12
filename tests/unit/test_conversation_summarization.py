@@ -133,21 +133,37 @@ class TestAddMessageTracking:
         assert state["total_message_count"] == 3
 
     def test_total_count_persists_through_windowing(self):
-        """Verify total_message_count tracks ALL messages, even when windowed."""
+        """Verify total_message_count increments correctly via add_message.
+
+        NOTE: add_message() uses LangGraph reducer semantics — it returns
+        {"messages": [new_msg], "total_message_count": N} as a partial update.
+        The messages list accumulation is done by the operator.add reducer
+        inside LangGraph, NOT by add_message itself.
+
+        This test verifies that total_message_count is correctly tracked
+        across multiple calls, simulating the reducer behaviour manually.
+        """
+        # Simulate LangGraph reducer: accumulate messages manually
+        accumulated_messages = []
         state: ConversationState = {
             "conversation_id": "test-001",
-            "messages": [],
+            "messages": accumulated_messages,
             "total_message_count": 0,
         }
 
-        # Add 15 messages (more than MAX_MESSAGES=10)
+        # Add 15 messages, merging partial updates as LangGraph would
         for i in range(15):
             role = "user" if i % 2 == 0 else "assistant"
-            state = add_message(state, role, f"Message {i+1}")
+            update = add_message(state, role, f"Message {i+1}")
+            # Simulate operator.add reducer: extend accumulated list
+            accumulated_messages.extend(update["messages"])
+            # Merge scalar fields
+            state = {**state, **update, "messages": accumulated_messages}
 
-        # Verify: Only 10 messages in state, but total_message_count is 15
-        assert len(state["messages"]) == 10
+        # total_message_count must be 15 (tracked across all calls)
         assert state["total_message_count"] == 15
+        # All 15 messages accumulated (no windowing in helper — reducer handles it)
+        assert len(state["messages"]) == 15
 
 
 class TestSummarizeConversation:
@@ -155,7 +171,7 @@ class TestSummarizeConversation:
 
     @pytest.mark.asyncio
     async def test_skips_summarization_when_not_needed(self):
-        """Verify node returns unchanged state when should_summarize is False."""
+        """Verify node returns partial update (not full state) when should_summarize is False."""
         state: ConversationState = {
             "conversation_id": "test-001",
             "total_message_count": 15,  # Not a trigger point
@@ -164,8 +180,11 @@ class TestSummarizeConversation:
 
         result = await summarize_conversation(state)
 
-        # State should be unchanged
-        assert result == state
+        # T-002 fix: must return partial dict (not spread {**state})
+        # LangGraph reducers apply partial updates — spreading full state causes message doubling
+        assert result == {"user_message": None}
+        # Verify it does NOT contain messages (would double-write via reducer)
+        assert "messages" not in result
 
     @pytest.mark.asyncio
     async def test_creates_summary_when_triggered(self):
@@ -227,7 +246,7 @@ class TestSummarizeConversation:
 
     @pytest.mark.asyncio
     async def test_graceful_degradation_on_api_failure(self):
-        """Verify node returns unchanged state if Claude API fails."""
+        """Verify node returns partial update (not full state) if Claude API fails."""
         state: ConversationState = {
             "conversation_id": "test-001",
             "total_message_count": 19,  # Trigger point
@@ -242,8 +261,10 @@ class TestSummarizeConversation:
 
             result = await summarize_conversation(state)
 
-            # State should be unchanged (graceful degradation)
-            assert result == state
+            # T-002 fix: graceful degradation returns partial dict, not full state
+            # Returning {**state} would cause message doubling via LangGraph reducers
+            assert result == {"user_message": None}
+            assert "messages" not in result
 
 
 class TestTokenEstimation:

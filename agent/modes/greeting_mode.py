@@ -1,372 +1,339 @@
 """
-GreetingMode — Handles first interactions and name confirmation (v6.0).
+Greeting Mode — v6.0 Mode-Based Architecture.
 
-This mode FIXES the infinite loop bug from v5.x where `process_incoming_message`
-would re-set `name_confirmation_pending=True` on every message, causing the bot to
-keep asking for the customer's name in an endless loop.
-
-Root cause of the bug:
-    - The old FSM would reset `name_confirmation_pending=True` on every incoming
-      message because the customer was never created until after name confirmation.
-    - The new mode-based architecture tracks state in `current_mode` + `customer_name`
-      fields with `preserve_if_none` reducers, so once the name is set it NEVER resets.
-
-Anti-loop guarantee:
-    - Once `state.customer_name` is set, GreetingMode IMMEDIATELY transitions to
-      GENERAL mode. It NEVER asks for the name again.
-    - The mode only stays in GREETING until `customer_name` is populated. After that,
-      any GREETING mode entry short-circuits to GENERAL.
+Handles first contact and customer name collection. This mode fires ONCE
+per new customer (when is_first_interaction=True or customer_name is None).
 
 Flow:
-    Turn 1 (is_first_interaction=True):
-        → Generate welcome message + ask for name
-        → Set is_first_interaction=False
-        → Stay in GREETING
+1. Turn 1 (is_first_interaction=True): Send welcome message, stay in GREETING
+2. Turn 2+ (customer_name is None): Extract name from user message, create customer in DB,
+   transition to GENERAL
+3. Anti-loop: if customer_name already known, transition immediately to GENERAL
 
-    Turn 2 (customer_name is None, user just replied):
-        → Extract name from user_message
-        → Generate "¡Perfecto, {name}! ¿En qué puedo ayudarte?" response
-        → Set customer_name={name}
-        → Transition to GENERAL
-
-    Turn N (customer_name is already set):
-        → Short-circuit: transition to GENERAL immediately
-        → No message generated (orchestrator will re-dispatch to GENERAL)
+This design ensures the greeting loop can never trigger infinitely — once the
+customer's name is set in state, GREETING will not repeat.
 """
 
-from __future__ import annotations
-
 import logging
-from typing import Any
+import string
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from agent.tools.customer_tools import manage_customer
 
 from agent.modes.base import BaseModeNode
-from agent.routing.intent_router import IntentResult
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# System prompt for name extraction (minimal, cheap LLM call)
-# ============================================================================
+# Words that are clearly NOT names — used to filter false positives
+_NON_NAME_WORDS: frozenset[str] = frozenset({
+    "si", "sí", "yes", "ok", "okay", "bueno", "dale", "claro",
+    "correcto", "exacto", "de acuerdo", "perfecto", "genial", "bien", "no", "nope",
+    "hola", "hey", "buenas", "buenos días", "buenas tardes", "buenas noches",
+    "gracias", "thanks", "por favor", "please",
+})
 
-_NAME_EXTRACT_SYSTEM = (
-    "Eres un extractor de nombres. El usuario acaba de decir cómo se llama. "
-    "Extrae SOLO el primer nombre o nombre completo que el usuario proporcionó. "
-    "Responde ÚNICAMENTE con el nombre, sin puntuación ni explicación. "
-    "Si no puedes detectar un nombre claro, responde con: UNKNOWN"
-)
+# Minimum character length for a valid name candidate
+_MIN_NAME_LENGTH = 2
 
-# Welcome message templates (no LLM needed — hardcoded to save cost on first turn)
+# Filler words stripped before extracting the name candidate
+_FILLER_WORDS: frozenset[str] = frozenset({
+    "me", "llamo", "soy", "mi", "nombre", "es", "el", "la",
+    "un", "una", "hola", "buenas", "hey", "buenos", "no",
+})
+
+# Pre-defined greeting messages
 _WELCOME_NEEDS_NAME = (
     "¡Hola! 🌸 Soy Maite, la asistenta virtual de Atrévete Peluquería. "
     "¿Con quién tengo el gusto de hablar?"
 )
-
-_WELCOME_WITH_HINT = (
+_WELCOME_CONFIRM_SUGGESTED = (
     "¡Hola! 🌸 Soy Maite, la asistenta virtual de Atrévete Peluquería. "
-    "Por lo que me ha llegado te llamas *{name}*, ¿es correcto?"
+    "¿Puedo llamarte {name}?"
 )
-
 _WELCOME_RETURNING = "¡Hola de nuevo, {name}! 😊 ¿En qué puedo ayudarte hoy?"
-
-# ============================================================================
-# Non-name words filter
-# ============================================================================
-# Words that look like names when extracted but are clearly NOT names.
-# Applied to heuristic and LLM results before accepting a name.
-#
-# Categories:
-#   - Affirmatives: user is confirming/agreeing, not giving their name
-#   - Negatives: user is declining, not giving their name
-#   - Greetings: standalone greetings aren't names
-#
-# Normalised to lowercase. Accent-stripped variants are included explicitly
-# because `str.lower()` alone doesn't strip accents.
-_NON_NAME_WORDS: frozenset[str] = frozenset(
-    {
-        # Affirmatives
-        "si",
-        "sí",
-        "yes",
-        "ok",
-        "okay",
-        "bueno",
-        "dale",
-        "claro",
-        "claro que si",
-        "claro que sí",
-        "por supuesto",
-        "correcto",
-        "exacto",
-        "exactamente",
-        "de acuerdo",
-        "perfecto",
-        "genial",
-        "bien",
-        "esta bien",
-        "está bien",
-        # Negatives
-        "no",
-        "nope",
-        "negativo",
-        "para nada",
-        # Greetings (standalone)
-        "hola",
-        "hey",
-        "buenas",
-        "buenos días",
-        "buenas tardes",
-        "buenas noches",
-        "saludos",
-    }
-)
-
-# Minimum character length a candidate name must have.
-# "Si", "Ok", "No" are all <= 2 chars — real names of length 2 exist (e.g. "Ai")
-# but raising the floor to 2 chars (exclusive) catches the most common false positives
-# without rejecting legitimate 3+-character names.
-_MIN_NAME_LENGTH = 2
+_ASK_NAME_AGAIN = "Disculpá, ¿me podrías decir tu nombre para poder atenderte mejor?"
+_ASK_NAME_AFTER_REJECTION = "Perfecto, decime entonces cómo te gustaría que te llame."
+_CONFIRMATION = "¡Perfecto, {name}! 😊 ¿En qué puedo ayudarte hoy?"
 
 
 def _is_valid_name(candidate: str) -> bool:
-    """
-    Return True if *candidate* looks like a real person's name.
-
-    Rejects:
-    - Empty strings or whitespace-only strings.
-    - Strings shorter than _MIN_NAME_LENGTH characters (after strip).
-    - Strings whose normalised form is in _NON_NAME_WORDS (affirmatives, negatives,
-      standalone greetings).
-
-    Args:
-        candidate: Raw string extracted by heuristic or LLM.
-
-    Returns:
-        True when the candidate is a plausible name; False otherwise.
-    """
+    """Return True if the candidate string looks like a real name."""
     stripped = candidate.strip()
-    if not stripped:
+    if not stripped or len(stripped) <= _MIN_NAME_LENGTH:
         return False
-    if len(stripped) <= _MIN_NAME_LENGTH:
-        return False
-    if stripped.lower() in _NON_NAME_WORDS:
-        return False
-    return True
+    return stripped.lower() not in _NON_NAME_WORDS
 
 
 class GreetingMode(BaseModeNode):
     """
-    Mode node for the GREETING conversation phase.
+    Mode node for first-contact greeting and name collection.
 
-    Handles:
-    - First interaction welcome (hardcoded Spanish greeting, no LLM cost)
-    - Name extraction from user response (LLM call, once per conversation)
-    - Returning customer detection (immediate transition to GENERAL)
-
-    Anti-loop invariant:
-        Once `state["customer_name"]` is set, this mode NEVER asks for the name
-        again. It immediately signals a transition to GENERAL mode.
+    Responsibilities:
+    - Send welcome message on first interaction
+    - Extract customer name from the user's response
+    - Create customer record in DB via manage_customer tool
+    - Transition to GENERAL after name is confirmed
     """
 
     @property
     def mode_name(self) -> str:
         return "GREETING"
 
-    async def handle(
-        self,
-        state: ConversationState,
-        intent: IntentResult,
-    ) -> dict:
+    async def handle(self, state: ConversationState, intent: object) -> dict:
         """
-        Process a turn in GREETING mode.
-
-        Decision tree:
-        1. customer_name already set → transition to GENERAL (no message)
-        2. is_first_interaction=True → send welcome, ask for name
-        3. Otherwise (second turn, user just gave name) → extract name, transition to GENERAL
+        Handle the greeting flow.
 
         Args:
-            state: Current ConversationState (read-only).
-            intent: Classified intent from IntentRouter.
+            state: Current conversation state
+            intent: IntentResult (not used in GREETING — simple sequential flow)
 
         Returns:
-            Partial state update dict for LangGraph reducers.
+            Partial state update dict
         """
         conversation_id = state.get("conversation_id", "unknown")
         customer_name = state.get("customer_name")
         is_first = state.get("is_first_interaction", True)
+        mode_context = state.get("mode_context") or {}
+        greeting_step = mode_context.get("greeting_step")
+        suggested_name = mode_context.get("suggested_name")
 
-        # ── Guard: name already known → short-circuit to GENERAL ──────────────
-        # This is the core anti-loop guarantee.
-        # If customer_name is set, we should never be asking for it again.
+        self.logger.info(
+            "GreetingMode.handle | conversation=%s | customer_name=%s | is_first=%s",
+            conversation_id,
+            customer_name,
+            is_first,
+        )
+
+        # ── Anti-loop guard: if name already known, skip to GENERAL ──────────
         if customer_name:
-            logger.info(
-                "GreetingMode: customer_name already set, transitioning to GENERAL | "
-                "conversation_id=%s | name=%s",
-                conversation_id,
+            self.logger.info(
+                "GreetingMode: customer_name already set (%s), transitioning to GENERAL",
                 customer_name,
             )
-            transition = transition_mode(state, "GENERAL")
-            # Add a returning greeting
             response = _WELCOME_RETURNING.format(name=customer_name)
-            msg_update = add_message(state, "assistant", response)
-            return {**transition, **msg_update}
-
-        # ── Turn 1: First interaction — send welcome, ask for name ─────────────
-        if is_first:
-            logger.info(
-                "GreetingMode: first interaction — sending welcome | "
-                "conversation_id=%s",
-                conversation_id,
-            )
-            welcome_text = _WELCOME_NEEDS_NAME
-            msg_update = add_message(state, "assistant", welcome_text)
             return {
-                **msg_update,
-                "is_first_interaction": False,
-                # Stay in GREETING mode — next turn will extract the name
-                "current_mode": "GREETING",
+                **transition_mode(state, "GENERAL"),
+                **add_message(state, "assistant", response),
+                "user_message": None,
             }
 
-        # ── Turn 2+: User has replied — extract name ───────────────────────────
-        # We're in GREETING mode and customer_name is None, so the user just
-        # responded to our "¿Con quién tengo el gusto de hablar?" question.
-        user_message = state.get("user_message") or ""
+        # ── Turn 1: first interaction — seed greeting subflow ─────────────────
+        if is_first:
+            self.logger.info(
+                "GreetingMode: first interaction — sending welcome message"
+            )
+            if suggested_name:
+                response = _WELCOME_CONFIRM_SUGGESTED.format(name=suggested_name)
+                next_context = {
+                    **mode_context,
+                    "greeting_step": "confirm_suggested_name",
+                    "suggested_name": suggested_name,
+                }
+            else:
+                response = _WELCOME_NEEDS_NAME
+                next_context = {**mode_context, "greeting_step": "ask_name"}
 
-        # Try to extract name from the user's message
+            return {
+                **add_message(state, "assistant", response),
+                "is_first_interaction": False,
+                "current_mode": "GREETING",
+                "mode_context": next_context,
+                "user_message": None,
+            }
+
+        # ── Turn 2+: resolve current greeting subflow ─────────────────────────
+        user_message = self._get_last_user_message(state)
+        intent_name = getattr(intent, "intent", "ambiguous")
+
+        if greeting_step == "confirm_suggested_name" and suggested_name:
+            explicit_name = await self._extract_name(user_message)
+
+            if intent_name == "confirm":
+                customer_id = await self._create_customer(state, suggested_name)
+                response = _CONFIRMATION.format(name=suggested_name)
+                return {
+                    **transition_mode(state, "GENERAL"),
+                    **add_message(state, "assistant", response),
+                    "customer_name": suggested_name,
+                    "customer_id": customer_id,
+                    "user_message": None,
+                }
+
+            if explicit_name != "UNKNOWN" and explicit_name != suggested_name:
+                customer_id = await self._create_customer(state, explicit_name)
+                response = _CONFIRMATION.format(name=explicit_name)
+                return {
+                    **transition_mode(state, "GENERAL"),
+                    **add_message(state, "assistant", response),
+                    "customer_name": explicit_name,
+                    "customer_id": customer_id,
+                    "user_message": None,
+                }
+
+            if intent_name == "reject":
+                return {
+                    **add_message(state, "assistant", _ASK_NAME_AFTER_REJECTION),
+                    "current_mode": "GREETING",
+                    "mode_context": {
+                        **mode_context,
+                        "greeting_step": "ask_name",
+                    },
+                    "user_message": None,
+                }
+
         extracted_name = await self._extract_name(user_message)
+        self.logger.info(
+            "GreetingMode: extracted_name=%s from user_message=%r",
+            extracted_name,
+            user_message[:60] if user_message else "",
+        )
 
         if extracted_name and extracted_name != "UNKNOWN":
-            logger.info(
-                "GreetingMode: name extracted | conversation_id=%s | name=%s",
-                conversation_id,
-                extracted_name,
-            )
-            response = f"¡Perfecto, {extracted_name}! 😊 ¿En qué puedo ayudarte hoy?"
-            msg_update = add_message(state, "assistant", response)
-            transition = transition_mode(state, "GENERAL")
+            # Create customer in DB
+            customer_id = await self._create_customer(state, extracted_name)
+
+            response = _CONFIRMATION.format(name=extracted_name)
             return {
-                **transition,
-                **msg_update,
+                **transition_mode(state, "GENERAL"),
+                **add_message(state, "assistant", response),
                 "customer_name": extracted_name,
+                "customer_id": customer_id,
+                "user_message": None,
             }
         else:
-            # Could not extract a clear name — ask again politely
-            logger.info(
-                "GreetingMode: name extraction failed, asking again | "
-                "conversation_id=%s | user_message=%s",
-                conversation_id,
-                user_message[:50],
-            )
-            response = "Disculpá, ¿me podrías decir tu nombre?"
-            return add_message(state, "assistant", response)
+            # Could not extract a valid name — ask again
+            return {
+                **add_message(state, "assistant", _ASK_NAME_AGAIN),
+                "current_mode": "GREETING",
+                "user_message": None,
+            }
+
+    # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _get_last_user_message(self, state: ConversationState) -> str:
+        """Return the content of the most recent user message from history."""
+        for msg in reversed(state.get("messages", [])):
+            if msg.get("role") == "user":
+                return msg.get("content", "")
+        # Fallback: check transient user_message field
+        return state.get("user_message") or ""
 
     async def _extract_name(self, user_message: str) -> str:
         """
-        Use LLM to extract the customer's name from their response.
+        Extract a name from the user's message.
 
-        Falls back to a simple heuristic (first 1-2 words) if LLM call fails.
+        Strategy:
+        1. Try heuristic extraction (fast, no LLM)
+        2. If heuristic fails, call LLM for NLU-based extraction
 
-        Args:
-            user_message: The user's text response to our name question.
-
-        Returns:
-            Extracted name string, or "UNKNOWN" if extraction failed.
+        Returns "UNKNOWN" if no valid name can be extracted.
         """
         if not user_message or not user_message.strip():
             return "UNKNOWN"
 
-        # Simple heuristic fallback: if message is short (1-3 words), use it directly
-        words = user_message.strip().split()
-        if len(words) <= 3:
-            # Short message — likely just the name (e.g., "Pedro", "Juan García")
-            # Filter out common filler words
-            filler_words = {
-                "me", "llamo", "soy", "mi", "nombre", "es", "el", "la", "un", "una",
-                "hola", "buenas", "hey",
-            }
-            name_words = [w for w in words if w.lower() not in filler_words]
-            if name_words:
-                # Capitalize first letter of each word
-                name = " ".join(w.capitalize() for w in name_words[:2])
-                if not _is_valid_name(name):
-                    logger.debug(
-                        "GreetingMode._extract_name: heuristic rejected non-name | "
-                        "raw=%s → candidate=%s",
-                        user_message[:50],
-                        name,
-                    )
-                    return "UNKNOWN"
-                logger.debug(
-                    "GreetingMode._extract_name: heuristic | raw=%s → name=%s",
-                    user_message[:50],
-                    name,
-                )
-                return name
+        # Step 1: Heuristic extraction
+        heuristic_result = self._heuristic_extract(user_message)
+        if heuristic_result != "UNKNOWN":
+            return heuristic_result
 
-        # LLM extraction for more complex messages
+        # Step 2: LLM fallback
         try:
-            messages = [
-                SystemMessage(content=_NAME_EXTRACT_SYSTEM),
+            result = await self._call_llm([
+                SystemMessage(
+                    content=(
+                        "Extrae SOLO el nombre del usuario del siguiente mensaje. "
+                        "Responde únicamente con el nombre (capitalizado). "
+                        "Si no hay un nombre claro, responde exactamente: UNKNOWN"
+                    )
+                ),
                 HumanMessage(content=user_message),
-            ]
-            result = await self._call_llm(messages)
-            if result is None:
-                logger.warning(
-                    "GreetingMode._extract_name: LLM returned None, using heuristic"
+            ])
+            if result:
+                extracted = (
+                    result.content.strip()
+                    if hasattr(result, "content")
+                    else str(result).strip()
                 )
-                return self._heuristic_extract(user_message)
-
-            extracted = result.content.strip() if hasattr(result, "content") else str(result).strip()
-
-            # Validate: should be a plausible name (not too long, not empty, not a
-            # non-name word like "Sí" / "Ok" / "Dale").
-            if extracted and extracted != "UNKNOWN" and len(extracted) <= 50:
-                capitalized = extracted.capitalize()
-                if _is_valid_name(capitalized):
-                    return capitalized
-                logger.debug(
-                    "GreetingMode._extract_name: LLM returned non-name | extracted=%s",
-                    extracted,
-                )
-                return "UNKNOWN"
-
-            return "UNKNOWN"
-
+                if extracted and len(extracted) <= 60:
+                    # Check sentinel BEFORE title-casing (title() turns "UNKNOWN" → "Unknown"
+                    # which would pass _is_valid_name incorrectly)
+                    if extracted.upper() == "UNKNOWN":
+                        return "UNKNOWN"
+                    capitalized = extracted.title()
+                    return capitalized if _is_valid_name(capitalized) else "UNKNOWN"
         except Exception as exc:
-            logger.warning(
-                "GreetingMode._extract_name: LLM failed | error=%s | using heuristic",
-                exc,
-            )
-            return self._heuristic_extract(user_message)
+            self.logger.warning("LLM name extraction failed: %s", exc)
+
+        return "UNKNOWN"
 
     def _heuristic_extract(self, user_message: str) -> str:
         """
-        Simple heuristic name extraction fallback.
+        Extract name via simple heuristic (no LLM).
 
-        Takes the first 1-2 meaningful words from the user message, filtering
-        out common Spanish filler words.
+        Works well for messages like:
+        - "Me llamo María" → "María"
+        - "Soy Juan Carlos" → "Juan Carlos"
+        - "María" → "María"
 
-        Args:
-            user_message: Raw user message text.
-
-        Returns:
-            Extracted name string, or "UNKNOWN" if nothing plausible found.
+        Returns "UNKNOWN" if no valid candidate found.
         """
-        filler_words = {
-            "me", "llamo", "soy", "mi", "nombre", "es", "el", "la", "un", "una",
-            "hola", "buenas", "hey", "que", "qué", "como", "cómo", "pues",
-        }
         words = user_message.strip().split()
-        name_words = [w for w in words if w.lower() not in filler_words][:2]
 
-        if name_words:
-            candidate = " ".join(w.capitalize() for w in name_words)
-            if not _is_valid_name(candidate):
-                return "UNKNOWN"
-            return candidate
+        # Filter out known filler words
+        name_words = [
+            cleaned for w in words
+            if (cleaned := w.strip(string.punctuation))
+            and cleaned.lower() not in _FILLER_WORDS
+        ]
 
-        return "UNKNOWN"
+        if not name_words:
+            return "UNKNOWN"
+
+        # Take the first 1-2 words as the name candidate
+        candidate = " ".join(w.capitalize() for w in name_words[:2])
+        return candidate if _is_valid_name(candidate) else "UNKNOWN"
+
+    async def _create_customer(
+        self, state: ConversationState, name: str
+    ) -> str | None:
+        """
+        Create a new customer record in the database.
+
+        Returns the customer ID string if successful, or None on failure.
+        """
+        customer_phone = state.get("customer_phone", "")
+        if not customer_phone:
+            self.logger.warning("GreetingMode: no customer_phone in state — skipping DB creation")
+            return None
+
+        try:
+            result = await manage_customer.ainvoke({
+                "action": "create",
+                "phone": customer_phone,
+                "data": {"first_name": name},
+            })
+
+            if isinstance(result, dict) and "id" in result and "error" not in result:
+                customer_id = str(result["id"])
+                self.logger.info(
+                    "GreetingMode: customer created | id=%s | name=%s | phone=%s",
+                    customer_id,
+                    name,
+                    customer_phone,
+                )
+                return customer_id
+            else:
+                self.logger.warning(
+                    "GreetingMode: manage_customer returned unexpected result: %s", result
+                )
+                return None
+
+        except Exception as exc:
+            self.logger.error(
+                "GreetingMode: customer creation failed | name=%s | error=%s",
+                name,
+                exc,
+            )
+            return None

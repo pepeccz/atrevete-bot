@@ -29,12 +29,12 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from sqlalchemy import select, and_, delete, update
 from sqlalchemy.orm import selectinload
 
+from agent.services.gcal_credential_factory import get_google_credentials
 from database.connection import get_async_session
 from database.models import (
     Appointment,
@@ -100,20 +100,20 @@ async def get_dynamic_settings() -> dict[str, Any]:
         }
 
 
-def _get_calendar_service():
+async def _get_calendar_service():
     """
-    Create a Google Calendar API service instance.
+    Create a Google Calendar API service instance using the credential factory.
+
+    Uses get_google_credentials() which resolves OAuth2 tokens from DB (when
+    configured) or falls back to the service account file. Opens a short-lived
+    AsyncSession to allow the factory to resolve OAuth2 tokens from the database.
 
     Returns:
-        Google Calendar service object
+        Google Calendar service object (awaitable)
     """
-    settings = get_settings()
-
     try:
-        credentials = service_account.Credentials.from_service_account_file(
-            settings.GOOGLE_SERVICE_ACCOUNT_JSON,
-            scopes=["https://www.googleapis.com/auth/calendar"],
-        )
+        async with get_async_session() as session:
+            credentials = await get_google_credentials(session=session)
         return build("calendar", "v3", credentials=credentials)
     except Exception as e:
         logger.error(f"Failed to create Google Calendar service: {e}")
@@ -181,7 +181,7 @@ async def fetch_calendar_events(
     Returns:
         Tuple of (events list, new sync token)
     """
-    service = _get_calendar_service()
+    service = await _get_calendar_service()
 
     def _fetch():
         try:
@@ -223,16 +223,7 @@ async def fetch_calendar_events(
             raise
 
     loop = asyncio.get_event_loop()
-    try:
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, _fetch),
-            timeout=30.0,
-        )
-    except asyncio.TimeoutError:
-        logger.error(
-            f"GCal API call timed out after 30s for calendar {calendar_id[-10:]}, skipping"
-        )
-        return [], None
+    result = await loop.run_in_executor(None, _fetch)
 
     if result[0] is None:
         # Sync token expired, retry with full sync
@@ -896,8 +887,8 @@ async def update_health_check(
     temp_file = health_dir / f"gcal_sync_worker_health.{int(time.time())}.tmp"
 
     health_data = {
-        "last_run": last_run.isoformat(),
         "last_heartbeat": time.time(),
+        "last_run": last_run.isoformat(),
         "status": status,
         "stylists_synced": stats.get("stylists_synced", 0),
         "events_created": stats.get("created", 0),
@@ -953,26 +944,6 @@ async def async_main() -> None:
 
     # Main loop with asyncio.sleep (single event loop, no schedule library)
     while not shutdown_requested:
-        # Heartbeat: write loop timestamp on every iteration so Docker healthcheck
-        # can verify the loop is alive (not just that the process exists).
-        _health_dir = Path("/tmp/health")
-        _health_dir.mkdir(parents=True, exist_ok=True)
-        _heartbeat_file = _health_dir / "gcal_sync_worker_health.json"
-        _heartbeat_tmp = _health_dir / f"gcal_sync_worker_heartbeat.{int(time.time())}.tmp"
-        try:
-            _existing: dict = {}
-            if _heartbeat_file.exists():
-                try:
-                    _existing = json.loads(_heartbeat_file.read_text())
-                except Exception:
-                    pass
-            _existing["last_heartbeat"] = time.time()
-            _existing["status"] = "running"
-            _heartbeat_tmp.write_text(json.dumps(_existing))
-            _heartbeat_tmp.rename(_heartbeat_file)
-        except Exception as _hb_err:
-            logger.warning(f"Failed to write loop heartbeat: {_hb_err}")
-
         # Sleep for sync_interval minutes (checking shutdown flag every 30s)
         sleep_seconds = sync_interval * 60
         for _ in range(sleep_seconds // 30):

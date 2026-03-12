@@ -15,14 +15,35 @@ import type {
   SystemServicesResponse,
   ServiceActionResponse,
   SystemServiceName,
+  DeleteConversationResult,
+  GoogleCalendarStatus,
+  GoogleCalendar,
+  CreateCalendarPayload,
+  UpdateCalendarPayload,
+  OverlapCheckResponse,
 } from "./types";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface ApiError {
-  error: string;
+  error?: string;
+  detail?: string | { message?: string; stylist_names?: string[] } | unknown;
   details?: unknown;
+}
+
+export class ApiRequestError extends Error {
+  status: number;
+  detail: unknown;
+  stylistNames?: string[];
+
+  constructor(message: string, status: number, detail?: unknown, stylistNames?: string[]) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.detail = detail;
+    this.stylistNames = stylistNames;
+  }
 }
 
 class ApiClient {
@@ -84,10 +105,38 @@ class ApiClient {
         }
       }
 
-      const error: ApiError = await response.json().catch(() => ({
+      const errorBody: ApiError = await response.json().catch(() => ({
         error: `HTTP ${response.status}: ${response.statusText}`,
       }));
-      throw new Error(error.error || "Unknown error");
+
+      // FastAPI returns { detail: string } or { detail: { message, stylist_names } }
+      // Legacy format: { error: string, details?: unknown }
+      let errorMessage = "Unknown error";
+      let stylistNames: string[] | undefined;
+
+      if (typeof errorBody.detail === "string") {
+        errorMessage = errorBody.detail;
+      } else if (
+        errorBody.detail !== null &&
+        typeof errorBody.detail === "object" &&
+        "message" in (errorBody.detail as object)
+      ) {
+        const detailObj = errorBody.detail as { message?: string; stylist_names?: string[] };
+        errorMessage = detailObj.message ?? "Unknown error";
+        if (detailObj.stylist_names?.length) {
+          stylistNames = detailObj.stylist_names;
+          errorMessage = `${errorMessage}: ${detailObj.stylist_names.join(", ")}`;
+        }
+      } else if (errorBody.error) {
+        errorMessage = errorBody.error;
+      }
+
+      throw new ApiRequestError(
+        errorMessage,
+        response.status,
+        errorBody.detail ?? errorBody.details,
+        stylistNames
+      );
     }
 
     // Handle empty responses (204 No Content from DELETE endpoints)
@@ -214,6 +263,18 @@ class ApiClient {
     await this.request(`/api/admin/${resource}/${id}`, {
       method: "DELETE",
     });
+  }
+
+  // Conversations endpoints
+  async getConversation(conversationUuid: string): Promise<import("./types").ConversationHistory> {
+    return this.request(`/api/admin/conversations/${conversationUuid}`);
+  }
+
+  async deleteConversation(conversationUuid: string): Promise<DeleteConversationResult> {
+    return this.request<DeleteConversationResult>(
+      `/api/admin/conversations/${conversationUuid}`,
+      { method: "DELETE" }
+    );
   }
 
   // Calendar endpoints
@@ -415,6 +476,19 @@ class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  }
+
+  async checkOverlaps(
+    stylistId: string,
+    startTime: string,
+    durationMinutes: number
+  ): Promise<OverlapCheckResponse> {
+    const params = new URLSearchParams({
+      stylist_id: stylistId,
+      start_time: startTime,
+      duration_minutes: durationMinutes.toString(),
+    });
+    return this.request(`/api/admin/appointments/check-overlaps?${params}`);
   }
 
   // Blocking Events endpoints
@@ -863,6 +937,58 @@ class ApiClient {
   async clearSystemCache(): Promise<ServiceActionResponse> {
     return this.request("/api/admin/system/cache/clear", {
       method: "POST",
+    });
+  }
+
+  // Google Calendar OAuth2 endpoints
+  async getGoogleCalendarStatus(): Promise<GoogleCalendarStatus> {
+    return this.request("/api/admin/google/status");
+  }
+
+  async getGoogleCalendarAuthUrl(): Promise<{ url: string; state: string }> {
+    return this.request("/api/admin/google/auth-url");
+  }
+
+  async getGoogleCalendars(): Promise<{ calendars: GoogleCalendar[] }> {
+    return this.request("/api/admin/google/calendars");
+  }
+
+  async disconnectGoogleCalendar(): Promise<void> {
+    await this.request("/api/admin/google/disconnect", {
+      method: "DELETE",
+    });
+  }
+
+  async assignCalendarToStylist(
+    stylistId: string,
+    calendarId: string
+  ): Promise<void> {
+    await this.request(`/api/admin/stylists/${stylistId}/calendar`, {
+      method: "PUT",
+      body: JSON.stringify({ calendar_id: calendarId }),
+    });
+  }
+
+  async createGoogleCalendar(payload: CreateCalendarPayload): Promise<GoogleCalendar> {
+    return this.request("/api/admin/google/calendars", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateGoogleCalendar(
+    calendarId: string,
+    payload: UpdateCalendarPayload
+  ): Promise<GoogleCalendar> {
+    return this.request(`/api/admin/google/calendars/${encodeURIComponent(calendarId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteGoogleCalendar(calendarId: string): Promise<void> {
+    await this.request(`/api/admin/google/calendars/${encodeURIComponent(calendarId)}`, {
+      method: "DELETE",
     });
   }
 }

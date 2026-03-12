@@ -3,7 +3,7 @@
 One-shot script to archive test conversations immediately.
 
 This script bypasses the 23-hour cutoff and archives specified conversations
-from Redis to PostgreSQL for testing purposes.
+from Redis to PostgreSQL using the two-table schema (ConversationHistory + ConversationMessage).
 
 Usage:
     # Archive all conversations
@@ -16,6 +16,7 @@ Usage:
 import asyncio
 import json
 import logging
+import pathlib
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -23,11 +24,11 @@ from zoneinfo import ZoneInfo
 import redis
 from sqlalchemy import select, func
 
-# Add project root to path
-sys.path.insert(0, '/home/pepe/atrevete-bot')
+# Add project root to path (resolve relative to this script's location)
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from database.connection import get_async_session
-from database.models import ConversationHistory, MessageRole
+from database.models import ConversationHistory, ConversationMessage
 from shared.config import get_settings
 
 # Configure logger
@@ -102,10 +103,8 @@ async def get_checkpoint_data(redis_client, key: str) -> dict | None:
         return None
 
 
-async def extract_messages_from_checkpoint(checkpoint: dict) -> list[dict]:
+async def extract_messages_from_checkpoint(checkpoint: dict) -> dict | None:
     """Extract messages from LangGraph checkpoint structure."""
-    messages = []
-
     # Navigate LangGraph checkpoint structure
     # Structure: {"channel_values": {"messages": [...]}, "channel_versions": {...}}
     channel_values = checkpoint.get('channel_values', {})
@@ -130,8 +129,28 @@ async def extract_messages_from_checkpoint(checkpoint: dict) -> list[dict]:
     return None
 
 
+def _parse_timestamp(timestamp_str) -> datetime:
+    """Parse a timestamp from various formats, defaulting to now."""
+    if timestamp_str is None:
+        return datetime.now(TIMEZONE)
+    if isinstance(timestamp_str, datetime):
+        return timestamp_str if timestamp_str.tzinfo else timestamp_str.replace(tzinfo=TIMEZONE)
+    if isinstance(timestamp_str, str):
+        try:
+            ts = datetime.fromisoformat(timestamp_str)
+            return ts if ts.tzinfo else ts.replace(tzinfo=TIMEZONE)
+        except (ValueError, TypeError):
+            pass
+    return datetime.now(TIMEZONE)
+
+
 async def archive_to_db(data: dict) -> int:
-    """Insert conversation data into PostgreSQL."""
+    """
+    Upsert conversation data into the two-table schema.
+
+    Get-or-create ConversationHistory parent, then insert ConversationMessage children
+    with deduplication by (role, content, created_at) fingerprint.
+    """
     conversation_id = data.get('conversation_id')
     customer_id = data.get('customer_id')
     messages = data.get('messages', [])
@@ -144,83 +163,105 @@ async def archive_to_db(data: dict) -> int:
     inserted = 0
 
     async with get_async_session() as session:
-        # Check if already archived
-        existing = await session.execute(
-            select(func.count()).select_from(ConversationHistory).where(
+        # Get-or-create ConversationHistory parent
+        result = await session.execute(
+            select(ConversationHistory).where(
                 ConversationHistory.conversation_id == conversation_id
             )
         )
-        existing_count = existing.scalar()
+        parent: ConversationHistory | None = result.scalar_one_or_none()
 
-        if existing_count > 0:
-            logger.info(f"Conversation {conversation_id} already has {existing_count} messages in DB")
-            return 0
+        if parent is not None:
+            logger.info(
+                f"Conversation {conversation_id} already exists in DB "
+                f"(message_count={parent.message_count}), upserting new messages only"
+            )
+        else:
+            parent = ConversationHistory(
+                customer_id=customer_id,
+                conversation_id=conversation_id,
+                message_count=0,
+                metadata_={},
+            )
+            session.add(parent)
+            await session.flush()  # Populate parent.id
+
+        # Update customer_id if we now know it
+        if parent.customer_id is None and customer_id is not None:
+            parent.customer_id = customer_id
+
+        # Load existing message fingerprints for deduplication
+        existing_result = await session.execute(
+            select(
+                ConversationMessage.role,
+                ConversationMessage.content,
+                ConversationMessage.created_at,
+            ).where(ConversationMessage.conversation_history_id == parent.id)
+        )
+        existing_fingerprints: set[tuple[str, str, str]] = {
+            (row.role, row.content, row.created_at.isoformat())
+            for row in existing_result.all()
+        }
+
+        all_timestamps = []
 
         # Insert messages
         for msg in messages:
-            try:
-                role = msg.get('role', 'user')
-                content = msg.get('content', '')
-                timestamp_str = msg.get('timestamp')
+            role = msg.get('role', 'user').lower()
+            content = msg.get('content', '')
+            timestamp = _parse_timestamp(msg.get('timestamp'))
 
-                # Parse timestamp
-                if timestamp_str:
-                    try:
-                        timestamp = datetime.fromisoformat(timestamp_str)
-                        if timestamp.tzinfo is None:
-                            timestamp = timestamp.replace(tzinfo=TIMEZONE)
-                    except Exception:
-                        timestamp = datetime.now(TIMEZONE)
-                else:
-                    timestamp = datetime.now(TIMEZONE)
+            if not role or not content:
+                continue
 
-                # Map role
-                try:
-                    message_role = MessageRole[role.upper()]
-                except (KeyError, AttributeError):
-                    message_role = MessageRole.USER
+            fingerprint = (role, content, timestamp.isoformat())
+            if fingerprint in existing_fingerprints:
+                all_timestamps.append(timestamp)
+                continue
 
-                record = ConversationHistory(
-                    customer_id=customer_id,
-                    conversation_id=conversation_id,
-                    timestamp=timestamp,
-                    message_role=message_role,
-                    message_content=content,
-                    metadata_={},
-                )
-                session.add(record)
-                inserted += 1
+            record = ConversationMessage(
+                conversation_history_id=parent.id,
+                role=role,
+                content=content,
+                created_at=timestamp,
+            )
+            session.add(record)
+            existing_fingerprints.add(fingerprint)
+            all_timestamps.append(timestamp)
+            inserted += 1
 
-            except Exception as e:
-                logger.error(f"Error inserting message: {e}")
-
-        # Insert summary as system message
+        # Update summary
         if summary:
-            try:
-                record = ConversationHistory(
-                    customer_id=customer_id,
-                    conversation_id=conversation_id,
-                    timestamp=datetime.now(TIMEZONE),
-                    message_role=MessageRole.SYSTEM,
-                    message_content=summary,
-                    metadata_={'type': 'conversation_summary'},
-                )
-                session.add(record)
-                inserted += 1
-                logger.info(f"Inserted conversation summary")
-            except Exception as e:
-                logger.error(f"Error inserting summary: {e}")
+            parent.summary = summary
+            logger.info("Set conversation summary on parent")
+
+        # Update parent aggregate fields
+        if all_timestamps:
+            parent.started_at = min(all_timestamps)
+            parent.ended_at = max(all_timestamps)
+
+        # Refresh message_count
+        count_result = await session.execute(
+            select(func.count()).select_from(ConversationMessage).where(
+                ConversationMessage.conversation_history_id == parent.id
+            )
+        )
+        current_count = count_result.scalar() or 0
+        parent.message_count = current_count + inserted
 
         await session.commit()
 
-    logger.info(f"Inserted {inserted} records for conversation {conversation_id}")
+    logger.info(
+        f"Archived {inserted} new messages for conversation {conversation_id} "
+        f"(total: {parent.message_count})"
+    )
     return inserted
 
 
 async def main(filter_conversation_id: str | None = None):
     """Main archival function."""
     logger.info("=" * 60)
-    logger.info("ONE-SHOT ARCHIVAL SCRIPT")
+    logger.info("ONE-SHOT ARCHIVAL SCRIPT (two-table schema)")
     logger.info("=" * 60)
 
     if filter_conversation_id:

@@ -34,18 +34,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const checkAuth = useCallback(async () => {
     const token = localStorage.getItem("admin_token");
 
-    if (!token || isTokenExpired(token)) {
+    if (!token) {
       setUser(null);
       setIsLoading(false);
       return;
     }
 
+    // If token is expired, clear it
+    if (isTokenExpired(token)) {
+      localStorage.removeItem("admin_token");
+      setUser(null);
+      setIsLoading(false);
+      return;
+    }
+
+    // Token exists and is not expired - extract user from token
+    const payload = decodeToken(token);
+    if (!payload) {
+      localStorage.removeItem("admin_token");
+      setUser(null);
+      setIsLoading(false);
+      return;
+    }
+
+    // Set user from token immediately (optimistic)
+    setUser({ username: payload.sub, role: "admin" });
+
+    // Validate with backend (but don't logout on network errors)
     try {
       const userData = await api.getMe();
       setUser(userData);
-    } catch {
-      localStorage.removeItem("admin_token");
-      setUser(null);
+    } catch (error) {
+      // Only clear token on 401 Unauthorized (invalid/expired token)
+      // Keep session on network errors (backend down, etc.)
+      if (error instanceof Error && error.message.includes("401")) {
+        localStorage.removeItem("admin_token");
+        setUser(null);
+      }
+      // Otherwise, keep the session from the token
     } finally {
       setIsLoading(false);
     }

@@ -224,6 +224,39 @@ class TestMergeDicts:
         _ = merge_dicts(current, update)
         assert update == {"b": 2}  # Original unchanged
 
+    # ── T-012: __reset__ sentinel tests ──────────────────────────────────────
+
+    def test_reset_sentinel_true_clears_old_keys(self):
+        """__reset__=True ignores current entirely — only new data survives."""
+        result = merge_dicts({"old_key": 1, "stale": "yes"}, {"__reset__": True, "new": 2})
+        assert result == {"new": 2}
+
+    def test_reset_sentinel_true_removes_itself(self):
+        """The __reset__ sentinel must not appear in the result."""
+        result = merge_dicts({"a": 1}, {"__reset__": True})
+        assert "__reset__" not in result
+
+    def test_reset_sentinel_true_returns_only_new_data(self):
+        """After reset, only the keys alongside __reset__ are present."""
+        result = merge_dicts({"a": 1, "b": 2}, {"__reset__": True, "c": 3, "d": 4})
+        assert result == {"c": 3, "d": 4}
+        assert "a" not in result
+        assert "b" not in result
+
+    def test_reset_sentinel_false_does_normal_merge(self):
+        """__reset__=False (falsy) does NOT trigger reset — normal merge."""
+        result = merge_dicts({"a": 1}, {"__reset__": False, "b": 2})
+        assert "a" in result
+        assert result["b"] == 2
+        # __reset__ key is kept (not a sentinel — only True triggers reset)
+        assert "__reset__" in result
+
+    def test_reset_sentinel_only_true_triggers_reset(self):
+        """Only __reset__=True triggers the reset; 0, None, False do not."""
+        for falsy_value in (0, None, False, ""):
+            result = merge_dicts({"old": 1}, {"__reset__": falsy_value, "new": 2})
+            assert "old" in result, f"Expected old key to survive for __reset__={falsy_value!r}"
+
 
 # =============================================================================
 # append_unique_list reducer
@@ -362,16 +395,35 @@ class TestTransitionMode:
         # mode_history update should be a list containing the old mode
         assert "GREETING" in update["mode_history"]
 
-    def test_mode_context_reset_when_no_context_update(self):
+    def test_mode_context_contains_reset_sentinel_when_no_context_update(self):
         state = self._make_state(current_mode="BOOKING", mode_context={"booking_step": "slot"})
         update = transition_mode(state, "GENERAL")
-        # When no context_update provided, mode_context should be reset to empty
-        assert update["mode_context"] == {}
+        # Raw return value contains __reset__ sentinel — reducer strips it
+        assert update["mode_context"].get("__reset__") is True
+
+    def test_mode_context_reset_sentinel_clears_via_reducer(self):
+        """When reducer processes the __reset__ sentinel, stale data is dropped."""
+        state = self._make_state(current_mode="BOOKING", mode_context={"booking_step": "slot"})
+        update = transition_mode(state, "GENERAL")
+        # After reducer processes: old keys gone, sentinel stripped
+        result = merge_dicts({"booking_step": "slot"}, update["mode_context"])
+        assert "booking_step" not in result
+        assert "__reset__" not in result
 
     def test_mode_context_set_when_context_update_provided(self):
         state = self._make_state(current_mode="GREETING")
         update = transition_mode(state, "BOOKING", context_update={"booking_step": "service_selection"})
-        assert update["mode_context"] == {"booking_step": "service_selection"}
+        # Raw value has __reset__ + the new context; reducer will strip sentinel
+        assert update["mode_context"].get("__reset__") is True
+        assert update["mode_context"].get("booking_step") == "service_selection"
+
+    def test_mode_context_new_data_survives_reducer(self):
+        """After reducer: new context data is present, sentinel and old data removed."""
+        state = self._make_state(current_mode="GREETING")
+        update = transition_mode(state, "BOOKING", context_update={"booking_step": "service_selection"})
+        result = merge_dicts({}, update["mode_context"])
+        assert result == {"booking_step": "service_selection"}
+        assert "__reset__" not in result
 
     def test_old_context_saved_to_draft_contexts(self):
         """When transitioning away from a mode with context, save it as a draft."""
@@ -402,3 +454,52 @@ class TestTransitionMode:
         update = transition_mode(state, "GENERAL")
         # No draft_contexts entry for GENERAL since mode didn't change (or context was empty)
         assert update["draft_contexts"] == {}
+
+    # ── T-012: __reset__ sentinel in transition_mode ─────────────────────────
+
+    def test_transition_mode_includes_reset_sentinel(self):
+        """transition_mode must include __reset__=True in mode_context raw output."""
+        state = self._make_state(current_mode="BOOKING", mode_context={"booking_step": "slot"})
+        update = transition_mode(state, "GENERAL")
+        assert update["mode_context"].get("__reset__") is True
+
+    def test_transition_mode_reset_sentinel_present_with_no_context(self):
+        """Even with no context_update, __reset__ sentinel is in mode_context."""
+        state = self._make_state(current_mode="GREETING")
+        update = transition_mode(state, "BOOKING")
+        assert "__reset__" in update["mode_context"]
+        assert update["mode_context"]["__reset__"] is True
+
+    def test_transition_mode_reset_sentinel_present_with_context(self):
+        """With a context_update, __reset__ is included alongside the new data."""
+        state = self._make_state(current_mode="GREETING")
+        update = transition_mode(state, "BOOKING", context_update={"intent": "book"})
+        assert update["mode_context"]["__reset__"] is True
+        assert update["mode_context"]["intent"] == "book"
+
+    def test_two_transitions_only_last_data_survives_reducer(self):
+        """
+        Reducer test: simulating two mode transitions.
+        After each transition, old mode_context data must not bleed through.
+        """
+        # Start in BOOKING with stale booking context
+        state1 = self._make_state(
+            current_mode="BOOKING",
+            mode_context={"booking_step": "stylist_selection", "service_id": "uuid-svc-1"},
+        )
+        # Transition to GENERAL
+        update1 = transition_mode(state1, "GENERAL")
+        # Simulate reducer merging with old context
+        merged_context1 = merge_dicts(state1["mode_context"], update1["mode_context"])
+        # Old booking keys must be gone
+        assert "booking_step" not in merged_context1
+        assert "service_id" not in merged_context1
+        assert "__reset__" not in merged_context1
+
+        # Now transition from GENERAL to BOOKING with new intent
+        state2 = {**state1, "current_mode": "GENERAL", "mode_context": merged_context1}
+        update2 = transition_mode(state2, "BOOKING", context_update={"intent": "book"})
+        merged_context2 = merge_dicts(merged_context1, update2["mode_context"])
+        # Only new data survives
+        assert merged_context2 == {"intent": "book"}
+        assert "__reset__" not in merged_context2

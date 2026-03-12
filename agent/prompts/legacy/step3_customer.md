@@ -161,7 +161,7 @@ Bot: "Perfecto, Pepe. Aquí está el resumen de tu reserva:
 🕐 *10:00* (duración estimada: 60 minutos)
 💇‍♀️ Con *Pilar*
 📋 Servicios:
-- Corte + Peinado (Corto-Medio) (60 min)
+- Cortar (40 min)
 👤 A nombre de: Pepe Cabeza
 ¿Confirmas esta reserva?"
 ```

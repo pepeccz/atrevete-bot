@@ -7,6 +7,8 @@ Coverage:
 - Cancel at early (service_selection) step → direct GENERAL transition
 - Escalate intent at any step → transitions to ESCALATION
 - BookingMode mode_name property
+- _advance_step: step advancement rules (T-008)
+- AgenticLoopResult integration (T-006/T-007)
 
 All LLM calls are mocked — tests do NOT require a real LLM or DB.
 """
@@ -15,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agent.modes.base import AgenticLoopResult
 from agent.modes.booking_mode import BookingMode
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
@@ -320,3 +323,216 @@ class TestBookingModeConfirmation:
 
         messages = result.get("messages", [])
         assert len(messages) >= 1
+
+
+# =============================================================================
+# _advance_step unit tests (T-008)
+# =============================================================================
+
+
+class TestAdvanceStep:
+    """
+    Direct unit tests for BookingMode._advance_step().
+
+    These tests verify the step-advancement logic in isolation without
+    calling handle() — they call _advance_step() directly.
+    """
+
+    def make_mode(self) -> BookingMode:
+        return make_booking_mode()
+
+    def make_result(
+        self,
+        response_text: str = "OK",
+        tool_results: dict | None = None,
+    ) -> AgenticLoopResult:
+        return AgenticLoopResult(
+            response_text=response_text,
+            tool_results=tool_results or {},
+        )
+
+    # ── service_selection ──────────────────────────────────────────────────────
+
+    def test_service_selection_stays_when_no_tool_results(self):
+        """No tools called → stay at service_selection."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={})
+        next_step, ctx = mode._advance_step(result, "service_selection", {})
+        assert next_step == "service_selection"
+
+    def test_service_selection_stays_when_tool_called_but_no_service_name(self):
+        """search_services called but service_name not yet in context → stay."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={"search_services": []})
+        next_step, ctx = mode._advance_step(result, "service_selection", {})
+        assert next_step == "service_selection"
+
+    def test_service_selection_advances_when_search_services_returns_result(self):
+        """search_services called AND service_name in context → advance."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={"search_services": []})
+        ctx = {"service_name": "Corte señora"}
+        next_step, updated_ctx = mode._advance_step(result, "service_selection", ctx)
+        assert next_step == "stylist_selection"
+
+    def test_service_selection_advances_with_query_info(self):
+        """query_info called AND service_name in context → advance."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={"query_info": {}})
+        ctx = {"service_name": "Tinte"}
+        next_step, _ = mode._advance_step(result, "service_selection", ctx)
+        assert next_step == "stylist_selection"
+
+    def test_service_selection_single_match_auto_populates_context(self):
+        """search_services returning single result auto-populates service_name."""
+        mode = self.make_mode()
+        services = [{"id": "svc-1", "name": "Corte señora", "category": "Peluquería"}]
+        result = self.make_result(tool_results={"search_services": services})
+        # service_name not yet in context — but single match should populate it
+        next_step, ctx = mode._advance_step(result, "service_selection", {})
+        # Single match → service_name auto-set → advance
+        assert ctx["service_name"] == "Corte señora"
+        assert ctx["service_id"] == "svc-1"
+        assert ctx["service_category"] == "Peluquería"
+        assert next_step == "stylist_selection"
+
+    # ── stylist_selection ──────────────────────────────────────────────────────
+
+    def test_stylist_selection_stays_when_no_list_stylists(self):
+        """No list_stylists call → stay at stylist_selection."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={})
+        next_step, _ = mode._advance_step(result, "stylist_selection", {"service_name": "Corte"})
+        assert next_step == "stylist_selection"
+
+    def test_stylist_selection_stays_when_no_stylist_id_in_context(self):
+        """list_stylists called but stylist_id not in context → stay."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={"list_stylists": []})
+        next_step, _ = mode._advance_step(result, "stylist_selection", {})
+        assert next_step == "stylist_selection"
+
+    def test_stylist_selection_advances_when_stylist_chosen(self):
+        """list_stylists called AND stylist_id in context → advance."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={"list_stylists": []})
+        ctx = {"stylist_id": "stl-1"}
+        next_step, _ = mode._advance_step(result, "stylist_selection", ctx)
+        assert next_step == "slot_selection"
+
+    def test_stylist_selection_single_match_auto_populates_context(self):
+        """list_stylists returning single result auto-populates stylist_id."""
+        mode = self.make_mode()
+        stylists = [{"id": "stl-1", "name": "Laura"}]
+        result = self.make_result(tool_results={"list_stylists": stylists})
+        next_step, ctx = mode._advance_step(result, "stylist_selection", {})
+        assert ctx["stylist_id"] == "stl-1"
+        assert ctx["stylist_name"] == "Laura"
+        assert next_step == "slot_selection"
+
+    # ── customer_data ──────────────────────────────────────────────────────────
+
+    def test_customer_data_stays_when_no_first_name(self):
+        """No first_name in context → stay at customer_data."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={})
+        next_step, _ = mode._advance_step(result, "customer_data", {})
+        assert next_step == "customer_data"
+
+    def test_customer_data_advances_when_first_name_in_context(self):
+        """first_name in mode_context → advance to confirmation."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={})
+        ctx = {"first_name": "Juan"}
+        next_step, _ = mode._advance_step(result, "customer_data", ctx)
+        assert next_step == "confirmation"
+
+    def test_customer_data_advances_when_booking_first_name_in_context(self):
+        """booking_first_name also triggers advancement (alternate key)."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={})
+        ctx = {"booking_first_name": "María"}
+        next_step, _ = mode._advance_step(result, "customer_data", ctx)
+        assert next_step == "confirmation"
+
+    # ── confirmation ──────────────────────────────────────────────────────────
+
+    def test_confirmation_intent_confirm_advances_via_step_confirmation(self):
+        """
+        confirmation + intent=confirm is handled by _step_confirmation returning a
+        dict directly (not AgenticLoopResult), so _advance_step is never called.
+        This test verifies _advance_step stays at confirmation when reached via
+        AgenticLoopResult path (non-confirm).
+        """
+        mode = self.make_mode()
+        result = self.make_result(tool_results={})
+        # When _advance_step is called with "confirmation", no tool results → stay
+        next_step, _ = mode._advance_step(result, "confirmation", {})
+        assert next_step == "confirmation"
+
+    # ── completed ─────────────────────────────────────────────────────────────
+
+    def test_completed_stays_completed(self):
+        """completed step always returns completed."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={})
+        next_step, _ = mode._advance_step(result, "completed", {})
+        assert next_step == "completed"
+
+    # ── unknown step ──────────────────────────────────────────────────────────
+
+    def test_unknown_step_stays_at_current(self):
+        """Unrecognized step names → conservative stay."""
+        mode = self.make_mode()
+        result = self.make_result(tool_results={"some_tool": {}})
+        next_step, _ = mode._advance_step(result, "unknown_step", {})
+        assert next_step == "unknown_step"
+
+
+# =============================================================================
+# AgenticLoopResult integration tests (T-007)
+# =============================================================================
+
+
+class TestAgenticLoopResultIntegration:
+    """
+    Tests that verify handle() correctly processes AgenticLoopResult from
+    step handlers and builds the state update dict with booking_step.
+    """
+
+    async def test_handle_service_selection_returns_booking_step_in_mode_context(self):
+        """
+        handle() at service_selection step must include booking_step in mode_context.
+        """
+        mode = make_booking_mode("¿Qué servicio te gustaría?")
+        state = make_state_with_step(booking_step="service_selection")
+
+        result = await mode.handle(state, make_intent())
+
+        mode_context = result.get("mode_context", {})
+        assert "booking_step" in mode_context
+
+    async def test_handle_service_selection_stays_at_service_selection_without_context(self):
+        """
+        Without service_name in mode_context, service_selection stays put.
+        """
+        mode = make_booking_mode("¿Qué servicio?")
+        state = make_state_with_step(booking_step="service_selection")
+
+        result = await mode.handle(state, make_intent())
+
+        mode_context = result.get("mode_context", {})
+        assert mode_context.get("booking_step") == "service_selection"
+
+    async def test_handle_returns_assistant_message(self):
+        """
+        handle() must always return at least one assistant message.
+        """
+        mode = make_booking_mode("Respuesta de prueba")
+        state = make_state_with_step(booking_step="service_selection")
+
+        result = await mode.handle(state, make_intent())
+
+        messages = result.get("messages", [])
+        assert len(messages) >= 1
+        assert messages[0]["role"] == "assistant"

@@ -1,336 +1,293 @@
 """
-BaseModeNode — Abstract base class for all mode nodes (v6.0 mode-based architecture).
+Base module for v6.0 mode nodes.
 
-This module defines the shared contract and utilities that every mode node
-(GreetingMode, BookingMode, GeneralMode, EscalationMode) must implement.
-
-Architecture:
-    BaseModeNode
-        ├─ GreetingMode   (GREETING mode — first contact)
-        ├─ BookingMode    (BOOKING mode — appointment flow)
-        ├─ GeneralMode    (GENERAL mode — FAQs, info queries)
-        └─ EscalationMode (ESCALATION mode — human handoff)
-
-Each mode:
-1. Receives the current ConversationState + IntentResult
-2. Calls LLM (optionally with tools) via _call_llm()
-3. Returns a partial state update dict for LangGraph reducers
-
-Resilience:
-    If ``resilience_chain`` is provided (a FallbackChain instance), all LLM
-    calls go through ``call_with_fallback()`` for automatic provider rotation.
-    Otherwise, LLM calls are made directly via ``llm_client.ainvoke()``.
+Provides shared types and the BaseModeNode abstract class used by all 4 modes.
 """
-
-from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_openai import ChatOpenAI
 
-from agent.state.helpers import increment_error_count
+from agent.prompts.loader import build_layered_messages, build_step_context, get_system_prompt
 from agent.state.schemas import ConversationState
-
-logger = logging.getLogger(__name__)
+from shared.config import get_settings
 
 
 # ============================================================================
-# ModeResult
+# AgenticLoopResult — Return type for _run_agentic_loop()
 # ============================================================================
 
 
 @dataclass
-class ModeResult:
-    """
-    Result returned by a mode node's handle() method.
+class AgenticLoopResult:
+    """Result from running an agentic loop with optional tool calls."""
 
-    Encapsulates the response, any requested mode transition, context updates,
-    and additional metadata for debugging or downstream logic.
-
-    Attributes:
-        response: The assistant response text to send to the customer.
-        next_mode: If not None, signals a mode transition. The orchestrator
-                   node should call ``transition_mode(state, next_mode)`` and
-                   update the state accordingly.
-        mode_context_update: Dict of changes to merge into state.mode_context
-                             for the current (or incoming) mode.
-        metadata: Arbitrary key-value pairs for debugging, metrics, or
-                  downstream enrichment (not persisted to state).
-    """
-
-    response: str
-    next_mode: str | None = None
-    mode_context_update: dict = field(default_factory=dict)
-    metadata: dict = field(default_factory=dict)
+    response_text: str
+    tool_results: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
 
 
 # ============================================================================
-# BaseModeNode
+# ModeResult — TypedDict for mode node return values
+# ============================================================================
+
+
+class ModeResult(TypedDict, total=False):
+    """Type hints for dicts returned by mode node handle() methods."""
+
+    messages: list
+    current_mode: str
+    customer_name: str | None
+    customer_id: str | None
+    mode_context: dict
+    mode_history: list[str]
+    is_first_interaction: bool
+    escalation_triggered: bool
+    error_count: int
+    last_node: str
+    conversation_summary: str
+    user_message: str | None
+
+
+# ============================================================================
+# BaseModeNode — Abstract base class for all 4 mode nodes
 # ============================================================================
 
 
 class BaseModeNode(ABC):
     """
-    Abstract base class for all mode nodes in the v6.0 architecture.
+    Abstract base class for v6.0 mode nodes.
 
-    Subclasses MUST implement:
-    - ``mode_name`` property (str) — unique identifier for the mode
-    - ``handle(state, intent)`` method — core mode logic
+    Each mode node (Greeting, General, Booking, Escalation) inherits from
+    this class and implements handle() to process the user message and
+    return a partial state update dict.
 
-    Shared utilities (available to all subclasses):
-    - ``_call_llm(messages, tools)`` — resilience-aware LLM invocation
-    - ``_build_messages(state, system_prompt)`` — constructs LangChain message list
-    - ``_format_tool_response(tool_result)`` — formats tool output for LLM context
-
-    Usage:
-        class GreetingMode(BaseModeNode):
-            @property
-            def mode_name(self) -> str:
-                return "GREETING"
-
-            async def handle(self, state, intent) -> dict:
-                messages = self._build_messages(state, "You are a greeter...")
-                result = await self._call_llm(messages)
-                response_text = result.content
-                return add_message(state, "assistant", response_text)
+    The _run_agentic_loop() method provides a reusable agentic loop with
+    optional tool calling support.
     """
 
-    def __init__(
-        self,
-        tools: list,
-        llm_client: Any,
-        resilience_chain: Any | None = None,
-    ) -> None:
-        """
-        Initialise the mode node.
-
-        Args:
-            tools: List of LangChain tools available to this mode.
-                   Pass an empty list for modes that don't use tools.
-            llm_client: Primary LLM client (ChatOpenAI or compatible).
-                        Must support ``ainvoke(messages)``.
-            resilience_chain: Optional FallbackChain instance. If provided,
-                              all LLM calls go through ``call_with_fallback()``.
-                              If None, calls are made directly on ``llm_client``.
-        """
-        self._tools: list = tools
-        self._llm: Any = llm_client
-        self._resilience_chain: Any | None = resilience_chain
-
-    # -------------------------------------------------------------------------
-    # Abstract interface — subclasses MUST implement
-    # -------------------------------------------------------------------------
+    def __init__(self, tools: list, llm_client: ChatOpenAI | None = None):
+        self.tools = tools
+        self.llm = llm_client
+        self.logger = logging.getLogger(self.__class__.__name__)
 
     @property
     @abstractmethod
     def mode_name(self) -> str:
-        """
-        Unique name for this mode (matches ConversationMode literal).
-
-        Must be one of: "GREETING", "BOOKING", "GENERAL", "ESCALATION".
-        Used for logging, mode_history tracking, and draft_contexts keys.
-        """
+        """Return the mode name string (GREETING/BOOKING/GENERAL/ESCALATION)."""
         ...
 
     @abstractmethod
-    async def handle(
-        self,
-        state: ConversationState,
-        intent: Any,  # IntentResult from agent.routing.intent_router
-    ) -> dict:
+    async def handle(self, state: ConversationState, intent: Any) -> dict:
         """
-        Process the current turn and return a partial state update dict.
-
-        Subclasses implement the core logic here:
-        1. Build LLM messages using _build_messages()
-        2. Call _call_llm() with messages (and tools if needed)
-        3. Extract response from LLM output
-        4. Return a partial state update dict using add_message() + mode updates
-
-        The returned dict is merged by LangGraph reducers — return only the
-        fields that changed. Do NOT return the full state.
+        Process the user message and return a partial state update dict.
 
         Args:
-            state: Current ConversationState (read-only; use helpers to build updates)
-            intent: IntentResult with classified intent and confidence
+            state: Current conversation state (read-only; return updates, don't mutate)
+            intent: IntentResult from the router node
 
         Returns:
-            Partial state update dict compatible with LangGraph reducers.
-            Typically includes at minimum: {"messages": [...]}
-
-        Example:
-            async def handle(self, state, intent) -> dict:
-                messages = self._build_messages(state, SYSTEM_PROMPT)
-                llm_result = await self._call_llm(messages)
-                return add_message(state, "assistant", llm_result.content)
+            Partial state dict with only the fields that changed.
+            MUST always include "user_message": None to clear transient field.
         """
         ...
 
-    # -------------------------------------------------------------------------
-    # Shared utilities — available to all subclasses
-    # -------------------------------------------------------------------------
+    async def _load_cached_system_prompt(self) -> str:
+        """
+        Load the cached system prompt (shared content).
 
-    async def _call_llm(
+        Loads and concatenates:
+        - shared/identity.md
+        - shared/critical_rules.md
+        - shared/glossary.md
+
+        Cached for 10 minutes with thread safety via asyncio.Lock.
+
+        Returns:
+            str: Concatenated system prompt (~2,200 tokens)
+        """
+        return await get_system_prompt()
+
+    def _build_step_context(
+        self,
+        state: ConversationState,
+        mode_context: dict,
+        step_name: str | None = None,
+    ) -> str:
+        """
+        Build dynamic context with step info, collected data, and user message.
+
+        Creates context string with:
+        - Current step information
+        - Collected data so far (service, stylist, slot, name, notes)
+        - User message
+        - Conversation summary (if available)
+
+        Args:
+            state: Current conversation state
+            mode_context: Mode-specific context data
+            step_name: Optional step name for context
+
+        Returns:
+            str: Dynamic context string (~300 tokens)
+        """
+        step_info = {"step_name": step_name} if step_name else None
+        return build_step_context(state, mode_context, step_info)
+
+    async def _build_layered_messages(
+        self,
+        state: ConversationState,
+        mode_context: dict,
+        step_name: str | None = None,
+        include_history: bool = True,
+        history_limit: int = 6,
+    ) -> list:
+        """
+        Build messages using the optimized layered prompt approach.
+
+        Uses cached system prompt + dynamic step context for ~25% token reduction.
+
+        Args:
+            state: Current conversation state
+            mode_context: Mode-specific context data
+            step_name: Optional step name for context
+            include_history: Whether to include conversation history
+            history_limit: Max number of history messages to include
+
+        Returns:
+            list: List of LangChain message objects
+        """
+        step_info = {"step_name": step_name} if step_name else None
+        return await build_layered_messages(
+            state, mode_context, step_info, include_history, history_limit
+        )
+
+    def _use_optimized_prompts(self) -> bool:
+        """
+        Check if optimized prompts should be used.
+
+        Returns True if USE_OPTIMIZED_PROMPTS is enabled (default: True).
+        When False, modes should fall back to legacy inline prompts.
+
+        Returns:
+            bool: Whether to use the optimized prompt system
+        """
+        try:
+            settings = get_settings()
+            return settings.USE_OPTIMIZED_PROMPTS
+        except Exception:
+            # Default to True if settings can't be loaded
+            return True
+
+    async def _call_llm(self, messages: list) -> Any | None:
+        """
+        Call the LLM with a list of messages. Returns the response or None on failure.
+
+        Args:
+            messages: List of LangChain message objects
+
+        Returns:
+            LLM response object or None if LLM not configured / call failed
+        """
+        if self.llm is None:
+            return None
+        try:
+            return await self.llm.ainvoke(messages)
+        except Exception as exc:
+            self.logger.error("LLM call failed: %s", exc)
+            return None
+
+    async def _run_agentic_loop(
         self,
         messages: list,
         tools: list | None = None,
-    ) -> Any:
+    ) -> AgenticLoopResult:
         """
-        Resilience-aware LLM invocation.
+        Run an agentic loop with optional tool calls.
 
-        If ``self._resilience_chain`` is set, uses FallbackChain.call_with_fallback()
-        for automatic provider rotation. Otherwise, calls ``self._llm.ainvoke()``
-        directly (with optional tool binding).
-
-        On any exception:
-        - Logs the error
-        - Returns None (caller should handle None gracefully)
+        Flow:
+        1. Call LLM (with tools bound if any)
+        2. If LLM returns tool_calls, invoke each tool and collect results
+        3. If tools were called, make a second LLM call with tool results for final response
+        4. Return AgenticLoopResult with response_text and tool_results
 
         Args:
             messages: List of LangChain message objects (SystemMessage, HumanMessage, etc.)
-            tools: Optional list of LangChain tools to bind. If None, no tools are bound.
+            tools: Tool list to bind. Defaults to self.tools if None.
 
         Returns:
-            LLM response object (typically AIMessage with .content), or None on failure.
+            AgenticLoopResult with response_text, tool_results, and optional error
         """
-        try:
-            if self._resilience_chain is not None:
-                # Resilience path: FallbackChain manages provider rotation
-                # The chain injects ``llm`` as a kwarg per-provider attempt
-                async def _invoke_with_provider(
-                    *, llm: Any, **_kwargs: Any
-                ) -> Any:
-                    if tools:
-                        bound = llm.bind_tools(tools)
-                        return await bound.ainvoke(messages)
-                    return await llm.ainvoke(messages)
+        active_tools = tools if tools is not None else self.tools
+        tool_results: dict[str, Any] = {}
 
-                conversation_id = "mode-node"  # Default; subclasses can override
-                return await self._resilience_chain.call_with_fallback(
-                    _invoke_with_provider,
-                    conversation_id=conversation_id,
+        if self.llm is None:
+            return AgenticLoopResult(
+                response_text="Error: no LLM configurado.",
+                error="No LLM configured",
+            )
+
+        try:
+            # Bind tools if any are provided
+            llm_with_tools = self.llm.bind_tools(active_tools) if active_tools else self.llm
+            response = await llm_with_tools.ainvoke(messages)
+
+            # Process tool calls if any
+            if hasattr(response, "tool_calls") and response.tool_calls:
+                tool_map = {t.name: t for t in active_tools}
+
+                for tool_call in response.tool_calls:
+                    tool_name = tool_call.get("name", "")
+                    tool_args = tool_call.get("args", {})
+                    if tool_name in tool_map:
+                        try:
+                            result = await tool_map[tool_name].ainvoke(tool_args)
+                            tool_results[tool_name] = result
+                        except Exception as exc:
+                            self.logger.error(
+                                "Tool %s failed: %s", tool_name, exc
+                            )
+                            tool_results[tool_name] = {"error": str(exc)}
+
+                # Second LLM call with tool results appended
+                tool_messages = list(messages)
+                tool_messages.append(response)  # Append AIMessage with tool_calls
+
+                for tool_call in response.tool_calls:
+                    tool_name = tool_call.get("name", "")
+                    result = tool_results.get(tool_name, {})
+                    tool_messages.append(
+                        ToolMessage(
+                            content=str(result),
+                            tool_call_id=tool_call.get("id", tool_name),
+                        )
+                    )
+
+                final_response = await self.llm.ainvoke(tool_messages)
+                response_text = (
+                    final_response.content
+                    if hasattr(final_response, "content")
+                    else str(final_response)
                 )
             else:
-                # Direct path: use primary LLM client
-                if tools:
-                    bound = self._llm.bind_tools(tools)
-                    return await bound.ainvoke(messages)
-                return await self._llm.ainvoke(messages)
+                response_text = (
+                    response.content
+                    if hasattr(response, "content")
+                    else str(response)
+                )
+
+            return AgenticLoopResult(
+                response_text=response_text,
+                tool_results=tool_results,
+            )
 
         except Exception as exc:
-            logger.error(
-                "BaseModeNode._call_llm: LLM call failed | mode=%s | error=%s",
-                self.mode_name,
-                exc,
-                exc_info=True,
+            self.logger.error("Agentic loop failed: %s", exc)
+            return AgenticLoopResult(
+                response_text="Lo siento, ha ocurrido un error. ¿Puedes repetir tu mensaje?",
+                error=str(exc),
             )
-            return None
-
-    def _build_messages(
-        self,
-        state: ConversationState,
-        system_prompt: str,
-    ) -> list:
-        """
-        Build a LangChain message list from conversation state + system prompt.
-
-        The resulting list has this structure:
-        1. SystemMessage (system_prompt) — role instructions for this mode
-        2. Optional HumanMessage with conversation_summary (if present)
-        3. Recent conversation messages converted to LangChain types
-
-        Message role mapping:
-        - state message role "user"      → HumanMessage
-        - state message role "assistant" → AIMessage
-        - state message role "tool"      → ToolMessage (with tool_call_id)
-
-        Args:
-            state: Current ConversationState (read-only).
-            system_prompt: System instructions for this mode's LLM call.
-
-        Returns:
-            List of LangChain message objects ready for LLM invocation.
-        """
-        lc_messages: list = [SystemMessage(content=system_prompt)]
-
-        # Include conversation summary if present (for long conversations)
-        summary = state.get("conversation_summary")
-        if summary:
-            lc_messages.append(
-                HumanMessage(
-                    content=f"[Resumen de la conversación previa]\n{summary}"
-                )
-            )
-
-        # Convert state messages to LangChain message objects
-        state_messages = state.get("messages", [])
-        for msg in state_messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            if role == "user":
-                lc_messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                lc_messages.append(AIMessage(content=content))
-            elif role == "tool":
-                # ToolMessage requires tool_call_id
-                tool_call_id = msg.get("tool_call_id", "tool_call_0")
-                lc_messages.append(
-                    ToolMessage(content=content, tool_call_id=tool_call_id)
-                )
-            else:
-                # Fallback for unknown roles — treat as HumanMessage
-                logger.debug(
-                    "BaseModeNode._build_messages: unknown role '%s' — treating as HumanMessage",
-                    role,
-                )
-                lc_messages.append(HumanMessage(content=content))
-
-        return lc_messages
-
-    def _format_tool_response(self, tool_result: Any) -> str:
-        """
-        Format tool output for injection into LLM context.
-
-        Converts various tool result types to a clean string representation
-        suitable for inclusion in a ToolMessage or as additional context.
-
-        Handles:
-        - str: returned as-is
-        - dict: formatted as key=value pairs (newline-separated)
-        - list: each item on its own line (dicts formatted as key=value)
-        - None: returns "(sin resultado)"
-        - Other: str() conversion
-
-        Args:
-            tool_result: Raw output from a tool call.
-
-        Returns:
-            Formatted string representation of the tool result.
-        """
-        if tool_result is None:
-            return "(sin resultado)"
-
-        if isinstance(tool_result, str):
-            return tool_result
-
-        if isinstance(tool_result, dict):
-            lines = []
-            for key, value in tool_result.items():
-                lines.append(f"{key}: {value}")
-            return "\n".join(lines)
-
-        if isinstance(tool_result, list):
-            lines = []
-            for item in tool_result:
-                if isinstance(item, dict):
-                    item_parts = [f"{k}: {v}" for k, v in item.items()]
-                    lines.append(" | ".join(item_parts))
-                else:
-                    lines.append(str(item))
-            return "\n".join(lines)
-
-        return str(tool_result)

@@ -48,6 +48,7 @@ django-unfold>=0.40.0
 
 # External Service Integrations
 google-api-python-client>=2.150
+google-auth-oauthlib>=1.0.0  # OAuth2 flow for admin panel Google Calendar connection
 
 # Audio Transcription
 groq>=0.11.0

@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { MessageSquare, User, Clock, Eye, Info } from "lucide-react";
+import { MessageSquare, User, Clock, Eye, Info, Trash2 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +18,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -147,6 +157,11 @@ export default function ConversationsPage() {
   const [selectedConversation, setSelectedConversation] =
     useState<ConversationHistory | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [conversationToDelete, setConversationToDelete] =
+    useState<ConversationHistory | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Create customer map for display
   const customerMap = Object.fromEntries(
@@ -175,9 +190,50 @@ export default function ConversationsPage() {
     loadData();
   }, [loadData]);
 
-  const handleViewConversation = (conversation: ConversationHistory) => {
-    setSelectedConversation(conversation);
-    setModalOpen(true);
+  const handleViewConversation = async (conversation: ConversationHistory) => {
+    // The list endpoint does not return messages — fetch full detail first
+    setLoadingDetail(true);
+    try {
+      const detail = await api.getConversation(conversation.id);
+      setSelectedConversation(detail);
+      setModalOpen(true);
+    } catch (error) {
+      toast.error("Error al cargar los mensajes de la conversacion");
+      console.error(error);
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
+  const handleDeleteClick = (conversation: ConversationHistory) => {
+    setConversationToDelete(conversation);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDelete = async () => {
+    if (!conversationToDelete) return;
+
+    setDeleting(true);
+    try {
+      const result = await api.deleteConversation(conversationToDelete.id);
+      if (result.db_deleted) {
+        setConversations((prev) =>
+          prev.filter((c) => c.id !== conversationToDelete.id)
+        );
+        toast.success("Conversacion eliminada correctamente");
+      } else {
+        toast.error(result.error ?? "Error al eliminar la conversacion");
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Error desconocido";
+      toast.error(`Error al eliminar la conversacion: ${message}`);
+      console.error(error);
+    } finally {
+      setDeleting(false);
+      setDeleteDialogOpen(false);
+      setConversationToDelete(null);
+    }
   };
 
   const columns: ColumnDef<ConversationHistory>[] = [
@@ -190,7 +246,8 @@ export default function ConversationsPage() {
         </div>
       ),
       cell: ({ row }) => {
-        const customerId = row.getValue("customer_id") as string;
+        const customerId = row.getValue("customer_id") as string | null;
+        if (!customerId) return "Desconocido";
         const customer = customerMap[customerId];
         if (!customer) return "Desconocido";
         return `${customer.first_name} ${customer.last_name || ""}`.trim();
@@ -239,22 +296,34 @@ export default function ConversationsPage() {
       cell: ({ row }) => {
         const conversation = row.original;
         return (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => handleViewConversation(conversation)}
-          >
-            <Eye className="mr-2 h-4 w-4" />
-            Ver
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleViewConversation(conversation)}
+              disabled={loadingDetail}
+            >
+              <Eye className="mr-2 h-4 w-4" />
+              {loadingDetail ? "Cargando..." : "Ver"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={() => handleDeleteClick(conversation)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
         );
       },
     },
   ];
 
-  const selectedCustomer = selectedConversation
-    ? customerMap[selectedConversation.customer_id]
-    : null;
+  const selectedCustomer =
+    selectedConversation?.customer_id
+      ? customerMap[selectedConversation.customer_id] ?? null
+      : null;
 
   return (
     <div className="flex flex-col">
@@ -311,6 +380,30 @@ export default function ConversationsPage() {
         conversation={selectedConversation}
         customer={selectedCustomer}
       />
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar conversacion</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta accion no se puede deshacer. La conversacion sera eliminada
+              permanentemente junto con todos sus mensajes y el checkpoint de
+              Redis asociado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

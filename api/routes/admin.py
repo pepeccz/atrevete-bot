@@ -172,7 +172,7 @@ settings = get_settings()
 
 # JWT Configuration
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 24  # 24h for convenience during development
+JWT_EXPIRATION_HOURS = 720  # 30 days - persistent session
 JWT_COOKIE_NAME = "admin_token"  # HttpOnly cookie name
 JWT_COOKIE_SECURE = False  # Set to True in production with HTTPS
 JWT_COOKIE_SAMESITE = "lax"  # "strict" may break some OAuth flows
@@ -596,6 +596,28 @@ NOTIFICATION_CATEGORIES = {
 
 
 # =============================================================================
+# Overlap Detection Models
+# =============================================================================
+
+
+class OverlapConflict(BaseModel):
+    """Represents a single overlapping appointment conflict."""
+    appointment_id: UUID
+    customer_name: str
+    service_names: str
+    start_time: datetime
+    end_time: datetime
+    status: str
+
+
+class OverlapCheckResponse(BaseModel):
+    """Response model for overlap check endpoint."""
+    has_overlaps: bool
+    conflicts: list[OverlapConflict]
+    checked_range: dict
+
+
+# =============================================================================
 # Auth Endpoints
 # =============================================================================
 
@@ -639,6 +661,19 @@ async def login(request: LoginRequest, response: Response):
 
     # Also return token in body for API clients (mobile apps, etc.)
     return LoginResponse(access_token=token)
+
+
+@router.get("/auth/me", response_model=UserResponse)
+async def get_me(
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Get current authenticated user info.
+
+    Validates that the token is still valid and returns user data.
+    Used by frontend to check session status on page refresh.
+    """
+    return UserResponse(username=current_user["sub"], role="admin")
 
 
 @router.post("/auth/logout")
@@ -1196,6 +1231,53 @@ async def delete_stylist(
         await publish_cache_invalidation("stylists", "delete")
 
 
+class AssignCalendarRequest(BaseModel):
+    """Request body for assigning a Google Calendar to a stylist."""
+
+    calendar_id: str = Field(..., min_length=1, description="Google Calendar ID to assign to this stylist")
+
+
+@router.put("/stylists/{stylist_id}/calendar")
+async def assign_stylist_calendar(
+    stylist_id: UUID,
+    request: AssignCalendarRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Assign a Google Calendar to a stylist.
+
+    Updates the ``google_calendar_id`` field on the stylist record.
+    The calendar_id must be a non-empty string (e.g., "primary" or a full
+    calendar email like "abc@group.calendar.google.com").
+
+    Response:
+        stylist_id (str): UUID of the updated stylist.
+        calendar_id (str): The newly assigned Google Calendar ID.
+        updated (bool): Always True on success.
+    """
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Stylist).where(Stylist.id == stylist_id)
+        )
+        stylist = result.scalar_one_or_none()
+
+        if not stylist:
+            raise HTTPException(status_code=404, detail="Stylist not found")
+
+        stylist.google_calendar_id = request.calendar_id
+
+        await session.commit()
+        await session.refresh(stylist)
+
+        await publish_cache_invalidation("stylists", "update")
+
+        return {
+            "stylist_id": str(stylist.id),
+            "calendar_id": stylist.google_calendar_id,
+            "updated": True,
+        }
+
+
 # =============================================================================
 # Customers CRUD
 # =============================================================================
@@ -1700,6 +1782,95 @@ async def list_appointments(
         }
 
 
+@router.get("/appointments/check-overlaps", response_model=OverlapCheckResponse)
+async def check_overlaps(
+    stylist_id: UUID,
+    start_time: datetime,
+    duration_minutes: int,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Check for overlapping appointments before creating a new one.
+
+    Args:
+        stylist_id: UUID of the stylist
+        start_time: Proposed appointment start time (ISO format, timezone-aware preferred)
+        duration_minutes: Duration of the appointment in minutes
+
+    Returns:
+        OverlapCheckResponse with has_overlaps flag and list of conflicts if any
+
+    Raises:
+        HTTPException 404: If stylist not found
+        HTTPException 400: If duration <= 0 or start_time has no timezone
+    """
+    # Validate inputs
+    if duration_minutes <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="duration_minutes must be greater than 0"
+        )
+
+    # Parse and validate start_time
+    parsed_start = parse_datetime_as_madrid(start_time)
+    if parsed_start.tzinfo is None:
+        raise HTTPException(
+            status_code=400,
+            detail="start_time must have timezone information"
+        )
+
+    async with get_async_session() as session:
+        # Verify stylist exists
+        stylist_result = await session.execute(
+            select(Stylist).where(Stylist.id == stylist_id)
+        )
+        stylist = stylist_result.scalar_one_or_none()
+        if not stylist:
+            raise HTTPException(status_code=404, detail="Stylist not found")
+
+        # Find overlapping appointments
+        overlaps = await find_overlapping_appointments(
+            stylist_id=stylist_id,
+            start_time=parsed_start,
+            duration_minutes=duration_minutes,
+            session=session,
+        )
+
+        # Build conflicts list
+        conflicts = []
+        for appt in overlaps:
+            # Get service names from service_ids array
+            if appt.service_ids:
+                services_result = await session.execute(
+                    select(Service).where(Service.id.in_(appt.service_ids))
+                )
+                services = list(services_result.scalars().all())
+                service_names = ", ".join([s.name for s in services])
+            else:
+                service_names = "Unknown"
+
+            appt_end_time = appt.start_time + timedelta(minutes=appt.duration_minutes)
+
+            conflicts.append(OverlapConflict(
+                appointment_id=appt.id,
+                customer_name=f"{appt.first_name} {appt.last_name or ''}".strip(),
+                service_names=service_names,
+                start_time=appt.start_time,
+                end_time=appt_end_time,
+                status=appt.status.value,
+            ))
+
+        return OverlapCheckResponse(
+            has_overlaps=len(conflicts) > 0,
+            conflicts=conflicts,
+            checked_range={
+                "start_time": parsed_start.isoformat(),
+                "end_time": (parsed_start + timedelta(minutes=duration_minutes)).isoformat(),
+                "duration_minutes": duration_minutes,
+            }
+        )
+
+
 @router.get("/appointments/pending-actions")
 async def get_pending_actions(
     current_user: Annotated[dict, Depends(get_current_user)],
@@ -1767,6 +1938,57 @@ async def get_pending_actions(
         }
 
 
+# =============================================================================
+# Overlap Detection Utility
+# =============================================================================
+
+
+async def find_overlapping_appointments(
+    stylist_id: UUID,
+    start_time: datetime,
+    duration_minutes: int,
+    session: AsyncSession,
+) -> list[Appointment]:
+    """
+    Find overlapping appointments for a given time slot.
+
+    Uses the same SQL overlap pattern as transaction_validators.py but
+    without SELECT FOR UPDATE (read-only check, no locking needed).
+
+    Only checks appointments with PENDING or CONFIRMED status.
+
+    Args:
+        stylist_id: UUID of the stylist
+        start_time: Proposed appointment start time (timezone-aware)
+        duration_minutes: Duration of the appointment
+        session: SQLAlchemy async session
+
+    Returns:
+        List of conflicting Appointment objects (empty if no overlaps)
+    """
+    from sqlalchemy import text
+
+    end_time = start_time + timedelta(minutes=duration_minutes)
+
+    stmt = (
+        select(Appointment)
+        .where(Appointment.stylist_id == stylist_id)
+        .where(Appointment.status.in_([
+            AppointmentStatus.PENDING,
+            AppointmentStatus.CONFIRMED,
+        ]))
+        # Check for overlap: existing appointment overlaps with [start_time, end_time]
+        .where(Appointment.start_time < end_time)
+        # Appointment ends after our start_time (calculated dynamically)
+        .where(text(
+            "start_time + (duration_minutes || ' minutes')::interval > :start_time"
+        ).bindparams(start_time=start_time))
+    )
+
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 class CreateAppointmentRequest(BaseModel):
     customer_id: UUID
     stylist_id: UUID
@@ -1776,6 +1998,7 @@ class CreateAppointmentRequest(BaseModel):
     last_name: str | None = None
     notes: str | None = None
     send_notification: bool = True
+    allow_overlap: bool = False
 
     @field_validator("start_time", mode="before")
     @classmethod
@@ -1817,6 +2040,47 @@ async def create_appointment(
             raise HTTPException(status_code=404, detail="One or more services not found")
 
         total_duration = sum(s.duration_minutes for s in services)
+
+        # Check for overlapping appointments (unless explicitly allowed)
+        if not request.allow_overlap:
+            overlaps = await find_overlapping_appointments(
+                stylist_id=request.stylist_id,
+                start_time=request.start_time,
+                duration_minutes=total_duration,
+                session=session,
+            )
+
+            if overlaps:
+                # Build conflict details for 409 response
+                conflicts = []
+                for appt in overlaps:
+                    # Get service names from service_ids array
+                    if appt.service_ids:
+                        appt_services_result = await session.execute(
+                            select(Service).where(Service.id.in_(appt.service_ids))
+                        )
+                        appt_services = list(appt_services_result.scalars().all())
+                        appt_service_names = ", ".join([s.name for s in appt_services])
+                    else:
+                        appt_service_names = "Unknown"
+
+                    appt_end_time = appt.start_time + timedelta(minutes=appt.duration_minutes)
+                    conflicts.append({
+                        "appointment_id": str(appt.id),
+                        "customer_name": f"{appt.first_name} {appt.last_name or ''}".strip(),
+                        "service_names": appt_service_names,
+                        "start_time": appt.start_time.isoformat(),
+                        "end_time": appt_end_time.isoformat(),
+                        "status": appt.status.value,
+                    })
+
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Appointment overlaps with existing bookings",
+                        "overlaps": conflicts,
+                    }
+                )
 
         # Create appointment in database
         new_appointment = Appointment(
@@ -3993,7 +4257,7 @@ async def delete_holiday(
 
 
 # =============================================================================
-# Conversation History (Read-only)
+# Conversation History
 # =============================================================================
 
 
@@ -4007,75 +4271,137 @@ async def list_conversations(
     """
     List conversation history (read-only).
 
-    Aggregates individual messages from conversation_history table
-    into grouped conversations by conversation_id.
+    Merges two sources:
+    1. DB (ConversationHistory) — archived conversations (>23h old)
+    2. Redis (checkpoint:*) — active conversations not yet archived
+
+    Redis-only conversations are shown as "active" with live message counts.
+    Conversations already in DB are shown from DB (more complete metadata).
     """
+    import json
+    import pickle
+    try:
+        from shared.redis_client import get_redis_client
+        redis_client = get_redis_client()
+    except Exception:
+        redis_client = None
+
     try:
         async with get_async_session() as session:
-            # Subquery to aggregate messages by conversation_id
-            subquery = (
-                select(
-                    ConversationHistory.conversation_id.label("id"),
-                    func.array_agg(ConversationHistory.customer_id)[1].label("customer_id"),
-                    func.min(ConversationHistory.timestamp).label("started_at"),
-                    func.max(ConversationHistory.timestamp).label("ended_at"),
-                    func.count().label("message_count"),
-                    func.json_agg(
-                        func.json_build_object(
-                            "role", ConversationHistory.message_role,
-                            "content", ConversationHistory.message_content,
-                            "timestamp", ConversationHistory.timestamp,
-                        ).cast(JSONB)
-                    ).label("messages"),
-                )
-                .group_by(ConversationHistory.conversation_id)
+            # --- Source 1: DB archived conversations ---
+            stmt = (
+                select(ConversationHistory)
+                .options(selectinload(ConversationHistory.customer))
+                .order_by(ConversationHistory.started_at.desc())
             )
-
-            # Apply customer_id filter if provided
             if customer_id:
-                subquery = subquery.where(ConversationHistory.customer_id == customer_id)
+                stmt = stmt.where(ConversationHistory.customer_id == customer_id)
 
-            # Create CTE for pagination
-            cte = subquery.cte("conversations_grouped")
+            count_result = await session.execute(stmt)
+            db_rows: list[ConversationHistory] = list(count_result.scalars().all())
+            db_conv_ids = {row.conversation_id for row in db_rows}
 
-            # Main query with pagination
-            query = (
-                select(cte)
-                .order_by(cte.c.started_at.desc())
-                .offset((page - 1) * page_size)
-                .limit(page_size + 1)
-            )
+            db_items = [
+                {
+                    "id": str(row.id),
+                    "conversation_id": row.conversation_id,
+                    "customer_id": str(row.customer_id) if row.customer_id else None,
+                    "customer_name": (
+                        f"{row.customer.first_name} {row.customer.last_name or ''}".strip()
+                        if row.customer
+                        else None
+                    ),
+                    "started_at": row.started_at.isoformat() if row.started_at else None,
+                    "ended_at": row.ended_at.isoformat() if row.ended_at else None,
+                    "message_count": row.message_count,
+                    "summary": row.summary,
+                    "created_at": row.created_at.isoformat(),
+                    "source": "db",
+                }
+                for row in db_rows
+            ]
 
-            result = await session.execute(query)
-            rows = result.all()
+            # --- Source 2: Active Redis conversations (not yet in DB) ---
+            redis_items = []
+            if redis_client and not customer_id:  # Redis has no customer_id index
+                try:
+                    # Get unique thread_ids from active checkpoints (async scan)
+                    seen_thread_ids: set[str] = set()
+                    async for key in redis_client.scan_iter(match="checkpoint:*", count=500):
+                        key_str = key.decode("utf-8") if isinstance(key, bytes) else key
+                        parts = key_str.split(":")
+                        if len(parts) >= 2:
+                            seen_thread_ids.add(parts[1])
 
-            has_more = len(rows) > page_size
-            items = rows[:page_size]
+                    # For each active thread_id not already in DB, synthesize a summary
+                    for thread_id in seen_thread_ids:
+                        if thread_id in db_conv_ids:
+                            continue  # Already shown from DB
 
-            # Helper to extract summary from SYSTEM message
-            def extract_summary(messages: list | None) -> str | None:
-                if not messages:
-                    return None
-                for msg in messages:
-                    if msg.get("role") == "system":
-                        return msg.get("content")
-                return None
+                        # Get the latest checkpoint key for this thread_id
+                        thread_keys = []
+                        async for k in redis_client.scan_iter(match=f"checkpoint:{thread_id}:*", count=100):
+                            thread_keys.append(k)
+                        if not thread_keys:
+                            continue
+
+                        # Read the most recent checkpoint via JSON.GET (ReJSON-RL type)
+                        state = None
+                        for ck in thread_keys[:3]:
+                            try:
+                                raw = await redis_client.json().get(ck)
+                            except Exception:
+                                continue
+                            if not raw or not isinstance(raw, dict):
+                                continue
+                            # LangGraph stores state in checkpoint.channel_values
+                            cv = raw.get("checkpoint", {}).get("channel_values", {})
+                            if "messages" in cv:
+                                state = cv
+                                break
+
+                        if not state:
+                            continue
+
+                        messages = state.get("messages", [])
+                        msg_count = len(messages)
+                        customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
+                        summary = state.get("conversation_summary")
+
+                        # Derive timestamps from messages if available
+                        started_at = None
+                        ended_at = None
+                        if messages:
+                            first_ts = messages[0].get("timestamp") if isinstance(messages[0], dict) else None
+                            last_ts = messages[-1].get("timestamp") if isinstance(messages[-1], dict) else None
+                            started_at = first_ts
+                            ended_at = last_ts
+
+                        redis_items.append({
+                            "id": f"redis:{thread_id}",  # Synthetic ID — no DB row yet
+                            "conversation_id": thread_id,
+                            "customer_id": None,
+                            "customer_name": customer_name,
+                            "started_at": started_at,
+                            "ended_at": ended_at,
+                            "message_count": msg_count,
+                            "summary": summary,
+                            "created_at": started_at,
+                            "source": "redis",
+                        })
+                except Exception as e:
+                    logger.warning(f"Could not read active Redis conversations: {e}")
+
+            # --- Merge: Redis-active first (most recent), then DB ---
+            all_items = redis_items + db_items
+            total = len(all_items)
+            offset = (page - 1) * page_size
+            items = all_items[offset : offset + page_size]
+            has_more = (offset + page_size) < total
 
             return {
-                "items": [
-                    {
-                        "id": str(row.id),
-                        "customer_id": str(row.customer_id) if row.customer_id else None,
-                        "started_at": row.started_at.isoformat() if row.started_at else None,
-                        "ended_at": row.ended_at.isoformat() if row.ended_at else None,
-                        "message_count": row.message_count or 0,
-                        "messages": row.messages if row.messages else [],
-                        "summary": extract_summary(row.messages),
-                        "created_at": row.started_at.isoformat() if row.started_at else None,
-                    }
-                    for row in items
-                ],
-                "total": len(items),
+                "items": items,
+                "total": total,
                 "page": page,
                 "page_size": page_size,
                 "has_more": has_more,
@@ -4090,31 +4416,229 @@ async def list_conversations(
 
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(
-    conversation_id: UUID,
+    conversation_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
-    """Get a single conversation by ID."""
-    from database.models import ConversationHistory
+    """
+    Get a single conversation with all messages.
+
+    Accepts two id formats:
+    - UUID string: looks up ConversationHistory by PK (archived conversations)
+    - "redis:{thread_id}": reads live state from Redis checkpoint (active conversations)
+
+    Returns: all parent metadata fields + messages array.
+    """
+    from uuid import UUID as _UUID
+
+    # --- Redis-sourced active conversation ---
+    if conversation_id.startswith("redis:"):
+        thread_id = conversation_id[len("redis:"):]
+        try:
+            from shared.redis_client import get_redis_client
+            redis_client = get_redis_client()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Redis unavailable: {e}")
+
+        thread_keys = []
+        async for k in redis_client.scan_iter(match=f"checkpoint:{thread_id}:*", count=100):
+            thread_keys.append(k)
+        if not thread_keys:
+            raise HTTPException(status_code=404, detail="Active conversation not found in Redis")
+
+        state = None
+        for ck in thread_keys[:5]:
+            try:
+                # checkpoint:* keys are ReJSON-RL type — must use json().get(), NOT get()
+                raw = await redis_client.json().get(ck)
+            except Exception:
+                continue
+            if not raw or not isinstance(raw, dict):
+                continue
+            # LangGraph stores state in checkpoint.channel_values
+            cv = raw.get("checkpoint", {}).get("channel_values", {})
+            if "messages" in cv:
+                state = cv
+                break
+
+        if not state:
+            raise HTTPException(status_code=404, detail="Could not read checkpoint state from Redis")
+
+        raw_messages = state.get("messages", [])
+        messages = []
+        for m in raw_messages:
+            if isinstance(m, dict):
+                messages.append({
+                    "role": m.get("role", "unknown"),
+                    "content": m.get("content", ""),
+                    "created_at": m.get("timestamp"),
+                    "chatwoot_message_id": None,
+                })
+
+        customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
+        started_at = messages[0]["created_at"] if messages else None
+        ended_at = messages[-1]["created_at"] if messages else None
+
+        return {
+            "id": f"redis:{thread_id}",
+            "conversation_id": thread_id,
+            "customer_id": None,
+            "customer_name": customer_name,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "message_count": len(messages),
+            "summary": state.get("conversation_summary"),
+            "created_at": started_at,
+            "messages": messages,
+            "source": "redis",
+        }
+
+    # --- DB-sourced archived conversation (UUID PK) ---
+    try:
+        conv_uuid = _UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID format")
 
     async with get_async_session() as session:
         result = await session.execute(
-            select(ConversationHistory).where(ConversationHistory.id == conversation_id)
+            select(ConversationHistory)
+            .where(ConversationHistory.id == conv_uuid)
+            .options(
+                selectinload(ConversationHistory.customer),
+                selectinload(ConversationHistory.message_records),
+            )
         )
         conversation = result.scalar_one_or_none()
 
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
+        messages = [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "created_at": msg.created_at.isoformat(),
+                "chatwoot_message_id": msg.chatwoot_message_id,
+            }
+            for msg in conversation.message_records
+        ]
+
         return {
             "id": str(conversation.id),
-            "customer_id": str(conversation.customer_id),
+            "conversation_id": conversation.conversation_id,
+            "customer_id": str(conversation.customer_id) if conversation.customer_id else None,
+            "customer_name": (
+                f"{conversation.customer.first_name} {conversation.customer.last_name or ''}".strip()
+                if conversation.customer
+                else None
+            ),
             "started_at": conversation.started_at.isoformat() if conversation.started_at else None,
             "ended_at": conversation.ended_at.isoformat() if conversation.ended_at else None,
             "message_count": conversation.message_count,
-            "messages": conversation.messages,
             "summary": conversation.summary,
             "created_at": conversation.created_at.isoformat(),
+            "messages": messages,
+            "source": "db",
         }
+
+
+@router.delete("/conversations/{conversation_uuid}", status_code=200)
+async def delete_conversation_endpoint(
+    conversation_uuid: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Delete a conversation and clean up all associated Redis checkpoint keys.
+
+    Accepts two id formats:
+    - UUID string: deletes DB row (CASCADE) + Redis keys for that thread_id
+    - "redis:{thread_id}": deletes Redis keys only (no DB row exists yet)
+
+    Returns a DeleteResult JSON with per-step outcomes.
+    """
+    from api.services.conversation_delete_service import (
+        DeleteResult,
+        delete_conversation,
+    )
+    from shared.redis_client import get_redis_client
+    from uuid import UUID as _UUID
+
+    # --- Redis-only delete (active conversation not yet archived) ---
+    if conversation_uuid.startswith("redis:"):
+        thread_id = conversation_uuid[len("redis:"):]
+        try:
+            redis_client = get_redis_client()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Redis unavailable: {exc}")
+
+        try:
+            patterns = [
+                f"checkpoint:{thread_id}:*",
+                f"checkpoint_write:{thread_id}:*",
+                f"write_keys_zset:{thread_id}:*",
+            ]
+            all_keys = []
+            for pattern in patterns:
+                async for k in redis_client.scan_iter(match=pattern, count=200):
+                    all_keys.append(k)
+
+            if not all_keys:
+                raise HTTPException(status_code=404, detail="Active conversation not found in Redis")
+
+            deleted = await redis_client.delete(*all_keys)
+            return {
+                "conversation_uuid": conversation_uuid,
+                "thread_id": thread_id,
+                "db_deleted": False,
+                "redis_keys_deleted": deleted,
+                "redis_status": "cleaned",
+                "error": None,
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Redis delete failed: {exc}")
+
+    # --- DB + Redis delete (archived conversation) ---
+    try:
+        conv_uuid = _UUID(conversation_uuid)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID format")
+
+    async with get_async_session() as session:
+        try:
+            redis_client = get_redis_client()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Redis client unavailable — cannot proceed with deletion",
+            ) from exc
+
+        result: DeleteResult = await delete_conversation(
+            conversation_uuid=conv_uuid,
+            session=session,
+            redis_client=redis_client,
+        )
+
+    # If the record was not found, return 404
+    if not result.db_deleted and result.error == "ConversationHistory not found":
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Any other DB failure → 500
+    if not result.db_deleted:
+        raise HTTPException(
+            status_code=500,
+            detail=result.error or "Failed to delete conversation from database",
+        )
+
+    # Success (Redis cleanup may be partial — reported in result)
+    return {
+        "conversation_uuid": str(result.conversation_uuid),
+        "thread_id": result.thread_id,
+        "db_deleted": result.db_deleted,
+        "redis_keys_deleted": result.redis_keys_deleted,
+        "redis_status": result.redis_status,
+        "error": result.error,
+    }
 
 
 # =============================================================================

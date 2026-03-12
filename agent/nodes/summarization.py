@@ -54,7 +54,7 @@ async def summarize_conversation(state: ConversationState) -> dict:
     try:
         # Step 1: Check if summarization is needed
         if not should_summarize(state):
-            return state  # Skip summarization, return unchanged
+            return {"user_message": None}  # Skip summarization, clear transient field
 
         # Step 2: Load summarization prompt template
         with open(SUMMARIZATION_PROMPT_PATH, "r", encoding="utf-8") as f:
@@ -132,11 +132,11 @@ async def summarize_conversation(state: ConversationState) -> dict:
                     f"flagging for escalation"
                 )
                 return {
-                    **state,
                     "conversation_summary": combined_summary,
                     "messages": messages,
                     "escalated": True,
-                    "escalation_reason": "token_overflow"
+                    "escalation_reason": "token_overflow",
+                    "user_message": None,
                 }
 
         # Step 8: Log summarization event
@@ -148,18 +148,18 @@ async def summarize_conversation(state: ConversationState) -> dict:
             f"summary length: {len(combined_summary)} chars"
         )
 
-        # Step 9: Return updated state with summary
+        # Step 9: Return only changed fields (never full state — prevents doubling via operator.add)
         return {
-            **state,
             "conversation_summary": combined_summary,
-            "messages": messages  # May be reduced if aggressive summarization applied
+            "messages": messages,  # May be reduced if aggressive summarization applied
+            "user_message": None,
         }
 
     except Exception as e:
-        # Graceful degradation: log error and return unchanged state
+        # Graceful degradation: log error and clear transient field
         conversation_id = state.get("conversation_id", "unknown")
         logger.error(
             f"Summarization failed for conversation {conversation_id}: {e}",
             exc_info=True
         )
-        return state
+        return {"user_message": None}

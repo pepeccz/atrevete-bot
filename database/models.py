@@ -566,10 +566,11 @@ class Policy(Base):
 
 class ConversationHistory(Base):
     """
-    ConversationHistory model - Archives conversation messages for long-term storage.
+    ConversationHistory model - Parent record for a conversation session.
 
-    Messages are grouped by conversation_id (LangGraph thread_id).
-    Metadata stores additional context like node_name, tool_calls, escalation_reason.
+    One row per conversation (identified by conversation_id / LangGraph thread_id).
+    Individual messages are stored in ConversationMessage (child table).
+    CASCADE delete: deleting a ConversationHistory removes all its messages automatically.
     """
 
     __tablename__ = "conversation_history"
@@ -579,47 +580,138 @@ class ConversationHistory(Base):
         PGUUID(as_uuid=True), primary_key=True, default=uuid4
     )
 
-    # Foreign keys
+    # Foreign key to customer (nullable — allows conversations before customer is identified)
     customer_id: Mapped[Optional[UUID]] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("customers.id", ondelete="CASCADE"),
-        nullable=True,  # Allows unidentified customer conversations before phone collection
+        nullable=True,
         index=True,
     )
 
-    # Conversation grouping (logical, not FK)
-    conversation_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Conversation identifier (LangGraph thread_id / Chatwoot conversation ID)
+    # UNIQUE — exactly one parent row per conversation
+    conversation_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True, index=True
+    )
 
-    # Message details
-    timestamp: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
+    # Conversation-level timing
+    started_at: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
     )
-    message_role: Mapped[MessageRole] = mapped_column(
-        SQLEnum(MessageRole, name="message_role", create_type=True),
-        nullable=False,
+    ended_at: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
     )
-    message_content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Denormalized counters (updated by archiver on each sync)
+    message_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+
+    # AI-generated summary (populated by archiver / summarize_node)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Flexible metadata (node_name, escalation_reason, mode_history, etc.)
     metadata_: Mapped[dict] = mapped_column(
         "metadata", JSONB, default=dict, nullable=False
     )
 
-    # Relationship
+    # Row creation timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
     customer: Mapped[Optional["Customer"]] = relationship("Customer")
+    message_records: Mapped[list["ConversationMessage"]] = relationship(
+        "ConversationMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationMessage.created_at",
+    )
 
     # Indexes
     __table_args__ = (
-        # Composite index for thread retrieval with chronological ordering
-        Index("idx_conversation_history_conversation_timestamp", "conversation_id", "timestamp"),
-        # Descending index for recent message queries
+        # Fast lookup by conversation_id + time window (archiver, admin panel)
         Index(
-            "idx_conversation_history_timestamp_desc",
-            "timestamp",
-            postgresql_ops={"timestamp": "DESC"},
+            "idx_conversation_history_conversation_started",
+            "conversation_id",
+            "started_at",
         ),
     )
 
     def __repr__(self) -> str:
-        return f"<ConversationHistory(id={self.id}, conversation_id='{self.conversation_id}', role='{self.message_role.value}')>"
+        return (
+            f"<ConversationHistory(id={self.id}, "
+            f"conversation_id='{self.conversation_id}', "
+            f"messages={self.message_count})>"
+        )
+
+
+class ConversationMessage(Base):
+    """
+    ConversationMessage model - Individual messages within a conversation.
+
+    Each row is one message (user, assistant, or system).
+    Automatically deleted via CASCADE when the parent ConversationHistory is deleted.
+    """
+
+    __tablename__ = "conversation_messages"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Foreign key to parent conversation (CASCADE DELETE)
+    conversation_history_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("conversation_history.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Message content
+    role: Mapped[str] = mapped_column(
+        String(20), nullable=False  # values: 'user', 'assistant', 'system'
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Optional Chatwoot correlation ID
+    chatwoot_message_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+
+    # Timestamp (timezone-aware, server-set for consistency)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    # Relationship back to parent
+    conversation: Mapped["ConversationHistory"] = relationship(
+        "ConversationHistory",
+        back_populates="message_records",
+    )
+
+    # Indexes
+    __table_args__ = (
+        # Primary query pattern: all messages for a conversation in chronological order
+        Index(
+            "idx_conversation_messages_conv_created",
+            "conversation_history_id",
+            "created_at",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ConversationMessage(id={self.id}, "
+            f"conversation_history_id={self.conversation_history_id}, "
+            f"role='{self.role}')>"
+        )
 
 
 class BusinessHours(Base):
@@ -1258,3 +1350,92 @@ class GCalSyncState(Base):
 
     def __repr__(self) -> str:
         return f"<GCalSyncState(stylist_id={self.stylist_id}, last_sync={self.last_sync_at})>"
+
+
+# ============================================================================
+# OAuth2 Credential Models
+# ============================================================================
+
+
+class GoogleOAuthCredential(Base):
+    """
+    GoogleOAuthCredential model - Encrypted OAuth2 tokens for Google Calendar access.
+
+    Stores the encrypted access/refresh tokens obtained after the admin connects their
+    Google account via OAuth2 flow. The credential factory uses this table as the
+    primary source when authenticating to Google Calendar API.
+
+    Only one active credential is allowed at a time (partial unique index on is_active).
+    Tokens are encrypted using Fernet symmetric encryption (shared/encryption.py).
+    """
+
+    __tablename__ = "google_oauth_credentials"
+
+    # Primary key — server-generated UUID
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+
+    # Encrypted token fields (Fernet-encrypted, base64-encoded ciphertext)
+    encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Token expiry (UTC, nullable — some providers omit it)
+    token_expiry: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    # Google account info
+    connected_email: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # OAuth2 scopes granted (e.g., ["https://www.googleapis.com/auth/calendar"])
+    calendar_scopes: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), nullable=True
+    )
+
+    # Status — only one active credential allowed (enforced via partial unique index)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+
+    # Connection tracking
+    connected_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_refresh_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    # Audit timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    # Constraints and indexes
+    __table_args__ = (
+        # Partial unique index: only ONE active credential allowed at a time
+        # INSERT a new active credential → deactivate the old one first
+        Index(
+            "uq_google_oauth_active",
+            "is_active",
+            unique=True,
+            postgresql_where=text("is_active = true"),
+        ),
+        # Index for history queries (all credentials, ordered by connection date)
+        Index("idx_google_oauth_connected_at", "connected_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<GoogleOAuthCredential(id={self.id}, "
+            f"email='{self.connected_email}', "
+            f"is_active={self.is_active})>"
+        )

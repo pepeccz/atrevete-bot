@@ -55,6 +55,45 @@ SPANISH_SERVICE_SYNONYMS: dict[str, str] = {
     "raparme": "corte rapado",
     "pelo": "",  # Remove generic "pelo" as it adds noise
     "cabello": "",  # Remove generic "cabello"
+    # PDF service catalog synonyms (update-services-catalog)
+    "óleo": "oleo pigmento",
+    "oleo": "oleo pigmento",
+    "barro": "barro, barro gold, barro extra, barro gold extra",
+    "cultura": "cultura de color",
+    "agua": "agua lluvia, agua tierra",
+    "infoactivo": "infoactivo fuerza, infoactivo sensitivo",
+    "prepigmentar": "prepigmentar",
+    "prepigmentación": "prepigmentar",
+    "perilla": "perilla",
+    "barba": "barba",
+    "recogido": "recogido, semirecogido, recogido novia",
+    "novia": "recogido novia, maquillaje novia",
+    "peinado niña": "peinado niña comunión",
+    "flequillo": "corte de flequillo",
+    "escultor": "bioterapia escultor completo",
+    "scultor": "bioterapia scultor",
+    "podal": "bioterapia podal",
+    "senos": "bioterapia de senos, bono bioterapia de senos",
+    "pestañas": "tinte de pestañas, permanente de pestañas, tinte+permanente de pestañas",
+    "cejas": "cejas",
+    "labio": "labio",
+    "axilas": "ingles o axilas",
+    "brasileña": "ingles brasileñas",
+    "pubis": "pubis completo",
+    "cera": "cera enteras, cera medias piernas, cera muslos",
+    "depilación": "cera enteras, cera medias piernas, cera muslos, ingles o axilas, ingles brasileñas, pubis completo, abdomen gluteos espalda o pecho, brazos completos o pecho, brazos medios, medios brazos, cejas, labio",
+    "higiene espalda": "higiene de espalda",
+    "peeling": "peeling corporal",
+    "masaje": "masaje corporal",
+    "piernas perfectas": "piernas perfectas",
+    "presoterapia": "piernas perfectas",
+    "manicura permanente": "manicura permanente+bio",
+    "pedicura permanente": "pedicura permanente con bioterapia",
+    "quita esmalte": "quita esmalte permanente",
+    "limar manos": "limar y pintar manos",
+    "limar pies": "limar y pintar pies",
+    "manos permanentes": "limar y pintar manos permanente",
+    "pies permanentes": "limar y pintar pies permanente",
 }
 
 
@@ -292,10 +331,11 @@ async def search_services(
         # Calculate weighted scores for all services
         # Uses _calculate_service_score() which prioritizes name matches over description
         # This fixes the bug where "corte" returned "Pack Óleo Pigmento" instead of "Corte + Peinado"
+        # v4.0: Lowered cutoff from 65 to 60 for shorter PDF service names (e.g., "Cortar" vs "Corte + Peinado Largo")
         scored_services: list[tuple[Service, float]] = []
         for service in services:
             score = _calculate_service_score(expanded_query, service)
-            if score >= 65:  # Stricter cutoff (was 55)
+            if score >= 60:  # Adjusted for shorter service names (was 65)
                 scored_services.append((service, score))
 
         # Sort by score descending (best matches first)
@@ -306,7 +346,7 @@ async def search_services(
 
         logger.info(
             f"Found {len(top_matches)} matches | original='{query}' | expanded='{expanded_query}' | "
-            f"scorer=weighted(name:70%,desc:30%,substring_boost:+30) | cutoff=65 | limit={max_results}"
+            f"scorer=weighted(name:70%,desc:30%,substring_boost:+30) | cutoff=60 | limit={max_results}"
         )
 
         # Step 3: Format results

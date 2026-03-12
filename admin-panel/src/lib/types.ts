@@ -18,12 +18,47 @@ export interface Stylist {
   id: string;
   name: string;
   category: ServiceCategory;
-  google_calendar_id: string;
+  google_calendar_id: string | null;
   is_active: boolean;
   color?: string;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+// Google Calendar OAuth2 types
+export interface GoogleCalendarStatus {
+  connected: boolean;
+  email: string | null;
+  connected_at: string | null;
+  token_healthy: boolean;
+  scopes: string[];
+}
+
+export interface GoogleCalendar {
+  id: string;
+  summary: string;
+  description: string;
+  timeZone: string;
+  primary: boolean;
+  access_role: string;
+  background_color: string | null;
+}
+
+export interface CreateCalendarPayload {
+  summary: string;
+  description?: string;
+  timeZone?: string;
+}
+
+export interface UpdateCalendarPayload {
+  summary?: string;
+  description?: string;
+}
+
+export interface CalendarConflictError {
+  message: string;
+  stylist_names: string[];
 }
 
 export interface Customer {
@@ -104,21 +139,36 @@ export interface Holiday {
 }
 
 export interface ConversationMessage {
+  id: string;
   role: MessageRole;
   content: string;
+  created_at: string;
+  chatwoot_message_id: number | null;
+  // Legacy field — kept for backward compatibility with archived conversations
   timestamp?: string;
 }
 
 export interface ConversationHistory {
   id: string;
-  customer_id: string;
-  started_at: string;
+  conversation_id: string; // thread_id string (LangGraph thread)
+  customer_id: string | null;
+  customer_name: string | null;
+  started_at: string | null;
   ended_at: string | null;
   message_count: number;
   messages: ConversationMessage[];
   summary: string | null;
-  metadata: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   created_at: string;
+}
+
+export interface DeleteConversationResult {
+  conversation_uuid: string;
+  thread_id: string;
+  db_deleted: boolean;
+  redis_keys_deleted: number;
+  redis_status: string;
+  error: string | null;
 }
 
 // API Response types
@@ -396,4 +446,24 @@ export interface SystemServicesResponse {
 export interface ServiceActionResponse {
   success: boolean;
   message: string;
+}
+
+// Overlap Check types for appointment creation
+export interface OverlapConflict {
+  appointment_id: string;
+  customer_name: string;
+  service_names: string;
+  start_time: string;
+  end_time: string;
+  status: string;
+}
+
+export interface OverlapCheckResponse {
+  has_overlaps: boolean;
+  conflicts: OverlapConflict[];
+  checked_range: {
+    start_time: string;
+    end_time: string;
+    duration_minutes: number;
+  };
 }

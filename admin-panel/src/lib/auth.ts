@@ -34,8 +34,8 @@ export function isTokenExpired(token: string): boolean {
   const payload = decodeToken(token);
   if (!payload || !payload.exp) return true;
 
-  // Add 60 second buffer
-  return Date.now() >= payload.exp * 1000 - 60000;
+  // Token is expired if current time is past expiration
+  return Date.now() >= payload.exp * 1000;
 }
 
 /**

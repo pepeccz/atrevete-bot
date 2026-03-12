@@ -25,7 +25,7 @@ from agent.workers.conversation_archiver import (
     retrieve_and_parse_checkpoint,
 )
 from database.connection import get_async_session
-from database.models import ConversationHistory, Customer, MessageRole
+from database.models import ConversationHistory, ConversationMessage, Customer, MessageRole
 
 # Timezone for all datetime operations
 TIMEZONE = ZoneInfo("Europe/Madrid")
@@ -175,35 +175,48 @@ async def test_full_archival_workflow_with_json_serialization(clean_test_data, t
     # Step 2: Run archival worker
     await archive_expired_conversations()
 
-    # Step 3: Query PostgreSQL for archived messages
+    # Step 3: Query PostgreSQL for archived messages (two-table schema)
     async for session in get_async_session():
-        result = await session.execute(
+        # Query the parent ConversationHistory row
+        parent_result = await session.execute(
             select(ConversationHistory)
             .where(ConversationHistory.conversation_id == conversation_id)
-            .order_by(ConversationHistory.timestamp)
         )
-        archived_messages = result.scalars().all()
+        parent = parent_result.scalar_one_or_none()
+
+        # Query the child ConversationMessage rows in chronological order
+        messages_result = await session.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_history_id == parent.id)
+            .order_by(ConversationMessage.created_at)
+        )
+        archived_messages = messages_result.scalars().all()
         break
 
-    # Assert: 5 messages archived
+    # Assert: parent row exists with correct customer
+    assert parent is not None
+    assert parent.customer_id == customer_id
+    assert parent.message_count == 5
+
+    # Assert: 5 messages archived as child rows
     assert len(archived_messages) == 5
 
     # Assert: Messages have correct content
-    assert archived_messages[0].message_content == "Hola, quiero hacer una cita"
-    assert archived_messages[1].message_content == "¡Hola! Claro, te ayudo con tu cita."
-    assert archived_messages[2].message_content == "Para mañana a las 10"
-    assert archived_messages[3].message_content == "Perfecto, te confirmo la cita."
-    assert archived_messages[4].message_content == "Gracias"
+    assert archived_messages[0].content == "Hola, quiero hacer una cita"
+    assert archived_messages[1].content == "¡Hola! Claro, te ayudo con tu cita."
+    assert archived_messages[2].content == "Para mañana a las 10"
+    assert archived_messages[3].content == "Perfecto, te confirmo la cita."
+    assert archived_messages[4].content == "Gracias"
 
-    # Assert: Messages have correct roles
-    assert archived_messages[0].message_role == MessageRole.USER
-    assert archived_messages[1].message_role == MessageRole.ASSISTANT
-    assert archived_messages[2].message_role == MessageRole.USER
-    assert archived_messages[3].message_role == MessageRole.ASSISTANT
-    assert archived_messages[4].message_role == MessageRole.USER
+    # Assert: Messages have correct roles (stored as lowercase strings)
+    assert archived_messages[0].role == "user"
+    assert archived_messages[1].role == "assistant"
+    assert archived_messages[2].role == "user"
+    assert archived_messages[3].role == "assistant"
+    assert archived_messages[4].role == "user"
 
-    # Assert: Messages have customer_id
-    assert all(msg.customer_id == customer_id for msg in archived_messages)
+    # Assert: Messages have created_at timestamps
+    assert all(msg.created_at is not None for msg in archived_messages)
 
     # Step 4: Verify checkpoint deleted from Redis
     assert redis_client.exists(key) == 0
@@ -246,19 +259,18 @@ async def test_archival_with_conversation_summary(clean_test_data, test_customer
     # Run archival
     await archive_expired_conversations()
 
-    # Verify summary archived as system message
+    # Verify summary stored on the parent ConversationHistory row
     async for session in get_async_session():
         result = await session.execute(
             select(ConversationHistory)
             .where(ConversationHistory.conversation_id == conversation_id)
-            .where(ConversationHistory.message_role == MessageRole.SYSTEM)
         )
-        summary_records = result.scalars().all()
+        parent = result.scalar_one_or_none()
         break
 
-    assert len(summary_records) == 1
-    assert "Customer requested booking" in summary_records[0].message_content
-    assert summary_records[0].metadata_.get('type') == 'conversation_summary'
+    assert parent is not None
+    assert parent.summary is not None
+    assert "Customer requested booking" in parent.summary
 
 
 @pytest.mark.asyncio
@@ -281,17 +293,17 @@ async def test_archival_skips_malformed_checkpoint(clean_test_data):
     # Run archival (should not crash)
     await archive_expired_conversations()
 
-    # Verify no messages archived
+    # Verify no conversation parent was created (nothing archived)
     async for session in get_async_session():
         result = await session.execute(
             select(ConversationHistory).where(
                 ConversationHistory.conversation_id == conversation_id
             )
         )
-        archived_messages = result.scalars().all()
+        parent = result.scalar_one_or_none()
         break
 
-    assert len(archived_messages) == 0
+    assert parent is None
 
     # Checkpoint should NOT be deleted (failed to parse)
     assert redis_client.exists(key) == 1
@@ -331,18 +343,26 @@ async def test_archival_handles_missing_customer_id(clean_test_data):
     # Run archival
     await archive_expired_conversations()
 
-    # Verify message archived with NULL customer_id
+    # Verify parent created with NULL customer_id, and 1 child message archived
     async for session in get_async_session():
-        result = await session.execute(
+        parent_result = await session.execute(
             select(ConversationHistory).where(
                 ConversationHistory.conversation_id == conversation_id
             )
         )
-        archived_messages = result.scalars().all()
+        parent = parent_result.scalar_one_or_none()
+
+        messages_result = await session.execute(
+            select(ConversationMessage).where(
+                ConversationMessage.conversation_history_id == parent.id
+            )
+        )
+        archived_messages = messages_result.scalars().all()
         break
 
+    assert parent is not None
+    assert parent.customer_id is None
     assert len(archived_messages) == 1
-    assert archived_messages[0].customer_id is None
 
 
 @pytest.mark.asyncio

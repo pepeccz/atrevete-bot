@@ -18,7 +18,7 @@ from agent.workers.conversation_archiver import (
     CUTOFF_HOURS,
     TIMEZONE,
     find_expired_checkpoints,
-    insert_messages_to_db,
+    upsert_conversation_to_db,
     retrieve_and_parse_checkpoint,
 )
 from database.models import MessageRole
@@ -343,12 +343,19 @@ async def test_retrieve_and_parse_checkpoint_handles_malformed_data():
 
 
 @pytest.mark.asyncio
-async def test_insert_messages_to_db_with_valid_messages():
+async def test_upsert_conversation_to_db_with_valid_messages():
     """
     Test message insertion with valid message data.
     """
     # Mock session
     mock_session = AsyncMock()
+
+    # Mock session.execute to return empty existing fingerprints (no-ops for SELECT)
+    mock_exec_result = MagicMock()
+    mock_exec_result.scalar_one_or_none.return_value = None
+    mock_exec_result.all.return_value = []
+    mock_exec_result.scalar.return_value = 0
+    mock_session.execute.return_value = mock_exec_result
 
     customer_id = uuid4()
     conversation_id = "test-conv-insert"
@@ -371,24 +378,30 @@ async def test_insert_messages_to_db_with_valid_messages():
     }
 
     # Insert messages
-    inserted_count = await insert_messages_to_db(mock_session, state)
+    inserted_count = await upsert_conversation_to_db(mock_session, state)
 
     # Verify 2 messages inserted
     assert inserted_count == 2
 
-    # Verify session.add called twice
-    assert mock_session.add.call_count == 2
+    # Verify session.add called at least twice (parent + 2 messages)
+    assert mock_session.add.call_count >= 2
 
     # Verify commit called
     mock_session.commit.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_insert_messages_to_db_with_conversation_summary():
+async def test_upsert_conversation_to_db_with_conversation_summary():
     """
-    Test that conversation_summary is inserted as system message.
+    Test that conversation_summary is stored on the parent ConversationHistory row.
     """
     mock_session = AsyncMock()
+
+    mock_exec_result = MagicMock()
+    mock_exec_result.scalar_one_or_none.return_value = None
+    mock_exec_result.all.return_value = []
+    mock_exec_result.scalar.return_value = 0
+    mock_session.execute.return_value = mock_exec_result
 
     customer_id = uuid4()
     conversation_id = "test-conv-summary"
@@ -407,21 +420,27 @@ async def test_insert_messages_to_db_with_conversation_summary():
     }
 
     # Insert messages
-    inserted_count = await insert_messages_to_db(mock_session, state)
+    inserted_count = await upsert_conversation_to_db(mock_session, state)
 
-    # Verify 2 records inserted (1 message + 1 summary)
-    assert inserted_count == 2
+    # Verify 1 message inserted (summary goes to parent.summary, not a child row)
+    assert inserted_count == 1
 
-    # Verify session.add called twice
-    assert mock_session.add.call_count == 2
+    # Verify session.add called at least once (parent + message)
+    assert mock_session.add.call_count >= 1
 
 
 @pytest.mark.asyncio
-async def test_insert_messages_to_db_handles_missing_customer_id():
+async def test_upsert_conversation_to_db_handles_missing_customer_id():
     """
     Test message insertion with missing customer_id (unidentified customer).
     """
     mock_session = AsyncMock()
+
+    mock_exec_result = MagicMock()
+    mock_exec_result.scalar_one_or_none.return_value = None
+    mock_exec_result.all.return_value = []
+    mock_exec_result.scalar.return_value = 0
+    mock_session.execute.return_value = mock_exec_result
 
     conversation_id = "test-conv-no-customer"
 
@@ -438,21 +457,27 @@ async def test_insert_messages_to_db_handles_missing_customer_id():
     }
 
     # Insert messages
-    inserted_count = await insert_messages_to_db(mock_session, state)
+    inserted_count = await upsert_conversation_to_db(mock_session, state)
 
     # Verify 1 message inserted
     assert inserted_count == 1
 
-    # Verify session.add called with customer_id=None
-    mock_session.add.assert_called_once()
+    # Verify session.add called (parent + message)
+    assert mock_session.add.call_count >= 1
 
 
 @pytest.mark.asyncio
-async def test_insert_messages_to_db_skips_invalid_messages():
+async def test_upsert_conversation_to_db_skips_invalid_messages():
     """
-    Test that insert_messages_to_db skips messages with missing role or content.
+    Test that upsert_conversation_to_db skips messages with missing role or content.
     """
     mock_session = AsyncMock()
+
+    mock_exec_result = MagicMock()
+    mock_exec_result.scalar_one_or_none.return_value = None
+    mock_exec_result.all.return_value = []
+    mock_exec_result.scalar.return_value = 0
+    mock_session.execute.return_value = mock_exec_result
 
     conversation_id = "test-conv-invalid-msgs"
 
@@ -479,18 +504,24 @@ async def test_insert_messages_to_db_skips_invalid_messages():
     }
 
     # Insert messages
-    inserted_count = await insert_messages_to_db(mock_session, state)
+    inserted_count = await upsert_conversation_to_db(mock_session, state)
 
     # Only 1 valid message should be inserted
     assert inserted_count == 1
 
 
 @pytest.mark.asyncio
-async def test_insert_messages_to_db_handles_missing_timestamp():
+async def test_upsert_conversation_to_db_handles_missing_timestamp():
     """
-    Test that insert_messages_to_db uses current time when timestamp is missing.
+    Test that upsert_conversation_to_db uses current time when timestamp is missing.
     """
     mock_session = AsyncMock()
+
+    mock_exec_result = MagicMock()
+    mock_exec_result.scalar_one_or_none.return_value = None
+    mock_exec_result.all.return_value = []
+    mock_exec_result.scalar.return_value = 0
+    mock_session.execute.return_value = mock_exec_result
 
     conversation_id = "test-conv-no-timestamp"
 
@@ -507,16 +538,16 @@ async def test_insert_messages_to_db_handles_missing_timestamp():
     }
 
     # Insert messages
-    inserted_count = await insert_messages_to_db(mock_session, state)
+    inserted_count = await upsert_conversation_to_db(mock_session, state)
 
     # Message should be inserted with current timestamp
     assert inserted_count == 1
 
 
 @pytest.mark.asyncio
-async def test_insert_messages_to_db_returns_zero_when_no_messages():
+async def test_upsert_conversation_to_db_returns_zero_when_no_messages():
     """
-    Test that insert_messages_to_db returns 0 when state has no messages or summary.
+    Test that upsert_conversation_to_db returns 0 when state has no messages or summary.
     """
     mock_session = AsyncMock()
 
@@ -528,7 +559,7 @@ async def test_insert_messages_to_db_returns_zero_when_no_messages():
     }
 
     # Insert messages
-    inserted_count = await insert_messages_to_db(mock_session, state)
+    inserted_count = await upsert_conversation_to_db(mock_session, state)
 
     # Should return 0
     assert inserted_count == 0

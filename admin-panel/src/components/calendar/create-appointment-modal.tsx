@@ -19,6 +19,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { OverlapConfirmDialog } from "./overlap-confirm-dialog";
+import type { OverlapConflict } from "@/lib/types";
 import api from "@/lib/api";
 
 interface Customer {
@@ -62,6 +64,11 @@ export function CreateAppointmentModal({
   const [notes, setNotes] = useState("");
   const [startTime, setStartTime] = useState("");
   const [sendNotification, setSendNotification] = useState(true);
+
+  // Overlap check state
+  const [pendingConflicts, setPendingConflicts] = useState<OverlapConflict[]>([]);
+  const [showOverlapDialog, setShowOverlapDialog] = useState(false);
+  const [allowOverlap, setAllowOverlap] = useState(false);
 
   // Load customers and services on mount
   useEffect(() => {
@@ -119,18 +126,40 @@ export function CreateAppointmentModal({
       const appointmentDate = new Date(selectedDate);
       appointmentDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
 
+      const startTimeISO = appointmentDate.toISOString();
+      const totalDuration = selectedServices.reduce((total, serviceId) => {
+        const service = services.find((s) => s.id === serviceId);
+        return total + (service?.duration_minutes || 0);
+      }, 0);
+
+      // Check for overlaps if not already allowed
+      if (!allowOverlap) {
+        const overlapCheck = await api.checkOverlaps(
+          stylistId,
+          startTimeISO,
+          totalDuration
+        );
+
+        if (overlapCheck.has_overlaps) {
+          setPendingConflicts(overlapCheck.conflicts);
+          setShowOverlapDialog(true);
+          setIsLoading(false);
+          return;
+        }
+      }
+
       await api.create("appointments", {
         customer_id: selectedCustomer,
         stylist_id: stylistId,
         service_ids: selectedServices,
-        start_time: appointmentDate.toISOString(),
+        start_time: startTimeISO,
         first_name: firstName,
         last_name: lastName || null,
         notes: notes || null,
         send_notification: sendNotification,
       });
 
-      // Reset form
+      // Reset form and state
       setSelectedCustomer("");
       setSelectedServices([]);
       setFirstName("");
@@ -138,6 +167,8 @@ export function CreateAppointmentModal({
       setNotes("");
       setStartTime("");
       setSendNotification(true);
+      setAllowOverlap(false);
+      setPendingConflicts([]);
 
       onSuccess();
       onClose();
@@ -147,6 +178,19 @@ export function CreateAppointmentModal({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleConfirmOverlap = async () => {
+    setAllowOverlap(true);
+    setShowOverlapDialog(false);
+    // Retry submission with allow_overlap flag
+    await handleSubmit();
+  };
+
+  const handleCancelOverlap = () => {
+    setShowOverlapDialog(false);
+    setPendingConflicts([]);
+    // Stay in the form - user can change time
   };
 
   const totalDuration = selectedServices.reduce((total, serviceId) => {
@@ -301,6 +345,15 @@ export function CreateAppointmentModal({
           </Button>
         </div>
       </DialogContent>
+
+      {/* Overlap Confirmation Dialog */}
+      <OverlapConfirmDialog
+        isOpen={showOverlapDialog}
+        onClose={handleCancelOverlap}
+        onConfirm={handleConfirmOverlap}
+        conflicts={pendingConflicts}
+        isSubmitting={isLoading}
+      />
     </Dialog>
   );
 }
