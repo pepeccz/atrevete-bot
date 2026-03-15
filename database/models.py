@@ -174,12 +174,13 @@ class Stylist(Base):
 
     # Core fields
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
     category: Mapped[ServiceCategory] = mapped_column(
         SQLEnum(ServiceCategory, name="service_category", create_type=True),
         nullable=False,
     )
-    google_calendar_id: Mapped[str] = mapped_column(
-        String(255), unique=True, nullable=False, index=True
+    google_calendar_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -217,6 +218,13 @@ class Stylist(Base):
             "idx_stylists_category_active",
             "category",
             postgresql_where=text("is_active = true"),
+        ),
+        # Partial unique index: allows multiple NULLs, enforces uniqueness on non-null values
+        Index(
+            "uq_stylists_google_calendar_id_notnull",
+            "google_calendar_id",
+            unique=True,
+            postgresql_where=text("google_calendar_id IS NOT NULL"),
         ),
     )
 
@@ -330,6 +338,24 @@ class Service(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Disambiguation metadata (JSONB) — used by the service resolver to disambiguate
+    # ambiguous service names without hardcoding families in prompts.
+    # Default: {} (empty — all existing services are metadata-free until seeded).
+    # Schema (when populated):
+    #   {
+    #     "family": str,                  # e.g. "haircut", "highlights", "hairstyle"
+    #     "audience": str | null,         # e.g. "adult_male", "child_female"
+    #     "disambiguation_tags": [str],   # keywords that map a customer query to this service
+    #     "ask_if_missing": [str],        # dimensions the agent must clarify before booking
+    #     "variant": str | null,          # e.g. "extra", "express", "long"
+    #     "hair_length": str | null,      # e.g. "short", "long"
+    #     "hair_density": str | null,     # e.g. "normal", "extra"
+    #     "combo_recommendations": [str], # suggested add-on service names
+    #   }
+    metadata_: Mapped[dict] = mapped_column(
+        "metadata", JSONB, default=dict, nullable=False
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

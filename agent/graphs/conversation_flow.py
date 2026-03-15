@@ -513,8 +513,9 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
-    # Rule 4: First interaction or name unknown → GREETING
-    if is_first_interaction or not customer_name:
+    # Rule 4: First interaction or name unknown → GREETING (not if already mid-booking)
+    # BUG-1B FIX: guard against intercepting mid-booking turns where customer_name is still None
+    if is_first_interaction or (not customer_name and current_mode != "BOOKING"):
         return {"current_mode": "GREETING", "last_node": "router"}
 
     # Classify intent (keyword + LLM hybrid)
@@ -554,6 +555,10 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
 
     # Rule 7: Book intent → BOOKING
     if intent.intent == "book":
+        # BUG-1C FIX: if already in BOOKING, skip transition_mode (which sends __reset__)
+        # to avoid wiping mode_context mid-flow. Use the same no-reset return shape as Rule 6.
+        if current_mode == "BOOKING":
+            return {"mode_context": {**intent_data}, "last_node": "router"}
         return {
             **transition_mode(state, "BOOKING"),
             "mode_context": {**intent_data},

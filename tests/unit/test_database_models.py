@@ -364,3 +364,61 @@ async def test_stylist_calendar_id_index_exists(session):
     ]
     assert len(calendar_indexes) > 0
     assert calendar_indexes[0]["unique"] is True
+
+
+# ============================================================================
+# Task 5.5 — Stylist model introspection tests (no DB required)
+# ============================================================================
+
+
+def test_stylist_model_slug_field_exists():
+    """
+    GIVEN the Stylist SQLAlchemy model
+    THEN it has a 'slug' column that is non-nullable and has a unique index.
+    """
+    slug_col = Stylist.__table__.c.get("slug")
+    assert slug_col is not None, "Stylist model must have a 'slug' column"
+    assert not slug_col.nullable, "slug column must be NOT NULL"
+    # unique=True is set directly on the column
+    assert slug_col.unique is True, "slug column must have unique=True"
+
+
+def test_stylist_google_calendar_id_nullable():
+    """
+    GIVEN the Stylist SQLAlchemy model after Rev 2 migration
+    THEN google_calendar_id is nullable (allows None for unassigned calendars).
+    """
+    calendar_col = Stylist.__table__.c.get("google_calendar_id")
+    assert calendar_col is not None, "Stylist model must have a 'google_calendar_id' column"
+    assert calendar_col.nullable is True, (
+        "google_calendar_id must be nullable=True so stylists can exist without a calendar"
+    )
+
+
+def test_stylist_no_column_level_unique_on_calendar():
+    """
+    GIVEN the Stylist SQLAlchemy model after Rev 2 migration
+    THEN google_calendar_id does NOT have column-level unique=True.
+
+    Uniqueness is enforced exclusively via the partial index
+    'uq_stylists_google_calendar_id_notnull' (WHERE google_calendar_id IS NOT NULL),
+    which allows multiple NULL values while still preventing duplicate non-null calendar IDs.
+    """
+    calendar_col = Stylist.__table__.c.get("google_calendar_id")
+    assert calendar_col is not None
+
+    # Column-level unique constraint must be absent — partial index handles it instead
+    assert not calendar_col.unique, (
+        "google_calendar_id must NOT have column-level unique=True; "
+        "use the partial index 'uq_stylists_google_calendar_id_notnull' instead"
+    )
+
+    # Verify the partial index IS present in __table_args__
+    partial_index_names = {
+        idx.name
+        for idx in Stylist.__table__.indexes
+        if idx.name and "google_calendar_id" in idx.name
+    }
+    assert "uq_stylists_google_calendar_id_notnull" in partial_index_names, (
+        "Partial unique index 'uq_stylists_google_calendar_id_notnull' must exist on Stylist"
+    )

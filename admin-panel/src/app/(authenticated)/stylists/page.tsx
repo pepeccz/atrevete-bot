@@ -76,7 +76,7 @@ function CategoryBadge({ category }: { category: ServiceCategory }) {
 interface StylistFormData {
   name: string;
   category: ServiceCategory;
-  google_calendar_id: string;
+  google_calendar_id: string | null;
   is_active: boolean;
   color: string | null;
 }
@@ -197,12 +197,15 @@ function StylistModal({
     setLoading(true);
     setConflictError(null);
 
+    // Normalize: empty string → null so the API receives null, not ""
+    const calendarId = formData.google_calendar_id?.trim() || null;
+
     try {
       if (stylist) {
         await api.update("stylists", stylist.id, {
           name: formData.name,
           category: formData.category,
-          google_calendar_id: formData.google_calendar_id,
+          google_calendar_id: calendarId,
           is_active: formData.is_active,
           color: formData.color,
         });
@@ -211,7 +214,7 @@ function StylistModal({
         await api.create("stylists", {
           name: formData.name,
           category: formData.category,
-          google_calendar_id: formData.google_calendar_id,
+          google_calendar_id: calendarId,
           is_active: formData.is_active,
           color: formData.color,
         });
@@ -293,7 +296,7 @@ function StylistModal({
             {availableCalendars.length > 0 ? (
               <>
                 <Select
-                  value={formData.google_calendar_id}
+                  value={formData.google_calendar_id ?? ""}
                   onValueChange={(value) => {
                     setFormData((prev) => ({
                       ...prev,
@@ -357,7 +360,7 @@ function StylistModal({
               <>
                 <Input
                   id="google_calendar_id"
-                  value={formData.google_calendar_id}
+                  value={formData.google_calendar_id ?? ""}
                   onChange={(e) => {
                     setFormData((prev) => ({
                       ...prev,
@@ -542,7 +545,10 @@ export default function StylistsPage() {
         </div>
       ),
       cell: ({ row }) => {
-        const calId = row.getValue("google_calendar_id") as string;
+        const calId = row.getValue("google_calendar_id") as string | null;
+        if (!calId) {
+          return <span className="text-muted-foreground text-sm">Sin calendario</span>;
+        }
         return calId.length > 30 ? calId.substring(0, 30) + "..." : calId;
       },
     },

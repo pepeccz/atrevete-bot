@@ -2,7 +2,7 @@
 Seed data script for services table - VERSIÓN ACTUALIZADA desde PDF oficial
 
 Este archivo contiene los 77 servicios oficiales de Atrévete Peluquería:
-- 36 servicios de Peluquería
+- 36 servicios de Peluquería (Corte Dama NO existe en el catálogo real)
 - 41 servicios de Estética
 
 Datos actualizados desde el PDF oficial de servicios (2026).
@@ -11,6 +11,29 @@ Can be run standalone: python -m database.seeds.services
 IMPORTANTE: Los servicios usan UUIDs determinísticos basados en el nombre.
 Esto garantiza que el mismo servicio siempre tenga el mismo UUID,
 evitar problemas de service_ids huérfanos en citas existentes.
+
+DISAMBIGUATION METADATA (metadata_ field):
+Only ambiguous service families are seeded with structured metadata.
+All other services keep metadata_ == {} (empty dict / no metadata).
+
+Seeded families (Phase 1 scope):
+  - haircut: Corte Bebé, Corte Niño, Corte Niña, Corte Caballero, Cortar
+  - highlights: Mechas, Mechas Extras
+  - hairstyle: Peinado, Peinado Largo, Peinado Extra
+  - perm: Moldeado, Moldeado Extra
+  - color: Cultura de Color, Cultura de Color Extra
+
+Metadata shape:
+  {
+    "family": str,                  # service family key
+    "audience": str | None,         # "baby", "child_male", "child_female", "adult_male", "adult_female"
+    "disambiguation_tags": [str],   # keywords that map a customer utterance to this service
+    "ask_if_missing": [str],        # clarification dimensions: "audience", "hair_length", "hair_density"
+    "variant": str | None,          # "standard" | "extra" | "long"
+    "hair_length": str | None,      # "short_medium" | "long"
+    "hair_density": str | None,     # "normal" | "extra"
+    "combo_recommendations": [str], # suggested add-on service names
+  }
 """
 
 import asyncio
@@ -111,6 +134,16 @@ HAIRDRESSING_SERVICES = [
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 50,
         "description": "Moldeado capilar con productos profesionales para dar forma y textura al cabello",
+        "metadata_": {
+            "family": "perm",
+            "audience": None,
+            "disambiguation_tags": ["moldeado", "permanente", "rizo", "ondas"],
+            "ask_if_missing": ["hair_density"],
+            "variant": "standard",
+            "hair_length": None,
+            "hair_density": "normal",
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Recogido",
@@ -135,18 +168,48 @@ HAIRDRESSING_SERVICES = [
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 20,
         "description": "Corte capilar suave y rápido para los más pequeños de la casa",
+        "metadata_": {
+            "family": "haircut",
+            "audience": "baby",
+            "disambiguation_tags": ["bebé", "bebe", "bebito", "bebita", "muy pequeño", "muy pequeña"],
+            "ask_if_missing": [],
+            "variant": None,
+            "hair_length": None,
+            "hair_density": None,
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Mechas",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 60,
         "description": "Servicio completo de mechas para iluminar y dar dimensión al cabello",
+        "metadata_": {
+            "family": "highlights",
+            "audience": None,
+            "disambiguation_tags": ["mechas", "highlights", "reflejos", "luces", "balayage"],
+            "ask_if_missing": ["hair_density"],
+            "variant": "standard",
+            "hair_length": None,
+            "hair_density": "normal",
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Mechas Extras",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 70,
         "description": "Servicio de mechas extendido para cabellos largos o con mucha densidad",
+        "metadata_": {
+            "family": "highlights",
+            "audience": None,
+            "disambiguation_tags": ["mechas extras", "mechas extra", "mechas largo", "mechas larga", "mucho pelo"],
+            "ask_if_missing": [],
+            "variant": "extra",
+            "hair_length": None,
+            "hair_density": "extra",
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Barro Gold",
@@ -183,6 +246,16 @@ HAIRDRESSING_SERVICES = [
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 70,
         "description": "Moldeado extendido para cabellos largos o con tratamientos químicos previos",
+        "metadata_": {
+            "family": "perm",
+            "audience": None,
+            "disambiguation_tags": ["moldeado extra", "moldeado largo", "moldeado mucho pelo"],
+            "ask_if_missing": [],
+            "variant": "extra",
+            "hair_length": None,
+            "hair_density": "extra",
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Agua Lluvia",
@@ -195,6 +268,16 @@ HAIRDRESSING_SERVICES = [
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 50,
         "description": "Servicio de coloración extendido para cambios drásticos o correcciones",
+        "metadata_": {
+            "family": "color",
+            "audience": None,
+            "disambiguation_tags": ["cultura de color extra", "color extra", "coloración extra", "cambio drástico"],
+            "ask_if_missing": [],
+            "variant": "extra",
+            "hair_length": None,
+            "hair_density": "extra",
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Prepigmentar",
@@ -207,12 +290,32 @@ HAIRDRESSING_SERVICES = [
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 40,
         "description": "Corte capilar completo con lavado incluido",
+        "metadata_": {
+            "family": "haircut",
+            "audience": "adult_female",
+            "disambiguation_tags": ["cortar", "corte", "corte adulto", "corte mujer", "corte señora", "corte dama"],
+            "ask_if_missing": [],
+            "variant": None,
+            "hair_length": None,
+            "hair_density": None,
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Peinado Largo",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 45,
         "description": "Peinado profesional para cabello largo, incluye lavado ritual facial",
+        "metadata_": {
+            "family": "hairstyle",
+            "audience": None,
+            "disambiguation_tags": ["peinado largo", "peinado cabello largo", "blow dry largo"],
+            "ask_if_missing": [],
+            "variant": "long",
+            "hair_length": "long",
+            "hair_density": None,
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Barro",
@@ -225,18 +328,48 @@ HAIRDRESSING_SERVICES = [
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 70,
         "description": "Peinado extendido para cabello muy largo o elaborado",
+        "metadata_": {
+            "family": "hairstyle",
+            "audience": None,
+            "disambiguation_tags": ["peinado extra", "peinado muy largo", "peinado elaborado", "peinado mucho pelo"],
+            "ask_if_missing": [],
+            "variant": "extra",
+            "hair_length": "long",
+            "hair_density": "extra",
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Corte Niña",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 30,
         "description": "Corte especializado para niñas con técnicas adaptadas a su edad",
+        "metadata_": {
+            "family": "haircut",
+            "audience": "child_female",
+            "disambiguation_tags": ["corte niña", "niña", "chica", "nena"],
+            "ask_if_missing": [],
+            "variant": None,
+            "hair_length": None,
+            "hair_density": None,
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Cultura de Color",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 40,
         "description": "Servicio de coloración profesional con productos de alta calidad",
+        "metadata_": {
+            "family": "color",
+            "audience": None,
+            "disambiguation_tags": ["cultura de color", "color", "coloración", "tinte"],
+            "ask_if_missing": ["hair_density"],
+            "variant": "standard",
+            "hair_length": None,
+            "hair_density": "normal",
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Peinado Niña Comunión",
@@ -255,18 +388,48 @@ HAIRDRESSING_SERVICES = [
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 40,
         "description": "Peinado profesional para el día a día o eventos informales",
+        "metadata_": {
+            "family": "hairstyle",
+            "audience": None,
+            "disambiguation_tags": ["peinado", "blow dry", "secado con forma", "marcado"],
+            "ask_if_missing": ["hair_length"],
+            "variant": "standard",
+            "hair_length": "short_medium",
+            "hair_density": None,
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Corte Niño",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 30,
         "description": "Corte especializado para niños con técnicas adaptadas a su edad",
+        "metadata_": {
+            "family": "haircut",
+            "audience": "child_male",
+            "disambiguation_tags": ["corte niño", "niño", "chico", "nene"],
+            "ask_if_missing": [],
+            "variant": None,
+            "hair_length": None,
+            "hair_density": None,
+            "combo_recommendations": [],
+        },
     },
     {
         "name": "Corte Caballero",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 40,
         "description": "Corte capilar completo para caballeros con lavado incluido",
+        "metadata_": {
+            "family": "haircut",
+            "audience": "adult_male",
+            "disambiguation_tags": ["corte caballero", "caballero", "hombre", "señor", "varón"],
+            "ask_if_missing": [],
+            "variant": None,
+            "hair_length": None,
+            "hair_density": None,
+            "combo_recommendations": ["Barba"],
+        },
     },
 ]
 
@@ -531,7 +694,7 @@ ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
 
 async def seed_services() -> None:
     """
-    Seed services table with the 77 official services.
+    Seed services table with the official services (77 hairdressing + aesthetics).
 
     Usa UPSERT para preservar UUIDs existentes y evitar romper referencias en citas.
     Los UUIDs son determinísticos basados en el nombre del servicio.
@@ -558,6 +721,7 @@ async def seed_services() -> None:
                 service.category = service_data["category"]
                 service.duration_minutes = service_data["duration_minutes"]
                 service.description = service_data.get("description")
+                service.metadata_ = service_data.get("metadata_", {})
                 service.is_active = True
                 updated_count += 1
             else:
@@ -568,6 +732,7 @@ async def seed_services() -> None:
                     category=service_data["category"],
                     duration_minutes=service_data["duration_minutes"],
                     description=service_data.get("description"),
+                    metadata_=service_data.get("metadata_", {}),
                     is_active=True,
                 )
                 session.add(new_service)

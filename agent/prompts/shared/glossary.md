@@ -159,25 +159,6 @@
 
 ---
 
-## Regla de Variantes STANDARD vs EXTRA
-
-Muchos servicios tienen dos versiones según longitud y densidad del cabello:
-
-| Servicio | Standard | EXTRA (largo/denso) |
-|----------|----------|---------------------|
-| Mechas | 60 min | 70 min (Mechas Extras) |
-| Moldeado | 50 min | 70 min (Moldeado Extra) |
-| Peinado | 40 min | 45 min (Largo) / 70 min (Extra) |
-| Cultura de Color | 40 min | 50 min (Extra) |
-| Óleo Pigmento | 30 min | 40 min (Óleo Extra) |
-| Barro | 40 min | 40 min (Barro Extra/Barro Gold) |
-
-**Cuándo preguntar:**
-Cuando el cliente pregunte por estos servicios, SIEMPRE pregunta:
-> "¿Tienes el cabello corto/medio o largo? ¿Es muy denso o grueso?"
-
----
-
 ## Glosario Técnico
 
 ### Términos de Coloración
@@ -253,4 +234,4 @@ Tratamiento que drena toxinas, descongestiona y reafirma mediante presión contr
 
 - **Máximo 5 servicios por cita:** No se pueden agendar más de 5 servicios en una sola cita.
 - **No combinar categorías:** No se pueden mezclar servicios de Peluquería y Estética en la misma cita.
-- **Servicios con variantes:** Siempre preguntar por longitud/densidad del cabello para servicios con variantes Standard/Extra.
+- **Servicios con variantes:** el sistema detecta automáticamente cuándo se necesita aclaración según los metadatos del servicio.

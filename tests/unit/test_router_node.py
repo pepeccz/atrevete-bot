@@ -469,3 +469,236 @@ class TestRouterNodeRules:
             result = await router_node(state)
 
         assert isinstance(result, dict)
+
+
+# ============================================================================
+# Regression tests — Bug 1B: Router Rule 4 mid-booking guard
+# ============================================================================
+
+
+class TestRule4MidBookingGuard:
+    """
+    Regression tests for Bug 1B fix.
+
+    Before fix: Rule 4 fired for ANY state where customer_name=None,
+    interrupting mid-booking turns and sending the user back to GREETING.
+
+    After fix: Rule 4 only fires if NOT already in BOOKING mode.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rule4_does_not_fire_when_in_booking_mode(self):
+        """
+        BUG-1B REGRESSION: Rule 4 must NOT route to GREETING when in BOOKING with
+        customer_name=None (anonymous guest mid-booking scenario).
+
+        Old (buggy) behavior: `not customer_name` alone (without mode guard)
+        would trigger GREETING, interrupting mid-booking turns.
+
+        New (correct) behavior: the guard `current_mode != "BOOKING"` protects
+        against this so mid-booking turns with unknown customer are not interrupted.
+
+        Note: is_first_interaction=False is used here since in a real mid-booking
+        scenario the user has already interacted (first turn was the booking intent).
+        """
+        from agent.graphs.conversation_flow import router_node
+
+        # Exact bug condition: BOOKING mode + no customer name + NOT first interaction
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name=None,
+            is_first_interaction=False,
+            error_count=0,
+            escalation_triggered=False,
+            user_message="quiero corte caballero",
+        )
+        # booking step already set — mid-booking scenario
+        state["mode_context"] = {
+            "booking_step": "service_selection",
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("book")
+            result = await router_node(state)
+
+        # Must NOT have routed to GREETING
+        returned_mode = result.get("current_mode")
+        assert returned_mode != "GREETING", (
+            "Bug 1B regression: router interrupted mid-booking turn and sent to GREETING"
+        )
+
+    @pytest.mark.asyncio
+    async def test_rule4_does_not_fire_when_booking_customer_name_none(self):
+        """
+        BUG-1B REGRESSION: customer_name=None in BOOKING mode (e.g. anonymous guest
+        flow) must not trigger Rule 4. The is_first_interaction=False variant.
+        """
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name=None,
+            is_first_interaction=False,
+            error_count=0,
+            escalation_triggered=False,
+            user_message="corte de pelo para caballero",
+        )
+        state["mode_context"] = {
+            "booking_step": "slot_selection",
+            "service_name": "Corte Caballero",
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("confirm")
+            result = await router_node(state)
+
+        returned_mode = result.get("current_mode")
+        assert returned_mode != "GREETING", (
+            "Bug 1B regression: customer_name=None in BOOKING caused GREETING redirect"
+        )
+
+    @pytest.mark.asyncio
+    async def test_rule4_fires_for_genuinely_new_customer(self):
+        """
+        Rule 4 still correctly fires for a brand-new customer outside BOOKING.
+
+        is_first_interaction=True AND current_mode=GREETING → must route to GREETING.
+        """
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GREETING",
+            customer_name=None,
+            is_first_interaction=True,
+            error_count=0,
+            escalation_triggered=False,
+            user_message="hola",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("greet")
+            result = await router_node(state)
+
+        assert result.get("current_mode") == "GREETING"
+
+    @pytest.mark.asyncio
+    async def test_rule4_fires_for_general_mode_customer_name_none(self):
+        """
+        Rule 4 still fires when customer_name=None and NOT in BOOKING mode.
+
+        current_mode=GENERAL + customer_name=None → redirect to GREETING (correct).
+        """
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GENERAL",
+            customer_name=None,
+            is_first_interaction=False,
+            error_count=0,
+            escalation_triggered=False,
+            user_message="hola",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("ask_info")
+            result = await router_node(state)
+
+        assert result.get("current_mode") == "GREETING"
+
+
+# ============================================================================
+# Regression tests — Bug 1C: Router Rule 7 no __reset__ in BOOKING
+# ============================================================================
+
+
+class TestRule7NoResetInBooking:
+    """
+    Regression tests for Bug 1C fix.
+
+    Before fix: Rule 7 (book intent) always called transition_mode() which
+    sends __reset__=True, wiping mode_context even when already in BOOKING.
+
+    After fix: When already in BOOKING + book intent, Rule 7 returns the
+    same shape as Rule 6 (no __reset__), preserving booking_step and other
+    mid-booking context.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rule7_does_not_reset_mode_context_when_in_booking(self):
+        """
+        BUG-1C REGRESSION: book intent while already in BOOKING must NOT reset
+        mode_context (which would wipe booking_step, service_name, etc.).
+
+        Before fix: transition_mode() sent __reset__=True → all booking context lost.
+        After fix: same as Rule 6 shape → mode_context preserved via merge_dicts.
+        """
+        from agent.graphs.conversation_flow import router_node
+
+        booking_context = {
+            "booking_step": "slot_selection",
+            "service_name": "Corte Caballero",
+            "service_id": "svc-caballero-001",
+        }
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name="Pedro",
+            is_first_interaction=False,
+            error_count=0,
+            escalation_triggered=False,
+            user_message="quiero reservar",
+        )
+        state["mode_context"] = booking_context
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("book")
+            result = await router_node(state)
+
+        # The router must NOT return __reset__=True in mode_context
+        returned_mc = result.get("mode_context", {})
+        assert not returned_mc.get("__reset__"), (
+            "Bug 1C regression: __reset__=True found in mode_context — "
+            "booking context would be wiped"
+        )
+
+        # booking_step and service_name must be preserved in the result
+        # (router returns only intent_data update, not the full context,
+        # so we check there's no __reset__ and no active wipe)
+        assert "__reset__" not in returned_mc
+
+    @pytest.mark.asyncio
+    async def test_rule7_book_intent_from_booking_does_not_change_mode(self):
+        """
+        BUG-1C REGRESSION: book intent while in BOOKING must not change current_mode.
+
+        The result should either omit current_mode (stays via state reducer)
+        or explicitly set it to BOOKING — never transition_mode shape.
+        """
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name="Maria",
+            is_first_interaction=False,
+            error_count=0,
+            escalation_triggered=False,
+            user_message="sí, quiero reservar una cita",
+        )
+        state["mode_context"] = {
+            "booking_step": "stylist_selection",
+            "service_name": "Mechas",
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("book")
+            result = await router_node(state)
+
+        # Mode must stay BOOKING (either None/omitted or explicitly BOOKING)
+        returned_mode = result.get("current_mode")
+        assert returned_mode is None or returned_mode == "BOOKING", (
+            f"Bug 1C regression: book intent in BOOKING changed mode to {returned_mode!r}"
+        )
+
+        # Critically: must not carry __reset__ which would wipe service_name, booking_step
+        returned_mc = result.get("mode_context", {})
+        assert "__reset__" not in returned_mc

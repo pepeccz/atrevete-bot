@@ -1,5 +1,5 @@
 """
-Search Services Tool for v3.1 Architecture.
+Search Services Tool for v3.2 Architecture.
 
 This tool provides fuzzy search functionality for salon services, returning
 only the most relevant matches (max 5) instead of all services.
@@ -7,6 +7,14 @@ only the most relevant matches (max 5) instead of all services.
 Use Cases:
 - User query: "corte pelo largo" → Returns top 5 matches
 - User query: "tinte rubio" → Returns coloring services
+
+v3.2 changes:
+- Added ``id`` field back to results (needed by booking flow)
+- Integrated shared service_disambiguation resolver
+- Returns a stable response envelope distinguishing three response types:
+    * ``resolved_service``    — single unambiguous match (via metadata resolver)
+    * ``clarification_needed`` — metadata-driven clarification payload
+    * ``services``            — ranked fuzzy matches (fallback / unambiguous)
 
 This solves the blank response problem when query_info returns 47 services.
 """
@@ -19,6 +27,11 @@ from pydantic import BaseModel, Field
 from rapidfuzz import fuzz
 from sqlalchemy import select
 
+from agent.utils.service_disambiguation import (
+    ClarificationPayload,
+    ResolvedService,
+    resolve_candidates,
+)
 from database.connection import get_async_session
 from database.models import Service, ServiceCategory
 
@@ -53,7 +66,7 @@ SPANISH_SERVICE_SYNONYMS: dict[str, str] = {
     "rizarme": "permanente",
     # Colloquial terms
     "raparme": "corte rapado",
-    "pelo": "",  # Remove generic "pelo" as it adds noise
+    "pelo": "corte",  # BUG-2B FIX: "pelo" alone implies a haircut, not noise
     "cabello": "",  # Remove generic "cabello"
     # PDF service catalog synonyms (update-services-catalog)
     "óleo": "oleo pigmento",
@@ -236,10 +249,47 @@ async def search_services(
         max_results: Maximum number of results to return (1-10, default 5)
 
     Returns:
-        Dict with search results:
+        Stable response envelope (one of three shapes):
+
+        Resolved service (single unambiguous metadata-backed match):
+        {
+            "resolved_service": {
+                "id": str,
+                "name": str,
+                "duration_minutes": int,
+                "category": str,
+                "family": str | None,
+                "ask_if_missing": list[str],
+                "combo_recommendations": list[str]
+            },
+            "count": 1,
+            "query": str
+        }
+
+        Clarification needed (ambiguous metadata family):
+        {
+            "clarification_needed": {
+                "axis": str,            # e.g. "hair_density"
+                "question_hint": str,   # e.g. "¿Es cabello normal o muy denso?"
+                "options": [            # one entry per concrete service
+                    {
+                        "label": str,
+                        "value": str,
+                        "service_name": str,
+                        "service_id": str,
+                        "duration_minutes": int
+                    }
+                ]
+            },
+            "count": 0,
+            "query": str
+        }
+
+        Plain ranked matches (no metadata / unambiguous fuzzy):
         {
             "services": [
                 {
+                    "id": str,
                     "name": str,
                     "duration_minutes": int,
                     "category": str,
@@ -250,8 +300,6 @@ async def search_services(
             "query": str
         }
 
-        Note: v3.2 optimization removed price_euros and id fields to reduce token usage.
-
         If no matches found:
         {
             "services": [],
@@ -261,33 +309,41 @@ async def search_services(
         }
 
     Examples:
-        Search for haircut with styling for long hair:
-        >>> await search_services("corte peinado largo")
+        Search for Mechas (ambiguous — needs hair_density clarification):
+        >>> await search_services("mechas")
         {
-            "services": [
-                {"name": "Corte + Peinado (Largo)", "duration_minutes": 60, ...},
-                {"name": "Corte + Tratamiento (Largo)", "duration_minutes": 90, ...}
-            ],
-            "count": 2,
-            "query": "corte peinado largo"
+            "clarification_needed": {
+                "axis": "hair_density",
+                "question_hint": "¿Es cabello normal o muy largo/denso?",
+                "options": [...]
+            },
+            "count": 0,
+            "query": "mechas"
         }
 
-        Search for hair coloring in Peluquería category:
-        >>> await search_services("tinte", category="Peluquería")
+        Search resolved directly (corte caballero):
+        >>> await search_services("corte caballero")
         {
-            "services": [
-                {"name": "Tinte de Raíces", ...},
-                {"name": "Mechas", ...}
-            ],
-            "count": 2
+            "resolved_service": {"id": "...", "name": "Corte Caballero", ...},
+            "count": 1,
+            "query": "corte caballero"
+        }
+
+        Fallback (no metadata — bioterapia facial):
+        >>> await search_services("bioterapia facial")
+        {
+            "services": [{"id": "...", "name": "Bioterapia Facial Completa", ...}],
+            "count": 1,
+            "query": "bioterapia facial"
         }
 
     Notes:
         - Uses RapidFuzz token_set_ratio for matching (handles word order)
-        - Minimum match score: 50% (configurable)
+        - Minimum match score: 60% (configurable)
         - Case-insensitive matching
         - Handles typos and partial matches
         - Returns results sorted by match score (best first)
+        - id field restored in v3.2 for booking flow compatibility
     """
     try:
         logger.info(
@@ -349,7 +405,7 @@ async def search_services(
             f"scorer=weighted(name:70%,desc:30%,substring_boost:+30) | cutoff=60 | limit={max_results}"
         )
 
-        # Step 3: Format results
+        # Step 3: Try metadata-based disambiguation on the top matches
         if not top_matches:
             return {
                 "services": [],
@@ -358,25 +414,70 @@ async def search_services(
                 "message": f"No se encontraron servicios que coincidan con '{query}'"
             }
 
-        # Extract matched services and scores (v3.2: simplified output to save tokens)
+        top_service_objects = [svc for svc, _ in top_matches]
+        disambiguation_result = resolve_candidates(top_service_objects)
+
+        # Step 4a: Single resolved service via metadata
+        if isinstance(disambiguation_result, ResolvedService):
+            logger.info(
+                f"Resolved single service via metadata: '{disambiguation_result.name}' "
+                f"for query='{query}'"
+            )
+            return {
+                "resolved_service": {
+                    "id": str(disambiguation_result.id),
+                    "name": disambiguation_result.name,
+                    "duration_minutes": disambiguation_result.duration_minutes,
+                    "category": disambiguation_result.category,
+                    "family": disambiguation_result.family,
+                    "ask_if_missing": disambiguation_result.ask_if_missing,
+                    "combo_recommendations": disambiguation_result.combo_recommendations,
+                },
+                "count": 1,
+                "query": query,
+            }
+
+        # Step 4b: Clarification needed from metadata resolver
+        if isinstance(disambiguation_result, ClarificationPayload):
+            logger.info(
+                f"Disambiguation clarification needed for query='{query}': "
+                f"axis='{disambiguation_result.axis}'"
+            )
+            return {
+                "clarification_needed": {
+                    "axis": disambiguation_result.axis,
+                    "question_hint": disambiguation_result.question_hint,
+                    "options": disambiguation_result.options,
+                },
+                "count": 0,
+                "query": query,
+            }
+
+        # Step 4c: Fallback — return plain ranked matches (metadata-free services)
+        # ``disambiguation_result`` is a list[Service] in this branch
+        fallback_services = disambiguation_result if isinstance(disambiguation_result, list) else top_service_objects
+        matched_scores = {svc.id: score for svc, score in top_matches}
+
         matched_services = []
-        for service_obj, match_score in top_matches:
+        for service_obj in fallback_services:
+            match_score = matched_scores.get(service_obj.id, 0)
             matched_services.append({
+                "id": str(service_obj.id),
                 "name": service_obj.name,
                 "description": service_obj.description[:150] if service_obj.description else None,
                 "duration_minutes": service_obj.duration_minutes,
                 "category": service_obj.category.value,
-                "match_score": int(match_score)  # Add fuzzy match score for transparency
+                "match_score": int(match_score),
             })
 
         logger.info(
-            f"Returning {len(matched_services)} services for query='{query}'"
+            f"Returning {len(matched_services)} services (fallback) for query='{query}'"
         )
 
         return {
             "services": matched_services,
             "count": len(matched_services),
-            "query": query
+            "query": query,
         }
 
     except Exception as e:

@@ -59,8 +59,12 @@ _SYSTEM_SERVICE_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
 El cliente quiere reservar una cita. Ayúdale a elegir el servicio.
 - Usa query_info para mostrar categorías de servicios disponibles.
 - Usa search_services si el cliente menciona un servicio específico.
-- Sé concisa (2-4 frases). No preguntes por fecha ni estilista todavía.
-- Una vez el cliente elija un servicio, confírmalo."""
+- Si search_services devuelve "clarification_needed": transmite la "question_hint" al cliente
+  y espera su respuesta antes de avanzar. No inventes opciones — usa las que vienen en "options".
+- Si search_services devuelve "resolved_service": confirma el servicio y avanza.
+- Si search_services devuelve "services" (lista): si hay 1 resultado confírmalo; si hay varios
+  preséntaselos al cliente para que elija.
+- Sé concisa (2-4 frases). No preguntes por fecha ni estilista todavía."""
 
 _SYSTEM_STYLIST_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
 El cliente ya eligió el servicio: {service_name}.
@@ -69,7 +73,7 @@ Ahora debe elegir una estilista o indicar que no tiene preferencia.
 - Sé concisa. Pregunta si tiene preferencia o si cualquiera está bien."""
 
 _SYSTEM_SLOT_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
-Servicio: {service_name} | Estilista: {stylist_name}
+Servicio: {service_name} | Estilista: {stylist_name}{duration_hint}
 Ahora el cliente debe elegir fecha y hora.
 - Usa find_next_available para mostrar los próximos huecos disponibles.
 - Usa check_availability si el cliente pide una fecha específica.
@@ -227,6 +231,64 @@ class BookingMode(BaseModeNode):
         from agent.tools.info_tools import query_info
         from agent.tools.search_services import search_services
 
+        # BUG-1D FIX: If there's a pending clarification, try to parse the user's
+        # answer before running the agentic loop. If we can resolve it directly
+        # from the options list, skip the LLM search_services call entirely.
+        original_clarification = mode_context.get("pending_clarification")
+        if original_clarification:
+            user_message = self._get_last_user_message(state)
+            if user_message:
+                axis, resolved_value = self._parse_clarification_answer(
+                    user_message, original_clarification
+                )
+                if axis and resolved_value:
+                    # Find the matching option to extract service metadata directly
+                    options = original_clarification.get("options", [])
+                    matched_option = next(
+                        (opt for opt in options if opt.get("value") == resolved_value),
+                        None,
+                    )
+                    if matched_option:
+                        self.logger.info(
+                            "BookingMode._handle_service_selection: clarification resolved "
+                            "axis=%s value=%s service=%s (no LLM call needed)",
+                            axis,
+                            resolved_value,
+                            matched_option.get("service_name"),
+                        )
+                        # Build a minimal LLM response to confirm the selection
+                        confirmed_context = {
+                            **mode_context,
+                            "service_name": matched_option.get("service_name", ""),
+                            "service_id": matched_option.get("service_id"),
+                            "service_duration_minutes": matched_option.get("duration_minutes"),
+                        }
+                        # Run LLM with just the confirmation system prompt (no tools needed)
+                        service_name = confirmed_context["service_name"]
+                        confirm_system = (
+                            f"Eres Maite, asistenta de Atrévete Peluquería. "
+                            f"El cliente eligió el servicio: {service_name}. "
+                            f"Confírmale brevemente (1-2 frases) y dile que ahora "
+                            f"elegiréis la estilista."
+                        )
+                        if self._use_optimized_prompts():
+                            confirm_messages = await self._build_layered_messages(
+                                state, confirmed_context, step_name=STEP_SERVICE_SELECTION
+                            )
+                        else:
+                            confirm_messages = self._build_messages(state, confirm_system)
+                        result = await self._run_agentic_loop(confirm_messages, tools=[])
+
+                        next_step, updated_context = self._advance_step(
+                            result, STEP_SERVICE_SELECTION, confirmed_context
+                        )
+                        return {
+                            **add_message(state, "assistant", result.response_text),
+                            "mode_context": {**updated_context, "booking_step": next_step},
+                            "last_node": "booking",
+                            "user_message": None,
+                        }
+
         if self._use_optimized_prompts():
             messages = await self._build_layered_messages(
                 state, mode_context, step_name=STEP_SERVICE_SELECTION
@@ -290,9 +352,14 @@ class BookingMode(BaseModeNode):
         else:
             service_name = mode_context.get("service_name", "el servicio")
             stylist_name = mode_context.get("stylist_name", "cualquier estilista")
+            duration_minutes = mode_context.get("service_duration_minutes")
+            duration_hint = (
+                f" | Duración aprox.: {duration_minutes} min" if duration_minutes else ""
+            )
             system = _SYSTEM_SLOT_SELECTION.format(
                 service_name=service_name,
                 stylist_name=stylist_name,
+                duration_hint=duration_hint,
             )
             messages = self._build_messages(state, system)
         result = await self._run_agentic_loop(
@@ -388,25 +455,30 @@ class BookingMode(BaseModeNode):
         from agent.tools.booking_tools import book
 
         service_name = mode_context.get("service_name", "")
-        service_id = mode_context.get("service_id")
         stylist_id = mode_context.get("stylist_id")
         selected_slot = mode_context.get("selected_slot", {})
         first_name = mode_context.get("first_name", "")
         notes = mode_context.get("notes", "")
-        customer_phone = state.get("customer_phone", "")
+
+        customer_id = state.get("customer_id") or ""
+        conversation_id = state.get("conversation_id") or None
 
         booking_result: dict[str, Any] = {}
         error_text: str | None = None
 
+        # Build services list: prefer resolved service_name, fallback to empty list
+        services_list: list[str] = [service_name] if service_name else []
+
         try:
             booking_result = await book.ainvoke({
-                "service_name": service_name,
-                "service_id": service_id,
-                "stylist_id": stylist_id,
-                "start_time": selected_slot.get("start_time", ""),
-                "customer_phone": customer_phone,
+                "customer_id": customer_id,
                 "first_name": first_name,
-                "notes": notes,
+                "last_name": None,
+                "notes": notes if notes else None,
+                "services": services_list,
+                "stylist_id": stylist_id or "",
+                "start_time": selected_slot.get("start_time", ""),
+                "conversation_id": conversation_id,
             })
 
             if "error" in booking_result:
@@ -453,6 +525,74 @@ class BookingMode(BaseModeNode):
 
     # ── Helper methods ────────────────────────────────────────────────────────
 
+    def _get_last_user_message(self, state: ConversationState) -> str:
+        """Return the most recent user message content from state, or empty string."""
+        for msg in reversed(state.get("messages", [])):
+            if msg.get("role") == "user":
+                return msg.get("content", "")
+        return state.get("user_message") or ""
+
+    @staticmethod
+    def _parse_clarification_answer(
+        message: str,
+        pending_clarification: dict,
+    ) -> tuple[str | None, str | None]:
+        """
+        Try to match a user's free-text answer to one of the clarification options.
+
+        BUG-1D FIX: When the user replies to a clarification question (e.g., "Dama",
+        "1", "caballero"), this method resolves their answer to a concrete option
+        value so the booking flow can bypass the looping LLM search_services call.
+
+        Matching strategy (in priority order):
+        1. Numeric index — "1" → options[0]["value"], "2" → options[1]["value"]
+        2. Label substring — message contains option["label"] (case-insensitive)
+        3. Value substring — message contains option["value"] (case-insensitive)
+
+        Args:
+            message: Raw user message text.
+            pending_clarification: Dict with keys "axis", "options", "question_hint".
+                Each option has at least {"value": str, "label": str}.
+
+        Returns:
+            (axis, resolved_value) if a match is found, (None, None) otherwise.
+        """
+        if not pending_clarification:
+            return None, None
+
+        axis: str = pending_clarification.get("axis", "")
+        options: list[dict] = pending_clarification.get("options", [])
+
+        if not options:
+            return None, None
+
+        msg_stripped = message.strip()
+        if not msg_stripped:
+            return None, None
+
+        msg_lower = msg_stripped.lower()
+
+        # Strategy 1: Numeric index ("1", "2", etc.)
+        if msg_stripped.isdigit():
+            idx = int(msg_stripped) - 1  # 1-based → 0-based
+            if 0 <= idx < len(options):
+                return axis, options[idx]["value"]
+            return None, None
+
+        # Strategy 2: Label substring match (bidirectional, requires non-empty msg)
+        for opt in options:
+            label_lower = opt.get("label", "").lower()
+            if label_lower and (label_lower in msg_lower or msg_lower in label_lower):
+                return axis, opt["value"]
+
+        # Strategy 3: Value substring match (bidirectional, requires non-empty msg)
+        for opt in options:
+            value_lower = opt.get("value", "").lower()
+            if value_lower and (value_lower in msg_lower or msg_lower in value_lower):
+                return axis, opt["value"]
+
+        return None, None
+
     def _determine_step(self, mode_context: dict) -> str:
         """
         Determine the current booking sub-step from mode_context.
@@ -490,19 +630,57 @@ class BookingMode(BaseModeNode):
             Tuple of (next_step, updated_mode_context)
         """
         updated_context = dict(mode_context)
+        # BUG-1A FIX: always clear stale pending_clarification at start of each turn
+        updated_context.pop("pending_clarification", None)
         tool_results = result.tool_results
 
-        # Extract service from tool results if single result
+        # Extract service from tool results — handle 3-shape envelope from search_services
         if "search_services" in tool_results:
-            services = tool_results["search_services"]
-            if isinstance(services, list) and len(services) == 1:
-                svc = services[0]
-                updated_context.setdefault("service_name", svc.get("name", ""))
-                updated_context.setdefault("service_id", svc.get("id"))
-                updated_context.setdefault("service_category", svc.get("category", ""))
-            elif isinstance(services, dict) and "name" in services:
-                updated_context.setdefault("service_name", services.get("name", ""))
-                updated_context.setdefault("service_id", services.get("id"))
+            envelope = tool_results["search_services"]
+
+            if isinstance(envelope, dict):
+                if "resolved_service" in envelope:
+                    # Shape 1: single unambiguous metadata-backed match
+                    svc = envelope["resolved_service"]
+                    updated_context.setdefault("service_name", svc.get("name", ""))
+                    updated_context.setdefault("service_id", svc.get("id"))
+                    updated_context.setdefault("service_category", svc.get("category", ""))
+                    updated_context.setdefault(
+                        "service_duration_minutes", svc.get("duration_minutes")
+                    )
+                    updated_context.setdefault("service_family", svc.get("family"))
+                    # Clear any stale clarification now that we have a resolved service
+                    updated_context.pop("pending_clarification", None)
+
+                elif "clarification_needed" in envelope:
+                    # Shape 2: metadata-driven clarification needed — do NOT advance step
+                    clarification = envelope["clarification_needed"]
+                    updated_context["pending_clarification"] = {
+                        "axis": clarification.get("axis", ""),
+                        "question_hint": clarification.get("question_hint", ""),
+                        "options": clarification.get("options", []),
+                    }
+
+                elif "services" in envelope:
+                    # Shape 3: ranked fuzzy matches (fallback)
+                    services = envelope["services"]
+                    if isinstance(services, list) and len(services) == 1:
+                        svc = services[0]
+                        updated_context.setdefault("service_name", svc.get("name", ""))
+                        updated_context.setdefault("service_id", svc.get("id"))
+                        updated_context.setdefault("service_category", svc.get("category", ""))
+                        updated_context.setdefault(
+                            "service_duration_minutes", svc.get("duration_minutes")
+                        )
+                        updated_context.pop("pending_clarification", None)
+                    # Multiple services → LLM presents options, no auto-advance
+            elif isinstance(envelope, list):
+                # Legacy list response — kept for backwards compatibility
+                if len(envelope) == 1:
+                    svc = envelope[0]
+                    updated_context.setdefault("service_name", svc.get("name", ""))
+                    updated_context.setdefault("service_id", svc.get("id"))
+                    updated_context.setdefault("service_category", svc.get("category", ""))
 
         # Extract stylist from tool results if single result
         if "list_stylists" in tool_results:
@@ -532,6 +710,9 @@ class BookingMode(BaseModeNode):
 
         # Apply advancement rules
         if current_step == STEP_SERVICE_SELECTION:
+            # Do not advance if clarification is still pending
+            if updated_context.get("pending_clarification"):
+                return STEP_SERVICE_SELECTION, updated_context
             if updated_context.get("service_name"):
                 return STEP_STYLIST_SELECTION, updated_context
 

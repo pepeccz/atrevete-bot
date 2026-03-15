@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import signal
+import sys
 from datetime import UTC, datetime
 
 from agent.batching.message_batcher import MessageBatcher
@@ -627,6 +628,60 @@ async def subscribe_to_outgoing_messages():
         raise
 
 
+def _make_task_done_callback(task_name: str):
+    """
+    Returns a done-callback that logs immediately when a task dies unexpectedly.
+
+    This fires the moment the task finishes — even before the watchdog loop
+    checks — so the error always appears in the logs regardless of timing.
+    """
+    def _on_done(task: asyncio.Task) -> None:
+        if task.cancelled():
+            # Normal shutdown path — not an error
+            logger.info(f"Task '{task_name}' was cancelled (expected during shutdown)")
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.critical(
+                f"Task '{task_name}' died with unhandled exception: {exc}",
+                exc_info=exc,
+            )
+    return _on_done
+
+
+async def _watchdog(
+    tasks: dict[str, asyncio.Task],
+    interval_seconds: float = 5.0,
+) -> None:
+    """
+    Periodically checks that all critical tasks are still alive.
+
+    If any task finishes unexpectedly (not cancelled), logs CRITICAL and
+    triggers graceful shutdown so Docker/compose can restart the container.
+
+    The done-callback on each task already logs the exception immediately;
+    this watchdog is the enforcement mechanism that actually stops the process.
+    """
+    logger.info(
+        f"Watchdog started | monitoring={list(tasks.keys())} | "
+        f"interval={interval_seconds}s"
+    )
+    while not shutdown_event.is_set():
+        await asyncio.sleep(interval_seconds)
+        for name, task in tasks.items():
+            if task.done() and not task.cancelled():
+                exc = task.exception()
+                logger.critical(
+                    f"Watchdog detected dead task '{name}' "
+                    f"(exception={type(exc).__name__ if exc else 'None'}). "
+                    f"Exiting with code 1 so Docker restarts the container.",
+                    exc_info=exc,
+                )
+                # Exit immediately with non-zero code so Docker/compose
+                # restart_policy triggers a clean container restart.
+                sys.exit(1)
+
+
 async def main():
     """Agent worker main entry point"""
     logger.info("Agent service started")
@@ -650,20 +705,41 @@ async def main():
         logger.warning("Signal handlers not supported on this platform")
 
     # Start both workers concurrently
-    incoming_task = asyncio.create_task(subscribe_to_incoming_messages())
-    outgoing_task = asyncio.create_task(subscribe_to_outgoing_messages())
+    incoming_task = asyncio.create_task(
+        subscribe_to_incoming_messages(), name="incoming_messages"
+    )
+    outgoing_task = asyncio.create_task(
+        subscribe_to_outgoing_messages(), name="outgoing_messages"
+    )
+
+    # Attach done-callbacks so errors are logged THE MOMENT a task dies,
+    # before the watchdog's next polling cycle fires.
+    incoming_task.add_done_callback(_make_task_done_callback("incoming_messages"))
+    outgoing_task.add_done_callback(_make_task_done_callback("outgoing_messages"))
+
+    # Start watchdog that monitors task health every 5 seconds
+    critical_tasks = {
+        "incoming_messages": incoming_task,
+        "outgoing_messages": outgoing_task,
+    }
+    watchdog_task = asyncio.create_task(
+        _watchdog(critical_tasks, interval_seconds=5.0), name="watchdog"
+    )
 
     try:
-        # Wait for shutdown signal
+        # Wait for shutdown signal (set by signal handler OR watchdog)
         await shutdown_event.wait()
     except asyncio.CancelledError:
         logger.info("Main loop cancelled")
     finally:
         logger.info("Shutting down agent service...")
+        watchdog_task.cancel()
         incoming_task.cancel()
         outgoing_task.cancel()
         try:
-            await asyncio.gather(incoming_task, outgoing_task, return_exceptions=True)
+            await asyncio.gather(
+                watchdog_task, incoming_task, outgoing_task, return_exceptions=True
+            )
         except asyncio.CancelledError:
             pass
         logger.info("Agent service stopped")

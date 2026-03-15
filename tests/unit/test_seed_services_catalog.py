@@ -54,7 +54,7 @@ class TestServiceCatalogSeed:
     """Test the complete service catalog seeding from PDF."""
 
     async def test_all_77_services_seeded(self):
-        """Test that all 77 services from PDF are present in database."""
+        """Test that all 77 services from catalog are present in database."""
         from database.connection import get_async_session
 
         async with get_async_session() as session:
@@ -62,7 +62,7 @@ class TestServiceCatalogSeed:
             result = await session.execute(stmt)
             services = list(result.scalars().all())
 
-        # Assert: Exactly 77 services
+        # Assert: Exactly 77 services (36 hairdressing + 41 aesthetics)
         assert len(services) == 77, f"Expected 77 services, got {len(services)}"
 
     async def test_hairdressing_service_count(self):
@@ -254,10 +254,286 @@ class TestServiceCatalogSeed:
         # Run seed again
         await seed_services()
 
-        # Count should still be 77
+        # Count should still be 77 (36 hairdressing + 41 aesthetics)
         async with get_async_session() as session:
             stmt = select(Service).where(Service.is_active == True)
             result = await session.execute(stmt)
             services = list(result.scalars().all())
 
         assert len(services) == 77, "Seed should be idempotent"
+
+
+@pytest.mark.asyncio
+class TestServiceDisambiguationMetadata:
+    """Tests for Phase 1 disambiguation metadata seeded on ambiguous service families."""
+
+    # ------------------------------------------------------------------ helpers
+
+    async def _get_service(self, session, name: str) -> "Service":
+        from database.connection import get_async_session  # noqa: F401
+
+        stmt = select(Service).where(Service.name == name)
+        result = await session.execute(stmt)
+        svc = result.scalar_one_or_none()
+        assert svc is not None, f"Service '{name}' not found in database"
+        return svc
+
+    # ------------------------------------------------------------------ haircut family
+
+    async def test_corte_bebe_metadata(self):
+        """Corte Bebé must have family=haircut, audience=baby, no ask_if_missing."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Corte Bebé")
+
+        assert svc.metadata_["family"] == "haircut"
+        assert svc.metadata_["audience"] == "baby"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 20
+
+    async def test_corte_nino_metadata(self):
+        """Corte Niño must have family=haircut, audience=child_male."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Corte Niño")
+
+        assert svc.metadata_["family"] == "haircut"
+        assert svc.metadata_["audience"] == "child_male"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 30
+
+    async def test_corte_nina_metadata(self):
+        """Corte Niña must have family=haircut, audience=child_female."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Corte Niña")
+
+        assert svc.metadata_["family"] == "haircut"
+        assert svc.metadata_["audience"] == "child_female"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 30
+
+    async def test_corte_caballero_metadata(self):
+        """Corte Caballero must have family=haircut, audience=adult_male."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Corte Caballero")
+
+        assert svc.metadata_["family"] == "haircut"
+        assert svc.metadata_["audience"] == "adult_male"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 40
+
+    async def test_cortar_metadata(self):
+        """Cortar (corte dama) must have family=haircut, audience=adult_female, ask_if_missing empty."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Cortar")
+
+        assert svc.metadata_["family"] == "haircut"
+        assert svc.metadata_["audience"] == "adult_female"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 40
+
+    # ------------------------------------------------------------------ highlights family
+
+    async def test_mechas_metadata(self):
+        """Mechas must have family=highlights, hair_density=normal, ask_if_missing hair_density."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Mechas")
+
+        assert svc.metadata_["family"] == "highlights"
+        assert svc.metadata_["hair_density"] == "normal"
+        assert svc.metadata_["variant"] == "standard"
+        assert "hair_density" in svc.metadata_["ask_if_missing"]
+        assert svc.duration_minutes == 60
+
+    async def test_mechas_extras_metadata(self):
+        """Mechas Extras must have family=highlights, hair_density=extra, no ask_if_missing."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Mechas Extras")
+
+        assert svc.metadata_["family"] == "highlights"
+        assert svc.metadata_["hair_density"] == "extra"
+        assert svc.metadata_["variant"] == "extra"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 70
+
+    # ------------------------------------------------------------------ hairstyle family
+
+    async def test_peinado_metadata(self):
+        """Peinado must have family=hairstyle, hair_length=short_medium, ask_if_missing hair_length."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Peinado")
+
+        assert svc.metadata_["family"] == "hairstyle"
+        assert svc.metadata_["hair_length"] == "short_medium"
+        assert svc.metadata_["variant"] == "standard"
+        assert "hair_length" in svc.metadata_["ask_if_missing"]
+        assert svc.duration_minutes == 40
+
+    async def test_peinado_largo_metadata(self):
+        """Peinado Largo must have family=hairstyle, hair_length=long, no ask_if_missing."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Peinado Largo")
+
+        assert svc.metadata_["family"] == "hairstyle"
+        assert svc.metadata_["hair_length"] == "long"
+        assert svc.metadata_["variant"] == "long"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 45
+
+    async def test_peinado_extra_metadata(self):
+        """Peinado Extra must have family=hairstyle, hair_length=long, hair_density=extra."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Peinado Extra")
+
+        assert svc.metadata_["family"] == "hairstyle"
+        assert svc.metadata_["hair_length"] == "long"
+        assert svc.metadata_["hair_density"] == "extra"
+        assert svc.metadata_["variant"] == "extra"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 70
+
+    # ------------------------------------------------------------------ perm family
+
+    async def test_moldeado_metadata(self):
+        """Moldeado must have family=perm, hair_density=normal, ask_if_missing hair_density."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Moldeado")
+
+        assert svc.metadata_["family"] == "perm"
+        assert svc.metadata_["hair_density"] == "normal"
+        assert svc.metadata_["variant"] == "standard"
+        assert "hair_density" in svc.metadata_["ask_if_missing"]
+        assert svc.duration_minutes == 50
+
+    async def test_moldeado_extra_metadata(self):
+        """Moldeado Extra must have family=perm, hair_density=extra, no ask_if_missing."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Moldeado Extra")
+
+        assert svc.metadata_["family"] == "perm"
+        assert svc.metadata_["hair_density"] == "extra"
+        assert svc.metadata_["variant"] == "extra"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 70
+
+    # ------------------------------------------------------------------ color family
+
+    async def test_cultura_de_color_metadata(self):
+        """Cultura de Color must have family=color, hair_density=normal, ask_if_missing hair_density."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Cultura de Color")
+
+        assert svc.metadata_["family"] == "color"
+        assert svc.metadata_["hair_density"] == "normal"
+        assert svc.metadata_["variant"] == "standard"
+        assert "hair_density" in svc.metadata_["ask_if_missing"]
+        assert svc.duration_minutes == 40
+
+    async def test_cultura_de_color_extra_metadata(self):
+        """Cultura de Color Extra must have family=color, hair_density=extra, no ask_if_missing."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            svc = await self._get_service(session, "Cultura de Color Extra")
+
+        assert svc.metadata_["family"] == "color"
+        assert svc.metadata_["hair_density"] == "extra"
+        assert svc.metadata_["variant"] == "extra"
+        assert svc.metadata_["ask_if_missing"] == []
+        assert svc.duration_minutes == 50
+
+    # ------------------------------------------------------------------ non-seeded services have empty metadata
+
+    async def test_non_seeded_services_have_empty_metadata(self):
+        """Services not in ambiguous families must have metadata_ == {}."""
+        from database.connection import get_async_session
+
+        # Services explicitly outside Phase 1 scope
+        non_seeded = [
+            "Óleo Pigmento",
+            "Agua Tierra",
+            "Barba",
+            "Barro",
+            "Barro Gold",
+            "Mechas Localizadas",
+            "Mechas Localizadas Express",
+            "Recogido",
+            "Semirecogido",
+            "Recogido Novia",
+            "Color Caballero",
+            "Perilla",
+            "Corte de Flequillo",
+            "Peinado Niña Comunión",
+            "Secado",
+        ]
+
+        async with get_async_session() as session:
+            for name in non_seeded:
+                svc = await self._get_service(session, name)
+                assert svc.metadata_ == {}, (
+                    f"Service '{name}' should have empty metadata_ but got: {svc.metadata_}"
+                )
+
+    # ------------------------------------------------------------------ duration spot-checks
+
+    async def test_haircut_family_durations(self):
+        """Verify exact durations for all haircut-family services."""
+        from database.connection import get_async_session
+
+        expected_durations = {
+            "Corte Bebé": 20,
+            "Corte Niño": 30,
+            "Corte Niña": 30,
+            "Corte Caballero": 40,
+            "Cortar": 40,
+        }
+
+        async with get_async_session() as session:
+            for name, expected_duration in expected_durations.items():
+                svc = await self._get_service(session, name)
+                assert svc.duration_minutes == expected_duration, (
+                    f"Service '{name}' expected {expected_duration} min, got {svc.duration_minutes}"
+                )
+
+    async def test_all_seeded_services_have_disambiguation_tags(self):
+        """All services with non-empty metadata_ must have non-empty disambiguation_tags."""
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            stmt = select(Service).where(Service.is_active == True)
+            result = await session.execute(stmt)
+            services = list(result.scalars().all())
+
+        for svc in services:
+            if svc.metadata_:
+                tags = svc.metadata_.get("disambiguation_tags", [])
+                assert isinstance(tags, list), (
+                    f"Service '{svc.name}' disambiguation_tags must be a list"
+                )
+                assert len(tags) > 0, (
+                    f"Service '{svc.name}' has metadata but empty disambiguation_tags"
+                )

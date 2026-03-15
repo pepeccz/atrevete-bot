@@ -87,6 +87,69 @@ if "googleapiclient" not in sys.modules:
         "googleapiclient.errors", HttpError=_HttpError
     )
 
+# jose (python-jose) — needed by api/routes/admin.py for JWT handling
+if "jose" not in sys.modules:
+    class _JWTError(Exception):
+        """Minimal stub that mimics jose.JWTError."""
+        pass
+
+    def _jwt_encode(payload, key, algorithm=None):
+        return "stub_token"
+
+    def _jwt_decode(token, key, algorithms=None, **kwargs):
+        return {"sub": "test"}
+
+    sys.modules["jose"] = _make_stub_module("jose", JWTError=_JWTError)
+    sys.modules["jose.jwt"] = _make_stub_module(
+        "jose.jwt", encode=_jwt_encode, decode=_jwt_decode
+    )
+
+# passlib — needed by api/routes/admin.py for bcrypt password hashing
+if "passlib" not in sys.modules:
+    class _bcrypt_stub:
+        """Minimal stub that mimics passlib.hash.bcrypt."""
+        @staticmethod
+        def hash(password):
+            return "hashed_password_stub"
+
+        @staticmethod
+        def verify(password, hash):
+            return True
+
+    sys.modules["passlib"] = _make_stub_module("passlib")
+    sys.modules["passlib.hash"] = _make_stub_module("passlib.hash", bcrypt=_bcrypt_stub)
+
+# groq — needed by api/routes/chatwoot.py for audio transcription
+if "groq" not in sys.modules:
+    class _RateLimitError(Exception):
+        """Minimal stub that mimics groq.RateLimitError."""
+        pass
+
+    class _APIError(Exception):
+        """Minimal stub that mimics groq.APIError."""
+        pass
+
+    class _AsyncGroq_stub:
+        """Minimal stub that mimics groq.AsyncGroq."""
+        pass
+
+    sys.modules["groq"] = _make_stub_module(
+        "groq", RateLimitError=_RateLimitError, APIError=_APIError, AsyncGroq=_AsyncGroq_stub
+    )
+
+# pydub — needed by shared/audio_conversion.py for audio conversion
+if "pydub" not in sys.modules:
+    class _AudioSegment_stub:
+        """Minimal stub that mimics pydub.AudioSegment."""
+        @staticmethod
+        def from_ogg(path):
+            return _AudioSegment_stub()
+
+        def export(self, path, format=None):
+            return self
+
+    sys.modules["pydub"] = _make_stub_module("pydub", AudioSegment=_AudioSegment_stub)
+
 
 @pytest.fixture(scope="function")
 def event_loop():

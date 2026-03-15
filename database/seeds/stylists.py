@@ -1,13 +1,10 @@
 """
 Seed script for stylists table.
 
-Populates the database with 6 stylists with real Google Calendar IDs:
-- Victor (Hairdressing)
-- Ana (Hairdressing)
-- Marta (Hairdressing)
-- Ana Maria (Hairdressing)
-- Pilar (Hairdressing)
-- Rosa (Aesthetics)
+Populates the database with stylists using slug as the stable identity key.
+Google Calendar IDs are assigned via the admin panel OAuth flow — not by this script.
+
+NOTE: Only Pilar is seeded by default. Create other stylists manually via the admin panel.
 """
 
 import asyncio
@@ -18,88 +15,64 @@ from sqlalchemy import select
 from database.connection import AsyncSessionLocal
 from database.models import ServiceCategory, Stylist
 
-# Stylist seed data with real Google Calendar IDs
+# Stylist seed data — identity fields only.
+# google_calendar_id is intentionally absent: it is assigned exclusively via
+# the admin panel's OAuth-backed calendar picker (PUT /api/admin/stylists/{id}/calendar).
 STYLISTS_DATA: list[dict[str, Any]] = [
     {
-        "name": "Victor",
-        "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "2eda3449b5832c981f72fc4c3cee8eac296868ea889aba41e507c7cb550cef4b@group.calendar.google.com",
-        "is_active": True,
-        "metadata_": {},
-    },
-    {
-        "name": "Ana",
-        "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "740ac1de72d7343d38e7c29e21f88da2654c805d3918710b24e491bce3effd34@group.calendar.google.com",
-        "is_active": True,
-        "metadata_": {},
-    },
-    {
-        "name": "Marta",
-        "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "4824b0be9f7479672cf08e305c18ff87b607c2ea7f2fc7c3e2641f2e07671062@group.calendar.google.com",
-        "is_active": True,
-        "metadata_": {},
-    },
-    {
-        "name": "Ana Maria",
-        "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "97124a0d577423f6efc3d8f72a253ed987178f31c8f138395a99817200e75883@group.calendar.google.com",
-        "is_active": True,
-        "metadata_": {},
-    },
-    {
         "name": "Pilar",
+        "slug": "pilar",
         "category": ServiceCategory.HAIRDRESSING,
-        "google_calendar_id": "39024c9b23eb5ce41489b48a2c843b064821085bc99ac5b06317f1c01ceb194f@group.calendar.google.com",
         "is_active": True,
-        "metadata_": {},
-    },
-    {
-        "name": "Rosa",
-        "category": ServiceCategory.AESTHETICS,
-        "google_calendar_id": "3b266f75917395ff0cfe7ed47703a5f9c8a8a14a8f680882693df6da80122c39@group.calendar.google.com",
-        "is_active": True,
-        "metadata_": {},
     },
 ]
 
 
 async def seed_stylists() -> None:
     """
-    Seed the stylists table with 6 stylists.
+    Seed the stylists table with stylists defined in STYLISTS_DATA.
 
-    Checks if each stylist already exists by google_calendar_id before inserting.
-    Uses UPSERT logic to avoid duplicate entries.
+    Reconciles by slug (stable identity key). For each entry:
+    - If a row with that slug already exists: update name, category, is_active.
+      The google_calendar_id column is intentionally left untouched.
+    - If no row exists: create a new row with google_calendar_id=None.
+
+    This function is fully idempotent — running it multiple times produces the same result.
     """
     async with AsyncSessionLocal() as session:
         async with session.begin():
             for stylist_data in STYLISTS_DATA:
-                # Check if stylist already exists
                 result = await session.execute(
-                    select(Stylist).where(
-                        Stylist.google_calendar_id == stylist_data["google_calendar_id"]
-                    )
+                    select(Stylist).where(Stylist.slug == stylist_data["slug"])
                 )
                 existing_stylist = result.scalar_one_or_none()
 
-                if existing_stylist is None:
-                    # Create new stylist
-                    stylist = Stylist(**stylist_data)
-                    session.add(stylist)
-                    category_value = stylist_data['category'].value if hasattr(stylist_data['category'], 'value') else str(stylist_data['category'])
-                    print(
-                        f"✓ Created stylist: {stylist_data['name']} ({category_value})"
-                    )
-                else:
-                    category_value = stylist_data['category'].value if hasattr(stylist_data['category'], 'value') else str(stylist_data['category'])
-                    print(
-                        f"⊙ Stylist already exists: {stylist_data['name']} ({category_value})"
-                    )
+                category_value = (
+                    stylist_data["category"].value
+                    if hasattr(stylist_data["category"], "value")
+                    else str(stylist_data["category"])
+                )
 
-        # Commit all changes
+                if existing_stylist is not None:
+                    # Update identity fields only — NEVER touch google_calendar_id
+                    existing_stylist.name = stylist_data["name"]
+                    existing_stylist.category = stylist_data["category"]
+                    existing_stylist.is_active = stylist_data["is_active"]
+                    print(f"✓ Updated stylist: {stylist_data['name']} ({category_value})")
+                else:
+                    # Create new row — google_calendar_id starts as None
+                    stylist = Stylist(
+                        name=stylist_data["name"],
+                        slug=stylist_data["slug"],
+                        category=stylist_data["category"],
+                        is_active=stylist_data["is_active"],
+                        google_calendar_id=None,
+                    )
+                    session.add(stylist)
+                    print(f"✓ Created stylist: {stylist_data['name']} ({category_value})")
+
         await session.commit()
-        print(f"\n✓ Seeding complete! Total stylists in database: {len(STYLISTS_DATA)}")
+        print(f"\n✓ Seeding complete! Total stylists in seed data: {len(STYLISTS_DATA)}")
 
 
 if __name__ == "__main__":

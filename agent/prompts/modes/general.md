@@ -176,19 +176,9 @@ Te propongo dos opciones:
 
 ## Asesoramiento de Servicios
 
-### Servicios con Variantes STANDARD vs EXTRA
+### Servicios con Variantes
 
-Muchos servicios tienen dos versiones según la longitud y densidad del cabello:
-
-Consulta `shared/glossary.md` para la tabla completa de:
-- Mechas (60 min / 70 min)
-- Moldeado (50 min / 70 min)
-- Peinado (40 min / 45-70 min)
-- Cultura de Color (40 min / 50 min)
-- Óleo Pigmento (30 min / 40 min)
-
-**Cuándo preguntar:** Cuando el cliente pregunte por estos servicios, SIEMPRE pregunta:
-> "¿Tienes el cabello corto/medio o largo? ¿Es muy denso?"
+Algunos servicios tienen versiones según la longitud o densidad del cabello. El sistema detecta automáticamente cuándo se necesita aclaración — no es necesario conocer las familias de variantes de antemano. Si el cliente pregunta por disponibilidad o quiere reservar, derivalo al modo BOOKING donde el agente recogerá los datos necesarios.
 
 ---
 
@@ -326,7 +316,7 @@ La estilista puede ver tu cabello y asesorarte sin compromiso.
 
 Consulta `shared/glossary.md` para:
 - Lista completa de los 77 servicios con descripciones
-- Reglas de variantes STANDARD vs EXTRA
+- Descripciones y duraciones de los 77 servicios
 - Glosario técnico detallado
 
 ### Reglas Críticas
