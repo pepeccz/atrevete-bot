@@ -702,3 +702,71 @@ class TestRule7NoResetInBooking:
         # Critically: must not carry __reset__ which would wipe service_name, booking_step
         returned_mc = result.get("mode_context", {})
         assert "__reset__" not in returned_mc
+
+
+class TestBookingDigressions:
+    """Coverage for BOOKING -> GENERAL digressions and BOOKING re-entry restore."""
+
+    @pytest.mark.asyncio
+    async def test_ask_info_digression_preserves_booking_draft(self):
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name="Ana",
+            is_first_interaction=False,
+            user_message="que productos usan para el alisado",
+        )
+        state["mode_context"] = {
+            "booking_step": "slot_selection",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "stylist_id": "sty-1",
+            "stylist_name": "Maria",
+            "selected_slot": {"start_time": "2026-03-20T10:00:00+01:00"},
+            "slot_summary": "20/03 10:00",
+            "notes": None,
+            "pending_cancel": False,
+            "candidate_services": [{"id": "svc-1", "name": "Cortar"}],
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("ask_info")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GENERAL"
+        preserved = result["draft_contexts"]["BOOKING"]
+        assert preserved["booking_step"] == "slot_selection"
+        assert preserved["service_id"] == "svc-1"
+        assert preserved["stylist_id"] == "sty-1"
+        assert preserved["selected_slot"]["start_time"] == "2026-03-20T10:00:00+01:00"
+
+    @pytest.mark.asyncio
+    async def test_book_reentry_restores_saved_booking_draft(self):
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GENERAL",
+            customer_name="Ana",
+            is_first_interaction=False,
+            user_message="dale, volvamos con el turno",
+        )
+        state["draft_contexts"] = {
+            "BOOKING": {
+                "booking_step": "stylist_selection",
+                "service_id": "svc-1",
+                "service_name": "Cortar",
+                "stylist_id": "sty-1",
+                "stylist_name": "Maria",
+            }
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("book")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "BOOKING"
+        assert result["mode_context"]["booking_step"] == "stylist_selection"
+        assert result["mode_context"]["service_id"] == "svc-1"
+        assert result["mode_context"]["stylist_id"] == "sty-1"
+        assert result["mode_context"]["last_intent"] == "book"

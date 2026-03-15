@@ -282,6 +282,39 @@ class TestBookingModeServiceSelection:
         messages = result.get("messages", [])
         assert messages[0]["role"] == "assistant"
 
+    async def test_service_selection_appends_recommendations_when_available(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="service_selection")
+
+        with patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), patch.object(
+            mode,
+            "_run_agentic_loop",
+            new=AsyncMock(
+                return_value=AgenticLoopResult(
+                    response_text="Perfecto, ya tengo tu servicio.",
+                    tool_results={
+                        "search_services": {
+                            "resolved_service": {
+                                "id": "svc-1",
+                                "name": "Cortar",
+                                "category": "Peluquería",
+                                "duration_minutes": 45,
+                                "family": "haircut",
+                                "combo_recommendations": ["Peinado", "Barro"],
+                            }
+                        }
+                    },
+                )
+            ),
+        ):
+            result = await mode.handle(state, make_intent())
+
+        message = result["messages"][0]["content"]
+        assert "Peinado" in message
+        assert "Barro" in message
+        assert result["mode_context"]["recommendations_shown"] is True
+        assert result["mode_context"]["selected_services"] == ["Cortar"]
+
 
 # =============================================================================
 # Confirmation step
@@ -323,6 +356,108 @@ class TestBookingModeConfirmation:
 
         messages = result.get("messages", [])
         assert len(messages) >= 1
+
+
+class TestBookingModePolishBehaviors:
+    async def test_volver_rewinds_one_step_and_preserves_prior_data(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="slot_selection")
+        state["user_message"] = "volver"
+        state["mode_context"].update(
+            {
+                "service_id": "svc-1",
+                "service_name": "Cortar",
+                "stylist_id": "sty-1",
+                "stylist_name": "María",
+                "selected_slot": {"start_time": "2026-03-20T10:00:00+01:00"},
+                "slot_summary": "20/03 10:00",
+            }
+        )
+
+        result = await mode.handle(state, make_intent())
+
+        assert result["mode_context"]["booking_step"] == "stylist_selection"
+        assert result["mode_context"]["service_name"] == "Cortar"
+        assert "selected_slot" not in result["mode_context"]
+
+    async def test_change_service_resets_dependent_context(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="stylist_selection")
+        state["user_message"] = "mejor quiero peinado"
+        state["mode_context"].update(
+            {
+                "service_id": "svc-1",
+                "service_name": "Cortar",
+                "stylist_id": "sty-1",
+                "stylist_name": "María",
+            }
+        )
+
+        result = await mode.handle(state, make_intent())
+
+        assert result["mode_context"]["booking_step"] == "service_selection"
+        assert result["mode_context"].get("selected_services") == []
+        assert "stylist_id" not in result["mode_context"]
+
+    async def test_slot_selection_captures_requested_range_preferences(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="slot_selection")
+        state["user_message"] = "mañana por la tarde"
+        state["mode_context"].update(
+            {
+                "service_id": "svc-1",
+                "service_name": "Cortar",
+                "service_category": "Peluquería",
+                "stylist_id": "sty-1",
+                "stylist_name": "María",
+            }
+        )
+
+        with patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), patch.object(
+            mode,
+            "_run_agentic_loop",
+            new=AsyncMock(return_value=AgenticLoopResult(response_text="Te muestro horarios.", tool_results={})),
+        ):
+            result = await mode.handle(state, make_intent())
+
+        assert result["mode_context"]["availability_start_date"] == "manana"
+        assert result["mode_context"]["availability_time_range"] == "afternoon"
+
+    async def test_populate_recurrent_stylist_from_customer_history(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="stylist_selection")
+        state["customer_id"] = "cust-123"
+        context = {
+            "service_category": "Peluquería",
+            "service_duration_minutes": 45,
+        }
+
+        stylist = MagicMock()
+        stylist.id = "sty-9"
+        stylist.name = "Lucía"
+
+        history_tool = MagicMock()
+        history_tool.ainvoke = AsyncMock(return_value={
+            "appointments": [
+                {"stylist_id": "sty-9"},
+                {"stylist_id": "sty-9"},
+            ]
+        })
+        availability_tool = MagicMock()
+        availability_tool.ainvoke = AsyncMock(return_value={
+            "selected_stylist_slots": [
+                {"day_name": "mañana", "time": "10:30"},
+            ]
+        })
+
+        with patch("agent.tools.customer_tools.get_customer_history", new=history_tool), patch(
+            "agent.services.availability_service.get_stylist_by_id", new=AsyncMock(return_value=stylist)
+        ), patch("agent.tools.availability_tools.find_next_available", new=availability_tool):
+            updated = await mode._populate_recurrent_stylist(state, context)
+
+        assert updated["recurrent_stylist_id"] == "sty-9"
+        assert updated["recurrent_stylist_name"] == "Lucía"
+        assert "10:30" in updated["recurrent_stylist_slot_summary"]
 
 
 # =============================================================================
@@ -430,30 +565,30 @@ class TestAdvanceStep:
         assert ctx["stylist_name"] == "Laura"
         assert next_step == "slot_selection"
 
-    # ── customer_data ──────────────────────────────────────────────────────────
+    # ── notes / legacy customer_data alias ────────────────────────────────────
 
-    def test_customer_data_stays_when_no_first_name(self):
-        """No first_name in context → stay at customer_data."""
+    def test_customer_data_alias_stays_at_notes_without_turn_input(self):
+        """Legacy customer_data alias resolves to notes and stays without user reply."""
         mode = self.make_mode()
         result = self.make_result(tool_results={})
         next_step, _ = mode._advance_step(result, "customer_data", {})
-        assert next_step == "customer_data"
+        assert next_step == "notes"
 
-    def test_customer_data_advances_when_first_name_in_context(self):
-        """first_name in mode_context → advance to confirmation."""
+    def test_customer_data_alias_ignores_first_name_for_advancement(self):
+        """Notes step no longer advances based on first_name presence alone."""
         mode = self.make_mode()
         result = self.make_result(tool_results={})
         ctx = {"first_name": "Juan"}
         next_step, _ = mode._advance_step(result, "customer_data", ctx)
-        assert next_step == "confirmation"
+        assert next_step == "notes"
 
-    def test_customer_data_advances_when_booking_first_name_in_context(self):
-        """booking_first_name also triggers advancement (alternate key)."""
+    def test_customer_data_alias_ignores_booking_first_name_for_advancement(self):
+        """Legacy booking_first_name no longer controls booking progression."""
         mode = self.make_mode()
         result = self.make_result(tool_results={})
         ctx = {"booking_first_name": "María"}
         next_step, _ = mode._advance_step(result, "customer_data", ctx)
-        assert next_step == "confirmation"
+        assert next_step == "notes"
 
     # ── confirmation ──────────────────────────────────────────────────────────
 
@@ -482,11 +617,11 @@ class TestAdvanceStep:
     # ── unknown step ──────────────────────────────────────────────────────────
 
     def test_unknown_step_stays_at_current(self):
-        """Unrecognized step names → conservative stay."""
+        """Unrecognized step names now raise a validation error."""
         mode = self.make_mode()
         result = self.make_result(tool_results={"some_tool": {}})
-        next_step, _ = mode._advance_step(result, "unknown_step", {})
-        assert next_step == "unknown_step"
+        with pytest.raises(ValueError, match="Invalid booking substep"):
+            mode._advance_step(result, "unknown_step", {})
 
 
 # =============================================================================

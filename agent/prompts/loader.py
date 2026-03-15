@@ -13,7 +13,9 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent.modes.booking_context import BookingSubstep, normalize_booking_substep
 from agent.state.schemas import ConversationState
+from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,20 @@ _prompt_cache: dict[str, Any] = {
 
 CACHE_KEY = "system_prompt_v1"
 CACHE_TTL_MINUTES = 10
+
+_BOOKING_PROMPT_LEGACY_STEP_ALIASES = {
+    "customer_data": BookingSubstep.NOTES,
+    "datetime_selection": BookingSubstep.SLOT_SELECTION,
+}
+
+_BOOKING_SUBSTEP_FILE_MAP: dict[BookingSubstep, str] = {
+    BookingSubstep.SERVICE_SELECTION: "service_selection.md",
+    BookingSubstep.STYLIST_SELECTION: "stylist_selection.md",
+    BookingSubstep.SLOT_SELECTION: "slot_selection.md",
+    BookingSubstep.NOTES: "notes.md",
+    BookingSubstep.CONFIRMATION: "confirmation.md",
+    BookingSubstep.COMPLETED: "completed.md",
+}
 
 
 # ============================================================================
@@ -132,6 +148,65 @@ def clear_prompt_cache() -> None:
     logger.info("System prompt cache cleared")
 
 
+def _use_substep_prompts() -> bool:
+    """Return whether booking substep overlays are enabled."""
+
+    try:
+        return get_settings().USE_SUBSTEP_PROMPTS
+    except Exception:
+        return True
+
+
+def _resolve_booking_substep(
+    mode_context: dict,
+    step_info: dict | None = None,
+    substep: str | None = None,
+) -> BookingSubstep | None:
+    """Resolve the canonical booking substep from explicit or legacy inputs."""
+
+    raw_substep = substep or mode_context.get("booking_step")
+    if raw_substep is None and step_info is not None:
+        raw_substep = step_info.get("step_name")
+    if raw_substep is None:
+        return None
+
+    aliased = _BOOKING_PROMPT_LEGACY_STEP_ALIASES.get(str(raw_substep).lower(), raw_substep)
+
+    try:
+        return normalize_booking_substep(str(aliased).lower())
+    except ValueError:
+        return None
+
+
+def load_mode_overlay(
+    mode_name: str | None,
+    mode_context: dict,
+    step_info: dict | None = None,
+    substep: str | None = None,
+) -> str:
+    """Load the appropriate mode overlay for the current prompt context."""
+
+    if not mode_name:
+        return ""
+
+    normalized_mode = mode_name.upper()
+    if normalized_mode != "BOOKING":
+        return ""
+
+    if not _use_substep_prompts():
+        return load_markdown("booking.md", "modes")
+
+    resolved_substep = _resolve_booking_substep(mode_context, step_info, substep)
+    if resolved_substep is None:
+        return ""
+
+    file_name = _BOOKING_SUBSTEP_FILE_MAP.get(resolved_substep)
+    if not file_name:
+        return ""
+
+    return load_markdown(file_name, "modes/booking")
+
+
 # ============================================================================
 # Message Building Helpers
 # ============================================================================
@@ -188,12 +263,33 @@ def build_step_context(
         collected_data.append(f"Servicio: {mode_context['service_name']}")
     if mode_context.get("stylist_name"):
         collected_data.append(f"Estilista: {mode_context['stylist_name']}")
+    if mode_context.get("selected_services"):
+        collected_data.append(
+            "Servicios seleccionados: " + ", ".join(mode_context["selected_services"])
+        )
+    if mode_context.get("recurrent_stylist_name"):
+        recurrent_line = f"Estilista habitual: {mode_context['recurrent_stylist_name']}"
+        if mode_context.get("recurrent_stylist_slot_summary"):
+            recurrent_line += f" ({mode_context['recurrent_stylist_slot_summary']})"
+        collected_data.append(recurrent_line)
     if mode_context.get("slot_summary"):
         collected_data.append(f"Horario: {mode_context['slot_summary']}")
     if mode_context.get("first_name"):
         collected_data.append(f"Nombre para la reserva: {mode_context['first_name']}")
     if mode_context.get("notes"):
         collected_data.append(f"Notas: {mode_context['notes']}")
+    if mode_context.get("pending_recommendations"):
+        collected_data.append(
+            "Servicios sugeridos: " + ", ".join(mode_context["pending_recommendations"])
+        )
+    if mode_context.get("availability_start_date"):
+        collected_data.append(
+            f"Fecha pedida por la clienta: {mode_context['availability_start_date']}"
+        )
+    if mode_context.get("availability_time_range"):
+        collected_data.append(
+            f"Franja pedida por la clienta: {mode_context['availability_time_range']}"
+        )
 
     if collected_data:
         parts.append("\nDatos recopilados:")
@@ -219,14 +315,17 @@ async def build_layered_messages(
     step_info: dict | None = None,
     include_history: bool = True,
     history_limit: int = 6,
+    mode_name: str | None = None,
+    substep: str | None = None,
 ) -> list:
     """
     Build a complete message list using the layered prompt approach.
 
     Returns messages in the format:
     1. SystemMessage: Cached system prompt (from shared/)
-    2. HumanMessage: Dynamic step context
-    3. Recent conversation history (optional)
+    2. SystemMessage: Optional mode overlay
+    3. HumanMessage: Dynamic step context
+    4. Recent conversation history (optional)
 
     Args:
         state: Current conversation state
@@ -234,6 +333,8 @@ async def build_layered_messages(
         step_info: Optional step-specific info
         include_history: Whether to include conversation history
         history_limit: Max number of history messages to include
+        mode_name: Optional active mode name for overlay loading
+        substep: Optional booking substep override
 
     Returns:
         list: List of LangChain message objects
@@ -246,11 +347,16 @@ async def build_layered_messages(
     system_prompt = await get_system_prompt()
     messages.append(SystemMessage(content=system_prompt))
 
-    # 2. Dynamic context (~300 tokens)
+    # 2. Optional mode overlay
+    mode_overlay = load_mode_overlay(mode_name, mode_context, step_info, substep)
+    if mode_overlay:
+        messages.append(SystemMessage(content=mode_overlay))
+
+    # 3. Dynamic context (~300 tokens)
     dynamic_context = build_step_context(state, mode_context, step_info)
     messages.append(HumanMessage(content=dynamic_context))
 
-    # 3. Recent conversation history (if enabled)
+    # 4. Recent conversation history (if enabled)
     if include_history:
         for msg in state.get("messages", [])[-history_limit:]:
             role = msg.get("role", "user")
@@ -267,6 +373,7 @@ __all__ = [
     "load_markdown",
     "get_system_prompt",
     "clear_prompt_cache",
+    "load_mode_overlay",
     "build_step_context",
     "build_layered_messages",
 ]

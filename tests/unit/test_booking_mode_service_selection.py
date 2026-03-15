@@ -31,10 +31,14 @@ import importlib.util
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from langchain_core.messages import AIMessage as RealAIMessage
+from langchain_core.messages import HumanMessage as RealHumanMessage
+from langchain_core.messages import SystemMessage as RealSystemMessage
 
 
 # ---------------------------------------------------------------------------
@@ -44,23 +48,7 @@ import pytest
 # imports resolve without errors.
 
 _MOCK_MODULES = [
-    "langchain_core",
-    "langchain_core.messages",
-    "langchain_core.tools",
-    "langchain_openai",
     "agent.modes.base",
-    "agent.prompts",
-    "agent.prompts.loader",
-    "shared",
-    "shared.config",
-    "database",
-    "database.connection",
-    "database.models",
-    "asyncpg",
-    "sqlalchemy",
-    "rapidfuzz",
-    "openai",
-    "pydantic",
 ]
 
 # Install mocks (only if not already installed by a previous collection run)
@@ -68,14 +56,30 @@ for _mod_name in _MOCK_MODULES:
     if _mod_name not in sys.modules:
         sys.modules[_mod_name] = MagicMock()  # type: ignore[assignment]
 
-# Provide concrete AIMessage / HumanMessage / SystemMessage stubs so that
-# booking_mode.py's ``_build_messages`` can be called without errors
-# (not strictly needed for _advance_step tests, but avoids NameError if the
-# module code references them at class-definition time).
-_lc_messages = sys.modules["langchain_core.messages"]
-_lc_messages.AIMessage = MagicMock
-_lc_messages.HumanMessage = MagicMock
-_lc_messages.SystemMessage = MagicMock
+# Install a lightweight fake `agent.modes` package so booking_mode.py can import
+# `agent.modes.base` and `agent.modes.booking_context` without executing the real
+# package __init__, which pulls the whole runtime graph.
+_original_agent_modes = sys.modules.get("agent.modes")
+_original_agent_modes_base = sys.modules.get("agent.modes.base")
+_original_agent_modes_booking_context = sys.modules.get("agent.modes.booking_context")
+
+_fake_modes_pkg = ModuleType("agent.modes")
+_fake_modes_pkg.__path__ = []  # type: ignore[attr-defined]
+sys.modules["agent.modes"] = _fake_modes_pkg
+
+_BOOKING_CONTEXT_PATH = (
+    Path(__file__).parent.parent.parent / "agent" / "modes" / "booking_context.py"
+)
+_booking_context_spec = importlib.util.spec_from_file_location(
+    "agent.modes.booking_context", str(_BOOKING_CONTEXT_PATH)
+)
+_booking_context_mod = importlib.util.module_from_spec(_booking_context_spec)  # type: ignore[arg-type]
+sys.modules["agent.modes.booking_context"] = _booking_context_mod
+_booking_context_spec.loader.exec_module(_booking_context_mod)  # type: ignore[union-attr]
+
+sys.modules["langchain_core.messages"].AIMessage = RealAIMessage
+sys.modules["langchain_core.messages"].HumanMessage = RealHumanMessage
+sys.modules["langchain_core.messages"].SystemMessage = RealSystemMessage
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +125,21 @@ _spec = importlib.util.spec_from_file_location(
 )
 _booking_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_booking_mod)  # type: ignore[union-attr]
+
+if _original_agent_modes is not None:
+    sys.modules["agent.modes"] = _original_agent_modes
+else:
+    sys.modules.pop("agent.modes", None)
+
+if _original_agent_modes_base is not None:
+    sys.modules["agent.modes.base"] = _original_agent_modes_base
+else:
+    sys.modules.pop("agent.modes.base", None)
+
+if _original_agent_modes_booking_context is not None:
+    sys.modules["agent.modes.booking_context"] = _original_agent_modes_booking_context
+else:
+    sys.modules.pop("agent.modes.booking_context", None)
 
 BookingMode = _booking_mod.BookingMode
 STEP_SERVICE_SELECTION: str = _booking_mod.STEP_SERVICE_SELECTION
@@ -852,6 +871,51 @@ class TestNoToolResultsBaselineBehavior:
         next_step, _ = mode._advance_step(result, STEP_CONFIRMATION, ctx)
 
         assert next_step == STEP_CONFIRMATION
+
+    def test_list_stylists_dict_response_auto_selects_single_stylist(self):
+        mode = _make_mode()
+        result = _make_result({
+            "list_stylists": {"stylists": [{"id": "sty-1", "name": "Lucía"}]}
+        })
+        next_step, ctx = mode._advance_step(result, STEP_STYLIST_SELECTION, {
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+        })
+
+        assert next_step == STEP_SLOT_SELECTION
+        assert ctx["stylist_id"] == "sty-1"
+        assert ctx["stylist_name"] == "Lucía"
+
+    def test_check_availability_dict_uses_available_slots_payload(self):
+        mode = _make_mode()
+        result = _make_result({
+            "check_availability": {
+                "available_slots": [
+                    {"date": "2026-03-20", "time": "10:00", "full_datetime": "2026-03-20T10:00:00+01:00"}
+                ]
+            }
+        })
+        next_step, ctx = mode._advance_step(result, STEP_SLOT_SELECTION, {
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "stylist_id": "sty-1",
+            "stylist_name": "Lucía",
+        })
+
+        assert next_step == STEP_CUSTOMER_DATA
+        assert ctx["slot_summary"] == "2026-03-20T10:00:00+01:00"
+
+    def test_empty_slot_payload_returns_to_stylist_selection(self):
+        mode = _make_mode()
+        result = _make_result({"check_availability": {"available_slots": []}})
+        next_step, _ = mode._advance_step(result, STEP_SLOT_SELECTION, {
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "stylist_id": "sty-1",
+            "stylist_name": "Lucía",
+        })
+
+        assert next_step == STEP_STYLIST_SELECTION
 
 
 # =============================================================================

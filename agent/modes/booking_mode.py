@@ -25,10 +25,19 @@ Tools used per step:
 """
 
 import logging
-from typing import Any
+import unicodedata
+from typing import Any, Mapping, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from agent.modes.booking_context import (
+    ALLOWED_TRANSITIONS,
+    BookingDraftContext,
+    BookingSubstep,
+    normalize_booking_substep,
+    preserve_booking_context,
+    validate_booking_context,
+)
 from agent.modes.base import AgenticLoopResult, BaseModeNode
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
@@ -36,27 +45,21 @@ from agent.state.schemas import ConversationState
 logger = logging.getLogger(__name__)
 
 # ── Booking sub-steps ─────────────────────────────────────────────────────────
-STEP_SERVICE_SELECTION = "service_selection"
-STEP_STYLIST_SELECTION = "stylist_selection"
-STEP_SLOT_SELECTION = "slot_selection"
-STEP_CUSTOMER_DATA = "customer_data"
-STEP_CONFIRMATION = "confirmation"
-STEP_COMPLETED = "completed"
+STEP_SERVICE_SELECTION = BookingSubstep.SERVICE_SELECTION.value
+STEP_STYLIST_SELECTION = BookingSubstep.STYLIST_SELECTION.value
+STEP_SLOT_SELECTION = BookingSubstep.SLOT_SELECTION.value
+STEP_NOTES = BookingSubstep.NOTES.value
+STEP_CUSTOMER_DATA = STEP_NOTES
+STEP_CONFIRMATION = BookingSubstep.CONFIRMATION.value
+STEP_COMPLETED = BookingSubstep.COMPLETED.value
 
 # Ordered sequence of steps
-_STEP_ORDER = [
-    STEP_SERVICE_SELECTION,
-    STEP_STYLIST_SELECTION,
-    STEP_SLOT_SELECTION,
-    STEP_CUSTOMER_DATA,
-    STEP_CONFIRMATION,
-    STEP_COMPLETED,
-]
+_STEP_ORDER = [substep.value for substep in BookingSubstep]
 
 # ── System prompts per step ───────────────────────────────────────────────────
 
 _SYSTEM_SERVICE_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
-El cliente quiere reservar una cita. Ayúdale a elegir el servicio.
+La clienta quiere reservar una cita. Ayúdala a elegir el servicio.
 - Usa query_info para mostrar categorías de servicios disponibles.
 - Usa search_services si el cliente menciona un servicio específico.
 - Si search_services devuelve "clarification_needed": transmite la "question_hint" al cliente
@@ -64,51 +67,53 @@ El cliente quiere reservar una cita. Ayúdale a elegir el servicio.
 - Si search_services devuelve "resolved_service": confirma el servicio y avanza.
 - Si search_services devuelve "services" (lista): si hay 1 resultado confírmalo; si hay varios
   preséntaselos al cliente para que elija.
+- Usa un tono cálido e informal con "te"/"tu", nunca "usted".
 - Sé concisa (2-4 frases). No preguntes por fecha ni estilista todavía."""
 
 _SYSTEM_STYLIST_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
-El cliente ya eligió el servicio: {service_name}.
-Ahora debe elegir una estilista o indicar que no tiene preferencia.
+La clienta ya eligió el servicio: {service_name}.
+Ahora puede elegir una estilista o decirte que no tiene preferencia.
 - Usa list_stylists para mostrar las estilistas disponibles.
+- Si hay estilista recurrente, ofrécela primero de forma cálida.
+- Usa un tono cálido e informal con "te"/"tu", nunca "usted".
 - Sé concisa. Pregunta si tiene preferencia o si cualquiera está bien."""
 
 _SYSTEM_SLOT_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
 Servicio: {service_name} | Estilista: {stylist_name}{duration_hint}
-Ahora el cliente debe elegir fecha y hora.
-- Usa find_next_available para mostrar los próximos huecos disponibles.
-- Usa check_availability si el cliente pide una fecha específica.
+Ahora la clienta debe elegir fecha y hora.
+- Usa find_next_available para mostrar los próximos huecos disponibles cuando no haya rango pedido.
+- Usa check_availability si la clienta pide una fecha, rango o franja específica.
+- Usa un tono cálido e informal con "te"/"tu", nunca "usted".
 - Sé concisa. Muestra máximo 5 opciones."""
 
-_SYSTEM_CUSTOMER_DATA = """Eres Maite, asistenta de Atrévete Peluquería.
-Necesitamos el nombre del cliente para la reserva.
+_SYSTEM_NOTES = """Eres Maite, asistenta de Atrévete Peluquería.
 Servicio: {service_name} | Estilista: {stylist_name} | Fecha: {slot_summary}
-Pide amablemente:
-1. Nombre (obligatorio)
-2. Alguna nota especial para la cita (opcional)
-No uses herramientas. Solo conversa."""
+Ya conocemos los datos de la clienta. No pidas su nombre ni teléfono.
+Pregunta solo si quiere dejar alguna nota o pedido especial para la cita.
+Si dice que no, avanza igual. No uses herramientas."""
 
 _SYSTEM_CONFIRMATION = """Eres Maite, asistenta de Atrévete Peluquería.
-Muestra el resumen de la reserva y pide confirmación:
+Muestra el resumen de la reserva y pide confirmación con tono cálido e informal:
 
 📋 Resumen:
 - Servicio: {service_name}
 - Estilista: {stylist_name}
 - Fecha/Hora: {slot_summary}
-- Nombre: {first_name}
+- Nombre: {customer_name}
 {notes_line}
 
-¿Confirmas la reserva? (Sí/No)"""
+¿Te va bien así? (Sí/No)"""
 
 _SYSTEM_COMPLETED = """Eres Maite, asistenta de Atrévete Peluquería.
-La reserva ha sido creada exitosamente. Informa al cliente con entusiasmo.
+La reserva ha sido creada exitosamente. Informa a la clienta con entusiasmo.
 Detalles: {booking_details}
-Despídete amablemente y pregunta si necesita algo más."""
+Despídete amablemente y pregunta si necesita algo más, sin usar "usted"."""
 
 _SYSTEM_ERROR = """Eres Maite, asistenta de Atrévete Peluquería.
 Ha habido un problema al crear la reserva. Disculpa al cliente y ofrece alternativas:
 1. Intentar de nuevo
 2. Contactar con el equipo directamente
-Sé empática y concisa."""
+Usa un tono cálido e informal con "te"/"tu". Sé empática y concisa."""
 
 
 class BookingMode(BaseModeNode):
@@ -122,6 +127,208 @@ class BookingMode(BaseModeNode):
     @property
     def mode_name(self) -> str:
         return "BOOKING"
+
+    @staticmethod
+    def _normalize_text(value: str | None) -> str:
+        raw = (value or "").strip().lower()
+        normalized = unicodedata.normalize("NFKD", raw)
+        return "".join(char for char in normalized if not unicodedata.combining(char))
+
+    @classmethod
+    def _message_starts_over(cls, message: str) -> bool:
+        normalized = cls._normalize_text(message)
+        return any(
+            phrase in normalized
+            for phrase in ("empecemos de nuevo", "empezar de nuevo", "cancelar todo", "arranquemos de nuevo")
+        )
+
+    @classmethod
+    def _message_requests_backtrack(cls, message: str) -> bool:
+        normalized = cls._normalize_text(message)
+        return any(token in normalized for token in ("volver", "volvamos", "atras", "para atras", "retroceder"))
+
+    @classmethod
+    def _message_declines_recommendations(cls, message: str) -> bool:
+        normalized = cls._normalize_text(message)
+        return normalized in {
+            "no",
+            "no gracias",
+            "no, gracias",
+            "solo eso",
+            "solo eso gracias",
+            "con eso estoy",
+        }
+
+    @classmethod
+    def _recommended_services_from_message(
+        cls,
+        message: str,
+        recommendations: list[str] | None,
+    ) -> list[str]:
+        normalized = cls._normalize_text(message)
+        matches: list[str] = []
+        for recommendation in recommendations or []:
+            if cls._normalize_text(recommendation) in normalized:
+                matches.append(recommendation)
+        return matches
+
+    @classmethod
+    def _extract_time_range(cls, message: str) -> str | None:
+        normalized = cls._normalize_text(message)
+        if any(token in normalized for token in ("por la tarde", "a la tarde", "tarde")):
+            return "afternoon"
+        if any(token in normalized for token in ("por la manana", "a la manana", "manana temprano", "morning")):
+            return "morning"
+        return None
+
+    @classmethod
+    def _extract_start_date_hint(cls, message: str) -> str | None:
+        normalized = cls._normalize_text(message)
+        if "entre " in normalized:
+            return message.strip()
+        for token in ("hoy", "manana", "pasado manana", "esta semana", "proxima semana"):
+            if token in normalized:
+                return token
+        return None
+
+    @staticmethod
+    def _previous_substep(current_step: BookingSubstep) -> BookingSubstep:
+        if current_step == BookingSubstep.COMPLETED:
+            return BookingSubstep.CONFIRMATION
+        if current_step == BookingSubstep.CONFIRMATION:
+            return BookingSubstep.NOTES
+        if current_step == BookingSubstep.NOTES:
+            return BookingSubstep.SLOT_SELECTION
+        if current_step == BookingSubstep.SLOT_SELECTION:
+            return BookingSubstep.STYLIST_SELECTION
+        if current_step == BookingSubstep.STYLIST_SELECTION:
+            return BookingSubstep.SERVICE_SELECTION
+        return BookingSubstep.SERVICE_SELECTION
+
+    def _rewind_context(
+        self,
+        mode_context: Mapping[str, Any],
+        target: BookingSubstep,
+    ) -> BookingDraftContext:
+        candidate = dict(mode_context)
+        if target == BookingSubstep.SERVICE_SELECTION:
+            for key in (
+                "stylist_id",
+                "stylist_name",
+                "recurrent_stylist_id",
+                "recurrent_stylist_name",
+                "recurrent_stylist_slot_summary",
+                "selected_slot",
+                "slot_summary",
+                "availability_start_date",
+                "availability_time_range",
+                "pending_cancel",
+            ):
+                candidate.pop(key, None)
+        elif target == BookingSubstep.STYLIST_SELECTION:
+            for key in ("selected_slot", "slot_summary", "availability_start_date", "availability_time_range"):
+                candidate.pop(key, None)
+        elif target == BookingSubstep.SLOT_SELECTION:
+            candidate.pop("selected_slot", None)
+            candidate.pop("slot_summary", None)
+        return self._finalize_mode_context(candidate, target, target)
+
+    def _message_changes_service(self, current_step: BookingSubstep, message: str) -> bool:
+        if current_step == BookingSubstep.SERVICE_SELECTION:
+            return False
+        normalized = self._normalize_text(message)
+        service_tokens = (
+            "corte",
+            "cortar",
+            "peinado",
+            "barro",
+            "mechas",
+            "color",
+            "tinte",
+            "tratamiento",
+            "oleo",
+        )
+        return ("mejor" in normalized or "cambiar" in normalized or "quiero" in normalized) and any(
+            token in normalized for token in service_tokens
+        )
+
+    def _message_changes_stylist(self, current_step: BookingSubstep, message: str, mode_context: Mapping[str, Any]) -> bool:
+        if current_step not in {BookingSubstep.SLOT_SELECTION, BookingSubstep.NOTES, BookingSubstep.CONFIRMATION}:
+            return False
+        normalized = self._normalize_text(message)
+        current_stylist = self._normalize_text(str(mode_context.get("stylist_name") or ""))
+        return "con " in normalized and "quiero" in normalized and current_stylist not in normalized
+
+    def _message_changes_slot(self, current_step: BookingSubstep, message: str) -> bool:
+        if current_step not in {BookingSubstep.NOTES, BookingSubstep.CONFIRMATION}:
+            return False
+        normalized = self._normalize_text(message)
+        slot_tokens = ("lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo", ":", "hora", "manana", "tarde")
+        return ("cambiar" in normalized or "mejor" in normalized or "otro horario" in normalized) and any(
+            token in normalized for token in slot_tokens
+        )
+
+    @staticmethod
+    def _build_recommendation_follow_up(mode_context: Mapping[str, Any]) -> str:
+        recommendations = [str(item) for item in mode_context.get("pending_recommendations") or [] if str(item).strip()]
+        if not recommendations:
+            return ""
+        joined = ", ".join(recommendations)
+        return f"\n\nSi te copa, también puedo sumarte algo relacionado: {joined}. ¿Te gustaría agregar alguno?"
+
+    def _selected_services(self, mode_context: Mapping[str, Any]) -> list[str]:
+        services = [str(item) for item in mode_context.get("selected_services") or [] if str(item).strip()]
+        if services:
+            return services
+        primary = str(mode_context.get("service_name") or "").strip()
+        return [primary] if primary else []
+
+    async def _populate_recurrent_stylist(self, state: ConversationState, mode_context: dict[str, Any]) -> dict[str, Any]:
+        if mode_context.get("recurrent_stylist_id") or not state.get("customer_id"):
+            return mode_context
+
+        from agent.services.availability_service import get_stylist_by_id
+        from agent.tools.customer_tools import get_customer_history
+        from agent.tools.availability_tools import find_next_available
+
+        customer_id = state.get("customer_id")
+        if not customer_id:
+            return mode_context
+
+        history = await get_customer_history.ainvoke({"customer_id": customer_id, "limit": 2})
+        appointments = history.get("appointments") or []
+        if len(appointments) < 2:
+            return mode_context
+
+        first_stylist = appointments[0].get("stylist_id")
+        if not first_stylist or any(appointment.get("stylist_id") != first_stylist for appointment in appointments[:2]):
+            return mode_context
+
+        stylist = await get_stylist_by_id(first_stylist)
+        if not stylist:
+            return mode_context
+
+        updated_context = dict(mode_context)
+        updated_context["recurrent_stylist_id"] = str(stylist.id)
+        updated_context["recurrent_stylist_name"] = stylist.name
+
+        category = updated_context.get("service_category") or "Peluquería"
+        slots = await find_next_available.ainvoke(
+            {
+                "service_category": category,
+                "stylist_id": str(stylist.id),
+                "service_duration_minutes": updated_context.get("service_duration_minutes"),
+                "max_days_to_search": 7,
+            }
+        )
+        selected_slots = slots.get("selected_stylist_slots") or []
+        if selected_slots:
+            slot = selected_slots[0]
+            updated_context["recurrent_stylist_slot_summary"] = (
+                f"{slot.get('day_name', slot.get('date', 'próximamente'))} a las {slot.get('time', '')}".strip()
+            )
+
+        return updated_context
 
     async def handle(self, state: ConversationState, intent: object) -> dict:
         """
@@ -147,10 +354,11 @@ class BookingMode(BaseModeNode):
         from agent.state.schemas import transition_mode
 
         conversation_id = state.get("conversation_id", "unknown")
-        mode_context = state.get("mode_context") or {}
+        mode_context = self._hydrate_mode_context(state.get("mode_context") or {})
 
         current_step = self._determine_step(mode_context)
         intent_signal = getattr(intent, "intent", "") if intent else ""
+        user_message = self._get_last_user_message(state)
 
         self.logger.info(
             "BookingMode.handle | conversation=%s | step=%s | intent=%s | context_keys=%s",
@@ -163,8 +371,12 @@ class BookingMode(BaseModeNode):
         # ── Early exit: escalate intent → always ESCALATION ────────────────
         if intent_signal == "escalate":
             self.logger.info("BookingMode: escalate intent → transitioning to ESCALATION")
+            transition_update = transition_mode(state, "ESCALATION")
+            draft_contexts = dict(transition_update.get("draft_contexts") or {})
+            draft_contexts["BOOKING"] = preserve_booking_context(mode_context, "ESCALATION")
             return {
-                **transition_mode(state, "ESCALATION"),
+                **transition_update,
+                "draft_contexts": draft_contexts,
                 "last_node": "booking",
                 "user_message": None,
             }
@@ -206,17 +418,77 @@ class BookingMode(BaseModeNode):
                     "user_message": None,
                 }
 
+        if self._message_starts_over(user_message):
+            reset_context = self._finalize_mode_context({}, BookingSubstep.SERVICE_SELECTION, None)
+            return {
+                **add_message(state, "assistant", "¡Listo! Empezamos de nuevo. ¿Qué servicio querés agendar?"),
+                "mode_context": reset_context,
+                "last_node": "booking",
+                "user_message": None,
+            }
+
+        if self._message_requests_backtrack(user_message) and current_step != BookingSubstep.SERVICE_SELECTION:
+            previous_step = self._previous_substep(current_step)
+            rewound_context = self._rewind_context(mode_context, previous_step)
+            return {
+                **add_message(
+                    state,
+                    "assistant",
+                    f"Dale, volvamos un paso. Retomemos desde {previous_step.value.replace('_', ' ')}.",
+                ),
+                "mode_context": rewound_context,
+                "last_node": "booking",
+                "user_message": None,
+            }
+
+        if self._message_changes_service(current_step, user_message):
+            rewound_context = self._rewind_context(mode_context, BookingSubstep.SERVICE_SELECTION)
+            for key in ("service_id", "service_name", "service_category", "service_duration_minutes", "service_family"):
+                rewound_context.pop(key, None)
+            rewound_context["selected_services"] = []
+            rewound_context["pending_recommendations"] = []
+            rewound_context["recommendations_shown"] = False
+            rewound_context["booking_step"] = BookingSubstep.SERVICE_SELECTION.value
+            return {
+                **add_message(state, "assistant", "Perfecto, cambiamos el servicio. Contame cuál querés ahora."),
+                "mode_context": rewound_context,
+                "last_node": "booking",
+                "user_message": None,
+            }
+
+        if self._message_changes_stylist(current_step, user_message, mode_context):
+            rewound_context = self._rewind_context(mode_context, BookingSubstep.STYLIST_SELECTION)
+            rewound_context.pop("stylist_id", None)
+            rewound_context.pop("stylist_name", None)
+            rewound_context["booking_step"] = BookingSubstep.STYLIST_SELECTION.value
+            return {
+                **add_message(state, "assistant", "Perfecto, cambiamos de profesional. Decime con quién te gustaría atenderte."),
+                "mode_context": rewound_context,
+                "last_node": "booking",
+                "user_message": None,
+            }
+
+        if self._message_changes_slot(current_step, user_message):
+            rewound_context = self._rewind_context(mode_context, BookingSubstep.SLOT_SELECTION)
+            rewound_context["booking_step"] = BookingSubstep.SLOT_SELECTION.value
+            return {
+                **add_message(state, "assistant", "Perfecto, buscamos otro horario. Decime qué día o franja te viene mejor."),
+                "mode_context": rewound_context,
+                "last_node": "booking",
+                "user_message": None,
+            }
+
         # Store intent signal in mode_context for confirmation step
         mode_context = {**mode_context, "last_intent": str(intent_signal)}
 
         # Dispatch to step handler
-        handler_map = {
-            STEP_SERVICE_SELECTION: self._handle_service_selection,
-            STEP_STYLIST_SELECTION: self._handle_stylist_selection,
-            STEP_SLOT_SELECTION: self._handle_slot_selection,
-            STEP_CUSTOMER_DATA: self._handle_customer_data,
-            STEP_CONFIRMATION: self._handle_confirmation,
-            STEP_COMPLETED: self._handle_completed,
+        handler_map: dict[BookingSubstep, Any] = {
+            BookingSubstep.SERVICE_SELECTION: self._handle_service_selection,
+            BookingSubstep.STYLIST_SELECTION: self._handle_stylist_selection,
+            BookingSubstep.SLOT_SELECTION: self._handle_slot_selection,
+            BookingSubstep.NOTES: self._handle_notes,
+            BookingSubstep.CONFIRMATION: self._handle_confirmation,
+            BookingSubstep.COMPLETED: self._handle_completed,
         }
 
         handler = handler_map.get(current_step, self._handle_service_selection)
@@ -280,11 +552,15 @@ class BookingMode(BaseModeNode):
                         result = await self._run_agentic_loop(confirm_messages, tools=[])
 
                         next_step, updated_context = self._advance_step(
-                            result, STEP_SERVICE_SELECTION, confirmed_context
+                            result, BookingSubstep.SERVICE_SELECTION, confirmed_context
                         )
                         return {
                             **add_message(state, "assistant", result.response_text),
-                            "mode_context": {**updated_context, "booking_step": next_step},
+                            "mode_context": self._finalize_mode_context(
+                                updated_context,
+                                next_step,
+                                BookingSubstep.SERVICE_SELECTION,
+                            ),
                             "last_node": "booking",
                             "user_message": None,
                         }
@@ -301,12 +577,21 @@ class BookingMode(BaseModeNode):
 
         # Check if a service was identified
         next_step, updated_context = self._advance_step(
-            result, STEP_SERVICE_SELECTION, mode_context
+            result, BookingSubstep.SERVICE_SELECTION, mode_context
         )
 
+        response_text = result.response_text
+        if next_step == BookingSubstep.STYLIST_SELECTION and updated_context.get("pending_recommendations"):
+            response_text += self._build_recommendation_follow_up(updated_context)
+            updated_context["recommendations_shown"] = True
+
         return {
-            **add_message(state, "assistant", result.response_text),
-            "mode_context": {**updated_context, "booking_step": next_step},
+            **add_message(state, "assistant", response_text),
+            "mode_context": self._finalize_mode_context(
+                updated_context,
+                next_step,
+                BookingSubstep.SERVICE_SELECTION,
+            ),
             "last_node": "booking",
             "user_message": None,
         }
@@ -318,10 +603,33 @@ class BookingMode(BaseModeNode):
         from agent.tools.info_tools import list_stylists
 
         service_name = mode_context.get("service_name", "el servicio solicitado")
+        user_message = self._get_last_user_message(state)
+        updated_context = dict(mode_context)
+        recommended_from_reply = self._recommended_services_from_message(
+            user_message,
+            cast(list[str] | None, updated_context.get("pending_recommendations")),
+        )
+
+        if recommended_from_reply:
+            selected_services = self._selected_services(updated_context)
+            for recommendation in recommended_from_reply:
+                if recommendation not in selected_services:
+                    selected_services.append(recommendation)
+            updated_context["selected_services"] = selected_services
+            updated_context["pending_recommendations"] = [
+                item
+                for item in cast(list[str], updated_context.get("pending_recommendations") or [])
+                if item not in recommended_from_reply
+            ]
+
+        if updated_context.get("pending_recommendations") and self._message_declines_recommendations(user_message):
+            updated_context["pending_recommendations"] = []
+
+        updated_context = await self._populate_recurrent_stylist(state, updated_context)
 
         if self._use_optimized_prompts():
             messages = await self._build_layered_messages(
-                state, mode_context, step_name=STEP_STYLIST_SELECTION
+                state, updated_context, step_name=STEP_STYLIST_SELECTION
             )
         else:
             system = _SYSTEM_STYLIST_SELECTION.format(service_name=service_name)
@@ -329,12 +637,16 @@ class BookingMode(BaseModeNode):
         result = await self._run_agentic_loop(messages, tools=[list_stylists])
 
         next_step, updated_context = self._advance_step(
-            result, STEP_STYLIST_SELECTION, mode_context
+            result, BookingSubstep.STYLIST_SELECTION, updated_context
         )
 
         return {
             **add_message(state, "assistant", result.response_text),
-            "mode_context": {**updated_context, "booking_step": next_step},
+            "mode_context": self._finalize_mode_context(
+                updated_context,
+                next_step,
+                BookingSubstep.STYLIST_SELECTION,
+            ),
             "last_node": "booking",
             "user_message": None,
         }
@@ -345,14 +657,23 @@ class BookingMode(BaseModeNode):
         """Step 3: Help customer select a date/time slot."""
         from agent.tools.availability_tools import check_availability, find_next_available
 
+        user_message = self._get_last_user_message(state)
+        updated_context = dict(mode_context)
+        time_range = self._extract_time_range(user_message)
+        start_date_hint = self._extract_start_date_hint(user_message)
+        if time_range:
+            updated_context["availability_time_range"] = time_range
+        if start_date_hint:
+            updated_context["availability_start_date"] = start_date_hint
+
         if self._use_optimized_prompts():
             messages = await self._build_layered_messages(
-                state, mode_context, step_name=STEP_SLOT_SELECTION
+                state, updated_context, step_name=STEP_SLOT_SELECTION
             )
         else:
-            service_name = mode_context.get("service_name", "el servicio")
-            stylist_name = mode_context.get("stylist_name", "cualquier estilista")
-            duration_minutes = mode_context.get("service_duration_minutes")
+            service_name = updated_context.get("service_name", "el servicio")
+            stylist_name = updated_context.get("stylist_name", "cualquier estilista")
+            duration_minutes = updated_context.get("service_duration_minutes")
             duration_hint = (
                 f" | Duración aprox.: {duration_minutes} min" if duration_minutes else ""
             )
@@ -367,29 +688,33 @@ class BookingMode(BaseModeNode):
         )
 
         next_step, updated_context = self._advance_step(
-            result, STEP_SLOT_SELECTION, mode_context
+            result, BookingSubstep.SLOT_SELECTION, updated_context
         )
 
         return {
             **add_message(state, "assistant", result.response_text),
-            "mode_context": {**updated_context, "booking_step": next_step},
+            "mode_context": self._finalize_mode_context(
+                updated_context,
+                next_step,
+                BookingSubstep.SLOT_SELECTION,
+            ),
             "last_node": "booking",
             "user_message": None,
         }
 
-    async def _handle_customer_data(
+    async def _handle_notes(
         self, state: ConversationState, mode_context: dict
     ) -> dict:
-        """Step 4: Collect customer name and optional notes."""
+        """Step 4: Collect optional booking notes without asking for the name."""
         if self._use_optimized_prompts():
             messages = await self._build_layered_messages(
-                state, mode_context, step_name=STEP_CUSTOMER_DATA
+                state, mode_context, step_name=STEP_NOTES
             )
         else:
             service_name = mode_context.get("service_name", "el servicio")
             stylist_name = mode_context.get("stylist_name", "la estilista")
             slot_summary = mode_context.get("slot_summary", "la fecha seleccionada")
-            system = _SYSTEM_CUSTOMER_DATA.format(
+            system = _SYSTEM_NOTES.format(
                 service_name=service_name,
                 stylist_name=stylist_name,
                 slot_summary=slot_summary,
@@ -397,16 +722,19 @@ class BookingMode(BaseModeNode):
             messages = self._build_messages(state, system)
         result = await self._run_agentic_loop(messages, tools=[])
 
-        # Extract name/notes from latest user message
-        updated_context = self._extract_customer_data(state, mode_context)
+        updated_context = self._extract_notes(state, mode_context)
 
         next_step, updated_context = self._advance_step(
-            result, STEP_CUSTOMER_DATA, updated_context
+            result, BookingSubstep.NOTES, updated_context, state=state
         )
 
         return {
             **add_message(state, "assistant", result.response_text),
-            "mode_context": {**updated_context, "booking_step": next_step},
+            "mode_context": self._finalize_mode_context(
+                updated_context,
+                next_step,
+                BookingSubstep.NOTES,
+            ),
             "last_node": "booking",
             "user_message": None,
         }
@@ -423,7 +751,7 @@ class BookingMode(BaseModeNode):
             service_name = mode_context.get("service_name", "el servicio")
             stylist_name = mode_context.get("stylist_name", "la estilista")
             slot_summary = mode_context.get("slot_summary", "la fecha")
-            first_name = mode_context.get("first_name", "Cliente")
+            customer_name = self._resolve_customer_name(state, mode_context)
             notes = mode_context.get("notes", "")
             notes_line = f"- Notas: {notes}" if notes else ""
 
@@ -431,19 +759,23 @@ class BookingMode(BaseModeNode):
                 service_name=service_name,
                 stylist_name=stylist_name,
                 slot_summary=slot_summary,
-                first_name=first_name,
+                customer_name=customer_name,
                 notes_line=notes_line,
             )
             messages = self._build_messages(state, system)
         result = await self._run_agentic_loop(messages, tools=[])
 
         next_step, updated_context = self._advance_step(
-            result, STEP_CONFIRMATION, mode_context
+            result, BookingSubstep.CONFIRMATION, mode_context
         )
 
         return {
             **add_message(state, "assistant", result.response_text),
-            "mode_context": {**updated_context, "booking_step": next_step},
+            "mode_context": self._finalize_mode_context(
+                updated_context,
+                next_step,
+                BookingSubstep.CONFIRMATION,
+            ),
             "last_node": "booking",
             "user_message": None,
         }
@@ -453,11 +785,12 @@ class BookingMode(BaseModeNode):
     ) -> dict:
         """Step 6: Execute book() tool and confirm booking."""
         from agent.tools.booking_tools import book
+        from agent.state.schemas import transition_mode
 
         service_name = mode_context.get("service_name", "")
         stylist_id = mode_context.get("stylist_id")
         selected_slot = mode_context.get("selected_slot", {})
-        first_name = mode_context.get("first_name", "")
+        first_name = self._resolve_customer_name(state, mode_context)
         notes = mode_context.get("notes", "")
 
         customer_id = state.get("customer_id") or ""
@@ -467,7 +800,7 @@ class BookingMode(BaseModeNode):
         error_text: str | None = None
 
         # Build services list: prefer resolved service_name, fallback to empty list
-        services_list: list[str] = [service_name] if service_name else []
+        services_list = self._selected_services(mode_context)
 
         try:
             booking_result = await book.ainvoke({
@@ -499,7 +832,11 @@ class BookingMode(BaseModeNode):
             result = await self._run_agentic_loop(messages, tools=[])
             return {
                 **add_message(state, "assistant", result.response_text),
-                "mode_context": {**mode_context, "booking_step": STEP_CONFIRMATION},  # go back
+                "mode_context": self._finalize_mode_context(
+                    mode_context,
+                    BookingSubstep.CONFIRMATION,
+                    BookingSubstep.COMPLETED,
+                ),
                 "last_node": "booking",
                 "user_message": None,
             }
@@ -515,9 +852,14 @@ class BookingMode(BaseModeNode):
             messages = self._build_messages(state, system)
         result = await self._run_agentic_loop(messages, tools=[])
 
+        transition_update = transition_mode(state, "GENERAL")
+        draft_contexts = dict(transition_update.get("draft_contexts") or {})
+        draft_contexts.pop("BOOKING", None)
+
         return {
+            **transition_update,
+            "draft_contexts": draft_contexts,
             **add_message(state, "assistant", result.response_text),
-            "mode_context": {**mode_context, "booking_step": STEP_COMPLETED, "booked": True},
             "appointment_created": True,
             "last_node": "booking",
             "user_message": None,
@@ -593,26 +935,29 @@ class BookingMode(BaseModeNode):
 
         return None, None
 
-    def _determine_step(self, mode_context: dict) -> str:
+    def _determine_step(self, mode_context: Mapping[str, Any]) -> BookingSubstep:
         """
         Determine the current booking sub-step from mode_context.
 
         Returns the booking_step value or defaults to service_selection.
         """
         step = mode_context.get("booking_step", STEP_SERVICE_SELECTION)
-        if step not in _STEP_ORDER:
+        try:
+            return normalize_booking_substep(step)
+        except ValueError:
             self.logger.warning(
                 "BookingMode: unknown step %r, defaulting to service_selection", step
             )
-            return STEP_SERVICE_SELECTION
-        return step
+            return BookingSubstep.SERVICE_SELECTION
 
     def _advance_step(
         self,
         result: AgenticLoopResult,
-        current_step: str,
+        current_step: BookingSubstep | str,
         mode_context: dict,
-    ) -> tuple[str, dict]:
+        *,
+        state: ConversationState | None = None,
+    ) -> tuple[BookingSubstep, BookingDraftContext]:
         """
         Decide whether to advance to the next step based on what was collected.
 
@@ -629,6 +974,7 @@ class BookingMode(BaseModeNode):
         Returns:
             Tuple of (next_step, updated_mode_context)
         """
+        current_substep = normalize_booking_substep(current_step)
         updated_context = dict(mode_context)
         # BUG-1A FIX: always clear stale pending_clarification at start of each turn
         updated_context.pop("pending_clarification", None)
@@ -649,6 +995,16 @@ class BookingMode(BaseModeNode):
                         "service_duration_minutes", svc.get("duration_minutes")
                     )
                     updated_context.setdefault("service_family", svc.get("family"))
+                    selected_services = self._selected_services(updated_context)
+                    if svc.get("name") and svc.get("name") not in selected_services:
+                        selected_services = [svc.get("name"), *selected_services]
+                    updated_context["selected_services"] = selected_services
+                    recommendations = [
+                        str(item) for item in svc.get("combo_recommendations", []) if str(item).strip()
+                    ]
+                    if recommendations:
+                        updated_context["pending_recommendations"] = recommendations
+                        updated_context["recommendations_shown"] = False
                     # Clear any stale clarification now that we have a resolved service
                     updated_context.pop("pending_clarification", None)
 
@@ -664,6 +1020,11 @@ class BookingMode(BaseModeNode):
                 elif "services" in envelope:
                     # Shape 3: ranked fuzzy matches (fallback)
                     services = envelope["services"]
+                    if isinstance(services, list):
+                        updated_context["candidate_services"] = services
+                        updated_context["candidate_service_ids"] = [
+                            svc.get("id") for svc in services if svc.get("id")
+                        ]
                     if isinstance(services, list) and len(services) == 1:
                         svc = services[0]
                         updated_context.setdefault("service_name", svc.get("name", ""))
@@ -672,6 +1033,7 @@ class BookingMode(BaseModeNode):
                         updated_context.setdefault(
                             "service_duration_minutes", svc.get("duration_minutes")
                         )
+                        updated_context["selected_services"] = self._selected_services(updated_context)
                         updated_context.pop("pending_clarification", None)
                     # Multiple services → LLM presents options, no auto-advance
             elif isinstance(envelope, list):
@@ -685,6 +1047,8 @@ class BookingMode(BaseModeNode):
         # Extract stylist from tool results if single result
         if "list_stylists" in tool_results:
             stylists = tool_results["list_stylists"]
+            if isinstance(stylists, dict):
+                stylists = stylists.get("stylists", [])
             if isinstance(stylists, list) and len(stylists) == 1:
                 stylist = stylists[0]
                 updated_context.setdefault("stylist_id", str(stylist.get("id", "")))
@@ -694,12 +1058,24 @@ class BookingMode(BaseModeNode):
         for slot_tool in ("check_availability", "find_next_available"):
             if slot_tool in tool_results:
                 slots = tool_results[slot_tool]
+                if isinstance(slots, dict):
+                    if slot_tool == "check_availability":
+                        slots = slots.get("available_slots", [])
+                    else:
+                        preferred_slots = slots.get("selected_stylist_slots") or []
+                        soonest_any = [slots["soonest_any"]] if slots.get("soonest_any") else []
+                        slots = preferred_slots or soonest_any or slots.get("available_dates", [])
                 if isinstance(slots, list) and slots:
                     first_slot = slots[0]
                     updated_context.setdefault("selected_slot", first_slot)
                     updated_context.setdefault(
                         "slot_summary",
-                        first_slot.get("start_time", "fecha seleccionada")
+                        first_slot.get("start_time")
+                        or first_slot.get("full_datetime")
+                        or (
+                            f"{first_slot.get('date', '')} {first_slot.get('time', '')}".strip()
+                            or "fecha seleccionada"
+                        )
                     )
                 elif isinstance(slots, dict) and "start_time" in slots:
                     updated_context.setdefault("selected_slot", slots)
@@ -708,77 +1084,143 @@ class BookingMode(BaseModeNode):
                         slots.get("start_time", "fecha seleccionada")
                     )
 
+        if current_substep == BookingSubstep.NOTES:
+            if "customer_name" not in updated_context:
+                updated_context["customer_name"] = self._resolve_customer_name(state, updated_context)
+
         # Apply advancement rules
-        if current_step == STEP_SERVICE_SELECTION:
+        next_substep = current_substep
+
+        if current_substep == BookingSubstep.SERVICE_SELECTION:
             # Do not advance if clarification is still pending
             if updated_context.get("pending_clarification"):
-                return STEP_SERVICE_SELECTION, updated_context
-            if updated_context.get("service_name"):
-                return STEP_STYLIST_SELECTION, updated_context
+                next_substep = BookingSubstep.SERVICE_SELECTION
+            elif updated_context.get("service_name"):
+                next_substep = BookingSubstep.STYLIST_SELECTION
 
-        elif current_step == STEP_STYLIST_SELECTION:
+        elif current_substep == BookingSubstep.STYLIST_SELECTION:
             if updated_context.get("stylist_id"):
-                return STEP_SLOT_SELECTION, updated_context
+                next_substep = BookingSubstep.SLOT_SELECTION
 
-        elif current_step == STEP_SLOT_SELECTION:
+        elif current_substep == BookingSubstep.SLOT_SELECTION:
             if updated_context.get("selected_slot"):
-                return STEP_CUSTOMER_DATA, updated_context
+                next_substep = BookingSubstep.NOTES
+            else:
+                slot_payload = tool_results.get("check_availability") or tool_results.get("find_next_available") or {}
+                if isinstance(slot_payload, dict):
+                    empty_slots = not (slot_payload.get("available_slots") or slot_payload.get("selected_stylist_slots"))
+                    if empty_slots and updated_context.get("stylist_id"):
+                        next_substep = BookingSubstep.STYLIST_SELECTION
 
-        elif current_step == STEP_CUSTOMER_DATA:
-            # Accept both "first_name" and "booking_first_name" as the name key
-            if updated_context.get("first_name") or updated_context.get("booking_first_name"):
-                return STEP_CONFIRMATION, updated_context
+        elif current_substep == BookingSubstep.NOTES:
+            if state and self._has_user_reply(state):
+                next_substep = BookingSubstep.CONFIRMATION
 
-        elif current_step == STEP_CONFIRMATION:
+        elif current_substep == BookingSubstep.CONFIRMATION:
             last_intent = str(updated_context.get("last_intent", "")).lower()
             if last_intent in ("confirm", "confirmación", "sí", "si", "yes"):
-                return STEP_COMPLETED, updated_context
+                next_substep = BookingSubstep.COMPLETED
 
-        # No advancement — stay at current step
-        return current_step, updated_context
+        return next_substep, self._finalize_mode_context(
+            updated_context,
+            next_substep,
+            current_substep,
+        )
 
-    def _extract_customer_data(
-        self, state: ConversationState, mode_context: dict
-    ) -> dict:
+    def _extract_notes(self, state: ConversationState, mode_context: dict) -> dict:
         """
-        Extract first_name and notes from the most recent user message.
+        Extract optional booking notes from the latest user message.
 
-        Simple heuristic: treat the user message as the name if it's short (≤ 4 words)
-        or look for known patterns like "me llamo", "soy", "mi nombre es".
-
-        Returns updated mode_context with first_name and/or notes set.
+        Returns updated mode_context with notes normalized and customer name preserved.
         """
         updated_context = dict(mode_context)
+        updated_context["customer_name"] = self._resolve_customer_name(state, updated_context)
 
-        # Find last user message
-        user_message = ""
-        for msg in reversed(state.get("messages", [])):
-            if msg.get("role") == "user":
-                user_message = msg.get("content", "")
-                break
+        user_message = self._get_last_user_message(state).strip()
+
         if not user_message:
-            user_message = state.get("user_message") or ""
-
-        if not user_message.strip():
             return updated_context
 
-        # If we don't have a name yet, try to extract it
-        if not updated_context.get("first_name"):
-            words = user_message.strip().split()
-            filler = {"me", "llamo", "soy", "mi", "nombre", "es", "el", "la"}
-            name_words = [w for w in words if w.lower() not in filler]
-            if name_words and len(name_words) <= 4:
-                candidate = name_words[0].capitalize()
-                if len(candidate) > 1:
-                    updated_context["first_name"] = candidate
+        normalized = user_message.lower()
+        skip_tokens = {
+            "no",
+            "no gracias",
+            "no, gracias",
+            "no, nada mas",
+            "no, nada más",
+            "nada",
+            "nada mas",
+            "nada más",
+            "todo bien",
+            "ninguna",
+        }
+        if normalized in skip_tokens:
+            updated_context["notes"] = None
+            return updated_context
 
-        # If name is already set, treat new message as notes
-        elif not updated_context.get("notes") and len(user_message.strip()) > 3:
-            # Ignore simple affirmative/negative words as notes
-            if user_message.strip().lower() not in {"no", "si", "sí", "nada", "ninguna"}:
-                updated_context["notes"] = user_message.strip()
+        updated_context["notes"] = user_message
 
         return updated_context
+
+    def _resolve_customer_name(self, state: ConversationState | None, mode_context: dict) -> str:
+        """Resolve the customer name from mode context or state without re-asking."""
+
+        if mode_context.get("customer_name"):
+            return str(mode_context["customer_name"])
+        if not state:
+            return "Cliente"
+        for field_name in ("customer_first_name", "customer_name"):
+            value = state.get(field_name)
+            if value:
+                return str(value)
+        return "Cliente"
+
+    def _has_user_reply(self, state: ConversationState) -> bool:
+        """Return True when the current turn contains user text."""
+
+        return bool(self._get_last_user_message(state).strip())
+
+    def _hydrate_mode_context(self, mode_context: dict[str, Any]) -> BookingDraftContext:
+        """Normalize persisted booking context before dispatching handlers."""
+
+        candidate = dict(mode_context)
+        current_substep = self._determine_step(candidate)
+        candidate["booking_step"] = current_substep.value
+        try:
+            return validate_booking_context(candidate)
+        except ValueError as exc:
+            self.logger.warning("BookingMode: continuing with partial context: %s", exc)
+            return cast(BookingDraftContext, candidate)
+
+    def _finalize_mode_context(
+        self,
+        mode_context: Mapping[str, Any],
+        next_substep: BookingSubstep | str,
+        previous_substep: BookingSubstep | str | None,
+    ) -> BookingDraftContext:
+        """Persist the next booking substep and validate the resulting draft."""
+
+        target = normalize_booking_substep(next_substep)
+        candidate = dict(mode_context)
+        candidate["booking_step"] = target.value
+
+        if previous_substep is not None:
+            previous = normalize_booking_substep(previous_substep)
+            if previous == BookingSubstep.COMPLETED and target == BookingSubstep.COMPLETED:
+                return cast(BookingDraftContext, candidate)
+            if target not in ALLOWED_TRANSITIONS[previous]:
+                raise ValueError(f"Invalid booking transition: {previous.value} -> {target.value}")
+            try:
+                return validate_booking_context(candidate, previous_substep=previous)
+            except ValueError as exc:
+                self.logger.warning("BookingMode: partial context after transition: %s", exc)
+                return cast(BookingDraftContext, candidate)
+
+        try:
+            return validate_booking_context(candidate)
+        except ValueError as exc:
+            self.logger.warning("BookingMode: partial context without validation: %s", exc)
+            return cast(BookingDraftContext, candidate)
 
     def _build_messages(self, state: ConversationState, system_content: str) -> list:
         """
@@ -790,8 +1232,9 @@ class BookingMode(BaseModeNode):
         3. Recent 6 messages from history
         """
         system = system_content
-        if state.get("conversation_summary"):
-            system += f"\n\nContexto previo:\n{state['conversation_summary']}"
+        summary = state.get("conversation_summary")
+        if summary:
+            system += f"\n\nContexto previo:\n{summary}"
 
         messages: list = [SystemMessage(content=system)]
 

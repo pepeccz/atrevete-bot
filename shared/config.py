@@ -148,6 +148,14 @@ class Settings(BaseSettings):
             "When False, falls back to legacy inline prompts for backward compatibility."
         ),
     )
+    USE_SUBSTEP_PROMPTS: bool = Field(
+        default=True,
+        description=(
+            "Feature flag for booking substep prompt overlays. When True, the booking flow "
+            "may load focused per-substep instructions on top of the optimized prompt stack. "
+            "When False, booking mode must keep using legacy inline guidance."
+        ),
+    )
 
     # Application Settings
     TIMEZONE: str = Field(default="Europe/Madrid")

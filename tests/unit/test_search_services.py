@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import uuid
+from importlib.machinery import ModuleSpec
 from types import ModuleType
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -39,29 +40,33 @@ def _load_search_services_module():
     The module uses `from langchain_core.tools import tool` at import time.
     We stub langchain_core so the @tool decorator becomes a no-op.
     """
-    # Stub langchain_core before loading
-    if "langchain_core.tools" not in sys.modules:
-        def _tool_decorator(fn=None, args_schema=None, **kwargs):
-            """Minimal @tool stub that returns the function unchanged."""
-            if fn is None:
-                def wrapper(f):
-                    # Attach an ainvoke method so tests can call it
-                    async def ainvoke(args: dict[str, Any]):
-                        return await f(**args)
-                    f.ainvoke = ainvoke
-                    return f
-                return wrapper
-            # Direct decoration (no args)
-            async def ainvoke(args: dict[str, Any]):
-                return await fn(**args)
-            fn.ainvoke = ainvoke
-            return fn
+    # Prefer the real langchain_core package when available so this module does
+    # not poison the rest of the test session with a fake top-level package.
+    try:
+        import langchain_core.tools  # noqa: F401
+    except ImportError:
+        if "langchain_core.tools" not in sys.modules:
+            def _tool_decorator(fn=None, args_schema=None, **kwargs):
+                """Minimal @tool stub that returns the function unchanged."""
+                if fn is None:
+                    def wrapper(f):
+                        # Attach an ainvoke method so tests can call it
+                        async def ainvoke(args: dict[str, Any]):
+                            return await f(**args)
+                        f.ainvoke = ainvoke
+                        return f
+                    return wrapper
+                # Direct decoration (no args)
+                async def ainvoke(args: dict[str, Any]):
+                    return await fn(**args)
+                fn.ainvoke = ainvoke
+                return fn
 
-        lc_stub = ModuleType("langchain_core")
-        lc_tools_stub = ModuleType("langchain_core.tools")
-        lc_tools_stub.tool = _tool_decorator
-        sys.modules["langchain_core"] = lc_stub
-        sys.modules["langchain_core.tools"] = lc_tools_stub
+            lc_stub = ModuleType("langchain_core")
+            lc_tools_stub = ModuleType("langchain_core.tools")
+            setattr(lc_tools_stub, "tool", _tool_decorator)
+            sys.modules["langchain_core"] = lc_stub
+            sys.modules["langchain_core.tools"] = lc_tools_stub
 
     import importlib.util
     import os
@@ -74,6 +79,8 @@ def _load_search_services_module():
         "agent.tools.search_services_standalone",
         module_path,
     )
+    assert isinstance(spec, ModuleSpec)
+    assert spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -197,6 +204,32 @@ BIOTERAPIA_FACIAL = _make_service(
     metadata_={},  # No disambiguation metadata
 )
 
+CORTAR = _make_service(
+    "Cortar",
+    duration_minutes=40,
+    description="Corte capilar completo con lavado incluido",
+    metadata_={
+        "family": "haircut",
+        "audience": "adult_female",
+        "disambiguation_tags": [
+            "cortar",
+            "corte",
+            "corte adulto",
+            "corte mujer",
+            "corte señora",
+            "corte dama",
+            "mujer adulta",
+            "señora",
+            "dama",
+        ],
+        "ask_if_missing": [],
+        "variant": None,
+        "hair_length": None,
+        "hair_density": None,
+        "combo_recommendations": [],
+    },
+)
+
 
 # ---------------------------------------------------------------------------
 # Context manager mock for get_async_session
@@ -317,6 +350,58 @@ class TestSearchServicesEnvelope:
         assert resolved["duration_minutes"] == 40
         assert "id" in resolved
         assert result["count"] == 1
+
+
+class TestMetadataAwareScoring:
+    @pytest.mark.parametrize("query", ["corte mujer", "dama", "señora", "mujer adulta"])
+    def test_female_haircut_queries_score_cortar_above_cutoff(self, query: str):
+        score = _ss_mod._calculate_service_score(query, CORTAR)
+
+        assert score >= 60
+
+    def test_female_haircut_query_ranks_cortar_above_corte_caballero(self):
+        cortar_score = _ss_mod._calculate_service_score("corte mujer", CORTAR)
+        caballero_score = _ss_mod._calculate_service_score("corte mujer", CORTE_CABALLERO)
+
+        assert cortar_score > caballero_score
+        assert cortar_score >= 60
+
+    def test_corte_caballero_query_keeps_male_haircut_ranked_above_cortar(self):
+        caballero_score = _ss_mod._calculate_service_score("corte caballero", CORTE_CABALLERO)
+        cortar_score = _ss_mod._calculate_service_score("corte caballero", CORTAR)
+
+        assert caballero_score > cortar_score
+
+    def test_existing_good_paths_still_score_above_cutoff(self):
+        assert _ss_mod._calculate_service_score("mechas", MECHAS) >= 60
+        assert _ss_mod._calculate_service_score("peinado", PEINADO) >= 60
+
+    @pytest.mark.parametrize(
+        ("query", "service"),
+        [
+            ("mechas", MECHAS),
+            ("peinado", PEINADO),
+            ("corte caballero", CORTE_CABALLERO),
+        ],
+    )
+    def test_phase5_regression_queries_keep_expected_services_above_cutoff(self, query: str, service: MagicMock):
+        assert _ss_mod._calculate_service_score(query, service) >= 60
+
+    @pytest.mark.parametrize("query", ["mujer adulta", "corte dama", "corte señora"])
+    async def test_phase5_adult_female_synonyms_resolve_cortar(self, query: str):
+        with _patch_db([CORTAR, CORTE_CABALLERO]):
+            result = await _invoke(query)
+
+        assert "resolved_service" in result
+        assert result["resolved_service"]["name"] == "Cortar"
+
+    def test_phase5_scoring_uses_bounded_similarity_calls(self):
+        tag_count = len(CORTAR.metadata_["disambiguation_tags"])
+        with patch.object(_ss_mod.fuzz, "token_set_ratio", return_value=80) as mocked_ratio:
+            score = _ss_mod._calculate_service_score("corte dama", CORTAR)
+
+        assert score >= 60
+        assert mocked_ratio.call_count == tag_count + 2
 
     async def test_resolved_service_has_id_field(self):
         """resolved_service envelope must include id (restored in v3.2)."""

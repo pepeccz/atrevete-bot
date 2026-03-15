@@ -163,7 +163,13 @@ class BaseModeNode(ABC):
         """
         step_info = {"step_name": step_name} if step_name else None
         return await build_layered_messages(
-            state, mode_context, step_info, include_history, history_limit
+            state,
+            mode_context,
+            step_info,
+            include_history,
+            history_limit,
+            mode_name=self.mode_name,
+            substep=step_name,
         )
 
     def _use_optimized_prompts(self) -> bool:

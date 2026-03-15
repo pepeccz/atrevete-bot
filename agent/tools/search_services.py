@@ -158,9 +158,11 @@ def _calculate_service_score(query: str, service: "Service") -> float:
 
     Scoring algorithm:
     1. Exact substring match in name: +30 boost
-    2. Fuzzy match on name: 70% weight
-    3. Fuzzy match on description: 30% weight
-    4. Final score capped at 100
+    2. Fuzzy match on name: 50% weight
+    3. Fuzzy match on description: 10% weight
+    4. Fuzzy match on disambiguation tags: 40% weight
+    5. Exact/substring tag match: +25 boost
+    6. Final score capped at 100
 
     Args:
         query: Search query (already expanded with synonyms)
@@ -172,21 +174,36 @@ def _calculate_service_score(query: str, service: "Service") -> float:
     query_lower = query.lower().strip()
     name_lower = service.name.lower()
 
-    # Exact substring match in name gets big boost
-    # This ensures "corte" matches "Corte + Peinado" over "Pack Óleo Pigmento"
+    # Exact substring match in name gets big boost.
     substring_boost = 30 if query_lower in name_lower else 0
 
-    # Fuzzy match on name (weight: 70%)
-    # token_set_ratio handles word order: "peinado corte" matches "Corte + Peinado"
+    # Fuzzy match on name (weight: 50%)
     name_score = fuzz.token_set_ratio(query_lower, name_lower)
 
-    # Fuzzy match on description (weight: 30%)
+    # Fuzzy match on description (weight: 10%)
     desc_score = 0
     if service.description:
         desc_score = fuzz.token_set_ratio(query_lower, service.description.lower()[:150])
 
+    # Metadata-aware fuzzy match on disambiguation tags (weight: 40%)
+    tag_score = 0
+    tag_boost = 0
+    metadata = service.metadata_ or {}
+    raw_tags = metadata.get("disambiguation_tags") or []
+    tags = [str(tag).strip().lower() for tag in raw_tags if str(tag).strip()]
+    if tags:
+        tag_score = max(fuzz.token_set_ratio(query_lower, tag) for tag in tags)
+        if any(query_lower in tag or tag in query_lower for tag in tags):
+            tag_boost = 25
+
     # Weighted final score
-    final_score = (name_score * 0.7) + (desc_score * 0.3) + substring_boost
+    final_score = (
+        (name_score * 0.5)
+        + (desc_score * 0.1)
+        + (tag_score * 0.4)
+        + substring_boost
+        + tag_boost
+    )
 
     return min(final_score, 100)  # Cap at 100
 
@@ -402,7 +419,8 @@ async def search_services(
 
         logger.info(
             f"Found {len(top_matches)} matches | original='{query}' | expanded='{expanded_query}' | "
-            f"scorer=weighted(name:70%,desc:30%,substring_boost:+30) | cutoff=60 | limit={max_results}"
+            f"scorer=weighted(name:50%,desc:10%,tags:40%,substring_boost:+30,tag_boost:+25) | "
+            f"cutoff=60 | limit={max_results}"
         )
 
         # Step 3: Try metadata-based disambiguation on the top matches

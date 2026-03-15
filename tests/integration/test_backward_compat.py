@@ -48,6 +48,18 @@ class TestBackwardCompatibilityFeatureFlag:
                 assert settings.USE_OPTIMIZED_PROMPTS == expected, \
                     f"Failed for env_value='{env_value}'"
 
+    def test_use_substep_prompts_default_is_true(self):
+        """Test that USE_SUBSTEP_PROMPTS defaults to True."""
+        with patch.dict(os.environ, {}, clear=True):
+            settings = Settings()
+            assert settings.USE_SUBSTEP_PROMPTS is True
+
+    def test_use_substep_prompts_can_be_disabled(self):
+        """Test that USE_SUBSTEP_PROMPTS can be set to False."""
+        with patch.dict(os.environ, {"USE_SUBSTEP_PROMPTS": "false"}):
+            settings = Settings()
+            assert settings.USE_SUBSTEP_PROMPTS is False
+
 
 class TestLegacyPromptLoading:
     """Test cases for legacy prompt loading when feature flag is disabled."""

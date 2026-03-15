@@ -217,12 +217,6 @@ class ConversationState(TypedDict, total=False):
         booking_confirmed: True after user confirms booking summary
         appointment_created: True after book() successfully creates appointment
 
-        # FSM State - ADR-011: Single Source of Truth (1 field)
-        fsm_state: Consolidated FSM state from BookingFSM
-            Structure: {"state": str, "collected_data": dict, "last_updated": str}
-            Use BookingFSM.to_dict() to serialize, BookingFSM.from_dict() to deserialize
-            Replaces separate fsm:{conversation_id} Redis key (eliminated dual persistence)
-
         # Node Tracking (1 field)
         last_node: Last executed node (for debugging)
 
@@ -286,7 +280,7 @@ class ConversationState(TypedDict, total=False):
     # ============================================================================
     # FSM State - ADR-011: Single Source of Truth (1 field)
     # ============================================================================
-    fsm_state: dict[str, Any] | None  # BookingFSM serialized state: {state, collected_data, last_updated}
+    fsm_state: dict[str, Any] | None  # DEPRECATED: use booking substep context instead
 
     # ============================================================================
     # Node Tracking (1 field)
@@ -316,8 +310,17 @@ class ConversationState(TypedDict, total=False):
     pending_cancellation_id: str | None  # UUID of appointment selected for cancellation
     cancellation_appointments: list[dict[str, Any]] | None  # Appointments shown for selection
 
+# ============================================================================
+    # Booking State Flags (5 fields) - created by book tool result
     # ============================================================================
-    # Pending Decline State (2 fields) - v3.5 double confirmation for cancellation
+    customer_data_collected: bool  # True after manage_customer returns customer_id
+    service_selected: list[str] | None  # List of service names selected by user (supports multi-service booking)
+    slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
+    booking_confirmed: bool  # True after user confirms booking summary
+    appointment_created: bool  # True after book() successfully creates appointment
+
+    # ============================================================================
+    # Node Tracking (1 field)
     # ============================================================================
     pending_decline_appointment_id: str | None  # UUID of appointment pending decline confirmation
     pending_decline_initiated_at: str | None  # ISO 8601 timestamp when decline was initiated
@@ -398,8 +401,6 @@ def create_initial_state(
         "slot_selected": None,
         "booking_confirmed": False,
         "appointment_created": False,
-        # FSM
-        "fsm_state": None,
         # Node tracking
         "last_node": None,
         # Timestamps (ISO 8601 strings)

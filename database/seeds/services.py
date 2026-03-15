@@ -176,7 +176,7 @@ HAIRDRESSING_SERVICES = [
             "variant": None,
             "hair_length": None,
             "hair_density": None,
-            "combo_recommendations": [],
+            "combo_recommendations": ["Peinado", "Barro", "Óleo Pigmento"],
         },
     },
     {
@@ -293,7 +293,17 @@ HAIRDRESSING_SERVICES = [
         "metadata_": {
             "family": "haircut",
             "audience": "adult_female",
-            "disambiguation_tags": ["cortar", "corte", "corte adulto", "corte mujer", "corte señora", "corte dama"],
+            "disambiguation_tags": [
+                "cortar",
+                "corte",
+                "corte adulto",
+                "corte mujer",
+                "corte señora",
+                "corte dama",
+                "mujer adulta",
+                "señora",
+                "dama",
+            ],
             "ask_if_missing": [],
             "variant": None,
             "hair_length": None,
@@ -314,7 +324,7 @@ HAIRDRESSING_SERVICES = [
             "variant": "long",
             "hair_length": "long",
             "hair_density": None,
-            "combo_recommendations": [],
+            "combo_recommendations": ["Barro", "Óleo Pigmento"],
         },
     },
     {
@@ -336,7 +346,7 @@ HAIRDRESSING_SERVICES = [
             "variant": "extra",
             "hair_length": "long",
             "hair_density": "extra",
-            "combo_recommendations": [],
+            "combo_recommendations": ["Barro", "Óleo Pigmento"],
         },
     },
     {
@@ -396,7 +406,7 @@ HAIRDRESSING_SERVICES = [
             "variant": "standard",
             "hair_length": "short_medium",
             "hair_density": None,
-            "combo_recommendations": [],
+            "combo_recommendations": ["Barro", "Óleo Pigmento"],
         },
     },
     {

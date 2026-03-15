@@ -528,6 +528,16 @@ class TestPromptCacheIntegration:
         # (Allowing for test variability)
         assert hit_time < miss_time * 2  # Hit should be at most 2x slower than miss
 
+    @pytest.mark.asyncio
+    async def test_cached_system_prompt_avoids_reloading_markdown_files(self):
+        with patch("agent.prompts.loader.load_markdown", side_effect=["id", "rules", "glossary"]) as mocked_load:
+            clear_prompt_cache()
+            first = await get_system_prompt()
+            second = await get_system_prompt()
+
+        assert first == second
+        assert mocked_load.call_count == 3
+
 
 class TestPromptCacheEdgeCases:
     """Edge case tests for prompt caching."""
