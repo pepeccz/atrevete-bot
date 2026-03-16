@@ -1,30 +1,28 @@
 """
-FSM module for booking flow control (v5.0 prescriptive architecture).
+FSM module for booking flow control (legacy v5.0 prescriptive architecture).
 
-This module provides the BookingFSM class and related models for controlling
-the booking conversation flow. The FSM validates state transitions, accumulates
-data, and persists state to checkpoint (ADR-011: single source of truth).
+NOTICE: The BookingFSM core is DEPRECATED and removed in v6.0.
+Only models remain for service-level intent type definitions.
 
-v5.0 Changes:
-- REMOVED: tool_validation.py (FSM now prescribes tools, no post-hoc validation)
-- REMOVED: response_validator.py (templates prevent hallucinations, no reactive validation)
-- ADDED: get_required_action() returns FSMAction (prescriptive tool execution)
+v6.0 Change:
+- REMOVED: BookingFSM (replaced by BookingSubstep-based mode architecture)
+- REMOVED: intent_extractor (replaced by v6.0 IntentRouter)
+- KEPT: models.py for IntentType used in cancellation/confirmation services
 
 Public exports:
-    - BookingFSM: Main FSM controller class with prescriptive actions
-    - BookingState: Enum of FSM states
+    - ActionType: Enum for action types (tool calls)
+    - FSMAction: Action structure (prescriptive tool execution)
+    - ToolCall: Tool call specification
+    - BookingState: Enum of FSM states (legacy)
     - Intent: Structured user intent representation
     - IntentType: Enum of recognized intent types
     - FSMResult: Result of FSM transition operations
     - CollectedData: TypedDict for accumulated booking data
+    - ResponseGuidance: Proactive response guidance (legacy)
     - SlotData: TypedDict for slot information
-    - extract_intent: LLM-based intent extraction function (NLU only)
-    - ResponseGuidance: Proactive response guidance (legacy, v4.0)
 """
 
-from agent.fsm.booking_fsm import BookingFSM
 from agent.fsm.fsm_action import ActionType, FSMAction, ToolCall
-from agent.fsm.intent_extractor import extract_intent
 from agent.fsm.models import (
     BookingState,
     CollectedData,
@@ -36,9 +34,8 @@ from agent.fsm.models import (
 )
 
 __all__ = [
-    # Core FSM (v5.0)
+    # Core types (still used in services)
     "ActionType",
-    "BookingFSM",
     "BookingState",
     "CollectedData",
     "FSMAction",
@@ -48,5 +45,4 @@ __all__ = [
     "ResponseGuidance",
     "SlotData",
     "ToolCall",
-    "extract_intent",
 ]

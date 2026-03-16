@@ -1,39 +1,20 @@
 """
-Routing layer for v5.0 prescriptive FSM architecture.
+Routing layer for v6.0 mode-based architecture.
 
-This module implements intent routing, separating booking flows (FSM prescribes tools)
-from non-booking flows (LLM handles conversationally with safe tools).
+This module implements intent routing using keyword + LLM hybrid classification.
 
 Key components:
-- IntentRouter: Routes intents to booking or non-booking handlers
-- BookingHandler: Prescriptive booking flow (FSM decides tools)
-- NonBookingHandler: Conversational FAQ/greeting flow (LLM decides)
-- ResponseFormatter: Formats responses using Jinja2 templates + LLM creativity
+- IntentRouter: Classifies intents and provides mode hints for the v6.0 router
 
-Architecture:
-    Intent → IntentRouter
-        ├─ BOOKING_INTENTS → BookingHandler
-        │   ↓
-        │   FSM.get_required_action() → FSMAction
-        │   ↓
-        │   Execute Prescribed Tools
-        │   ↓
-        │   ResponseFormatter (template + LLM creativity)
-        │
-        └─ NON_BOOKING_INTENTS → NonBookingHandler
-            ↓
-            LLM with Safe Tools (query_info, escalate)
-            ↓
-            Response
+v6.0 Changes:
+- REMOVED: BookingHandler (replaced by BookingMode)
+- REMOVED: NonBookingHandler (replaced by GeneralMode)
+- REMOVED: ResponseFormatter (handled by mode nodes)
+- KEPT: IntentRouter for intent classification
 """
 
-from agent.routing.booking_handler import BookingHandler, ResponseFormatter
 from agent.routing.intent_router import IntentRouter
-from agent.routing.non_booking_handler import NonBookingHandler
 
 __all__ = [
     "IntentRouter",
-    "BookingHandler",
-    "NonBookingHandler",
-    "ResponseFormatter",
 ]

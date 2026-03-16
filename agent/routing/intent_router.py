@@ -72,7 +72,6 @@ class IntentResult:
 if TYPE_CHECKING:
     from langchain_openai import ChatOpenAI
 
-    from agent.fsm import BookingFSM
     from agent.state.schemas import ConversationState
 
 logger = logging.getLogger(__name__)
@@ -482,47 +481,3 @@ class IntentRouter:
             raw_input=text,
             mode_hint=None,
         )
-
-    # ---- v5.0 static method (backward compatibility) ----
-
-    @staticmethod
-    async def route(
-        intent: Intent,
-        fsm: "BookingFSM",
-        state: "ConversationState",
-        llm: "ChatOpenAI",
-    ) -> tuple[str, dict | None]:
-        """
-        Route intent to appropriate handler.
-
-        Args:
-            intent: Extracted user intent
-            fsm: BookingFSM instance (contains state + collected_data)
-            state: Conversation state
-            llm: LLM client for response generation
-
-        Returns:
-            Tuple of (response_text, state_updates)
-            - response_text: Assistant response text
-            - state_updates: Dict of state fields to update (or None)
-        """
-        is_booking = intent.type in IntentRouter.BOOKING_INTENTS
-
-        logger.info(
-            f"Routing intent | type={intent.type.value} | "
-            f"is_booking={is_booking} | fsm_state={fsm.state.value}"
-        )
-
-        if is_booking:
-            # Prescriptive flow: FSM decides tools
-            from agent.routing.booking_handler import BookingHandler
-
-            handler = BookingHandler(fsm, state, llm)
-            return await handler.handle(intent), None
-        else:
-            # Conversational flow: LLM handles with safe tools
-            from agent.routing.non_booking_handler import NonBookingHandler
-
-            handler = NonBookingHandler(state, llm, fsm)
-            # NonBookingHandler returns (response, state_updates)
-            return await handler.handle(intent)
