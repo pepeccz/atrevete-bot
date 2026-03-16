@@ -33,6 +33,20 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import type { ConversationHistory, ConversationMessage, Customer } from "@/lib/types";
 
+function getConversationCustomerName(
+  conversation: Pick<ConversationHistory, "customer_id" | "customer_name">,
+  customerMap: Record<string, Customer>
+): string | null {
+  if (conversation.customer_id) {
+    const customer = customerMap[conversation.customer_id];
+    if (customer) {
+      return `${customer.first_name} ${customer.last_name || ""}`.trim();
+    }
+  }
+
+  return conversation.customer_name;
+}
+
 // Format date for display
 function formatDate(dateString: string | null): string {
   if (!dateString) return "-";
@@ -84,11 +98,13 @@ function ConversationDetailModal({
   onOpenChange,
   conversation,
   customer,
+  customerName,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   conversation: ConversationHistory | null;
   customer: Customer | null;
+  customerName: string | null;
 }) {
   if (!conversation) return null;
 
@@ -108,7 +124,7 @@ function ConversationDetailModal({
           <DialogDescription>
             {customer
               ? `${customer.first_name} ${customer.last_name || ""} - ${customer.phone}`
-              : "Cliente no identificado"}
+              : customerName || "Cliente no identificado"}
           </DialogDescription>
         </DialogHeader>
 
@@ -246,11 +262,7 @@ export default function ConversationsPage() {
         </div>
       ),
       cell: ({ row }) => {
-        const customerId = row.getValue("customer_id") as string | null;
-        if (!customerId) return "Desconocido";
-        const customer = customerMap[customerId];
-        if (!customer) return "Desconocido";
-        return `${customer.first_name} ${customer.last_name || ""}`.trim();
+        return getConversationCustomerName(row.original, customerMap) || "Desconocido";
       },
     },
     {
@@ -324,6 +336,9 @@ export default function ConversationsPage() {
     selectedConversation?.customer_id
       ? customerMap[selectedConversation.customer_id] ?? null
       : null;
+  const selectedCustomerName = selectedConversation
+    ? getConversationCustomerName(selectedConversation, customerMap)
+    : null;
 
   return (
     <div className="flex flex-col">
@@ -379,6 +394,7 @@ export default function ConversationsPage() {
         onOpenChange={setModalOpen}
         conversation={selectedConversation}
         customer={selectedCustomer}
+        customerName={selectedCustomerName}
       />
 
       {/* Delete Confirmation */}

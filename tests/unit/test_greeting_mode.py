@@ -181,6 +181,36 @@ class TestGreetingModeFirstInteraction:
         assert "Pepe" in content
         assert _WELCOME_CONFIRM_SUGGESTED.format(name="Pepe") == content
 
+    async def test_first_interaction_without_suggested_name_switches_to_ask_name(self):
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-001b", "+34612345678")
+        state["mode_context"] = {
+            "greeting_step": "ask_name",
+            "suggested_name": None,
+        }
+
+        result = await mode.handle(state, make_intent())
+
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["greeting_step"] == "ask_name"
+        assert result["mode_context"]["suggested_name"] is None
+        assert result["messages"][0]["content"] == _WELCOME_NEEDS_NAME
+
+    async def test_first_interaction_with_suggested_name_keeps_confirmation_step(self):
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-001c", "+34612345678")
+        state["mode_context"] = {
+            "greeting_step": "confirm_suggested_name",
+            "suggested_name": "Carlos",
+        }
+
+        result = await mode.handle(state, make_intent())
+
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["greeting_step"] == "confirm_suggested_name"
+        assert result["mode_context"]["suggested_name"] == "Carlos"
+        assert result["messages"][0]["content"] == _WELCOME_CONFIRM_SUGGESTED.format(name="Carlos")
+
 
 # =============================================================================
 # Name extraction (Turn 2: user replies with their name)

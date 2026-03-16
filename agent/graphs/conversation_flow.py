@@ -70,6 +70,12 @@ def _extract_suggested_name(display_name: str | None) -> str | None:
     if not NAME_READABLE_PATTERN.match(candidate):
         return None
 
+    # Reject tokens with 3 or fewer chars to avoid low-confidence guesses like
+    # "Sii". This also rejects real short names such as "Ana", but in that
+    # case GREETING falls back to the explicit name-ask flow instead.
+    if len(candidate) <= 3:
+        return None
+
     return candidate.title()
 
 
@@ -174,12 +180,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     1. escalation_triggered=True → ESCALATION
     2. error_count >= 3 → ESCALATION (auto-escalation)
     3. pending GREETING subflow → GREETING with classified intent
-    4. is_first_interaction=True OR customer_name is None → GREETING
-    5. intent=escalate → ESCALATION
-    6. current_mode=BOOKING and intent not cancel/reject → stay BOOKING
-    7. intent=book → BOOKING
-    8. intent=greet (not in BOOKING) → GREETING
-    9. Default → GENERAL
+    4. classify intent before first-turn fallback
+    5. is_first_interaction=True OR customer_name is None + intent=book → BOOKING
+    6. is_first_interaction=True OR customer_name is None + intent!=book → GREETING
+    7. intent=escalate → ESCALATION
+    8. current_mode=BOOKING and intent not cancel/reject → stay BOOKING
+    9. intent=book → BOOKING
+    10. intent=greet (not in BOOKING) → GREETING
+    11. Default → GENERAL
     """
     from agent.modes.booking_context import preserve_booking_context
     from agent.state.schemas import transition_mode
@@ -245,12 +253,8 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
-    # Rule 4: First interaction or name unknown → GREETING (not if already mid-booking)
-    # BUG-1B FIX: guard against intercepting mid-booking turns where customer_name is still None
-    if is_first_interaction or (not customer_name and current_mode != "BOOKING"):
-        return {"current_mode": "GREETING", "last_node": "router"}
-
-    # Classify intent (keyword + LLM hybrid)
+    # Classify intent (keyword + LLM hybrid) before first-turn fallback so
+    # booking messages can bypass GREETING on the very first turn.
     intent_router = _get_intent_router()
     try:
         from agent.routing.intent_router import IntentResult
@@ -259,7 +263,11 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             current_mode=current_mode,
         )
     except Exception as exc:
-        logger.error("router_node: intent classification failed | error=%s", exc)
+        logger.error(
+            "router_node: intent classification failed | conversation_id=%s | error=%s",
+            conversation_id,
+            exc,
+        )
         from agent.routing.intent_router import IntentResult
         intent = IntentResult(
             intent="ambiguous",
@@ -272,6 +280,28 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         "last_intent": intent.intent,
         "last_intent_confidence": intent.confidence,
     }
+
+    # Rule 4a/4b: First interaction or name unknown.
+    # BUG-1B FIX: guard against intercepting mid-booking turns where customer_name is still None.
+    if is_first_interaction or (not customer_name and current_mode != "BOOKING"):
+        if intent.intent == "book":
+            first_turn_booking_context = {
+                **intent_data,
+                "is_first_interaction": is_first_interaction,
+            }
+            return {
+                **transition_mode(state, "BOOKING", context_update=first_turn_booking_context),
+                "last_node": "router",
+            }
+
+        return {
+            "current_mode": "GREETING",
+            "mode_context": {
+                **(state.get("mode_context") or {}),
+                **intent_data,
+            },
+            "last_node": "router",
+        }
 
     # Rule 5: Escalation intent
     if intent.intent == "escalate":
@@ -402,6 +432,9 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
                 else:
                     raw_display_name = state.get("pending_whatsapp_name") or state.get("customer_name")
                     suggested_name = _extract_suggested_name(raw_display_name)
+                    greeting_step = (
+                        GREETING_CONFIRM_SUGGESTED if suggested_name is not None else GREETING_ASK_EXPLICIT
+                    )
 
                     updates["customer_name"] = None
                     updates["customer_id"] = None
@@ -409,9 +442,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
 
                     if not _has_pending_greeting_step(state):
                         updates["mode_context"] = {
-                            "greeting_step": (
-                                GREETING_CONFIRM_SUGGESTED if suggested_name else GREETING_ASK_EXPLICIT
-                            ),
+                            "greeting_step": greeting_step,
                             "suggested_name": suggested_name,
                             "whatsapp_display_name": raw_display_name,
                         }

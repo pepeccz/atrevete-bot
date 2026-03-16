@@ -124,7 +124,7 @@ class GreetingMode(BaseModeNode):
             self.logger.info(
                 "GreetingMode: first interaction — sending welcome message"
             )
-            if suggested_name:
+            if greeting_step == "confirm_suggested_name" and suggested_name:
                 response = _WELCOME_CONFIRM_SUGGESTED.format(name=suggested_name)
                 next_context = {
                     **mode_context,
@@ -133,7 +133,11 @@ class GreetingMode(BaseModeNode):
                 }
             else:
                 response = _WELCOME_NEEDS_NAME
-                next_context = {**mode_context, "greeting_step": "ask_name"}
+                next_context = {
+                    **mode_context,
+                    "greeting_step": "ask_name",
+                    "suggested_name": None,
+                }
 
             return {
                 **add_message(state, "assistant", response),

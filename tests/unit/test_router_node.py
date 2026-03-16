@@ -7,13 +7,14 @@ IntentRouter is mocked via patch("agent.graphs.conversation_flow._get_intent_rou
 Coverage:
 - Rule 1: escalation_triggered=True → always ESCALATION
 - Rule 2: error_count >= 3 → ESCALATION (auto-escalation)
-- Rule 3: is_first_interaction=True → GREETING
-- Rule 3b: customer_name is None → GREETING
-- Rule 4: intent=escalate → ESCALATION
-- Rule 5: current_mode=BOOKING, intent not cancel/reject → stay BOOKING
-- Rule 6: intent=book → BOOKING
-- Rule 7: intent=greet (and not in BOOKING) → GREETING
-- Rule 8: everything else → GENERAL
+- Rule 3: pending greeting subflow stays in GREETING
+- Rule 4a: first-turn/unknown-customer book intent → BOOKING
+- Rule 4b: first-turn/unknown-customer non-book intent → GREETING
+- Rule 5: intent=escalate → ESCALATION
+- Rule 6: current_mode=BOOKING, intent not cancel/reject → stay BOOKING
+- Rule 7: intent=book → BOOKING
+- Rule 8: intent=greet (and not in BOOKING) → GREETING
+- Rule 9: everything else → GENERAL
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -171,42 +172,67 @@ class TestRouterNodeRules:
 
         assert result["current_mode"] != "ESCALATION"
 
-    # ── Rule 3: is_first_interaction=True ──────────────────────────────────────
+    # ── Rule 4a/4b: first turn / unknown customer ─────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_rule3_first_interaction_routes_to_greeting(self):
-        """Rule 3: is_first_interaction=True → GREETING."""
+    async def test_rule4a_first_interaction_booking_routes_to_booking(self):
+        """First interaction with booking intent should bypass GREETING."""
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
             current_mode="GREETING",
-            customer_name="Ana",
+            customer_name=None,
             is_first_interaction=True,
             escalation_triggered=False,
             error_count=0,
+            user_message="Hola, quiero agendar una cita",
         )
 
         with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
             mock_get_router.return_value = _make_mock_router("book")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
-        # Short-circuits before intent classification
-        mock_get_router.return_value.classify.assert_not_called()
+        assert result["current_mode"] == "BOOKING"
+        assert result["mode_context"]["is_first_interaction"] is True
+        assert result["mode_context"]["last_intent"] == "book"
+        mock_get_router.return_value.classify.assert_called_once()
 
-    # ── Rule 3b: customer_name is None ────────────────────────────────────────
+    # ── Rule 4b: first turn / unknown customer fallback to GREETING ───────────
 
     @pytest.mark.asyncio
-    async def test_rule3b_customer_name_none_routes_to_greeting(self):
-        """Rule 3b: customer_name=None → GREETING (new customer, name unknown)."""
+    async def test_rule4b_first_interaction_non_booking_routes_to_greeting(self):
+        """First interaction without booking intent should preserve GREETING."""
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
             current_mode="GREETING",
             customer_name=None,
+            is_first_interaction=True,
+            error_count=0,
+            escalation_triggered=False,
+            user_message="Hola, buenos dias",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("greet")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["last_intent"] == "greet"
+        mock_get_router.return_value.classify.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rule4b_customer_name_none_non_booking_routes_to_greeting(self):
+        """Unknown customer outside BOOKING still goes to GREETING after classification."""
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GENERAL",
+            customer_name=None,
             is_first_interaction=False,
             error_count=0,
             escalation_triggered=False,
+            user_message="Necesito saber horarios",
         )
 
         with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
@@ -214,7 +240,8 @@ class TestRouterNodeRules:
             result = await router_node(state)
 
         assert result["current_mode"] == "GREETING"
-        mock_get_router.return_value.classify.assert_not_called()
+        assert result["mode_context"]["last_intent"] == "ask_info"
+        mock_get_router.return_value.classify.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_rule3_pending_greeting_subflow_classifies_and_stays_in_greeting(self):
@@ -240,6 +267,28 @@ class TestRouterNodeRules:
         assert result["mode_context"]["greeting_step"] == "confirm_suggested_name"
         assert result["mode_context"]["last_intent"] == "confirm"
         mock_get_router.return_value.classify.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rule4b_first_turn_classification_error_falls_back_to_greeting(self):
+        """Classification failures on first turn must fail closed to GREETING."""
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GREETING",
+            customer_name=None,
+            is_first_interaction=True,
+            error_count=0,
+            escalation_triggered=False,
+            user_message="Hola",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value.classify = AsyncMock(side_effect=Exception("LLM timeout"))
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["last_intent"] == "ambiguous"
+        assert result["mode_context"]["last_intent_confidence"] == 0.0
 
     # ── Rule 4: intent=escalate ───────────────────────────────────────────────
 
@@ -770,3 +819,112 @@ class TestBookingDigressions:
         assert result["mode_context"]["service_id"] == "svc-1"
         assert result["mode_context"]["stylist_id"] == "sty-1"
         assert result["mode_context"]["last_intent"] == "book"
+
+
+class TestFirstTurnRouterExamples:
+    """Concrete first-turn routing examples for the routing fix."""
+
+    @pytest.mark.asyncio
+    async def test_first_turn_quiero_agendar_routes_to_booking(self):
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GREETING",
+            customer_name=None,
+            is_first_interaction=True,
+            user_message="quiero agendar",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("book")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "BOOKING"
+
+    @pytest.mark.asyncio
+    async def test_first_turn_hola_routes_to_greeting(self):
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GREETING",
+            customer_name=None,
+            is_first_interaction=True,
+            user_message="hola",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("greet")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["last_intent"] == "greet"
+
+    @pytest.mark.asyncio
+    async def test_first_turn_cancelar_cita_currently_falls_back_to_greeting(self):
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GREETING",
+            customer_name=None,
+            is_first_interaction=True,
+            user_message="cancelar cita",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("cancel")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["last_intent"] == "cancel"
+
+    @pytest.mark.asyncio
+    async def test_first_turn_ambiguous_routes_to_greeting_safe_default(self):
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GREETING",
+            customer_name=None,
+            is_first_interaction=True,
+            user_message="mmm",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("ambiguous", confidence=0.2)
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["last_intent"] == "ambiguous"
+
+    @pytest.mark.asyncio
+    async def test_first_turn_quiero_reservar_routes_to_booking(self):
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GREETING",
+            customer_name=None,
+            is_first_interaction=True,
+            user_message="quiero reservar",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("book")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "BOOKING"
+
+    @pytest.mark.asyncio
+    async def test_returning_customer_agendar_routes_to_booking(self):
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GENERAL",
+            customer_name="Carlos",
+            is_first_interaction=False,
+            user_message="agendar",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("book")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "BOOKING"

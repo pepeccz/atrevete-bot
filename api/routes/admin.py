@@ -4551,6 +4551,7 @@ async def list_conversations(
                         messages = state.get("messages", [])
                         msg_count = len(messages)
                         customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
+                        customer_id = state.get("customer_id")
                         summary = state.get("conversation_summary")
 
                         # Derive timestamps from messages if available
@@ -4565,7 +4566,7 @@ async def list_conversations(
                         redis_items.append({
                             "id": f"redis:{thread_id}",  # Synthetic ID — no DB row yet
                             "conversation_id": thread_id,
-                            "customer_id": None,
+                            "customer_id": str(customer_id) if customer_id else None,
                             "customer_name": customer_name,
                             "started_at": started_at,
                             "ended_at": ended_at,
@@ -4660,13 +4661,14 @@ async def get_conversation(
                 })
 
         customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
+        customer_id = state.get("customer_id")
         started_at = messages[0]["created_at"] if messages else None
         ended_at = messages[-1]["created_at"] if messages else None
 
         return {
             "id": f"redis:{thread_id}",
             "conversation_id": thread_id,
-            "customer_id": None,
+            "customer_id": str(customer_id) if customer_id else None,
             "customer_name": customer_name,
             "started_at": started_at,
             "ended_at": ended_at,
