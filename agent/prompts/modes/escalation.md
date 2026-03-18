@@ -8,7 +8,7 @@ Gestionar la transferencia de conversaciones al equipo humano de manera cálida 
 
 ## 📝 Regla Absoluta: Silencio Post-Escalación
 
-**Después de llamar `escalate_to_human()`, NO envíes más mensajes.**
+**Después de escalar, NO envíes más mensajes.**
 
 El equipo humano toma el control completo de la conversación. Cualquier mensaje adicional:
 - Interfieres con la atención del equipo humano
@@ -88,25 +88,14 @@ Determina el motivo exacto de la escalación para informar al equipo humano.
 
 ### Paso 2: Llamar Herramienta
 
-```python
-escalate_to_human(reason="Descripción clara del motivo")
-```
+- El sistema ejecuta la escalación automáticamente usando un motivo claro y específico.
 
-**Ejemplos de `reason`:**
+**Ejemplos de motivo:**
 
-```python
-# Cliente solicitó humano
-escalate_to_human(reason="Cliente solicitó explícitamente hablar con una persona")
-
-# Ambigüedad persistente
-escalate_to_human(reason="Ambigüedad persistente después de 3 intentos de entendimiento")
-
-# Error técnico
-escalate_to_human(reason="Error crítico en base de datos, no se puede continuar")
-
-# Consulta médica
-escalate_to_human(reason="Cliente menciona embarazo, requiere asesoramiento especializado")
-```
+- Cliente solicitó explícitamente hablar con una persona.
+- Ambigüedad persistente después de 3 intentos de entendimiento.
+- Error crítico que impide continuar.
+- Consulta médica o sensible que requiere asesoramiento especializado.
 
 ### Paso 3: Enviar Mensaje de Despedida
 
@@ -128,7 +117,7 @@ Por supuesto. Voy a conectar contigo con el equipo ahora.
 Tiempo estimado de respuesta: 5-10 minutos. 💕
 ```
 
-**[escalate_to_human(reason="Cliente solicitó hablar con persona")]**
+**(El sistema ejecuta la escalación automáticamente.)**
 
 ---
 
@@ -142,7 +131,7 @@ Voy a conectar con el equipo para que te ayuden mejor.
 Tiempo estimado: 5-10 minutos. 💕
 ```
 
-**[escalate_to_human(reason="Ambigüedad persistente después de 3 intentos")]**
+**(El sistema ejecuta la escalación automáticamente.)**
 
 ---
 
@@ -154,7 +143,7 @@ Lo siento, hay un problema técnico que me impide continuar ahora mismo. 💕
 Voy a conectar con el equipo. Te responderán en 5-10 minutos.
 ```
 
-**[escalate_to_human(reason="Error técnico crítico: [descripción]")]**
+**(El sistema ejecuta la escalación automáticamente.)**
 
 ---
 
@@ -168,7 +157,7 @@ Para darte la mejor atención, voy a conectar contigo con el equipo.
 Tiempo estimado de respuesta: 5-10 minutos. 💕
 ```
 
-**[escalate_to_human(reason="Consulta médica: [descripción específica]")]**
+**(El sistema ejecuta la escalación automáticamente.)**
 
 ---
 
@@ -180,7 +169,7 @@ Entiendo tu frustración. Voy a conectar contigo con el equipo para que puedan a
 El tiempo estimado de respuesta es de 5-10 minutos. 💕
 ```
 
-**[escalate_to_human(reason="Cliente frustrado/insiste en [X], requiere atención personalizada")]**
+**(El sistema ejecuta la escalación automáticamente.)**
 
 ---
 
@@ -212,7 +201,7 @@ Consulta `shared/recovery.md`:
 
 ## Checklist Pre-Escalación
 
-Antes de llamar `escalate_to_human()`, verifica:
+Antes de escalar, verifica:
 
 - [ ] ¿Es realmente necesario escalar o puedo resolverlo?
 - [ ] ¿He identificado claramente el motivo para el `reason`?
@@ -252,9 +241,6 @@ Por supuesto. Voy a conectar contigo con una persona de nuestro equipo.
 El tiempo estimado de respuesta es de 5 a 10 minutos. 💕
 ```
 
-**Acción:**
-```python
-escalate_to_human(reason="Cliente solicitó explícitamente hablar con persona")
-```
+**Acción:** El sistema ejecuta la escalación automáticamente con el motivo correspondiente.
 
 **Resultado:** Silencio. Fin de la conversación con el bot.

@@ -31,6 +31,7 @@ from agent.services.availability_service import (
     get_stylist_by_id,
     is_holiday,
 )
+from agent.modes.booking_context import InterpretationReason
 from agent.tools.calendar_tools import (
     generate_time_slots_async,
     get_stylists_by_category,
@@ -94,8 +95,13 @@ async def check_availability(
     - Holiday closures
     - Business hours constraints
 
-    Queries Google Calendar API for all stylists in the specified category
-    and returns available time slots prioritized by business rules.
+    Queries the DB-first availability service for the requested category and
+    returns available time slots prioritized by business rules.
+
+    Semantic fields are additive. When the requested date violates the 3-day
+    minimum notice rule, the payload keeps `date_too_soon=True` and also exposes
+    `date_requested`, `min_valid_date`, and `substitution_reason` so the booking
+    prompt can explain why the request was rejected.
 
     Args:
         service_category: "Peluquería"/"Hairdressing" or "Estética"/"Aesthetics"
@@ -121,6 +127,9 @@ async def check_availability(
                 "is_same_day": bool,
                 "holiday_detected": bool,
                 "date_too_soon": bool,
+                "date_requested": str | None,
+                "min_valid_date": str | None,
+                "substitution_reason": str | None,
                 "error": str | None
             }
 
@@ -170,6 +179,9 @@ async def check_availability(
                 "holiday_detected": False,
                 "date_too_soon": True,
                 "days_until_appointment": validation["days_until_appointment"],
+                "date_requested": requested_date.date().isoformat(),
+                "min_valid_date": (datetime.now(MADRID_TZ) + timedelta(days=MINIMUM_DAYS)).date().isoformat(),
+                "substitution_reason": InterpretationReason.MINIMUM_DAYS_RULE.value,
             }
 
         # Convert service_category string to enum
@@ -355,6 +367,9 @@ async def find_next_available(
         time_range: Optional time filter ("morning", "afternoon", or "14:00-18:00")
         stylist_id: Optional preferred stylist UUID
         max_days_to_search: Maximum days to search ahead (default: 10)
+        start_date: Preferred natural-language or ISO date that anchors the search.
+            If it breaks the minimum-days rule, the search starts at the first
+            valid date and the response includes semantic substitution fields.
         service_duration_minutes: Service duration for proper slot spacing (default: 90)
 
     Returns:
@@ -381,6 +396,11 @@ async def find_next_available(
                 "available_stylists": [...],  # Legacy format for backwards compat
                 "total_slots_found": int,
                 "dates_searched": int,
+                "substitution_made": bool,
+                "date_requested": str,
+                "date_substituted": str,
+                "substitution_reason": str,
+                "min_valid_date": str,
                 "error": str | None
             }
 
@@ -394,6 +414,16 @@ async def find_next_available(
                 {"time": "16:00", "stylist": "Pilar", ...}
             ],
             "selected_stylist_name": "Pilar",
+            ...
+        }
+
+        >>> await find_next_available("Peluquería", start_date="mañana")
+        {
+            "substitution_made": True,
+            "substitution_reason": "minimum_days_rule",
+            "date_requested": "2026-03-17",
+            "date_substituted": "2026-03-19",
+            "min_valid_date": "2026-03-19",
             ...
         }
     """
@@ -454,7 +484,9 @@ async def find_next_available(
         min_valid_date = now + timedelta(days=MINIMUM_DAYS)  # 3-day rule minimum
 
         # If start_date is provided, parse and use it (respecting 3-day rule)
+        preferred_date: datetime | None = None
         if start_date:
+            substitution_requested = False
             try:
                 preferred_date = parse_natural_date(start_date, timezone=MADRID_TZ)
                 logger.info(f"Parsed preferred start_date '{start_date}' → {preferred_date.date()}")
@@ -468,11 +500,14 @@ async def find_next_available(
                         f"{min_valid_date.date()}, using minimum"
                     )
                     earliest_valid = min_valid_date
+                    substitution_requested = True
             except ValueError as e:
                 logger.warning(f"Could not parse start_date '{start_date}': {e}, using default")
                 earliest_valid = min_valid_date
+                substitution_requested = False
         else:
             earliest_valid = min_valid_date
+            substitution_requested = False
 
         # Check if earliest_valid date is a holiday
         if isinstance(earliest_valid, datetime):
@@ -650,6 +685,13 @@ async def find_next_available(
             result["selected_stylist_slots"] = selected_stylist_slots
             result["selected_stylist_name"] = selected_stylist.name
             result["selected_stylist_id"] = str(selected_stylist.id)
+
+        if start_date and substitution_requested and preferred_date is not None:
+            result["substitution_made"] = True
+            result["date_requested"] = preferred_date.date().isoformat()
+            result["date_substituted"] = min_valid_date.date().isoformat()
+            result["substitution_reason"] = InterpretationReason.MINIMUM_DAYS_RULE.value
+            result["min_valid_date"] = min_valid_date.date().isoformat()
 
         return result
 

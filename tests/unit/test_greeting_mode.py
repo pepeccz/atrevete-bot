@@ -394,3 +394,84 @@ class TestGreetingModeLLMNameLeakPrevention:
         combined_content = " ".join(m.get("content", "") for m in messages)
         # Must NOT ask for name
         assert "llamas" not in combined_content.lower()
+
+
+# =============================================================================
+# Intent-aware mode transitions (greeting → BOOKING when intent is book)
+# =============================================================================
+
+
+class TestGreetingModeIntentAwareTransition:
+    """
+    When the router classifies a message as greeting but also detects an
+    actionable intent (e.g., booking), GreetingMode should transition to
+    the appropriate mode instead of always defaulting to GENERAL.
+    """
+
+    @pytest.mark.asyncio
+    async def test_new_customer_with_book_intent_transitions_to_booking(self):
+        """'Hola, quiero cortarme el pelo' → greet + book → greeting then BOOKING."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-100", "+34612345678")
+        state["customer_name"] = None
+        state["pending_whatsapp_name"] = "Pepe"
+        state["mode_context"] = {"last_intent": "book", "last_intent_confidence": 0.85}
+        state["messages"] = [
+            {"role": "user", "content": "Hola, quiero cortarme el pelo",
+             "timestamp": "2026-03-18T10:00:00+01:00"}
+        ]
+
+        mock_result = {"id": "cust-uuid-100"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
+
+        assert result["current_mode"] == "BOOKING"
+
+    @pytest.mark.asyncio
+    async def test_returning_customer_with_book_intent_transitions_to_booking(self):
+        """Returning customer with booking intent → greeting then BOOKING."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-101", "+34612345678")
+        state["customer_name"] = "Ana"
+        state["mode_context"] = {"last_intent": "book", "last_intent_confidence": 0.90}
+
+        result = await mode.handle(state, make_intent())
+
+        assert result["current_mode"] == "BOOKING"
+
+    @pytest.mark.asyncio
+    async def test_greet_only_intent_transitions_to_general(self):
+        """Pure greeting intent (no booking) → GENERAL (backward-compatible)."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-102", "+34612345678")
+        state["customer_name"] = "Carlos"
+        state["mode_context"] = {"last_intent": "greet", "last_intent_confidence": 0.90}
+
+        result = await mode.handle(state, make_intent())
+
+        assert result["current_mode"] == "GENERAL"
+
+    @pytest.mark.asyncio
+    async def test_no_intent_in_context_defaults_to_general(self):
+        """No last_intent in mode_context → GENERAL (backward-compatible)."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-103", "+34612345678")
+        state["customer_name"] = "Laura"
+        state["mode_context"] = {}
+
+        result = await mode.handle(state, make_intent())
+
+        assert result["current_mode"] == "GENERAL"
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_intent_transitions_to_general(self):
+        """Ambiguous intent → GENERAL (default safe behavior)."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-104", "+34612345678")
+        state["customer_name"] = "Diego"
+        state["mode_context"] = {"last_intent": "ambiguous", "last_intent_confidence": 0.30}
+
+        result = await mode.handle(state, make_intent())
+
+        assert result["current_mode"] == "GENERAL"

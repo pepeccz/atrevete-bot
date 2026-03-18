@@ -228,6 +228,7 @@ async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -
                     "name": s.name,  # Simplified: removed id to save tokens
                     "duration_minutes": s.duration_minutes,
                     "category": s.category.value,
+                    "description": s.description,
                 }
                 for s in truncated_services
             ],
@@ -430,7 +431,21 @@ def _get_location() -> dict[str, Any]:
     }
 
 
-@tool
+class ListStylistsSchema(BaseModel):
+    """Schema for list_stylists tool parameters."""
+
+    category: str | None = Field(
+        default=None,
+        description=(
+            "Optional category filter:\n"
+            "- 'Peluquería' or 'HAIRDRESSING': Hair stylists only\n"
+            "- 'Estética' or 'AESTHETICS': Aesthetics specialists only\n"
+            "- None: All active stylists"
+        ),
+    )
+
+
+@tool(args_schema=ListStylistsSchema)
 async def list_stylists(category: str | None = None) -> dict[str, Any]:
     """
     List active stylists, optionally filtered by service category.
@@ -458,34 +473,38 @@ async def list_stylists(category: str | None = None) -> dict[str, Any]:
         >>> await list_stylists("Peluquería")
         {"stylists": [{"id": "...", "name": "Ana", "category": "HAIRDRESSING"}, ...], "count": 5}
     """
-    async with get_async_session() as session:
-        query = select(Stylist).where(Stylist.is_active == True)
+    try:
+        async with get_async_session() as session:
+            query = select(Stylist).where(Stylist.is_active == True)
 
-        # Filter by category if provided
-        if category:
-            if category in ["Peluquería", "PELUQUERIA", "HAIRDRESSING"]:
-                query = query.where(Stylist.category == ServiceCategory.HAIRDRESSING)
-            elif category in ["Estética", "ESTETICA", "AESTHETICS"]:
-                query = query.where(Stylist.category == ServiceCategory.AESTHETICS)
+            # Filter by category if provided
+            if category:
+                if category in ["Peluquería", "PELUQUERIA", "HAIRDRESSING"]:
+                    query = query.where(Stylist.category == ServiceCategory.HAIRDRESSING)
+                elif category in ["Estética", "ESTETICA", "AESTHETICS"]:
+                    query = query.where(Stylist.category == ServiceCategory.AESTHETICS)
 
-        query = query.order_by(Stylist.name)
+            query = query.order_by(Stylist.name)
 
-        result = await session.execute(query)
-        stylists = list(result.scalars().all())
+            result = await session.execute(query)
+            stylists = list(result.scalars().all())
 
-        logger.info(
-            f"Retrieved {len(stylists)} stylists" +
-            (f" for category {category}" if category else "")
-        )
+            logger.info(
+                f"Retrieved {len(stylists)} stylists" +
+                (f" for category {category}" if category else "")
+            )
 
-        return {
-            "stylists": [
-                {
-                    "id": str(s.id),
-                    "name": s.name,
-                    "category": s.category.value,
-                }
-                for s in stylists
-            ],
-            "count": len(stylists),
-        }
+            return {
+                "stylists": [
+                    {
+                        "id": str(s.id),
+                        "name": s.name,
+                        "category": s.category.value,
+                    }
+                    for s in stylists
+                ],
+                "count": len(stylists),
+            }
+    except Exception as e:
+        logger.error(f"Error in list_stylists: {e}", exc_info=True)
+        return {"stylists": [], "count": 0, "error": str(e)}

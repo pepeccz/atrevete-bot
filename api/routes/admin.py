@@ -165,6 +165,46 @@ def parse_datetime_as_madrid(v: Any) -> datetime | None:
         return v
     return v
 
+
+async def _get_latest_checkpoint_state(redis_client: Any, thread_id: str) -> dict[str, Any] | None:
+    """Return the checkpoint state with the highest message count for a thread."""
+    thread_keys: list[str | bytes] = []
+    async for key in redis_client.scan_iter(match=f"checkpoint:{thread_id}:*", count=100):
+        thread_keys.append(key)
+
+    best_state: dict[str, Any] | None = None
+    best_message_count = -1
+    best_checkpoint_suffix = ""
+
+    for checkpoint_key in thread_keys:
+        key_str = checkpoint_key.decode("utf-8") if isinstance(checkpoint_key, bytes) else str(checkpoint_key)
+        checkpoint_suffix = key_str.rsplit(":", 1)[-1]
+
+        try:
+            raw = await redis_client.json().get(checkpoint_key)
+        except Exception:
+            continue
+
+        if not raw or not isinstance(raw, dict):
+            continue
+
+        state = raw.get("checkpoint", {}).get("channel_values", {})
+        if not isinstance(state, dict):
+            continue
+
+        raw_messages = state.get("messages", [])
+        message_count = len(raw_messages) if isinstance(raw_messages, list) else 0
+
+        if (
+            message_count > best_message_count
+            or (message_count == best_message_count and checkpoint_suffix > best_checkpoint_suffix)
+        ):
+            best_state = state
+            best_message_count = message_count
+            best_checkpoint_suffix = checkpoint_suffix
+
+    return best_state
+
 # =============================================================================
 # Security
 # =============================================================================
@@ -4523,28 +4563,7 @@ async def list_conversations(
                         if thread_id in db_conv_ids:
                             continue  # Already shown from DB
 
-                        # Get the latest checkpoint key for this thread_id
-                        thread_keys = []
-                        async for k in redis_client.scan_iter(match=f"checkpoint:{thread_id}:*", count=100):
-                            thread_keys.append(k)
-                        if not thread_keys:
-                            continue
-
-                        # Read the most recent checkpoint via JSON.GET (ReJSON-RL type)
-                        state = None
-                        for ck in thread_keys[:3]:
-                            try:
-                                raw = await redis_client.json().get(ck)
-                            except Exception:
-                                continue
-                            if not raw or not isinstance(raw, dict):
-                                continue
-                            # LangGraph stores state in checkpoint.channel_values
-                            cv = raw.get("checkpoint", {}).get("channel_values", {})
-                            if "messages" in cv:
-                                state = cv
-                                break
-
+                        state = await _get_latest_checkpoint_state(redis_client, thread_id)
                         if not state:
                             continue
 
@@ -4625,29 +4644,9 @@ async def get_conversation(
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"Redis unavailable: {e}")
 
-        thread_keys = []
-        async for k in redis_client.scan_iter(match=f"checkpoint:{thread_id}:*", count=100):
-            thread_keys.append(k)
-        if not thread_keys:
-            raise HTTPException(status_code=404, detail="Active conversation not found in Redis")
-
-        state = None
-        for ck in thread_keys[:5]:
-            try:
-                # checkpoint:* keys are ReJSON-RL type — must use json().get(), NOT get()
-                raw = await redis_client.json().get(ck)
-            except Exception:
-                continue
-            if not raw or not isinstance(raw, dict):
-                continue
-            # LangGraph stores state in checkpoint.channel_values
-            cv = raw.get("checkpoint", {}).get("channel_values", {})
-            if "messages" in cv:
-                state = cv
-                break
-
+        state = await _get_latest_checkpoint_state(redis_client, thread_id)
         if not state:
-            raise HTTPException(status_code=404, detail="Could not read checkpoint state from Redis")
+            raise HTTPException(status_code=404, detail="Active conversation not found in Redis")
 
         raw_messages = state.get("messages", [])
         messages = []

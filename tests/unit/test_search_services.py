@@ -412,6 +412,14 @@ class TestMetadataAwareScoring:
         assert "id" in resolved
         assert resolved["id"] == str(CORTE_CABALLERO.id)
 
+    async def test_resolved_service_includes_description_key(self):
+        with _patch_db([CORTAR]):
+            result = await _invoke("cortar")
+
+        resolved = result["resolved_service"]
+        assert "description" in resolved
+        assert resolved["description"] == CORTAR.description
+
     # -----------------------------------------------------------------------
     # services (fallback) cases
     # -----------------------------------------------------------------------

@@ -37,10 +37,15 @@ if "langchain_core.messages" not in sys.modules:
     class MockAIMessage:
         def __init__(self, content=""):
             self.content = content
-    
+
+    class MockToolMessage:
+        def __init__(self, content=""):
+            self.content = content
+
     messages_stub.SystemMessage = MockSystemMessage
     messages_stub.HumanMessage = MockHumanMessage
     messages_stub.AIMessage = MockAIMessage
+    messages_stub.ToolMessage = MockToolMessage
     sys.modules["langchain_core.messages"] = messages_stub
 
 if "langchain_core" not in sys.modules:
@@ -54,6 +59,7 @@ from agent.prompts.loader import (
     clear_prompt_cache,
     get_system_prompt,
     load_markdown,
+    load_mode_overlay,
     _prompt_cache,
 )
 
@@ -349,11 +355,11 @@ class TestBuildStepContext:
         context = build_step_context(state, mode_context)
 
         assert isinstance(context, str)
-        assert "Hello" in context
+        assert "Hello" not in context
         assert "Fecha y hora actual" in context
 
     def test_build_step_context_with_customer(self):
-        """Test building context with customer info."""
+        """Test building context with customer info — name NOT injected (privacy)."""
         state = {
             "user_message": "I want to book",
             "customer_name": "María",
@@ -363,7 +369,8 @@ class TestBuildStepContext:
 
         context = build_step_context(state, mode_context)
 
-        assert "María" in context
+        # Customer name should NOT appear in prompt context (customer-name-handling refactor)
+        assert "María" not in context
         assert "+1234567890" in context
 
     def test_build_step_context_with_collected_data(self):
@@ -407,6 +414,101 @@ class TestBuildStepContext:
 
         assert "service_selection" in context
 
+    def test_build_step_context_includes_semantic_fields_when_present(self):
+        state = {"user_message": "quiero turno pronto"}
+        mode_context = {
+            "stylist_name": "María",
+            "substitution_made": True,
+            "substitution_reason": "minimum_days_rule",
+            "date_requested": "2026-03-19",
+            "date_substituted": "2026-03-22",
+            "min_valid_date": "2026-03-22",
+            "no_slots_for_stylist": True,
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "Fecha solicitada ajustada" in context
+        assert "2026-03-19" in context
+        assert "2026-03-22" in context
+        assert "Sin disponibilidad para María en el rango solicitado" in context
+
+    def test_build_step_context_includes_prefetch_error_warning(self):
+        """When prefetch_error is True, context must include PREFETCH FALLIDO warning."""
+        state = {"user_message": "quiero turno"}
+        mode_context = {
+            "service_name": "Cortar",
+            "prefetch_error": True,
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "PREFETCH FALLIDO" in context
+        assert "list_stylists" in context
+
+    def test_build_step_context_omits_prefetch_warning_when_no_error(self):
+        """When prefetch_error is absent/False, no warning should appear."""
+        state = {"user_message": "quiero turno"}
+        mode_context = {
+            "service_name": "Cortar",
+            "prefetched_stylists": [
+                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes a las 10:00"},
+            ],
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "PREFETCH FALLIDO" not in context
+        assert "Ana" in context
+
+    def test_build_step_context_omits_semantic_fields_when_absent(self):
+        state = {"user_message": "quiero turno"}
+        mode_context = {"service_name": "Cortar"}
+
+        context = build_step_context(state, mode_context)
+
+        assert "Fecha solicitada ajustada" not in context
+        assert "Sin disponibilidad para" not in context
+
+    @pytest.mark.asyncio
+    async def test_build_layered_messages_renders_semantic_fields_in_dynamic_context(self):
+        state = {"user_message": "quiero turno"}
+        mode_context = {
+            "substitution_made": True,
+            "substitution_reason": "minimum_days_rule",
+            "date_requested": "2026-03-19",
+            "min_valid_date": "2026-03-22",
+        }
+
+        messages = await build_layered_messages(state, mode_context, include_history=False)
+
+        assert "Fecha solicitada ajustada" in messages[1].content
+        assert "2026-03-19" in messages[1].content
+        assert "2026-03-22" in messages[1].content
+
+    def test_build_step_context_does_not_duplicate_user_message(self):
+        state = {"user_message": "Necesito una cita"}
+        mode_context = {"service_name": "Corte"}
+
+        context = build_step_context(state, mode_context)
+
+        assert "Mensaje del cliente:" not in context
+        assert "Necesito una cita" not in context
+
+    @pytest.mark.asyncio
+    async def test_build_layered_messages_keeps_user_message_only_in_history(self):
+        state = {
+            "user_message": "Necesito una cita",
+            "messages": [{"role": "user", "content": "Necesito una cita"}],
+        }
+        mode_context = {"service_name": "Corte"}
+
+        messages = await build_layered_messages(state, mode_context, include_history=True)
+
+        assert "Mensaje del cliente:" not in messages[1].content
+        assert "Necesito una cita" not in messages[1].content
+        assert messages[-1].content == "Necesito una cita"
+
 
 class TestBuildLayeredMessages:
     """Test cases for build_layered_messages function."""
@@ -419,16 +521,16 @@ class TestBuildLayeredMessages:
 
         messages = await build_layered_messages(state, mode_context)
 
-        # Should have at least 2 messages (System + Human)
+        # Should have at least 2 messages (System + System context)
         assert len(messages) >= 2
 
-        # First should be SystemMessage
+        # First should be SystemMessage (cached system prompt)
         from langchain_core.messages import SystemMessage
         assert isinstance(messages[0], SystemMessage)
 
-        # Second should be HumanMessage (dynamic context)
-        from langchain_core.messages import HumanMessage
-        assert isinstance(messages[1], HumanMessage)
+        # Second should be SystemMessage (dynamic context — NOT HumanMessage,
+        # to prevent the LLM from echoing internal context back to the user)
+        assert isinstance(messages[1], SystemMessage)
 
     @pytest.mark.asyncio
     async def test_build_layered_messages_with_history(self):
@@ -475,8 +577,43 @@ class TestBuildLayeredMessages:
         assert "Maite" in messages[0].content or "#" in messages[0].content
 
         # Human message should have dynamic context
-        assert "Book appointment" in messages[1].content
         assert "Corte" in messages[1].content
+
+
+class TestLoadModeOverlay:
+    """Coverage for mode overlay dispatch across all v6 modes."""
+
+    def test_load_mode_overlay_loads_all_non_booking_modes(self):
+        with patch("agent.prompts.loader.load_markdown") as mock_load_markdown:
+            mock_load_markdown.side_effect = lambda file_name, subdir: f"{subdir}/{file_name}"
+
+            greeting = load_mode_overlay("greeting", {})
+            general = load_mode_overlay("GENERAL", {})
+            escalation = load_mode_overlay("Escalation", {})
+
+        assert greeting == "modes/greeting.md"
+        assert general == "modes/general.md"
+        assert escalation == "modes/escalation.md"
+
+    def test_load_mode_overlay_unknown_mode_logs_warning(self):
+        with patch("agent.prompts.loader.logger") as mock_logger:
+            result = load_mode_overlay("unknown", {})
+
+        assert result == ""
+        mock_logger.warning.assert_called_once()
+
+    def test_load_mode_overlay_booking_keeps_substep_behavior(self):
+        with patch("agent.prompts.loader._use_substep_prompts", return_value=True), patch(
+            "agent.prompts.loader._resolve_booking_substep",
+            return_value="slot_selection",
+        ), patch(
+            "agent.prompts.loader.load_markdown",
+            return_value="booking slot prompt",
+        ) as mock_load_markdown:
+            result = load_mode_overlay("booking", {}, substep="slot_selection")
+
+        assert result == "booking slot prompt"
+        mock_load_markdown.assert_called_once_with("slot_selection.md", "modes/booking")
 
 
 class TestPromptCacheIntegration:

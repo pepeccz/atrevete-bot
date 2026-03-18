@@ -140,6 +140,32 @@ def _get_intent_router():
     return _intent_router
 
 
+def _is_booking_related_query(user_message: str) -> bool:
+    """Check if an ask_info query is related to the current booking flow.
+
+    Questions about stylists, availability, time slots, or the selected
+    service should stay in BOOKING mode, not digress to GENERAL.
+    """
+    if not user_message:
+        return False
+    msg_lower = user_message.lower()
+    # Keywords that indicate the question is about the current booking
+    BOOKING_RELATED_TERMS = {
+        # Stylists
+        "estilista", "peluquera", "peluquero", "profesional", "profesionales",
+        "quién", "quien", "cuál", "cual", "cuáles", "cuales",
+        "disponible", "disponibles", "disponibilidad",
+        # Time/slots
+        "horario", "horarios", "hora", "horas", "hueco", "huecos",
+        "cuándo", "cuando", "mañana", "tarde", "semana",
+        # Current service context
+        "cuánto tarda", "cuanto tarda", "duración", "duracion",
+        "cuánto dura", "cuanto dura",
+        "cuánto cuesta", "cuanto cuesta", "precio",
+    }
+    return any(term in msg_lower for term in BOOKING_RELATED_TERMS)
+
+
 async def router_node(state: ConversationState) -> dict[str, Any]:
     """
     v6.0 router_node: Classify intent and determine which mode to activate.
@@ -273,8 +299,16 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
-    # Rule 6: BOOKING digressions → GENERAL with preserved draft context
+    # Rule 6: BOOKING digressions → GENERAL (only for truly unrelated queries)
     if current_mode == "BOOKING" and intent_result.intent == "ask_info":
+        if _is_booking_related_query(user_message):
+            # Stay in BOOKING — the question is about the current booking flow
+            logger.info(
+                "router_node: ask_info in BOOKING kept in BOOKING (booking-related query) | message=%r",
+                user_message[:80],
+            )
+            return {"mode_context": {**intent_data}, "last_node": "router"}
+        # Truly unrelated → digress to GENERAL with preserved draft context
         transition_update = transition_mode(state, "GENERAL")
         draft_contexts = dict(transition_update.get("draft_contexts") or {})
         draft_contexts["BOOKING"] = preserve_booking_context(

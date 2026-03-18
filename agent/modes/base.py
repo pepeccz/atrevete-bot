@@ -5,6 +5,7 @@ Provides shared types and the BaseModeNode abstract class used by all 4 modes.
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
@@ -46,11 +47,19 @@ class ModeResult(TypedDict, total=False):
     mode_context: dict
     mode_history: list[str]
     is_first_interaction: bool
+    ai_disclosure_sent: bool
     escalation_triggered: bool
     error_count: int
     last_node: str
     conversation_summary: str
     user_message: str | None
+
+
+MAX_TOOL_ROUNDS = 3
+_TOOL_CALL_PATTERN = re.compile(r"\[[\w_]+(?:\([^\)]*\))?\](?!\()")
+
+# EU AI Act first-turn disclosure enforced in code.
+FIRST_TURN_INTRO = "¡Hola! 🌸 Soy Maite, la asistenta virtual con IA de Atrévete Peluquería."
 
 
 # ============================================================================
@@ -207,6 +216,45 @@ class BaseModeNode(ABC):
             self.logger.error("LLM call failed: %s", exc)
             return None
 
+    @staticmethod
+    def _sanitize_response(text: str) -> str:
+        """Strip pseudo-tool-call text from LLM output before user delivery."""
+        cleaned = _TOOL_CALL_PATTERN.sub("", text)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
+
+    def _maybe_prepend_intro(
+        self,
+        response_text: str,
+        state: ConversationState,
+    ) -> tuple[str, bool]:
+        """Prepend the first-turn disclosure unless it was already handled.
+
+        Uses TWO independent checks to avoid duplication:
+        1. The `ai_disclosure_sent` state flag (set after first delivery)
+        2. A scan of prior assistant messages for the intro text
+
+        Check #2 is the fallback safety net — it catches cases where the
+        state flag didn't persist correctly across checkpoint boundaries.
+        """
+        # Check 1: Explicit state flag
+        if state.get("ai_disclosure_sent", False):
+            return response_text, False
+
+        # Check 2: Scan existing messages for prior disclosure
+        for msg in state.get("messages", []):
+            if msg.get("role") == "assistant" and "soy maite" in (msg.get("content") or "").lower():
+                return response_text, False
+
+        # No prior disclosure found — check if LLM already introduced itself
+        if response_text.startswith(FIRST_TURN_INTRO[:20]):
+            return response_text, True
+        if "soy maite" in response_text.lower():
+            return response_text, True
+
+        # Prepend the mandatory EU AI Act disclosure
+        return f"{FIRST_TURN_INTRO} {response_text}", True
+
     async def _run_agentic_loop(
         self,
         messages: list,
@@ -238,52 +286,63 @@ class BaseModeNode(ABC):
             )
 
         try:
-            # Bind tools if any are provided
-            llm_with_tools = self.llm.bind_tools(active_tools) if active_tools else self.llm
-            response = await llm_with_tools.ainvoke(messages)
+            tool_map = {t.name: t for t in active_tools}
+            working_messages = list(messages)
+            iterations = 0
+            response: Any | None = None
 
-            # Process tool calls if any
-            if hasattr(response, "tool_calls") and response.tool_calls:
-                tool_map = {t.name: t for t in active_tools}
+            while iterations < MAX_TOOL_ROUNDS:
+                llm_with_tools = self.llm.bind_tools(active_tools) if active_tools else self.llm
+                response = await llm_with_tools.ainvoke(working_messages)
+
+                if not (hasattr(response, "tool_calls") and response.tool_calls):
+                    break
+
+                working_messages.append(response)
 
                 for tool_call in response.tool_calls:
                     tool_name = tool_call.get("name", "")
                     tool_args = tool_call.get("args", {})
+
                     if tool_name in tool_map:
                         try:
                             result = await tool_map[tool_name].ainvoke(tool_args)
                             tool_results[tool_name] = result
                         except Exception as exc:
-                            self.logger.error(
-                                "Tool %s failed: %s", tool_name, exc
-                            )
-                            tool_results[tool_name] = {"error": str(exc)}
+                            self.logger.error("Tool %s failed: %s", tool_name, exc)
+                            result = {"error": str(exc)}
+                            tool_results[tool_name] = result
+                    else:
+                        result = {"error": f"Unknown tool: {tool_name}"}
+                        tool_results[tool_name] = result
 
-                # Second LLM call with tool results appended
-                tool_messages = list(messages)
-                tool_messages.append(response)  # Append AIMessage with tool_calls
-
-                for tool_call in response.tool_calls:
-                    tool_name = tool_call.get("name", "")
-                    result = tool_results.get(tool_name, {})
-                    tool_messages.append(
+                    working_messages.append(
                         ToolMessage(
                             content=str(result),
                             tool_call_id=tool_call.get("id", tool_name),
                         )
                     )
 
-                final_response = await self.llm.ainvoke(tool_messages)
-                response_text = (
-                    final_response.content
-                    if hasattr(final_response, "content")
-                    else str(final_response)
+                iterations += 1
+
+            if response is None:
+                return AgenticLoopResult(
+                    response_text="Lo siento, no pude procesar tu mensaje.",
+                    error="No response from LLM",
                 )
-            else:
-                response_text = (
-                    response.content
-                    if hasattr(response, "content")
-                    else str(response)
+
+            content = response.content if hasattr(response, "content") else response
+            response_text: str = content if isinstance(content, str) else str(content)
+            response_text = self._sanitize_response(response_text)
+
+            if (
+                iterations >= MAX_TOOL_ROUNDS
+                and hasattr(response, "tool_calls")
+                and response.tool_calls
+            ):
+                self.logger.warning(
+                    "Agentic loop hit MAX_TOOL_ROUNDS (%d)",
+                    MAX_TOOL_ROUNDS,
                 )
 
             return AgenticLoopResult(

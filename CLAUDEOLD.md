@@ -1,0 +1,870 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+Atrévete Bot is an AI-powered WhatsApp booking assistant for a beauty salon. It handles customer bookings via WhatsApp through Chatwoot, managing appointments across 5 stylists using Google Calendar, and escalating to staff when needed. The agent uses LangGraph for stateful conversation orchestration and GPT-4.1-mini via OpenRouter for natural language understanding in Spanish.
+
+**Key External Dependencies:**
+- Google Calendar API (5 stylist calendars)
+- Chatwoot API (WhatsApp integration)
+- OpenRouter API (LLM gateway - using openai/gpt-4.1-mini for cost optimization)
+- PostgreSQL 15+ (data persistence)
+- Redis Stack (checkpointing + RedisSearch/RedisJSON for LangGraph)
+
+## Development Commands
+
+### Environment Setup
+```bash
+# Create virtual environment (Python 3.11+ required)
+python3.11 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with real API keys - see docs/external-services-setup.md
+```
+
+### Running Services
+```bash
+# Start all services (PostgreSQL, Redis, API, Agent, Archiver)
+docker-compose up -d
+
+# Check service health
+docker-compose ps
+
+# View logs
+docker-compose logs -f api      # FastAPI webhook receiver
+docker-compose logs -f agent    # LangGraph orchestrator
+docker-compose logs -f archiver # Conversation archival worker
+
+# Restart specific service
+docker-compose restart api
+
+# IMPORTANT: Google Calendar credentials
+# The agent service requires service-account-key.json to be present in the project root
+# This file is mounted as a read-only volume in docker-compose.yml
+# Verify it's accessible inside the container:
+docker exec atrevete-agent ls -la /app/service-account-key.json
+```
+
+### Database Operations
+```bash
+# Create new migration
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic revision --autogenerate -m "description"
+
+# Apply migrations
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic upgrade head
+
+# Check current migration version
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic current
+
+# Rollback one migration
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic downgrade -1
+
+# Access PostgreSQL directly
+PGPASSWORD="changeme_min16chars_secure_password" psql -h localhost -U atrevete -d atrevete_db
+
+# Access via Docker
+docker exec -it atrevete-postgres psql -U atrevete -d atrevete_db
+```
+
+### Django Admin Panel
+```bash
+# Access Django Admin web interface
+# URL: http://localhost:8001/admin
+# Username: admin
+# Password: admin123
+
+# View Django Admin logs
+docker-compose logs -f admin
+
+# Restart Django Admin service
+docker-compose restart admin
+
+# Access Django shell for manual operations
+docker exec atrevete-admin python manage.py shell
+
+# Create additional superuser
+docker exec atrevete-admin python manage.py shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('username', 'email@example.com', 'password')"
+
+# Collect static files (if needed for production)
+docker exec atrevete-admin python manage.py collectstatic --noinput
+
+# IMPORTANT: Django migrations
+# Django Admin uses unmanaged models (managed=False) for core app tables
+# DO NOT run Django migrations for the 'core' app - those are managed by Alembic
+# Only Django's built-in apps (auth, admin, sessions, contenttypes) use Django migrations
+```
+
+**Django Admin Features:**
+- **Customers**: Full CRUD with export/import (CSV, Excel, JSON), appointment history, total spent statistics
+- **Stylists**: Manage stylist profiles, categories, Google Calendar integration
+- **Services**: Service catalog management with duration, categories
+- **Appointments**: View/edit appointments with service details, Google Calendar sync
+- **Policies**: Manage FAQ responses and business policies (JSON format)
+- **Conversation History**: View customer conversation logs with the AI agent
+- **Business Hours**: Configure salon opening hours by day of week
+
+**Important Notes:**
+- Django Admin models have `managed=False` to prevent interference with Alembic migrations
+- Database schema changes must be done via Alembic migrations in the main project
+- Django Admin only manages its own auth tables (auth_user, auth_group, etc.)
+- Custom purple gradient theme with Spanish language interface
+- Import/Export functionality available for customers, services, and appointments
+
+### Testing
+```bash
+# Run all tests with coverage (minimum 85% required)
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest
+
+# Run unit tests only
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/unit/
+
+# Run integration tests
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/integration/
+
+# Run specific test file
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/unit/test_customer_tools.py
+
+# Run specific test with verbose output
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/unit/test_customer_tools.py::test_create_customer -v
+```
+
+### Code Quality
+```bash
+# Format code (line length: 100, Python 3.11)
+black .
+
+# Lint code
+ruff check .
+
+# Type check (strict for shared/ and database/, relaxed for agent/ and admin/)
+mypy .
+```
+
+## Architecture Overview
+
+> ✅ **Modes Architecture COMPLETE (2026-03-09):** Infinite greeting loop bug fixed. Replaced FSM mega-node with 4 independent modes (GREETING, BOOKING, GENERAL, ESCALATION). New files: `agent/routing/`, `agent/modes/`, `agent/prompts/modes/`.
+
+> ✅ **v6-critical-fixes COMPLETE (2026-03-10):** 5 critical bugs in v6.0 wiring fixed. 187/187 tests pass. Booking flow is now fully functional. See Engram obs #87–#98 for full history.
+
+### Modes Architecture (v6.0) — COMPLETE + CRITICAL FIXES APPLIED
+
+**Bug Fixed:** Name confirmation infinite loop. The old `conversational_agent` mega-node (v5.0) would get stuck asking for the customer's name repeatedly because the FSM state and the LangGraph checkpoint could diverge, and the single-node design had no clear separation between "collect name" and "process booking" concerns.
+
+**Solution:** Replace the single FSM-driven mega-node with 4 independent mode nodes, each with its own prompt and tool set:
+
+```
+START → preprocess_node → router_node → mode_dispatcher
+    → [greeting_node | general_node | booking_node | escalation_node]
+    → summarize_node → END
+```
+
+**4 Modes:**
+- **GREETING**: First contact, name extraction. Fires ONCE per new customer. On confirmation, creates customer in DB and transitions to GENERAL/BOOKING.
+- **BOOKING**: Full multi-step appointment booking flow. Isolated from GREETING — no more infinite loop.
+- **GENERAL**: FAQs, service info, informational queries. Uses `query_info` and `search_services` (read-only tools, no booking risk).
+- **ESCALATION**: Human handoff. Sets `escalation_triggered=True` and calls `escalate_to_human`.
+
+**Routing Logic (router_node):**
+1. `escalation_triggered=True` → always ESCALATION
+2. `error_count >= 3` → auto-escalation to ESCALATION
+3. `is_first_interaction=True` OR `customer_name is None` → GREETING
+4. `intent == escalate` → ESCALATION
+5. Currently in BOOKING and not cancel/reject → stay BOOKING
+6. `intent == book` → BOOKING
+7. `intent == greet` and not in BOOKING → GREETING
+8. Everything else → GENERAL
+
+**New File Structure:**
+- `agent/routing/intent_router.py` — Keyword + LLM hybrid intent classifier (8 intents: greet, book, ask_info, confirm, reject, cancel, escalate, ambiguous) + `IntentResult` dataclass
+- `agent/modes/__init__.py` — Package init
+- `agent/modes/base.py` — BaseMode abstract class
+- `agent/modes/greeting_mode.py` — GreetingMode: name collection, customer creation via `manage_customer.ainvoke`
+- `agent/modes/booking_mode.py` — BookingMode: full booking flow with `AgenticLoopResult` + `_advance_step()`
+- `agent/modes/general_mode.py` — GeneralMode: read-only informational queries
+- `agent/modes/escalation_mode.py` — EscalationMode: human handoff
+- `agent/prompts/modes/` — Mode-specific prompts (greeting.md, booking.md, general.md, escalation.md)
+
+**What Was Removed:**
+- `agent/nodes/conversational_agent.py` — OLD mega-node (DEPRECATED, kept for backward compatibility only, not in v6.0 graph)
+- FSM states: `SERVICE_SELECTION`, `STYLIST_SELECTION`, `SLOT_SELECTION`, `CUSTOMER_DATA`, `CONFIRMATION`, `BOOKED` → replaced by `BookingMode` sub-steps
+- Parallel name confirmation flow (caused infinite loop)
+
+**State Schema Changes (v6.0):**
+- `current_mode: ConversationMode` — Active mode (GREETING/BOOKING/GENERAL/ESCALATION)
+- `is_first_interaction: bool` — True only on first message (set by preprocess_node)
+- `customer_name: str | None` — Name collected in GREETING mode
+- `mode_context: Annotated[dict, merge_dicts]` — Mode-specific transient data (booking step, last intent, etc.); uses `__reset__` sentinel on mode transitions
+- `mode_history: Annotated[list[str], operator.add]` — Ordered list of mode transitions (for debugging)
+- `draft_contexts: Annotated[dict, merge_dicts]` — Draft context storage with merge reducer
+
+**Critical Fixes Applied (v6-critical-fixes, 2026-03-10):**
+
+All 5 bugs below made the v6.0 booking flow non-functional. All are fixed. 187/187 tests pass.
+
+- ✅ **FIX-001**: `preprocess_node` no longer clears `user_message` before mode nodes read it (`agent/graphs/conversation_flow.py`). `user_message` is now cleared only in `summarize_node` at the end of the pipeline.
+- ✅ **FIX-002**: `GreetingMode` creates customer in DB via `manage_customer.ainvoke` after name extraction (`agent/modes/greeting_mode.py`). Without this, no new customer was ever persisted → booking always failed with `customer_id=None`.
+- ✅ **FIX-003**: `BookingMode` advances booking sub-steps using `AgenticLoopResult` + `_advance_step()` (`agent/modes/booking_mode.py`). Without this, `booking_step` stayed at 0 forever.
+- ✅ **FIX-004**: `summarize_conversation` returns partial dicts only — no `{**state}` spread (`agent/nodes/summarization.py`). The spread was causing `messages` to double via `operator.add` reducer on every summarization.
+- ✅ **FIX-005**: `mode_context` uses `Annotated[dict, merge_dicts]` and `transition_mode()` always resets with `__reset__` sentinel (`agent/state/schemas.py`). Prevents stale keys accumulating across mode transitions.
+- ✅ **FIX-005b**: `mode_history` and `draft_contexts` also wired with correct `Annotated` reducers (`agent/state/schemas.py`).
+
+**Key Improvements:**
+- ✅ Infinite greeting loop: FIXED (GREETING fires once, then done)
+- ✅ Customer DB creation: FIXED (GreetingMode calls manage_customer after name extraction)
+- ✅ Booking step advancement: FIXED (AgenticLoopResult + _advance_step())
+- ✅ Message doubling: FIXED (no {**state} spread in summarize_conversation)
+- ✅ Stale mode_context: FIXED (Annotated reducers + __reset__ sentinel)
+- ✅ Extensible: New feature = new mode (no mega-node modification needed)
+- ✅ Testable: Each mode tested independently with unit tests (18 router tests + 7 smoke tests added)
+- ✅ Debuggable: `current_mode` always visible in state; `mode_history` shows transitions
+
+> ✅ **ADR-011 COMPLETE (2025-11-27):** Sistema 100% unificado en **single source of truth**. FSM state consolidado en LangGraph checkpoints. Eliminada dual persistence Redis + Checkpoint.
+
+### FSM-LangGraph Single Source of Truth (ADR-011) - COMPLETE
+
+**Problema anterior (ADR-010):** Dual persistence causaba race conditions y requería workaround de 100ms sleep:
+- FSM persistía en Redis key `fsm:{conversation_id}` (síncrono) ❌ ELIMINADO
+- LangGraph checkpoint persistía en `langchain:checkpoint:thread:*` (asincrónico) ✅ ÚNICA FUENTE
+- Divergencia posible si mensajes llegaban rápido ❌ ELIMINADA
+
+**Solución ADR-011 (Completada 2025-11-27):** FSM consolidado completamente en checkpoint:
+```
+Message llega
+    ↓
+FSM carga desde ConversationState.fsm_state (ÚNICA FUENTE)
+    ↓
+FSM procesa + transiciona
+    ↓
+state["fsm_state"] = fsm.to_dict() (ÚNICA ESCRITURA)
+    ↓
+LangGraph persiste checkpoint (escritura atómica)
+    ↓
+Próximo mensaje: FSM y checkpoint SIEMPRE en sync (garantizado)
+```
+
+**Beneficios Alcanzados:**
+- ✅ 0% race condition (eliminada dual persistence)
+- ✅ -100ms latencia (sin sleep workaround)
+- ✅ -100% Redis memory para fsm:* keys (eliminadas completamente)
+- ✅ Arquitectura más simple (una fuente de verdad)
+- ✅ Código más mantenible (-107 líneas de métodos deprecated)
+
+**Implementación:**
+- Phase 1-4: COMPLETE ✅ (serialización, dual-read, cutover, cleanup)
+- `persist()` y `load()` methods: ELIMINADOS ✅
+- fsm:* Redis keys: ELIMINADAS ✅
+- Tests: ACTUALIZADOS a checkpoint-only ✅
+- Ver `ADR-011-STATUS.md` para detalles completos
+
+### DB-First Calendar Architecture (v4.1) - NEW
+
+> ✅ **DB-First Calendar Migration COMPLETE (2025-12-09):** PostgreSQL es ahora la fuente de verdad para disponibilidad. Google Calendar es push-only mirror.
+
+**Problema anterior:** Availability checks via Google Calendar API tomaban 2-5 segundos por estilista (rate limits, latencia API).
+
+**Solución v4.1:** DB-first architecture con push híbrido:
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FLUJO NUEVO (DB-first)                   │
+├─────────────────────────────────────────────────────────────┤
+│ check_availability() → PostgreSQL query → <100ms            │
+│ book() → DB commit → fire-and-forget GCal push (async)      │
+│ Admin calendar → DB only → <50ms                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Nuevos Componentes:**
+- `agent/services/availability_service.py` - DB-first availability checking
+- `agent/services/gcal_push_service.py` - Fire-and-forget Google Calendar push
+- `database/models.py` - BlockingEvent, Holiday models
+- `api/routes/admin.py` - CRUD endpoints for blocking events, holidays
+
+**Nuevas Tablas:**
+- `blocking_events` - Eventos que bloquean disponibilidad (vacaciones, reuniones, descansos)
+- `holidays` - Festivos nacionales y regionales (cierre global del salón)
+
+**Performance:**
+| Operación | Antes (Google Calendar) | Después (DB-First) |
+|-----------|-------------------------|---------------------|
+| Verificar disponibilidad | 2-5 segundos | <100ms |
+| Crear cita | 3 segundos (blocking) | <50ms + async push |
+| Vista calendario admin | 5 API calls paralelos | 1 query <50ms |
+| Detectar festivos | 5 API calls | 1 query <10ms |
+
+**Funciones Deprecated:**
+- `calendar_tools.fetch_calendar_events()` → Use `availability_service.get_busy_periods()`
+- `calendar_tools.fetch_calendar_events_async()` → Use `availability_service.get_busy_periods()`
+- `calendar_tools.check_holiday_closure()` → Use `availability_service.is_holiday()`
+- `calendar_tools.get_calendar_availability()` → Use `availability_tools.check_availability()`
+
+### Resilience Layer (v5.1) - LLM API Error Recovery
+
+> ✅ **Resilience Layer COMPLETE (2026-03-09):** Multi-provider fallback, progressive retry with exponential backoff, and per-conversation budget tracking fully implemented.
+
+**Problem:** Single LLM provider (OpenRouter/GPT-4.1-mini) has no automatic recovery from transient failures, rate limits, or provider outages.
+
+**Solution:** Layered resilience architecture with classification → retry decision → provider fallback:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                RESILIENCE LAYER (RESILIENCE_ENABLED=True)    │
+├──────────────────────────────────────────────────────────────┤
+│ Exception caught                                             │
+│     ↓                                                        │
+│ ErrorClassifier.classify(exc) → ErrorType                   │
+│     ↓                                                        │
+│ TRANSIENT/RATE_LIMIT → FallbackChain.call_with_fallback()   │
+│     ├─ primary   (openai/gpt-4o-mini)    → try first        │
+│     ├─ fallback  (deepseek/deepseek-chat) → on failure      │
+│     └─ emergency (meta-llama/llama-3.1-8b) → last resort   │
+│ PERMANENT → re-raise immediately (no fallback)               │
+│ All providers fail → FallbackExhaustedError → escalation    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Error Types (5 categories):**
+- `TRANSIENT` — Network glitches, 5xx server errors. Retry with exponential backoff (1s → 2s → 4s, max 3 retries).
+- `RATE_LIMIT` — HTTP 429. Retry once after `Retry-After` header delay (default: 60s).
+- `PERMANENT` — Auth failures (401/403), not found (404). Do NOT retry — will always fail.
+- `VALIDATION` — Schema/business rule violations. Do NOT retry — must fix data first.
+- `PARTIAL_FAILURE` — Some tool calls succeeded, others failed. Do NOT blindly retry (prevents double-booking).
+
+**Retry Policy:**
+- `TRANSIENT`: up to 3 retries, exponential backoff with ±10% jitter, capped at 4s
+- `RATE_LIMIT`: 1 retry, waits `Retry-After` seconds (or 60s default)
+- `PERMANENT/VALIDATION/PARTIAL_FAILURE`: 0 retries, fail immediately
+
+**Per-Conversation Retry Budget:**
+- `MAX_TOTAL_RETRIES = 5` per conversation (across all error types)
+- Budget tracked in-memory with `asyncio.Lock` (thread-safe)
+- Budget resets on successful response (`budget.reset(conversation_id)`)
+- Prevents runaway retry loops for bad conversations
+
+**Multi-Provider Fallback Chain:**
+- `primary` (priority=0): `LLM_MODEL` (default: `openai/gpt-4o-mini`)
+- `fallback` (priority=1): `LLM_FALLBACK_MODEL` (default: `deepseek/deepseek-chat`)
+- `emergency` (priority=2): `LLM_EMERGENCY_MODEL` (default: `meta-llama/llama-3.1-8b-instruct`)
+- Fallback only triggers for TRANSIENT/RATE_LIMIT errors (not PERMANENT)
+- Each provider has independent circuit breaker (via `pybreaker`)
+
+**Feature Flag — RESILIENCE_ENABLED:**
+- `True` (default): Full resilience path — FallbackChain + RetryBudget + ErrorClassifier
+- `False`: Legacy path — original single-provider + `openrouter_breaker` only (no changes)
+- Both paths coexist in `agent/nodes/conversational_agent.py`
+- Intent extractor also respects this flag (`agent/fsm/intent_extractor.py`)
+
+**New Environment Variables (all have defaults — no migration needed):**
+```bash
+RESILIENCE_ENABLED=true          # Feature flag (default: true)
+LLM_FALLBACK_MODEL=deepseek/deepseek-chat              # First fallback provider
+LLM_EMERGENCY_MODEL=meta-llama/llama-3.1-8b-instruct   # Emergency provider
+MAX_PROVIDER_FAILURES=3          # Failures before provider is skipped
+RETRY_BUDGET_PER_CONVERSATION=5  # Max retries per conversation
+```
+
+**Key Components:**
+- `agent/resilience/error_classifier.py` — `ErrorClassifier`, `ErrorType`, `ClassifiedError`
+- `agent/resilience/retry_strategy.py` — `RetryStrategy`, `RetryBudget`, `RetryState`
+- `agent/resilience/fallback_chain.py` — `FallbackChain`, `ProviderConfig`, `FallbackExhaustedError`
+- `agent/resilience/__init__.py` — Package exports (all public types)
+- `tests/mocks/mock_llm_providers.py` — Mock harness for resilience integration tests
+
+**Testing:**
+- `tests/unit/test_error_classifier.py` — ErrorClassifier (all 5 error types + edge cases)
+- `tests/unit/test_retry_strategy.py` — RetryStrategy + RetryBudget
+- `tests/unit/test_fallback_chain.py` — FallbackChain (all scenarios)
+- `tests/unit/test_resilience_feature_flag.py` — Feature flag unit tests
+- `tests/integration/test_resilience_integration.py` — End-to-end resilience flows (mocked)
+
+**Rollout Checklist (T-022):**
+
+Before enabling `RESILIENCE_ENABLED=true` in production, verify these steps:
+
+**1. Pre-deployment validation**
+- [ ] Run full test suite in Docker (Python 3.11): `docker exec atrevete-agent python -m pytest tests/unit/test_error_classifier.py tests/unit/test_retry_strategy.py tests/unit/test_fallback_chain.py tests/unit/test_resilience_feature_flag.py tests/integration/test_resilience_integration.py -v`
+- [ ] Confirm all 5 new env vars are set in production `.env` (or rely on defaults)
+- [ ] Verify DeepSeek and Llama API keys are valid on OpenRouter (fallback/emergency models)
+
+**2. Staged rollout (recommended)**
+- [ ] Deploy with `RESILIENCE_ENABLED=false` first (legacy path, no behavioral change)
+- [ ] Monitor logs for 24h to establish baseline error rate
+- [ ] Flip `RESILIENCE_ENABLED=true` with docker-compose restart
+- [ ] Watch agent logs for `FallbackChain` entries: `docker-compose logs -f agent | grep FallbackChain`
+
+**3. Key log signals to monitor**
+- `FallbackChain: selected fallback provider` — Primary failed, switching to DeepSeek ✅ expected
+- `FallbackChain: all providers exhausted` — All 3 failed → escalation triggered ⚠️ investigate
+- `RetryBudget: budget exhausted for conversation` — A single conversation hit 5 retries ⚠️ investigate
+- `FallbackChain: circuit OPEN for provider` — Circuit breaker tripped for a provider ⚠️ investigate
+
+**4. Rollback procedure**
+- Set `RESILIENCE_ENABLED=false` in `.env` and run `docker-compose restart agent`
+- No database migrations needed — feature is entirely in-memory
+- No state to clean up — RetryBudget is in-memory and resets on restart
+
+**5. Provider cost implications**
+- DeepSeek fallback: ~$0.14/1M tokens input (cheaper than primary)
+- Llama emergency: ~$0.06/1M tokens input (cheapest)
+- Budget: `RETRY_BUDGET_PER_CONVERSATION=5` limits worst-case retry cost per conversation
+- Monitor OpenRouter dashboard for unexpected token spikes after enabling
+
+### FSM Hybrid Architecture (v4.0) - FOUNDATION FOR ADR-011
+
+**Base (v4.0):** FSM híbrida donde LLM solo maneja NLU y generación de lenguaje, mientras FSM controla flujo de conversación.
+- Implementado en Epic 5 (commit 3366117)
+- FSM now consolidated in checkpoint (ADR-011, 2025-11-24)
+
+```
+┌──────────────┐
+│ LLM (NLU)    │ ← Interpreta INTENCIÓN + Genera LENGUAJE
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│ FSM Control  │ ← Controla FLUJO + Valida PROGRESO + Decide TOOLS
+└──────┬───────┘
+       ↓
+┌──────────────┐
+│ Tool Calls   │ ← Ejecuta ACCIONES validadas
+└──────────────┘
+```
+
+**Nuevos componentes (Epic 5):**
+- `agent/fsm/booking_fsm.py` - FSM Controller con estados y transiciones
+- `agent/fsm/intent_extractor.py` - Extracción de intención estructurada
+
+**Estados del Booking FSM:**
+- IDLE → SERVICE_SELECTION → STYLIST_SELECTION → SLOT_SELECTION → CUSTOMER_DATA → CONFIRMATION → BOOKED
+
+**Beneficios:**
+- ✅ Transiciones deterministas y testeables
+- ✅ Estado siempre claro y debuggeable
+- ✅ LLM enfocado en lenguaje natural
+- ✅ Validación explícita antes de tool calls
+
+### Legacy: Tool-Based Architecture (v3.2)
+
+The system currently uses a **simplified tool-based architecture** with 3 nodes (being replaced by FSM):
+
+**Main Conversational Flow (3 Nodes)**
+1. **`process_incoming_message`**: Adds user message to conversation history
+2. **`conversational_agent`**: GPT-4.1-mini via OpenRouter with 8 tools handles ALL conversations
+   - Tools available: customer management, FAQs, services (92 individual), availability, booking, escalation
+   - Natural language understanding and dialogue management via LLM reasoning
+   - OpenRouter provides automatic prompt caching (>1024 tokens) for cost optimization
+   - Handles both informational queries AND booking transactions
+3. **`summarize`**: FIFO windowing - keeps recent 10 messages, summarizes older ones
+
+**Model Selection Rationale:**
+- Using `openai/gpt-4.1-mini` for 7-10x cost savings vs Claude Haiku 4.5
+- Input: $0.15/1M tokens vs $1.00/1M tokens
+- Automatic caching via OpenRouter (no configuration needed)
+- Sufficient capability for booking assistant use case
+
+This architecture eliminated the hybrid tier system, consolidating all logic into a single conversational agent with tool access.
+
+### v3.2 Optimizations: Dynamic Prompt Injection
+
+**Goal:** Reduce token usage by 60-70% through intelligent prompt caching and truncation strategies.
+
+**Key Optimizations Implemented:**
+
+1. **Layered Prompt Architecture (Cacheable vs Dynamic)**
+   - **SystemMessage (Cacheable)**: Core prompt + Stylist context (~2,500 tokens)
+     - Stable content that benefits from OpenRouter's automatic caching
+     - Changes infrequently (only when prompts updated or stylists change)
+   - **HumanMessage (Dynamic)**: Temporal + Customer context (~300 tokens)
+     - Content that changes per request (current date/time, customer info)
+     - NOT cached, minimizing cache invalidation
+
+2. **Granular State Detection (7 Booking States)** - Updated Nov 13, 2025
+   - Function: `_detect_booking_state()` in `agent/prompts/__init__.py`
+   - States detected:
+     - `GENERAL`: FAQs, greetings, no booking intent
+     - `SERVICE_SELECTION`: User wants to book, needs service selection
+     - `AVAILABILITY_CHECK`: Service selected, checking availability
+     - `CUSTOMER_DATA`: Slot selected, collecting customer info
+     - `BOOKING_CONFIRMATION`: Customer data collected, waiting for user confirmation (NEW)
+     - `BOOKING_EXECUTION`: User confirmed, ready to execute `book()` tool
+     - `POST_BOOKING`: Booking completed, handling confirmations
+   - Each state loads focused prompt (2-4KB) instead of monolithic 27KB
+
+3. **In-Memory Caching (Stylist Context)**
+   - TTL: 10 minutes
+   - Thread-safe with `asyncio.Lock`
+   - Reduces DB queries by 90%
+   - Saves ~150ms per request (after first cache)
+   - Trade-off: Stylist data up to 10 min stale (acceptable, rarely changes)
+
+4. **Tool Output Truncation**
+   - `query_info`: Max 10 results (default), configurable 1-50
+   - `search_services`: Max 5 results, simplified output (removed `id`)
+   - `find_next_available`: Max 5 slots per stylist, simplified output
+   - Output fields reduced: Only essential data returned to LLM
+
+5. **Monitoring and Alerts**
+   - Logging of prompt sizes (cacheable + dynamic + total)
+   - Automatic alerts if prompt >4000 tokens (~16KB)
+   - Booking state logged with every request
+   - Helps detect regressions in prompt size
+
+**Performance Impact:**
+
+| Metric | Before (v3.0) | After (v3.2) | Improvement |
+|--------|---------------|--------------|-------------|
+| Prompt size (avg) | 27KB | 8-10KB | -63% |
+| Tokens/request | ~7,000 | ~2,500-3,000 | -60% |
+| Tokens cacheable | 0 | ~2,500 | OpenRouter cache active |
+| Tool output tokens | ~3,500 | ~800-1,200 | -65% |
+| DB queries (stylists) | 100% | 10% | -90% |
+| Cache hit rate | 0% | 70-80% (est.) | +70-80% |
+| Cost/1K conversations | $1,350/mo | $280/mo | -79% ($1,070/mo saved) |
+
+**Files Modified:**
+- `agent/prompts/__init__.py`: Granular state detection + stylist caching
+- `agent/nodes/conversational_agent.py`: Layered prompts + logging
+- `agent/state/schemas.py`: New state flags (v3.2 enhanced)
+- `agent/tools/info_tools.py`: Truncation for `query_info`
+- `agent/tools/search_services.py`: Simplified output
+- `agent/tools/availability_tools.py`: Truncation for `find_next_available`
+- `agent/prompts/step5_post_booking.md`: New prompt for POST_BOOKING state
+
+### Prompt System Optimization (v6.1) — Modular Shared Prompts
+
+> **NEW (2025-03-11):** Optimized prompt system with modular shared components and centralized caching.
+
+**Problem:** Step-based prompts (step1_service.md, step2_availability.md, etc.) were tightly coupled to FSM states and duplicated common content (identity, rules, glossary). Any change to bot personality required editing 6+ files.
+
+**Solution:** Modular prompt architecture with shared components and mode-specific overlays:
+
+```
+agent/prompts/
+├── shared/                    # Reusable components (~2,200 tokens)
+│   ├── identity.md           # Bot personality and tone
+│   ├── critical_rules.md     # Safety and formatting rules
+│   ├── glossary.md          # Terminology definitions
+│   └── recovery.md          # Error recovery strategies
+├── modes/                    # Mode-specific overlays (~800 tokens)
+│   ├── greeting.md          # First contact, name collection
+│   ├── booking.md           # Multi-step booking flow
+│   ├── general.md           # FAQs and info queries
+│   └── escalation.md        # Human handoff
+└── legacy/                   # Archived step-based prompts
+    └── step[1-5]_*.md        # (kept for reference, not used)
+```
+
+**Architecture:**
+
+1. **Shared System Prompt (Cached)**
+   - Concatenation of: identity + critical_rules + glossary
+   - Loaded once via `get_system_prompt()` with 10-minute TTL cache
+   - ~2,200 tokens, stable content benefits from OpenRouter caching
+
+2. **Mode-Specific Overlay (Dynamic)**
+   - Loaded per request via `load_markdown("booking.md", "modes")`
+   - Contains mode-specific instructions and tool calling guidance
+   - ~800 tokens, changes based on current mode
+
+3. **Dynamic Context (Per Message)**
+   - Built via `build_step_context()` with temporal + customer data
+   - ~300 tokens, includes current date, collected data, user message
+   - Injected as HumanMessage for conversation context
+
+**Key Components:**
+- `agent/prompts/loader.py` — Centralized loading with caching (`get_system_prompt()`, `load_markdown()`)
+- `agent/prompts/shared/*.md` — Modular shared components
+- `agent/prompts/modes/*.md` — Mode-specific overlays
+- `agent/prompts/legacy/*.md` — Archived step-based prompts (not deleted, for reference)
+
+**Caching Strategy:**
+- System prompt: 10-minute TTL with async lock (thread-safe)
+- Cache key: "system_prompt_v1"
+- Clear cache: `clear_prompt_cache()` for immediate updates
+
+**Feature Flag:**
+```bash
+USE_OPTIMIZED_PROMPTS=true   # Enable v6.1 modular prompts (default)
+USE_OPTIMIZED_PROMPTS=false  # Use legacy prompts (fallback)
+```
+
+**Performance Impact:**
+
+| Metric | Before (v6.0) | After (v6.1) | Improvement |
+|--------|---------------|--------------|-------------|
+| Prompt load time | ~50ms | ~5ms (cached) | 90% |
+| Token count | ~5,000 | ~2,200 (shared) | 56% |
+| Files to edit for personality | 6+ | 1 (identity.md) | 83% |
+| Cache hit rate | 0% | ~95% | +95% |
+
+**Migration:**
+- Step-based prompts moved to `agent/prompts/legacy/` (not deleted)
+- Full migration guide: `docs/migrations/prompt-optimization-v6-1.md`
+- Rollback: Set `USE_OPTIMIZED_PROMPTS=false` and restart
+
+### Request Flow
+
+1. **Webhook Reception (api/)**
+   - Chatwoot webhook arrives at `/webhook/chatwoot/{token}` (api/routes/chatwoot.py)
+   - Token validated using `CHATWOOT_WEBHOOK_TOKEN` (timing-safe comparison)
+   - Message filtered (only `message_type=0` incoming messages processed)
+   - Published to Redis `incoming_messages` channel
+
+2. **Agent Orchestration (agent/)**
+   - `agent/main.py` subscribes to `incoming_messages` channel
+   - LangGraph StateGraph processes message through conversation flow
+   - State persisted to Redis via AsyncRedisSaver (RedisSearch indexes)
+   - Response published to `outgoing_messages` channel
+   - FastAPI consumes response and sends to Chatwoot API
+
+3. **State Management**
+   - Redis: Short-term checkpointing (15 min TTL, RDB snapshots every 15 min)
+   - PostgreSQL: Long-term archival via `conversation_archiver` worker
+   - State schema: `agent/state/schemas.py` (19 fields, v3.2 enhanced)
+
+### Key Components
+
+**LangGraph Flow (agent/graphs/conversation_flow.py) - v6.0 Mode-Based**
+- Main StateGraph: 7 nodes — preprocess → router → [greeting|general|booking|escalation] → summarize
+- Mode-based routing with conditional edges via `mode_dispatcher()`
+- Checkpointing: AsyncRedisSaver with Redis Stack (requires RedisSearch/RedisJSON)
+- Mode prompts: `agent/prompts/modes/` (greeting.md, booking.md, general.md, escalation.md)
+
+**Mode Nodes (agent/modes/) - v6.0**
+- `greeting_mode.py` — GreetingMode: name extraction, customer creation (fires ONCE per new customer)
+- `booking_mode.py` — BookingMode: full multi-step booking with all 8 tools
+- `general_mode.py` — GeneralMode: read-only FAQ/info queries (query_info, search_services only)
+- `escalation_mode.py` — EscalationMode: calls escalate_to_human, sets escalation_triggered=True
+
+**Intent Router (agent/routing/intent_router.py) - v6.0**
+- Keyword + LLM hybrid intent classifier (8 intents: greet, book, ask_info, confirm, reject, cancel, escalate, ambiguous)
+- Fast path: keyword matching (no LLM) when confidence >= 0.8
+- Fallback: minimal LLM prompt with JSON response when keywords are ambiguous
+- Stateless — safe to share as module-level singleton
+
+**[DEPRECATED] Conversational Agent Node (agent/nodes/conversational_agent.py)**
+- OLD mega-node (v5.0 FSM architecture) — NOT used in v6.0 graph
+- Kept for backward compatibility (some old tests still import from it)
+- Do NOT add to new graphs — use mode nodes in conversation_flow.py instead
+
+**State Schema (agent/state/schemas.py) - v6.0**
+- `ConversationState` TypedDict with v6.0 mode fields
+- Message format: `{"role": "user"|"assistant", "content": str, "timestamp": str}`
+- IMPORTANT: Use `add_message()` helper from `agent/state/helpers.py` for correct format
+- FIFO windowing: Recent 10 messages kept, older messages summarized
+- **v6.0 mode fields:**
+  - `current_mode: str` — Active mode (GREETING/BOOKING/GENERAL/ESCALATION)
+  - `is_first_interaction: bool` — True only on first message
+  - `customer_name: str | None` — Name collected in GREETING mode
+  - `mode_context: Annotated[dict, merge_dicts]` — Mode-specific transient data (booking_step, last_intent, etc.); uses `__reset__` sentinel on mode transitions
+  - `mode_history: Annotated[list[str], operator.add]` — Ordered mode transition log (for debugging)
+  - `draft_contexts: Annotated[dict, merge_dicts]` — Draft context storage with merge reducer
+
+**Database Models (database/models.py)**
+- Core tables: `customers`, `stylists`, `services`, `business_hours`, `policies`
+- Transactional tables: `appointments`, `conversation_history`
+- All use UUID primary keys, TIMESTAMP WITH TIME ZONE, JSONB metadata
+- Enums: `ServiceCategory`, `AppointmentStatus`, `MessageRole`
+- **IMPORTANT:** System de pagos eliminado completamente (Nov 10, 2025):
+  - `services` table NO tiene campo `price_euros` (servicios sin precio)
+  - `appointments` table NO tiene campos de pago (`stripe_payment_id`, `payment_status`, etc.)
+  - Todas las citas se auto-confirman al crear (status=`CONFIRMED`, sin flujo provisional)
+  - Sin integración con Stripe
+- **IMPORTANT:** Customer management separado del flujo de reserva (Nov 13, 2025):
+  - Customers auto-created in `process_incoming_message` (first interaction)
+  - `appointments` table has appointment-specific fields: `first_name` (required), `last_name` (optional), `notes` (optional)
+  - These fields allow booking-specific customer data without calling `manage_customer`
+  - `customer_id` in appointments remains FK (NOT NULL) linking to `customers` table
+  - Booking flow (PASO 3) collects name/notes directly from user, no database operations until book()
+
+**Tools (agent/tools/) - v3.2 Consolidated (8 tools)**
+1. **`query_info`**: Unified information retrieval (services, FAQs, hours, policies)
+2. **`search_services`**: Fuzzy search across 92 services (handles ambiguous service names)
+3. **`manage_customer`**: Unified customer CRUD (get, create, update)
+4. **`get_customer_history`**: Retrieve appointment history
+5. **`check_availability`**: Check availability for specific date
+6. **`find_next_available`**: Multi-date automatic search for next available slots
+7. **`book`**: Atomic booking transaction (auto-confirms, no payment flow)
+8. **`escalate_to_human`**: Human handoff for complex cases
+
+Note: Consultation service is offered via `query_info("services", {"name": "consulta gratuita"})`, not a separate tool
+
+**Background Workers (agent/workers/)**
+- `conversation_archiver.py`: Archives expired Redis checkpoints to PostgreSQL
+- Runs every 5 minutes, processes conversations with TTL expired
+- Ensures conversation history persistence beyond Redis TTL
+
+## Important Patterns
+
+### Configuration Access
+**CRITICAL:** Always use `shared/config.py` for environment variables. NEVER use `os.getenv()` directly.
+```python
+from shared.config import get_settings
+settings = get_settings()  # Cached via @lru_cache
+api_key = settings.OPENROUTER_API_KEY  # OpenRouter unified gateway
+```
+
+### State Updates
+State is immutable. Nodes must return new dicts, not mutate input state:
+```python
+from agent.state.helpers import add_message
+
+async def my_node(state: ConversationState) -> dict[str, Any]:
+    # CORRECT: Use helper to return new state dict
+    return add_message(state, "assistant", "Response text")
+
+    # WRONG: Never mutate state directly
+    # state["messages"].append(...)  # DON'T DO THIS
+```
+
+### Message Format
+Always use `add_message()` helper to ensure correct message format:
+```python
+# Message format (role is "user" or "assistant", NEVER "human" or "ai")
+{
+    "role": "user" | "assistant",
+    "content": str,
+    "timestamp": str  # ISO 8601 in Europe/Madrid timezone
+}
+```
+
+### Redis Checkpointer Initialization
+AsyncRedisSaver requires Redis Stack (for RedisSearch/RedisJSON modules):
+```python
+from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
+
+checkpointer = get_redis_checkpointer()
+await initialize_redis_indexes(checkpointer)  # Creates checkpoint_writes index
+```
+
+### Database Connections
+Use async context manager for database sessions:
+```python
+from database.connection import get_async_session
+
+async for session in get_async_session():
+    result = await session.execute(query)
+    await session.commit()
+    break  # Important: break after first iteration
+```
+
+### LangGraph Reducer Wiring (CRITICAL)
+
+**NEVER use `{**state}` spread in node return values.** Every field returned passes through its reducer. For `operator.add` fields (like `messages`, `mode_history`), this causes duplication on every node invocation.
+
+**ALWAYS use `Annotated[T, reducer_fn]` for custom reducers.** Defining a reducer function alone (without `Annotated`) makes LangGraph fall back to REPLACE semantics silently. The reducer is never called.
+
+```python
+from typing import Annotated
+import operator
+
+# CORRECT: Annotated wiring — reducer IS called
+mode_history: Annotated[list[str], operator.add]
+mode_context: Annotated[dict, merge_dicts]
+
+# WRONG: Bare type — reducer is NEVER called, REPLACE semantics apply
+mode_history: list[str]  # DON'T DO THIS for append fields
+mode_context: dict        # DON'T DO THIS for merge fields
+```
+
+**Node returns must be partial dicts — only include fields you intend to change:**
+
+```python
+# CORRECT: Partial return — only what changes
+async def summarize_node(state: ConversationState) -> dict:
+    return {"conversation_summary": new_summary, "user_message": None}
+
+# WRONG: Full state spread — ALL fields pass through reducers again
+async def summarize_node(state: ConversationState) -> dict:
+    return {**state, "conversation_summary": new_summary}  # DON'T DO THIS
+```
+
+**Transient fields (like `user_message`) must survive the full pipeline:**
+
+- Set by caller → survives preprocess_node → mode nodes read it → cleared in summarize_node (END)
+- NEVER clear a transient field in an early node (preprocess) before downstream nodes have read it
+
+### Chatwoot API Integration
+Chatwoot API URL must have trailing slash removed before use:
+```python
+settings = get_settings()
+api_url = settings.CHATWOOT_API_URL.rstrip('/')
+endpoint = f"{api_url}/api/v1/accounts/{account_id}/conversations/{conversation_id}/messages"
+```
+
+## Testing Strategy
+
+- **Unit tests (tests/unit/)**: Test individual functions/tools in isolation with mocks
+- **Integration tests (tests/integration/)**: Test component interactions (API → Redis → Agent)
+- **Scenario tests (tests/integration/scenarios/)**: Test complete conversation flows end-to-end
+- **Mocks (tests/mocks/)**: Shared mock objects (Chatwoot, Google Calendar APIs)
+- **Coverage requirement**: 85% minimum (configured in pyproject.toml)
+- **Excluded from coverage**: `admin/*` (deferred to Epic 7), migrations, tests
+
+## Technology Stack
+
+- **Agent:** LangGraph 0.6.7+, LangChain 0.3.0+, GPT-4.1-mini via OpenRouter (openai/gpt-4.1-mini)
+- **LLM Provider:** OpenRouter API (unified gateway with automatic prompt caching)
+- **API:** FastAPI 0.116.1, Uvicorn 0.30.0+, Pydantic 2.x (settings via pydantic-settings)
+- **Database:** PostgreSQL 15+, SQLAlchemy 2.0+ (asyncpg driver), Alembic 1.13+
+- **Cache:** Redis Stack (redis-stack-server with RedisSearch, RedisJSON)
+- **Testing:** pytest 8.3.0+, pytest-asyncio 0.24.0+, asyncio_mode=auto
+- **Code Quality:** black (line length 100), ruff (pycodestyle, pyflakes, isort), mypy (strict for shared/database/)
+
+## Project Structure Notes
+
+- `api/` - FastAPI webhook receiver with routes for Chatwoot webhooks
+- `agent/` - LangGraph orchestrator with graphs, nodes, tools, prompts, workers
+  - `agent/graphs/` - v6.0 StateGraph definition (conversation_flow.py)
+  - `agent/modes/` - v6.0 mode nodes (greeting, booking, general, escalation)
+  - `agent/routing/` - v6.0 intent router (keyword + LLM hybrid classifier)
+  - `agent/prompts/modes/` - v6.0 mode-specific system prompts
+  - `agent/nodes/` - Legacy nodes (conversational_agent.py DEPRECATED; summarization.py active)
+  - `agent/fsm/` - v5.0 FSM models (still used by routing handlers and services)
+  - `agent/resilience/` - v5.1 error classification, retry strategy, fallback chain
+  - `agent/tools/` - 8 LangChain tools (query_info, book, escalate, etc.)
+  - `agent/workers/` - Background workers (conversation archiver)
+- `database/` - SQLAlchemy models + Alembic migrations + seed data
+- `shared/` - Shared utilities: config, logging, Redis client, Chatwoot client
+- `admin/` - Django Admin interface (✅ Implemented Nov 6, 2025 - accessible at http://localhost:8001/admin)
+- `tests/` - Test suite organized by type (unit, integration, mocks)
+- `docker/` - Dockerfiles for API and Agent services
+- `.cursor/rules/bmad/` - BMAD development methodology rules (orchestrator, analyst, architect, dev, qa, pm, po, sm, ux-expert)
+
+## Security Notes
+
+- Chatwoot webhook authentication: Token in URL path + timing-safe comparison
+- Environment variables: NEVER commit `.env` to git
+- API keys: Use test keys for development, live keys only in production
+- Database credentials: Minimum 16 characters for security
+- Google service account key: Mounted as read-only volume, never commit to git
+
+## Troubleshooting
+
+### Google Calendar API Errors
+
+**Error:** `FileNotFoundError: [Errno 2] No such file or directory: 'service-account-key.json'`
+
+**Cause:** The Google service account credentials file is not accessible inside the Docker container.
+
+**Solution:**
+1. Verify the file exists on the host: `ls -la /home/pepe/atrevete-bot/service-account-key.json`
+2. Verify `docker-compose.yml` has the volume mount in the `agent` service:
+   ```yaml
+   agent:
+     volumes:
+       - ./service-account-key.json:/app/service-account-key.json:ro
+   ```
+3. Recreate the container (restart is not enough): `docker-compose up -d agent`
+4. Verify the file is accessible: `docker exec atrevete-agent ls -la /app/service-account-key.json`
+
+**Impact if not fixed:**
+- Customers cannot check availability
+- Booking flow is blocked (requires availability check)
+- Agent can only handle informational queries (FAQs, service info)
+- All booking attempts will escalate to human staff

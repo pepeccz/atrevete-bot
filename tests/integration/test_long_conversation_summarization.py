@@ -155,10 +155,8 @@ async def test_long_conversation_with_summarization():
             for keyword in ["maría", "cliente", "cita", "corte", "tinte", "pago", "confirmación"]
         ), f"Summary should contain key booking context. Got: {summary}"
 
-        # Assertion 3: Verify recent messages are still retained
-        assert len(summarized_state["messages"]) == 10, (
-            "Should retain 10 recent messages after summarization"
-        )
+        # Assertion 3: Normal summarization returns a partial update, so messages stay untouched
+        assert "messages" not in summarized_state
 
         # Assertion 4: Estimate final token count
         final_tokens = estimate_token_count(summarized_state)
@@ -177,7 +175,7 @@ async def test_long_conversation_with_summarization():
         # Assertion 6: Verify conversation can continue after summarization
         # Add message 31
         post_summary_state = add_message(
-            summarized_state,
+            {**summarization_test_state, **summarized_state},
             "user",
             "Una última pregunta, ¿hacéis mechas?"
         )

@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
+from langgraph.types import Overwrite
 
 from agent.state.schemas import ConversationState
 from agent.state.helpers import should_summarize, check_token_overflow
@@ -90,9 +91,9 @@ async def summarize_conversation(state: ConversationState) -> dict:
             api_key=settings.OPENROUTER_API_KEY,
             base_url="https://openrouter.ai/api/v1",
             temperature=0.3,  # Deterministic summaries
-            max_tokens=300,   # 2-3 sentences ~100-200 tokens
-            request_timeout=20.0,  # 20s timeout for summarization
+            timeout=20.0,  # 20s timeout for summarization
             max_retries=2,  # Retry 2x on transient failures
+            model_kwargs={"max_tokens": 300},  # 2-3 sentences ~100-200 tokens
             default_headers={
                 "HTTP-Referer": settings.SITE_URL,
                 "X-Title": settings.SITE_NAME,
@@ -100,7 +101,7 @@ async def summarize_conversation(state: ConversationState) -> dict:
         )
 
         response = await llm.ainvoke([{"role": "user", "content": prompt_text}])
-        new_summary_text = response.content.strip()
+        new_summary_text = str(response.content).strip()
 
         # Step 6: Combine with existing summary if present
         if existing_summary:
@@ -114,6 +115,8 @@ async def summarize_conversation(state: ConversationState) -> dict:
             "conversation_summary": combined_summary
         })
 
+        reduced_messages: list[dict] | None = None
+
         if overflow_check["overflow"]:
             action = overflow_check.get("action")
             conversation_id = state.get("conversation_id", "unknown")
@@ -123,8 +126,8 @@ async def summarize_conversation(state: ConversationState) -> dict:
                 logger.warning(
                     f"Applying aggressive summarization for conversation {conversation_id}"
                 )
-                # Keep only last 5 messages
-                messages = messages[-5:]
+                # Keep only last 5 messages using reducer-bypass replacement semantics
+                reduced_messages = messages[-5:]
             elif action == "escalate":
                 # Conversation too complex, flag for human takeover
                 logger.error(
@@ -133,7 +136,6 @@ async def summarize_conversation(state: ConversationState) -> dict:
                 )
                 return {
                     "conversation_summary": combined_summary,
-                    "messages": messages,
                     "escalated": True,
                     "escalation_reason": "token_overflow",
                     "user_message": None,
@@ -149,11 +151,15 @@ async def summarize_conversation(state: ConversationState) -> dict:
         )
 
         # Step 9: Return only changed fields (never full state — prevents doubling via operator.add)
-        return {
+        result = {
             "conversation_summary": combined_summary,
-            "messages": messages,  # May be reduced if aggressive summarization applied
             "user_message": None,
         }
+
+        if reduced_messages is not None:
+            result["messages"] = Overwrite(reduced_messages)
+
+        return result
 
     except Exception as e:
         # Graceful degradation: log error and clear transient field

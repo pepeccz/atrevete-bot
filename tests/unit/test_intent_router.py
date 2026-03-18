@@ -17,7 +17,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent.fsm.models import BookingState, Intent, IntentType
-from agent.routing.intent_router import IntentRouter
+from agent.routing.intent_router import IntentRouter, classify_by_keywords
 
 
 class TestIntentRouterConstants:
@@ -298,3 +298,23 @@ def mock_state():
         "messages": [],
         "fsm_state": None,
     }
+
+
+class TestIntentRouterKeywordFastPath:
+    def test_bare_no_classifies_as_reject(self):
+        intent = classify_by_keywords("no")
+
+        assert intent is not None
+        assert intent.intent == "reject"
+
+    def test_cancelo_classifies_as_cancel(self):
+        intent = classify_by_keywords("cancelo")
+
+        assert intent is not None
+        assert intent.intent == "cancel"
+
+    def test_cancela_classifies_as_cancel(self):
+        intent = classify_by_keywords("cancela")
+
+        assert intent is not None
+        assert intent.intent == "cancel"

@@ -25,6 +25,7 @@ import pytest
 from agent.utils.service_disambiguation import (
     ClarificationPayload,
     ResolvedService,
+    _to_resolved,
     resolve_candidates,
 )
 from database.models import ServiceCategory
@@ -38,6 +39,7 @@ from database.models import ServiceCategory
 def _make_service(
     name: str,
     duration_minutes: int = 60,
+    description: str | None = None,
     metadata_: dict | None = None,
 ) -> MagicMock:
     """Build a minimal mock that satisfies the resolve_candidates() interface."""
@@ -45,6 +47,7 @@ def _make_service(
     svc.id = _uuid_for(name)
     svc.name = name
     svc.duration_minutes = duration_minutes
+    svc.description = description
     svc.category = ServiceCategory.HAIRDRESSING
     svc.metadata_ = metadata_ or {}
     return svc
@@ -343,3 +346,55 @@ class TestResolveCandidates:
         # Should return ClarificationPayload for the Mechas family
         assert isinstance(result, ClarificationPayload)
         assert result.axis == "hair_density"
+
+
+class TestResolvedServiceDescription:
+    def test_resolved_service_accepts_missing_description(self):
+        resolved = ResolvedService(
+            id=_uuid_for("x"),
+            name="Corte",
+            duration_minutes=30,
+            category="Peluquería",
+            family=None,
+            ask_if_missing=[],
+            combo_recommendations=[],
+        )
+
+        assert resolved.description is None
+
+    def test_resolved_service_preserves_provided_description(self):
+        resolved = ResolvedService(
+            id=_uuid_for("x"),
+            name="Corte",
+            duration_minutes=30,
+            category="Peluquería",
+            family=None,
+            ask_if_missing=[],
+            combo_recommendations=[],
+            description="Corte clásico",
+        )
+
+        assert resolved.description == "Corte clásico"
+
+    def test_resolved_service_description_defaults_to_none(self):
+        resolved = ResolvedService(
+            id=_uuid_for("Corte"),
+            name="Corte",
+            duration_minutes=45,
+            category=ServiceCategory.HAIRDRESSING.value,
+            family="haircut",
+        )
+
+        assert resolved.description is None
+
+    def test_to_resolved_populates_description_when_service_has_one(self):
+        service = _make_service(
+            "Cortar",
+            duration_minutes=40,
+            description="Corte capilar completo con lavado incluido",
+            metadata_={"family": "haircut", "combo_recommendations": []},
+        )
+
+        resolved = _to_resolved(service)
+
+        assert resolved.description == "Corte capilar completo con lavado incluido"

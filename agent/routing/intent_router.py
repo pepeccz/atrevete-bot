@@ -149,6 +149,7 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "así es",
     ],
     "reject": [
+        "no",
         "mejor no",
         "no quiero",
         "no gracias",
@@ -156,7 +157,6 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "para nada",
         "no me interesa",
         "no, gracias",
-        "no",
     ],
     "cancel": [
         "cancelar",
@@ -166,6 +166,8 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "deshacer",
         "eliminar cita",
         "borrar cita",
+        "cancelo",
+        "cancela",
     ],
     "escalate": [
         "hablar con una persona",
@@ -250,6 +252,12 @@ def classify_by_keywords(text: str) -> IntentResult | None:
     Only confidence >= _KEYWORD_MATCH_THRESHOLD (0.80) bypasses the LLM.
     Substring-only matches (0.70) still trigger LLM for more accurate classification.
 
+    Multi-intent conflict resolution:
+    - When both a social intent (greet) and an actionable intent (book, ask_info,
+      cancel, escalate) match above threshold, return None to defer to the LLM.
+      This prevents "Hola, quiero cortarme el pelo" from being classified as
+      just "greet" — the LLM correctly identifies the dominant intent.
+
     When multiple intents match at the same confidence level, the first match
     (by KEYWORD_MAP insertion order) wins.
 
@@ -266,6 +274,9 @@ def classify_by_keywords(text: str) -> IntentResult | None:
     best_intent: str | None = None
     best_confidence: float = 0.0
 
+    # Collect ALL intents that match above threshold to detect conflicts
+    matched_intents: dict[str, float] = {}
+
     for intent, keywords in KEYWORD_MAP.items():
         # Find the best-matching keyword for this intent
         intent_best_confidence: float = 0.0
@@ -278,12 +289,29 @@ def classify_by_keywords(text: str) -> IntentResult | None:
                     # Can't do better — short-circuit to next intent
                     break
 
+        if intent_best_confidence > 0.0:
+            matched_intents[intent] = intent_best_confidence
+
         # Update global best if this intent scored higher
         if intent_best_confidence > best_confidence:
             best_confidence = intent_best_confidence
             best_intent = intent
 
     if best_intent is None:
+        return None
+
+    # Multi-intent conflict detection:
+    # When a greeting co-occurs with an actionable intent (book, ask_info,
+    # cancel, escalate), defer to LLM for accurate classification.
+    _ACTIONABLE_INTENTS = {"book", "ask_info", "cancel", "escalate"}
+    if best_intent == "greet" and any(
+        i in matched_intents for i in _ACTIONABLE_INTENTS
+    ):
+        logger.debug(
+            "classify_by_keywords: multi-intent conflict detected "
+            "(greet + %s) — deferring to LLM",
+            [i for i in _ACTIONABLE_INTENTS if i in matched_intents],
+        )
         return None
 
     return IntentResult(
@@ -308,14 +336,22 @@ Responde ÚNICAMENTE con JSON válido, sin comentarios ni texto extra:
 {"intent": "<intención>", "confidence": <0.0-1.0>}
 
 Intenciones:
-- greet: saludo, presentación
+- greet: saludo puro sin otra intención (ej: "Hola", "Buenas tardes")
 - book: quiere hacer o gestionar una reserva/cita
 - ask_info: pregunta sobre precios, servicios, horarios, información general
 - confirm: confirma algo propuesto
 - reject: rechaza algo propuesto
 - cancel: quiere cancelar una cita existente
 - escalate: quiere hablar con una persona real
-- ambiguous: no queda claro"""
+- ambiguous: no queda claro
+
+REGLA IMPORTANTE: Si el mensaje contiene un saludo ("hola", "buenas") JUNTO \
+con una intención de acción (reservar, preguntar, cancelar), clasifica según \
+la ACCIÓN, NO como greet. Ejemplo: "Hola, quiero cortarme el pelo" → book.
+
+REGLA DE CONTEXTO: Si el current_mode es BOOKING, las preguntas sobre \
+estilistas, disponibilidad, horarios o el servicio seleccionado son parte \
+de la reserva. Clasifica como "book", NO como "ask_info"."""
 
 
 class IntentRouter:

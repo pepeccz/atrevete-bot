@@ -178,6 +178,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Action | Skill |
 |--------|-------|
 | After creating/modifying a skill | `skill-sync` |
+| Choosing a QA persona | `atrevete-qa-context` |
 | Creating React components | `atrevete-admin` |
 | Creating UI components | `atrevete-admin` |
 | Creating agent tools | `atrevete-agent` |
@@ -190,14 +191,22 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Creating/modifying services | `atrevete-api` |
 | Editing agent system prompts | `atrevete-prompts` |
 | Editing identity.md or critical_rules.md | `atrevete-prompts` |
+| Evaluating a QA conversation | `atrevete-qa-evaluator` |
+| Executing a conversational QA run | `atrevete-qa-tester` |
 | General Atrévete Bot development questions | `atrevete` |
+| Generating a QA report | `atrevete-qa-evaluator` |
+| Loading QA context | `atrevete-qa-context` |
 | Modifying core prompt rules | `atrevete-prompts` |
 | Modifying files in agent/prompts/ | `atrevete-prompts` |
 | Modifying mode prompt instructions | `atrevete-prompts` |
+| Preparing a conversational QA scenario | `atrevete-qa-context` |
 | Project overview and architecture | `atrevete` |
 | Regenerate AGENTS.md Auto-invoke tables | `skill-sync` |
 | Reviewing prompt quality | `atrevete-prompts` |
+| Scoring a conversational flow | `atrevete-qa-evaluator` |
+| Simulating a WhatsApp user | `atrevete-qa-tester` |
 | Troubleshoot missing skill in auto-invoke | `skill-sync` |
+| Validating a QA flow end to end | `atrevete-qa-tester` |
 | Working on API routes | `atrevete-api` |
 | Working on Chatwoot | `atrevete-api` |
 | Working on Chatwoot client | `atrevete-shared` |

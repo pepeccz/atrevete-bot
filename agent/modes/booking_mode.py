@@ -556,14 +556,21 @@ class BookingMode(BaseModeNode):
                     }
                 )
 
+            self.logger.info(
+                "BookingMode._prefetch_stylist_options: fetched %d stylists | soonest_slot=%s",
+                len(prefetched_stylists),
+                soonest_slot[1] if soonest_slot else "none",
+            )
             return {
                 **mode_context,
                 "prefetched_stylists": prefetched_stylists,
                 "soonest_any_slot": soonest_slot[1] if soonest_slot else None,
             }
         except Exception as exc:
-            self.logger.warning("BookingMode._prefetch_stylist_options failed: %s", exc)
-            return mode_context
+            self.logger.error(
+                "BookingMode._prefetch_stylist_options failed: %s", exc, exc_info=True
+            )
+            return {**mode_context, "prefetch_error": True}
 
     async def handle(self, state: ConversationState, intent: object) -> dict:
         """
@@ -648,7 +655,24 @@ class BookingMode(BaseModeNode):
                     "user_message": None,
                 }
 
-            if current_step == STEP_CONFIRMATION and self._message_is_explicit_cancellation(user_message):
+            # ADD_ONS step: "no" / "no es necesario" means declining the add-on,
+            # NOT cancelling the booking.  Advance to the next step instead.
+            if current_step == STEP_ADD_ONS:
+                self.logger.info(
+                    "BookingMode: reject intent at ADD_ONS → declining add-on, advancing step"
+                )
+                advanced_context = self._finalize_mode_context(
+                    {**mode_context, "add_ons_declined": True},
+                    BookingSubstep.STYLIST_SELECTION,
+                    None,
+                )
+                # Fall through to the regular step handler instead of cancelling
+                mode_context = advanced_context
+                current_step = self._determine_step(mode_context)
+                intent_signal = "ambiguous"
+                # (continues to normal step handling below)
+
+            elif current_step == STEP_CONFIRMATION and self._message_is_explicit_cancellation(user_message):
                 self.logger.info(
                     "BookingMode: explicit cancellation detected at confirmation -> GENERAL"
                 )
@@ -662,7 +686,7 @@ class BookingMode(BaseModeNode):
                     "user_message": None,
                 }
 
-            if current_step == STEP_SERVICE_SELECTION or pending_cancel:
+            elif current_step == STEP_SERVICE_SELECTION or pending_cancel:
                 # At the first step OR confirmed cancellation → go to GENERAL directly
                 self.logger.info(
                     "BookingMode: reject intent (step=%s, pending_cancel=%s) → GENERAL",
@@ -684,7 +708,7 @@ class BookingMode(BaseModeNode):
                 return {
                     **self._response_updates(
                         state,
-                        "¿Seguro que quieres cancelar la reserva? Responde 'no' para cancelar o continúa con la reserva.",
+                        "¿Seguro que quieres cancelar la reserva? Responde 'sí' para cancelar o 'no' para continuar con tu cita.",
                     ),
                     "mode_context": updated_context,
                     "last_node": "booking",
@@ -1022,7 +1046,11 @@ class BookingMode(BaseModeNode):
                 service_category=service_category or "sin categoria informada",
             )
             messages = self._build_messages(state, system)
-        result = await self._run_agentic_loop(messages, tools=[])
+
+        # Provide list_stylists as a fallback tool in case the prefetch failed
+        # or the dynamic context doesn't contain the expected data.
+        from agent.tools.info_tools import list_stylists
+        result = await self._run_agentic_loop(messages, tools=[list_stylists])
 
         next_step, updated_context = self._advance_step(
             result, BookingSubstep.STYLIST_SELECTION, updated_context

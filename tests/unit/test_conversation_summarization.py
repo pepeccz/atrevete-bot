@@ -11,6 +11,7 @@ Tests cover:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from langgraph.types import Overwrite
 
 from agent.nodes.summarization import summarize_conversation
 from agent.state.helpers import (
@@ -212,6 +213,7 @@ class TestSummarizeConversation:
 
             # Verify summary was created
             assert result["conversation_summary"] == "Cliente solicita cita para corte de pelo."
+            assert "messages" not in result
 
     @pytest.mark.asyncio
     async def test_combines_with_existing_summary(self):
@@ -243,6 +245,7 @@ class TestSummarizeConversation:
                 "Cliente confirma cita para mañana 10am."
             )
             assert result["conversation_summary"] == expected_summary
+            assert "messages" not in result
 
     @pytest.mark.asyncio
     async def test_graceful_degradation_on_api_failure(self):
@@ -265,6 +268,62 @@ class TestSummarizeConversation:
             # Returning {**state} would cause message doubling via LangGraph reducers
             assert result == {"user_message": None}
             assert "messages" not in result
+
+    @pytest.mark.asyncio
+    async def test_aggressive_summarization_overwrites_message_window(self):
+        """Verify aggressive reduction uses Overwrite instead of operator.add append semantics."""
+        state: ConversationState = {
+            "conversation_id": "test-overflow",
+            "total_message_count": 19,
+            "messages": [
+                {"role": "user", "content": f"Message {idx}"}
+                for idx in range(10)
+            ],
+            "conversation_summary": None,
+        }
+
+        mock_response = MagicMock()
+        mock_response.content = "Resumen corto."
+
+        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm, patch(
+            "agent.nodes.summarization.check_token_overflow",
+            return_value={"overflow": True, "action": "aggressive_summarize"},
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.ainvoke = AsyncMock(return_value=mock_response)
+            mock_llm.return_value = mock_instance
+
+            result = await summarize_conversation(state)
+
+        assert result["conversation_summary"] == "Resumen corto."
+        assert isinstance(result["messages"], Overwrite)
+        assert result["messages"].value == state["messages"][-5:]
+
+    @pytest.mark.asyncio
+    async def test_escalation_path_does_not_return_messages(self):
+        state: ConversationState = {
+            "conversation_id": "test-escalate",
+            "total_message_count": 19,
+            "messages": [{"role": "user", "content": "Hola"}],
+            "conversation_summary": None,
+        }
+
+        mock_response = MagicMock()
+        mock_response.content = "Resumen corto."
+
+        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm, patch(
+            "agent.nodes.summarization.check_token_overflow",
+            return_value={"overflow": True, "action": "escalate"},
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.ainvoke = AsyncMock(return_value=mock_response)
+            mock_llm.return_value = mock_instance
+
+            result = await summarize_conversation(state)
+
+        assert result["escalated"] is True
+        assert result["escalation_reason"] == "token_overflow"
+        assert "messages" not in result
 
 
 class TestTokenEstimation:

@@ -294,9 +294,10 @@ class ConversationState(TypedDict, total=False):
     updated_at: str
 
     # ============================================================================
-    # First Interaction Detection (6 fields) - v3.3 customer greeting, v6.1 name confirmation, v6.2 deferred customer creation
+    # First Interaction Detection (7 fields) - v3.3 customer greeting, v6.1 name confirmation, v6.2 deferred customer creation
     # ============================================================================
     is_first_interaction: bool  # True if this is the customer's first message ever
+    ai_disclosure_sent: bool  # True after the first-turn AI disclosure has been delivered
     customer_needs_name: bool  # True if WhatsApp name is not readable (numbers/emojis)
     customer_first_name: str | None  # Current customer first_name from database
     name_confirmation_pending: bool  # v6.1: True while waiting for user to confirm/provide name
@@ -324,6 +325,7 @@ class ConversationState(TypedDict, total=False):
     # ============================================================================
     pending_decline_appointment_id: str | None  # UUID of appointment pending decline confirmation
     pending_decline_initiated_at: str | None  # ISO 8601 timestamp when decline was initiated
+    pending_confirmation_appointment_id: str | None  # UUID string of appointment awaiting confirm/decline reply
 
     # ============================================================================
     # v6.0 Mode-Based Architecture Fields
@@ -408,6 +410,7 @@ def create_initial_state(
         "updated_at": now_str,
         # First interaction
         "is_first_interaction": True,
+        "ai_disclosure_sent": False,
         "customer_needs_name": False,
         "customer_first_name": customer_name,
         "name_confirmation_pending": False,
@@ -420,6 +423,7 @@ def create_initial_state(
         # Decline flow
         "pending_decline_appointment_id": None,
         "pending_decline_initiated_at": None,
+        "pending_confirmation_appointment_id": None,
         # v6.0 mode fields
         "current_mode": "GREETING",
         "previous_mode": None,

@@ -928,3 +928,223 @@ class TestFirstTurnRouterExamples:
             result = await router_node(state)
 
         assert result["current_mode"] == "BOOKING"
+
+
+# ============================================================================
+# Tests for _is_booking_related_query() helper
+# ============================================================================
+
+
+class TestIsBookingRelatedQuery:
+    """Unit tests for the _is_booking_related_query() helper."""
+
+    def test_cuales_tienes_disponibles_is_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("Cuáles tienes disponibles?") is True
+
+    def test_que_estilistas_hay_is_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("¿Qué estilistas hay?") is True
+
+    def test_que_horarios_teneis_is_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("¿Qué horarios tenéis?") is True
+
+    def test_cuanto_cuesta_is_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("¿Cuánto cuesta el corte?") is True
+
+    def test_cuando_hay_hueco_is_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("¿Cuándo hay hueco?") is True
+
+    def test_manana_por_la_tarde_is_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("¿Hay algo mañana por la tarde?") is True
+
+    def test_donde_estais_is_not_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("¿Dónde estáis?") is False
+
+    def test_teneis_parking_is_not_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("¿Tenéis parking?") is False
+
+    def test_empty_string_is_not_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("") is False
+
+    def test_cuanto_dura_is_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("¿Cuánto dura el corte?") is True
+
+    def test_que_productos_usan_is_not_booking_related(self):
+        from agent.graphs.conversation_flow import _is_booking_related_query
+
+        assert _is_booking_related_query("que productos usan para el alisado") is False
+
+
+# ============================================================================
+# Tests for Rule 6 booking-related guard — stays in BOOKING or digresses
+# ============================================================================
+
+
+class TestRule6BookingRelatedGuard:
+    """Tests for Rule 6 booking-related ask_info guard."""
+
+    @pytest.mark.asyncio
+    async def test_rule6_booking_related_ask_info_stays_in_booking(self):
+        """ask_info about stylists during BOOKING should stay in BOOKING."""
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name="Ana",
+            is_first_interaction=False,
+            user_message="¿Qué estilistas hay disponibles?",
+        )
+        state["mode_context"] = {
+            "booking_step": "stylist_selection",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("ask_info")
+            result = await router_node(state)
+
+        # Must stay in BOOKING (no current_mode change or explicitly BOOKING)
+        returned_mode = result.get("current_mode")
+        assert returned_mode is None or returned_mode == "BOOKING", (
+            f"Booking-related ask_info should stay in BOOKING, got {returned_mode!r}"
+        )
+        assert result["mode_context"]["last_intent"] == "ask_info"
+        # Must NOT have draft_contexts (no digression happened)
+        assert "draft_contexts" not in result
+
+    @pytest.mark.asyncio
+    async def test_rule6_horarios_during_booking_stays_in_booking(self):
+        """ask_info about schedules during BOOKING stays in BOOKING."""
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name="Carlos",
+            is_first_interaction=False,
+            user_message="¿Qué horarios tenéis mañana?",
+        )
+        state["mode_context"] = {
+            "booking_step": "slot_selection",
+            "service_id": "svc-2",
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("ask_info")
+            result = await router_node(state)
+
+        returned_mode = result.get("current_mode")
+        assert returned_mode is None or returned_mode == "BOOKING"
+        assert "draft_contexts" not in result
+
+    @pytest.mark.asyncio
+    async def test_rule6_precio_during_booking_stays_in_booking(self):
+        """ask_info about price during BOOKING stays in BOOKING."""
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name="Maria",
+            is_first_interaction=False,
+            user_message="¿Cuánto cuesta el corte?",
+        )
+        state["mode_context"] = {
+            "booking_step": "service_selection",
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("ask_info")
+            result = await router_node(state)
+
+        returned_mode = result.get("current_mode")
+        assert returned_mode is None or returned_mode == "BOOKING"
+
+    @pytest.mark.asyncio
+    async def test_rule6_unrelated_ask_info_still_digresses_to_general(self):
+        """ask_info about unrelated topic during BOOKING digresses to GENERAL."""
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name="Ana",
+            is_first_interaction=False,
+            user_message="¿Dónde estáis ubicados?",
+        )
+        state["mode_context"] = {
+            "booking_step": "slot_selection",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "stylist_id": "sty-1",
+            "stylist_name": "Maria",
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("ask_info")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GENERAL"
+        assert "draft_contexts" in result
+        assert "BOOKING" in result["draft_contexts"]
+
+    @pytest.mark.asyncio
+    async def test_rule6_product_question_digresses_to_general(self):
+        """ask_info about products (not booking-related) digresses to GENERAL."""
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name="Ana",
+            is_first_interaction=False,
+            user_message="que productos usan para el alisado",
+        )
+        state["mode_context"] = {
+            "booking_step": "slot_selection",
+            "service_id": "svc-1",
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("ask_info")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GENERAL"
+        assert "draft_contexts" in result
+
+    @pytest.mark.asyncio
+    async def test_rule6_teneis_parking_digresses_to_general(self):
+        """ask_info about parking (unrelated) digresses to GENERAL."""
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="BOOKING",
+            customer_name="Pedro",
+            is_first_interaction=False,
+            user_message="¿Tenéis parking?",
+        )
+        state["mode_context"] = {
+            "booking_step": "service_selection",
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("ask_info")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GENERAL"

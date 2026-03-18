@@ -6,8 +6,13 @@ extracts or mentions the customer's name. Customer creation uses
 `pending_whatsapp_name` (from Chatwoot sender.name) silently.
 
 Flow:
-1. If customer already exists (returning): warm name-free greeting → GENERAL
-2. If new customer: create customer silently with sender_name → warm name-free greeting → GENERAL
+1. If customer already exists (returning): warm name-free greeting → target mode
+2. If new customer: create customer silently with sender_name → warm greeting → target mode
+
+Target mode after greeting is determined by `last_intent` in mode_context:
+- "book" → BOOKING (user greeted AND wants to book)
+- "ask_info" → GENERAL (user greeted AND has a question)
+- anything else → GENERAL (default)
 
 NO name extraction from message text. NO name in any response.
 """
@@ -27,6 +32,25 @@ _WELCOME_NEW = f"{FIRST_TURN_INTRO} ¿En qué puedo ayudarte hoy?"
 _WELCOME_RETURNING = "¡Hola de nuevo! 😊 ¿En qué puedo ayudarte hoy?"
 
 
+def _resolve_target_mode(mode_context: dict) -> str:
+    """
+    Determine which mode to transition to after the greeting.
+
+    When the user's message contained a greeting AND an actionable intent
+    (e.g. "Hola, quiero cortarme el pelo"), the router stores the classified
+    intent in mode_context["last_intent"].  We use it to send the user to the
+    right mode instead of always defaulting to GENERAL.
+
+    Returns:
+        "BOOKING" if last_intent == "book",
+        "GENERAL" otherwise (including greet, ask_info, ambiguous, etc.)
+    """
+    last_intent = (mode_context or {}).get("last_intent", "greet")
+    if last_intent == "book":
+        return "BOOKING"
+    return "GENERAL"
+
+
 class GreetingMode(BaseModeNode):
     """
     Mode node for first-contact greetings.
@@ -34,7 +58,7 @@ class GreetingMode(BaseModeNode):
     Responsibilities:
     - Send a warm welcome on genuine greeting turns (WITHOUT using customer name)
     - Create customer record silently using sender_name from Chatwoot
-    - Hand off to GENERAL after the greeting response
+    - Transition to the appropriate mode based on detected intent
     """
 
     @property
@@ -78,10 +102,12 @@ class GreetingMode(BaseModeNode):
         )
 
         # ── Branch 1: Returning customer (name already known) ────────────
+        target_mode = _resolve_target_mode(mode_context)
         if customer_name:
             self.logger.info(
-                "GreetingMode: returning customer (name=%s), transitioning to GENERAL",
+                "GreetingMode: returning customer (name=%s), transitioning to %s",
                 customer_name,
+                target_mode,
             )
             fallback_response = _WELCOME_RETURNING
             response = await self._render_layered_response(
@@ -93,7 +119,7 @@ class GreetingMode(BaseModeNode):
             )
             final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
             updates = {
-                **transition_mode(state, "GENERAL"),
+                **transition_mode(state, target_mode),
                 **add_message(state, "assistant", final_response),
                 "user_message": None,
             }
@@ -109,9 +135,10 @@ class GreetingMode(BaseModeNode):
         )
 
         self.logger.info(
-            "GreetingMode: new customer | pending_name=%s | customer_id=%s",
+            "GreetingMode: new customer | pending_name=%s | customer_id=%s | target_mode=%s",
             pending_name,
             customer_id,
+            target_mode,
         )
 
         fallback_response = _WELCOME_NEW
@@ -124,7 +151,7 @@ class GreetingMode(BaseModeNode):
         )
         final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
         updates = {
-            **transition_mode(state, "GENERAL"),
+            **transition_mode(state, target_mode),
             **add_message(state, "assistant", final_response),
             "user_message": None,
         }

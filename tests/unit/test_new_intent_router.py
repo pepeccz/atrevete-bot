@@ -196,10 +196,48 @@ class TestClassifyByKeywords:
     # ------ raw_input preserved ------
 
     def test_raw_input_preserved(self):
-        text = "Hola, quiero una cita"
+        """raw_input field stores the original text when a keyword matches."""
+        text = "reservar una cita"
         result = classify_by_keywords(text)
         assert result is not None
         assert result.raw_input == text
+
+    def test_greet_plus_book_defers_to_llm(self):
+        """Multi-intent conflict: greeting + booking → None (LLM fallback).
+
+        'Hola, quiero una cita' contains both greet ('hola') and book ('quiero')
+        keywords. The keyword classifier should return None to defer to the
+        LLM, which is better at classifying the dominant intent.
+        """
+        result = classify_by_keywords("Hola, quiero una cita")
+        assert result is None
+
+    def test_greet_plus_ask_info_defers_to_llm(self):
+        """Multi-intent conflict: greeting + info query → None (LLM fallback)."""
+        result = classify_by_keywords("Hola, cuánto cuesta un corte")
+        assert result is None
+
+    def test_greet_plus_cancel_defers_to_llm(self):
+        """Multi-intent conflict: greeting + cancel → None (LLM fallback)."""
+        result = classify_by_keywords("Buenas, quiero cancelar mi cita")
+        assert result is None
+
+    def test_greet_plus_escalate_defers_to_llm(self):
+        """Multi-intent conflict: greeting + escalate → None (LLM fallback)."""
+        result = classify_by_keywords("Hola, necesito hablar con una persona")
+        assert result is None
+
+    def test_pure_greet_still_works(self):
+        """Pure greeting without actionable intent still returns greet."""
+        result = classify_by_keywords("Hola, buenas tardes")
+        assert result is not None
+        assert result.intent == "greet"
+
+    def test_pure_book_still_works(self):
+        """Pure booking without greeting still returns book."""
+        result = classify_by_keywords("Quiero una cita para mañana")
+        assert result is not None
+        assert result.intent == "book"
 
     # ------ mode_hint ------
 

@@ -2,244 +2,168 @@
 
 ## Objetivo
 
-Gestionar el flujo completo de agendamiento de citas. Este modo tiene acceso a TODAS las herramientas de booking.
+Guiar el FSM real de reserva usando `mode_context["booking_step"]` como fuente de verdad.
+En este modo **no** se vuelve a pedir nombre: la clienta ya llega identificada desde GREETING
+o se crea de forma lazy en el paso `customer_name`.
 
 ---
 
-## Flujo de 6 Pasos (OBLIGATORIO)
+## Substeps Reales del FSM
 
-### PASO 1: Recolectar Servicio(s) 🎯
+### 1. `service_selection`
 
-**Acciones:**
-1. Escucha qué servicio desea el cliente
-2. **Llama `search_services(query="...")`** con palabras clave del cliente
-3. Presenta opciones en LISTA NUMERADA (máximo 5)
+**Objetivo:** resolver el servicio exacto antes de hablar de estilista u horarios.
 
-**Ejemplo:**
-```
-Cliente: "Quiero cortarme el pelo"
-[Tú llamas: search_services(query="corte")]
-[El tool retorna lista de servicios]
-Tenemos estos servicios:
+**Herramientas que usa el código:**
+- `search_services(query, category)`
+- `query_info(type="services")`
 
-1. {Servicio A} ({X} min)
-2. {Servicio B} ({Y} min)
-...
+**Qué pasa acá:**
+- Si hay coincidencia exacta, se guarda `service_id`, `service_name`, `service_category` y la
+  duración.
+- Si `search_services` devuelve `clarification_needed`, hay que transmitir el `question_hint`
+  y esperar la respuesta del cliente.
+- Si se resuelve el servicio, el flujo avanza a `stylist_selection`.
 
-¿Cuál prefieres?
-```
+**Transiciones válidas:**
+- `service_selection -> service_selection`
+- `service_selection -> stylist_selection`
 
-**Servicios con variantes:**
+### 2. `stylist_selection`
 
-Cuando `search_services` retorne `clarification_needed`, transmite el `question_hint` al cliente y espera su respuesta antes de avanzar.
+**Objetivo:** elegir profesional o confirmar que cualquier estilista sirve.
 
-### PASO 2: Elegir Estilista y Disponibilidad 📅
+**Herramientas que usa el código:**
+- `list_stylists()`
+- `get_customer_history(...)` se usa de forma auxiliar para detectar estilista recurrente
 
-1. Para clientes recurrentes → `get_customer_history()`
-2. Presenta 2 slots disponibles por cada estilista
-3. Usa `find_next_available(service_category="...", max_results=10)`
+**Qué pasa acá:**
+- Si hay historial consistente, el sistema puede precargar una estilista recurrente.
+- Si la clienta elige una profesional concreta, se guardan `stylist_id` y `stylist_name`.
+- Cuando ya hay estilista resuelta, el flujo avanza a `slot_selection`.
 
-**Formato:**
-```
-*María*:
-- Viernes 8 nov a las 10:00
-- Sábado 9 nov a las 15:00
+**Transiciones válidas:**
+- `stylist_selection -> service_selection`
+- `stylist_selection -> stylist_selection`
+- `stylist_selection -> slot_selection`
 
-*Carmen*:
-- Viernes 8 nov a las 14:00
-- Lunes 11 nov a las 10:00
-```
+### 3. `slot_selection`
 
-### PASO 3: Confirmar Datos del Cliente 👤
+**Objetivo:** encontrar una fecha y horario válidos con la estilista elegida.
 
-1. `manage_customer(action="get", phone="...")`
-2. Si existe → Confirma: "¿Es correcto que te llamas *{nombre}*?"
-3. Si no existe → Pide nombre y crea con `manage_customer(action="create", ...)`
-4. **ALMACENA MENTALMENTE** el `customer_id`
-5. Pregunta por notas: "¿Hay algo que debamos saber? (alergias, etc.)"
+**Herramientas que usa el código:**
+- `check_availability(...)`
+- `find_next_available(...)`
 
-### PASO 4: Confirmación de Servicios y Horario ✓
+**Qué pasa acá:**
+- `check_availability` se usa cuando la clienta pide una fecha o franja concreta.
+- `find_next_available` se usa para proponer próximos huecos disponibles.
+- El modo interpreta respuestas semánticas como `substitution_made`, `min_valid_date` y
+  `no_slots_for_stylist`.
+- Solo avanza cuando existe `selected_slot`; si no hay hueco para la estilista elegida, se queda
+  en este mismo substep.
 
-**Antes de ejecutar el booking, confirma todos los detalles:**
+**Transiciones válidas:**
+- `slot_selection -> slot_selection`
+- `slot_selection -> notes`
 
-```
-Perfecto, {nombre}. Déjame confirmar los detalles:
+### 4. `notes`
 
-📋 Servicios:
-1. {Servicio 1} - {X} min
-2. {Servicio 2} - {Y} min
+**Objetivo:** pedir una nota opcional para la cita.
 
-📅 Fecha: {día}, {DD/MM/YYYY}
-🕐 Hora: {HH:MM}
-💇‍♀️ Con: {nombre_estilista}
-⏱️ Duración total: {X horas Y minutos}
+**Herramientas que usa el código:**
+- Ninguna
 
-¿Todo correcto?
-```
+**Qué pasa acá:**
+- La clienta ya está identificada; no se le pide nombre ni teléfono.
+- Si responde con algo como "no" o "nada más", se guarda `notes = None`.
+- Cualquier otra respuesta se guarda como nota libre.
+- Con una respuesta de la clienta, el flujo avanza a `confirmation`.
 
-**Espera confirmación explícita del cliente antes de continuar.**
+**Transiciones válidas:**
+- `notes -> notes`
+- `notes -> confirmation`
 
-### PASO 5: Ejecutar Reserva ✅
+### 5. `confirmation`
 
-**⚠️ CRÍTICO:**
-- NO llames `manage_customer` otra vez
-- USA el `customer_id` que YA obtuviste en PASO 3
+**Objetivo:** mostrar el resumen final y pedir confirmación explícita.
 
-```python
-book(
-    customer_id="...",  # Del PASO 3
-    services=["Corte Caballero"],
-    stylist_id="...",
-    start_time="2025-11-15T10:00:00+01:00"
-)
-```
+**Herramientas que usa el código:**
+- Ninguna
 
-### PASO 6: Confirmación Final ✅
+**Qué pasa acá:**
+- Se resume servicio, estilista, horario, nombre y notas si existen.
+- Solo cuando el intent detectado es confirmación (`confirm`, `sí`, `si`, `yes`) el flujo avanza.
+- Si la clienta cambia servicio, estilista u horario, el modo puede retroceder al substep
+  correspondiente.
 
-```
-¡Perfecto, {nombre}! ✅ Tu cita ha sido confirmada:
+**Transiciones válidas:**
+- `confirmation -> service_selection`
+- `confirmation -> slot_selection`
+- `confirmation -> confirmation`
+- `confirmation -> completed`
 
-📅 Fecha: {día}, {DD/MM/YYYY}
-🕐 Hora: {HH:MM} - {HH:MM}
-💇‍♀️ Asistenta: {nombre}
+### 6. `completed`
 
-📋 Servicios:
-1. {Servicio} - {X} min
+**Objetivo:** ejecutar la reserva y cerrar el flujo.
 
-⏱️ Duración total: {X horas Y minutos}
+**Herramientas que usa el código:**
+- `book(...)`
 
-📍 Te esperamos en {dirección}
+**Qué pasa acá:**
+- `book()` se invoca de forma directa desde Python, no mediante el loop agentic.
+- Si falla, el flujo vuelve a `confirmation`.
+- Si sale bien, se responde con la confirmación final y el modo transiciona a `GENERAL`.
 
-¡Gracias por confiar en nosotro@s! 💇‍♀️
-```
-
----
-
-## Técnicas de Conversión (Conversion Nudges)
-
-### De Pregunta Genérica a Propuesta Específica
-
-❌ **Evita:** "¿Quieres agendar?"
-
-✅ **Usa:** "¿Te gustaría que busque un hueco para el viernes por la mañana?"
-
-**Ejemplos de propuestas específicas:**
-
-**Para servicios populares:**
-```
-El {servicio} es muy solicitado. ¿Te gustaría que busque disponibilidad para esta semana?
-```
-
-**Para cliente indeciso sobre cuándo:**
-```
-¿Prefieres mañana por la mañana o pasado por la tarde? Te busco opciones.
-```
-
-**Para cliente que "lo piensa":**
-```
-Entiendo que quieres pensarlo. ¿Te parece si te mando un recordatorio mañana con disponibilidad?
-```
-
-### Consultoría Gratuita para Clientes Indecisos
-
-Cuando el cliente no sabe qué necesita:
-
-```
-Si no estás segura de qué servicio necesitas, ofrecemos una *consultoría gratuita* de 15 minutos.
-
-La estilista puede ver tu cabello y asesorarte sobre la mejor opción.
-
-¿Te gustaría agendarla?
-```
-
-**Consultoría gratuita incluye:**
-- Evaluación del cabello/piel
-- Recomendación personalizada
-- Presupuesto sin compromiso
-- Cita de 15 minutos (sin coste)
-
-### Recuperación de Abandono (24h)
-
-Cuando el cliente no responde durante el flujo de booking:
-
-**Después de 24h sin respuesta (automático):**
-```
-¡Hola de nuevo, {nombre}! 😊
-
-Veo que estuviste mirando citas para {servicio}.
-
-Todavía tienes huecos disponibles esta semana. ¿Te gustaría que te muestre las opciones?
-```
-
-**Alternativa si hay disponibilidad limitada:**
-```
-Hola {nombre} 💕
-
-Los huecos para {servicio} se están llenando rápido esta semana.
-
-¿Quieres que reserve uno para ti antes de que se ocupen?
-```
-
-**Para cliente que dijo "más tarde":**
-```
-¡Hola {nombre}! 😊
-
-Me dijiste que querías agendar {servicio} más tarde.
-
-¿Ahora te viene bien? Tengo disponibilidad:
-- Mañana a las 10:00
-- Pasado a las 16:00
-
-¿Cuál prefieres?
-```
+**Transiciones válidas:**
+- `completed` es terminal dentro del FSM
 
 ---
 
-## Herramientas Disponibles
+## Resumen de Herramientas por Substep
 
-1. **`search_services(query, category)`**: Buscar servicios específicos
-2. **`query_info(type="services")`**: Listar todos los servicios (77 total)
-3. **`find_next_available(...)`**: Buscar disponibilidad
-4. **`check_availability(...)`**: Consultar fecha específica
-5. **`manage_customer(...)`**: Gestión de clientes
-6. **`get_customer_history(...)`**: Historial de citas
-7. **`book(...)`**: Crear reserva
-8. **`escalate_to_human(...)`**: Escalar a humano
-
----
-
-## Reglas Importantes
-
-1. **NO narres acciones futuras**: NO digas "Voy a buscar..."
-2. **SIEMPRE llama herramientas ANTES de responder**
-3. **NO combines peluquería + estética** en misma cita
-4. **Máximo 5 servicios** por cita
-5. **Cuando `search_services` devuelva `clarification_needed`**, el sistema ya sabe qué preguntar — transmite el `question_hint` exactamente
-6. **Ofrece consultoría gratuita** si el cliente está indeciso
-7. **Usa propuestas específicas** en lugar de preguntas genéricas
+| Substep | Herramientas |
+| --- | --- |
+| `service_selection` | `search_services`, `query_info` |
+| `stylist_selection` | `list_stylists` (+ `get_customer_history` como ayuda interna) |
+| `slot_selection` | `check_availability`, `find_next_available` |
+| `notes` | ninguna |
+| `confirmation` | ninguna |
+| `completed` | `book` directo |
 
 ---
 
-## Referencias
+## Reglas Operativas
 
-### Descripciones de Servicios
+1. No vuelvas a pedir el nombre: ya existe `customer_name` en estado o contexto.
+2. No inventes disponibilidad ni servicios; usá siempre los resultados reales de tools.
+3. Si `search_services` pide aclaración, repetí el `question_hint` tal cual.
+4. Si no hay huecos para la estilista elegida, quedate en `slot_selection` y ofrecé ampliar
+   rango o cambiar de profesional.
+5. La confirmación explícita sucede en `confirmation`; recién después se ejecuta `book()`.
+6. La escalación se maneja por intención/ruteo del sistema, no por `manage_customer()` ni por un
+   substep especial de booking.
 
-Consulta `shared/glossary.md` para:
-- Descripciones completas de los 77 servicios
-- Glosario técnico de coloración, tratamientos, mechas
+---
 
-### Reglas Críticas
+## Relación con los prompts por substep
 
-Consulta `shared/critical_rules.md`:
-- Regla #1: NO narrar acciones futuras
-- Regla #2: Uso obligatorio de herramientas
-- Regla #4: Servicios mixtos prohibidos
-- Regla #10: Después de `book()`, continúa
-- Regla #11: No confirmar sin validar
+Cuando `USE_SUBSTEP_PROMPTS=True`, este archivo queda como referencia y el sistema carga los
+overlays específicos desde `agent/prompts/modes/booking/`:
 
-### Recuperación
+- `service_selection.md`
+- `stylist_selection.md`
+- `slot_selection.md`
+- `notes.md`
+- `confirmation.md`
+- `completed.md`
 
-Consulta `shared/recovery.md` para:
-- Manejo de cambios de opinión durante booking
-- Recuperación de flujo si cliente se salta pasos
-- Cliente dice "cualquiera" o "me da igual"
+Esos archivos se resuelven desde `load_mode_overlay()` usando el `booking_step` actual.
+
+---
+
+## Referencias de Código
+
+- `agent/modes/booking_context.py` — enum `BookingSubstep`, transiciones y registro de tools
+- `agent/modes/booking_mode.py` — handlers `_handle_*` y lógica real de avance
+- `agent/prompts/modes/booking/*.md` — overlays específicos por substep

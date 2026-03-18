@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from enum import StrEnum
 from typing import Any, Mapping, TypedDict, cast
 
@@ -10,11 +11,71 @@ class BookingSubstep(StrEnum):
     """Typed booking substeps serialized as lowercase strings."""
 
     SERVICE_SELECTION = "service_selection"
+    ADD_ONS = "add_ons"
     STYLIST_SELECTION = "stylist_selection"
     SLOT_SELECTION = "slot_selection"
+    CUSTOMER_NAME = "customer_name"
     NOTES = "notes"
     CONFIRMATION = "confirmation"
     COMPLETED = "completed"
+
+
+class BookingStepTransition(StrEnum):
+    """Semantic labels that explain why the booking flow moved between steps.
+
+    These values are stored alongside booking state so prompts, tests, and future
+    analytics can distinguish a normal step advance from UX-specific detours such
+    as keeping the user in slot selection after a stylist has no availability.
+    """
+
+    NORMAL = "normal"
+    DATE_SUBSTITUTED = "date_substituted"
+    NO_SLOTS_FOR_STYLIST = "no_slots_for_stylist"
+    USER_CANCELLED = "user_cancelled"
+
+
+class InterpretationReason(StrEnum):
+    """Canonical semantic reasons produced while interpreting availability results.
+
+    The values are shared by booking mode and availability tools so semantic
+    payloads stay stable across prompt rendering, transition decisions, and tests.
+    """
+
+    MINIMUM_DAYS_RULE = "minimum_days_rule"
+    NO_AVAILABILITY = "no_availability"
+    STYLIST_UNAVAILABLE = "stylist_unavailable"
+    SUCCESS = "success"
+
+
+class SlotInterpretation(TypedDict, total=False):
+    """Semantic interpretation of availability tool responses.
+
+    This typed dict decouples raw tool payload shapes from booking-step decisions.
+    `_interpret_slot_tool_results()` normalizes both legacy and semantic tool
+    responses into this structure before `_advance_step()` decides whether the
+    flow should stay in `slot_selection` or continue.
+
+    Example:
+        {
+            "has_slots": False,
+            "substitution_made": True,
+            "substitution_reason": "minimum_days_rule",
+            "date_requested": date(2026, 3, 17),
+            "min_valid_date": date(2026, 3, 19),
+            "no_slots_for_chosen_stylist": True,
+        }
+    """
+
+    has_slots: bool
+    substitution_made: bool
+    date_requested: date | None
+    date_substituted: date | None
+    substitution_reason: str | None
+    min_valid_date: date | None
+    no_slots_for_chosen_stylist: bool
+    no_slots_for_any_stylist: bool
+    stylist_name: str | None
+    available_slots: list[dict[str, Any]] | None
 
 
 class BookingDraftContext(TypedDict, total=False):
@@ -42,8 +103,16 @@ class BookingDraftContext(TypedDict, total=False):
     candidate_service_ids: list[str]
     pending_recommendations: list[str]
     recommendations_shown: bool
+    add_ons_options: list[dict[str, Any]] | None
+    add_ons_declined: bool
     availability_start_date: str | None
     availability_time_range: str | None
+    substitution_made: bool
+    substitution_reason: str | None
+    date_requested: str | None
+    date_substituted: str | None
+    min_valid_date: str | None
+    no_slots_for_stylist: bool
     last_intent: str
     last_intent_confidence: float
     pending_cancel: bool
@@ -59,30 +128,67 @@ _BOOKING_SUBSTEP_ALIASES: dict[str, BookingSubstep] = {
 ALLOWED_TRANSITIONS: dict[BookingSubstep, list[BookingSubstep]] = {
     BookingSubstep.SERVICE_SELECTION: [
         BookingSubstep.SERVICE_SELECTION,
+        BookingSubstep.ADD_ONS,
         BookingSubstep.STYLIST_SELECTION,
+    ],
+    BookingSubstep.ADD_ONS: [
+        BookingSubstep.ADD_ONS,
+        BookingSubstep.STYLIST_SELECTION,
+        BookingSubstep.SERVICE_SELECTION,
     ],
     BookingSubstep.STYLIST_SELECTION: [
         BookingSubstep.SERVICE_SELECTION,
+        BookingSubstep.ADD_ONS,
         BookingSubstep.STYLIST_SELECTION,
         BookingSubstep.SLOT_SELECTION,
     ],
     BookingSubstep.SLOT_SELECTION: [
-        BookingSubstep.STYLIST_SELECTION,
         BookingSubstep.SLOT_SELECTION,
+        BookingSubstep.CUSTOMER_NAME,
         BookingSubstep.NOTES,
+        BookingSubstep.STYLIST_SELECTION,
+    ],
+    BookingSubstep.CUSTOMER_NAME: [
+        BookingSubstep.CUSTOMER_NAME,
+        BookingSubstep.NOTES,
+        BookingSubstep.SLOT_SELECTION,
     ],
     BookingSubstep.NOTES: [
         BookingSubstep.NOTES,
         BookingSubstep.CONFIRMATION,
+        BookingSubstep.SLOT_SELECTION,
+        BookingSubstep.CUSTOMER_NAME,
     ],
     BookingSubstep.CONFIRMATION: [
-        BookingSubstep.SERVICE_SELECTION,
-        BookingSubstep.SLOT_SELECTION,
-        BookingSubstep.CONFIRMATION,
         BookingSubstep.COMPLETED,
+        BookingSubstep.NOTES,
+        BookingSubstep.SLOT_SELECTION,
+        BookingSubstep.SERVICE_SELECTION,
     ],
     BookingSubstep.COMPLETED: [],
 }
+
+
+STEP_TOOL_REGISTRY: dict[BookingSubstep, list[str]] = {
+    BookingSubstep.SERVICE_SELECTION: ["query_info", "search_services"],
+    BookingSubstep.ADD_ONS: ["search_services"],
+    BookingSubstep.STYLIST_SELECTION: [],
+    BookingSubstep.SLOT_SELECTION: ["check_availability", "find_next_available"],
+    BookingSubstep.CUSTOMER_NAME: [],
+    BookingSubstep.NOTES: [],
+    BookingSubstep.CONFIRMATION: [],
+    BookingSubstep.COMPLETED: [],
+}
+"""Canonical `BookingSubstep -> tool names` registry for the booking flow.
+
+Keep this mapping in sync with the tools passed to each `_handle_*` method in
+`booking_mode.py`. Tests and docs treat it as the single source of truth for
+which tools the LLM may use at each step.
+
+Example:
+    `STEP_TOOL_REGISTRY[BookingSubstep.SLOT_SELECTION]` returns
+    `["check_availability", "find_next_available"]`.
+"""
 
 
 BOOKING_PRESERVE_ON_GENERAL: set[str] = {
@@ -108,8 +214,16 @@ BOOKING_PRESERVE_ON_GENERAL: set[str] = {
     "candidate_service_ids",
     "pending_recommendations",
     "recommendations_shown",
+    "add_ons_options",
+    "add_ons_declined",
     "availability_start_date",
     "availability_time_range",
+    "substitution_made",
+    "substitution_reason",
+    "date_requested",
+    "date_substituted",
+    "min_valid_date",
+    "no_slots_for_stylist",
     "last_intent",
     "last_intent_confidence",
     "pending_cancel",
@@ -124,8 +238,16 @@ CONTEXT_PRESERVE_RULES: dict[str, set[str]] = {
 
 _REQUIRED_FIELDS_BY_SUBSTEP: dict[BookingSubstep, set[str]] = {
     BookingSubstep.SERVICE_SELECTION: set(),
+    BookingSubstep.ADD_ONS: {"service_id", "service_name"},
     BookingSubstep.STYLIST_SELECTION: {"service_id", "service_name"},
     BookingSubstep.SLOT_SELECTION: {"service_id", "service_name", "stylist_id", "stylist_name"},
+    BookingSubstep.CUSTOMER_NAME: {
+        "service_id",
+        "service_name",
+        "stylist_id",
+        "stylist_name",
+        "selected_slot",
+    },
     BookingSubstep.NOTES: {
         "service_id",
         "service_name",

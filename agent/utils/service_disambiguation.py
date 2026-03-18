@@ -65,6 +65,7 @@ class ResolvedService:
     family: str | None
     ask_if_missing: list[str] = field(default_factory=list)
     combo_recommendations: list[str] = field(default_factory=list)
+    description: str | None = None
 
 
 @dataclass
@@ -83,6 +84,10 @@ class ClarificationPayload:
             - ``service_name``: service name in the catalog
             - ``service_id``: deterministic UUID for that service (as string)
             - ``duration_minutes``: duration of that service
+            - ``category``: service category value (e.g. ``"HAIRDRESSING"``)
+            - ``family``: service family code from metadata (or None)
+            - ``combo_recommendations``: list of combo service names (may be empty)
+            - ``description``: human-readable service description (or None)
     """
 
     axis: str
@@ -151,6 +156,7 @@ def _to_resolved(service: Service) -> ResolvedService:
         family=meta.get("family"),
         ask_if_missing=meta.get("ask_if_missing", []),
         combo_recommendations=meta.get("combo_recommendations", []),
+        description=service.description,
     )
 
 
@@ -184,6 +190,10 @@ def _build_clarification(
                 "service_name": svc.name,
                 "service_id": str(svc.id),
                 "duration_minutes": svc.duration_minutes,
+                "category": svc.category.value,
+                "family": meta.get("family"),
+                "combo_recommendations": meta.get("combo_recommendations", []),
+                "description": svc.description,
             }
         )
 

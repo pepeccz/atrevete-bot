@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from agent.tools.availability_tools import check_availability, find_next_available
+from agent.tools.info_tools import list_stylists, query_info
+from agent.tools.search_services import search_services
+
 
 def _load_booking_context_module():
     project_root = Path(__file__).resolve().parents[2]
@@ -24,6 +28,8 @@ BOOKING_FREEZE_ON_ESCALATION = _bc_mod.BOOKING_FREEZE_ON_ESCALATION
 BOOKING_PRESERVE_ON_GENERAL = _bc_mod.BOOKING_PRESERVE_ON_GENERAL
 BookingDraftContext = _bc_mod.BookingDraftContext
 BookingSubstep = _bc_mod.BookingSubstep
+STEP_TOOL_REGISTRY = _bc_mod.STEP_TOOL_REGISTRY
+normalize_booking_substep = _bc_mod.normalize_booking_substep
 validate_booking_context = _bc_mod.validate_booking_context
 
 
@@ -31,12 +37,34 @@ class TestBookingSubstep:
     def test_enum_has_all_expected_values(self):
         assert [substep.value for substep in BookingSubstep] == [
             "service_selection",
+            "add_ons",
             "stylist_selection",
             "slot_selection",
+            "customer_name",
             "notes",
             "confirmation",
             "completed",
         ]
+
+    def test_new_substeps_have_expected_values(self):
+        assert BookingSubstep.ADD_ONS == "add_ons"
+        assert BookingSubstep.CUSTOMER_NAME == "customer_name"
+
+    def test_add_ons_substep_uses_expected_value(self):
+        assert BookingSubstep.ADD_ONS == "add_ons"
+
+    def test_customer_name_substep_uses_expected_value(self):
+        assert BookingSubstep.CUSTOMER_NAME == "customer_name"
+
+    def test_normalize_booking_substep_supports_new_values(self):
+        assert normalize_booking_substep("add_ons") is BookingSubstep.ADD_ONS
+        assert normalize_booking_substep("customer_name") is BookingSubstep.CUSTOMER_NAME
+
+    def test_normalize_booking_substep_returns_add_ons(self):
+        assert normalize_booking_substep("add_ons") is BookingSubstep.ADD_ONS
+
+    def test_normalize_booking_substep_returns_customer_name(self):
+        assert normalize_booking_substep("customer_name") is BookingSubstep.CUSTOMER_NAME
 
     def test_typed_dict_contains_foundation_fields(self):
         hints = BookingDraftContext.__annotations__
@@ -69,15 +97,27 @@ class TestAllowedTransitions:
                 assert target in BookingSubstep
 
     def test_linear_progression_and_backtracking_rules_exist(self):
-        assert BookingSubstep.STYLIST_SELECTION in ALLOWED_TRANSITIONS[BookingSubstep.SERVICE_SELECTION]
+        assert BookingSubstep.ADD_ONS in ALLOWED_TRANSITIONS[BookingSubstep.SERVICE_SELECTION]
         assert BookingSubstep.SLOT_SELECTION in ALLOWED_TRANSITIONS[BookingSubstep.STYLIST_SELECTION]
-        assert BookingSubstep.NOTES in ALLOWED_TRANSITIONS[BookingSubstep.SLOT_SELECTION]
+        assert BookingSubstep.STYLIST_SELECTION in ALLOWED_TRANSITIONS[BookingSubstep.ADD_ONS]
+        assert BookingSubstep.CUSTOMER_NAME in ALLOWED_TRANSITIONS[BookingSubstep.SLOT_SELECTION]
+        assert BookingSubstep.NOTES in ALLOWED_TRANSITIONS[BookingSubstep.CUSTOMER_NAME]
         assert BookingSubstep.CONFIRMATION in ALLOWED_TRANSITIONS[BookingSubstep.NOTES]
         assert BookingSubstep.COMPLETED in ALLOWED_TRANSITIONS[BookingSubstep.CONFIRMATION]
         assert BookingSubstep.SERVICE_SELECTION in ALLOWED_TRANSITIONS[BookingSubstep.STYLIST_SELECTION]
         assert BookingSubstep.STYLIST_SELECTION in ALLOWED_TRANSITIONS[BookingSubstep.SLOT_SELECTION]
         assert BookingSubstep.SLOT_SELECTION in ALLOWED_TRANSITIONS[BookingSubstep.CONFIRMATION]
         assert BookingSubstep.SERVICE_SELECTION in ALLOWED_TRANSITIONS[BookingSubstep.CONFIRMATION]
+
+    def test_new_transition_rules_cover_add_ons_and_customer_name(self):
+        assert BookingSubstep.STYLIST_SELECTION in ALLOWED_TRANSITIONS[BookingSubstep.ADD_ONS]
+        assert BookingSubstep.ADD_ONS in ALLOWED_TRANSITIONS[BookingSubstep.SERVICE_SELECTION]
+
+    def test_add_ons_can_advance_to_stylist_selection(self):
+        assert BookingSubstep.STYLIST_SELECTION in ALLOWED_TRANSITIONS[BookingSubstep.ADD_ONS]
+
+    def test_service_selection_can_advance_to_add_ons(self):
+        assert BookingSubstep.ADD_ONS in ALLOWED_TRANSITIONS[BookingSubstep.SERVICE_SELECTION]
 
     def test_completed_is_terminal_state(self):
         assert ALLOWED_TRANSITIONS[BookingSubstep.COMPLETED] == []
@@ -98,6 +138,29 @@ class TestContextPreserveRules:
     def test_escalation_freezes_everything_general_preserves_plus_handoff_flag(self):
         assert BOOKING_PRESERVE_ON_GENERAL.issubset(BOOKING_FREEZE_ON_ESCALATION)
         assert "awaiting_human" in BOOKING_FREEZE_ON_ESCALATION
+
+
+class TestStepToolRegistry:
+    def test_every_substep_has_registry_entry(self):
+        assert set(STEP_TOOL_REGISTRY) == set(BookingSubstep)
+
+    def test_registry_points_to_existing_tool_names(self):
+        actual_tool_names = {
+            query_info.name,
+            search_services.name,
+            list_stylists.name,
+            check_availability.name,
+            find_next_available.name,
+        }
+
+        for substep, tool_names in STEP_TOOL_REGISTRY.items():
+            assert isinstance(tool_names, list), f"{substep.value} must map to a list"
+            assert all(isinstance(tool_name, str) for tool_name in tool_names)
+            assert set(tool_names).issubset(actual_tool_names)
+
+    def test_registry_has_no_duplicate_tool_names_per_substep(self):
+        for substep, tool_names in STEP_TOOL_REGISTRY.items():
+            assert len(tool_names) == len(set(tool_names)), f"{substep.value} has duplicate tools"
 
 
 class TestValidateBookingContext:

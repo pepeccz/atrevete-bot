@@ -288,6 +288,11 @@ def build_step_context(
         if mode_context.get("recurrent_stylist_slot_summary"):
             recurrent_line += f" ({mode_context['recurrent_stylist_slot_summary']})"
         collected_data.append(recurrent_line)
+    if mode_context.get("prefetch_error"):
+        collected_data.append(
+            "⚠️ PREFETCH FALLIDO: Los datos de estilistas no se pudieron cargar. "
+            "USA la herramienta list_stylists para obtenerlos."
+        )
     prefetched_stylists = mode_context.get("prefetched_stylists")
     if prefetched_stylists:
         collected_data.append("Estilistas disponibles:")
@@ -396,8 +401,10 @@ async def build_layered_messages(
         messages.append(SystemMessage(content=mode_overlay))
 
     # 3. Dynamic context (~300 tokens)
+    # CRITICAL: Must be SystemMessage so the LLM treats it as internal context.
+    # Using HumanMessage causes the LLM to echo it back to the user (context leak).
     dynamic_context = build_step_context(state, mode_context, step_info)
-    messages.append(HumanMessage(content=dynamic_context))
+    messages.append(SystemMessage(content=dynamic_context))
 
     # 4. Recent conversation history (if enabled)
     if include_history:

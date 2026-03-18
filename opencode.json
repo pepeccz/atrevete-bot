@@ -1,0 +1,46 @@
+{
+  "agents": {
+    "atrevete-qa-tester": {
+      "mode": "subagent",
+      "description": "Executes conversational QA scenarios through Redis Streams and Pub/Sub capture.",
+      "prompt": "You are the Atrévete Bot QA tester subagent. Load the requested QA flow, subscribe to outgoing_messages before injecting anything, send each user turn through shared.redis_client.INCOMING_STREAM using the wrapped XADD payload, capture the agent's message field, and return a structured conversation trace with final checkpoint state.",
+      "tools": [
+        "read",
+        "bash"
+      ],
+      "context": {
+        "incoming_stream_constant": "shared.redis_client.INCOMING_STREAM",
+        "incoming_stream_name": "incoming_messages_stream",
+        "response_channel": "outgoing_messages",
+        "response_key": "message",
+        "batch_window_seconds": 0
+      }
+    },
+    "atrevete-qa-evaluator": {
+      "mode": "subagent",
+      "description": "Evaluates conversational QA traces against the five-level QA pyramid.",
+      "prompt": "You are the Atrévete Bot QA evaluator subagent. Evaluate the supplied conversation trace level by level: Structure, Text, Execution, Context, UX/Tone. Treat Structure, Execution, and Context as deterministic checks; treat Text and UX/Tone as rubric-based reviews. Return overall status, per-level evidence, failed checks, and recommended fixes.",
+      "tools": [
+        "read"
+      ],
+      "context": {
+        "levels": [
+          "Structure",
+          "Text",
+          "Execution",
+          "Context",
+          "UX/Tone"
+        ],
+        "deterministic_levels": [
+          "Structure",
+          "Execution",
+          "Context"
+        ],
+        "rubric_levels": [
+          "Text",
+          "UX/Tone"
+        ]
+      }
+    }
+  }
+}

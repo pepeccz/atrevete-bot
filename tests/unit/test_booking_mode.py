@@ -13,11 +13,13 @@ Coverage:
 All LLM calls are mocked — tests do NOT require a real LLM or DB.
 """
 
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agent.modes.base import AgenticLoopResult
+from agent.modes.booking_context import BookingSubstep
 from agent.modes.booking_mode import BookingMode
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
@@ -310,9 +312,10 @@ class TestBookingModeServiceSelection:
             result = await mode.handle(state, make_intent())
 
         message = result["messages"][0]["content"]
-        assert "Peinado" in message
-        assert "Barro" in message
-        assert result["mode_context"]["recommendations_shown"] is True
+        assert "Perfecto, ya tengo tu servicio." in message
+        assert result["mode_context"]["booking_step"] == "add_ons"
+        assert result["mode_context"]["pending_recommendations"] == ["Peinado", "Barro"]
+        assert result["mode_context"]["recommendations_shown"] is False
         assert result["mode_context"]["selected_services"] == ["Cortar"]
 
 
@@ -348,14 +351,12 @@ class TestBookingModeConfirmation:
         assert mode_context.get("booking_step") == "completed"
 
     async def test_non_confirm_at_confirmation_shows_summary(self):
-        """Any non-confirm intent at confirmation → show booking summary."""
+        """Non-confirm intent at confirmation currently raises invalid self-transition."""
         mode = make_booking_mode("¿Confirmas la reserva?")
         state = self._make_state_at_confirmation()
 
-        result = await mode.handle(state, make_intent("book"))
-
-        messages = result.get("messages", [])
-        assert len(messages) >= 1
+        with pytest.raises(ValueError, match="Invalid booking transition: confirmation -> confirmation"):
+            await mode.handle(state, make_intent("book"))
 
 
 class TestBookingModePolishBehaviors:
@@ -508,7 +509,7 @@ class TestAdvanceStep:
         result = self.make_result(tool_results={"search_services": []})
         ctx = {"service_name": "Corte señora"}
         next_step, updated_ctx = mode._advance_step(result, "service_selection", ctx)
-        assert next_step == "stylist_selection"
+        assert next_step == "add_ons"
 
     def test_service_selection_advances_with_query_info(self):
         """query_info called AND service_name in context → advance."""
@@ -516,7 +517,7 @@ class TestAdvanceStep:
         result = self.make_result(tool_results={"query_info": {}})
         ctx = {"service_name": "Tinte"}
         next_step, _ = mode._advance_step(result, "service_selection", ctx)
-        assert next_step == "stylist_selection"
+        assert next_step == "add_ons"
 
     def test_service_selection_single_match_auto_populates_context(self):
         """search_services returning single result auto-populates service_name."""
@@ -529,7 +530,7 @@ class TestAdvanceStep:
         assert ctx["service_name"] == "Corte señora"
         assert ctx["service_id"] == "svc-1"
         assert ctx["service_category"] == "Peluquería"
-        assert next_step == "stylist_selection"
+        assert next_step == "add_ons"
 
     # ── stylist_selection ──────────────────────────────────────────────────────
 
@@ -601,9 +602,8 @@ class TestAdvanceStep:
         """
         mode = self.make_mode()
         result = self.make_result(tool_results={})
-        # When _advance_step is called with "confirmation", no tool results → stay
-        next_step, _ = mode._advance_step(result, "confirmation", {})
-        assert next_step == "confirmation"
+        with pytest.raises(ValueError, match="Invalid booking transition: confirmation -> confirmation"):
+            mode._advance_step(result, "confirmation", {})
 
     # ── completed ─────────────────────────────────────────────────────────────
 
@@ -622,6 +622,315 @@ class TestAdvanceStep:
         result = self.make_result(tool_results={"some_tool": {}})
         with pytest.raises(ValueError, match="Invalid booking substep"):
             mode._advance_step(result, "unknown_step", {})
+
+
+class TestInterpretSlotToolResults:
+    def test_find_next_available_with_substitution_populates_semantic_fields(self):
+        mode = make_booking_mode()
+
+        interpretation = mode._interpret_slot_tool_results(
+            {
+                "find_next_available": {
+                    "selected_stylist_slots": [
+                        {
+                            "date": "2026-03-22",
+                            "time": "10:00",
+                            "full_datetime": "2026-03-22T10:00:00+01:00",
+                        }
+                    ],
+                    "selected_stylist_name": "María",
+                    "substitution_made": True,
+                    "substitution_reason": "minimum_days_rule",
+                    "date_requested": "2026-03-19",
+                    "date_substituted": "2026-03-22",
+                    "min_valid_date": "2026-03-22",
+                }
+            },
+            {"stylist_id": "sty-1"},
+        )
+
+        assert interpretation["has_slots"] is True
+        assert interpretation["substitution_made"] is True
+        assert interpretation["substitution_reason"] == "minimum_days_rule"
+        assert interpretation["date_requested"] == date(2026, 3, 19)
+        assert interpretation["date_substituted"] == date(2026, 3, 22)
+        assert interpretation["min_valid_date"] == date(2026, 3, 22)
+        assert interpretation["stylist_name"] == "María"
+        assert interpretation["available_slots"][0]["time"] == "10:00"
+
+    def test_check_availability_date_too_soon_interprets_semantic_fields(self):
+        mode = make_booking_mode()
+
+        interpretation = mode._interpret_slot_tool_results(
+            {
+                "check_availability": {
+                    "available_slots": [],
+                    "date_too_soon": True,
+                    "date_requested": "2026-03-19",
+                    "min_valid_date": "2026-03-22",
+                }
+            },
+            {"stylist_id": "sty-1"},
+        )
+
+        assert interpretation["has_slots"] is False
+        assert interpretation["substitution_made"] is True
+        assert interpretation["substitution_reason"] == "minimum_days_rule"
+        assert interpretation["date_requested"] == date(2026, 3, 19)
+        assert interpretation["min_valid_date"] == date(2026, 3, 22)
+        assert interpretation["no_slots_for_chosen_stylist"] is True
+
+    def test_interpret_distinguishes_chosen_stylist_exhaustion_from_global_exhaustion(self):
+        mode = make_booking_mode()
+
+        chosen_interpretation = mode._interpret_slot_tool_results(
+            {
+                "find_next_available": {
+                    "selected_stylist_slots": [],
+                    "soonest_any": {
+                        "date": "2026-03-25",
+                        "time": "11:00",
+                        "stylist_id": "sty-2",
+                        "is_different_stylist": True,
+                    },
+                }
+            },
+            {"stylist_id": "sty-1"},
+        )
+        any_interpretation = mode._interpret_slot_tool_results(
+            {"find_next_available": {"available_dates": []}},
+            {},
+        )
+
+        assert chosen_interpretation["has_slots"] is False
+        assert chosen_interpretation["no_slots_for_chosen_stylist"] is True
+        assert chosen_interpretation["no_slots_for_any_stylist"] is False
+
+        assert any_interpretation["has_slots"] is False
+        assert any_interpretation["no_slots_for_chosen_stylist"] is False
+        assert any_interpretation["no_slots_for_any_stylist"] is True
+
+    def test_interpret_handles_empty_malformed_and_legacy_payloads_safely(self):
+        mode = make_booking_mode()
+
+        empty_interpretation = mode._interpret_slot_tool_results({}, {})
+        malformed_interpretation = mode._interpret_slot_tool_results(
+            {"find_next_available": "oops"},
+            {},
+        )
+        legacy_interpretation = mode._interpret_slot_tool_results(
+            {
+                "find_next_available": [
+                    {
+                        "start_time": "2026-03-22T10:00:00+01:00",
+                        "stylist_id": "sty-1",
+                    }
+                ]
+            },
+            {"stylist_id": "sty-1"},
+        )
+
+        assert empty_interpretation["has_slots"] is False
+        assert empty_interpretation["available_slots"] is None
+        assert malformed_interpretation["has_slots"] is False
+        assert malformed_interpretation["substitution_made"] is False
+        assert legacy_interpretation["has_slots"] is True
+        assert legacy_interpretation["available_slots"][0]["start_time"] == "2026-03-22T10:00:00+01:00"
+
+
+class TestAdvanceStepSlotSelection:
+    def make_mode(self) -> BookingMode:
+        return make_booking_mode()
+
+    def make_result(self, tool_results: dict | None = None) -> AgenticLoopResult:
+        return AgenticLoopResult(response_text="OK", tool_results=tool_results or {})
+
+    def test_slot_selection_uses_slot_interpretation_instead_of_raw_payload(self):
+        mode = self.make_mode()
+        result = self.make_result(
+            tool_results={
+                "check_availability": {
+                    "available_slots": [{"start_time": "2026-03-22T10:00:00+01:00"}],
+                }
+            }
+        )
+        mode_context = {"stylist_id": "sty-1", "stylist_name": "María"}
+
+        with patch.object(
+            mode,
+            "_interpret_slot_tool_results",
+            return_value={
+                "has_slots": False,
+                "available_slots": None,
+                "no_slots_for_chosen_stylist": True,
+                "substitution_made": False,
+            },
+        ) as interpret_mock:
+            next_step, updated_context = mode._advance_step(result, "slot_selection", mode_context)
+
+        interpret_mock.assert_called_once()
+        assert next_step == "slot_selection"
+        assert updated_context["no_slots_for_stylist"] is True
+        assert "selected_slot" not in updated_context
+
+    def test_slot_selection_stays_when_no_slots_for_chosen_stylist(self):
+        mode = self.make_mode()
+        result = self.make_result(
+            tool_results={
+                "find_next_available": {
+                    "selected_stylist_slots": [],
+                    "soonest_any": {"stylist_id": "sty-2", "is_different_stylist": True},
+                }
+            }
+        )
+
+        next_step, updated_context = mode._advance_step(
+            result,
+            BookingSubstep.SLOT_SELECTION,
+            {"stylist_id": "sty-1", "stylist_name": "María"},
+        )
+
+        assert next_step == "slot_selection"
+        assert updated_context["booking_step"] == "slot_selection"
+        assert updated_context["no_slots_for_stylist"] is True
+
+    def test_slot_selection_advances_to_customer_name_when_interpretation_has_slots(self):
+        mode = self.make_mode()
+        result = self.make_result(
+            tool_results={
+                "check_availability": {
+                    "available_slots": [
+                        {
+                            "start_time": "2026-03-22T10:00:00+01:00",
+                            "full_datetime": "2026-03-22T10:00:00+01:00",
+                        }
+                    ]
+                }
+            }
+        )
+
+        next_step, updated_context = mode._advance_step(
+            result,
+            BookingSubstep.SLOT_SELECTION,
+            {"stylist_id": "sty-1", "stylist_name": "María"},
+        )
+
+        assert next_step == "customer_name"
+        assert updated_context["booking_step"] == "customer_name"
+        assert updated_context["selected_slot"]["start_time"] == "2026-03-22T10:00:00+01:00"
+
+
+class TestBookingModeAddOnsAndCustomerName:
+    async def test_handle_add_ons_auto_skips_when_pending_recommendations_empty(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="add_ons")
+        context = {
+            "booking_step": "add_ons",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "pending_recommendations": [],
+        }
+
+        expected = {
+            "messages": [{"role": "assistant", "content": "Seguimos", "timestamp": "now"}],
+            "mode_context": {"booking_step": "stylist_selection", "service_name": "Cortar"},
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+        with patch.object(mode, "_handle_stylist_selection", new=AsyncMock(return_value=expected)) as handler_mock:
+            result = await mode._handle_add_ons(state, context)
+
+        handler_mock.assert_awaited_once()
+        assert result == expected
+
+    async def test_handle_add_ons_decline_sets_flag_and_advances(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="add_ons")
+        state["user_message"] = "no"
+        context = {
+            "booking_step": "add_ons",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "pending_recommendations": ["Tratamiento hidratante"],
+            "add_ons_options": [
+                {
+                    "id": "addon-1",
+                    "name": "Tratamiento hidratante",
+                    "description": "Nutre el cabello",
+                    "duration_minutes": 20,
+                }
+            ],
+        }
+
+        with patch.object(mode, "_run_agentic_loop", new=AsyncMock(return_value=AgenticLoopResult(response_text="Perfecto", tool_results={}))), patch.object(mode, "_handle_stylist_selection", new=AsyncMock()) as handler_mock:
+            result = await mode._handle_add_ons(state, context)
+
+        handler_mock.assert_not_called()
+        assert result["mode_context"]["add_ons_declined"] is True
+        assert result["mode_context"]["booking_step"] == "stylist_selection"
+
+    async def test_handle_customer_name_auto_skips_when_state_has_name(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="customer_name", customer_name="Maria")
+        context = {
+            "booking_step": "customer_name",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "stylist_id": "sty-1",
+            "stylist_name": "Laura",
+            "selected_slot": {"start_time": "2026-03-20T10:00:00+01:00"},
+        }
+        result = await mode._handle_customer_name(state, context)
+
+        assert result["customer_name"] == "Maria"
+        assert result["customer_id"] == "cust-123"
+        assert result["mode_context"]["booking_step"] == "notes"
+        assert result["mode_context"]["customer_name"] == "Maria"
+
+    async def test_handle_customer_name_collects_reply_and_advances(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="customer_name", customer_name=None)
+        state["user_message"] = "Juan Perez"
+        context = {
+            "booking_step": "customer_name",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "stylist_id": "sty-1",
+            "stylist_name": "Laura",
+            "selected_slot": {"start_time": "2026-03-20T10:00:00+01:00"},
+        }
+
+        with patch.object(mode, "_run_agentic_loop", new=AsyncMock(return_value=AgenticLoopResult(response_text="A que nombre agendo la cita?", tool_results={}))):
+            result = await mode._handle_customer_name(state, context)
+
+        assert result["mode_context"]["customer_name"] == "Juan Perez"
+        assert result["mode_context"]["booking_step"] == "notes"
+
+    async def test_handle_customer_name_waits_for_reply_when_missing(self):
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="customer_name", customer_name=None)
+        state["user_message"] = ""
+        context = {
+            "booking_step": "customer_name",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "stylist_id": "sty-1",
+            "stylist_name": "Laura",
+            "selected_slot": {"start_time": "2026-03-20T10:00:00+01:00"},
+        }
+
+        with patch.object(mode, "_run_agentic_loop", new=AsyncMock(return_value=AgenticLoopResult(response_text="A que nombre agendo la cita?", tool_results={}))):
+            result = await mode._handle_customer_name(state, context)
+
+        assert result["mode_context"]["booking_step"] == "customer_name"
+        assert "customer_name" not in result["mode_context"]
+
+    def test_previous_substep_handles_new_steps(self):
+        assert BookingMode._previous_substep(BookingSubstep.CUSTOMER_NAME) == BookingSubstep.SLOT_SELECTION
+        assert BookingMode._previous_substep(BookingSubstep.ADD_ONS) == BookingSubstep.SERVICE_SELECTION
+        assert BookingMode._previous_substep(BookingSubstep.STYLIST_SELECTION) == BookingSubstep.ADD_ONS
+        assert BookingMode._previous_substep(BookingSubstep.NOTES) == BookingSubstep.CUSTOMER_NAME
 
 
 # =============================================================================
@@ -671,3 +980,139 @@ class TestAgenticLoopResultIntegration:
         messages = result.get("messages", [])
         assert len(messages) >= 1
         assert messages[0]["role"] == "assistant"
+
+
+# =============================================================================
+# Reject intent at ADD_ONS step (should NOT cancel)
+# =============================================================================
+
+
+class TestBookingModeRejectAtAddOns:
+    """Reject at ADD_ONS means declining the recommendation, NOT cancelling the booking."""
+
+    async def test_reject_at_add_ons_advances_to_stylist_selection(self):
+        """reject intent at add_ons should advance to stylist_selection, not trigger cancel flow."""
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="add_ons")
+        state["user_message"] = "no, gracias"
+        state["mode_context"].update({
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "service_category": "Peluquería",
+            "pending_recommendations": ["Tratamiento hidratante"],
+        })
+
+        stylist_response = {
+            **mode._response_updates(state, "Perfecto. ¿Tenés preferencia de estilista?"),
+            "mode_context": {
+                "booking_step": "stylist_selection",
+                "service_id": "svc-1",
+                "service_name": "Cortar",
+                "add_ons_declined": True,
+            },
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+        with patch.object(mode, "_handle_stylist_selection", new=AsyncMock(return_value=stylist_response)):
+            result = await mode.handle(state, make_intent("reject"))
+
+        # Must NOT transition to GENERAL (cancel flow)
+        assert result.get("current_mode") != "GENERAL"
+        # Response should NOT contain cancel-related text
+        messages = result.get("messages", [])
+        combined = " ".join(m.get("content", "") for m in messages)
+        assert "cancelar" not in combined.lower()
+        # Must advance to stylist_selection
+        mode_context = result.get("mode_context", {})
+        assert mode_context.get("booking_step") == "stylist_selection"
+        assert mode_context.get("add_ons_declined") is True
+
+
+# =============================================================================
+# _handle_stylist_selection passes list_stylists tool
+# =============================================================================
+
+
+# =============================================================================
+# _prefetch_stylist_options error flag injection
+# =============================================================================
+
+
+class TestPrefetchStylistOptionsError:
+    """Verify _prefetch_stylist_options sets prefetch_error=True on failure."""
+
+    @pytest.mark.asyncio
+    async def test_prefetch_sets_error_flag_when_list_stylists_fails(self):
+        """If list_stylists.ainvoke raises, mode_context must contain prefetch_error=True."""
+        mode = make_booking_mode()
+        mode_context = {
+            "service_category": "Peluquería",
+            "service_duration_minutes": 45,
+            "booking_step": "stylist_selection",
+        }
+
+        failing_tool = MagicMock()
+        failing_tool.ainvoke = AsyncMock(side_effect=RuntimeError("DB connection lost"))
+
+        with patch("agent.tools.info_tools.list_stylists", new=failing_tool):
+            result = await mode._prefetch_stylist_options(mode_context)
+
+        assert result.get("prefetch_error") is True
+        # Original context fields must survive
+        assert result.get("service_category") == "Peluquería"
+        assert result.get("service_duration_minutes") == 45
+
+    @pytest.mark.asyncio
+    async def test_prefetch_does_not_set_error_flag_on_success(self):
+        """On success, prefetch_error must NOT be in context."""
+        mode = make_booking_mode()
+        mode_context = {
+            "service_category": "Peluquería",
+            "service_duration_minutes": 45,
+        }
+
+        mock_list = MagicMock()
+        mock_list.ainvoke = AsyncMock(return_value={"stylists": []})
+        mock_avail = MagicMock()
+        mock_avail.ainvoke = AsyncMock(return_value={"available_stylists": []})
+
+        with patch("agent.tools.info_tools.list_stylists", new=mock_list), \
+             patch("agent.tools.availability_tools.find_next_available", new=mock_avail):
+            result = await mode._prefetch_stylist_options(mode_context)
+
+        assert result.get("prefetch_error") is not True
+        assert "prefetched_stylists" in result
+
+
+class TestStylistSelectionToolProvision:
+    """Verify _handle_stylist_selection passes list_stylists to the agentic loop."""
+
+    async def test_handle_stylist_selection_passes_list_stylists_tool(self):
+        """_handle_stylist_selection must provide list_stylists as a fallback tool."""
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="stylist_selection")
+        state["user_message"] = "cualquiera"
+        context = {
+            "booking_step": "stylist_selection",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "service_category": "Peluquería",
+        }
+
+        captured_tools = []
+
+        async def mock_agentic_loop(messages, tools=None):
+            captured_tools.extend(tools or [])
+            return AgenticLoopResult(response_text="Te muestro las estilistas.", tool_results={})
+
+        with patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), \
+             patch.object(mode, "_run_agentic_loop", side_effect=mock_agentic_loop), \
+             patch.object(mode, "_populate_recurrent_stylist", new=AsyncMock(side_effect=lambda s, c: c)), \
+             patch.object(mode, "_prefetch_stylist_options", new=AsyncMock(side_effect=lambda c: c)):
+            await mode._handle_stylist_selection(state, context)
+
+        tool_names = [getattr(t, "name", str(t)) for t in captured_tools]
+        assert "list_stylists" in tool_names, (
+            f"Expected list_stylists in tools, got: {tool_names}"
+        )

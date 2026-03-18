@@ -277,7 +277,8 @@ async def search_services(
                 "category": str,
                 "family": str | None,
                 "ask_if_missing": list[str],
-                "combo_recommendations": list[str]
+                "combo_recommendations": list[str],
+                "description": str | None,
             },
             "count": 1,
             "query": str
@@ -450,6 +451,7 @@ async def search_services(
                     "family": disambiguation_result.family,
                     "ask_if_missing": disambiguation_result.ask_if_missing,
                     "combo_recommendations": disambiguation_result.combo_recommendations,
+                    "description": disambiguation_result.description,
                 },
                 "count": 1,
                 "query": query,
