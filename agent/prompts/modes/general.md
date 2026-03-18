@@ -324,7 +324,7 @@ Consulta `shared/glossary.md` para:
 Consulta `shared/critical_rules.md`:
 - Regla #1: NO narrar acciones futuras
 - Regla #2: Uso obligatorio de herramientas
-- Regla #6: Uso de nombres reales
+- Regla #6: NUNCA mencionar el nombre del cliente
 - Regla #12: Modo Actual = Respuesta Única
 
 ### Mensajes de Recuperación

@@ -122,7 +122,10 @@ class TestNewCustomerGreetingFlow:
             result = await graph.ainvoke(state, config=config)
 
         assert result is not None
-        assert result.get("current_mode") == "GREETING"
+        # After customer-name-handling refactor, GreetingMode transitions to GENERAL immediately
+        # So the final mode is GENERAL, but GREETING should appear in mode_history
+        assert result.get("current_mode") == "GENERAL"
+        assert "GREETING" in result.get("mode_history", [])
 
     async def test_new_customer_result_has_messages(self):
         """Graph must produce at least the user message in messages list."""

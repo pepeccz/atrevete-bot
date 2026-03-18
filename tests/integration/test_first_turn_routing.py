@@ -66,4 +66,7 @@ async def test_first_turn_greeting_message_routes_to_greeting():
         graph = create_graph(checkpointer=None)
         result = await graph.ainvoke(state, config={"configurable": {"thread_id": "first-turn-greeting-001"}})
 
-    assert result["current_mode"] == "GREETING"
+    # After customer-name-handling refactor, GreetingMode transitions to GENERAL immediately
+    # So the final mode is GENERAL, but GREETING should appear in mode_history
+    assert result["current_mode"] == "GENERAL"
+    assert "GREETING" in result.get("mode_history", [])

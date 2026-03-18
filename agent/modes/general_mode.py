@@ -18,19 +18,6 @@ from agent.state.schemas import ConversationState
 
 logger = logging.getLogger(__name__)
 
-_GENERAL_SYSTEM = """Eres Maite, asistenta virtual de Atrévete Peluquería en Alcobendas.
-
-Tu misión: responder preguntas sobre servicios, horarios, precios y políticas del salón de forma concisa y amigable.
-
-Reglas:
-- Responde en 2-4 frases máximo (a menos que sea una lista de servicios).
-- Sé cálida y usa emojis ocasionalmente (no en exceso).
-- Si el cliente quiere reservar una cita, anímale a hacerlo pero NO reserves en este modo.
-- Para información de servicios, usa la herramienta query_info.
-- Para buscar servicios específicos, usa search_services.
-
-Idioma: español (tutear al cliente, estilo Rioplatense si el cliente lo usa)."""
-
 
 class GeneralMode(BaseModeNode):
     """
@@ -58,25 +45,43 @@ class GeneralMode(BaseModeNode):
         from agent.tools.info_tools import query_info
         from agent.tools.search_services import search_services
 
-        customer_name = state.get("customer_name", "")
-        messages_history = state.get("messages", [])
+        mode_context = state.get("mode_context") or {}
 
-        # Build system message with optional customer context
-        system_content = _GENERAL_SYSTEM
-        if customer_name:
-            system_content += f"\n\nEl cliente se llama {customer_name}."
-        if state.get("conversation_summary"):
-            system_content += f"\n\nContexto previo de la conversación:\n{state['conversation_summary']}"
+        langchain_messages: list[SystemMessage | HumanMessage | AIMessage]
 
-        # Build LangChain message list from recent history (last 8 messages)
-        langchain_messages: list = [SystemMessage(content=system_content)]
-        for msg in messages_history[-8:]:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "user":
-                langchain_messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                langchain_messages.append(AIMessage(content=content))
+        if self._use_optimized_prompts():
+            langchain_messages = list(
+                await self._build_layered_messages(
+                state,
+                mode_context,
+                step_name="general_query",
+                include_history=True,
+                history_limit=8,
+                )
+            )
+        else:
+            messages_history = state.get("messages", [])
+
+            system_content = (
+                "Eres Maite, asistenta virtual de Atrévete Peluquería en Alcobendas. "
+                "Respondé dudas sobre servicios, horarios, precios y políticas del salón "
+                "de forma breve, cálida y útil."
+            )
+            conversation_summary = state.get("conversation_summary")
+            if conversation_summary:
+                system_content += (
+                    "\n\nContexto previo de la conversación:\n"
+                    f"{conversation_summary}"
+                )
+
+            langchain_messages = [SystemMessage(content=system_content)]
+            for msg in messages_history[-8:]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "user":
+                    langchain_messages.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    langchain_messages.append(AIMessage(content=content))
 
         # Run agentic loop with read-only tools
         result = await self._run_agentic_loop(
@@ -90,8 +95,17 @@ class GeneralMode(BaseModeNode):
             bool(result.error),
         )
 
-        return {
-            **add_message(state, "assistant", result.response_text),
+        final_response, disclosure_sent = self._maybe_prepend_intro(
+            result.response_text,
+            state,
+        )
+
+        updates = {
+            **add_message(state, "assistant", final_response),
             "last_node": "general",
             "user_message": None,
         }
+        if disclosure_sent:
+            updates["ai_disclosure_sent"] = True
+
+        return updates

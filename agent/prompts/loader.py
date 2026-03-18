@@ -13,7 +13,6 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agent.modes.booking_context import BookingSubstep, normalize_booking_substep
 from agent.state.schemas import ConversationState
 from shared.config import get_settings
 
@@ -33,17 +32,26 @@ CACHE_KEY = "system_prompt_v1"
 CACHE_TTL_MINUTES = 10
 
 _BOOKING_PROMPT_LEGACY_STEP_ALIASES = {
-    "customer_data": BookingSubstep.NOTES,
-    "datetime_selection": BookingSubstep.SLOT_SELECTION,
+    "customer_data": "notes",
+    "datetime_selection": "slot_selection",
 }
 
-_BOOKING_SUBSTEP_FILE_MAP: dict[BookingSubstep, str] = {
-    BookingSubstep.SERVICE_SELECTION: "service_selection.md",
-    BookingSubstep.STYLIST_SELECTION: "stylist_selection.md",
-    BookingSubstep.SLOT_SELECTION: "slot_selection.md",
-    BookingSubstep.NOTES: "notes.md",
-    BookingSubstep.CONFIRMATION: "confirmation.md",
-    BookingSubstep.COMPLETED: "completed.md",
+_BOOKING_SUBSTEP_FILE_MAP: dict[str, str] = {
+    "service_selection": "service_selection.md",
+    "add_ons": "add_ons.md",
+    "stylist_selection": "stylist_selection.md",
+    "slot_selection": "slot_selection.md",
+    "customer_name": "customer_name.md",
+    "notes": "notes.md",
+    "confirmation": "confirmation.md",
+    "completed": "completed.md",
+}
+
+_MODE_OVERLAY_FILES: dict[str, str] = {
+    "GREETING": "modes/greeting.md",
+    "BOOKING": "modes/booking.md",
+    "GENERAL": "modes/general.md",
+    "ESCALATION": "modes/escalation.md",
 }
 
 
@@ -161,8 +169,10 @@ def _resolve_booking_substep(
     mode_context: dict,
     step_info: dict | None = None,
     substep: str | None = None,
-) -> BookingSubstep | None:
+) -> str | None:
     """Resolve the canonical booking substep from explicit or legacy inputs."""
+
+    from agent.modes.booking_context import normalize_booking_substep
 
     raw_substep = substep or mode_context.get("booking_step")
     if raw_substep is None and step_info is not None:
@@ -173,7 +183,7 @@ def _resolve_booking_substep(
     aliased = _BOOKING_PROMPT_LEGACY_STEP_ALIASES.get(str(raw_substep).lower(), raw_substep)
 
     try:
-        return normalize_booking_substep(str(aliased).lower())
+        return normalize_booking_substep(str(aliased).lower()).value
     except ValueError:
         return None
 
@@ -189,12 +199,21 @@ def load_mode_overlay(
     if not mode_name:
         return ""
 
-    normalized_mode = mode_name.upper()
+    normalized_mode = mode_name.strip().upper()
+
     if normalized_mode != "BOOKING":
-        return ""
+        overlay_path = _MODE_OVERLAY_FILES.get(normalized_mode)
+        if overlay_path is None:
+            logger.warning("load_mode_overlay: unknown mode '%s'", mode_name)
+            return ""
+
+        subdir, file_name = overlay_path.rsplit("/", 1)
+        return load_markdown(file_name, subdir)
 
     if not _use_substep_prompts():
-        return load_markdown("booking.md", "modes")
+        overlay_path = _MODE_OVERLAY_FILES["BOOKING"]
+        subdir, file_name = overlay_path.rsplit("/", 1)
+        return load_markdown(file_name, subdir)
 
     resolved_substep = _resolve_booking_substep(mode_context, step_info, substep)
     if resolved_substep is None:
@@ -223,7 +242,6 @@ def build_step_context(
     Creates context string with:
     - Current step information
     - Collected data so far
-    - User message
     - Conversation summary (if available)
 
     Args:
@@ -244,11 +262,9 @@ def build_step_context(
     now = datetime.now(timezone)
     parts.append(f"Fecha y hora actual: {now.strftime('%A %d de %B de %Y, %H:%M')}")
 
-    # Add customer info if available
-    customer_name = state.get("customer_name")
+    # Customer name is intentionally NOT injected into prompt context.
+    # The LLM cannot leak what it doesn't know. Name is stored in DB only.
     customer_phone = state.get("customer_phone")
-    if customer_name:
-        parts.append(f"Nombre del cliente: {customer_name}")
     if customer_phone:
         parts.append(f"Teléfono: {customer_phone}")
 
@@ -272,6 +288,17 @@ def build_step_context(
         if mode_context.get("recurrent_stylist_slot_summary"):
             recurrent_line += f" ({mode_context['recurrent_stylist_slot_summary']})"
         collected_data.append(recurrent_line)
+    prefetched_stylists = mode_context.get("prefetched_stylists")
+    if prefetched_stylists:
+        collected_data.append("Estilistas disponibles:")
+        for stylist in prefetched_stylists:
+            collected_data.append(
+                f"  - {stylist['name']}: {stylist.get('next_slot_summary', 'Sin disponibilidad')}"
+            )
+    if mode_context.get("soonest_any_slot"):
+        collected_data.append(
+            f"Cualquier profesional disponible: {mode_context['soonest_any_slot']}"
+        )
     if mode_context.get("slot_summary"):
         collected_data.append(f"Horario: {mode_context['slot_summary']}")
     if mode_context.get("first_name"):
@@ -290,16 +317,32 @@ def build_step_context(
         collected_data.append(
             f"Franja pedida por la clienta: {mode_context['availability_time_range']}"
         )
+    if mode_context.get("substitution_made"):
+        substitution_reason = mode_context.get("substitution_reason")
+        date_requested = mode_context.get("date_requested")
+        date_substituted = mode_context.get("date_substituted")
+        min_valid_date = mode_context.get("min_valid_date")
+
+        if substitution_reason == "minimum_days_rule" and date_requested and min_valid_date:
+            collected_data.append(
+                "Fecha solicitada ajustada: "
+                f"{date_requested} no cumple la anticipacion minima. "
+                f"Primera fecha valida: {min_valid_date}"
+            )
+        elif date_requested and date_substituted:
+            collected_data.append(
+                f"Fecha solicitada ajustada: {date_requested} -> {date_substituted}"
+            )
+    if mode_context.get("no_slots_for_stylist"):
+        stylist_name = mode_context.get("stylist_name") or "la estilista elegida"
+        collected_data.append(
+            f"Sin disponibilidad para {stylist_name} en el rango solicitado"
+        )
 
     if collected_data:
         parts.append("\nDatos recopilados:")
         for item in collected_data:
             parts.append(f"- {item}")
-
-    # Add user message
-    user_message = state.get("user_message", "")
-    if user_message:
-        parts.append(f"\nMensaje del cliente: {user_message}")
 
     # Add conversation summary if available
     summary = state.get("conversation_summary")

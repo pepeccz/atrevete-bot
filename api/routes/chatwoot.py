@@ -362,14 +362,15 @@ async def receive_chatwoot_webhook(
         conversation_id=str(payload.conversation.id),
         customer_phone=payload.sender.phone_number,  # Will be normalized to E.164
         message_text=message_text,
-        customer_name=payload.sender.name,
+        sender_name=payload.sender.name,
+        customer_name=payload.sender.name,  # DEPRECATED: kept for rolling deploy compatibility
         is_audio_transcription=is_audio_transcription,
         audio_url=audio_url,
     )
 
     logger.info(
         f"Parsed message event: conversation_id={message_event.conversation_id}, "
-        f"phone={message_event.customer_phone}, name={message_event.customer_name}, "
+        f"phone={message_event.customer_phone}, sender_name={message_event.sender_name}, "
         f"text='{message_event.message_text[:100]}'"
     )
 

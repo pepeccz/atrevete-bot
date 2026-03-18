@@ -23,7 +23,7 @@ _ALREADY_ESCALATED = (
     "¿Hay algo más en lo que pueda ayudarte mientras esperás?"
 )
 _ESCALATION_SUCCESS = (
-    "Entendido, {name}. He avisado a nuestro equipo y te atenderán "
+    "Entendido. He avisado a nuestro equipo y te atenderán "
     "personalmente en breve. 🙏"
 )
 _ESCALATION_FALLBACK = (
@@ -62,14 +62,22 @@ class EscalationMode(BaseModeNode):
             self.logger.info(
                 "EscalationMode: already escalated | conversation=%s", conversation_id
             )
-            return {
-                **add_message(state, "assistant", _ALREADY_ESCALATED),
+            final_response, disclosure_sent = self._maybe_prepend_intro(
+                _ALREADY_ESCALATED,
+                state,
+            )
+            updates = {
+                **add_message(state, "assistant", final_response),
                 "last_node": "escalation",
                 "user_message": None,
             }
+            if disclosure_sent:
+                updates["ai_disclosure_sent"] = True
+            return updates
 
         # Attempt to call escalate_to_human tool
-        customer_name = state.get("customer_name") or "Cliente"
+        # customer_name is passed to the tool for internal logging only — never in responses
+        customer_name_internal = state.get("customer_name") or "Cliente"
         customer_phone = state.get("customer_phone", "")
 
         response_text = _ESCALATION_FALLBACK
@@ -79,15 +87,14 @@ class EscalationMode(BaseModeNode):
 
             await escalate_to_human.ainvoke({
                 "reason": "customer_request",
-                "customer_name": customer_name,
+                "customer_name": customer_name_internal,
                 "customer_phone": customer_phone,
                 "conversation_id": conversation_id,
             })
-            response_text = _ESCALATION_SUCCESS.format(name=customer_name)
+            response_text = _ESCALATION_SUCCESS
             self.logger.info(
-                "EscalationMode: escalation successful | conversation=%s | customer=%s",
+                "EscalationMode: escalation successful | conversation=%s",
                 conversation_id,
-                customer_name,
             )
 
         except Exception as exc:
@@ -99,9 +106,13 @@ class EscalationMode(BaseModeNode):
             # Still mark as escalated to avoid infinite retries
             response_text = _ESCALATION_FALLBACK
 
-        return {
-            **add_message(state, "assistant", response_text),
+        final_response, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+        updates = {
+            **add_message(state, "assistant", final_response),
             "escalation_triggered": True,
             "last_node": "escalation",
             "user_message": None,
         }
+        if disclosure_sent:
+            updates["ai_disclosure_sent"] = True
+        return updates

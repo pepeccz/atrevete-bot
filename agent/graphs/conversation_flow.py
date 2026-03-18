@@ -9,7 +9,6 @@ compatibility imports use the same architecture.
 """
 
 import logging
-import re
 from typing import Any
 from uuid import UUID
 
@@ -24,9 +23,6 @@ from agent.state.schemas import ConversationState
 from agent.state.helpers import add_message, should_summarize
 from database.connection import get_async_session
 from database.models import Customer
-
-# Regex pattern for "readable" names (only letters, spaces, accents)
-NAME_READABLE_PATTERN = re.compile(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s]+$')
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -54,38 +50,10 @@ def get_maite_system_prompt() -> str:
 # For backward compatibility
 MAITE_SYSTEM_PROMPT = get_maite_system_prompt
 
-GREETING_CONFIRM_SUGGESTED = "confirm_suggested_name"
-GREETING_ASK_EXPLICIT = "ask_name"
 
-
-def _extract_suggested_name(display_name: str | None) -> str | None:
-    """Return a readable first name from a raw WhatsApp/Chatwoot display name."""
-    if not display_name:
-        return None
-
-    candidate = display_name.strip().split()[0] if display_name.strip() else ""
-    if not candidate or candidate == "Cliente":
-        return None
-
-    if not NAME_READABLE_PATTERN.match(candidate):
-        return None
-
-    # Reject tokens with 3 or fewer chars to avoid low-confidence guesses like
-    # "Sii". This also rejects real short names such as "Ana", but in that
-    # case GREETING falls back to the explicit name-ask flow instead.
-    if len(candidate) <= 3:
-        return None
-
-    return candidate.title()
-
-
-def _has_pending_greeting_step(state: ConversationState) -> bool:
-    """Return True when GREETING still owns the current turn."""
-    mode_context = state.get("mode_context") or {}
-    return bool(
-        state.get("current_mode") == "GREETING"
-        and mode_context.get("greeting_step") in {GREETING_CONFIRM_SUGGESTED, GREETING_ASK_EXPLICIT}
-    )
+# REMOVED: _extract_suggested_name, _has_pending_greeting_step,
+# GREETING_CONFIRM_SUGGESTED, GREETING_ASK_EXPLICIT, NAME_READABLE_PATTERN
+# (dead code after customer-name-handling refactor)
 
 
 async def check_customer_exists(phone: str) -> tuple[bool, Customer | None]:
@@ -179,15 +147,15 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     Routing rules (priority order):
     1. escalation_triggered=True → ESCALATION
     2. error_count >= 3 → ESCALATION (auto-escalation)
+    2.5 pending confirmation reply + intent in {confirm, reject, cancel} → CONFIRMATION_REPLY
     3. pending GREETING subflow → GREETING with classified intent
-    4. classify intent before first-turn fallback
-    5. is_first_interaction=True OR customer_name is None + intent=book → BOOKING
-    6. is_first_interaction=True OR customer_name is None + intent!=book → GREETING
-    7. intent=escalate → ESCALATION
-    8. current_mode=BOOKING and intent not cancel/reject → stay BOOKING
-    9. intent=book → BOOKING
-    10. intent=greet (not in BOOKING) → GREETING
-    11. Default → GENERAL
+    4. customer_name is None + intent in {greet, ambiguous} → GREETING
+    5. intent=escalate → ESCALATION
+    6. current_mode=BOOKING and intent ask_info → GENERAL with preserved draft
+    7. current_mode=BOOKING and intent not cancel/reject/ask_info → stay BOOKING
+    8. intent=book → BOOKING
+    9. intent=greet (not in BOOKING) → GREETING
+    10. Default → GENERAL
     """
     from agent.modes.booking_context import preserve_booking_context
     from agent.state.schemas import transition_mode
@@ -198,10 +166,10 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     is_first_interaction = state.get("is_first_interaction", False)
     error_count = state.get("error_count", 0)
     escalation_triggered = state.get("escalation_triggered", False)
-    greeting_pending = _has_pending_greeting_step(state)
 
     # Find last user message
     messages = state.get("messages", [])
+    turn_count = len(messages)
     user_message = ""
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -224,41 +192,12 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         logger.warning("router_node: auto-escalation (error_count=%d)", error_count)
         return {"current_mode": "ESCALATION", "last_node": "router"}
 
-    # Rule 3: Existing GREETING subflow keeps ownership until resolved
-    if greeting_pending and not is_first_interaction:
-        intent_router = _get_intent_router()
-        try:
-            from agent.routing.intent_router import IntentResult
-            intent = await intent_router.classify(
-                text=user_message,
-                current_mode="GREETING",
-            )
-        except Exception as exc:
-            logger.error("router_node: greeting intent classification failed | error=%s", exc)
-            from agent.routing.intent_router import IntentResult
-            intent = IntentResult(
-                intent="ambiguous",
-                confidence=0.0,
-                raw_input=user_message,
-                mode_hint="GREETING",
-            )
-
-        return {
-            "current_mode": "GREETING",
-            "mode_context": {
-                **(state.get("mode_context") or {}),
-                "last_intent": intent.intent,
-                "last_intent_confidence": intent.confidence,
-            },
-            "last_node": "router",
-        }
-
-    # Classify intent (keyword + LLM hybrid) before first-turn fallback so
-    # booking messages can bypass GREETING on the very first turn.
+    # Classify intent (keyword + LLM hybrid) before confirmation/greeting rules
+    # so both subflows can use the same classified result.
     intent_router = _get_intent_router()
     try:
         from agent.routing.intent_router import IntentResult
-        intent = await intent_router.classify(
+        intent_result = await intent_router.classify(
             text=user_message,
             current_mode=current_mode,
         )
@@ -269,7 +208,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             exc,
         )
         from agent.routing.intent_router import IntentResult
-        intent = IntentResult(
+        intent_result = IntentResult(
             intent="ambiguous",
             confidence=0.0,
             raw_input=user_message,
@@ -277,34 +216,49 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         )
 
     intent_data = {
-        "last_intent": intent.intent,
-        "last_intent_confidence": intent.confidence,
+        "last_intent": intent_result.intent,
+        "last_intent_confidence": intent_result.confidence,
     }
 
-    # Rule 4a/4b: First interaction or name unknown.
-    # BUG-1B FIX: guard against intercepting mid-booking turns where customer_name is still None.
-    if is_first_interaction or (not customer_name and current_mode != "BOOKING"):
-        if intent.intent == "book":
-            first_turn_booking_context = {
-                **intent_data,
-                "is_first_interaction": is_first_interaction,
-            }
-            return {
-                **transition_mode(state, "BOOKING", context_update=first_turn_booking_context),
-                "last_node": "router",
-            }
-
+    # Rule 2.5: Customer replying to a pending appointment confirmation template
+    pending_confirmation_id = state.get("pending_confirmation_appointment_id")
+    if pending_confirmation_id and intent_result.intent in ("confirm", "reject", "cancel"):
         return {
-            "current_mode": "GREETING",
+            "current_mode": "CONFIRMATION_REPLY",
             "mode_context": {
-                **(state.get("mode_context") or {}),
-                **intent_data,
+                "pending_confirmation_appointment_id": pending_confirmation_id,
+                "last_intent": intent_result.intent,
+                "last_intent_confidence": intent_result.confidence,
             },
             "last_node": "router",
         }
 
+    # Rule 3: REMOVED — greeting subflow no longer has pending steps
+    # (name confirmation was removed in customer-name-handling refactor)
+
+    # Rule 4: Unknown customers only go through GREETING on their FIRST
+    # interaction. The is_first_interaction guard prevents re-entry loops
+    # when customer_name is None on subsequent turns.
+    if (
+        not customer_name
+        and is_first_interaction
+        and current_mode != "BOOKING"
+        and intent_result.intent in ("greet", "ambiguous")
+    ):
+        greeting_context = {
+            **(state.get("mode_context") or {}),
+            **intent_data,
+            "is_first_interaction": is_first_interaction,
+            "turn_count": turn_count,
+        }
+        return {
+            "current_mode": "GREETING",
+            "mode_context": greeting_context,
+            "last_node": "router",
+        }
+
     # Rule 5: Escalation intent
-    if intent.intent == "escalate":
+    if intent_result.intent == "escalate":
         transition_update = transition_mode(state, "ESCALATION")
         if current_mode == "BOOKING":
             draft_contexts = dict(transition_update.get("draft_contexts") or {})
@@ -320,7 +274,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         }
 
     # Rule 6: BOOKING digressions → GENERAL with preserved draft context
-    if current_mode == "BOOKING" and intent.intent == "ask_info":
+    if current_mode == "BOOKING" and intent_result.intent == "ask_info":
         transition_update = transition_mode(state, "GENERAL")
         draft_contexts = dict(transition_update.get("draft_contexts") or {})
         draft_contexts["BOOKING"] = preserve_booking_context(
@@ -335,11 +289,11 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         }
 
     # Rule 7: Stay in BOOKING unless cancel/reject or GENERAL digression
-    if current_mode == "BOOKING" and intent.intent not in ("cancel", "reject", "ask_info"):
+    if current_mode == "BOOKING" and intent_result.intent not in ("cancel", "reject", "ask_info"):
         return {"mode_context": {**intent_data}, "last_node": "router"}
 
     # Rule 8: Book intent → BOOKING
-    if intent.intent == "book":
+    if intent_result.intent == "book":
         # BUG-1C FIX: if already in BOOKING, skip transition_mode (which sends __reset__)
         # to avoid wiping mode_context mid-flow. Use the same no-reset return shape as Rule 6.
         if current_mode == "BOOKING":
@@ -353,8 +307,12 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
-    # Rule 9: Greet intent → GREETING (only if name unknown)
-    if intent.intent == "greet" and current_mode not in ("BOOKING",):
+    # Rule 9: Greet intent → GREETING (only if name unknown AND first interaction)
+    if (
+        intent_result.intent == "greet"
+        and current_mode not in ("BOOKING",)
+        and not customer_name
+    ):
         return {
             "current_mode": "GREETING",
             "mode_context": {**intent_data},
@@ -363,7 +321,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
 
     # Rule 10: Default → GENERAL
     target_mode = "GENERAL"
-    if current_mode == "BOOKING" and intent.intent in ("cancel", "reject"):
+    if current_mode == "BOOKING" and intent_result.intent in ("cancel", "reject"):
         target_mode = "BOOKING"
 
     if target_mode != current_mode:
@@ -374,6 +332,71 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         }
 
     return {"mode_context": {**intent_data}, "last_node": "router"}
+
+
+async def preprocess_node_v6(state: ConversationState) -> dict[str, Any]:
+    """v6.0 preprocess: adds message, detects first interaction, checks customer."""
+    conversation_id = state.get("conversation_id", "unknown")
+    user_message = state.get("user_message")
+
+    if not user_message:
+        return {"last_node": "preprocess", "pending_confirmation_appointment_id": None}
+
+    existing_messages = state.get("messages", [])
+    is_first_interaction = len(existing_messages) == 0
+
+    msg_update = add_message(state, "user", user_message)
+    updates: dict[str, Any] = {
+        **msg_update,
+        "is_first_interaction": is_first_interaction,
+        "last_node": "preprocess",
+    }
+
+    customer_phone = state.get("customer_phone")
+    if customer_phone:
+        try:
+            customer_exists, customer = await check_customer_exists(customer_phone)
+            if customer_exists and customer:
+                updates["customer_id"] = str(customer.id)
+                updates["customer_name"] = customer.first_name
+                logger.info(
+                    "preprocess_node_v6: returning customer | customer_id=%s | name=%s",
+                    customer.id,
+                    customer.first_name,
+                )
+            else:
+                raw_display_name = state.get("pending_whatsapp_name") or state.get("customer_name")
+                updates["customer_name"] = None
+                updates["customer_id"] = None
+                updates["pending_whatsapp_name"] = raw_display_name
+        except Exception as e:
+            logger.error(
+                "preprocess_node_v6: customer check failed | conversation_id=%s | error=%s",
+                conversation_id,
+                e,
+            )
+
+    resolved_customer_id = updates.get("customer_id") or state.get("customer_id")
+    if not resolved_customer_id:
+        updates["pending_confirmation_appointment_id"] = None
+        return updates
+
+    try:
+        from agent.services.confirmation_service import get_pending_confirmations
+
+        pending_appts = await get_pending_confirmations(UUID(str(resolved_customer_id)))
+        updates["pending_confirmation_appointment_id"] = (
+            str(pending_appts[0].id) if pending_appts else None
+        )
+    except Exception as exc:
+        logger.warning(
+            "preprocess_node_v6: pending confirmation check failed | conversation_id=%s | error=%s",
+            conversation_id,
+            exc,
+        )
+        updates["pending_confirmation_appointment_id"] = None
+
+    return updates
 
 
 def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
@@ -392,64 +415,11 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
     from agent.modes.general_mode import GeneralMode
     from agent.modes.booking_mode import BookingMode
     from agent.modes.escalation_mode import EscalationMode
+    from agent.modes.confirmation_reply_node import confirmation_reply_node
     from agent.routing.intent_router import IntentResult
 
     def _get_llm():
         return _get_llm_client()
-
-    async def preprocess_node_v6(state: ConversationState) -> dict[str, Any]:
-        """v6.0 preprocess: adds message, detects first interaction, checks customer."""
-        conversation_id = state.get("conversation_id", "unknown")
-        user_message = state.get("user_message")
-
-        if not user_message:
-            return {"last_node": "preprocess"}
-
-        existing_messages = state.get("messages", [])
-        is_first_interaction = len(existing_messages) == 0
-
-        msg_update = add_message(state, "user", user_message)
-        # NOTE: user_message is NOT cleared here (FIX-001)
-        # It is cleared in summarize_node at the end of the pipeline
-
-        updates: dict[str, Any] = {
-            **msg_update,
-            "is_first_interaction": is_first_interaction,
-            "last_node": "preprocess",
-        }
-
-        customer_phone = state.get("customer_phone")
-        if customer_phone:
-            try:
-                customer_exists, customer = await check_customer_exists(customer_phone)
-                if customer_exists and customer:
-                    updates["customer_id"] = str(customer.id)
-                    updates["customer_name"] = customer.first_name
-                    logger.info(
-                        "preprocess_node_v6: returning customer | customer_id=%s | name=%s",
-                        customer.id, customer.first_name,
-                    )
-                else:
-                    raw_display_name = state.get("pending_whatsapp_name") or state.get("customer_name")
-                    suggested_name = _extract_suggested_name(raw_display_name)
-                    greeting_step = (
-                        GREETING_CONFIRM_SUGGESTED if suggested_name is not None else GREETING_ASK_EXPLICIT
-                    )
-
-                    updates["customer_name"] = None
-                    updates["customer_id"] = None
-                    updates["pending_whatsapp_name"] = raw_display_name
-
-                    if not _has_pending_greeting_step(state):
-                        updates["mode_context"] = {
-                            "greeting_step": greeting_step,
-                            "suggested_name": suggested_name,
-                            "whatsapp_display_name": raw_display_name,
-                        }
-            except Exception as e:
-                logger.error("preprocess_node_v6: customer check failed | error=%s", e)
-
-        return updates
 
     def mode_dispatcher(state: ConversationState) -> str:
         """Conditional edge: current_mode → node name."""
@@ -458,6 +428,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
             "GENERAL": "general",
             "BOOKING": "booking",
             "ESCALATION": "escalation",
+            "CONFIRMATION_REPLY": "confirmation_reply",
         }
         return mode_to_node.get(state.get("current_mode") or "GENERAL", "general")
 
@@ -518,6 +489,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
     graph.add_node("general", general_node_fn)
     graph.add_node("booking", booking_node_fn)
     graph.add_node("escalation", escalation_node_fn)
+    graph.add_node("confirmation_reply", confirmation_reply_node)
     graph.add_node("summarize", summarize_conversation)
 
     graph.set_entry_point("preprocess")
@@ -527,11 +499,13 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
         "general": "general",
         "booking": "booking",
         "escalation": "escalation",
+        "confirmation_reply": "confirmation_reply",
     })
     graph.add_edge("greeting", "summarize")
     graph.add_edge("general", "summarize")
     graph.add_edge("booking", "summarize")
     graph.add_edge("escalation", "summarize")
+    graph.add_edge("confirmation_reply", "summarize")
     graph.add_edge("summarize", END)
 
     compiled = graph.compile(checkpointer=checkpointer)

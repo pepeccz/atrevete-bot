@@ -26,6 +26,7 @@ Tools used per step:
 
 import logging
 import unicodedata
+from datetime import date, datetime
 from typing import Any, Mapping, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -34,6 +35,8 @@ from agent.modes.booking_context import (
     ALLOWED_TRANSITIONS,
     BookingDraftContext,
     BookingSubstep,
+    InterpretationReason,
+    SlotInterpretation,
     normalize_booking_substep,
     preserve_booking_context,
     validate_booking_context,
@@ -44,10 +47,27 @@ from agent.state.schemas import ConversationState
 
 logger = logging.getLogger(__name__)
 
+_BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset({
+    "mujer",
+    "hombre",
+    "nino",
+    "nina",
+    "dama",
+    "caballero",
+    "corte",
+    "tinte",
+    "color",
+    "peluqueria",
+    "adulta",
+    "adulto",
+})
+
 # ── Booking sub-steps ─────────────────────────────────────────────────────────
 STEP_SERVICE_SELECTION = BookingSubstep.SERVICE_SELECTION.value
+STEP_ADD_ONS = BookingSubstep.ADD_ONS.value
 STEP_STYLIST_SELECTION = BookingSubstep.STYLIST_SELECTION.value
 STEP_SLOT_SELECTION = BookingSubstep.SLOT_SELECTION.value
+STEP_CUSTOMER_NAME = BookingSubstep.CUSTOMER_NAME.value
 STEP_NOTES = BookingSubstep.NOTES.value
 STEP_CUSTOMER_DATA = STEP_NOTES
 STEP_CONFIRMATION = BookingSubstep.CONFIRMATION.value
@@ -72,9 +92,11 @@ La clienta quiere reservar una cita. Ayúdala a elegir el servicio.
 
 _SYSTEM_STYLIST_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
 La clienta ya eligió el servicio: {service_name}.
+Categoría del servicio: {service_category}.
 Ahora puede elegir una estilista o decirte que no tiene preferencia.
-- Usa list_stylists para mostrar las estilistas disponibles.
+- Usa list_stylists con la categoría del servicio para mostrar solo las estilistas disponibles.
 - Si hay estilista recurrente, ofrécela primero de forma cálida.
+- Ofrece también la opción de cualquier profesional disponible.
 - Usa un tono cálido e informal con "te"/"tu", nunca "usted".
 - Sé concisa. Pregunta si tiene preferencia o si cualquiera está bien."""
 
@@ -83,6 +105,10 @@ Servicio: {service_name} | Estilista: {stylist_name}{duration_hint}
 Ahora la clienta debe elegir fecha y hora.
 - Usa find_next_available para mostrar los próximos huecos disponibles cuando no haya rango pedido.
 - Usa check_availability si la clienta pide una fecha, rango o franja específica.
+- Si el contexto indica substitution_made=True, explica que la fecha solicitada fue ajustada antes de ofrecer horarios.
+- Si substitution_reason es minimum_days_rule y tienes min_valid_date, aclara la regla de anticipación mínima y menciona la primera fecha válida.
+- Si el contexto indica no_slots_for_stylist=True, ofrece ampliar rango o cambiar de estilista. No cambies de paso automáticamente.
+- Nunca inventes disponibilidad: usa únicamente los resultados de las tools.
 - Usa un tono cálido e informal con "te"/"tu", nunca "usted".
 - Sé concisa. Muestra máximo 5 opciones."""
 
@@ -99,7 +125,6 @@ Muestra el resumen de la reserva y pide confirmación con tono cálido e informa
 - Servicio: {service_name}
 - Estilista: {stylist_name}
 - Fecha/Hora: {slot_summary}
-- Nombre: {customer_name}
 {notes_line}
 
 ¿Te va bien así? (Sí/No)"""
@@ -160,6 +185,29 @@ class BookingMode(BaseModeNode):
         }
 
     @classmethod
+    def _has_booking_content(cls, message: str) -> bool:
+        normalized = cls._normalize_text(message)
+        return any(token in normalized for token in _BOOKING_CONTENT_TOKENS)
+
+    @classmethod
+    def _message_is_explicit_cancellation(cls, message: str) -> bool:
+        normalized = cls._normalize_text(message)
+        return any(
+            phrase in normalized
+            for phrase in (
+                "no quiero",
+                "cancelar",
+                "cancelalo",
+                "cancelala",
+                "cancela",
+                "anular",
+                "anulalo",
+                "anulala",
+                "mejor no",
+            )
+        )
+
+    @classmethod
     def _recommended_services_from_message(
         cls,
         message: str,
@@ -198,10 +246,14 @@ class BookingMode(BaseModeNode):
         if current_step == BookingSubstep.CONFIRMATION:
             return BookingSubstep.NOTES
         if current_step == BookingSubstep.NOTES:
+            return BookingSubstep.CUSTOMER_NAME
+        if current_step == BookingSubstep.CUSTOMER_NAME:
             return BookingSubstep.SLOT_SELECTION
         if current_step == BookingSubstep.SLOT_SELECTION:
             return BookingSubstep.STYLIST_SELECTION
         if current_step == BookingSubstep.STYLIST_SELECTION:
+            return BookingSubstep.ADD_ONS
+        if current_step == BookingSubstep.ADD_ONS:
             return BookingSubstep.SERVICE_SELECTION
         return BookingSubstep.SERVICE_SELECTION
 
@@ -222,7 +274,27 @@ class BookingMode(BaseModeNode):
                 "slot_summary",
                 "availability_start_date",
                 "availability_time_range",
+                "add_ons_options",
+                "add_ons_declined",
+                "customer_name",
+                "recommendations_shown",
                 "pending_cancel",
+            ):
+                candidate.pop(key, None)
+        elif target == BookingSubstep.ADD_ONS:
+            for key in (
+                "stylist_id",
+                "stylist_name",
+                "recurrent_stylist_id",
+                "recurrent_stylist_name",
+                "recurrent_stylist_slot_summary",
+                "selected_slot",
+                "slot_summary",
+                "availability_start_date",
+                "availability_time_range",
+                "add_ons_options",
+                "add_ons_declined",
+                "customer_name",
             ):
                 candidate.pop(key, None)
         elif target == BookingSubstep.STYLIST_SELECTION:
@@ -231,6 +303,8 @@ class BookingMode(BaseModeNode):
         elif target == BookingSubstep.SLOT_SELECTION:
             candidate.pop("selected_slot", None)
             candidate.pop("slot_summary", None)
+        elif target == BookingSubstep.CUSTOMER_NAME:
+            candidate.pop("customer_name", None)
         return self._finalize_mode_context(candidate, target, target)
 
     def _message_changes_service(self, current_step: BookingSubstep, message: str) -> bool:
@@ -283,6 +357,74 @@ class BookingMode(BaseModeNode):
         primary = str(mode_context.get("service_name") or "").strip()
         return [primary] if primary else []
 
+    def _response_updates(self, state: ConversationState, response_text: str) -> dict[str, Any]:
+        final_response, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+        updates: dict[str, Any] = add_message(state, "assistant", final_response)
+        if disclosure_sent:
+            updates["ai_disclosure_sent"] = True
+        return updates
+
+    async def _resolve_add_on_names(
+        self, names: list[str], category: str | None
+    ) -> list[dict]:
+        """
+        Resolve combo_recommendations service names to real Service DB records.
+        Uses fuzzy name matching (case-insensitive substring). Returns up to 3 results.
+        Gracefully returns [] on any DB error.
+        """
+        from sqlalchemy import select
+
+        from database.connection import get_async_session
+        from database.models import Service, ServiceCategory
+
+        if not names:
+            return []
+
+        results = []
+        try:
+            async with get_async_session() as session:
+                db_query = select(Service).where(Service.is_active == True)
+                if category:
+                    if "peluc" in category.lower() or category.upper() == "HAIRDRESSING":
+                        db_query = db_query.where(
+                            Service.category == ServiceCategory.HAIRDRESSING
+                        )
+                    elif "estet" in category.lower() or category.upper() == "AESTHETICS":
+                        db_query = db_query.where(
+                            Service.category == ServiceCategory.AESTHETICS
+                        )
+                all_services = (await session.execute(db_query)).scalars().all()
+
+            name_lower_map = {s.name.lower(): s for s in all_services}
+            for name in names:
+                name_l = name.lower().strip()
+                match = name_lower_map.get(name_l)
+                if not match:
+                    match = next(
+                        (
+                            s
+                            for s in all_services
+                            if name_l in s.name.lower() or s.name.lower() in name_l
+                        ),
+                        None,
+                    )
+                if match:
+                    results.append(
+                        {
+                            "id": str(match.id),
+                            "name": match.name,
+                            "description": match.description or "",
+                            "duration_minutes": match.duration_minutes,
+                        }
+                    )
+                if len(results) >= 3:
+                    break
+        except Exception as exc:
+            self.logger.warning("_resolve_add_on_names failed: %s", exc)
+            return []
+
+        return results
+
     async def _populate_recurrent_stylist(self, state: ConversationState, mode_context: dict[str, Any]) -> dict[str, Any]:
         if mode_context.get("recurrent_stylist_id") or not state.get("customer_id"):
             return mode_context
@@ -329,6 +471,99 @@ class BookingMode(BaseModeNode):
             )
 
         return updated_context
+
+    async def _prefetch_stylist_options(
+        self, mode_context: dict
+    ) -> dict:
+        """
+        Pre-fetch stylist list and next available slots before LLM call.
+
+        Calls list_stylists + find_next_available in Python so the LLM
+        receives data directly without needing to call tools itself.
+
+        Returns updated mode_context dict with:
+          - prefetched_stylists: list of {name, id, next_slot_summary}
+          - soonest_any_slot: str summary of the absolute earliest slot
+        """
+        try:
+            from agent.tools.availability_tools import find_next_available
+            from agent.tools.info_tools import list_stylists
+
+            service_category = mode_context.get("service_category") or ""
+            service_duration_minutes = mode_context.get("service_duration_minutes")
+
+            stylists_result = await list_stylists.ainvoke({"category": service_category})
+            availability_result = await find_next_available.ainvoke(
+                {
+                    "service_category": service_category,
+                    "service_duration_minutes": service_duration_minutes,
+                    "max_days_to_search": 7,
+                }
+            )
+
+            available_by_name = {
+                str(stylist.get("stylist_name") or ""): stylist
+                for stylist in availability_result.get("available_stylists") or []
+                if isinstance(stylist, dict)
+            }
+
+            def _format_slot_summary(slot: Mapping[str, Any]) -> str:
+                day_name = str(slot.get("day_name") or "").strip()
+                slot_date = str(slot.get("date") or "").strip()
+                slot_time = str(slot.get("time") or "").strip()
+                if day_name and slot_date and slot_time:
+                    return f"{day_name} {slot_date} a las {slot_time}"
+                if day_name and slot_time:
+                    return f"{day_name} a las {slot_time}"
+                if slot_date and slot_time:
+                    return f"{slot_date} a las {slot_time}"
+                if slot_time:
+                    return f"A las {slot_time}"
+                return "Sin disponibilidad próxima"
+
+            prefetched_stylists: list[dict[str, Any]] = []
+            soonest_slot: tuple[datetime, str] | None = None
+
+            for stylist in stylists_result.get("stylists") or []:
+                stylist_name = str(stylist.get("name") or "")
+                availability_entry = available_by_name.get(stylist_name, {})
+                slots = availability_entry.get("slots") or []
+                first_slot = slots[0] if slots else None
+                slot_summary = "Sin disponibilidad próxima"
+
+                if isinstance(first_slot, dict):
+                    slot_summary = _format_slot_summary(first_slot)
+                    full_datetime = first_slot.get("full_datetime")
+                    parsed_datetime: datetime | None = None
+                    if isinstance(full_datetime, datetime):
+                        parsed_datetime = full_datetime
+                    elif isinstance(full_datetime, str):
+                        try:
+                            parsed_datetime = datetime.fromisoformat(full_datetime)
+                        except ValueError:
+                            parsed_datetime = None
+
+                    if parsed_datetime is not None:
+                        soonest_summary = f"{slot_summary} con {stylist_name}".strip()
+                        if soonest_slot is None or parsed_datetime < soonest_slot[0]:
+                            soonest_slot = (parsed_datetime, soonest_summary)
+
+                prefetched_stylists.append(
+                    {
+                        "name": stylist_name,
+                        "id": stylist.get("id"),
+                        "next_slot_summary": slot_summary,
+                    }
+                )
+
+            return {
+                **mode_context,
+                "prefetched_stylists": prefetched_stylists,
+                "soonest_any_slot": soonest_slot[1] if soonest_slot else None,
+            }
+        except Exception as exc:
+            self.logger.warning("BookingMode._prefetch_stylist_options failed: %s", exc)
+            return mode_context
 
     async def handle(self, state: ConversationState, intent: object) -> dict:
         """
@@ -389,12 +624,44 @@ class BookingMode(BaseModeNode):
             self.logger.info("BookingMode: cancel intent → transitioning to GENERAL")
             return {
                 **transition_mode(state, "GENERAL"),
-                **add_message(state, "assistant", "De acuerdo, he cancelado la reserva. ¿En qué más puedo ayudarte?"),
+                **self._response_updates(
+                    state,
+                    "De acuerdo, he cancelado la reserva. ¿En qué más puedo ayudarte?",
+                ),
                 "last_node": "booking",
                 "user_message": None,
             }
 
         if intent_signal == "reject":
+            if current_step == STEP_SERVICE_SELECTION and self._has_booking_content(user_message):
+                self.logger.warning(
+                    "BookingMode: reject intent ignored at service_selection due to booking content | message=%r",
+                    user_message,
+                )
+                return {
+                    **self._response_updates(
+                        state,
+                        "Entiendo. Para seguir bien, decime si buscás un corte, color o si es para mujer, hombre, niño o niña.",
+                    ),
+                    "mode_context": {**mode_context, "last_intent": "ambiguous"},
+                    "last_node": "booking",
+                    "user_message": None,
+                }
+
+            if current_step == STEP_CONFIRMATION and self._message_is_explicit_cancellation(user_message):
+                self.logger.info(
+                    "BookingMode: explicit cancellation detected at confirmation -> GENERAL"
+                )
+                return {
+                    **transition_mode(state, "GENERAL"),
+                    **self._response_updates(
+                        state,
+                        "De acuerdo, he cancelado la reserva. ¿En qué más puedo ayudarte?",
+                    ),
+                    "last_node": "booking",
+                    "user_message": None,
+                }
+
             if current_step == STEP_SERVICE_SELECTION or pending_cancel:
                 # At the first step OR confirmed cancellation → go to GENERAL directly
                 self.logger.info(
@@ -403,7 +670,10 @@ class BookingMode(BaseModeNode):
                 )
                 return {
                     **transition_mode(state, "GENERAL"),
-                    **add_message(state, "assistant", "De acuerdo, he cancelado la reserva. ¿En qué más puedo ayudarte?"),
+                    **self._response_updates(
+                        state,
+                        "De acuerdo, he cancelado la reserva. ¿En qué más puedo ayudarte?",
+                    ),
                     "last_node": "booking",
                     "user_message": None,
                 }
@@ -412,7 +682,10 @@ class BookingMode(BaseModeNode):
                 self.logger.info("BookingMode: reject intent at mid-step → asking confirmation")
                 updated_context = {**mode_context, "last_intent": intent_signal, "pending_cancel": True}
                 return {
-                    **add_message(state, "assistant", "¿Seguro que quieres cancelar la reserva? Responde 'no' para cancelar o continúa con la reserva."),
+                    **self._response_updates(
+                        state,
+                        "¿Seguro que quieres cancelar la reserva? Responde 'no' para cancelar o continúa con la reserva.",
+                    ),
                     "mode_context": updated_context,
                     "last_node": "booking",
                     "user_message": None,
@@ -421,7 +694,10 @@ class BookingMode(BaseModeNode):
         if self._message_starts_over(user_message):
             reset_context = self._finalize_mode_context({}, BookingSubstep.SERVICE_SELECTION, None)
             return {
-                **add_message(state, "assistant", "¡Listo! Empezamos de nuevo. ¿Qué servicio querés agendar?"),
+                **self._response_updates(
+                    state,
+                    "¡Listo! Empezamos de nuevo. ¿Qué servicio querés agendar?",
+                ),
                 "mode_context": reset_context,
                 "last_node": "booking",
                 "user_message": None,
@@ -431,9 +707,8 @@ class BookingMode(BaseModeNode):
             previous_step = self._previous_substep(current_step)
             rewound_context = self._rewind_context(mode_context, previous_step)
             return {
-                **add_message(
+                **self._response_updates(
                     state,
-                    "assistant",
                     f"Dale, volvamos un paso. Retomemos desde {previous_step.value.replace('_', ' ')}.",
                 ),
                 "mode_context": rewound_context,
@@ -450,7 +725,10 @@ class BookingMode(BaseModeNode):
             rewound_context["recommendations_shown"] = False
             rewound_context["booking_step"] = BookingSubstep.SERVICE_SELECTION.value
             return {
-                **add_message(state, "assistant", "Perfecto, cambiamos el servicio. Contame cuál querés ahora."),
+                **self._response_updates(
+                    state,
+                    "Perfecto, cambiamos el servicio. Contame cuál querés ahora.",
+                ),
                 "mode_context": rewound_context,
                 "last_node": "booking",
                 "user_message": None,
@@ -462,7 +740,10 @@ class BookingMode(BaseModeNode):
             rewound_context.pop("stylist_name", None)
             rewound_context["booking_step"] = BookingSubstep.STYLIST_SELECTION.value
             return {
-                **add_message(state, "assistant", "Perfecto, cambiamos de profesional. Decime con quién te gustaría atenderte."),
+                **self._response_updates(
+                    state,
+                    "Perfecto, cambiamos de profesional. Decime con quién te gustaría atenderte.",
+                ),
                 "mode_context": rewound_context,
                 "last_node": "booking",
                 "user_message": None,
@@ -472,7 +753,10 @@ class BookingMode(BaseModeNode):
             rewound_context = self._rewind_context(mode_context, BookingSubstep.SLOT_SELECTION)
             rewound_context["booking_step"] = BookingSubstep.SLOT_SELECTION.value
             return {
-                **add_message(state, "assistant", "Perfecto, buscamos otro horario. Decime qué día o franja te viene mejor."),
+                **self._response_updates(
+                    state,
+                    "Perfecto, buscamos otro horario. Decime qué día o franja te viene mejor.",
+                ),
                 "mode_context": rewound_context,
                 "last_node": "booking",
                 "user_message": None,
@@ -484,8 +768,10 @@ class BookingMode(BaseModeNode):
         # Dispatch to step handler
         handler_map: dict[BookingSubstep, Any] = {
             BookingSubstep.SERVICE_SELECTION: self._handle_service_selection,
+            BookingSubstep.ADD_ONS: self._handle_add_ons,
             BookingSubstep.STYLIST_SELECTION: self._handle_stylist_selection,
             BookingSubstep.SLOT_SELECTION: self._handle_slot_selection,
+            BookingSubstep.CUSTOMER_NAME: self._handle_customer_name,
             BookingSubstep.NOTES: self._handle_notes,
             BookingSubstep.CONFIRMATION: self._handle_confirmation,
             BookingSubstep.COMPLETED: self._handle_completed,
@@ -534,6 +820,15 @@ class BookingMode(BaseModeNode):
                             "service_name": matched_option.get("service_name", ""),
                             "service_id": matched_option.get("service_id"),
                             "service_duration_minutes": matched_option.get("duration_minutes"),
+                            "service_category": matched_option.get(
+                                "category", mode_context.get("service_category", "")
+                            ),
+                            "service_family": matched_option.get(
+                                "family", mode_context.get("service_family")
+                            ),
+                            "pending_recommendations": matched_option.get("combo_recommendations")
+                            or mode_context.get("pending_recommendations")
+                            or [],
                         }
                         # Run LLM with just the confirmation system prompt (no tools needed)
                         service_name = confirmed_context["service_name"]
@@ -555,7 +850,7 @@ class BookingMode(BaseModeNode):
                             result, BookingSubstep.SERVICE_SELECTION, confirmed_context
                         )
                         return {
-                            **add_message(state, "assistant", result.response_text),
+                            **self._response_updates(state, result.response_text),
                             "mode_context": self._finalize_mode_context(
                                 updated_context,
                                 next_step,
@@ -586,7 +881,7 @@ class BookingMode(BaseModeNode):
             updated_context["recommendations_shown"] = True
 
         return {
-            **add_message(state, "assistant", response_text),
+            **self._response_updates(state, response_text),
             "mode_context": self._finalize_mode_context(
                 updated_context,
                 next_step,
@@ -596,15 +891,104 @@ class BookingMode(BaseModeNode):
             "user_message": None,
         }
 
+    async def _handle_add_ons(
+        self, state: ConversationState, mode_context: dict
+    ) -> dict:
+        """
+        Step 2: Offer complementary add-on services from same category.
+        Auto-skips if no add_ons_options resolved.
+        """
+        add_ons_options = mode_context.get("add_ons_options")
+        if add_ons_options is None:
+            pending = [
+                str(x)
+                for x in (mode_context.get("pending_recommendations") or [])
+                if str(x).strip()
+            ]
+            category = mode_context.get("service_category")
+            add_ons_options = await self._resolve_add_on_names(pending, category)
+            mode_context = {**mode_context, "add_ons_options": add_ons_options}
+
+        if not add_ons_options:
+            self.logger.info(
+                "BookingMode._handle_add_ons: no add-ons available, auto-advancing to stylist_selection"
+            )
+            next_context = {
+                **mode_context,
+                "add_ons_options": [],
+                "add_ons_declined": False,
+                "booking_step": BookingSubstep.STYLIST_SELECTION.value,
+            }
+            return await self._handle_stylist_selection(state, next_context)
+
+        if self._use_optimized_prompts():
+            messages = await self._build_layered_messages(
+                state, mode_context, step_name=STEP_ADD_ONS
+            )
+        else:
+            service_name = mode_context.get("service_name", "el servicio")
+            options_text = "\n".join(
+                f"{i + 1}. {opt['name']} ({opt['duration_minutes']} min) - {opt['description']}"
+                for i, opt in enumerate(add_ons_options)
+            )
+            system = (
+                f"Eres Maite, asistenta de Atrévete Peluquería.\n"
+                f"La clienta eligió: {service_name}.\n"
+                f"Ofrecé estos servicios adicionales disponibles:\n{options_text}\n"
+                f"Preguntá si quiere agregar alguno. No insistas si dice que no."
+            )
+            messages = self._build_messages(state, system)
+
+        result = await self._run_agentic_loop(messages, tools=[])
+
+        user_message = self._get_last_user_message(state)
+        declined = self._message_declines_recommendations(user_message)
+
+        updated_context = {
+            **mode_context,
+            "add_ons_options": add_ons_options,
+            "add_ons_declined": declined,
+        }
+
+        if not declined:
+            user_message_lower = user_message.lower()
+            for opt in add_ons_options:
+                if opt["name"].lower() in user_message_lower:
+                    selected = self._selected_services(updated_context)
+                    if opt["name"] not in selected:
+                        selected.append(opt["name"])
+                    updated_context["selected_services"] = selected
+
+        next_step = BookingSubstep.STYLIST_SELECTION if (
+            declined or updated_context.get("stylist_id")
+        ) else BookingSubstep.ADD_ONS
+
+        if any(opt["name"].lower() in user_message.lower() for opt in add_ons_options):
+            next_step = BookingSubstep.STYLIST_SELECTION
+        elif declined:
+            next_step = BookingSubstep.STYLIST_SELECTION
+
+        final_context = self._finalize_mode_context(
+            updated_context, next_step, BookingSubstep.ADD_ONS
+        )
+
+        return {
+            **self._response_updates(state, result.response_text),
+            "mode_context": final_context,
+            "last_node": "booking",
+            "user_message": None,
+        }
+
     async def _handle_stylist_selection(
         self, state: ConversationState, mode_context: dict
     ) -> dict:
         """Step 2: Help customer select a stylist."""
-        from agent.tools.info_tools import list_stylists
-
         service_name = mode_context.get("service_name", "el servicio solicitado")
+        service_category = mode_context.get("service_category") or ""
         user_message = self._get_last_user_message(state)
         updated_context = dict(mode_context)
+        if service_category:
+            updated_context["service_category"] = service_category
         recommended_from_reply = self._recommended_services_from_message(
             user_message,
             cast(list[str] | None, updated_context.get("pending_recommendations")),
@@ -626,22 +1010,26 @@ class BookingMode(BaseModeNode):
             updated_context["pending_recommendations"] = []
 
         updated_context = await self._populate_recurrent_stylist(state, updated_context)
+        updated_context = await self._prefetch_stylist_options(updated_context)
 
         if self._use_optimized_prompts():
             messages = await self._build_layered_messages(
                 state, updated_context, step_name=STEP_STYLIST_SELECTION
             )
         else:
-            system = _SYSTEM_STYLIST_SELECTION.format(service_name=service_name)
+            system = _SYSTEM_STYLIST_SELECTION.format(
+                service_name=service_name,
+                service_category=service_category or "sin categoria informada",
+            )
             messages = self._build_messages(state, system)
-        result = await self._run_agentic_loop(messages, tools=[list_stylists])
+        result = await self._run_agentic_loop(messages, tools=[])
 
         next_step, updated_context = self._advance_step(
             result, BookingSubstep.STYLIST_SELECTION, updated_context
         )
 
         return {
-            **add_message(state, "assistant", result.response_text),
+            **self._response_updates(state, result.response_text),
             "mode_context": self._finalize_mode_context(
                 updated_context,
                 next_step,
@@ -692,7 +1080,7 @@ class BookingMode(BaseModeNode):
         )
 
         return {
-            **add_message(state, "assistant", result.response_text),
+            **self._response_updates(state, result.response_text),
             "mode_context": self._finalize_mode_context(
                 updated_context,
                 next_step,
@@ -701,6 +1089,76 @@ class BookingMode(BaseModeNode):
             "last_node": "booking",
             "user_message": None,
         }
+
+    async def _handle_customer_name(
+        self, state: ConversationState, mode_context: dict
+    ) -> dict:
+        """
+        Step 5 (conditional): Collect customer name if not already known.
+        Auto-skips if customer_name already in state or mode_context.
+        """
+        existing_name = self._resolve_customer_name(state, mode_context)
+        if existing_name and existing_name != "Cliente":
+            customer_id = await self._create_customer_if_needed(state, existing_name)
+            self.logger.info(
+                "BookingMode._handle_customer_name: name already known (%s), auto-advancing to notes",
+                existing_name,
+            )
+            next_context = self._finalize_mode_context(
+                {**mode_context, "customer_name": existing_name},
+                BookingSubstep.NOTES,
+                BookingSubstep.CUSTOMER_NAME,
+            )
+            updates: dict[str, Any] = {
+                "customer_name": existing_name,
+                "mode_context": next_context,
+                "last_node": "booking",
+                "user_message": None,
+            }
+            if customer_id:
+                updates["customer_id"] = customer_id
+            return updates
+
+        if self._use_optimized_prompts():
+            messages = await self._build_layered_messages(
+                state, mode_context, step_name=STEP_CUSTOMER_NAME
+            )
+        else:
+            messages = self._build_messages(
+                state,
+                "Eres Maite, asistenta de Atrévete Peluquería. "
+                "Preguntá a qué nombre se agenda la cita. Una sola pregunta, concisa e informal.",
+            )
+
+        result = await self._run_agentic_loop(messages, tools=[])
+
+        user_message = self._get_last_user_message(state)
+        customer_name = user_message.strip() if user_message.strip() else None
+
+        updated_context = {**mode_context}
+        if customer_name:
+            updated_context["customer_name"] = customer_name
+            customer_id = await self._create_customer_if_needed(state, customer_name)
+            next_step = BookingSubstep.NOTES
+        else:
+            customer_id = None
+            next_step = BookingSubstep.CUSTOMER_NAME
+
+        final_context = self._finalize_mode_context(
+            updated_context, next_step, BookingSubstep.CUSTOMER_NAME
+        )
+
+        updates: dict[str, Any] = {
+            **self._response_updates(state, result.response_text),
+            "mode_context": final_context,
+            "last_node": "booking",
+            "user_message": None,
+        }
+        if customer_name:
+            updates["customer_name"] = customer_name
+        if customer_id:
+            updates["customer_id"] = customer_id
+        return updates
 
     async def _handle_notes(
         self, state: ConversationState, mode_context: dict
@@ -729,7 +1187,7 @@ class BookingMode(BaseModeNode):
         )
 
         return {
-            **add_message(state, "assistant", result.response_text),
+            **self._response_updates(state, result.response_text),
             "mode_context": self._finalize_mode_context(
                 updated_context,
                 next_step,
@@ -751,7 +1209,6 @@ class BookingMode(BaseModeNode):
             service_name = mode_context.get("service_name", "el servicio")
             stylist_name = mode_context.get("stylist_name", "la estilista")
             slot_summary = mode_context.get("slot_summary", "la fecha")
-            customer_name = self._resolve_customer_name(state, mode_context)
             notes = mode_context.get("notes", "")
             notes_line = f"- Notas: {notes}" if notes else ""
 
@@ -759,7 +1216,6 @@ class BookingMode(BaseModeNode):
                 service_name=service_name,
                 stylist_name=stylist_name,
                 slot_summary=slot_summary,
-                customer_name=customer_name,
                 notes_line=notes_line,
             )
             messages = self._build_messages(state, system)
@@ -770,7 +1226,7 @@ class BookingMode(BaseModeNode):
         )
 
         return {
-            **add_message(state, "assistant", result.response_text),
+            **self._response_updates(state, result.response_text),
             "mode_context": self._finalize_mode_context(
                 updated_context,
                 next_step,
@@ -831,7 +1287,7 @@ class BookingMode(BaseModeNode):
                 messages = self._build_messages(state, _SYSTEM_ERROR)
             result = await self._run_agentic_loop(messages, tools=[])
             return {
-                **add_message(state, "assistant", result.response_text),
+                **self._response_updates(state, result.response_text),
                 "mode_context": self._finalize_mode_context(
                     mode_context,
                     BookingSubstep.CONFIRMATION,
@@ -859,7 +1315,7 @@ class BookingMode(BaseModeNode):
         return {
             **transition_update,
             "draft_contexts": draft_contexts,
-            **add_message(state, "assistant", result.response_text),
+            **self._response_updates(state, result.response_text),
             "appointment_created": True,
             "last_node": "booking",
             "user_message": None,
@@ -1054,35 +1510,19 @@ class BookingMode(BaseModeNode):
                 updated_context.setdefault("stylist_id", str(stylist.get("id", "")))
                 updated_context.setdefault("stylist_name", stylist.get("name", ""))
 
-        # Extract slot from tool results
-        for slot_tool in ("check_availability", "find_next_available"):
-            if slot_tool in tool_results:
-                slots = tool_results[slot_tool]
-                if isinstance(slots, dict):
-                    if slot_tool == "check_availability":
-                        slots = slots.get("available_slots", [])
-                    else:
-                        preferred_slots = slots.get("selected_stylist_slots") or []
-                        soonest_any = [slots["soonest_any"]] if slots.get("soonest_any") else []
-                        slots = preferred_slots or soonest_any or slots.get("available_dates", [])
-                if isinstance(slots, list) and slots:
-                    first_slot = slots[0]
-                    updated_context.setdefault("selected_slot", first_slot)
-                    updated_context.setdefault(
-                        "slot_summary",
-                        first_slot.get("start_time")
-                        or first_slot.get("full_datetime")
-                        or (
-                            f"{first_slot.get('date', '')} {first_slot.get('time', '')}".strip()
-                            or "fecha seleccionada"
-                        )
-                    )
-                elif isinstance(slots, dict) and "start_time" in slots:
-                    updated_context.setdefault("selected_slot", slots)
-                    updated_context.setdefault(
-                        "slot_summary",
-                        slots.get("start_time", "fecha seleccionada")
-                    )
+        slot_interpretation = self._interpret_slot_tool_results(tool_results, updated_context)
+
+        if slot_interpretation.get("has_slots") and not updated_context.get("selected_slot"):
+            available_slots = slot_interpretation.get("available_slots") or []
+            first_slot = available_slots[0] if available_slots else None
+            if isinstance(first_slot, dict):
+                updated_context.setdefault("selected_slot", first_slot)
+                updated_context.setdefault(
+                    "slot_summary",
+                    first_slot.get("start_time")
+                    or first_slot.get("full_datetime")
+                    or (f"{first_slot.get('date', '')} {first_slot.get('time', '')}".strip() or "fecha seleccionada")
+                )
 
         if current_substep == BookingSubstep.NOTES:
             if "customer_name" not in updated_context:
@@ -1096,6 +1536,13 @@ class BookingMode(BaseModeNode):
             if updated_context.get("pending_clarification"):
                 next_substep = BookingSubstep.SERVICE_SELECTION
             elif updated_context.get("service_name"):
+                next_substep = BookingSubstep.ADD_ONS
+
+        elif current_substep == BookingSubstep.ADD_ONS:
+            if (
+                not updated_context.get("pending_recommendations")
+                or updated_context.get("recommendations_shown")
+            ):
                 next_substep = BookingSubstep.STYLIST_SELECTION
 
         elif current_substep == BookingSubstep.STYLIST_SELECTION:
@@ -1103,14 +1550,50 @@ class BookingMode(BaseModeNode):
                 next_substep = BookingSubstep.SLOT_SELECTION
 
         elif current_substep == BookingSubstep.SLOT_SELECTION:
-            if updated_context.get("selected_slot"):
-                next_substep = BookingSubstep.NOTES
+            if slot_interpretation.get("substitution_made"):
+                updated_context["substitution_made"] = True
+                updated_context["substitution_reason"] = slot_interpretation.get("substitution_reason")
+
+                date_requested = slot_interpretation.get("date_requested")
+                if isinstance(date_requested, date):
+                    updated_context["date_requested"] = date_requested.isoformat()
+
+                date_substituted = slot_interpretation.get("date_substituted")
+                if isinstance(date_substituted, date):
+                    updated_context["date_substituted"] = date_substituted.isoformat()
+
+                min_valid_date = slot_interpretation.get("min_valid_date")
+                if isinstance(min_valid_date, date):
+                    updated_context["min_valid_date"] = min_valid_date.isoformat()
             else:
-                slot_payload = tool_results.get("check_availability") or tool_results.get("find_next_available") or {}
-                if isinstance(slot_payload, dict):
-                    empty_slots = not (slot_payload.get("available_slots") or slot_payload.get("selected_stylist_slots"))
-                    if empty_slots and updated_context.get("stylist_id"):
-                        next_substep = BookingSubstep.STYLIST_SELECTION
+                for key in (
+                    "substitution_made",
+                    "substitution_reason",
+                    "date_requested",
+                    "date_substituted",
+                    "min_valid_date",
+                ):
+                    updated_context.pop(key, None)
+
+            if slot_interpretation.get("no_slots_for_chosen_stylist"):
+                updated_context["no_slots_for_stylist"] = True
+            else:
+                updated_context.pop("no_slots_for_stylist", None)
+
+            if updated_context.get("selected_slot") and slot_interpretation.get("has_slots"):
+                next_substep = BookingSubstep.CUSTOMER_NAME
+            elif slot_interpretation.get("no_slots_for_chosen_stylist"):
+                next_substep = BookingSubstep.SLOT_SELECTION
+
+        elif current_substep == BookingSubstep.CUSTOMER_NAME:
+            customer_name = (
+                updated_context.get("customer_name")
+                or (state.get("customer_name") if state else None)
+                or (state.get("customer_first_name") if state else None)
+            )
+            if customer_name:
+                updated_context["customer_name"] = customer_name
+                next_substep = BookingSubstep.NOTES
 
         elif current_substep == BookingSubstep.NOTES:
             if state and self._has_user_reply(state):
@@ -1126,6 +1609,139 @@ class BookingMode(BaseModeNode):
             next_substep,
             current_substep,
         )
+
+    @staticmethod
+    def _coerce_slot_date(value: Any) -> date | None:
+        """Convert tool payload date values into `date` objects when possible."""
+
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value)
+            except ValueError:
+                return None
+        return None
+
+    def _interpret_slot_tool_results(
+        self,
+        tool_results: dict[str, Any],
+        mode_context: Mapping[str, Any],
+    ) -> SlotInterpretation:
+        """Convert raw availability tool payloads into semantic slot interpretation.
+
+        Args:
+            tool_results: Raw tool outputs keyed by tool name. Supports current
+                semantic payloads and legacy `find_next_available` list responses.
+            mode_context: Current booking context, used to detect whether the
+                customer already chose a stylist and to preserve stylist-specific
+                UX semantics.
+
+        Returns:
+            A `SlotInterpretation` that summarizes whether slots exist, whether a
+            requested date was adjusted, and whether only the chosen stylist is
+            unavailable.
+
+        Example:
+            A `find_next_available` payload with `soonest_any`, no
+            `selected_stylist_slots`, and an existing `stylist_id` returns an
+            interpretation with `no_slots_for_chosen_stylist=True` so the flow
+            stays in `slot_selection` instead of backtracking automatically.
+        """
+
+        interpretation: SlotInterpretation = {
+            "has_slots": False,
+            "substitution_made": False,
+            "date_requested": None,
+            "date_substituted": None,
+            "substitution_reason": None,
+            "min_valid_date": None,
+            "no_slots_for_chosen_stylist": False,
+            "no_slots_for_any_stylist": False,
+            "stylist_name": None,
+            "available_slots": None,
+        }
+
+        chosen_stylist_id = mode_context.get("stylist_id")
+
+        for tool_name in ("check_availability", "find_next_available"):
+            payload = tool_results.get(tool_name)
+            if tool_name == "find_next_available" and isinstance(payload, list):
+                slot_list = [slot for slot in payload if isinstance(slot, dict)]
+                if slot_list:
+                    interpretation["available_slots"] = slot_list
+                    interpretation["has_slots"] = True
+                else:
+                    interpretation["no_slots_for_chosen_stylist"] = bool(chosen_stylist_id)
+                    interpretation["no_slots_for_any_stylist"] = not bool(chosen_stylist_id)
+                return interpretation
+            if not isinstance(payload, dict):
+                continue
+
+            interpretation["date_requested"] = self._coerce_slot_date(payload.get("date_requested"))
+            interpretation["date_substituted"] = self._coerce_slot_date(payload.get("date_substituted"))
+            interpretation["min_valid_date"] = self._coerce_slot_date(payload.get("min_valid_date"))
+
+            substitution_reason = payload.get("substitution_reason")
+            if isinstance(substitution_reason, str) and substitution_reason:
+                interpretation["substitution_reason"] = substitution_reason
+
+            if interpretation.get("date_substituted") or payload.get("substitution_made"):
+                interpretation["substitution_made"] = True
+            elif payload.get("date_too_soon"):
+                interpretation["substitution_made"] = True
+                interpretation["substitution_reason"] = (
+                    interpretation.get("substitution_reason")
+                    or InterpretationReason.MINIMUM_DAYS_RULE.value
+                )
+
+            if tool_name == "check_availability":
+                available_slots = payload.get("available_slots")
+                slot_list = available_slots if isinstance(available_slots, list) else []
+                interpretation["available_slots"] = slot_list
+                interpretation["has_slots"] = bool(slot_list)
+                if not slot_list:
+                    if chosen_stylist_id:
+                        interpretation["no_slots_for_chosen_stylist"] = True
+                    else:
+                        interpretation["no_slots_for_any_stylist"] = True
+                return interpretation
+
+            selected_slots = payload.get("selected_stylist_slots")
+            selected_slot_list = selected_slots if isinstance(selected_slots, list) else []
+            available_dates = payload.get("available_dates")
+            available_date_list = available_dates if isinstance(available_dates, list) else []
+            soonest_any = payload.get("soonest_any")
+            soonest_any_slot = soonest_any if isinstance(soonest_any, dict) else None
+            selected_stylist_name = payload.get("selected_stylist_name")
+            if isinstance(selected_stylist_name, str) and selected_stylist_name:
+                interpretation["stylist_name"] = selected_stylist_name
+
+            if chosen_stylist_id:
+                if selected_slot_list:
+                    interpretation["available_slots"] = selected_slot_list
+                    interpretation["has_slots"] = True
+                elif soonest_any_slot and soonest_any_slot.get("is_different_stylist"):
+                    interpretation["no_slots_for_chosen_stylist"] = True
+                elif soonest_any_slot:
+                    interpretation["available_slots"] = [soonest_any_slot]
+                    interpretation["has_slots"] = True
+                else:
+                    interpretation["no_slots_for_chosen_stylist"] = True
+            elif available_date_list:
+                interpretation["available_slots"] = available_date_list
+                interpretation["has_slots"] = True
+            elif soonest_any_slot:
+                interpretation["available_slots"] = [soonest_any_slot]
+                interpretation["has_slots"] = True
+            else:
+                interpretation["no_slots_for_any_stylist"] = True
+
+            return interpretation
+
+        return interpretation
 
     def _extract_notes(self, state: ConversationState, mode_context: dict) -> dict:
         """
@@ -1174,6 +1790,63 @@ class BookingMode(BaseModeNode):
             if value:
                 return str(value)
         return "Cliente"
+
+    async def _create_customer_if_needed(
+        self,
+        state: ConversationState,
+        confirmed_name: str,
+    ) -> str | None:
+        """Create a customer record when booking reaches the confirmed-name step."""
+
+        from agent.tools.customer_tools import manage_customer
+
+        existing_customer_id = state.get("customer_id")
+        if existing_customer_id:
+            return str(existing_customer_id)
+
+        customer_phone = state.get("customer_phone", "")
+        if not customer_phone:
+            self.logger.warning("BookingMode: no customer_phone in state - skipping DB creation")
+            return None
+
+        try:
+            result = await manage_customer.ainvoke({
+                "action": "create",
+                "phone": customer_phone,
+                "data": {"first_name": confirmed_name},
+            })
+        except Exception as exc:
+            self.logger.error(
+                "BookingMode: customer creation failed | name=%s | error=%s",
+                confirmed_name,
+                exc,
+            )
+            return None
+
+        if not isinstance(result, dict):
+            self.logger.warning(
+                "BookingMode: manage_customer returned unexpected non-dict result: %s",
+                result,
+            )
+            return None
+
+        customer_id = result.get("id") or result.get("customer_id")
+        if customer_id and "error" not in result:
+            customer_id_str = str(customer_id)
+            self.logger.info(
+                "BookingMode: customer resolved | id=%s | name=%s | phone=%s",
+                customer_id_str,
+                confirmed_name,
+                customer_phone,
+            )
+            return customer_id_str
+
+        self.logger.warning(
+            "BookingMode: manage_customer returned no customer id for phone=%s | result=%s",
+            customer_phone,
+            result,
+        )
+        return None
 
     def _has_user_reply(self, state: ConversationState) -> bool:
         """Return True when the current turn contains user text."""

@@ -125,7 +125,8 @@ async def subscribe_to_incoming_messages():
         # Use metadata from last message (most recent)
         last_msg = messages[-1]
         customer_phone = last_msg.get("customer_phone")
-        customer_name = last_msg.get("customer_name")
+        # Prefer sender_name (new field) over customer_name (deprecated)
+        sender_name = last_msg.get("sender_name") or last_msg.get("customer_name")
 
         # Check if any message was from audio transcription
         has_audio = any(msg.get("is_audio_transcription") for msg in messages)
@@ -151,14 +152,13 @@ async def subscribe_to_incoming_messages():
         )
 
         # Create runtime ConversationState.
-        # `customer_name` is reserved for a confirmed/known customer name.
-        # Raw Chatwoot/WhatsApp display name is stored separately so GREETING mode
-        # can confirm or correct it without bypassing the v6 flow.
+        # `sender_name` from Chatwoot webhook is stored in `pending_whatsapp_name`
+        # for silent customer creation (name is never mentioned in bot responses).
         state = {
             "conversation_id": conversation_id,
             "customer_phone": customer_phone or "",
             "user_message": combined_text,
-            "pending_whatsapp_name": customer_name,
+            "pending_whatsapp_name": sender_name,
             "updated_at": datetime.now(UTC).isoformat(),
         }
 
@@ -168,7 +168,7 @@ async def subscribe_to_incoming_messages():
             langfuse_handler = get_langfuse_handler(
                 conversation_id=conversation_id,
                 customer_phone=customer_phone,
-                customer_name=customer_name,
+                customer_name=sender_name,
             )
         except Exception as langfuse_error:
             logger.warning(
@@ -378,7 +378,8 @@ async def subscribe_to_incoming_messages():
                             conversation_id = data.get("conversation_id")
                             customer_phone = data.get("customer_phone")
                             message_text = data.get("message_text")
-                            customer_name = data.get("customer_name")
+                            # sender_name is the new field; customer_name kept for rolling deploys
+                            _ = data.get("sender_name") or data.get("customer_name")
 
                             logger.info(
                                 f"Stream message received: conversation_id={conversation_id}, "
@@ -467,15 +468,15 @@ async def subscribe_to_incoming_messages():
                     conversation_id = data.get("conversation_id")
                     customer_phone = data.get("customer_phone")
                     message_text = data.get("message_text")
-                    customer_name = data.get("customer_name")
+                    # sender_name is the new field; customer_name kept for rolling deploys
+                    _ = data.get("sender_name") or data.get("customer_name")
 
                     logger.info(
                         f"Message received: conversation_id={conversation_id}, "
-                        f"phone={customer_phone}, name={customer_name}",
+                        f"phone={customer_phone}",
                         extra={
                             "conversation_id": conversation_id,
                             "customer_phone": customer_phone,
-                            "customer_name": customer_name,
                         },
                     )
 

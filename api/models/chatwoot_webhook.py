@@ -71,7 +71,8 @@ class ChatwootMessageEvent(BaseModel):
     conversation_id: str
     customer_phone: str
     message_text: str
-    customer_name: str | None = None
+    sender_name: str | None = None  # WhatsApp profile name from Chatwoot sender.name
+    customer_name: str | None = None  # DEPRECATED: alias for sender_name, kept for rolling deploys
     is_audio_transcription: bool = False  # True if message was transcribed from audio
     audio_url: str | None = None  # Original audio URL for logging
 

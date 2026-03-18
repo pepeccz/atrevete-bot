@@ -1,14 +1,12 @@
 """
-Unit tests for agent/modes/greeting_mode.py — GreetingMode v6.0.
+Unit tests for agent/modes/greeting_mode.py — GreetingMode (customer-name-handling refactor).
 
 Coverage:
-- Anti-loop guarantee: customer_name already set → immediate GENERAL transition
-- First interaction: welcome message generated, is_first_interaction=False
-- Name extraction: user gives name → customer_name set, transition to GENERAL
-- Failed name extraction: polite retry (stay in GREETING)
-- _heuristic_extract: various name patterns
-- T-003: user_message=None reads from messages history
-- T-004: customer DB creation after name extraction
+- Anti-loop guarantee: customer_name already set → immediate GENERAL transition (name-free)
+- New customer flow: create customer silently with pending_whatsapp_name → GENERAL
+- New customer without sender_name: create customer without name → GENERAL
+- Name-free responses: NO customer name appears in any response
+- No name extraction: _heuristic_extract and _extract_name are REMOVED
 
 All LLM calls are mocked — tests do NOT require a real LLM.
 """
@@ -19,11 +17,8 @@ import pytest
 
 from agent.modes.greeting_mode import (
     GreetingMode,
-    _NON_NAME_WORDS,
-    _WELCOME_CONFIRM_SUGGESTED,
-    _WELCOME_NEEDS_NAME,
+    _WELCOME_NEW,
     _WELCOME_RETURNING,
-    _is_valid_name,
 )
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
@@ -38,46 +33,47 @@ def make_intent(intent: str = "greet", confidence: float = 0.9) -> IntentResult:
     return IntentResult(intent=intent, confidence=confidence, raw_input="test", mode_hint="GREETING")
 
 
-def make_mock_llm(response_content: str = "Juan") -> AsyncMock:
+def make_mock_llm(response_content: str = "¡Hola! ¿En qué puedo ayudarte?") -> AsyncMock:
     """Build a mock LLM that returns a simple content string."""
     mock = AsyncMock()
     mock_response = MagicMock()
     mock_response.content = response_content
     mock.ainvoke = AsyncMock(return_value=mock_response)
-    # Also needs bind_tools since BaseModeNode may call it
     mock.bind_tools = MagicMock(return_value=mock)
     return mock
 
 
-def make_greeting_mode(llm_response: str = "Juan") -> GreetingMode:
+def make_greeting_mode(llm_response: str = "¡Hola! ¿En qué puedo ayudarte?") -> GreetingMode:
     mock_llm = make_mock_llm(llm_response)
     return GreetingMode(tools=[], llm_client=mock_llm)
 
 
 # =============================================================================
-# Anti-loop guarantee (THE most important test)
+# Anti-loop guarantee (returning customer)
 # =============================================================================
 
 
-class TestGreetingModeAntiLoop:
+class TestGreetingModeReturningCustomer:
     """
     Verify the anti-loop guarantee:
     If customer_name is already set in state, GreetingMode MUST
-    transition to GENERAL immediately — never ask for name again.
+    transition to GENERAL immediately with a NAME-FREE greeting.
     """
 
+    @pytest.mark.asyncio
     async def test_customer_name_set_transitions_to_general(self):
         """Core anti-loop: customer_name present → current_mode becomes GENERAL."""
         mode = make_greeting_mode()
         state = create_initial_state("conv-001", "+34612345678")
-        state["customer_name"] = "Juan"  # Name already known
+        state["customer_name"] = "Juan"
 
         result = await mode.handle(state, make_intent())
 
         assert result["current_mode"] == "GENERAL"
 
-    async def test_customer_name_set_does_not_ask_for_name_again(self):
-        """No message should ask '¿Con quién tengo el gusto?' when name is known."""
+    @pytest.mark.asyncio
+    async def test_returning_customer_greeting_does_not_contain_name(self):
+        """Returning customer greeting must NOT contain the customer's name."""
         mode = make_greeting_mode()
         state = create_initial_state("conv-001", "+34612345678")
         state["customer_name"] = "María"
@@ -86,11 +82,11 @@ class TestGreetingModeAntiLoop:
 
         messages = result.get("messages", [])
         combined_content = " ".join(m.get("content", "") for m in messages)
-        assert "¿Con quién" not in combined_content
-        assert "¿Me puedes decir" not in combined_content
+        assert "María" not in combined_content
 
-    async def test_customer_name_set_generates_returning_greeting(self):
-        """Should send a personalized returning customer greeting."""
+    @pytest.mark.asyncio
+    async def test_returning_customer_does_not_ask_for_name(self):
+        """No message should ask for name when customer is known."""
         mode = make_greeting_mode()
         state = create_initial_state("conv-001", "+34612345678")
         state["customer_name"] = "Carlos"
@@ -98,12 +94,13 @@ class TestGreetingModeAntiLoop:
         result = await mode.handle(state, make_intent())
 
         messages = result.get("messages", [])
-        assert len(messages) >= 1
-        # Returning greeting should mention customer name
-        content = messages[0]["content"]
-        assert "Carlos" in content
+        combined_content = " ".join(m.get("content", "") for m in messages)
+        assert "¿Con quién" not in combined_content
+        assert "nombre" not in combined_content.lower()
+        assert "llamas" not in combined_content.lower()
 
-    async def test_customer_name_set_sets_previous_mode(self):
+    @pytest.mark.asyncio
+    async def test_returning_customer_sets_previous_mode(self):
         """Mode transition should record GREETING as previous_mode."""
         mode = make_greeting_mode()
         state = create_initial_state("conv-001", "+34612345678")
@@ -114,641 +111,286 @@ class TestGreetingModeAntiLoop:
 
         assert result.get("previous_mode") == "GREETING"
 
-
-# =============================================================================
-# First interaction
-# =============================================================================
-
-
-class TestGreetingModeFirstInteraction:
-    """Tests for the first-time welcome flow (is_first_interaction=True)."""
-
-    async def test_first_interaction_sends_welcome_message(self):
+    @pytest.mark.asyncio
+    async def test_returning_customer_clears_user_message(self):
+        """user_message must be set to None after processing."""
         mode = make_greeting_mode()
         state = create_initial_state("conv-001", "+34612345678")
-        # is_first_interaction=True is the default in create_initial_state
+        state["customer_name"] = "Pedro"
 
         result = await mode.handle(state, make_intent())
 
-        messages = result.get("messages", [])
-        assert len(messages) >= 1
-
-    async def test_first_interaction_welcome_asks_for_name(self):
-        """Welcome message must ask who is speaking."""
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001", "+34612345678")
-
-        result = await mode.handle(state, make_intent())
-
-        messages = result.get("messages", [])
-        content = messages[0]["content"]
-        # The welcome message should contain the "who am I speaking to?" question
-        assert _WELCOME_NEEDS_NAME in content or "hablar" in content or "llamas" in content
-
-    async def test_first_interaction_sets_is_first_interaction_false(self):
-        """After welcome, is_first_interaction must be False to prevent loop."""
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001", "+34612345678")
-
-        result = await mode.handle(state, make_intent())
-
-        # The returned dict must set is_first_interaction=False
-        assert result.get("is_first_interaction") is False
-
-    async def test_first_interaction_stays_in_greeting_mode(self):
-        """After welcome, mode should remain GREETING (waiting for name)."""
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001", "+34612345678")
-
-        result = await mode.handle(state, make_intent())
-
-        # Should not transition to GENERAL yet — waiting for name
-        # mode is either not set (stays GREETING) or explicitly GREETING
-        current = result.get("current_mode")
-        assert current == "GREETING" or current is None
-
-    async def test_first_interaction_with_suggested_name_asks_for_confirmation(self):
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001a", "+34612345678")
-        state["mode_context"] = {
-            "greeting_step": "confirm_suggested_name",
-            "suggested_name": "Pepe",
-        }
-
-        result = await mode.handle(state, make_intent())
-
-        content = result["messages"][0]["content"]
-        assert "Pepe" in content
-        assert _WELCOME_CONFIRM_SUGGESTED.format(name="Pepe") == content
-
-    async def test_first_interaction_without_suggested_name_switches_to_ask_name(self):
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001b", "+34612345678")
-        state["mode_context"] = {
-            "greeting_step": "ask_name",
-            "suggested_name": None,
-        }
-
-        result = await mode.handle(state, make_intent())
-
-        assert result["current_mode"] == "GREETING"
-        assert result["mode_context"]["greeting_step"] == "ask_name"
-        assert result["mode_context"]["suggested_name"] is None
-        assert result["messages"][0]["content"] == _WELCOME_NEEDS_NAME
-
-    async def test_first_interaction_with_suggested_name_keeps_confirmation_step(self):
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001c", "+34612345678")
-        state["mode_context"] = {
-            "greeting_step": "confirm_suggested_name",
-            "suggested_name": "Carlos",
-        }
-
-        result = await mode.handle(state, make_intent())
-
-        assert result["current_mode"] == "GREETING"
-        assert result["mode_context"]["greeting_step"] == "confirm_suggested_name"
-        assert result["mode_context"]["suggested_name"] == "Carlos"
-        assert result["messages"][0]["content"] == _WELCOME_CONFIRM_SUGGESTED.format(name="Carlos")
+        assert result.get("user_message") is None
 
 
 # =============================================================================
-# Name extraction (Turn 2: user replies with their name)
+# New customer flow (with pending_whatsapp_name)
 # =============================================================================
 
 
-class TestGreetingModeNameExtraction:
-    """Tests for the name extraction turn (second interaction)."""
+class TestGreetingModeNewCustomer:
+    """Tests for new customer flow: silent creation with sender_name."""
 
-    async def test_user_gives_name_sets_customer_name(self):
-        """When user says their name, customer_name must be set in the result."""
+    @pytest.mark.asyncio
+    async def test_new_customer_creates_customer_with_sender_name(self):
+        """New customer with pending_whatsapp_name → create customer silently."""
         mode = make_greeting_mode()
-        state = create_initial_state("conv-001", "+34612345678")
-        state["is_first_interaction"] = False  # Already past welcome turn
+        state = create_initial_state("conv-002", "+34612345678")
         state["customer_name"] = None
-        state["user_message"] = "Me llamo Juan"
-
-        mock_result = {"id": "customer-uuid-001", "first_name": "Juan", "phone": "+34612345678"}
-        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
-            result = await mode.handle(state, make_intent())
-
-        assert result.get("customer_name") is not None
-        assert "Juan" in result.get("customer_name", "")
-
-    async def test_user_gives_name_transitions_to_general(self):
-        """After name extraction, mode must transition to GENERAL."""
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "Me llamo Juan"
-
-        mock_result = {"id": "customer-uuid-001", "first_name": "Juan", "phone": "+34612345678"}
-        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
-            result = await mode.handle(state, make_intent())
-
-        assert result.get("current_mode") == "GENERAL"
-
-    async def test_user_gives_name_sets_customer_id_in_state(self):
-        """After name extraction and DB creation, customer_id must be set in result."""
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "Juan"
-        state["customer_phone"] = "+34612345678"
-
-        mock_result = {"id": "customer-uuid-999", "first_name": "Juan", "phone": "+34612345678"}
-        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
-            result = await mode.handle(state, make_intent())
-
-        assert result.get("customer_id") == "customer-uuid-999"
-
-    async def test_user_gives_short_name_no_llm_needed(self):
-        """Short messages (1-3 words) use heuristic — LLM NOT called."""
-        mock_llm = make_mock_llm()
-        mode = GreetingMode(tools=[], llm_client=mock_llm)
-
-        state = create_initial_state("conv-001", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "Pedro"  # Short — heuristic should handle it
-
-        mock_result = {"id": "customer-uuid-002", "first_name": "Pedro", "phone": "+34612345678"}
-        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
-            result = await mode.handle(state, make_intent())
-
-        # Name should be extracted without LLM call
-        assert result.get("customer_name") is not None
-        # LLM may or may not be called — heuristic is preferred for short messages
-        # Just verify the name was captured correctly
-        assert "Pedro" in (result.get("customer_name") or "")
-
-    async def test_user_says_me_llamo_pedro(self):
-        """'Me llamo Pedro' → extracts 'Pedro'."""
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "Me llamo Pedro"
-
-        mock_result = {"id": "customer-uuid-003", "first_name": "Pedro", "phone": "+34612345678"}
-        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
-            result = await mode.handle(state, make_intent())
-
-        extracted = result.get("customer_name", "")
-        assert "Pedro" in extracted
-
-    async def test_name_extraction_generates_confirmation_message(self):
-        """After extracting name, bot should send a personalized confirmation."""
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "María García"
-
-        mock_result = {"id": "customer-uuid-004", "first_name": "María", "phone": "+34612345678"}
-        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
-            result = await mode.handle(state, make_intent())
-
-        messages = result.get("messages", [])
-        assert len(messages) >= 1
-        content = messages[0]["content"]
-        # Should address the user by their name
-        assert "María" in content or "García" in content
-
-    async def test_confirmation_reply_uses_suggested_name(self):
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001b", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "Sí"
-        state["mode_context"] = {
-            "greeting_step": "confirm_suggested_name",
-            "suggested_name": "Pepe",
-            "last_intent": "confirm",
-            "last_intent_confidence": 0.99,
-        }
-
-        mock_result = {"id": "customer-uuid-005", "first_name": "Pepe", "phone": "+34612345678"}
-        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
-            result = await mode.handle(state, make_intent("confirm"))
-
-        assert result.get("customer_name") == "Pepe"
-        assert result.get("current_mode") == "GENERAL"
-
-    async def test_corrected_name_reply_overrides_suggested_name(self):
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-001c", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "No, soy Juan"
-        state["mode_context"] = {
-            "greeting_step": "confirm_suggested_name",
-            "suggested_name": "Pepe",
-            "last_intent": "reject",
-            "last_intent_confidence": 0.99,
-        }
-
-        mock_result = {"id": "customer-uuid-006", "first_name": "Juan", "phone": "+34612345678"}
-        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
-            result = await mode.handle(state, make_intent("reject"))
-
-        assert result.get("customer_name") == "Juan"
-        assert result.get("current_mode") == "GENERAL"
-
-    async def test_reject_without_new_name_switches_to_explicit_name_step(self):
-        mode = make_greeting_mode("UNKNOWN")
-        state = create_initial_state("conv-001d", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "No"
-        state["mode_context"] = {
-            "greeting_step": "confirm_suggested_name",
-            "suggested_name": "Pepe",
-            "last_intent": "reject",
-            "last_intent_confidence": 0.99,
-        }
-
-        result = await mode.handle(state, make_intent("reject"))
-
-        assert result.get("current_mode") == "GREETING"
-        assert result.get("mode_context", {}).get("greeting_step") == "ask_name"
-
-
-# =============================================================================
-# T-003: user_message=None reads from messages history
-# =============================================================================
-
-
-class TestGreetingModeReadsFromMessagesHistory:
-    """
-    Verify T-003: GreetingMode reads user message from messages history
-    when state["user_message"] is None (cleared by preprocess_node after T-001).
-    """
-
-    async def test_turn2_with_user_message_none_reads_from_history(self):
-        """
-        Turn 2: user_message=None but messages list has last user message.
-        GreetingMode must extract name from messages history, not user_message field.
-        """
-        mode = make_greeting_mode()
-        state = create_initial_state("conv-010", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = None  # Cleared by preprocess_node (T-001 fix)
-        # The actual user text is in messages history
+        state["pending_whatsapp_name"] = "María García"
         state["messages"] = [
-            {"role": "assistant", "content": "¡Hola! ¿Con quién tengo el gusto?", "timestamp": "2026-01-01T10:00:00"},
-            {"role": "user", "content": "Me llamo Laura", "timestamp": "2026-01-01T10:00:05"},
+            {"role": "user", "content": "hola", "timestamp": "2026-03-18T10:00:00+01:00"}
         ]
 
-        mock_result = {"id": "customer-uuid-010", "first_name": "Laura", "phone": "+34612345678"}
+        mock_result = {"id": "cust-uuid-001", "first_name": "María García", "phone": "+34612345678"}
         with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
             mock_mc.ainvoke = AsyncMock(return_value=mock_result)
             result = await mode.handle(state, make_intent())
 
-        # Name must be extracted from messages history even though user_message=None
-        assert result.get("customer_name") is not None, (
-            "Expected customer_name to be set but got None — "
-            "GreetingMode failed to read from messages history"
-        )
-        assert "Laura" in result.get("customer_name", ""), (
-            f"Expected 'Laura' in customer_name but got {result.get('customer_name')!r}"
-        )
-        assert result.get("current_mode") == "GENERAL"
+        # Customer should be created
+        mock_mc.ainvoke.assert_called_once()
+        call_args = mock_mc.ainvoke.call_args[0][0]
+        assert call_args["action"] == "create"
+        assert call_args["data"]["first_name"] == "María García"
 
-    async def test_fallback_to_user_message_when_no_messages_in_history(self):
-        """
-        If messages list is empty but user_message is set (edge case),
-        falls back to user_message field.
-        """
+        # customer_name should be set in state
+        assert result.get("customer_name") == "María García"
+        assert result.get("customer_id") == "cust-uuid-001"
+
+    @pytest.mark.asyncio
+    async def test_new_customer_transitions_to_general(self):
+        """New customer flow must transition to GENERAL."""
         mode = make_greeting_mode()
-        state = create_initial_state("conv-011", "+34612345678")
-        state["is_first_interaction"] = False
+        state = create_initial_state("conv-002", "+34612345678")
         state["customer_name"] = None
-        state["user_message"] = "Soy Carlos"
-        state["messages"] = []  # Empty — fallback to user_message
+        state["pending_whatsapp_name"] = "Pedro"
+        state["messages"] = [
+            {"role": "user", "content": "hola", "timestamp": "2026-03-18T10:00:00+01:00"}
+        ]
 
-        mock_result = {"id": "customer-uuid-011", "first_name": "Carlos", "phone": "+34612345678"}
+        mock_result = {"id": "cust-uuid-002", "first_name": "Pedro"}
         with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
             mock_mc.ainvoke = AsyncMock(return_value=mock_result)
             result = await mode.handle(state, make_intent())
 
-        assert result.get("customer_name") is not None
-        assert "Carlos" in result.get("customer_name", "")
+        assert result["current_mode"] == "GENERAL"
+
+    @pytest.mark.asyncio
+    async def test_new_customer_response_does_not_contain_name(self):
+        """New customer greeting must NOT contain the sender's name."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-002", "+34612345678")
+        state["customer_name"] = None
+        state["pending_whatsapp_name"] = "María"
+        state["messages"] = [
+            {"role": "user", "content": "buenas tardes", "timestamp": "2026-03-18T10:00:00+01:00"}
+        ]
+
+        mock_result = {"id": "cust-uuid-003", "first_name": "María"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
+
+        messages = result.get("messages", [])
+        combined_content = " ".join(m.get("content", "") for m in messages)
+        assert "María" not in combined_content
 
 
 # =============================================================================
-# T-004: Customer creation failure is handled gracefully
+# New customer without sender_name
 # =============================================================================
 
 
-class TestGreetingModeCustomerCreation:
-    """
-    Verify T-004: Customer DB creation after name extraction.
-    Tests both happy path and failure handling.
-    """
+class TestGreetingModeNewCustomerNoName:
+    """Tests for new customer without sender_name (pending_whatsapp_name is None)."""
 
-    async def test_customer_creation_failure_handled_gracefully(self):
-        """
-        If manage_customer raises an exception, GreetingMode must NOT propagate it.
-        customer_id should be None, name still set, mode transitions to GENERAL.
-        """
+    @pytest.mark.asyncio
+    async def test_new_customer_without_name_creates_customer(self):
+        """Customer created with first_name=None when sender_name is None."""
         mode = make_greeting_mode()
-        state = create_initial_state("conv-020", "+34612345678")
-        state["is_first_interaction"] = False
+        state = create_initial_state("conv-003", "+34612345678")
         state["customer_name"] = None
-        state["user_message"] = "Ana"
-        state["customer_phone"] = "+34612345678"
+        state["pending_whatsapp_name"] = None
+        state["messages"] = [
+            {"role": "user", "content": "hola", "timestamp": "2026-03-18T10:00:00+01:00"}
+        ]
 
+        mock_result = {"id": "cust-uuid-004"}
         with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(side_effect=Exception("DB connection failed"))
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
             result = await mode.handle(state, make_intent())
 
-        # Name must still be extracted despite DB failure
-        assert result.get("customer_name") is not None, (
-            "customer_name should be set even if DB creation fails"
-        )
-        # customer_id should be None (graceful degradation)
-        assert result.get("customer_id") is None, (
-            "customer_id should be None when creation fails"
-        )
-        # Mode must still transition to GENERAL (not blocked by DB error)
-        assert result.get("current_mode") == "GENERAL", (
-            "Mode should still transition to GENERAL after DB failure"
-        )
+        # Should still create customer (without name)
+        mock_mc.ainvoke.assert_called_once()
+        call_args = mock_mc.ainvoke.call_args[0][0]
+        assert call_args["action"] == "create"
+        # data dict should NOT have first_name key when name is None
+        assert "first_name" not in call_args.get("data", {})
 
-    async def test_customer_creation_error_response_handled_gracefully(self):
-        """
-        If manage_customer returns an error dict (not raises), customer_id=None.
-        """
+    @pytest.mark.asyncio
+    async def test_new_customer_without_name_transitions_to_general(self):
+        """New customer without name must still transition to GENERAL."""
         mode = make_greeting_mode()
-        state = create_initial_state("conv-021", "+34612345678")
-        state["is_first_interaction"] = False
+        state = create_initial_state("conv-003", "+34612345678")
         state["customer_name"] = None
-        state["user_message"] = "Roberto"
-        state["customer_phone"] = "+34612345678"
+        state["pending_whatsapp_name"] = None
+        state["messages"] = [
+            {"role": "user", "content": "hola", "timestamp": "2026-03-18T10:00:00+01:00"}
+        ]
 
-        error_result = {"error": "Phone already exists", "exists": True}
+        mock_result = {"id": "cust-uuid-005"}
         with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
-            mock_mc.ainvoke = AsyncMock(return_value=error_result)
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
             result = await mode.handle(state, make_intent())
 
-        # Name still extracted
-        assert result.get("customer_name") is not None
-        # customer_id should be None when creation returned error
-        assert result.get("customer_id") is None
+        assert result["current_mode"] == "GENERAL"
 
-    async def test_no_customer_phone_skips_db_creation(self):
-        """
-        If customer_phone is empty/None, skip DB creation entirely.
-        customer_id=None, name still extracted, no exception.
-        """
+    @pytest.mark.asyncio
+    async def test_new_customer_without_name_does_not_ask_for_name(self):
+        """Must NOT ask for the customer's name."""
         mode = make_greeting_mode()
-        state = create_initial_state("conv-022", "")
-        state["is_first_interaction"] = False
+        state = create_initial_state("conv-003", "+34612345678")
         state["customer_name"] = None
-        state["user_message"] = "Sofia"
-        state["customer_phone"] = ""  # No phone
+        state["pending_whatsapp_name"] = None
+        state["messages"] = [
+            {"role": "user", "content": "hola", "timestamp": "2026-03-18T10:00:00+01:00"}
+        ]
+
+        mock_result = {"id": "cust-uuid-006"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
+
+        messages = result.get("messages", [])
+        combined_content = " ".join(m.get("content", "") for m in messages)
+        assert "nombre" not in combined_content.lower()
+        assert "llamas" not in combined_content.lower()
+        assert "¿Con quién" not in combined_content
+
+
+# =============================================================================
+# Name extraction removed
+# =============================================================================
+
+
+class TestGreetingModeNoNameExtraction:
+    """Verify that all name extraction methods have been removed."""
+
+    def test_no_heuristic_extract_method(self):
+        """_heuristic_extract method must not exist."""
+        mode = make_greeting_mode()
+        assert not hasattr(mode, "_heuristic_extract")
+
+    def test_no_extract_name_method(self):
+        """_extract_name method must not exist."""
+        mode = make_greeting_mode()
+        assert not hasattr(mode, "_extract_name")
+
+    def test_no_is_valid_name_function(self):
+        """_is_valid_name function must not exist in module."""
+        import agent.modes.greeting_mode as gm
+        assert not hasattr(gm, "_is_valid_name")
+
+    def test_no_non_name_words_constant(self):
+        """_NON_NAME_WORDS constant must not exist in module."""
+        import agent.modes.greeting_mode as gm
+        assert not hasattr(gm, "_NON_NAME_WORDS")
+
+    def test_no_filler_words_constant(self):
+        """_FILLER_WORDS constant must not exist in module."""
+        import agent.modes.greeting_mode as gm
+        assert not hasattr(gm, "_FILLER_WORDS")
+
+
+# =============================================================================
+# Customer creation failure handling
+# =============================================================================
+
+
+class TestGreetingModeCustomerCreationFailure:
+    """Tests for when customer creation fails."""
+
+    @pytest.mark.asyncio
+    async def test_customer_creation_failure_still_sends_greeting(self):
+        """Even if customer creation fails, greeting response should be sent."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-004", "+34612345678")
+        state["customer_name"] = None
+        state["pending_whatsapp_name"] = "Ana"
+        state["messages"] = [
+            {"role": "user", "content": "hola", "timestamp": "2026-03-18T10:00:00+01:00"}
+        ]
+
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(side_effect=Exception("DB connection error"))
+            result = await mode.handle(state, make_intent())
+
+        # Should still transition to GENERAL with a greeting
+        assert result["current_mode"] == "GENERAL"
+        messages = result.get("messages", [])
+        assert len(messages) >= 1
+
+    @pytest.mark.asyncio
+    async def test_no_phone_skips_customer_creation(self):
+        """When customer_phone is empty, skip DB creation."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-005", "")
+        state["customer_name"] = None
+        state["pending_whatsapp_name"] = "Pedro"
+        state["messages"] = [
+            {"role": "user", "content": "hola", "timestamp": "2026-03-18T10:00:00+01:00"}
+        ]
 
         with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
             mock_mc.ainvoke = AsyncMock()
             result = await mode.handle(state, make_intent())
 
-            # manage_customer should NOT be called with empty phone
-            mock_mc.ainvoke.assert_not_called()
-
-        assert result.get("customer_name") is not None
-        assert result.get("customer_id") is None
+        # manage_customer should NOT be called when phone is empty
+        mock_mc.ainvoke.assert_not_called()
+        # Should still transition to GENERAL
+        assert result["current_mode"] == "GENERAL"
 
 
 # =============================================================================
-# Failed name extraction
+# LLM response validation (name leak prevention)
 # =============================================================================
 
 
-class TestGreetingModeNameExtractionFailure:
-    """Tests for when name extraction fails (empty/unrecognizable input)."""
+class TestGreetingModeLLMNameLeakPrevention:
+    """Tests that LLM responses containing customer names are rejected."""
 
-    async def test_empty_user_message_asks_again(self):
-        """Empty message → bot asks politely for name again."""
-        mode = make_greeting_mode("UNKNOWN")
-        state = create_initial_state("conv-001", "+34612345678")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = ""
+    @pytest.mark.asyncio
+    async def test_llm_response_with_name_falls_back_to_template(self):
+        """If LLM leaks customer name in response, fall back to safe template."""
+        # LLM returns a response that contains the customer name
+        mode = make_greeting_mode(llm_response="¡Hola de nuevo, María! ¿En qué puedo ayudarte?")
+        state = create_initial_state("conv-006", "+34612345678")
+        state["customer_name"] = "María"
 
         result = await mode.handle(state, make_intent())
 
         messages = result.get("messages", [])
-        assert len(messages) >= 1
-        # Should ask again, not transition to GENERAL
-        assert result.get("current_mode") != "GENERAL"
+        combined_content = " ".join(m.get("content", "") for m in messages)
+        # Name must NOT appear even if LLM tried to use it
+        assert "María" not in combined_content
 
-
-# =============================================================================
-# Non-name word rejection (THE bug that was reported)
-# =============================================================================
-
-
-class TestGreetingModeRejectsNonNames:
-    """
-    Verify that affirmatives, negatives, and standalone greetings are NOT
-    accepted as customer names.
-
-    The original bug: user says "Si" after being asked "¿Con quién tengo el
-    gusto?", and the heuristic accepted "Si" (capitalised to "Si") as a valid
-    name, storing it in customer_name and transitioning to GENERAL.
-
-    Expected behaviour: any word in _NON_NAME_WORDS → stay in GREETING,
-    re-ask for name with "Disculpá, ¿me podrías decir tu nombre?"
-    """
-
-    async def test_greeting_mode_rejects_si_as_name(self):
-        """'Si' must NOT be accepted as a name — stay in GREETING."""
-        mode = make_greeting_mode("UNKNOWN")  # Mock LLM would also return UNKNOWN
-        state = create_initial_state("conv-001", "+34612345678")
-        state["is_first_interaction"] = False
+    @pytest.mark.asyncio
+    async def test_llm_response_asking_for_name_falls_back_to_template(self):
+        """If LLM asks for name in response, fall back to safe template."""
+        mode = make_greeting_mode(llm_response="¡Hola! ¿Cómo te llamas?")
+        state = create_initial_state("conv-007", "+34612345678")
         state["customer_name"] = None
-        state["user_message"] = "Si"
+        state["pending_whatsapp_name"] = "Pedro"
+        state["messages"] = [
+            {"role": "user", "content": "hola", "timestamp": "2026-03-18T10:00:00+01:00"}
+        ]
 
-        result = await mode.handle(state, make_intent())
-
-        # Must NOT set a customer_name
-        assert result.get("customer_name") is None, (
-            f"Expected customer_name=None but got {result.get('customer_name')!r}"
-        )
-        # Must stay in GREETING (not transition to GENERAL)
-        assert result.get("current_mode") != "GENERAL", (
-            "Mode should remain GREETING when user says 'Si'"
-        )
-
-    async def test_greeting_mode_rejects_si_with_accent(self):
-        """'Sí' (accented) must also be rejected."""
-        mode = make_greeting_mode("UNKNOWN")
-        state = create_initial_state("conv-002", "+34612345679")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "Sí"
-
-        result = await mode.handle(state, make_intent())
-
-        assert result.get("customer_name") is None
-        assert result.get("current_mode") != "GENERAL"
-
-    async def test_greeting_mode_rejects_ok_as_name(self):
-        """'Ok' must be rejected as a name."""
-        mode = make_greeting_mode("UNKNOWN")
-        state = create_initial_state("conv-003", "+34612345680")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "Ok"
-
-        result = await mode.handle(state, make_intent())
-
-        assert result.get("customer_name") is None
-        assert result.get("current_mode") != "GENERAL"
-
-    async def test_greeting_mode_rejects_dale_as_name(self):
-        """'Dale' (Rioplatense affirmative) must be rejected."""
-        mode = make_greeting_mode("UNKNOWN")
-        state = create_initial_state("conv-004", "+34612345681")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "dale"
-
-        result = await mode.handle(state, make_intent())
-
-        assert result.get("customer_name") is None
-        assert result.get("current_mode") != "GENERAL"
-
-    async def test_greeting_mode_rejects_no_as_name(self):
-        """'No' must be rejected."""
-        mode = make_greeting_mode("UNKNOWN")
-        state = create_initial_state("conv-005", "+34612345682")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "no"
-
-        result = await mode.handle(state, make_intent())
-
-        assert result.get("customer_name") is None
-        assert result.get("current_mode") != "GENERAL"
-
-    async def test_greeting_mode_reasks_name_after_rejection(self):
-        """After rejecting a non-name word, bot must ask again for the name."""
-        mode = make_greeting_mode("UNKNOWN")
-        state = create_initial_state("conv-006", "+34612345683")
-        state["is_first_interaction"] = False
-        state["customer_name"] = None
-        state["user_message"] = "Si"
-
-        result = await mode.handle(state, make_intent())
-
-        messages = result.get("messages", [])
-        assert len(messages) >= 1
-        content = messages[0]["content"]
-        assert "nombre" in content.lower() or "llamas" in content.lower() or "disculp" in content.lower(), (
-            f"Bot should ask for name again but got: {content!r}"
-        )
-
-    async def test_non_name_words_covers_common_affirmatives(self):
-        """Spot-check that _NON_NAME_WORDS contains the expected words."""
-        required = {"si", "sí", "ok", "dale", "claro", "bueno", "no", "hola"}
-        missing = required - _NON_NAME_WORDS
-        assert not missing, f"Missing non-name words: {missing}"
-
-    def test_is_valid_name_rejects_si(self):
-        """Unit test for _is_valid_name() standalone."""
-        assert _is_valid_name("Si") is False
-        assert _is_valid_name("Sí") is False
-
-    def test_is_valid_name_rejects_short_strings(self):
-        """Strings of length <= _MIN_NAME_LENGTH must be rejected."""
-        assert _is_valid_name("") is False
-        assert _is_valid_name("A") is False
-        assert _is_valid_name("Ok") is False  # len == 2, exactly at boundary
-
-    def test_is_valid_name_accepts_real_names(self):
-        """Real Spanish names must pass validation."""
-        assert _is_valid_name("Ana") is True  # 3 chars, not in list
-        assert _is_valid_name("Juan") is True
-        assert _is_valid_name("María García") is True
-        assert _is_valid_name("Pedro") is True
-
-    def test_anti_loop_guard_unaffected_by_non_name_filter(self):
-        """
-        The anti-loop guard (customer_name already set) must NOT be affected
-        by the non-name filter. Once a name is stored, it should never be
-        challenged again — even if the stored name happens to be unusual.
-        """
-        # This is tested indirectly: the filter only runs during _extract_name,
-        # NOT during the anti-loop guard check at the top of handle().
-        # The anti-loop guard checks `if customer_name:` — any truthy value
-        # (including unusual names) causes immediate GENERAL transition.
-        # We verify this with an already-set customer_name.
-        import asyncio
-
-        async def _run():
-            mode = make_greeting_mode()
-            state = create_initial_state("conv-007", "+34612345684")
-            state["customer_name"] = "Ana"  # Already set (passed anti-loop guard)
-
+        mock_result = {"id": "cust-uuid-007"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
             result = await mode.handle(state, make_intent())
-            # Must transition to GENERAL — anti-loop guard fires before any filter
-            assert result.get("current_mode") == "GENERAL"
 
-        asyncio.get_event_loop().run_until_complete(_run())
-
-
-# =============================================================================
-# _heuristic_extract
-# =============================================================================
-
-
-class TestHeuristicExtract:
-    """Tests for the _heuristic_extract() fallback method."""
-
-    def _make_mode(self) -> GreetingMode:
-        return GreetingMode(tools=[], llm_client=AsyncMock())
-
-    def test_extracts_single_name(self):
-        mode = self._make_mode()
-        result = mode._heuristic_extract("Juan")
-        assert result == "Juan"
-
-    def test_extracts_name_from_me_llamo(self):
-        mode = self._make_mode()
-        result = mode._heuristic_extract("me llamo Pedro")
-        assert "Pedro" in result
-
-    def test_extracts_name_from_soy(self):
-        mode = self._make_mode()
-        result = mode._heuristic_extract("soy María")
-        assert "María" in result
-
-    def test_returns_unknown_for_all_fillers(self):
-        mode = self._make_mode()
-        result = mode._heuristic_extract("me llamo")  # "me" and "llamo" are fillers
-        assert result == "UNKNOWN"
-
-    def test_capitalizes_first_letter(self):
-        mode = self._make_mode()
-        result = mode._heuristic_extract("juan")
-        assert result[0].isupper()
-
-    def test_limits_to_two_words(self):
-        mode = self._make_mode()
-        result = mode._heuristic_extract("Juan Carlos García López")
-        # Should extract at most 2 meaningful words
-        words = result.split()
-        assert len(words) <= 2
+        messages = result.get("messages", [])
+        combined_content = " ".join(m.get("content", "") for m in messages)
+        # Must NOT ask for name
+        assert "llamas" not in combined_content.lower()
