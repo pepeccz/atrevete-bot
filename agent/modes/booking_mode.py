@@ -28,7 +28,7 @@ import logging
 import re
 import unicodedata
 from datetime import date, datetime
-from typing import Any, Mapping, cast
+from typing import Any, Literal, Mapping, TypedDict, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -47,6 +47,37 @@ from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
 
 logger = logging.getLogger(__name__)
+
+
+# ── PrefetchResult discriminated union ────────────────────────────────────────
+
+
+class PrefetchOk(TypedDict):
+    """Successful prefetch: stylist list + availability data."""
+
+    status: Literal["ok"]
+    prefetched_stylists: list[dict[str, Any]]
+    soonest_any_slot: str | None
+    soonest_any_slot_candidate: dict[str, Any] | None
+
+
+class PrefetchNoAvailability(TypedDict):
+    """Prefetch completed but no slots available for any stylist."""
+
+    status: Literal["no_availability"]
+    error_detail: str
+
+
+class PrefetchToolError(TypedDict):
+    """Prefetch failed due to a tool/infrastructure error."""
+
+    status: Literal["tool_error"]
+    error_detail: str
+
+
+PrefetchResult = PrefetchOk | PrefetchNoAvailability | PrefetchToolError
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset({
     "mujer",
