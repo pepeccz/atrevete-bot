@@ -556,15 +556,48 @@ class BookingMode(BaseModeNode):
                     }
                 )
 
+            # Build structured candidate for "cualquiera" resolution
+            soonest_any_slot_candidate: dict[str, Any] | None = None
+            if soonest_slot is not None:
+                # Locate the stylist entry that owns the soonest slot
+                soonest_dt, soonest_summary = soonest_slot
+                for stylist in stylists_result.get("stylists") or []:
+                    stylist_name = str(stylist.get("name") or "")
+                    availability_entry = available_by_name.get(stylist_name, {})
+                    slots = availability_entry.get("slots") or []
+                    first_slot = slots[0] if slots else None
+                    if not isinstance(first_slot, dict):
+                        continue
+                    full_datetime = first_slot.get("full_datetime")
+                    parsed_dt: datetime | None = None
+                    if isinstance(full_datetime, datetime):
+                        parsed_dt = full_datetime
+                    elif isinstance(full_datetime, str):
+                        try:
+                            parsed_dt = datetime.fromisoformat(full_datetime)
+                        except ValueError:
+                            parsed_dt = None
+                    if parsed_dt is not None and parsed_dt == soonest_dt:
+                        slot_summary_str = _format_slot_summary(first_slot)
+                        soonest_any_slot_candidate = {
+                            "stylist_id": str(stylist.get("id") or ""),
+                            "stylist_name": stylist_name,
+                            "slot_datetime": soonest_dt.isoformat(),
+                            "slot_summary": slot_summary_str,
+                        }
+                        break
+
             self.logger.info(
-                "BookingMode._prefetch_stylist_options: fetched %d stylists | soonest_slot=%s",
+                "BookingMode._prefetch_stylist_options: fetched %d stylists | soonest_slot=%s | candidate=%s",
                 len(prefetched_stylists),
                 soonest_slot[1] if soonest_slot else "none",
+                soonest_any_slot_candidate.get("stylist_name") if soonest_any_slot_candidate else "none",
             )
             return {
                 **mode_context,
                 "prefetched_stylists": prefetched_stylists,
                 "soonest_any_slot": soonest_slot[1] if soonest_slot else None,
+                "soonest_any_slot_candidate": soonest_any_slot_candidate,
             }
         except Exception as exc:
             self.logger.error(
@@ -1003,6 +1036,112 @@ class BookingMode(BaseModeNode):
             "user_message": None,
         }
 
+    def _resolve_stylist_from_message(
+        self,
+        user_message: str,
+        prefetched_stylists: list[dict[str, Any]],
+        soonest_any_slot_candidate: dict[str, Any] | None,
+    ) -> dict[str, str] | None:
+        """
+        Deterministic pre-LLM resolver for stylist selection.
+
+        Resolution order:
+          1. "cualquiera" / "no importa" / "sin preferencia" / "primer horario" /
+             "el que sea" / "no tengo preferencia" / "el más temprano" →
+             pick soonest_any_slot_candidate's stylist.
+          2. Ordinal/numeric ("el 1", "la primera", "el 2", "la segunda") →
+             positional index into prefetched_stylists.
+          3. Case-insensitive NFD-normalized name substring →
+             prefetched_stylists[*]["name"].
+
+        Returns {"stylist_id": str, "stylist_name": str} if resolved, else None.
+        """
+
+        def _normalize(text: str) -> str:
+            """Strip accents and lowercase."""
+            return "".join(
+                c for c in unicodedata.normalize("NFD", text.lower())
+                if unicodedata.category(c) != "Mn"
+            )
+
+        normalized_msg = _normalize(user_message)
+
+        # ── 1. No-preference phrases → soonest available stylist ─────────────
+        _NO_PREF_PHRASES = (
+            "cualquiera",
+            "cualquier",
+            "no importa",
+            "sin preferencia",
+            "no tengo preferencia",
+            "no me importa",
+            "el que sea",
+            "la que sea",
+            "primer horario",
+            "primer horario disponible",
+            "el mas temprano",
+            "lo antes posible",
+            "antes posible",
+            "no tengo preferencia",
+        )
+        if any(phrase in normalized_msg for phrase in _NO_PREF_PHRASES):
+            if soonest_any_slot_candidate and soonest_any_slot_candidate.get("stylist_id"):
+                self.logger.info(
+                    "BookingMode._resolve_stylist_from_message: no-preference → stylist=%s",
+                    soonest_any_slot_candidate["stylist_name"],
+                )
+                return {
+                    "stylist_id": soonest_any_slot_candidate["stylist_id"],
+                    "stylist_name": soonest_any_slot_candidate["stylist_name"],
+                }
+            return None
+
+        # ── 2. Ordinal / numeric pick ─────────────────────────────────────────
+        import re
+
+        _ORDINAL_MAP: dict[str, int] = {
+            "primer": 0, "primero": 0, "primera": 0, "1": 0, "uno": 0, "una": 0,
+            "segundo": 1, "segunda": 1, "2": 1, "dos": 1,
+            "tercer": 2, "tercero": 2, "tercera": 2, "3": 2, "tres": 2,
+            "cuarto": 3, "cuarta": 3, "4": 3, "cuatro": 3,
+            "quinto": 4, "quinta": 4, "5": 4, "cinco": 4,
+        }
+        for token, idx in _ORDINAL_MAP.items():
+            pattern = rf"\b{re.escape(token)}\b"
+            if re.search(pattern, normalized_msg) and idx < len(prefetched_stylists):
+                stylist = prefetched_stylists[idx]
+                stylist_id = str(stylist.get("id") or "")
+                stylist_name = str(stylist.get("name") or "")
+                if stylist_id:
+                    self.logger.info(
+                        "BookingMode._resolve_stylist_from_message: ordinal '%s' → stylist=%s",
+                        token,
+                        stylist_name,
+                    )
+                    return {"stylist_id": stylist_id, "stylist_name": stylist_name}
+
+        # ── 3. Name substring match (accent-normalized, case-insensitive) ─────
+        for stylist in prefetched_stylists:
+            stylist_name = str(stylist.get("name") or "")
+            if not stylist_name:
+                continue
+            # Check each token of the stylist name individually (≥3 chars)
+            name_tokens = [t for t in re.split(r"\W+", stylist_name) if len(t) >= 3]
+            for token in name_tokens:
+                if _normalize(token) in normalized_msg:
+                    stylist_id = str(stylist.get("id") or "")
+                    if stylist_id:
+                        self.logger.info(
+                            "BookingMode._resolve_stylist_from_message: name match '%s' → stylist=%s",
+                            token,
+                            stylist_name,
+                        )
+                        return {"stylist_id": stylist_id, "stylist_name": stylist_name}
+
+        self.logger.debug(
+            "BookingMode._resolve_stylist_from_message: no match for message=%r", user_message[:80]
+        )
+        return None
+
     async def _handle_stylist_selection(
         self, state: ConversationState, mode_context: dict
     ) -> dict:
@@ -1035,6 +1174,23 @@ class BookingMode(BaseModeNode):
 
         updated_context = await self._populate_recurrent_stylist(state, updated_context)
         updated_context = await self._prefetch_stylist_options(updated_context)
+
+        # ── Pre-LLM deterministic stylist resolver ────────────────────────────
+        if not updated_context.get("stylist_id"):
+            resolved = self._resolve_stylist_from_message(
+                user_message,
+                cast(list[dict[str, Any]], updated_context.get("prefetched_stylists") or []),
+                cast(dict[str, Any] | None, updated_context.get("soonest_any_slot_candidate")),
+            )
+            if resolved:
+                updated_context["stylist_id"] = resolved["stylist_id"]
+                updated_context["stylist_name"] = resolved["stylist_name"]
+                self.logger.info(
+                    "BookingMode._handle_stylist_selection: pre-resolved stylist_id=%s name=%s",
+                    resolved["stylist_id"],
+                    resolved["stylist_name"],
+                )
+        # ─────────────────────────────────────────────────────────────────────
 
         if self._use_optimized_prompts():
             messages = await self._build_layered_messages(
@@ -1280,6 +1436,27 @@ class BookingMode(BaseModeNode):
         customer_id = state.get("customer_id") or ""
         conversation_id = state.get("conversation_id") or None
 
+        # T2.1: Defensive guard — resolve customer_id before calling book()
+        # Use raw mode_context["first_name"] (not the _resolve_customer_name fallback "Cliente")
+        # so the fallback chain: first_name → pending_whatsapp_name → customer_first_name → "Cliente"
+        # behaves correctly when no name is available in mode_context.
+        updates: dict[str, Any] = {}
+        if not customer_id:
+            resolved_name = (
+                mode_context.get("first_name")
+                or state.get("pending_whatsapp_name")
+                or state.get("customer_first_name")
+                or "Cliente"
+            )
+            new_id = await self._create_customer_if_needed(state, resolved_name)
+            if new_id:
+                customer_id = new_id
+                updates["customer_id"] = customer_id
+            else:
+                self.logger.error(
+                    "_handle_completed: could not resolve customer_id, booking will fail"
+                )
+
         booking_result: dict[str, Any] = {}
         error_text: str | None = None
 
@@ -1298,7 +1475,12 @@ class BookingMode(BaseModeNode):
                 "conversation_id": conversation_id,
             })
 
-            if "error" in booking_result:
+            # Check both explicit error key and success=False
+            if not booking_result.get("success", True):
+                error_text = booking_result.get("error") or (
+                    f"Booking failed (code={booking_result.get('error_code', 'unknown')})"
+                )
+            elif "error" in booking_result:
                 error_text = booking_result["error"]
         except Exception as exc:
             self.logger.error(
@@ -1314,13 +1496,16 @@ class BookingMode(BaseModeNode):
             else:
                 messages = self._build_messages(state, _SYSTEM_ERROR)
             result = await self._run_agentic_loop(messages, tools=[])
+            # T2.2: Preserve mode_context with last_error; T2.3: increment error_count
             return {
+                **updates,
                 **self._response_updates(state, result.response_text),
-                "mode_context": self._finalize_mode_context(
-                    mode_context,
-                    BookingSubstep.CONFIRMATION,
-                    BookingSubstep.COMPLETED,
-                ),
+                "mode_context": {
+                    **mode_context,
+                    "booking_step": BookingSubstep.CONFIRMATION.value,
+                    "last_error": error_text,
+                },
+                "error_count": state.get("error_count", 0) + 1,
                 "last_node": "booking",
                 "user_message": None,
             }

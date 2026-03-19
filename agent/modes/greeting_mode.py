@@ -18,6 +18,8 @@ NO name extraction from message text. NO name in any response.
 """
 
 import logging
+import re
+import unicodedata
 
 from agent.tools.customer_tools import manage_customer
 
@@ -130,9 +132,8 @@ class GreetingMode(BaseModeNode):
         # ── Branch 2: New customer ───────────────────────────────────────
         # Create customer silently using pending_whatsapp_name (from Chatwoot sender.name)
         pending_name = state.get("pending_whatsapp_name")
-        customer_id = state.get("customer_id") or await self._create_customer(
-            state, pending_name
-        )
+        existing_id = state.get("customer_id")
+        customer_id = existing_id or await self._create_customer(state, pending_name)
 
         self.logger.info(
             "GreetingMode: new customer | pending_name=%s | customer_id=%s | target_mode=%s",
@@ -140,6 +141,27 @@ class GreetingMode(BaseModeNode):
             customer_id,
             target_mode,
         )
+
+        # If customer creation failed and there was no pre-existing ID, escalate
+        if not customer_id and not existing_id:
+            self.logger.error(
+                "GreetingMode: customer creation returned None — escalating to support | phone=%s",
+                state.get("customer_phone"),
+            )
+            return {
+                **transition_mode(state, "ESCALATION"),
+                **add_message(
+                    state,
+                    "assistant",
+                    "Disculpá, estoy teniendo un problema técnico. Voy a derivarte con un agente. 🙏",
+                ),
+                "mode_context": {
+                    **mode_context,
+                    "escalation_reason": "customer_creation_failed",
+                },
+                "error_count": state.get("error_count", 0) + 1,
+                "user_message": None,
+            }
 
         fallback_response = _WELCOME_NEW
         response = await self._render_layered_response(
@@ -165,6 +187,39 @@ class GreetingMode(BaseModeNode):
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
+    def _contains_customer_name_token(
+        self,
+        response_text: str,
+        customer_name: str,
+    ) -> bool:
+        """
+        Returns True if any meaningful token from customer_name appears as a
+        word-boundary match (case+accent insensitive) in response_text.
+
+        Tokens shorter than 3 chars (prepositions, articles) are skipped
+        to avoid false positives on common words.
+
+        Accent normalization: NFD decomposition drops combining marks so
+        "María" matches "Maria" and vice-versa.
+        """
+
+        def _nfd_lower(text: str) -> str:
+            return "".join(
+                c for c in unicodedata.normalize("NFD", text.lower())
+                if unicodedata.category(c) != "Mn"
+            )
+
+        normalized_response = _nfd_lower(response_text)
+        tokens = re.split(r"\W+", customer_name)
+        for token in tokens:
+            if len(token) < 3:
+                continue
+            normalized_token = _nfd_lower(token)
+            pattern = rf"\b{re.escape(normalized_token)}\b"
+            if re.search(pattern, normalized_response):
+                return True
+        return False
+
     async def _render_layered_response(
         self,
         state: ConversationState,
@@ -186,12 +241,12 @@ class GreetingMode(BaseModeNode):
         )
         response_text = self._extract_response_text(await self._call_llm(messages))
 
-        # Validate: response must NOT contain the customer's name
+        # Validate: response must NOT contain the customer's name (token-based)
         customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
         if response_text and customer_name:
-            if customer_name.lower() in response_text.lower():
+            if self._contains_customer_name_token(response_text, customer_name):
                 self.logger.warning(
-                    "GreetingMode: LLM leaked customer name in response, using fallback"
+                    "GreetingMode: LLM leaked customer name token in response, using fallback"
                 )
                 return fallback_response
 
