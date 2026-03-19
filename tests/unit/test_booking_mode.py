@@ -1116,3 +1116,337 @@ class TestStylistSelectionToolProvision:
         assert "list_stylists" in tool_names, (
             f"Expected list_stylists in tools, got: {tool_names}"
         )
+
+
+# =============================================================================
+# T3.1-T3.5: _handle_completed defensive guard + error_count + mode_context
+# =============================================================================
+
+
+def _make_completed_state(
+    customer_id: str | None = None,
+    pending_whatsapp_name: str | None = None,
+    customer_first_name: str | None = None,
+    customer_phone: str = "+34600000001",
+    error_count: int = 0,
+) -> dict:
+    """Build a state for _handle_completed tests."""
+    state = create_initial_state("conv-completed", customer_phone)
+    state["customer_id"] = customer_id
+    state["customer_phone"] = customer_phone
+    state["customer_first_name"] = customer_first_name
+    state["pending_whatsapp_name"] = pending_whatsapp_name
+    state["error_count"] = error_count
+    state["current_mode"] = "BOOKING"
+    state["is_first_interaction"] = False
+    return state
+
+
+def _make_completed_mode_context(
+    selected_slot: dict | None = None,
+    stylist_id: str = "sty-1",
+    service_name: str = "Corte",
+    first_name: str | None = None,
+) -> dict:
+    return {
+        "booking_step": "confirmation",
+        "stylist_id": stylist_id,
+        "service_name": service_name,
+        "selected_slot": selected_slot or {"start_time": "2026-03-25T10:00:00+01:00"},
+        "selected_services": [service_name],
+        **({"first_name": first_name} if first_name else {}),
+    }
+
+
+class TestHandleCompletedDefensiveGuard:
+    """
+    T3.1 — New client, name from pending_whatsapp_name: _create_customer_if_needed called,
+            book() receives returned UUID.
+    T3.2 — Returning client with customer_id set: _create_customer_if_needed NOT called,
+            book() called with existing UUID directly.
+    T3.3 — New client, no phone: _create_customer_if_needed returns None,
+            book() NOT called, error response returned.
+    """
+
+    def _make_mode(self, loop_response: str = "Error al reservar.") -> BookingMode:
+        mock_llm = make_mock_llm(loop_response)
+        return BookingMode(tools=[], llm_client=mock_llm)
+
+    @pytest.mark.asyncio
+    async def test_new_client_name_from_pending_whatsapp_name_creates_customer(self):
+        """T3.1: customer_id=None + pending_whatsapp_name → _create_customer_if_needed called,
+        book() receives the new UUID."""
+        mode = self._make_mode()
+        state = _make_completed_state(
+            customer_id=None,
+            pending_whatsapp_name="María",
+            customer_phone="+34600000001",
+        )
+        mode_context = _make_completed_mode_context()
+
+        mock_book = MagicMock()
+        mock_book.ainvoke = AsyncMock(return_value={"appointment_id": "appt-123"})
+
+        with patch("agent.tools.booking_tools.book", new=mock_book), \
+             patch.object(
+                 mode,
+                 "_create_customer_if_needed",
+                 new=AsyncMock(return_value="new-uuid-456"),
+             ) as mock_create, \
+             patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), \
+             patch.object(mode, "_use_optimized_prompts", return_value=False), \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock(
+                 return_value=AgenticLoopResult(response_text="¡Reservado!", tool_results={})
+             )):
+            result = await mode._handle_completed(state, mode_context)
+
+        # _create_customer_if_needed was called with name chain: first_name → pending_whatsapp_name
+        mock_create.assert_awaited_once()
+        call_args = mock_create.call_args
+        assert call_args[0][1] == "María"  # resolved_name from pending_whatsapp_name
+
+        # book() was called with the new UUID
+        mock_book.ainvoke.assert_awaited_once()
+        book_call = mock_book.ainvoke.call_args[0][0]
+        assert book_call["customer_id"] == "new-uuid-456"
+
+        # Success path: appointment created flag is set
+        assert result.get("appointment_created") is True
+
+    @pytest.mark.asyncio
+    async def test_returning_client_skips_customer_creation(self):
+        """T3.2: customer_id already set → _create_customer_if_needed NOT called,
+        book() uses existing UUID."""
+        mode = self._make_mode()
+        state = _make_completed_state(customer_id="existing-uuid-123")
+        mode_context = _make_completed_mode_context()
+
+        mock_book = MagicMock()
+        mock_book.ainvoke = AsyncMock(return_value={"appointment_id": "appt-999"})
+
+        with patch("agent.tools.booking_tools.book", new=mock_book), \
+             patch.object(
+                 mode,
+                 "_create_customer_if_needed",
+                 new=AsyncMock(return_value="should-not-be-called"),
+             ) as mock_create, \
+             patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), \
+             patch.object(mode, "_use_optimized_prompts", return_value=False), \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock(
+                 return_value=AgenticLoopResult(response_text="¡Reservado!", tool_results={})
+             )):
+            result = await mode._handle_completed(state, mode_context)
+
+        # _create_customer_if_needed must NOT be called
+        mock_create.assert_not_awaited()
+
+        # book() was called with existing UUID
+        book_call = mock_book.ainvoke.call_args[0][0]
+        assert book_call["customer_id"] == "existing-uuid-123"
+
+    @pytest.mark.asyncio
+    async def test_no_phone_customer_creation_returns_none_book_fails(self):
+        """T3.3: customer_id=None + no phone → creation returns None → book() called with
+        empty string → raises ValueError → error response with error_count incremented."""
+        mode = self._make_mode("No se pudo completar la reserva.")
+        state = _make_completed_state(
+            customer_id=None,
+            customer_phone="",  # No phone
+        )
+        state["customer_phone"] = ""
+        mode_context = _make_completed_mode_context()
+
+        # book() gets called with empty customer_id and raises (as UUID("") would)
+        mock_book = MagicMock()
+        mock_book.ainvoke = AsyncMock(
+            side_effect=ValueError("badly formed hexadecimal UUID string: ")
+        )
+
+        with patch("agent.tools.booking_tools.book", new=mock_book), \
+             patch.object(
+                 mode,
+                 "_create_customer_if_needed",
+                 new=AsyncMock(return_value=None),
+             ), \
+             patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), \
+             patch.object(mode, "_use_optimized_prompts", return_value=False), \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock(
+                 return_value=AgenticLoopResult(response_text="Error al reservar.", tool_results={})
+             )):
+            result = await mode._handle_completed(state, mode_context)
+
+        # Error response returned, no appointment created
+        assert result.get("appointment_created") is not True
+        # error_count incremented
+        assert result.get("error_count", 0) >= 1
+        # mode_context preserved at confirmation step
+        assert result["mode_context"]["booking_step"] == "confirmation"
+
+
+class TestHandleCompletedErrorCount:
+    """T3.4: booking failure increments error_count by 1."""
+
+    @pytest.mark.asyncio
+    async def test_booking_failure_increments_error_count(self):
+        """T3.4: When book() fails, error_count in state update is prev + 1."""
+        mode = BookingMode(tools=[], llm_client=make_mock_llm())
+        state = _make_completed_state(
+            customer_id="uuid-existing",
+            error_count=2,
+        )
+        mode_context = _make_completed_mode_context()
+
+        mock_book = MagicMock()
+        mock_book.ainvoke = AsyncMock(side_effect=ValueError("booking exploded"))
+
+        with patch("agent.tools.booking_tools.book", new=mock_book), \
+             patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), \
+             patch.object(mode, "_use_optimized_prompts", return_value=False), \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock(
+                 return_value=AgenticLoopResult(response_text="Hubo un error.", tool_results={})
+             )):
+            result = await mode._handle_completed(state, mode_context)
+
+        assert result["error_count"] == 3  # prev(2) + 1
+
+
+class TestHandleCompletedModeContextPreservation:
+    """T3.5: booking failure preserves mode_context — slot data intact, last_error set."""
+
+    @pytest.mark.asyncio
+    async def test_error_preserves_mode_context_fields(self):
+        """T3.5: On error, mode_context preserves selected_slot, stylist_id, service_name,
+        booking_step=confirmation, and adds last_error."""
+        mode = BookingMode(tools=[], llm_client=make_mock_llm())
+        state = _make_completed_state(customer_id="uuid-existing")
+        mode_context = _make_completed_mode_context(
+            selected_slot={"start_time": "2026-03-25T10:00:00+01:00"},
+            stylist_id="sty-42",
+            service_name="Tinte completo",
+        )
+
+        mock_book = MagicMock()
+        mock_book.ainvoke = AsyncMock(side_effect=ValueError("network timeout"))
+
+        with patch("agent.tools.booking_tools.book", new=mock_book), \
+             patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), \
+             patch.object(mode, "_use_optimized_prompts", return_value=False), \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock(
+                 return_value=AgenticLoopResult(response_text="Hubo un problema.", tool_results={})
+             )):
+            result = await mode._handle_completed(state, mode_context)
+
+        ctx = result["mode_context"]
+        assert ctx["booking_step"] == "confirmation"
+        assert ctx["selected_slot"] == {"start_time": "2026-03-25T10:00:00+01:00"}
+        assert ctx["stylist_id"] == "sty-42"
+        assert ctx["service_name"] == "Tinte completo"
+        assert ctx["last_error"] == "network timeout"
+
+
+# ── NEW TESTS for Bug Fixes (pending_clarification + token filter) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_service_selection_clears_pending_clarification_after_resolve():
+    """When user answers clarification, pending_clarification should be set to None."""
+    mode = BookingMode()
+    state = default_conversation_state()
+    
+    # Setup: booking_step = SERVICE_SELECTION with a pending clarification
+    mode_context = {
+        "booking_step": "service_selection",
+        "pending_clarification": {
+            "axis": "audience",
+            "question_hint": "¿Es para dama, caballero, niño o niña?",
+            "options": [
+                {"value": "dama", "service_name": "Corte Dama", "service_id": "srv-1", "duration_minutes": 30, "category": "Peluquería"},
+                {"value": "caballero", "service_name": "Corte Caballero", "service_id": "srv-2", "duration_minutes": 25, "category": "Peluquería"},
+                {"value": "niño", "service_name": "Corte Niño", "service_id": "srv-3", "duration_minutes": 20, "category": "Peluquería"},
+            ],
+        },
+    }
+    
+    # User says "caballero"
+    state["messages"].append({"role": "user", "content": "Un corte de caballero", "timestamp": datetime.now(UTC)})
+    
+    # Mock search_services for normal path (fallback)
+    with patch("agent.tools.search_services.search_services", new=AsyncMock(return_value={})), \
+         patch.object(mode, "_parse_clarification_answer", return_value=("audience", "caballero")), \
+         patch.object(mode, "_get_last_user_message", return_value="Un corte de caballero"), \
+         patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), \
+         patch.object(mode, "_use_optimized_prompts", return_value=False), \
+         patch.object(mode, "_run_agentic_loop", new=AsyncMock(
+             return_value=AgenticLoopResult(response_text="Perfecto, elegiste Corte Caballero.", tool_results={})
+         )):
+        result = await mode._handle_service_selection(state, mode_context)
+    
+    # Check that pending_clarification was cleared (set to None)
+    returned_context = result["mode_context"]
+    assert returned_context["pending_clarification"] is None, "pending_clarification should be None after resolution"
+    assert returned_context["service_name"] == "Corte Caballero"
+    assert returned_context["booking_step"] == "add_ons"  # Should advance to next step
+
+
+@pytest.mark.asyncio
+async def test_booking_response_filters_customer_name_token():
+    """When LLM response contains customer name token, fallback to safe response."""
+    mode = BookingMode()
+    state = default_conversation_state()
+    state["customer_name"] = "María"
+    
+    # Simulate LLM generating a response with name leak
+    llm_response = "¡Hola, María! ¿Qué servicio querés para tu corte?"
+    
+    # Call _response_updates which should detect and filter the name
+    updates = mode._response_updates(state, llm_response)
+    
+    # Check that the response was replaced with fallback
+    messages = updates.get("messages", [])
+    assert len(messages) > 0, "Message should be added"
+    
+    final_message = messages[-1]["content"]
+    assert "María" not in final_message, "Customer name should not appear in final response"
+    assert "De acuerdo, continuemos" in final_message, "Fallback response should be used"
+
+
+def test_contains_customer_name_token_handles_variations():
+    """Filter should match name regardless of case/accents."""
+    mode = BookingMode()
+    
+    # Test: "María" matches "maria", "MARIA", "Maria"
+    assert mode._contains_customer_name_token("Hola, maria!", "María") is True
+    assert mode._contains_customer_name_token("Hola, MARIA!", "María") is True
+    assert mode._contains_customer_name_token("Hola, Maria!", "María") is True
+    
+    # Test: "José" matches in different cases
+    assert mode._contains_customer_name_token("Hola, jose!", "José") is True
+    assert mode._contains_customer_name_token("Hola, JOSE!", "José") is True
+    
+    # Test: "Luis" in different cases
+    assert mode._contains_customer_name_token("Hola, luis!", "Luis") is True
+    assert mode._contains_customer_name_token("Hola, LUIS!", "Luis") is True
+    
+    # Test: Name NOT in response (should return False)
+    assert mode._contains_customer_name_token("Hola, qué servicio quieres?", "María") is False
+
+
+def test_contains_customer_name_token_ignores_short_tokens():
+    """Tokens <3 chars should not trigger false positives."""
+    mode = BookingMode()
+    
+    # Test: "Al" (2 chars) should be skipped, but "Al" might match as a word
+    # If name is "Al", tokens are ["Al"] (2 chars), skipped → should return False
+    assert mode._contains_customer_name_token("Al servicio le voy", "Al") is False
+    
+    # Test: "Ana" (3 chars, boundary) — should be considered (≥3)
+    # This is a boundary test — "Ana" has exactly 3 chars, so it should match
+    assert mode._contains_customer_name_token("Hola, Ana, ¿qué tal?", "Ana") is True
+    
+    # Test: Short middle name should not match
+    # "José María" → tokens ["José", "María"], both ≥3 chars
+    # "jose" matches → True (but "maria" also ≥3)
+    assert mode._contains_customer_name_token("Hola, José María!", "Carlos Manuel") is False
+    
+    # Test: Single letter should be skipped
+    assert mode._contains_customer_name_token("Hola A, ¿cómo estás?", "A") is False

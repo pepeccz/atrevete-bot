@@ -25,6 +25,7 @@ Tools used per step:
 """
 
 import logging
+import re
 import unicodedata
 from datetime import date, datetime
 from typing import Any, Mapping, cast
@@ -158,6 +159,39 @@ class BookingMode(BaseModeNode):
         raw = (value or "").strip().lower()
         normalized = unicodedata.normalize("NFKD", raw)
         return "".join(char for char in normalized if not unicodedata.combining(char))
+
+    def _contains_customer_name_token(
+        self,
+        response_text: str,
+        customer_name: str,
+    ) -> bool:
+        """
+        Returns True if any meaningful token from customer_name appears as a
+        word-boundary match (case+accent insensitive) in response_text.
+
+        Tokens shorter than 3 chars (prepositions, articles) are skipped
+        to avoid false positives on common words.
+
+        Accent normalization: NFD decomposition drops combining marks so
+        "María" matches "Maria" and vice-versa.
+        """
+
+        def _nfd_lower(text: str) -> str:
+            return "".join(
+                c for c in unicodedata.normalize("NFD", text.lower())
+                if unicodedata.category(c) != "Mn"
+            )
+
+        normalized_response = _nfd_lower(response_text)
+        tokens = re.split(r"\W+", customer_name)
+        for token in tokens:
+            if len(token) < 3:
+                continue
+            normalized_token = _nfd_lower(token)
+            pattern = rf"\b{re.escape(normalized_token)}\b"
+            if re.search(pattern, normalized_response):
+                return True
+        return False
 
     @classmethod
     def _message_starts_over(cls, message: str) -> bool:
@@ -358,6 +392,15 @@ class BookingMode(BaseModeNode):
         return [primary] if primary else []
 
     def _response_updates(self, state: ConversationState, response_text: str) -> dict[str, Any]:
+        # Check for customer name token leak before processing response
+        customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
+        if response_text and customer_name:
+            if self._contains_customer_name_token(response_text, customer_name):
+                self.logger.warning(
+                    "BookingMode: LLM leaked customer name token in response, using fallback"
+                )
+                response_text = "De acuerdo, continuemos con tu reserva. 🙏"
+
         final_response, disclosure_sent = self._maybe_prepend_intro(response_text, state)
         updates: dict[str, Any] = add_message(state, "assistant", final_response)
         if disclosure_sent:
@@ -886,6 +929,7 @@ class BookingMode(BaseModeNode):
                             "pending_recommendations": matched_option.get("combo_recommendations")
                             or mode_context.get("pending_recommendations")
                             or [],
+                            "pending_clarification": None,  # BUG FIX: Clear after resolving
                         }
                         # Run LLM with just the confirmation system prompt (no tools needed)
                         service_name = confirmed_context["service_name"]
