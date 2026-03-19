@@ -1249,7 +1249,18 @@ class BookingMode(BaseModeNode):
     async def _handle_stylist_selection(
         self, state: ConversationState, mode_context: dict
     ) -> dict:
-        """Step 2: Help customer select a stylist."""
+        """Step 2: Help customer select a stylist.
+
+        Flow:
+          1. Populate recurrent stylist data.
+          2. Prefetch stylist options → PrefetchResult (typed union).
+          3. Branch on prefetch_result["status"]:
+             - "tool_error"      → return hardcoded Spanish error, stay STYLIST_SELECTION (Path D)
+             - "no_availability" → return hardcoded no-avail message, stay STYLIST_SELECTION (Path C)
+             - "ok"              → merge data into context, run resolver:
+                 * resolver match → same-turn handoff to _handle_slot_selection (Path A/E)
+                 * resolver no match → LLM call with stylist data in context (Path B/F)
+        """
         service_name = mode_context.get("service_name", "el servicio solicitado")
         service_category = mode_context.get("service_category") or ""
         user_message = self._get_last_user_message(state)
@@ -1277,7 +1288,68 @@ class BookingMode(BaseModeNode):
             updated_context["pending_recommendations"] = []
 
         updated_context = await self._populate_recurrent_stylist(state, updated_context)
-        updated_context = await self._prefetch_stylist_options(updated_context)
+
+        # Task 3.1: call prefetch and branch on status
+        prefetch_result = await self._prefetch_stylist_options(updated_context)
+
+        # Task 3.2: Path D — tool error: hardcoded fallback, no LLM call
+        if prefetch_result["status"] == "tool_error":
+            self.logger.warning(
+                "BookingMode._handle_stylist_selection: tool_error path, detail=%s",
+                prefetch_result.get("error_detail"),
+            )
+            error_context = {
+                **updated_context,
+                "prefetch_error": True,
+                "prefetch_error_type": "tool_error",
+                "prefetch_error_detail": prefetch_result.get("error_detail", ""),
+            }
+            return {
+                **self._response_updates(
+                    state,
+                    "Tenemos un problema técnico. Por favor intentá de nuevo en un momento.",
+                ),
+                "mode_context": self._finalize_mode_context(
+                    error_context,
+                    BookingSubstep.STYLIST_SELECTION,
+                    BookingSubstep.STYLIST_SELECTION,
+                ),
+                "last_node": "booking",
+                "user_message": None,
+            }
+
+        # Task 3.3: Path C — no availability: hardcoded fallback, no LLM call
+        if prefetch_result["status"] == "no_availability":
+            self.logger.warning(
+                "BookingMode._handle_stylist_selection: no_availability path, detail=%s",
+                prefetch_result.get("error_detail"),
+            )
+            no_avail_context = {
+                **updated_context,
+                "prefetch_error": True,
+                "prefetch_error_type": "no_availability",
+                "prefetch_error_detail": prefetch_result.get("error_detail", ""),
+            }
+            return {
+                **self._response_updates(
+                    state,
+                    "Lamentablemente no hay disponibilidad en este momento. ¿Querés intentar en otro día?",
+                ),
+                "mode_context": self._finalize_mode_context(
+                    no_avail_context,
+                    BookingSubstep.STYLIST_SELECTION,
+                    BookingSubstep.STYLIST_SELECTION,
+                ),
+                "last_node": "booking",
+                "user_message": None,
+            }
+
+        # Task 3.4: Path ok — merge PrefetchOk data into context
+        updated_context.update({
+            "prefetched_stylists": prefetch_result["prefetched_stylists"],
+            "soonest_any_slot": prefetch_result["soonest_any_slot"],
+            "soonest_any_slot_candidate": prefetch_result["soonest_any_slot_candidate"],
+        })
 
         # ── Pre-LLM deterministic stylist resolver ────────────────────────────
         if not updated_context.get("stylist_id"):
@@ -1290,12 +1362,17 @@ class BookingMode(BaseModeNode):
                 updated_context["stylist_id"] = resolved["stylist_id"]
                 updated_context["stylist_name"] = resolved["stylist_name"]
                 self.logger.info(
-                    "BookingMode._handle_stylist_selection: pre-resolved stylist_id=%s name=%s",
+                    "BookingMode._handle_stylist_selection: pre-resolved stylist_id=%s name=%s — same-turn handoff",
                     resolved["stylist_id"],
                     resolved["stylist_name"],
                 )
+                # Task 3.5: Path A/E — same-turn handoff (mirrors _handle_add_ons:1023)
+                # booking_step will be set to SLOT_SELECTION inside _handle_slot_selection
+                updated_context["booking_step"] = BookingSubstep.SLOT_SELECTION.value
+                return await self._handle_slot_selection(state, updated_context)
         # ─────────────────────────────────────────────────────────────────────
 
+        # Task 3.6: Path B/F — no resolver match → LLM call with stylist data in context
         if self._use_optimized_prompts():
             messages = await self._build_layered_messages(
                 state, updated_context, step_name=STEP_STYLIST_SELECTION
@@ -1307,8 +1384,8 @@ class BookingMode(BaseModeNode):
             )
             messages = self._build_messages(state, system)
 
-        # Provide list_stylists as a fallback tool in case the prefetch failed
-        # or the dynamic context doesn't contain the expected data.
+        # Provide list_stylists as a fallback tool in case the prefetch data
+        # doesn't contain what the LLM needs.
         from agent.tools.info_tools import list_stylists
         result = await self._run_agentic_loop(messages, tools=[list_stylists])
 
