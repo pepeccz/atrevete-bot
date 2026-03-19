@@ -22,6 +22,7 @@ from agent.modes.base import AgenticLoopResult
 from agent.modes.booking_context import BookingSubstep
 from agent.modes.booking_mode import BookingMode
 from agent.routing.intent_router import IntentResult
+from agent.state.helpers import add_message
 from agent.state.schemas import create_initial_state
 
 
@@ -1040,11 +1041,36 @@ class TestBookingModeRejectAtAddOns:
 
 
 class TestPrefetchStylistOptionsError:
-    """Verify _prefetch_stylist_options sets prefetch_error=True on failure."""
+    """Verify _prefetch_stylist_options returns typed PrefetchResult variants."""
+
+    # Task 5.1 — list_stylists soft error → PrefetchToolError (spec: tool error stops pipeline)
+    @pytest.mark.asyncio
+    async def test_prefetch_returns_tool_error_when_list_stylists_returns_error_field(self):
+        """If list_stylists returns error field, must return PrefetchToolError and NOT call find_next_available."""
+        mode = make_booking_mode()
+        mode_context = {
+            "service_category": "Peluquería",
+            "service_duration_minutes": 45,
+            "booking_step": "stylist_selection",
+        }
+
+        mock_list = MagicMock()
+        mock_list.ainvoke = AsyncMock(return_value={"stylists": [], "error": "DB timeout"})
+        mock_avail = MagicMock()
+        mock_avail.ainvoke = AsyncMock(return_value={"available_stylists": []})
+
+        with patch("agent.tools.info_tools.list_stylists", new=mock_list), \
+             patch("agent.tools.availability_tools.find_next_available", new=mock_avail):
+            result = await mode._prefetch_stylist_options(mode_context)
+
+        assert result["status"] == "tool_error"
+        assert result.get("error_detail") == "DB timeout"
+        # find_next_available must NOT be called (spec: tool error stops pipeline)
+        mock_avail.ainvoke.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_prefetch_sets_error_flag_when_list_stylists_fails(self):
-        """If list_stylists.ainvoke raises, mode_context must contain prefetch_error=True."""
+    async def test_prefetch_returns_tool_error_when_list_stylists_raises(self):
+        """If list_stylists.ainvoke raises, must return PrefetchToolError."""
         mode = make_booking_mode()
         mode_context = {
             "service_category": "Peluquería",
@@ -1058,14 +1084,67 @@ class TestPrefetchStylistOptionsError:
         with patch("agent.tools.info_tools.list_stylists", new=failing_tool):
             result = await mode._prefetch_stylist_options(mode_context)
 
-        assert result.get("prefetch_error") is True
-        # Original context fields must survive
-        assert result.get("service_category") == "Peluquería"
-        assert result.get("service_duration_minutes") == 45
+        assert result["status"] == "tool_error"
+        assert "DB connection lost" in result.get("error_detail", "")
 
+    # Task 5.2 — find_next_available soft error + empty list → PrefetchNoAvailability
+    @pytest.mark.asyncio
+    async def test_prefetch_returns_no_availability_when_find_next_available_returns_error_field(self):
+        """If find_next_available returns error with empty list, must return PrefetchNoAvailability."""
+        mode = make_booking_mode()
+        mode_context = {
+            "service_category": "Peluquería",
+            "service_duration_minutes": 45,
+        }
+
+        mock_list = MagicMock()
+        mock_list.ainvoke = AsyncMock(return_value={
+            "stylists": [{"name": "Ana", "id": "sty-1"}],
+        })
+        mock_avail = MagicMock()
+        mock_avail.ainvoke = AsyncMock(return_value={
+            "available_stylists": [],
+            "error": "No dates found",
+        })
+
+        with patch("agent.tools.info_tools.list_stylists", new=mock_list), \
+             patch("agent.tools.availability_tools.find_next_available", new=mock_avail):
+            result = await mode._prefetch_stylist_options(mode_context)
+
+        assert result["status"] == "no_availability"
+        assert result.get("error_detail") == "No dates found"
+
+    # Task 5.3 — both tools succeed → PrefetchOk
+    @pytest.mark.asyncio
+    async def test_prefetch_returns_ok_when_both_tools_succeed(self):
+        """On success, must return PrefetchOk with prefetched_stylists populated."""
+        mode = make_booking_mode()
+        mode_context = {
+            "service_category": "Peluquería",
+            "service_duration_minutes": 45,
+        }
+
+        mock_list = MagicMock()
+        mock_list.ainvoke = AsyncMock(return_value={
+            "stylists": [{"name": "Ana", "id": "sty-1"}],
+        })
+        mock_avail = MagicMock()
+        mock_avail.ainvoke = AsyncMock(return_value={"available_stylists": []})
+
+        with patch("agent.tools.info_tools.list_stylists", new=mock_list), \
+             patch("agent.tools.availability_tools.find_next_available", new=mock_avail):
+            result = await mode._prefetch_stylist_options(mode_context)
+
+        assert result["status"] == "ok"
+        assert "prefetched_stylists" in result
+        assert len(result["prefetched_stylists"]) == 1
+        assert result["prefetched_stylists"][0]["name"] == "Ana"
+        assert result.get("prefetch_error") is None  # No error key in PrefetchOk
+
+    # Keep backward-compat test for success path
     @pytest.mark.asyncio
     async def test_prefetch_does_not_set_error_flag_on_success(self):
-        """On success, prefetch_error must NOT be in context."""
+        """On success, status must be 'ok' and prefetched_stylists must be present."""
         mode = make_booking_mode()
         mode_context = {
             "service_category": "Peluquería",
@@ -1081,23 +1160,216 @@ class TestPrefetchStylistOptionsError:
              patch("agent.tools.availability_tools.find_next_available", new=mock_avail):
             result = await mode._prefetch_stylist_options(mode_context)
 
-        assert result.get("prefetch_error") is not True
+        assert result["status"] == "ok"
         assert "prefetched_stylists" in result
 
 
-class TestStylistSelectionToolProvision:
-    """Verify _handle_stylist_selection passes list_stylists to the agentic loop."""
+# =============================================================================
+# Task 5.4–5.6: _handle_stylist_selection path tests
+# =============================================================================
 
-    async def test_handle_stylist_selection_passes_list_stylists_tool(self):
-        """_handle_stylist_selection must provide list_stylists as a fallback tool."""
+
+def _make_prefetch_ok(
+    stylist_name: str = "Ana",
+    stylist_id: str = "sty-1",
+    soonest_slot: str = "lunes a las 10:00",
+) -> dict:
+    """Build a PrefetchOk-compatible dict for mocking."""
+    return {
+        "status": "ok",
+        "prefetched_stylists": [{"name": stylist_name, "id": stylist_id, "next_slot_summary": soonest_slot}],
+        "soonest_any_slot": soonest_slot,
+        "soonest_any_slot_candidate": {
+            "stylist_id": stylist_id,
+            "stylist_name": stylist_name,
+            "slot_datetime": "2026-03-23T10:00:00",
+            "slot_summary": soonest_slot,
+        },
+    }
+
+
+class TestHandleStylistSelectionPaths:
+    """Tests for the 6 paths in _handle_stylist_selection (spec scenarios A–F)."""
+
+    def _make_context(self) -> dict:
+        return {
+            "booking_step": "stylist_selection",
+            "service_id": "svc-1",
+            "service_name": "Cortar",
+            "service_category": "Peluquería",
+        }
+
+    # Task 5.4 — Path A: resolver match → same-turn handoff → _handle_slot_selection called
+    @pytest.mark.asyncio
+    async def test_path_a_resolver_match_calls_handle_slot_selection(self):
+        """Path A: prefetch=ok, resolver=match → _handle_slot_selection called, LLM not called."""
         mode = make_booking_mode()
         state = make_state_with_step(booking_step="stylist_selection")
         state["user_message"] = "cualquiera"
+        context = self._make_context()
+
+        slot_response = {
+            **add_message(state, "assistant", "Aquí están los horarios disponibles."),
+            "mode_context": {"booking_step": "slot_selection", "stylist_id": "sty-1"},
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+        with patch.object(mode, "_populate_recurrent_stylist", new=AsyncMock(side_effect=lambda s, c: c)), \
+             patch.object(mode, "_prefetch_stylist_options", new=AsyncMock(return_value=_make_prefetch_ok())), \
+             patch.object(mode, "_handle_slot_selection", new=AsyncMock(return_value=slot_response)) as mock_slot, \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock()) as mock_llm:
+            result = await mode._handle_stylist_selection(state, context)
+
+        # _handle_slot_selection must be called (same-turn handoff)
+        mock_slot.assert_called_once()
+        # _run_agentic_loop must NOT be called (no LLM turn for stylist step)
+        mock_llm.assert_not_called()
+        # The result is from _handle_slot_selection
+        assert result is slot_response
+
+    # Task 5.4 — Path A: booking_step set to SLOT_SELECTION before handoff
+    @pytest.mark.asyncio
+    async def test_path_a_context_has_stylist_set_before_slot_handoff(self):
+        """Path A: stylist_id and stylist_name must be set in context passed to _handle_slot_selection."""
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="stylist_selection")
+        state["user_message"] = "cualquiera"
+        context = self._make_context()
+
+        captured_context = {}
+
+        async def capture_slot(st, ctx):
+            captured_context.update(ctx)
+            return {"last_node": "booking", "user_message": None, "mode_context": {}}
+
+        with patch.object(mode, "_populate_recurrent_stylist", new=AsyncMock(side_effect=lambda s, c: c)), \
+             patch.object(mode, "_prefetch_stylist_options", new=AsyncMock(return_value=_make_prefetch_ok())), \
+             patch.object(mode, "_handle_slot_selection", side_effect=capture_slot):
+            await mode._handle_stylist_selection(state, context)
+
+        assert captured_context.get("stylist_id") == "sty-1"
+        assert captured_context.get("stylist_name") == "Ana"
+        assert captured_context.get("booking_step") == "slot_selection"
+
+    # Task 5.5 — Path B: resolver no match → LLM called, booking_step stays STYLIST_SELECTION
+    @pytest.mark.asyncio
+    async def test_path_b_resolver_no_match_calls_llm(self):
+        """Path B: prefetch=ok, resolver=None → LLM called, booking_step stays STYLIST_SELECTION."""
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="stylist_selection")
+        state["user_message"] = "no sé"  # ambiguous — resolver won't match
+        context = self._make_context()
+
+        llm_result = AgenticLoopResult(response_text="¿Cuál estilista preferís?", tool_results={})
+
+        with patch.object(mode, "_populate_recurrent_stylist", new=AsyncMock(side_effect=lambda s, c: c)), \
+             patch.object(mode, "_prefetch_stylist_options", new=AsyncMock(return_value=_make_prefetch_ok())), \
+             patch.object(mode, "_resolve_stylist_from_message", return_value=None), \
+             patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock(return_value=llm_result)) as mock_llm, \
+             patch.object(mode, "_handle_slot_selection", new=AsyncMock()) as mock_slot:
+            result = await mode._handle_stylist_selection(state, context)
+
+        # LLM must be called
+        mock_llm.assert_called_once()
+        # _handle_slot_selection must NOT be called
+        mock_slot.assert_not_called()
+        # booking_step stays in STYLIST_SELECTION (not advanced unless LLM signals it)
+        mode_ctx = result.get("mode_context", {})
+        assert mode_ctx.get("booking_step") == "stylist_selection"
+
+    # Task 5.6 — Path C: no_availability → hardcoded message, no LLM
+    @pytest.mark.asyncio
+    async def test_path_c_no_availability_returns_hardcoded_message(self):
+        """Path C: prefetch=no_availability → hardcoded Spanish message, LLM not called, step stays."""
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="stylist_selection")
+        state["user_message"] = "Sí"
+        context = self._make_context()
+
+        no_avail_result = {
+            "status": "no_availability",
+            "error_detail": "No dates found",
+        }
+
+        with patch.object(mode, "_populate_recurrent_stylist", new=AsyncMock(side_effect=lambda s, c: c)), \
+             patch.object(mode, "_prefetch_stylist_options", new=AsyncMock(return_value=no_avail_result)), \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock()) as mock_llm, \
+             patch.object(mode, "_handle_slot_selection", new=AsyncMock()) as mock_slot:
+            result = await mode._handle_stylist_selection(state, context)
+
+        # LLM must NOT be called
+        mock_llm.assert_not_called()
+        # _handle_slot_selection must NOT be called
+        mock_slot.assert_not_called()
+        # Response must contain no-availability text (from messages)
+        messages = result.get("messages", [])
+        assert any("disponibilidad" in str(m).lower() for m in messages), (
+            f"Expected 'disponibilidad' in messages, got: {messages}"
+        )
+        # mode_context must stay in STYLIST_SELECTION
+        mode_ctx = result.get("mode_context", {})
+        assert mode_ctx.get("booking_step") == "stylist_selection"
+        # stylist_id must NOT be set
+        assert mode_ctx.get("stylist_id") is None
+
+    # Task 5.6 — Path D: tool_error → hardcoded message, no LLM
+    @pytest.mark.asyncio
+    async def test_path_d_tool_error_returns_hardcoded_message(self):
+        """Path D: prefetch=tool_error → hardcoded technical error message, LLM not called."""
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="stylist_selection")
+        state["user_message"] = "cualquiera"
+        context = self._make_context()
+
+        tool_error_result = {
+            "status": "tool_error",
+            "error_detail": "DB connection refused",
+        }
+
+        with patch.object(mode, "_populate_recurrent_stylist", new=AsyncMock(side_effect=lambda s, c: c)), \
+             patch.object(mode, "_prefetch_stylist_options", new=AsyncMock(return_value=tool_error_result)), \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock()) as mock_llm, \
+             patch.object(mode, "_handle_slot_selection", new=AsyncMock()) as mock_slot:
+            result = await mode._handle_stylist_selection(state, context)
+
+        # LLM must NOT be called
+        mock_llm.assert_not_called()
+        # _handle_slot_selection must NOT be called
+        mock_slot.assert_not_called()
+        # Response must contain technical error text
+        messages = result.get("messages", [])
+        assert any("técnico" in str(m).lower() or "problema" in str(m).lower() for m in messages), (
+            f"Expected technical error mention in messages, got: {messages}"
+        )
+        # mode_context must stay in STYLIST_SELECTION
+        mode_ctx = result.get("mode_context", {})
+        assert mode_ctx.get("booking_step") == "stylist_selection"
+
+
+class TestStylistSelectionToolProvision:
+    """Verify _handle_stylist_selection passes list_stylists to the agentic loop (Path B)."""
+
+    @pytest.mark.asyncio
+    async def test_handle_stylist_selection_passes_list_stylists_tool(self):
+        """_handle_stylist_selection must provide list_stylists as a fallback tool (Path B — LLM path)."""
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="stylist_selection")
+        state["user_message"] = "no sé cuál"  # ambiguous → forces Path B (LLM)
         context = {
             "booking_step": "stylist_selection",
             "service_id": "svc-1",
             "service_name": "Cortar",
             "service_category": "Peluquería",
+        }
+
+        # Use a PrefetchOk result but with resolver returning None to force LLM path
+        prefetch_ok = {
+            "status": "ok",
+            "prefetched_stylists": [],
+            "soonest_any_slot": None,
+            "soonest_any_slot_candidate": None,
         }
 
         captured_tools = []
@@ -1109,7 +1381,8 @@ class TestStylistSelectionToolProvision:
         with patch.object(mode, "_build_layered_messages", new=AsyncMock(return_value=[])), \
              patch.object(mode, "_run_agentic_loop", side_effect=mock_agentic_loop), \
              patch.object(mode, "_populate_recurrent_stylist", new=AsyncMock(side_effect=lambda s, c: c)), \
-             patch.object(mode, "_prefetch_stylist_options", new=AsyncMock(side_effect=lambda c: c)):
+             patch.object(mode, "_prefetch_stylist_options", new=AsyncMock(return_value=prefetch_ok)), \
+             patch.object(mode, "_resolve_stylist_from_message", return_value=None):
             await mode._handle_stylist_selection(state, context)
 
         tool_names = [getattr(t, "name", str(t)) for t in captured_tools]

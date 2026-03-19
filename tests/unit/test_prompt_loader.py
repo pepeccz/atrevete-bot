@@ -374,7 +374,11 @@ class TestBuildStepContext:
         assert "+1234567890" in context
 
     def test_build_step_context_with_collected_data(self):
-        """Test building context with collected booking data."""
+        """Test building context with collected booking data.
+
+        first_name is intentionally excluded from context (Rule #6 — NUNCA uses el nombre
+        del cliente en ninguna respuesta). All other booking fields must still be present.
+        """
         state = {"user_message": "Yes, that's correct"}
         mode_context = {
             "service_name": "Corte Caballero",
@@ -389,7 +393,9 @@ class TestBuildStepContext:
         assert "Corte Caballero" in context
         assert "Ana" in context
         assert "Viernes 10:00" in context
-        assert "Juan" in context
+        # first_name must NOT be injected — Rule #6 privacy enforcement
+        assert "Juan" not in context
+        assert "Nombre para la reserva" not in context
         assert "Alergia a productos X" in context
 
     def test_build_step_context_with_summary(self):
@@ -433,18 +439,52 @@ class TestBuildStepContext:
         assert "2026-03-22" in context
         assert "Sin disponibilidad para María en el rango solicitado" in context
 
-    def test_build_step_context_includes_prefetch_error_warning(self):
-        """When prefetch_error is True, context must include PREFETCH FALLIDO warning."""
+    # Task 5.7 — loader guidance: tool_error
+    def test_build_step_context_includes_prefetch_tool_error_guidance(self):
+        """When prefetch_error_type='tool_error', context must include 'error técnico' guidance."""
         state = {"user_message": "quiero turno"}
         mode_context = {
             "service_name": "Cortar",
             "prefetch_error": True,
+            "prefetch_error_type": "tool_error",
         }
 
         context = build_step_context(state, mode_context)
 
         assert "PREFETCH FALLIDO" in context
+        assert "error técnico" in context
         assert "list_stylists" in context
+
+    # Task 5.7 — loader guidance: no_availability
+    def test_build_step_context_includes_prefetch_no_availability_guidance(self):
+        """When prefetch_error_type='no_availability', context must include 'SIN DISPONIBILIDAD'."""
+        state = {"user_message": "quiero turno"}
+        mode_context = {
+            "service_name": "Cortar",
+            "prefetch_error": True,
+            "prefetch_error_type": "no_availability",
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "SIN DISPONIBILIDAD" in context
+
+    # Task 5.7 — loader guidance: absent prefetch_error_type → no warning injected
+    def test_build_step_context_omits_prefetch_warning_when_no_error_type(self):
+        """When prefetch_error_type is absent, no prefetch warning should appear in context."""
+        state = {"user_message": "quiero turno"}
+        mode_context = {
+            "service_name": "Cortar",
+            "prefetched_stylists": [
+                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes a las 10:00"},
+            ],
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "PREFETCH FALLIDO" not in context
+        assert "SIN DISPONIBILIDAD" not in context
+        assert "Ana" in context
 
     def test_build_step_context_omits_prefetch_warning_when_no_error(self):
         """When prefetch_error is absent/False, no warning should appear."""
@@ -737,3 +777,83 @@ class TestPromptCacheEdgeCases:
         # Should reload
         prompt = await get_system_prompt()
         assert prompt != "old content"
+
+
+# =============================================================================
+# T3.6: build_step_context must NOT inject first_name (Rule #6 privacy fix)
+# T3.7: confirmation.md must NOT contain the name-permission line
+# =============================================================================
+
+
+class TestFirstNameFilteringRule6:
+    """T3.6 — Verify first_name is never injected into build_step_context output."""
+
+    def test_build_step_context_does_not_inject_first_name(self):
+        """T3.6: even when mode_context has first_name set, it must not appear in output."""
+        state = {"user_message": "sí, confirmo"}
+        mode_context = {"first_name": "María"}
+
+        context = build_step_context(state, mode_context)
+
+        assert "María" not in context
+        assert "Nombre para la reserva" not in context
+
+    def test_build_step_context_other_fields_unaffected_when_first_name_absent(self):
+        """T3.6 scenario 2: when first_name is not set, function behaves normally."""
+        state = {"user_message": "sí, confirmo"}
+        mode_context = {"slot_summary": "Viernes 10:00", "service_name": "Corte"}
+
+        context = build_step_context(state, mode_context)
+
+        assert "Viernes 10:00" in context
+        assert "Corte" in context
+
+    def test_build_step_context_first_name_with_other_fields_filters_only_name(self):
+        """T3.6 scenario 3: other fields still injected even when first_name present."""
+        state = {"user_message": "dale"}
+        mode_context = {
+            "first_name": "Carlos",
+            "stylist_name": "Laura",
+            "service_name": "Tinte",
+            "slot_summary": "Lunes 14:00",
+        }
+
+        context = build_step_context(state, mode_context)
+
+        # first_name filtered out
+        assert "Carlos" not in context
+        assert "Nombre para la reserva" not in context
+        # Other fields still present
+        assert "Laura" in context
+        assert "Tinte" in context
+        assert "Lunes 14:00" in context
+
+
+class TestConfirmationMdNoNamePermission:
+    """T3.7 — confirmation.md must not contain the removed name-permission line."""
+
+    def test_confirmation_md_does_not_contain_name_permission_line(self):
+        """T3.7: The line 'Puedes usar el nombre de la clienta' must be absent."""
+        from pathlib import Path
+
+        confirmation_path = (
+            Path(__file__).parent.parent.parent
+            / "agent" / "prompts" / "modes" / "booking" / "confirmation.md"
+        )
+        content = confirmation_path.read_text(encoding="utf-8")
+
+        assert "Puedes usar el nombre de la clienta" not in content
+
+    def test_confirmation_md_retains_core_instructions(self):
+        """T3.7 scenario 2: removing the line must not strip other content."""
+        from pathlib import Path
+
+        confirmation_path = (
+            Path(__file__).parent.parent.parent
+            / "agent" / "prompts" / "modes" / "booking" / "confirmation.md"
+        )
+        content = confirmation_path.read_text(encoding="utf-8")
+
+        assert "Confirmacion" in content or "confirmacion" in content.lower()
+        assert "Reglas de Transicion" in content
+        assert "Preservacion de Contexto" in content
