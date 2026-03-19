@@ -548,16 +548,19 @@ class BookingMode(BaseModeNode):
 
     async def _prefetch_stylist_options(
         self, mode_context: dict
-    ) -> dict:
+    ) -> PrefetchResult:
         """
         Pre-fetch stylist list and next available slots before LLM call.
 
         Calls list_stylists + find_next_available in Python so the LLM
         receives data directly without needing to call tools itself.
 
-        Returns updated mode_context dict with:
-          - prefetched_stylists: list of {name, id, next_slot_summary}
-          - soonest_any_slot: str summary of the absolute earliest slot
+        Returns a PrefetchResult discriminated union (NOT a merged context dict):
+          - PrefetchOk: prefetched_stylists, soonest_any_slot, soonest_any_slot_candidate
+          - PrefetchNoAvailability: no slots found for any stylist
+          - PrefetchToolError: infrastructure/tool failure (includes Python exceptions)
+
+        Callers are responsible for merging PrefetchOk data into their context dict.
         """
         try:
             from agent.tools.availability_tools import find_next_available
@@ -567,6 +570,18 @@ class BookingMode(BaseModeNode):
             service_duration_minutes = mode_context.get("service_duration_minutes")
 
             stylists_result = await list_stylists.ainvoke({"category": service_category})
+
+            # Task 2.1: check error field on list_stylists result
+            if stylists_result.get("error"):
+                self.logger.warning(
+                    "BookingMode._prefetch_stylist_options: list_stylists soft error=%s",
+                    stylists_result["error"],
+                )
+                return PrefetchToolError(
+                    status="tool_error",
+                    error_detail=str(stylists_result["error"]),
+                )
+
             availability_result = await find_next_available.ainvoke(
                 {
                     "service_category": service_category,
@@ -575,9 +590,21 @@ class BookingMode(BaseModeNode):
                 }
             )
 
+            # Task 2.2: check error field on find_next_available result
+            available_stylists_raw = availability_result.get("available_stylists") or []
+            if availability_result.get("error") and not available_stylists_raw:
+                self.logger.warning(
+                    "BookingMode._prefetch_stylist_options: find_next_available soft error=%s",
+                    availability_result["error"],
+                )
+                return PrefetchNoAvailability(
+                    status="no_availability",
+                    error_detail=str(availability_result["error"]),
+                )
+
             available_by_name = {
                 str(stylist.get("stylist_name") or ""): stylist
-                for stylist in availability_result.get("available_stylists") or []
+                for stylist in available_stylists_raw
                 if isinstance(stylist, dict)
             }
 
@@ -667,17 +694,19 @@ class BookingMode(BaseModeNode):
                 soonest_slot[1] if soonest_slot else "none",
                 soonest_any_slot_candidate.get("stylist_name") if soonest_any_slot_candidate else "none",
             )
-            return {
-                **mode_context,
-                "prefetched_stylists": prefetched_stylists,
-                "soonest_any_slot": soonest_slot[1] if soonest_slot else None,
-                "soonest_any_slot_candidate": soonest_any_slot_candidate,
-            }
+            # Task 2.3: return typed PrefetchOk (not merged dict)
+            return PrefetchOk(
+                status="ok",
+                prefetched_stylists=prefetched_stylists,
+                soonest_any_slot=soonest_slot[1] if soonest_slot else None,
+                soonest_any_slot_candidate=soonest_any_slot_candidate,
+            )
         except Exception as exc:
+            # Task 2.4: map Python exceptions to PrefetchToolError
             self.logger.error(
                 "BookingMode._prefetch_stylist_options failed: %s", exc, exc_info=True
             )
-            return {**mode_context, "prefetch_error": True}
+            return PrefetchToolError(status="tool_error", error_detail=str(exc))
 
     async def handle(self, state: ConversationState, intent: object) -> dict:
         """
