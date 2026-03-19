@@ -288,10 +288,15 @@ def build_step_context(
         if mode_context.get("recurrent_stylist_slot_summary"):
             recurrent_line += f" ({mode_context['recurrent_stylist_slot_summary']})"
         collected_data.append(recurrent_line)
-    if mode_context.get("prefetch_error"):
+    prefetch_error_type = mode_context.get("prefetch_error_type")
+    if prefetch_error_type == "tool_error":
         collected_data.append(
-            "⚠️ PREFETCH FALLIDO: Los datos de estilistas no se pudieron cargar. "
-            "USA la herramienta list_stylists para obtenerlos."
+            "⚠️ PREFETCH FALLIDO (error técnico): usá list_stylists como herramienta de respaldo."
+        )
+    elif prefetch_error_type == "no_availability":
+        collected_data.append(
+            "⚠️ SIN DISPONIBILIDAD: no hay estilistas disponibles. "
+            "Informá al cliente y sugiere otro día."
         )
     prefetched_stylists = mode_context.get("prefetched_stylists")
     if prefetched_stylists:
@@ -306,8 +311,6 @@ def build_step_context(
         )
     if mode_context.get("slot_summary"):
         collected_data.append(f"Horario: {mode_context['slot_summary']}")
-    if mode_context.get("first_name"):
-        collected_data.append(f"Nombre para la reserva: {mode_context['first_name']}")
     if mode_context.get("notes"):
         collected_data.append(f"Notas: {mode_context['notes']}")
     if mode_context.get("pending_recommendations"):
