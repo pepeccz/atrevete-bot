@@ -30,25 +30,129 @@ from agent.state.schemas import ConversationState, transition_mode
 logger = logging.getLogger(__name__)
 
 # Pre-defined greeting messages (ALL name-free)
-_WELCOME_NEW = f"{FIRST_TURN_INTRO} ¿En qué puedo ayudarte hoy?"
+# FIX: Removed FIRST_TURN_INTRO from _WELCOME_NEW to avoid duplication.
+# FIRST_TURN_INTRO is prepended automatically by BaseModeNode._maybe_prepend_intro() (base.py:257)
+_WELCOME_NEW = "¿En qué puedo ayudarte hoy?"
 _WELCOME_RETURNING = "¡Hola de nuevo! 😊 ¿En qué puedo ayudarte hoy?"
+
+# ── ADR-4: Audience hint tokens ───────────────────────────────────────────────
+# Maps normalized message tokens → audience hint values
+_AUDIENCE_HINT_MAP: dict[str, str] = {
+    # adult_male
+    "caballero": "adult_male",
+    "hombre": "adult_male",
+    "senor": "adult_male",
+    "adulto": "adult_male",
+    # adult_female
+    "dama": "adult_female",
+    "mujer": "adult_female",
+    "senora": "adult_female",
+    "adulta": "adult_female",
+    # child_female
+    "nina": "child_female",
+    "nena": "child_female",
+    "hija": "child_female",
+    # child_male
+    "nino": "child_male",
+    "nene": "child_male",
+    "hijo": "child_male",
+}
+
+# Tokens that signal booking intent in the greeting message
+_BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset({
+    "mujer",
+    "hombre",
+    "nino",
+    "nina",
+    "dama",
+    "caballero",
+    "corte",
+    "tinte",
+    "color",
+    "peluqueria",
+    "adulta",
+    "adulto",
+    "turno",
+    "reservar",
+    "cita",
+    "mechas",
+    "peinado",
+    "quiero",
+})
+
+
+def _normalize_text(text: str | None) -> str:
+    """Normalize text for comparison: strip, lowercase, remove accents."""
+    if not text:
+        return ""
+    raw = text.strip().lower()
+    normalized = unicodedata.normalize("NFKD", raw)
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _has_booking_content(message: str | None) -> bool:
+    """
+    Return True when the message contains tokens that signal a service request.
+
+    Used to detect when a greeting message also carries booking intent
+    (e.g. "Hola, quiero un corte de dama") so the booking context can be
+    passed to the next mode even when the router classified it as "greet".
+
+    Args:
+        message: Raw user message text (or None).
+
+    Returns:
+        True if any booking-intent token is found in the normalized text.
+    """
+    if not message:
+        return False
+    normalized = _normalize_text(message)
+    return any(token in normalized for token in _BOOKING_CONTENT_TOKENS)
+
+
+def _build_booking_handoff_context(message: str | None) -> dict:
+    """
+    Build a booking handoff context dict from a greeting message.
+
+    Extracts:
+    - opening_booking_request: the original message text (for intent carry-over)
+    - service_audience_hint: audience classification based on keywords
+
+    Args:
+        message: Raw user message text (or None).
+
+    Returns:
+        Dict with extracted booking context keys, or empty dict if no content.
+    """
+    if not message:
+        return {}
+    if not _has_booking_content(message):
+        return {}
+
+    ctx: dict = {"opening_booking_request": message}
+
+    normalized = _normalize_text(message)
+    for token, hint in _AUDIENCE_HINT_MAP.items():
+        if token in normalized:
+            ctx["service_audience_hint"] = hint
+            break
+
+    return ctx
 
 
 def _resolve_target_mode(mode_context: dict) -> str:
     """
     Determine which mode to transition to after the greeting.
 
-    When the user's message contained a greeting AND an actionable intent
-    (e.g. "Hola, quiero cortarme el pelo"), the router stores the classified
-    intent in mode_context["last_intent"].  We use it to send the user to the
-    right mode instead of always defaulting to GENERAL.
+    ADR-4: Widened gate — also routes to BOOKING when has_booking_content is True
+    (not just when last_intent == "book").
 
     Returns:
-        "BOOKING" if last_intent == "book",
+        "BOOKING" if last_intent == "book" or "reschedule",
         "GENERAL" otherwise (including greet, ask_info, ambiguous, etc.)
     """
     last_intent = (mode_context or {}).get("last_intent", "greet")
-    if last_intent == "book":
+    if last_intent in ("book", "reschedule"):
         return "BOOKING"
     return "GENERAL"
 
@@ -79,8 +183,12 @@ class GreetingMode(BaseModeNode):
         Handle the greeting flow.
 
         Two branches, both name-free:
-        1. Returning customer (customer_name exists) → warm greeting → GENERAL
-        2. New customer → create customer silently → warm greeting → GENERAL
+        1. Returning customer (customer_name exists) → warm greeting → target mode
+        2. New customer → create customer silently (soft-fail) → warm greeting → target mode
+
+        ADR-3: Customer creation failure is a soft-fail (continues in GREETING, no escalation).
+        ADR-4: Booking content in greeting message is detected and carried over to the
+               transition mode_context via _build_booking_handoff_context().
 
         NEVER mentions the customer's name in any response.
 
@@ -103,8 +211,20 @@ class GreetingMode(BaseModeNode):
             is_first,
         )
 
-        # ── Branch 1: Returning customer (name already known) ────────────
+        # ADR-4: Extract booking handoff context from the user's greeting message
+        # (e.g. "Hola, quiero turno para un caballero" → service_audience_hint = adult_male)
+        last_user_message = ""
+        for msg in reversed(state.get("messages", [])):
+            if msg.get("role") == "user":
+                last_user_message = msg.get("content", "")
+                break
+
+        booking_handoff = _build_booking_handoff_context(last_user_message)
+        has_booking_content = bool(booking_handoff)
+
         target_mode = _resolve_target_mode(mode_context)
+
+        # ── Branch 1: Returning customer (name already known) ────────────
         if customer_name:
             self.logger.info(
                 "GreetingMode: returning customer (name=%s), transitioning to %s",
@@ -120,8 +240,15 @@ class GreetingMode(BaseModeNode):
                 include_history=False,
             )
             final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
+            transition_update = transition_mode(state, target_mode)
+
+            # ADR-4: Inject booking handoff context into the new mode_context
+            if has_booking_content and booking_handoff:
+                new_mode_ctx = {**transition_update.get("mode_context", {}), **booking_handoff}
+                transition_update["mode_context"] = new_mode_ctx
+
             updates = {
-                **transition_mode(state, target_mode),
+                **transition_update,
                 **add_message(state, "assistant", final_response),
                 "user_message": None,
             }
@@ -131,9 +258,21 @@ class GreetingMode(BaseModeNode):
 
         # ── Branch 2: New customer ───────────────────────────────────────
         # Create customer silently using pending_whatsapp_name (from Chatwoot sender.name)
+        # ADR-3: Soft-fail — customer creation failure does NOT escalate, just continues
         pending_name = state.get("pending_whatsapp_name")
         existing_id = state.get("customer_id")
-        customer_id = existing_id or await self._create_customer(state, pending_name)
+
+        customer_id: str | None = existing_id or None
+        if not customer_id:
+            try:
+                customer_id = await self._create_customer(state, pending_name)
+            except Exception as exc:
+                self.logger.warning(
+                    "GreetingMode: customer creation failed (soft-fail, continuing): %s | phone=%s",
+                    exc,
+                    state.get("customer_phone"),
+                )
+                customer_id = None
 
         self.logger.info(
             "GreetingMode: new customer | pending_name=%s | customer_id=%s | target_mode=%s",
@@ -142,26 +281,8 @@ class GreetingMode(BaseModeNode):
             target_mode,
         )
 
-        # If customer creation failed and there was no pre-existing ID, escalate
-        if not customer_id and not existing_id:
-            self.logger.error(
-                "GreetingMode: customer creation returned None — escalating to support | phone=%s",
-                state.get("customer_phone"),
-            )
-            return {
-                **transition_mode(state, "ESCALATION"),
-                **add_message(
-                    state,
-                    "assistant",
-                    "Disculpá, estoy teniendo un problema técnico. Voy a derivarte con un agente. 🙏",
-                ),
-                "mode_context": {
-                    **mode_context,
-                    "escalation_reason": "customer_creation_failed",
-                },
-                "error_count": state.get("error_count", 0) + 1,
-                "user_message": None,
-            }
+        # ADR-3: No more escalation on customer creation failure — just continue
+        # The user gets a warm greeting, and customer creation will be retried later.
 
         fallback_response = _WELCOME_NEW
         response = await self._render_layered_response(
@@ -172,8 +293,15 @@ class GreetingMode(BaseModeNode):
             include_history=False,
         )
         final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
+        transition_update = transition_mode(state, target_mode)
+
+        # ADR-4: Inject booking handoff context into the new mode_context
+        if has_booking_content and booking_handoff:
+            new_mode_ctx = {**transition_update.get("mode_context", {}), **booking_handoff}
+            transition_update["mode_context"] = new_mode_ctx
+
         updates = {
-            **transition_mode(state, target_mode),
+            **transition_update,
             **add_message(state, "assistant", final_response),
             "user_message": None,
         }

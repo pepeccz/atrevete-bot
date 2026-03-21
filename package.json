@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "opencode-anthropic-user-agent-plugin": "^0.1.0"
+  }
+}

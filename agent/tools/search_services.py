@@ -236,12 +236,47 @@ class SearchServicesSchema(BaseModel):
         le=10
     )
 
+    audience: str | None = Field(
+        default=None,
+        description=(
+            "Optional audience hint to filter results by target demographic. "
+            "Examples: 'adult_female', 'adult_male', 'child_female', 'child_male'. "
+            "When provided, filters or prioritizes results matching the audience."
+        )
+    )
+
+
+# Audience keyword maps for post-filter matching
+_AUDIENCE_KEYWORDS: dict[str, list[str]] = {
+    "adult_female": ["dama", "mujer", "senora", "adulta", "femenino", "femenina"],
+    "adult_male": ["caballero", "hombre", "senor", "adulto", "masculino"],
+    "child_female": ["nina", "nena", "infantil femenino"],
+    "child_male": ["nino", "nene", "infantil masculino"],
+}
+
+
+def _matches_audience(service_name: str, service_description: str | None, audience: str) -> bool:
+    """Return True if the service likely targets the given audience."""
+    keywords = _AUDIENCE_KEYWORDS.get(audience, [])
+    if not keywords:
+        return True  # Unknown audience → no filtering
+
+    import unicodedata
+
+    def _nfd_lower(text: str) -> str:
+        normalized = unicodedata.normalize("NFKD", text.lower())
+        return "".join(c for c in normalized if not unicodedata.combining(c))
+
+    combined = _nfd_lower(f"{service_name} {service_description or ''}")
+    return any(kw in combined for kw in keywords)
+
 
 @tool(args_schema=SearchServicesSchema)
 async def search_services(
     query: str,
     category: Literal["Peluquería", "Estética"] | None = None,
-    max_results: int = 5
+    max_results: int = 5,
+    audience: str | None = None,
 ) -> dict[str, Any]:
     """
     Search salon services using fuzzy matching.
@@ -365,7 +400,8 @@ async def search_services(
     """
     try:
         logger.info(
-            f"Searching services with query='{query}', category={category}, max_results={max_results}"
+            f"Searching services with query='{query}', category={category}, "
+            f"max_results={max_results}, audience={audience}"
         )
 
         # Step 1: Fetch all active services from database
@@ -414,6 +450,20 @@ async def search_services(
 
         # Sort by score descending (best matches first)
         scored_services.sort(key=lambda x: x[1], reverse=True)
+
+        # Post-filter by audience if provided (BUG-NEW-2: audience parameter support)
+        if audience:
+            audience_filtered = [
+                (svc, score)
+                for svc, score in scored_services
+                if _matches_audience(svc.name, svc.description, audience)
+            ]
+            # Fall back to unfiltered results if no audience match found
+            scored_services = audience_filtered if audience_filtered else scored_services
+            logger.info(
+                f"Audience filter '{audience}' applied: {len(audience_filtered)} matches "
+                f"(fallback={len(audience_filtered) == 0})"
+            )
 
         # Take top max_results
         top_matches = scored_services[:max_results]

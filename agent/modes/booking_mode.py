@@ -48,6 +48,13 @@ from agent.state.schemas import ConversationState
 
 logger = logging.getLogger(__name__)
 
+# ── ADR-1: Slot Invalid-Input Recovery Guard ──────────────────────────────────
+# Maximum consecutive invalid slot selections before falling through to LLM loop
+SLOT_INVALID_INPUT_MAX = 3
+
+# ── ADR-2: Bounded retry for book() ──────────────────────────────────────────
+_BOOK_MAX_ATTEMPTS = 2
+
 
 # ── PrefetchResult discriminated union ────────────────────────────────────────
 
@@ -250,6 +257,131 @@ class BookingMode(BaseModeNode):
         }
 
     @classmethod
+    def _is_addon_decline(cls, message: str) -> bool:
+        """
+        Return True when the message declines add-on recommendations but is NOT
+        a booking cancellation. Alias for test-friendly API.
+
+        Accepts: "no gracias", "solo eso", "con eso estoy", etc.
+        Rejects: "cancelar la cita", "si agrega peinado", etc.
+        """
+        if cls._message_is_explicit_cancellation(message):
+            return False
+        normalized = cls._normalize_text(message)
+        decline_phrases = {
+            "no",
+            "no gracias",
+            "no, gracias",
+            "solo eso",
+            "solo eso gracias",
+            "con eso estoy",
+            "solo lo que elegi",
+            "solo lo que elegí",
+            "nada mas",
+            "nada más",
+        }
+        if normalized in decline_phrases:
+            return True
+        # Check "peinado no, barro tampoco" patterns — all recommendations declined
+        return False
+
+    @classmethod
+    def _resolve_add_on_intent(
+        cls,
+        message: str,
+        pending_recommendations: list[str],
+    ) -> str:
+        """
+        Classify user reply to an add-on offer.
+
+        Returns one of:
+        - "decline": user declines all add-ons
+        - "accept": user accepts at least one add-on
+        - "cancel": user wants to cancel the booking entirely
+        - "unknown": cannot be classified deterministically
+        """
+        # Explicit booking cancel takes priority
+        if cls._message_is_explicit_cancellation(message):
+            return "cancel"
+
+        normalized = cls._normalize_text(message)
+
+        # Check for affirmative intent with a specific recommendation
+        affirmative_words = ("si", "sí", "agrega", "añade", "anade", "quiero", "también", "tambien")
+        has_affirmative = any(word in normalized for word in affirmative_words)
+        for rec in pending_recommendations or []:
+            rec_norm = cls._normalize_text(rec)
+            if rec_norm in normalized and has_affirmative:
+                return "accept"
+
+        # Check for "X no, Y tampoco" pattern → decline all listed recommendations
+        negation_tokens = ("tampoco", "no,", " no ")
+        has_negation = any(pat in normalized for pat in negation_tokens)
+        if has_negation:
+            all_mentioned = all(
+                cls._normalize_text(rec) in normalized
+                for rec in (pending_recommendations or [])
+            )
+            if all_mentioned and pending_recommendations:
+                return "decline"
+
+        # Decline prefix phrases (message starts with or contains decline phrases)
+        decline_phrases = {
+            "no", "no gracias", "no, gracias", "solo eso", "solo eso gracias",
+            "con eso estoy", "solo lo que elegi", "nada mas", "nada más",
+            "no gracias solo",
+        }
+        if normalized in decline_phrases:
+            return "decline"
+
+        # "no gracias, solo el X" — starts with decline phrase
+        decline_prefixes = ("no gracias", "no, gracias", "no ")
+        if any(normalized.startswith(prefix) for prefix in decline_prefixes):
+            # Ensure there's no affirmative add-on selection
+            if not has_affirmative:
+                return "decline"
+
+        # "Solo quiero lo que elegí" pattern
+        solo_patterns = ("solo quiero", "solo lo que", "solo eso")
+        if any(pat in normalized for pat in solo_patterns):
+            return "decline"
+
+        # Check positive add-on selection without full affirmative context
+        # but skip if the message looks like a question (no affirmative signal)
+        question_tokens = ("?", "cuanto", "cuánto", "como", "cómo", "que es", "qué es")
+        is_question = any(tok in normalized for tok in question_tokens) or "?" in message
+        if not is_question:
+            for rec in pending_recommendations or []:
+                rec_norm = cls._normalize_text(rec)
+                if rec_norm in normalized:
+                    return "accept"
+
+        return "unknown"
+
+    @classmethod
+    def _is_explicit_booking_cancel(cls, message: str) -> bool:
+        """
+        Return True when message contains an explicit booking cancellation phrase.
+        Alias for _message_is_explicit_cancellation.
+
+        Accepts: "cancelar", "cancelalo", "anular", etc.
+        Rejects: "no gracias" (which is an add-on decline, not a booking cancel).
+        """
+        normalized = cls._normalize_text(message)
+        return any(
+            phrase in normalized
+            for phrase in (
+                "cancelar",
+                "cancelalo",
+                "cancelala",
+                "cancela",
+                "anular",
+                "anulalo",
+                "anulala",
+            )
+        )
+
+    @classmethod
     def _has_booking_content(cls, message: str) -> bool:
         normalized = cls._normalize_text(message)
         return any(token in normalized for token in _BOOKING_CONTENT_TOKENS)
@@ -271,6 +403,44 @@ class BookingMode(BaseModeNode):
                 "mejor no",
             )
         )
+
+    @classmethod
+    def _resolve_slot_from_message(cls, message: str, offered_slots: list[dict]) -> dict | None:
+        """
+        Try to resolve a user message to a specific slot from offered_slots.
+
+        Matching strategy:
+        1. Numeric index: "1" → offered_slots[0], "2" → offered_slots[1], etc.
+        2. Returns None if the message cannot be matched to any slot.
+
+        Args:
+            message: Raw user message text.
+            offered_slots: List of slot dicts with at least {"id", "date", "time"}.
+
+        Returns:
+            The matched slot dict, or None if no match.
+        """
+        if not offered_slots:
+            return None
+
+        normalized = cls._normalize_text(message).strip()
+
+        # Strategy 1: numeric index
+        if normalized.isdigit():
+            idx = int(normalized) - 1
+            if 0 <= idx < len(offered_slots):
+                return offered_slots[idx]
+
+        # Strategy 2: partial time match ("10:00", "12:30")
+        for slot in offered_slots:
+            slot_time = str(slot.get("time", ""))
+            slot_date = str(slot.get("date", ""))
+            if slot_time and slot_time in message:
+                return slot
+            if slot_date and slot_date in message:
+                return slot
+
+        return None
 
     @classmethod
     def _recommended_services_from_message(
@@ -949,6 +1119,74 @@ class BookingMode(BaseModeNode):
         from agent.tools.info_tools import query_info
         from agent.tools.search_services import search_services
 
+        # BUG-NEW-2 FIX: If service_query + service_audience_hint are in context,
+        # call search_services directly with the audience parameter instead of
+        # relying on the LLM tool loop (which lacks audience parameter support).
+        service_query = mode_context.get("service_query")
+        service_audience_hint = mode_context.get("service_audience_hint")
+        if service_query and not mode_context.get("service_name"):
+            self.logger.info(
+                "BookingMode._handle_service_selection: direct search_services call "
+                "with query=%r audience=%r",
+                service_query,
+                service_audience_hint,
+            )
+            search_result = await search_services.ainvoke({
+                "query": service_query,
+                "category": None,
+                "audience": service_audience_hint,
+            })
+            # Apply the search result to mode_context and then run the agentic loop
+            # to generate the LLM response
+            updated_context = dict(mode_context)
+            if isinstance(search_result, dict):
+                if "resolved_service" in search_result:
+                    svc = search_result["resolved_service"]
+                    updated_context["service_name"] = svc.get("name", "")
+                    updated_context["service_id"] = svc.get("id")
+                    updated_context["service_category"] = svc.get("category", "")
+                    updated_context["service_duration_minutes"] = svc.get("duration_minutes")
+                    updated_context["service_family"] = svc.get("family")
+                    updated_context["pending_recommendations"] = svc.get("combo_recommendations") or []
+                    updated_context.pop("service_query", None)
+                elif "clarification_needed" in search_result:
+                    updated_context["pending_clarification"] = search_result["clarification_needed"]
+                    updated_context.pop("service_query", None)
+                elif "services" in search_result:
+                    updated_context["candidate_services"] = search_result.get("services", [])
+                    updated_context.pop("service_query", None)
+
+            if self._use_optimized_prompts():
+                messages = await self._build_layered_messages(
+                    state, updated_context, step_name=STEP_SERVICE_SELECTION
+                )
+            else:
+                messages = self._build_messages(state, _SYSTEM_SERVICE_SELECTION)
+            result = await self._run_agentic_loop(messages, tools=[])
+
+            next_step, final_context = self._advance_step(
+                result, BookingSubstep.SERVICE_SELECTION, updated_context
+            )
+            return {
+                **self._response_updates(state, result.response_text),
+                "mode_context": self._finalize_mode_context(
+                    final_context,
+                    next_step,
+                    BookingSubstep.SERVICE_SELECTION,
+                ),
+                "last_node": "booking",
+                "user_message": None,
+            }
+
+        # Intent carry-over: consume opening_booking_request as implicit_service_hint (once only)
+        opening_booking_request = mode_context.get("opening_booking_request")
+        if opening_booking_request and not mode_context.get("service_name"):
+            mode_context = {
+                **mode_context,
+                "implicit_service_hint": opening_booking_request,
+                "opening_booking_request": None,  # consume — once only
+            }
+
         # BUG-1D FIX: If there's a pending clarification, try to parse the user's
         # answer before running the agentic loop. If we can resolve it directly
         # from the options list, skip the LLM search_services call entirely.
@@ -1419,6 +1657,76 @@ class BookingMode(BaseModeNode):
         if start_date_hint:
             updated_context["availability_start_date"] = start_date_hint
 
+        # ADR-1: Slot Invalid-Input Recovery Guard
+        # When offered_slots are in context, try to resolve the user's reply
+        # to a specific slot before falling through to the LLM loop.
+        offered_slots = updated_context.get("offered_slots")
+        if offered_slots:
+            resolved_slot = self._resolve_slot_from_message(user_message, offered_slots)
+            if resolved_slot:
+                # Valid slot selected — clear the invalid counter and advance
+                slot_summary = (
+                    resolved_slot.get("start_time")
+                    or f"{resolved_slot.get('date', '')} {resolved_slot.get('time', '')}".strip()
+                    or "fecha seleccionada"
+                )
+                updated_context["selected_slot"] = resolved_slot
+                updated_context["slot_summary"] = slot_summary
+                updated_context.pop("slot_invalid_count", None)  # clear counter
+
+                # Advance deterministically to CUSTOMER_NAME (slot resolved, has_slots=True)
+                # We bypass _advance_step to avoid requiring tool_results["slot_interpretation"]
+                next_step = BookingSubstep.CUSTOMER_NAME
+
+                # Generate LLM confirmation for the selected slot
+                if self._use_optimized_prompts():
+                    messages = await self._build_layered_messages(
+                        state, updated_context, step_name=STEP_SLOT_SELECTION
+                    )
+                else:
+                    service_name = updated_context.get("service_name", "el servicio")
+                    stylist_name = updated_context.get("stylist_name", "cualquier estilista")
+                    duration_minutes = updated_context.get("service_duration_minutes")
+                    duration_hint = (
+                        f" | Duración aprox.: {duration_minutes} min" if duration_minutes else ""
+                    )
+                    system = _SYSTEM_SLOT_SELECTION.format(
+                        service_name=service_name,
+                        stylist_name=stylist_name,
+                        duration_hint=duration_hint,
+                    )
+                    messages = self._build_messages(state, system)
+                result = await self._run_agentic_loop(messages, tools=[])
+
+                return {
+                    **self._response_updates(state, result.response_text),
+                    "mode_context": self._finalize_mode_context(
+                        updated_context,
+                        next_step,
+                        BookingSubstep.SLOT_SELECTION,
+                    ),
+                    "last_node": "booking",
+                    "user_message": None,
+                }
+            else:
+                # Could not resolve — invalid selection
+                invalid_count = updated_context.get("slot_invalid_count", 0) + 1
+                if invalid_count < SLOT_INVALID_INPUT_MAX:
+                    # Below cap: rephrase deterministically, do NOT increment no_progress_turns
+                    updated_context["slot_invalid_count"] = invalid_count
+                    updated_context["booking_step"] = BookingSubstep.SLOT_SELECTION.value
+                    rephrase_msg = (
+                        "¿Podés escribir el número del horario? "
+                        "Por ejemplo, '1' para el primer horario, '2' para el segundo, etc."
+                    )
+                    return {
+                        **self._response_updates(state, rephrase_msg),
+                        "mode_context": updated_context,
+                        "last_node": "booking",
+                        "user_message": None,
+                    }
+                # At/above cap: fall through to LLM loop for genuine confusion handling
+
         if self._use_optimized_prompts():
             messages = await self._build_layered_messages(
                 state, updated_context, step_name=STEP_SLOT_SELECTION
@@ -1590,6 +1898,12 @@ class BookingMode(BaseModeNode):
             result, BookingSubstep.CONFIRMATION, mode_context
         )
 
+        # FIX BUG-001: If user confirmed and we advanced to COMPLETED step,
+        # execute booking immediately in the same turn instead of deferring to next turn.
+        # This prevents phantom confirmations where user sees "confirmada" but appointment isn't created.
+        if next_step == BookingSubstep.COMPLETED:
+            return await self._handle_completed(state, updated_context)
+
         return {
             **self._response_updates(state, result.response_text),
             "mode_context": self._finalize_mode_context(
@@ -1644,47 +1958,99 @@ class BookingMode(BaseModeNode):
         # Build services list: prefer resolved service_name, fallback to empty list
         services_list = self._selected_services(mode_context)
 
-        try:
-            booking_result = await book.ainvoke({
-                "customer_id": customer_id,
-                "first_name": first_name,
-                "last_name": None,
-                "notes": notes if notes else None,
-                "services": services_list,
-                "stylist_id": stylist_id or "",
-                "start_time": selected_slot.get("start_time", ""),
-                "conversation_id": conversation_id,
-            })
+        # ADR-2: Bounded retry — attempt book() up to _BOOK_MAX_ATTEMPTS times
+        book_payload = {
+            "customer_id": customer_id,
+            "first_name": first_name,
+            "last_name": None,
+            "notes": notes if notes else None,
+            "services": services_list,
+            "stylist_id": stylist_id or "",
+            "start_time": selected_slot.get("start_time", ""),
+            "conversation_id": conversation_id,
+        }
+        last_exc: Exception | None = None
+        for attempt in range(_BOOK_MAX_ATTEMPTS):
+            try:
+                booking_result = await book.ainvoke(book_payload)
 
-            # Check both explicit error key and success=False
-            if not booking_result.get("success", True):
-                error_text = booking_result.get("error") or (
-                    f"Booking failed (code={booking_result.get('error_code', 'unknown')})"
+                # ADR-2 idempotency: if attempt ≥ 1 and error is SLOT_TAKEN/already booked,
+                # treat as success (attempt 1 committed, response was lost)
+                if attempt >= 1:
+                    exc_str = str(last_exc or "")
+                    if any(
+                        token in exc_str.upper()
+                        for token in ("SLOT_TAKEN", "ALREADY BOOKED", "ALREADY_BOOKED")
+                    ):
+                        # Booking already exists — treat as success
+                        self.logger.warning(
+                            "_handle_completed: idempotency guard triggered on attempt %d "
+                            "(SLOT_TAKEN → treating as success)",
+                            attempt + 1,
+                        )
+                        error_text = None
+                        break
+
+                # Check both explicit error key and success=False
+                if not booking_result.get("success", True):
+                    error_text = booking_result.get("error") or (
+                        f"Booking failed (code={booking_result.get('error_code', 'unknown')})"
+                    )
+                elif "error" in booking_result:
+                    error_text = booking_result["error"]
+                else:
+                    error_text = None
+
+                if not error_text:
+                    break  # Success — exit retry loop
+
+                self.logger.warning(
+                    "_handle_completed: book() returned error on attempt %d: %s",
+                    attempt + 1, error_text
                 )
-            elif "error" in booking_result:
-                error_text = booking_result["error"]
-        except Exception as exc:
-            self.logger.error(
-                "BookingMode._handle_completed: book() failed: %s", exc
-            )
-            error_text = str(exc)
+                last_exc = Exception(error_text)
+
+            except Exception as exc:
+                last_exc = exc
+                self.logger.warning(
+                    "_handle_completed: book() raised exception on attempt %d: %s",
+                    attempt + 1, exc
+                )
+                # ADR-2 idempotency: if retry exception contains SLOT_TAKEN, treat as success
+                exc_str = str(exc).upper()
+                if any(
+                    token in exc_str
+                    for token in ("SLOT_TAKEN", "ALREADY BOOKED", "ALREADY_BOOKED")
+                ):
+                    self.logger.warning(
+                        "_handle_completed: idempotency guard triggered (SLOT_TAKEN exception) "
+                        "on attempt %d — treating as success",
+                        attempt + 1,
+                    )
+                    error_text = None
+                    booking_result = {}
+                    break
+                error_text = str(exc)
 
         if error_text:
+            # Both attempts failed — user-safe error message (ADR-2)
+            safe_msg = "Hubo un problema al confirmar tu turno. Por favor intentá de nuevo en un momento."
             if self._use_optimized_prompts():
                 messages = await self._build_layered_messages(
                     state, mode_context, step_name="error"
                 )
+                result = await self._run_agentic_loop(messages, tools=[])
+                response_text = result.response_text
             else:
-                messages = self._build_messages(state, _SYSTEM_ERROR)
-            result = await self._run_agentic_loop(messages, tools=[])
-            # T2.2: Preserve mode_context with last_error; T2.3: increment error_count
+                response_text = safe_msg
+            # T2.2: Preserve mode_context with last_error (no raw error in prompt — ADR-2)
             return {
                 **updates,
-                **self._response_updates(state, result.response_text),
+                **self._response_updates(state, response_text),
                 "mode_context": {
                     **mode_context,
                     "booking_step": BookingSubstep.CONFIRMATION.value,
-                    "last_error": error_text,
+                    "last_error": "booking_failed",  # sanitized flag, not raw error text
                 },
                 "error_count": state.get("error_count", 0) + 1,
                 "last_node": "booking",

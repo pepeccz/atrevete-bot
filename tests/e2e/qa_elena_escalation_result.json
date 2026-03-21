@@ -1,0 +1,150 @@
+{
+  "run_id": "243ab857bb37",
+  "flow_id": "escalation",
+  "persona_id": "elena_escalation_client",
+  "conversation_id": "qa_elena_escalation_243ab857bb37",
+  "customer_phone": "+34999243857",
+  "outcome": "dead_loop",
+  "termination_reason": "Dead loop at milestone 'handoff_offered' for 3 consecutive turns",
+  "milestone_reached": "handoff_offered",
+  "total_turns": 4,
+  "total_duration_ms": 32772,
+  "turns": [
+    {
+      "turn_number": 0,
+      "user_message": "Me cobraron mal en mi último turno",
+      "bot_reply": "¡Hola! 🌸 Soy Maite, la asistenta virtual con IA de Atrévete Peluquería. Entendido. He avisado a nuestro equipo y te atenderán personalmente en breve. 🙏",
+      "latency_ms": 9644,
+      "timed_out": false,
+      "milestone_reached": "handoff_offered",
+      "flow_status": "in_progress",
+      "bugs": [],
+      "should_stop": false,
+      "stop_reason": "",
+      "next_user_message": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+      "timestamp_sent": "2026-03-20T19:01:35.890908+00:00",
+      "timestamp_received": "2026-03-20T19:01:45.535322+00:00",
+      "tool_evidence": [],
+      "raw_payloads_count": 1
+    },
+    {
+      "turn_number": 1,
+      "user_message": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+      "bot_reply": "Ya he contactado con nuestro equipo. Te atenderán en breve. 🙏 ¿Hay algo más en lo que pueda ayudarte mientras esperás?",
+      "latency_ms": 3028,
+      "timed_out": false,
+      "milestone_reached": "handoff_offered",
+      "flow_status": "in_progress",
+      "bugs": [],
+      "should_stop": false,
+      "stop_reason": "",
+      "next_user_message": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+      "timestamp_sent": "2026-03-20T19:01:48.840505+00:00",
+      "timestamp_received": "2026-03-20T19:01:51.868800+00:00",
+      "tool_evidence": [],
+      "raw_payloads_count": 1
+    },
+    {
+      "turn_number": 2,
+      "user_message": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+      "bot_reply": "Ya he contactado con nuestro equipo. Te atenderán en breve. 🙏 ¿Hay algo más en lo que pueda ayudarte mientras esperás?",
+      "latency_ms": 3030,
+      "timed_out": false,
+      "milestone_reached": "handoff_offered",
+      "flow_status": "in_progress",
+      "bugs": [],
+      "should_stop": false,
+      "stop_reason": "",
+      "next_user_message": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+      "timestamp_sent": "2026-03-20T19:01:54.878038+00:00",
+      "timestamp_received": "2026-03-20T19:01:57.908201+00:00",
+      "tool_evidence": [],
+      "raw_payloads_count": 1
+    },
+    {
+      "turn_number": 3,
+      "user_message": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+      "bot_reply": "Ya he contactado con nuestro equipo. Te atenderán en breve. 🙏 ¿Hay algo más en lo que pueda ayudarte mientras esperás?",
+      "latency_ms": 3069,
+      "timed_out": false,
+      "milestone_reached": "handoff_offered",
+      "flow_status": "in_progress",
+      "bugs": [],
+      "should_stop": false,
+      "stop_reason": "",
+      "next_user_message": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+      "timestamp_sent": "2026-03-20T19:02:00.914918+00:00",
+      "timestamp_received": "2026-03-20T19:02:03.983992+00:00",
+      "tool_evidence": [],
+      "raw_payloads_count": 1
+    }
+  ],
+  "final_state": {
+    "conversation_id": "qa_elena_escalation_243ab857bb37",
+    "customer_phone": "+34999243857",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Me cobraron mal en mi último turno",
+        "timestamp": "2026-03-20T20:01:44.943511+01:00"
+      },
+      {
+        "role": "assistant",
+        "content": "¡Hola! 🌸 Soy Maite, la asistenta virtual con IA de Atrévete Peluquería. Entendido. He avisado a nuestro equipo y te atenderán personalmente en breve. 🙏",
+        "timestamp": "2026-03-20T20:01:45.527593+01:00"
+      },
+      {
+        "role": "user",
+        "content": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+        "timestamp": "2026-03-20T20:01:51.850987+01:00"
+      },
+      {
+        "role": "assistant",
+        "content": "Ya he contactado con nuestro equipo. Te atenderán en breve. 🙏 ¿Hay algo más en lo que pueda ayudarte mientras esperás?",
+        "timestamp": "2026-03-20T20:01:51.861304+01:00"
+      },
+      {
+        "role": "user",
+        "content": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+        "timestamp": "2026-03-20T20:01:57.887669+01:00"
+      },
+      {
+        "role": "assistant",
+        "content": "Ya he contactado con nuestro equipo. Te atenderán en breve. 🙏 ¿Hay algo más en lo que pueda ayudarte mientras esperás?",
+        "timestamp": "2026-03-20T20:01:57.899753+01:00"
+      },
+      {
+        "role": "user",
+        "content": "Sí, prefiero hablar con alguien del equipo. ¿Cuándo me pueden contactar?",
+        "timestamp": "2026-03-20T20:02:03.934500+01:00"
+      },
+      {
+        "role": "assistant",
+        "content": "Ya he contactado con nuestro equipo. Te atenderán en breve. 🙏 ¿Hay algo más en lo que pueda ayudarte mientras esperás?",
+        "timestamp": "2026-03-20T20:02:03.967581+01:00"
+      }
+    ],
+    "user_message": null,
+    "total_message_count": 8,
+    "escalation_triggered": true,
+    "last_node": "escalation",
+    "updated_at": "2026-03-20T20:02:03.967758+01:00",
+    "is_first_interaction": false,
+    "ai_disclosure_sent": true,
+    "pending_whatsapp_name": "Elena QA",
+    "pending_confirmation_appointment_id": null,
+    "current_mode": "ESCALATION",
+    "previous_mode": "GREETING",
+    "mode_context": {
+      "last_intent": "escalate",
+      "last_intent_confidence": 0.9
+    },
+    "mode_history": [
+      "GREETING"
+    ],
+    "draft_contexts": {},
+    "customer_id": null,
+    "customer_name": null
+  },
+  "bugs_summary": []
+}

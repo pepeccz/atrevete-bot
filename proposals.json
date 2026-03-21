@@ -1,0 +1,32 @@
+[
+  {
+    "title": "Fix booking confirmation step — execute book() on same turn",
+    "intent": "When user confirms, appointment is created immediately, not deferred to next turn",
+    "scope": "booking_mode.py + integration tests",
+    "approach": "Modify _handle_confirmation in booking_mode.py to call book() tool directly when advancing to completed step, rather than just updating booking_step. Ensure the book() result is processed in the same turn via _apply_tool_flags and appropriate state updates.",
+    "risks": "Potential for double booking if book() is called twice due to rapid user messages. Need to ensure idempotency guards are in place. Also need to handle book() failure cases properly in the same turn flow.",
+    "acceptance_criteria": "appointment_created=True after confirm turn, not just step=\"completed\". DB should show appointment created immediately after user confirmation without requiring another message.",
+    "testing_strategy": "Update existing booking flow tests to verify appointment creation happens in confirmation turn. Add specific test for the Carlos phantom confirmation scenario. Verify both success and error paths of book() are handled correctly in same turn.",
+    "effort_estimate": "small"
+  },
+  {
+    "title": "Fix escalation mode — structured intake + proper tool integration",
+    "intent": "Escalation should capture issue details + contact preference BEFORE handing off",
+    "scope": "escalation_mode.py, state/schemas.py, router rule, escalation_tools.py",
+    "approach": "Implement a multi-step escalation flow: 1) Collect issue description, 2) Collect contact preference, 3) Execute handoff with correct tool parameters. Fix router to not perpetually loop back to ESCALATION after handoff. Correct tool parameter names in escalation_tools.py to match service expectations (add underscores).",
+    "risks": "Increased complexity may introduce new failure points. Need to ensure proper state cleanup after escalation. Risk of breaking existing integrations if tool parameter changes aren't matched in service layer.",
+    "acceptance_criteria": "Elena's flow captures issue + contact + calls tool with correct params. After handoff, bot should not continue replying or should provide clear handoff confirmation.",
+    "testing_strategy": "Create test cases for the full escalation intake flow. Verify tool is called with correct parameters including _conversation_id and _customer_phone. Test that router properly transitions out of ESCALATION after handoff completion.",
+    "effort_estimate": "medium"
+  },
+  {
+    "title": "Fix greeting duplication and action narration",
+    "intent": "Single greeting, no future-action narration in responses",
+    "scope": "greeting_mode.py, prompts (general.md, recovery.md, critical_rules.md), runtime guard",
+    "approach": "Remove greeting request from system prompt assembly in base.py since legal disclosure is prepended in code. Audit and remove action narration examples from all prompt files. Implement runtime response guard that strips prohibited prefixes like 'voy a', 'déjame', 'vamos a' from LLM responses before sending to user.",
+    "risks": "Over-aggressive stripping might remove legitimate phrases that happen to contain prohibited substrings. Need to ensure greeting removal doesn't break other modes that legitimately need to greet. Runtime guard might affect performance if not implemented efficiently.",
+    "acceptance_criteria": "One greeting phrase, no \"voy a\" / \"déjame\" narration. User should hear exactly one greeting at start of conversation, and no responses should contain future-action narration.",
+    "testing_strategy": "Add tests to verify single greeting in GREETING mode. Add tests to verify absence of narration phrases in booking and general mode responses. Manual QA verification of Luis and Carlos flows to confirm fixes.",
+    "effort_estimate": "small"
+  }
+]

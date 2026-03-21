@@ -30,6 +30,7 @@ class AgenticLoopResult:
     response_text: str
     tool_results: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    tool_events: list[Any] = field(default_factory=list)
 
 
 # ============================================================================
@@ -218,10 +219,35 @@ class BaseModeNode(ABC):
 
     @staticmethod
     def _sanitize_response(text: str) -> str:
-        """Strip pseudo-tool-call text from LLM output before user delivery."""
+        """
+        Strip pseudo-tool-call text and action narration from LLM output before user delivery.
+        
+        Removes patterns like:
+        - "Voy a..." (upcoming actions)
+        - "Déjame..." (let me/me deixa)
+        - "Ahora voy a..." (now I'm going to)
+        - "Un momento..." (one moment)
+        - "Permíteme..." (allow me)
+        """
         cleaned = _TOOL_CALL_PATTERN.sub("", text)
+        
+        # Strip action narration sentences (only if at sentence start)
+        # These indicate the LLM is narrating upcoming tool calls instead of executing silently
+        narration_patterns = [
+            r"^Voy a\s+.*?\.\s*",  # Voy a buscar... / Voy a confirmar...
+            r"^Déjame\s+.*?\.\s*",  # Déjame buscar... / Déjame ayudarte...
+            r"^Ahora voy a\s+.*?\.\s*",  # Ahora voy a...
+            r"^Un momento.*?\.\s*",  # Un momento, déjame...
+            r"^Permíteme\s+.*?\.\s*",  # Permíteme...
+            r"^Claro,? voy a\s+.*?\.\s*",  # Claro, voy a...
+        ]
+        for pattern in narration_patterns:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.MULTILINE | re.IGNORECASE)
+        
+        # Clean up excess whitespace
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        return cleaned.strip()
+        cleaned = cleaned.strip()
+        return cleaned
 
     def _maybe_prepend_intro(
         self,

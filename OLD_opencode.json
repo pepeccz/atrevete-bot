@@ -1,5 +1,5 @@
 {
-  "agents": {
+  "agent": {
     "atrevete-qa-tester": {
       "mode": "subagent",
       "description": "Executes conversational QA scenarios through Redis Streams and Pub/Sub capture.",

@@ -347,6 +347,11 @@ def build_step_context(
             f"Sin disponibilidad para {stylist_name} en el rango solicitado"
         )
 
+    # Intent carry-over: include implicit_service_hint if present (once-only pattern)
+    implicit_service_hint = mode_context.get("implicit_service_hint")
+    if implicit_service_hint:
+        collected_data.append(f"Petición original de la clienta: {implicit_service_hint}")
+
     if collected_data:
         parts.append("\nDatos recopilados:")
         for item in collected_data:
