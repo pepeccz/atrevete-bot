@@ -125,6 +125,34 @@ class TestBookingModeInitialStep:
         mode_context = result.get("mode_context", {})
         assert mode_context.get("booking_step") == "service_selection"
 
+    async def test_service_selection_extracts_variant_from_service_phrase(self):
+        """A phrase like 'corte caballero' should populate both query and audience hint."""
+        mode = make_booking_mode()
+        state = make_state_with_step(booking_step="service_selection")
+        state["messages"] = [
+            {
+                "role": "user",
+                "content": "Un corte caballero con Luciana, esta semana a la manana",
+                "timestamp": "2026-03-21T10:00:00+01:00",
+            }
+        ]
+        handler_result = {
+            "mode_context": {"booking_step": "service_selection"},
+            "last_node": "booking",
+            "user_message": None,
+        }
+
+        with patch.object(
+            mode,
+            "_handle_service_selection",
+            new=AsyncMock(return_value=handler_result),
+        ) as handler_mock:
+            await mode.handle(state, make_intent())
+
+        forwarded_context = handler_mock.await_args.args[1]
+        assert forwarded_context["service_audience_hint"] == "adult_male"
+        assert forwarded_context["service_query"] == "corte"
+
 
 # =============================================================================
 # Cancel at any step

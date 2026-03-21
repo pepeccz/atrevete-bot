@@ -101,6 +101,96 @@ _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset({
     "adulto",
 })
 
+_AUDIENCE_HINT_MAP: dict[str, str] = {
+    "caballero": "adult_male",
+    "hombre": "adult_male",
+    "adulto": "adult_male",
+    "dama": "adult_female",
+    "mujer": "adult_female",
+    "adulta": "adult_female",
+    "nino": "child_male",
+    "nene": "child_male",
+    "nina": "child_female",
+    "nena": "child_female",
+    "bebe": "baby",
+}
+
+_SERVICE_QUERY_STOPWORDS: frozenset[str] = frozenset({
+    "a",
+    "al",
+    "con",
+    "de",
+    "del",
+    "el",
+    "ella",
+    "en",
+    "esta",
+    "este",
+    "hola",
+    "la",
+    "las",
+    "lo",
+    "los",
+    "me",
+    "mi",
+    "necesito",
+    "para",
+    "por",
+    "queria",
+    "quiero",
+    "reservar",
+    "seria",
+    "su",
+    "te",
+    "turno",
+    "un",
+    "una",
+    "unos",
+    "unas",
+    "ya",
+})
+
+_SERVICE_QUERY_BOUNDARY_TOKENS: frozenset[str] = frozenset({
+    "abril",
+    "agosto",
+    "ahora",
+    "ano",
+    "dia",
+    "dias",
+    "diciembre",
+    "domingo",
+    "enero",
+    "esta",
+    "febrero",
+    "franja",
+    "hoy",
+    "hora",
+    "horario",
+    "julio",
+    "junio",
+    "lunes",
+    "manana",
+    "marzo",
+    "martes",
+    "mayo",
+    "miercoles",
+    "noche",
+    "noviembre",
+    "octubre",
+    "pasada",
+    "pasado",
+    "proxima",
+    "proximo",
+    "sabado",
+    "semana",
+    "siguiente",
+    "tarde",
+    "temprano",
+    "viene",
+    "viernes",
+    "ya",
+})
+
 # ── Booking sub-steps ─────────────────────────────────────────────────────────
 STEP_SERVICE_SELECTION = BookingSubstep.SERVICE_SELECTION.value
 STEP_ADD_ONS = BookingSubstep.ADD_ONS.value
@@ -197,6 +287,38 @@ class BookingMode(BaseModeNode):
         raw = (value or "").strip().lower()
         normalized = unicodedata.normalize("NFKD", raw)
         return "".join(char for char in normalized if not unicodedata.combining(char))
+
+    @classmethod
+    def _extract_service_audience_hint(cls, value: str | None) -> str | None:
+        normalized = cls._normalize_text(value)
+        if not normalized:
+            return None
+
+        for token, hint in _AUDIENCE_HINT_MAP.items():
+            if re.search(rf"\b{re.escape(token)}\b", normalized):
+                return hint
+
+        return None
+
+    @classmethod
+    def _extract_service_query(cls, message: str | None) -> str | None:
+        normalized = cls._normalize_text(message)
+        if not normalized:
+            return None
+
+        segment = normalized.split(",", 1)[0]
+        if " con " in f" {segment} ":
+            segment = segment.split(" con ", 1)[0]
+
+        cleaned_tokens: list[str] = []
+        for token in re.findall(r"[a-z0-9]+", segment):
+            if token in _SERVICE_QUERY_BOUNDARY_TOKENS:
+                break
+            if token in _AUDIENCE_HINT_MAP or token in _SERVICE_QUERY_STOPWORDS:
+                continue
+            cleaned_tokens.append(token)
+
+        return " ".join(cleaned_tokens).strip() or None
 
     def _contains_customer_name_token(
         self,
@@ -956,6 +1078,19 @@ class BookingMode(BaseModeNode):
         intent_signal = getattr(intent, "intent", "") if intent else ""
         user_message = self._get_last_user_message(state)
 
+        if current_step == BookingSubstep.SERVICE_SELECTION and user_message.strip():
+            extracted_audience_hint = self._extract_service_audience_hint(user_message)
+            if extracted_audience_hint and not mode_context.get("service_audience_hint"):
+                mode_context["service_audience_hint"] = extracted_audience_hint
+
+            extracted_service_query = self._extract_service_query(user_message)
+            if (
+                extracted_service_query
+                and not mode_context.get("service_name")
+                and not mode_context.get("service_query")
+            ):
+                mode_context["service_query"] = extracted_service_query
+
         self.logger.info(
             "BookingMode.handle | conversation=%s | step=%s | intent=%s | context_keys=%s",
             conversation_id,
@@ -1215,6 +1350,9 @@ class BookingMode(BaseModeNode):
                     updated_context["service_duration_minutes"] = svc.get("duration_minutes")
                     updated_context["service_family"] = svc.get("family")
                     updated_context["pending_recommendations"] = svc.get("combo_recommendations") or []
+                    inferred_audience_hint = self._extract_service_audience_hint(svc.get("name"))
+                    if inferred_audience_hint and not updated_context.get("service_audience_hint"):
+                        updated_context["service_audience_hint"] = inferred_audience_hint
                     updated_context.pop("service_query", None)
                 elif "clarification_needed" in search_result:
                     updated_context["pending_clarification"] = search_result["clarification_needed"]
@@ -2327,6 +2465,9 @@ class BookingMode(BaseModeNode):
                         "service_duration_minutes", svc.get("duration_minutes")
                     )
                     updated_context.setdefault("service_family", svc.get("family"))
+                    inferred_audience_hint = self._extract_service_audience_hint(svc.get("name"))
+                    if inferred_audience_hint and not updated_context.get("service_audience_hint"):
+                        updated_context["service_audience_hint"] = inferred_audience_hint
                     selected_services = self._selected_services(updated_context)
                     if svc.get("name") and svc.get("name") not in selected_services:
                         selected_services = [svc.get("name"), *selected_services]
@@ -2349,6 +2490,14 @@ class BookingMode(BaseModeNode):
                     clarification = envelope["clarification_needed"]
                     clarification_options = clarification.get("options", [])
                     audience_hint = updated_context.get("service_audience_hint")
+                    if not audience_hint and clarification.get("axis") == "audience":
+                        audience_hint = self._extract_service_audience_hint(
+                            updated_context.get("service_name")
+                        ) or self._extract_service_audience_hint(
+                            updated_context.get("service_query")
+                        )
+                        if audience_hint:
+                            updated_context["service_audience_hint"] = audience_hint
                     prior_bookings_category = updated_context.get("prior_bookings_category")
 
                     _auto_resolved_value: str | None = None
@@ -2429,6 +2578,9 @@ class BookingMode(BaseModeNode):
                         updated_context.setdefault(
                             "service_duration_minutes", svc.get("duration_minutes")
                         )
+                        inferred_audience_hint = self._extract_service_audience_hint(svc.get("name"))
+                        if inferred_audience_hint and not updated_context.get("service_audience_hint"):
+                            updated_context["service_audience_hint"] = inferred_audience_hint
                         updated_context["selected_services"] = self._selected_services(updated_context)
                         updated_context.pop("pending_clarification", None)
                     # Multiple services → LLM presents options, no auto-advance

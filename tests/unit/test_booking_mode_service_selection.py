@@ -271,6 +271,45 @@ class TestResolvedServiceEnvelope:
 
         assert "pending_clarification" not in ctx
 
+    def test_audience_clarification_auto_resolves_from_service_query(self):
+        """service_query carrying 'caballero' should skip audience clarification loops."""
+        mode = _make_mode()
+        envelope = {
+            "clarification_needed": {
+                "axis": "audience",
+                "question_hint": "¿Es para caballero, dama, nino o nina?",
+                "options": [
+                    {
+                        "label": "Caballero",
+                        "value": "adult_male",
+                        "service_name": "Corte Caballero",
+                        "service_id": "svc-uuid-caballero",
+                        "duration_minutes": 30,
+                    },
+                    {
+                        "label": "Dama / Senora",
+                        "value": "adult_female",
+                        "service_name": "Corte Dama",
+                        "service_id": "svc-uuid-dama",
+                        "duration_minutes": 45,
+                    },
+                ],
+            },
+            "count": 0,
+            "query": "corte caballero",
+        }
+
+        next_step, ctx = mode._advance_step(
+            _make_result({"search_services": envelope}),
+            STEP_SERVICE_SELECTION,
+            {"service_query": "corte caballero"},
+        )
+
+        assert next_step == _booking_mod.BookingSubstep.ADD_ONS
+        assert ctx["service_audience_hint"] == "adult_male"
+        assert ctx["service_name"] == "Corte Caballero"
+        assert "pending_clarification" not in ctx
+
     def test_setdefault_does_not_overwrite_existing_service_name(self):
         """If service_name already in context, resolved_service does not overwrite it."""
         mode = _make_mode()
