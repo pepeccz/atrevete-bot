@@ -346,3 +346,97 @@ async def test_rephrase_message_at_cap_mentions_team_help() -> None:
 
     mock_loop.assert_awaited_once()
     assert result.get("current_mode") != "ESCALATION"
+
+
+# ── T7.1: offered_slots overwrite contract ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_offered_slots_overwritten_on_second_availability_call() -> None:
+    """T2.1: Second availability search replaces prior offers (DESIGN-1)."""
+    mode = make_booking_mode()
+    # Start with stale offers from a prior search
+    state = make_slot_state("el próximo lunes")
+    state["mode_context"]["offered_slots"] = [
+        {"id": "old-slot", "date": "2026-03-23", "time": "09:00", "start_time": "2026-03-23T09:00:00"},
+    ]
+
+    new_slots = [
+        {"id": "new-1", "date": "2026-03-30", "time": "10:00", "start_time": "2026-03-30T10:00:00"},
+        {"id": "new-2", "date": "2026-03-30", "time": "14:00", "start_time": "2026-03-30T14:00:00"},
+    ]
+
+    mock_loop_result = MagicMock()
+    mock_loop_result.response_text = "Aquí tienes los horarios disponibles."
+    mock_loop_result.tool_results = {
+        "find_next_available": {
+            "selected_stylist_slots": new_slots,
+        }
+    }
+    mock_loop_result.tool_events = []
+
+    with (
+        patch.object(mode, "_use_optimized_prompts", return_value=False),
+        patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop,
+    ):
+        mock_loop.return_value = mock_loop_result
+        result = await mode._handle_slot_selection(state, dict(state["mode_context"]))
+
+    mc = result.get("mode_context", {})
+    offered = mc.get("offered_slots", [])
+    # Old slot must be gone — replaced by new results
+    old_ids = {s["id"] for s in offered}
+    assert "old-slot" not in old_ids, "Stale offered_slot must be overwritten"
+    assert len(offered) == 2, "New slots should replace old ones"
+
+
+@pytest.mark.asyncio
+async def test_offered_slots_cleared_on_explicit_empty_result() -> None:
+    """T2.1/T2.2: Recognized-empty tool result clears offered_slots to []."""
+    mode = make_booking_mode()
+    state = make_slot_state("para el próximo jueves")
+    state["mode_context"]["offered_slots"] = [
+        {"id": "stale-slot", "date": "2026-03-24", "time": "10:00", "start_time": "2026-03-24T10:00:00"},
+    ]
+
+    mock_loop_result = MagicMock()
+    mock_loop_result.response_text = "No hay disponibilidad para ese día."
+    # check_availability returns valid response with 0 slots
+    mock_loop_result.tool_results = {
+        "check_availability": {
+            "available_slots": [],
+        }
+    }
+    mock_loop_result.tool_events = []
+
+    with (
+        patch.object(mode, "_use_optimized_prompts", return_value=False),
+        patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop,
+    ):
+        mock_loop.return_value = mock_loop_result
+        result = await mode._handle_slot_selection(state, dict(state["mode_context"]))
+
+    mc = result.get("mode_context", {})
+    # offered_slots must be an explicit empty list, not stale or None
+    assert mc.get("offered_slots") == [], "Empty availability must clear offered_slots to []"
+
+
+def test_interpret_slot_tool_results_unknown_format_logs_error_and_returns_empty(caplog) -> None:
+    """T2.2: Malformed tool payload clears offers and logs an error."""
+    import logging
+
+    mode = make_booking_mode()
+    # Provide a non-dict, non-list payload — unknown format
+    tool_results = {"check_availability": "unexpected string payload"}
+    mode_context: dict = {"stylist_id": "550e8400-e29b-41d4-a716-446655440000"}
+
+    with caplog.at_level(logging.ERROR, logger="agent.modes.booking_mode"):
+        interp = mode._interpret_slot_tool_results(tool_results, mode_context)
+
+    # Must log an error
+    assert any("unrecognized payload" in rec.message.lower() for rec in caplog.records), (
+        "Unknown payload must produce an ERROR log"
+    )
+    # Must surface available_slots=[] for safe recovery
+    assert interp.get("available_slots") == [], "Unknown payload must yield available_slots=[]"
+    assert not interp.get("has_slots"), "Unknown payload must not report has_slots=True"

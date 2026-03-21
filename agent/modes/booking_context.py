@@ -79,7 +79,26 @@ class SlotInterpretation(TypedDict, total=False):
 
 
 class BookingDraftContext(TypedDict, total=False):
-    """Canonical booking draft stored inside mode_context or draft_contexts."""
+    """Canonical booking draft stored inside mode_context or draft_contexts.
+
+    T3.2 Contract — selected_slot:
+        Must be the canonical DTO written by booking_mode._handle_slot_selection after
+        _resolve_slot_from_message() finds a match:
+            {
+                "start_time": str,           # ISO datetime — equals offered_slots[i].full_datetime
+                "date": str,                 # YYYY-MM-DD
+                "time": str,                 # HH:MM
+                "stylist_id": str,           # UUID
+                "stylist_name": str,
+                "duration_minutes": int | None,
+            }
+        book() reads selected_slot["start_time"] for the appointment datetime.
+        Never store raw resolved_slot — always normalize through the DTO builder.
+
+    offered_slots:
+        Always overwritten from the latest availability tool result (DESIGN-1).
+        Each entry guaranteed to have full_datetime via _normalize_slot_entry().
+    """
 
     booking_step: str
     service_id: str
@@ -93,7 +112,7 @@ class BookingDraftContext(TypedDict, total=False):
     recurrent_stylist_id: str | None
     recurrent_stylist_name: str | None
     recurrent_stylist_slot_summary: str | None
-    selected_slot: dict[str, Any]
+    selected_slot: dict[str, Any]  # Canonical DTO: {start_time (ISO), date, time, stylist_id, stylist_name, duration_minutes}
     slot_summary: str
     notes: str | None
     customer_name: str | None
@@ -165,6 +184,10 @@ ALLOWED_TRANSITIONS: dict[BookingSubstep, list[BookingSubstep]] = {
         BookingSubstep.NOTES,
         BookingSubstep.SLOT_SELECTION,
         BookingSubstep.SERVICE_SELECTION,
+        # T5.3: Allow rewind to CUSTOMER_NAME and STYLIST_SELECTION from confirmation
+        # so _booking_payload_ready() can rewind to the earliest broken contract edge.
+        BookingSubstep.CUSTOMER_NAME,
+        BookingSubstep.STYLIST_SELECTION,
     ],
     BookingSubstep.COMPLETED: [],
 }

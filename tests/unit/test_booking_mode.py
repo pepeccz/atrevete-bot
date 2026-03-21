@@ -1751,3 +1751,272 @@ def test_contains_customer_name_token_ignores_short_tokens():
     
     # Test: Single letter should be skipped
     assert mode._contains_customer_name_token("Hola A, ¿cómo estás?", "A") is False
+
+
+# =============================================================================
+# T7.2: Canonical selected_slot DTO + _advance_step happy path
+# =============================================================================
+
+
+class TestCanonicalSelectedSlotDTO:
+    """T3.1 (SDD): Slot picked from offered_slots is written as canonical DTO."""
+
+    def _make_slot_state_with_offers(self, user_message: str) -> dict:
+        state = create_initial_state("conv-slot-dto", "+34600000010")
+        state["customer_name"] = "Carlos"
+        state["current_mode"] = "BOOKING"
+        state["messages"] = [
+            {"role": "user", "content": user_message, "timestamp": "2026-03-26T10:00:00"},
+        ]
+        state["mode_context"] = {
+            "booking_step": BookingSubstep.SLOT_SELECTION.value,
+            "service_id": "svc-dto",
+            "service_name": "Tinte",
+            "stylist_id": "550e8400-e29b-41d4-a716-446655440001",
+            "stylist_name": "Laura",
+            "offered_slots": [
+                {
+                    "id": "sl-a",
+                    "date": "2026-04-01",
+                    "time": "10:00",
+                    "full_datetime": "2026-04-01T10:00:00+02:00",
+                    "stylist_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "stylist": "Laura",
+                    "duration_minutes": 60,
+                },
+                {
+                    "id": "sl-b",
+                    "date": "2026-04-01",
+                    "time": "14:30",
+                    "full_datetime": "2026-04-01T14:30:00+02:00",
+                    "stylist_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "stylist": "Laura",
+                    "duration_minutes": 60,
+                },
+            ],
+        }
+        return state
+
+    @pytest.mark.asyncio
+    async def test_numeric_pick_writes_canonical_dto(self) -> None:
+        """Scenario 2a: numeric pick '1' writes selected_slot with start_time."""
+        mode = make_booking_mode()
+        state = self._make_slot_state_with_offers("1")
+
+        with patch.object(mode, "_use_optimized_prompts", return_value=False):
+            result = await mode._handle_slot_selection(state, dict(state["mode_context"]))
+
+        mc = result.get("mode_context", {})
+        selected = mc.get("selected_slot", {})
+        assert selected.get("start_time") == "2026-04-01T10:00:00+02:00", (
+            "Numeric pick '1' must write start_time from full_datetime"
+        )
+        assert selected.get("date") == "2026-04-01"
+        assert selected.get("time") == "10:00"
+        assert selected.get("stylist_id") == "550e8400-e29b-41d4-a716-446655440001"
+
+    @pytest.mark.asyncio
+    async def test_time_text_pick_writes_canonical_dto(self) -> None:
+        """Scenario 2b: time-based pick '14:30' writes correct slot DTO."""
+        mode = make_booking_mode()
+        state = self._make_slot_state_with_offers("el de las 14:30")
+
+        with patch.object(mode, "_use_optimized_prompts", return_value=False):
+            result = await mode._handle_slot_selection(state, dict(state["mode_context"]))
+
+        mc = result.get("mode_context", {})
+        selected = mc.get("selected_slot", {})
+        assert selected.get("start_time") == "2026-04-01T14:30:00+02:00"
+        assert selected.get("time") == "14:30"
+
+    @pytest.mark.asyncio
+    async def test_affirmation_single_slot_writes_canonical_dto(self) -> None:
+        """Scenario 2c: affirmation with single slot writes canonical DTO."""
+        mode = make_booking_mode()
+        state = self._make_slot_state_with_offers("sí, ese")
+        # Reduce to a single offered slot
+        state["mode_context"]["offered_slots"] = [state["mode_context"]["offered_slots"][0]]
+
+        with patch.object(mode, "_use_optimized_prompts", return_value=False):
+            result = await mode._handle_slot_selection(state, dict(state["mode_context"]))
+
+        mc = result.get("mode_context", {})
+        selected = mc.get("selected_slot", {})
+        assert selected.get("start_time") == "2026-04-01T10:00:00+02:00"
+
+    @pytest.mark.asyncio
+    async def test_slot_pick_advances_to_customer_name_via_advance_step(self) -> None:
+        """T4.1/T4.2: slot selection routes through _advance_step and advances to CUSTOMER_NAME."""
+        mode = make_booking_mode()
+        state = self._make_slot_state_with_offers("2")
+
+        with patch.object(mode, "_use_optimized_prompts", return_value=False):
+            result = await mode._handle_slot_selection(state, dict(state["mode_context"]))
+
+        mc = result.get("mode_context", {})
+        # After a valid slot pick, step must advance past SLOT_SELECTION
+        assert mc.get("booking_step") == BookingSubstep.CUSTOMER_NAME.value, (
+            "_advance_step must return CUSTOMER_NAME when selected_slot.start_time is set"
+        )
+
+
+# =============================================================================
+# T7.3: _booking_payload_ready rewind contract
+# =============================================================================
+
+
+class TestBookingPayloadReadyRewinds:
+    """Verify _booking_payload_ready returns correct rewind steps."""
+
+    def _make_mode(self) -> BookingMode:
+        return BookingMode(tools=[], llm_client=make_mock_llm())
+
+    def _make_state(self, customer_name: str | None = "Ana") -> dict:
+        state = create_initial_state("conv-ready", "+34600000020")
+        state["customer_name"] = customer_name
+        return state
+
+    def test_all_fields_present_returns_ready(self) -> None:
+        """Scenario 4a: all required fields → (True, '', CONFIRMATION)."""
+        mode = self._make_mode()
+        state = self._make_state()
+        ctx = {
+            "stylist_id": "sty-uuid-1",
+            "selected_slot": {"start_time": "2026-04-01T10:00:00+02:00"},
+            "customer_name": "Ana",
+            "service_name": "Corte",
+        }
+        ready, missing, rewind = mode._booking_payload_ready(ctx, state)
+        assert ready is True
+        assert missing == ""
+        assert rewind == BookingSubstep.CONFIRMATION
+
+    def test_missing_stylist_rewinds_to_stylist_selection(self) -> None:
+        """Scenario 4d: missing stylist_id → rewind to STYLIST_SELECTION."""
+        mode = self._make_mode()
+        state = self._make_state()
+        ctx = {
+            "selected_slot": {"start_time": "2026-04-01T10:00:00+02:00"},
+            "customer_name": "Ana",
+            "service_name": "Corte",
+        }
+        ready, missing, rewind = mode._booking_payload_ready(ctx, state)
+        assert ready is False
+        assert rewind == BookingSubstep.STYLIST_SELECTION
+
+    def test_missing_start_time_rewinds_to_slot_selection(self) -> None:
+        """Scenario 4c: empty selected_slot.start_time → rewind to SLOT_SELECTION."""
+        mode = self._make_mode()
+        state = self._make_state()
+        ctx = {
+            "stylist_id": "sty-uuid-1",
+            "selected_slot": {"start_time": ""},
+            "customer_name": "Ana",
+            "service_name": "Corte",
+        }
+        ready, missing, rewind = mode._booking_payload_ready(ctx, state)
+        assert ready is False
+        assert rewind == BookingSubstep.SLOT_SELECTION
+
+    def test_missing_customer_name_rewinds_to_customer_name(self) -> None:
+        """Scenario 4b: missing customer_name → rewind to CUSTOMER_NAME."""
+        mode = self._make_mode()
+        state = self._make_state(customer_name=None)
+        ctx = {
+            "stylist_id": "sty-uuid-1",
+            "selected_slot": {"start_time": "2026-04-01T10:00:00+02:00"},
+            "service_name": "Corte",
+        }
+        ready, missing, rewind = mode._booking_payload_ready(ctx, state)
+        assert ready is False
+        assert rewind == BookingSubstep.CUSTOMER_NAME
+
+    @pytest.mark.asyncio
+    async def test_handle_completed_rewinds_on_missing_slot(self) -> None:
+        """_handle_completed must rewind to SLOT_SELECTION when start_time is empty."""
+        mode = self._make_mode()
+        state = _make_completed_state(customer_id="cust-abc")
+        mode_context = _make_completed_mode_context(
+            selected_slot={"start_time": ""},  # empty — missing field
+            stylist_id="sty-1",
+            service_name="Corte",
+        )
+        # Patch customer_name into state
+        state["customer_name"] = "Ana"
+
+        result = await mode._handle_completed(state, mode_context)
+
+        mc = result.get("mode_context", {})
+        # Must rewind to slot selection — NOT stay in confirmation
+        assert mc.get("booking_step") == BookingSubstep.SLOT_SELECTION.value, (
+            "Missing start_time must rewind to SLOT_SELECTION"
+        )
+        # book() must NOT have been called
+        messages = result.get("messages", [])
+        assert messages, "Response must contain a message"
+
+
+# =============================================================================
+# T7.4: book() fail-closed on customer_id
+# =============================================================================
+
+
+class TestBookFailClosedOnCustomerId:
+    """T6.1: _handle_completed must not call book() when customer_id resolution fails."""
+
+    def _make_mode(self) -> BookingMode:
+        return BookingMode(tools=[], llm_client=make_mock_llm())
+
+    @pytest.mark.asyncio
+    async def test_customer_id_resolution_failure_prevents_book_call(self) -> None:
+        """Scenario 5b: manage_customer fails → book() not called, rewinds to CUSTOMER_NAME."""
+        mode = self._make_mode()
+        # No customer_id in state, no phone → _create_customer_if_needed returns None
+        state = _make_completed_state(customer_id=None, customer_phone="")
+        state["customer_name"] = "Luis"
+        mode_context = _make_completed_mode_context(
+            selected_slot={"start_time": "2026-04-01T10:00:00+02:00"},
+            stylist_id="sty-1",
+            service_name="Corte",
+        )
+        mode_context["customer_name"] = "Luis"
+
+        mock_book = MagicMock()
+        mock_book.ainvoke = AsyncMock(return_value={"appointment_id": "should-not-reach"})
+
+        with patch("agent.tools.booking_tools.book", new=mock_book), \
+             patch.object(mode, "_create_customer_if_needed", new=AsyncMock(return_value=None)):
+            result = await mode._handle_completed(state, mode_context)
+
+        # book() must NOT have been called
+        mock_book.ainvoke.assert_not_awaited()
+        mc = result.get("mode_context", {})
+        assert mc.get("booking_step") == BookingSubstep.CUSTOMER_NAME.value, (
+            "Failed customer resolution must rewind to CUSTOMER_NAME"
+        )
+
+    @pytest.mark.asyncio
+    async def test_existing_customer_id_proceeds_to_book(self) -> None:
+        """Scenario 5a: existing customer_id → book() is called."""
+        mode = self._make_mode()
+        state = _make_completed_state(customer_id="existing-uuid")
+        state["customer_name"] = "María"
+        mode_context = _make_completed_mode_context(
+            selected_slot={"start_time": "2026-04-01T10:00:00+02:00"},
+            stylist_id="sty-1",
+            service_name="Corte",
+        )
+        mode_context["customer_name"] = "María"
+
+        mock_book = MagicMock()
+        mock_book.ainvoke = AsyncMock(return_value={"appointment_id": "appt-ok"})
+
+        with patch("agent.tools.booking_tools.book", new=mock_book), \
+             patch.object(mode, "_use_optimized_prompts", return_value=False), \
+             patch.object(mode, "_run_agentic_loop", new=AsyncMock(
+                 return_value=AgenticLoopResult(response_text="¡Reservado!", tool_results={})
+             )):
+            result = await mode._handle_completed(state, mode_context)
+
+        mock_book.ainvoke.assert_awaited_once()
+        assert result.get("appointment_created") is True
