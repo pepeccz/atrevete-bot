@@ -699,6 +699,8 @@ class BookingMode(BaseModeNode):
                 "recurrent_stylist_slot_summary",
                 "selected_slot",
                 "slot_summary",
+                "offered_slots",  # FIX-3: clear stale offers on full rewind
+                "slot_offer_version",
                 "availability_start_date",
                 "availability_time_range",
                 "add_ons_options",
@@ -717,6 +719,8 @@ class BookingMode(BaseModeNode):
                 "recurrent_stylist_slot_summary",
                 "selected_slot",
                 "slot_summary",
+                "offered_slots",  # FIX-3: clear stale offers when rewinding past stylist
+                "slot_offer_version",
                 "availability_start_date",
                 "availability_time_range",
                 "add_ons_options",
@@ -725,7 +729,14 @@ class BookingMode(BaseModeNode):
             ):
                 candidate.pop(key, None)
         elif target == BookingSubstep.STYLIST_SELECTION:
-            for key in ("selected_slot", "slot_summary", "availability_start_date", "availability_time_range"):
+            for key in (
+                "selected_slot",
+                "slot_summary",
+                "offered_slots",  # FIX-3: clear stale offers when rewinding stylist
+                "slot_offer_version",
+                "availability_start_date",
+                "availability_time_range",
+            ):
                 candidate.pop(key, None)
         elif target == BookingSubstep.SLOT_SELECTION:
             candidate.pop("selected_slot", None)
@@ -1959,12 +1970,29 @@ class BookingMode(BaseModeNode):
             resolved_slot = self._resolve_slot_from_message(user_message, offered_slots)
             if resolved_slot:
                 # Valid slot selected — clear the invalid counter and advance
+                # FIX-1: Write canonical slot DTO so book() can read start_time correctly.
+                # Availability tools emit full_datetime (not start_time), so we normalize here.
+                selected_slot = {
+                    "start_time": resolved_slot.get("full_datetime") or resolved_slot.get("start_time", ""),
+                    "date": resolved_slot.get("date", ""),
+                    "time": resolved_slot.get("time", ""),
+                    "stylist_id": resolved_slot.get("stylist_id") or updated_context.get("stylist_id", ""),
+                    "stylist_name": (
+                        resolved_slot.get("stylist")
+                        or resolved_slot.get("stylist_name")
+                        or updated_context.get("stylist_name", "")
+                    ),
+                    "duration_minutes": (
+                        resolved_slot.get("duration_minutes")
+                        or updated_context.get("service_duration_minutes")
+                    ),
+                }
                 slot_summary = (
-                    resolved_slot.get("start_time")
-                    or f"{resolved_slot.get('date', '')} {resolved_slot.get('time', '')}".strip()
+                    selected_slot.get("start_time")
+                    or f"{selected_slot.get('date', '')} {selected_slot.get('time', '')}".strip()
                     or "fecha seleccionada"
                 )
-                updated_context["selected_slot"] = resolved_slot
+                updated_context["selected_slot"] = selected_slot
                 updated_context["slot_summary"] = slot_summary
                 updated_context.pop("slot_invalid_count", None)  # clear counter
 
@@ -2054,10 +2082,13 @@ class BookingMode(BaseModeNode):
         slot_interp_for_persist = self._interpret_slot_tool_results(result.tool_results, updated_context)
         if slot_interp_for_persist.get("has_slots"):
             available = slot_interp_for_persist.get("available_slots") or []
-            if available and not updated_context.get("offered_slots"):
-                updated_context["offered_slots"] = available
+            if available:
+                # FIX-2: Always refresh offered_slots (remove the "if not exists" guard
+                # so stale offers from prior searches are always replaced by current ones).
+                # FIX-6: Normalize each slot entry to ensure full_datetime is always present.
+                updated_context["offered_slots"] = [self._normalize_slot_entry(s) for s in available]
                 self.logger.info(
-                    "BookingMode._handle_slot_selection: persisted %d offered_slots to context",
+                    "BookingMode._handle_slot_selection: refreshed %d offered_slots in context",
                     len(available),
                 )
 
@@ -2235,6 +2266,28 @@ class BookingMode(BaseModeNode):
         from agent.tools.booking_tools import book
         from agent.state.schemas import transition_mode
 
+        # FIX-4: Fail-closed guard — refuse to call book() with an incomplete payload.
+        # This prevents silent failures where book() receives empty start_time / stylist_id.
+        ready, missing = self._booking_payload_ready(mode_context, state)
+        if not ready:
+            self.logger.error(
+                "_handle_completed: book() called with missing field '%s' — aborting",
+                missing,
+            )
+            return {
+                **add_message(
+                    state,
+                    "assistant",
+                    "Lo siento, necesito verificar algunos datos antes de confirmar tu cita. ¿Podés ayudarme?",
+                ),
+                "mode_context": {
+                    **mode_context,
+                    "booking_step": BookingSubstep.CONFIRMATION.value,
+                },
+                "last_node": "booking",
+                "user_message": None,
+            }
+
         service_name = mode_context.get("service_name", "")
         stylist_id = mode_context.get("stylist_id")
         selected_slot = mode_context.get("selected_slot", {})
@@ -2262,9 +2315,25 @@ class BookingMode(BaseModeNode):
                 customer_id = new_id
                 updates["customer_id"] = customer_id
             else:
+                # FIX-5: Fail-closed — customer_id is required before calling book().
+                # Return to customer_name step instead of calling book() with empty id.
                 self.logger.error(
-                    "_handle_completed: could not resolve customer_id, booking will fail"
+                    "_handle_completed: failed to create/find customer — cannot call book()"
                 )
+                return {
+                    **updates,
+                    **add_message(
+                        state,
+                        "assistant",
+                        "Necesito un poco más de información para completar tu reserva. ¿Podés decirme tu nombre completo?",
+                    ),
+                    "mode_context": {
+                        **mode_context,
+                        "booking_step": BookingSubstep.CUSTOMER_NAME.value,
+                    },
+                    "last_node": "booking",
+                    "user_message": None,
+                }
 
         booking_result: dict[str, Any] = {}
         error_text: str | None = None
@@ -2998,6 +3067,41 @@ class BookingMode(BaseModeNode):
         """Return True when the current turn contains user text."""
 
         return bool(self._get_last_user_message(state).strip())
+
+    def _normalize_slot_entry(self, slot: dict) -> dict:
+        """FIX-6: Ensure slot dict always has full_datetime for later resolution.
+
+        Availability tools may return full_datetime, start_time, or neither.
+        This normalizes every stored offer so _resolve_slot_from_message and
+        the canonical DTO builder can always read full_datetime.
+        """
+        full_dt = (
+            slot.get("full_datetime")
+            or slot.get("start_time")
+            or f"{slot.get('date', '')}T{slot.get('time', '')}:00"
+        )
+        return {**slot, "full_datetime": full_dt}
+
+    def _booking_payload_ready(
+        self, ctx: dict, state: ConversationState
+    ) -> tuple[bool, str]:
+        """FIX-4: Check that all mandatory fields for book() are present.
+
+        Returns:
+            (True, "") if the payload is ready.
+            (False, "<missing_field>") if a required field is absent.
+        """
+        if not ctx.get("stylist_id"):
+            return False, "stylist_id"
+        slot = ctx.get("selected_slot") or {}
+        if not slot.get("start_time"):
+            return False, "selected_slot.start_time"
+        name = (ctx.get("customer_name") or state.get("customer_name") or "").strip()
+        if not name:
+            return False, "customer_name"
+        if not ctx.get("service_name") and not ctx.get("selected_services"):
+            return False, "service_name"
+        return True, ""
 
     def _hydrate_mode_context(self, mode_context: dict[str, Any]) -> BookingDraftContext:
         """Normalize persisted booking context before dispatching handlers."""
