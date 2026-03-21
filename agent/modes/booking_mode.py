@@ -612,7 +612,15 @@ class BookingMode(BaseModeNode):
                 "claro", "por supuesto", "exacto", "correcto", "ese", "esa",
                 "ese mismo", "esa misma", "ese horario", "esa hora",
             )
-            if any(token == normalized or normalized.startswith(token + " ") for token in _AFFIRMATIVE_TOKENS):
+            # Match token at start or as whole string; also allow punctuation after token
+            # so "sí, ese" → normalized "si, ese" matches "si" via startswith("si,")
+            if any(
+                token == normalized
+                or normalized.startswith(token + " ")
+                or normalized.startswith(token + ",")
+                or normalized.startswith(token + ".")
+                for token in _AFFIRMATIVE_TOKENS
+            ):
                 return offered_slots[0]
 
         return None
@@ -2041,19 +2049,13 @@ class BookingMode(BaseModeNode):
                 # Could not resolve — invalid selection
                 invalid_count = updated_context.get("slot_invalid_count", 0) + 1
                 if invalid_count < SLOT_INVALID_INPUT_MAX:
-                    # Below cap: rephrase deterministically, do NOT increment no_progress_turns
+                    # Below cap: record rephrase intent but DO NOT return early.
+                    # The LLM loop must run first so the overwrite block (DESIGN-1)
+                    # can refresh offered_slots from any new availability tool result.
+                    # After the overwrite, _pending_rephrase causes a deterministic reply.
                     updated_context["slot_invalid_count"] = invalid_count
                     updated_context["booking_step"] = BookingSubstep.SLOT_SELECTION.value
-                    rephrase_msg = (
-                        "¿Podés escribir el número del horario? "
-                        "Por ejemplo, '1' para el primer horario, '2' para el segundo, etc."
-                    )
-                    return {
-                        **self._response_updates(state, rephrase_msg),
-                        "mode_context": updated_context,
-                        "last_node": "booking",
-                        "user_message": None,
-                    }
+                    updated_context["_pending_rephrase"] = True
                 # At/above cap: fall through to LLM loop for genuine confusion handling
 
         if self._use_optimized_prompts():
@@ -2100,6 +2102,20 @@ class BookingMode(BaseModeNode):
             self.logger.info(
                 "BookingMode._handle_slot_selection: recognized empty availability → clearing offered_slots",
             )
+
+        # DESIGN-1 post-LLM: if a deterministic rephrase was pending (below-cap invalid pick),
+        # return it now — after the overwrite so offered_slots reflects the latest tool results.
+        if updated_context.pop("_pending_rephrase", False):
+            rephrase_msg = (
+                "¿Podés escribir el número del horario? "
+                "Por ejemplo, '1' para el primer horario, '2' para el segundo, etc."
+            )
+            return {
+                **self._response_updates(state, rephrase_msg),
+                "mode_context": updated_context,
+                "last_node": "booking",
+                "user_message": None,
+            }
 
         next_step, updated_context = self._advance_step(
             result, BookingSubstep.SLOT_SELECTION, updated_context
@@ -2970,6 +2986,11 @@ class BookingMode(BaseModeNode):
                     interpretation["has_slots"] = True
                 else:
                     interpretation["no_slots_for_chosen_stylist"] = True
+            elif selected_slot_list:
+                # selected_stylist_slots present but no chosen stylist — use as fallback
+                # so fresh slots surface even when the user hasn't picked a stylist yet.
+                interpretation["available_slots"] = selected_slot_list
+                interpretation["has_slots"] = True
             elif available_date_list:
                 interpretation["available_slots"] = available_date_list
                 interpretation["has_slots"] = True
