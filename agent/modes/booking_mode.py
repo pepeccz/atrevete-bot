@@ -230,10 +230,11 @@ Ahora puede elegir una estilista o decirte que no tiene preferencia.
 - Sé concisa. Pregunta si tiene preferencia o si cualquiera está bien."""
 
 _SYSTEM_SLOT_SELECTION = """Eres Maite, asistenta de Atrévete Peluquería.
-Servicio: {service_name} | Estilista: {stylist_name}{duration_hint}
+Servicio: {service_name} | Estilista: {stylist_name} (stylist_id: {stylist_id}){duration_hint}
 Ahora la clienta debe elegir fecha y hora.
 - Usa find_next_available para mostrar los próximos huecos disponibles cuando no haya rango pedido.
 - Usa check_availability si la clienta pide una fecha, rango o franja específica.
+- IMPORTANTE: cuando uses check_availability o find_next_available, el parámetro stylist_id SIEMPRE debe ser el UUID indicado arriba (stylist_id), NUNCA el nombre de la estilista.
 - Si el contexto indica substitution_made=True, explica que la fecha solicitada fue ajustada antes de ofrecer horarios.
 - Si substitution_reason es minimum_days_rule y tienes min_valid_date, aclara la regla de anticipación mínima y menciona la primera fecha válida.
 - Si el contexto indica no_slots_for_stylist=True, ofrece ampliar rango o cambiar de estilista. No cambies de paso automáticamente.
@@ -1957,6 +1958,7 @@ class BookingMode(BaseModeNode):
                 else:
                     service_name = updated_context.get("service_name", "el servicio")
                     stylist_name = updated_context.get("stylist_name", "cualquier estilista")
+                    stylist_id_hint = updated_context.get("stylist_id", "")
                     duration_minutes = updated_context.get("service_duration_minutes")
                     duration_hint = (
                         f" | Duración aprox.: {duration_minutes} min" if duration_minutes else ""
@@ -1964,6 +1966,7 @@ class BookingMode(BaseModeNode):
                     system = _SYSTEM_SLOT_SELECTION.format(
                         service_name=service_name,
                         stylist_name=stylist_name,
+                        stylist_id=stylist_id_hint,
                         duration_hint=duration_hint,
                     )
                     messages = self._build_messages(state, system)
@@ -2005,6 +2008,7 @@ class BookingMode(BaseModeNode):
         else:
             service_name = updated_context.get("service_name", "el servicio")
             stylist_name = updated_context.get("stylist_name", "cualquier estilista")
+            stylist_id_hint = updated_context.get("stylist_id", "")
             duration_minutes = updated_context.get("service_duration_minutes")
             duration_hint = (
                 f" | Duración aprox.: {duration_minutes} min" if duration_minutes else ""
@@ -2012,6 +2016,7 @@ class BookingMode(BaseModeNode):
             system = _SYSTEM_SLOT_SELECTION.format(
                 service_name=service_name,
                 stylist_name=stylist_name,
+                stylist_id=stylist_id_hint,
                 duration_hint=duration_hint,
             )
             messages = self._build_messages(state, system)
@@ -2203,13 +2208,14 @@ class BookingMode(BaseModeNode):
         conversation_id = state.get("conversation_id") or None
 
         # T2.1: Defensive guard — resolve customer_id before calling book()
-        # Use raw mode_context["first_name"] (not the _resolve_customer_name fallback "Cliente")
-        # so the fallback chain: first_name → pending_whatsapp_name → customer_first_name → "Cliente"
+        # Use raw mode_context["customer_name"] (not the _resolve_customer_name fallback "Cliente")
+        # so the fallback chain: customer_name → pending_whatsapp_name → customer_first_name → "Cliente"
         # behaves correctly when no name is available in mode_context.
+        # BUG-BOOK-2 FIX: was mode_context.get("first_name") but name is stored as "customer_name".
         updates: dict[str, Any] = {}
         if not customer_id:
             resolved_name = (
-                mode_context.get("first_name")
+                mode_context.get("customer_name")
                 or state.get("pending_whatsapp_name")
                 or state.get("customer_first_name")
                 or "Cliente"
