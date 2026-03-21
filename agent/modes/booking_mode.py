@@ -532,6 +532,13 @@ class BookingMode(BaseModeNode):
             "no importa",
             "nada mas",
             "nada más",
+            # Retry / try-again phrases: must NOT trigger cancel flow
+            "intenta de nuevo",
+            "intentar de nuevo",
+            "intentalo de nuevo",
+            "intendemoslo de nuevo",
+            "por favor intenta de nuevo",
+            "vuelve a intentar",
         )
         return any(phrase in normalized for phrase in _QUALIFIER_PHRASES)
 
@@ -1131,12 +1138,13 @@ class BookingMode(BaseModeNode):
         pending_cancel = mode_context.get("pending_cancel", False)
 
         # ── Substep-first qualifier guard ───────────────────────────────────
-        # STYLIST_SELECTION, NOTES, and CONFIRMATION can receive "no preference"
-        # / qualifier phrases that must NOT trigger cancel/reject early exits.
+        # SLOT_SELECTION, STYLIST_SELECTION, NOTES, and CONFIRMATION can receive
+        # qualifier phrases (no-preference, bare digits, etc.) that must NOT
+        # trigger cancel/reject early exits.
         # If the current substep is one of those and the message is a booking
         # qualifier (not an explicit cancellation), treat intent as "ambiguous"
         # and let the step handler resolve it.
-        _SUBSTEP_QUALIFIER_OK = {STEP_STYLIST_SELECTION, STEP_NOTES, STEP_CONFIRMATION}
+        _SUBSTEP_QUALIFIER_OK = {STEP_SLOT_SELECTION, STEP_STYLIST_SELECTION, STEP_NOTES, STEP_CONFIRMATION}
         if (
             intent_signal in ("cancel", "reject")
             and current_step.value in _SUBSTEP_QUALIFIER_OK

@@ -322,9 +322,15 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
       so they fall through to the LLM / substep handler instead of triggering
       an early-exit cancel. Explicit cancel phrases are unaffected.
 
+    Slot-selection shortcut (context["booking_step"] == "slot_selection"):
+    - A bare digit reply ("1", "2", "3", ...) is classified as "confirm" with
+      confidence 0.95 so it reaches _handle_slot_selection instead of
+      triggering the cancel/reject early-exit path.
+
     Args:
         text: Raw user message (any case, any leading/trailing whitespace)
-        context: Optional runtime context dict, e.g. {"current_mode": "BOOKING"}
+        context: Optional runtime context dict, e.g.
+            {"current_mode": "BOOKING", "booking_step": "slot_selection"}
 
     Returns:
         IntentResult or None
@@ -333,6 +339,25 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
         return None
 
     text_normalized = text.strip().lower()
+
+    # Slot-selection shortcut: bare digit → "confirm" so the FSM slot resolver
+    # can handle it instead of the reject/cancel early-exit path.
+    _ctx = context or {}
+    if (
+        _ctx.get("current_mode") == "BOOKING"
+        and _ctx.get("booking_step") == "slot_selection"
+        and re.match(r"^\d+$", text_normalized)
+    ):
+        logger.debug(
+            "classify_by_keywords: slot_selection bare-digit shortcut | text=%r → confirm(0.95)",
+            text,
+        )
+        return IntentResult(
+            intent="confirm",
+            confidence=0.95,
+            raw_input=text,
+            mode_hint=None,
+        )
     best_intent: str | None = None
     best_confidence: float = 0.0
 
@@ -491,6 +516,7 @@ class IntentRouter:
         self,
         text: str,
         current_mode: str | None = None,
+        booking_step: str | None = None,
     ) -> IntentResult:
         """
         Classify user message intent using keyword fast-path or LLM fallback.
@@ -506,6 +532,8 @@ class IntentRouter:
             text: Raw user message
             current_mode: Active conversation mode (GREETING/BOOKING/GENERAL/ESCALATION),
                           passed to the LLM for context-dependent classification
+            booking_step: Current booking sub-step (e.g. "slot_selection"), used to
+                          classify bare digit replies as "confirm" at the right substep
 
         Returns:
             IntentResult — never raises
@@ -519,8 +547,15 @@ class IntentRouter:
                 mode_hint=None,
             )
 
-        # Step 2: Keyword fast-path (pass current_mode so BOOKING context can narrow reject)
-        keyword_result = classify_by_keywords(text, {"current_mode": current_mode} if current_mode else None)
+        # Step 2: Keyword fast-path (pass current_mode + booking_step for context narrowing)
+        kw_context: dict | None = None
+        if current_mode or booking_step:
+            kw_context = {}
+            if current_mode:
+                kw_context["current_mode"] = current_mode
+            if booking_step:
+                kw_context["booking_step"] = booking_step
+        keyword_result = classify_by_keywords(text, kw_context)
         if keyword_result is not None and keyword_result.confidence >= _KEYWORD_MATCH_THRESHOLD:
             logger.debug(
                 "IntentRouter: keyword fast-path | intent=%s | confidence=%.2f",

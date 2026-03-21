@@ -324,12 +324,17 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
 
     # Classify intent (keyword + LLM hybrid) before confirmation/greeting rules
     # so both subflows can use the same classified result.
+    # Pass booking_step from mode_context so bare digit replies in slot_selection
+    # are classified as "confirm" instead of falling to the LLM as "reject".
     intent_router = _get_intent_router()
+    _mode_context = state.get("mode_context") or {}
+    _booking_step = str(_mode_context.get("booking_step") or "") or None
     try:
         from agent.routing.intent_router import IntentResult
         intent_result = await intent_router.classify(
             text=user_message,
             current_mode=current_mode,
+            booking_step=_booking_step,
         )
     except Exception as exc:
         logger.error(
