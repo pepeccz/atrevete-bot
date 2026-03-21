@@ -272,7 +272,25 @@ class BaseModeNode(ABC):
             if msg.get("role") == "assistant" and "soy maite" in (msg.get("content") or "").lower():
                 return response_text, False
 
-        # No prior disclosure found — check if LLM already introduced itself
+        # No prior disclosure found — strip any LLM-generated greeting/self-intro
+        # before prepending our canonical disclosure (prevents double greetings).
+        _GREETING_STRIP_PATTERN = re.compile(
+            r"^\s*"
+            r"(?:[¡!]?[Hh]ola[!,\s]+)?"  # optional ¡Hola!, Hola, etc.
+            r"(?:[Bb]uen(?:as?|os?)?\s+(?:d[ií]as?|tardes?|noches?)[!,\s]+)?"  # optional salutation
+            r"(?:Soy\s+Maite[,\s]+"  # Soy Maite,
+            r"(?:la\s+asistenta\s+virtual\s+con\s+[Ii][Aa]\s+de\s+Atr[eé]vete\s+Peluquer[ií]a\s*)?"
+            r"[.!\s]*)+",  # self-intro sentence(s)
+            re.IGNORECASE,
+        )
+        stripped = _GREETING_STRIP_PATTERN.sub("", response_text).lstrip()
+        if stripped != response_text:
+            self.logger.debug(
+                "_maybe_prepend_intro: stripped LLM self-intro from first-turn response"
+            )
+            response_text = stripped
+
+        # Also check if LLM still introduced itself (partial match not caught by regex)
         if response_text.startswith(FIRST_TURN_INTRO[:20]):
             return response_text, True
         if "soy maite" in response_text.lower():

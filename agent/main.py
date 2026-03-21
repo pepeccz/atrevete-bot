@@ -186,6 +186,9 @@ async def subscribe_to_incoming_messages():
             extra={"conversation_id": conversation_id},
         )
 
+        # Capture message count BEFORE graph invocation for freshness guard
+        messages_before = len(state.get("messages", []))
+
         try:
             # ================================================================
             # GRAPH INVOCATION WITH CHECKPOINT FLUSH (ADR-010)
@@ -244,28 +247,60 @@ async def subscribe_to_incoming_messages():
             logger.info(f"Sent fallback message for conversation_id={conversation_id}")
             return
 
-        # Extract AI response from result state
-        last_message = result["messages"][-1]
+        # ================================================================
+        # PUBLISH FRESHNESS GUARD (T1.1)
+        # ================================================================
+        # Only publish a message produced in THIS turn:
+        # (a) result["messages"] must have grown beyond messages_before
+        # (b) the last message role must be "assistant"
+        # If either check fails, send a Spanish fallback instead.
+        result_messages = result.get("messages", [])
+        messages_after = len(result_messages)
+        last_message = result_messages[-1] if result_messages else None
 
-        # Handle both dict and Message object formats
-        if isinstance(last_message, dict):
-            content = last_message.get("content", "")
+        # Determine role of the last message
+        if last_message is not None:
+            if isinstance(last_message, dict):
+                last_role = last_message.get("role")
+            else:
+                last_role = getattr(last_message, "role", None)
         else:
-            content = last_message.content
+            last_role = None
 
-        # Extract text from content (handle both string and list of blocks)
-        if isinstance(content, str):
-            ai_message = content
-        elif isinstance(content, list):
-            # Content is a list of blocks (text + tool_use) - extract only text blocks
-            text_blocks = [
-                block.get("text", "") if isinstance(block, dict) else str(block)
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
-            ]
-            ai_message = " ".join(text_blocks).strip()
+        freshness_ok = (messages_after > messages_before) and (last_role == "assistant")
+
+        if not freshness_ok:
+            logger.warning(
+                f"Publish freshness guard triggered | conversation_id={conversation_id} | "
+                f"messages_before={messages_before} | messages_after={messages_after} | "
+                f"last_role={last_role}",
+                extra={"conversation_id": conversation_id},
+            )
+            ai_message = (
+                "Perdón, tuve un problema al responder. "
+                "Ya lo reviso y te pido que me escribas de nuevo en un momento."
+            )
         else:
-            ai_message = str(content)
+            # Extract AI response from result state
+            # Handle both dict and Message object formats
+            if isinstance(last_message, dict):
+                content = last_message.get("content", "")
+            else:
+                content = last_message.content  # type: ignore[union-attr]
+
+            # Extract text from content (handle both string and list of blocks)
+            if isinstance(content, str):
+                ai_message = content
+            elif isinstance(content, list):
+                # Content is a list of blocks (text + tool_use) - extract only text blocks
+                text_blocks = [
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
+                ai_message = " ".join(text_blocks).strip()
+            else:
+                ai_message = str(content)
 
         # Log full AI response for debugging
         logger.debug(

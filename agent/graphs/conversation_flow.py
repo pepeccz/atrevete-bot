@@ -356,6 +356,36 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
+    # Rule 9.5: Explicit-handoff override (T2.2)
+    # If the intent fell through to ask_info/ambiguous but the user explicitly
+    # asked for a human, force ESCALATION before the GENERAL fallback.
+    # This catches phrases that score 0.70 in _keyword_matches() and miss the
+    # 0.80 fast-path threshold.
+    from agent.routing.intent_router import _is_explicit_handoff
+    if (
+        intent_result.intent in ("ask_info", "ambiguous")
+        and current_mode != "ESCALATION"
+        and _is_explicit_handoff(user_message)
+    ):
+        logger.info(
+            "router_node: explicit-handoff override → ESCALATION | message=%r",
+            user_message[:80],
+        )
+        transition_update = transition_mode(state, "ESCALATION")
+        if current_mode == "BOOKING":
+            from agent.modes.booking_context import preserve_booking_context
+            draft_contexts = dict(transition_update.get("draft_contexts") or {})
+            draft_contexts["BOOKING"] = preserve_booking_context(
+                state.get("mode_context") or {},
+                "ESCALATION",
+            )
+            transition_update["draft_contexts"] = draft_contexts
+        return {
+            **transition_update,
+            "mode_context": {**intent_data},
+            "last_node": "router",
+        }
+
     # Rule 10: Default → GENERAL
     target_mode = "GENERAL"
     if current_mode == "BOOKING" and intent_result.intent in ("cancel", "reject"):

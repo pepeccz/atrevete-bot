@@ -186,6 +186,43 @@ KEYWORD_MAP: dict[str, list[str]] = {
 }
 
 
+# ============================================================================
+# Explicit handoff phrases — used by router override (T2.1 / T2.2)
+# ============================================================================
+
+EXPLICIT_HANDOFF_PHRASES: frozenset[str] = frozenset({
+    "hablar con alguien",
+    "hablar con una persona",
+    "hablar con un humano",
+    "persona real",
+    "quiero hablar con",
+    "no quiero hablar con un bot",
+    "necesito hablar con alguien",
+})
+
+
+def _is_explicit_handoff(text: str) -> bool:
+    """
+    Return True if the message contains an explicit human-handoff phrase.
+
+    This helper is intentionally narrow — it only matches phrases that
+    unambiguously mean the user wants a human agent.  Short/ambiguous phrases
+    like "quiero hablar" do NOT match so that the LLM retains control of
+    borderline cases.
+
+    Args:
+        text: Raw user message (any case)
+
+    Returns:
+        True if any phrase in EXPLICIT_HANDOFF_PHRASES is a substring
+        of the lowercased message.
+    """
+    if not text:
+        return False
+    text_lower = text.lower()
+    return any(phrase in text_lower for phrase in EXPLICIT_HANDOFF_PHRASES)
+
+
 def _intent_to_mode_hint(intent: str) -> str | None:
     """
     Map a classified intent to a suggested conversation mode.
@@ -238,7 +275,26 @@ def _keyword_matches(text_lower: str, kw_lower: str) -> float:
     return 0.0
 
 
-def classify_by_keywords(text: str) -> IntentResult | None:
+_BOOKING_NO_PREF_PHRASES: tuple[str, ...] = (
+    "no tengo preferencia",
+    "sin preferencia",
+    "cualquiera",
+    "no importa",
+    "nada mas",
+    "nada más",
+    "no, nada",
+)
+
+_EXPLICIT_CANCEL_PHRASES: tuple[str, ...] = (
+    "quiero cancelar",
+    "cancelar mi cita",
+    "cancelar la cita",
+    "cancelar reserva",
+    "anular",
+)
+
+
+def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult | None:
     """
     Fast synchronous keyword-based intent classification.
 
@@ -261,8 +317,14 @@ def classify_by_keywords(text: str) -> IntentResult | None:
     When multiple intents match at the same confidence level, the first match
     (by KEYWORD_MAP insertion order) wins.
 
+    Booking-context narrowing (context["current_mode"] == "BOOKING"):
+    - No-preference and qualifier phrases downgrade `reject` confidence to ≤0.40
+      so they fall through to the LLM / substep handler instead of triggering
+      an early-exit cancel. Explicit cancel phrases are unaffected.
+
     Args:
         text: Raw user message (any case, any leading/trailing whitespace)
+        context: Optional runtime context dict, e.g. {"current_mode": "BOOKING"}
 
     Returns:
         IntentResult or None
@@ -313,6 +375,24 @@ def classify_by_keywords(text: str) -> IntentResult | None:
             [i for i in _ACTIONABLE_INTENTS if i in matched_intents],
         )
         return None
+
+    # Booking-context narrowing: downgrade `reject` for no-preference / qualifier
+    # phrases so they fall through to the LLM rather than triggering an early exit.
+    if (
+        best_intent == "reject"
+        and (context or {}).get("current_mode") == "BOOKING"
+    ):
+        # Explicit cancel phrases must keep full confidence regardless
+        is_explicit_cancel = any(phrase in text_normalized for phrase in _EXPLICIT_CANCEL_PHRASES)
+        if not is_explicit_cancel:
+            is_no_pref = any(phrase in text_normalized for phrase in _BOOKING_NO_PREF_PHRASES)
+            if is_no_pref:
+                logger.debug(
+                    "classify_by_keywords: BOOKING context no-preference downgrade "
+                    "| text_preview=%s",
+                    text[:60],
+                )
+                best_confidence = min(best_confidence, 0.40)
 
     return IntentResult(
         intent=best_intent,
@@ -439,8 +519,8 @@ class IntentRouter:
                 mode_hint=None,
             )
 
-        # Step 2: Keyword fast-path
-        keyword_result = classify_by_keywords(text)
+        # Step 2: Keyword fast-path (pass current_mode so BOOKING context can narrow reject)
+        keyword_result = classify_by_keywords(text, {"current_mode": current_mode} if current_mode else None)
         if keyword_result is not None and keyword_result.confidence >= _KEYWORD_MATCH_THRESHOLD:
             logger.debug(
                 "IntentRouter: keyword fast-path | intent=%s | confidence=%.2f",

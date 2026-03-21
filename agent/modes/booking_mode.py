@@ -382,6 +382,37 @@ class BookingMode(BaseModeNode):
         )
 
     @classmethod
+    def _is_non_cancel_booking_qualifier(cls, message: str) -> bool:
+        """
+        Return True when message is a valid booking substep qualifier that should
+        NOT be treated as a booking cancellation.
+
+        Matches no-preference and qualifier phrases that are safe to receive at
+        STYLIST_SELECTION, NOTES, or CONFIRMATION substeps.
+
+        Explicit cancellation phrases always return False (cancel takes priority).
+        Bare "no" alone does NOT match — it should trigger clarification instead.
+
+        Examples that return True:
+            "no tengo preferencia", "sin preferencia", "cualquiera",
+            "no importa", "nada mas", "nada más"
+        Examples that return False:
+            "no" (bare), "quiero cancelar", "cancelar mi cita"
+        """
+        if cls._message_is_explicit_cancellation(message):
+            return False
+        normalized = cls._normalize_text(message)
+        _QUALIFIER_PHRASES = (
+            "no tengo preferencia",
+            "sin preferencia",
+            "cualquiera",
+            "no importa",
+            "nada mas",
+            "nada más",
+        )
+        return any(phrase in normalized for phrase in _QUALIFIER_PHRASES)
+
+    @classmethod
     def _has_booking_content(cls, message: str) -> bool:
         normalized = cls._normalize_text(message)
         return any(token in normalized for token in _BOOKING_CONTENT_TOKENS)
@@ -466,9 +497,26 @@ class BookingMode(BaseModeNode):
 
     @classmethod
     def _extract_start_date_hint(cls, message: str) -> str | None:
+        from agent.utils.date_parser import parse_natural_date
+
         normalized = cls._normalize_text(message)
         if "entre " in normalized:
             return message.strip()
+
+        # Detect "el lunes/martes/..." weekday patterns BEFORE the token loop
+        # so that "el viernes" on Friday resolves to NEXT Friday, not today.
+        _weekday_match = re.search(
+            r"\bel\s+(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b",
+            normalized,
+        )
+        if _weekday_match:
+            weekday_token = _weekday_match.group(1)
+            try:
+                resolved_dt = parse_natural_date(weekday_token)
+                return resolved_dt.date().isoformat()
+            except ValueError:
+                pass  # fall through to token loop
+
         for token in ("hoy", "manana", "pasado manana", "esta semana", "proxima semana"):
             if token in normalized:
                 return token
@@ -932,6 +980,25 @@ class BookingMode(BaseModeNode):
         # ── Early exit: cancel/reject handling ─────────────────────────────
         pending_cancel = mode_context.get("pending_cancel", False)
 
+        # ── Substep-first qualifier guard ───────────────────────────────────
+        # STYLIST_SELECTION, NOTES, and CONFIRMATION can receive "no preference"
+        # / qualifier phrases that must NOT trigger cancel/reject early exits.
+        # If the current substep is one of those and the message is a booking
+        # qualifier (not an explicit cancellation), treat intent as "ambiguous"
+        # and let the step handler resolve it.
+        _SUBSTEP_QUALIFIER_OK = {STEP_STYLIST_SELECTION, STEP_NOTES, STEP_CONFIRMATION}
+        if (
+            intent_signal in ("cancel", "reject")
+            and current_step.value in _SUBSTEP_QUALIFIER_OK
+            and self._is_non_cancel_booking_qualifier(user_message)
+        ):
+            self.logger.info(
+                "BookingMode: qualifier phrase at step=%s overrides %s intent → ambiguous",
+                current_step,
+                intent_signal,
+            )
+            intent_signal = "ambiguous"
+
         if intent_signal == "cancel":
             # 'cancel' always goes directly to GENERAL (no confirmation dialog)
             self.logger.info("BookingMode: cancel intent → transitioning to GENERAL")
@@ -1341,31 +1408,56 @@ class BookingMode(BaseModeNode):
         result = await self._run_agentic_loop(messages, tools=[])
 
         user_message = self._get_last_user_message(state)
-        declined = self._message_declines_recommendations(user_message)
+        add_on_names = [opt["name"] for opt in add_ons_options]
+
+        # Use the semantic resolver instead of exact-match decline check
+        add_on_intent = self._resolve_add_on_intent(user_message, add_on_names)
+
+        # Implicit decline: reply shifts to date/time/stylist without naming an add-on
+        if add_on_intent == "unknown" and (
+            self._looks_like_stylist_or_slot_reply(user_message)
+            and not self._mentions_add_on_name(user_message, add_ons_options)
+        ):
+            self.logger.info(
+                "BookingMode._handle_add_ons: implicit decline via topic shift | message=%r",
+                user_message,
+            )
+            add_on_intent = "decline"
 
         updated_context = {
             **mode_context,
             "add_ons_options": add_ons_options,
-            "add_ons_declined": declined,
         }
 
-        if not declined:
-            user_message_lower = user_message.lower()
+        if add_on_intent == "accept":
+            selected = self._selected_services(updated_context)
             for opt in add_ons_options:
-                if opt["name"].lower() in user_message_lower:
-                    selected = self._selected_services(updated_context)
+                if self._normalize_text(opt["name"]) in self._normalize_text(user_message):
                     if opt["name"] not in selected:
                         selected.append(opt["name"])
-                    updated_context["selected_services"] = selected
-
-        next_step = BookingSubstep.STYLIST_SELECTION if (
-            declined or updated_context.get("stylist_id")
-        ) else BookingSubstep.ADD_ONS
-
-        if any(opt["name"].lower() in user_message.lower() for opt in add_ons_options):
+            updated_context["selected_services"] = selected
+            updated_context["add_ons_declined"] = False
             next_step = BookingSubstep.STYLIST_SELECTION
-        elif declined:
+        elif add_on_intent == "decline":
+            updated_context["add_ons_declined"] = True
             next_step = BookingSubstep.STYLIST_SELECTION
+        elif add_on_intent == "cancel":
+            # Explicit booking cancel — transition to GENERAL
+            from agent.state.schemas import transition_mode
+            self.logger.info("BookingMode._handle_add_ons: cancel intent → GENERAL")
+            return {
+                **transition_mode(state, "GENERAL"),
+                **self._response_updates(
+                    state,
+                    "De acuerdo, he cancelado la reserva. ¿En qué más puedo ayudarte?",
+                ),
+                "last_node": "booking",
+                "user_message": None,
+            }
+        else:
+            # "unknown" — stay at ADD_ONS
+            updated_context["add_ons_declined"] = False
+            next_step = BookingSubstep.ADD_ONS if not updated_context.get("stylist_id") else BookingSubstep.STYLIST_SELECTION
 
         final_context = self._finalize_mode_context(
             updated_context, next_step, BookingSubstep.ADD_ONS
@@ -1377,6 +1469,30 @@ class BookingMode(BaseModeNode):
             "last_node": "booking",
             "user_message": None,
         }
+
+    @classmethod
+    def _looks_like_stylist_or_slot_reply(cls, message: str) -> bool:
+        """
+        Return True when the message looks like a stylist selection or slot
+        (date/time) reply rather than a genuine add-on response.
+
+        Used in _handle_add_ons to detect implicit decline via topic shift.
+        """
+        normalized = cls._normalize_text(message)
+        _SLOT_OR_STYLIST_TOKENS = (
+            "lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo",
+            "manana", "pasado", "hoy", "esta semana", "proxima semana",
+            "por la tarde", "por la manana",
+            "cualquiera", "no importa", "sin preferencia", "no tengo preferencia",
+            "a las", ":",  # time patterns like "10:00"
+        )
+        return any(token in normalized for token in _SLOT_OR_STYLIST_TOKENS)
+
+    @classmethod
+    def _mentions_add_on_name(cls, message: str, add_ons_options: list[dict]) -> bool:
+        """Return True when the message contains at least one add-on service name."""
+        normalized = cls._normalize_text(message)
+        return any(cls._normalize_text(opt.get("name", "")) in normalized for opt in add_ons_options)
 
     def _resolve_stylist_from_message(
         self,
@@ -2226,12 +2342,57 @@ class BookingMode(BaseModeNode):
 
                 elif "clarification_needed" in envelope:
                     # Shape 2: metadata-driven clarification needed — do NOT advance step
+                    # T2.4: Skip audience/variant clarification when variant is inferable:
+                    # (a) service_audience_hint already set in context → auto-resolve
+                    # (b) single-option clarification → auto-pick the only option
+                    # (c) returning client with bookings in same service category
                     clarification = envelope["clarification_needed"]
-                    updated_context["pending_clarification"] = {
-                        "axis": clarification.get("axis", ""),
-                        "question_hint": clarification.get("question_hint", ""),
-                        "options": clarification.get("options", []),
-                    }
+                    clarification_options = clarification.get("options", [])
+                    audience_hint = updated_context.get("service_audience_hint")
+                    prior_bookings_category = updated_context.get("prior_bookings_category")
+
+                    _auto_resolved_value: str | None = None
+
+                    if audience_hint and clarification_options:
+                        # Find the option whose label or value matches the hint
+                        hint_norm = self._normalize_text(str(audience_hint))
+                        for opt in clarification_options:
+                            if (
+                                hint_norm in self._normalize_text(opt.get("label", ""))
+                                or hint_norm in self._normalize_text(opt.get("value", ""))
+                                or self._normalize_text(opt.get("value", "")) in hint_norm
+                            ):
+                                _auto_resolved_value = opt.get("value")
+                                break
+
+                    if _auto_resolved_value is None and len(clarification_options) == 1:
+                        # Single variant — no ambiguity
+                        _auto_resolved_value = clarification_options[0].get("value")
+
+                    if _auto_resolved_value is None and prior_bookings_category and clarification_options:
+                        # Returning client: pick option whose value matches prior category
+                        cat_norm = self._normalize_text(str(prior_bookings_category))
+                        for opt in clarification_options:
+                            if self._normalize_text(opt.get("value", "")) in cat_norm or cat_norm in self._normalize_text(opt.get("value", "")):
+                                _auto_resolved_value = opt.get("value")
+                                break
+
+                    if _auto_resolved_value is not None:
+                        # Skip clarification: store auto-resolved audience and clear clarification
+                        self.logger.info(
+                            "BookingMode._advance_step: variant clarification skipped "
+                            "| auto_resolved=%s axis=%s",
+                            _auto_resolved_value,
+                            clarification.get("axis"),
+                        )
+                        updated_context["service_audience_hint"] = _auto_resolved_value
+                        updated_context.pop("pending_clarification", None)
+                    else:
+                        updated_context["pending_clarification"] = {
+                            "axis": clarification.get("axis", ""),
+                            "question_hint": clarification.get("question_hint", ""),
+                            "options": clarification_options,
+                        }
 
                 elif "services" in envelope:
                     # Shape 3: ranked fuzzy matches (fallback)
