@@ -105,6 +105,7 @@ class BookingDraftContext(TypedDict, total=False):
     recommendations_shown: bool
     add_ons_options: list[dict[str, Any]] | None
     add_ons_declined: bool
+    offered_slots: list[dict[str, Any]] | None
     availability_start_date: str | None
     availability_time_range: str | None
     substitution_made: bool

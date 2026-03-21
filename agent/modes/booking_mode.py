@@ -565,7 +565,8 @@ class BookingMode(BaseModeNode):
 
         Matching strategy:
         1. Numeric index: "1" → offered_slots[0], "2" → offered_slots[1], etc.
-        2. Returns None if the message cannot be matched to any slot.
+        2. Partial time match: "10:00" or "2026-03-24" found in message.
+        3. Affirmative confirmation when only one slot offered: "sí", "ok", "confirmo", etc.
 
         Args:
             message: Raw user message text.
@@ -585,7 +586,7 @@ class BookingMode(BaseModeNode):
             if 0 <= idx < len(offered_slots):
                 return offered_slots[idx]
 
-        # Strategy 2: partial time match ("10:00", "12:30")
+        # Strategy 2: partial time match ("10:00", "12:30") or date match ("2026-03-24")
         for slot in offered_slots:
             slot_time = str(slot.get("time", ""))
             slot_date = str(slot.get("date", ""))
@@ -593,6 +594,19 @@ class BookingMode(BaseModeNode):
                 return slot
             if slot_date and slot_date in message:
                 return slot
+
+        # Strategy 3: affirmative confirmation when there is exactly one offered slot.
+        # Handles "sí", "si", "ok", "dale", "confirmo", "perfecto", "de acuerdo", etc.
+        # Only fires when the list has a single element to avoid ambiguous resolution.
+        if len(offered_slots) == 1:
+            _AFFIRMATIVE_TOKENS = (
+                "si", "sí", "ok", "dale", "bueno", "confirmo", "confirmar",
+                "perfecto", "de acuerdo", "genial", "listo", "va", "venga",
+                "claro", "por supuesto", "exacto", "correcto", "ese", "esa",
+                "ese mismo", "esa misma", "ese horario", "esa hora",
+            )
+            if any(token == normalized or normalized.startswith(token + " ") for token in _AFFIRMATIVE_TOKENS):
+                return offered_slots[0]
 
         return None
 
@@ -2024,6 +2038,21 @@ class BookingMode(BaseModeNode):
             messages, tools=[check_availability, find_next_available]
         )
 
+        # ADR-1 FIX: After the LLM fetches and shows slots, persist the offered
+        # slots to context so the next turn's offered_slots guard can resolve
+        # the user's pick deterministically (e.g., "1", "2", "martes 10:00").
+        # Without this, offered_slots is always None on the follow-up turn and
+        # the guard is bypassed — the user's slot pick never advances the FSM.
+        slot_interp_for_persist = self._interpret_slot_tool_results(result.tool_results, updated_context)
+        if slot_interp_for_persist.get("has_slots"):
+            available = slot_interp_for_persist.get("available_slots") or []
+            if available and not updated_context.get("offered_slots"):
+                updated_context["offered_slots"] = available
+                self.logger.info(
+                    "BookingMode._handle_slot_selection: persisted %d offered_slots to context",
+                    len(available),
+                )
+
         next_step, updated_context = self._advance_step(
             result, BookingSubstep.SLOT_SELECTION, updated_context
         )
@@ -2627,17 +2656,11 @@ class BookingMode(BaseModeNode):
 
         slot_interpretation = self._interpret_slot_tool_results(tool_results, updated_context)
 
-        if slot_interpretation.get("has_slots") and not updated_context.get("selected_slot"):
-            available_slots = slot_interpretation.get("available_slots") or []
-            first_slot = available_slots[0] if available_slots else None
-            if isinstance(first_slot, dict):
-                updated_context.setdefault("selected_slot", first_slot)
-                updated_context.setdefault(
-                    "slot_summary",
-                    first_slot.get("start_time")
-                    or first_slot.get("full_datetime")
-                    or (f"{first_slot.get('date', '')} {first_slot.get('time', '')}".strip() or "fecha seleccionada")
-                )
+        # NOTE: We intentionally do NOT auto-assign selected_slot from tool results here.
+        # selected_slot must be set explicitly via the offered_slots guard in
+        # _handle_slot_selection (ADR-1) when the user picks from the offered list.
+        # Auto-assigning here would prematurely advance the FSM to CUSTOMER_NAME on
+        # Turn 1 (when the bot is merely showing slots, not yet receiving a pick).
 
         if current_substep == BookingSubstep.NOTES:
             if "customer_name" not in updated_context:
