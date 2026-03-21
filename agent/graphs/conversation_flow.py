@@ -342,10 +342,13 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         }
 
     # Rule 9: Greet intent → GREETING (only if name unknown AND first interaction)
+    # BUG-NEW-3 FIX: is_first_interaction guard prevents anonymous returning users
+    # from getting stuck in GREETING→GENERAL loop on subsequent turns.
     if (
         intent_result.intent == "greet"
         and current_mode not in ("BOOKING",)
         and not customer_name
+        and is_first_interaction  # Only re-enter GREETING on genuine first turns
     ):
         return {
             "current_mode": "GREETING",
@@ -384,6 +387,7 @@ async def preprocess_node_v6(state: ConversationState) -> dict[str, Any]:
         **msg_update,
         "is_first_interaction": is_first_interaction,
         "last_node": "preprocess",
+        "user_message": None,  # FIX BUG-NEW-1: clear transient user_message after persisting to messages
     }
 
     customer_phone = state.get("customer_phone")
