@@ -166,6 +166,110 @@ def _is_booking_related_query(user_message: str) -> bool:
     return any(term in msg_lower for term in BOOKING_RELATED_TERMS)
 
 
+def _normalize_handoff_text(value: str) -> str:
+    import unicodedata
+
+    normalized = unicodedata.normalize("NFKD", value.strip().lower())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _service_to_booking_context(service: dict[str, Any]) -> dict[str, Any]:
+    booking_context = {
+        "service_id": service.get("id"),
+        "service_name": service.get("name", ""),
+        "service_category": service.get("category", ""),
+        "service_duration_minutes": service.get("duration_minutes"),
+        "service_family": service.get("family"),
+    }
+
+    recommendations = [
+        str(item) for item in service.get("combo_recommendations", []) if str(item).strip()
+    ]
+    if recommendations:
+        booking_context["pending_recommendations"] = recommendations
+        booking_context["recommendations_shown"] = False
+
+    return booking_context
+
+
+def _looks_like_service_confirmation(user_message: str) -> bool:
+    normalized = _normalize_handoff_text(user_message)
+    if not normalized:
+        return False
+
+    if normalized == "1":
+        return True
+
+    confirmation_phrases = (
+        "si",
+        "dale",
+        "ok",
+        "vale",
+        "ese",
+        "esa",
+        "ese mismo",
+        "esa misma",
+        "quiero ese",
+        "quiero esa",
+        "reservalo",
+        "me va",
+        "me sirve",
+        "perfecto",
+        "genial",
+    )
+    return normalized in confirmation_phrases
+
+
+def _resolve_general_candidate_selection(
+    user_message: str,
+    candidate_services: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not candidate_services:
+        return None
+
+    normalized = _normalize_handoff_text(user_message)
+    if not normalized:
+        return None
+
+    if normalized.isdigit():
+        index = int(normalized) - 1
+        if 0 <= index < len(candidate_services):
+            return candidate_services[index]
+
+    for service in candidate_services:
+        service_name = str(service.get("name") or "")
+        if service_name and _normalize_handoff_text(service_name) in normalized:
+            return service
+
+    if len(candidate_services) == 1 and _looks_like_service_confirmation(user_message):
+        return candidate_services[0]
+
+    return None
+
+
+def _build_general_booking_handoff(state: ConversationState, user_message: str) -> dict[str, Any]:
+    mode_context = state.get("mode_context") or {}
+    handoff = mode_context.get("general_booking_handoff")
+    if not isinstance(handoff, dict):
+        return {}
+
+    resolved_service = handoff.get("resolved_service")
+    if isinstance(resolved_service, dict):
+        return _service_to_booking_context(resolved_service)
+
+    pending_clarification = handoff.get("pending_clarification")
+    if isinstance(pending_clarification, dict):
+        return {"pending_clarification": pending_clarification}
+
+    candidate_services = handoff.get("candidate_services")
+    if isinstance(candidate_services, list):
+        selected_service = _resolve_general_candidate_selection(user_message, candidate_services)
+        if isinstance(selected_service, dict):
+            return _service_to_booking_context(selected_service)
+
+    return {}
+
+
 async def router_node(state: ConversationState) -> dict[str, Any]:
     """
     v6.0 router_node: Classify intent and determine which mode to activate.
@@ -335,7 +439,11 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
 
         draft_contexts = state.get("draft_contexts") or {}
         restored_booking_draft = draft_contexts.get("BOOKING") or {}
-        booking_context = {**restored_booking_draft, **intent_data}
+        general_booking_handoff = {}
+        if current_mode == "GENERAL" and not restored_booking_draft:
+            general_booking_handoff = _build_general_booking_handoff(state, user_message)
+
+        booking_context = {**general_booking_handoff, **restored_booking_draft, **intent_data}
         return {
             **transition_mode(state, "BOOKING", context_update=booking_context),
             "last_node": "router",

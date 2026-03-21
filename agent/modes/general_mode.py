@@ -9,6 +9,7 @@ an informational question during an active BOOKING flow.
 """
 
 import logging
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -30,6 +31,33 @@ class GeneralMode(BaseModeNode):
     @property
     def mode_name(self) -> str:
         return "GENERAL"
+
+    @staticmethod
+    def _extract_booking_handoff(tool_results: dict[str, Any]) -> dict[str, Any] | None:
+        envelope = tool_results.get("search_services")
+        if not isinstance(envelope, dict):
+            return None
+
+        if isinstance(envelope.get("resolved_service"), dict):
+            return {"resolved_service": dict(envelope["resolved_service"])}
+
+        if isinstance(envelope.get("clarification_needed"), dict):
+            clarification = envelope["clarification_needed"]
+            return {
+                "pending_clarification": {
+                    "axis": clarification.get("axis", ""),
+                    "question_hint": clarification.get("question_hint", ""),
+                    "options": clarification.get("options", []),
+                }
+            }
+
+        services = envelope.get("services")
+        if isinstance(services, list):
+            return {
+                "candidate_services": [service for service in services if isinstance(service, dict)]
+            }
+
+        return None
 
     async def handle(self, state: ConversationState, intent: object) -> dict:
         """
@@ -102,6 +130,10 @@ class GeneralMode(BaseModeNode):
 
         updates = {
             **add_message(state, "assistant", final_response),
+            "mode_context": {
+                **mode_context,
+                "general_booking_handoff": self._extract_booking_handoff(result.tool_results),
+            },
             "last_node": "general",
             "user_message": None,
         }

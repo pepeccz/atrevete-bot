@@ -820,6 +820,39 @@ class TestBookingDigressions:
         assert result["mode_context"]["stylist_id"] == "sty-1"
         assert result["mode_context"]["last_intent"] == "book"
 
+    @pytest.mark.asyncio
+    async def test_general_recommendation_confirmation_carries_service_into_booking(self):
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GENERAL",
+            customer_name="Luis",
+            is_first_interaction=False,
+            user_message="1",
+        )
+        state["mode_context"] = {
+            "last_intent": "ask_info",
+            "general_booking_handoff": {
+                "resolved_service": {
+                    "id": "svc-caballero",
+                    "name": "Corte Caballero",
+                    "category": "Peluquería",
+                    "duration_minutes": 30,
+                    "family": "haircut",
+                }
+            },
+        }
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("book")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "BOOKING"
+        assert result["mode_context"]["service_id"] == "svc-caballero"
+        assert result["mode_context"]["service_name"] == "Corte Caballero"
+        assert result["mode_context"]["service_duration_minutes"] == 30
+        assert result["mode_context"]["last_intent"] == "book"
+
 
 class TestFirstTurnRouterExamples:
     """Concrete first-turn routing examples for the routing fix."""
