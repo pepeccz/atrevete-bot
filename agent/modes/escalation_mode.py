@@ -108,7 +108,18 @@ class EscalationMode(BaseModeNode):
         """
         conversation_id = state.get("conversation_id", "unknown")
         ctx = dict(state.get("mode_context") or {})
-        step = ctx.get("escalation_step") or _STEP_ACKNOWLEDGE
+
+        # ── Guard: fresh ESCALATION entry — reset FSM step to ACKNOWLEDGE ──────
+        # If we just transitioned INTO ESCALATION from another mode, stale
+        # mode_context may contain escalation_step=CONTACT from a prior
+        # conversation. Force a clean FSM start so we never skip ACKNOWLEDGE.
+        escalation_already_done = state.get("escalation_triggered", False)
+        previous_mode = state.get("current_mode", "")
+
+        if not escalation_already_done and previous_mode != "ESCALATION":
+            step = _STEP_ACKNOWLEDGE
+        else:
+            step = ctx.get("escalation_step") or _STEP_ACKNOWLEDGE
 
         # ── Guard: already triggered → waiting message ─────────────────────────
         if state.get("escalation_triggered") or step == _STEP_DONE:

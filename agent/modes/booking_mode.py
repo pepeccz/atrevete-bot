@@ -2352,6 +2352,7 @@ class BookingMode(BaseModeNode):
                     prior_bookings_category = updated_context.get("prior_bookings_category")
 
                     _auto_resolved_value: str | None = None
+                    _auto_resolved_opt: dict | None = None
 
                     if audience_hint and clarification_options:
                         # Find the option whose label or value matches the hint
@@ -2363,11 +2364,13 @@ class BookingMode(BaseModeNode):
                                 or self._normalize_text(opt.get("value", "")) in hint_norm
                             ):
                                 _auto_resolved_value = opt.get("value")
+                                _auto_resolved_opt = opt
                                 break
 
                     if _auto_resolved_value is None and len(clarification_options) == 1:
                         # Single variant — no ambiguity
                         _auto_resolved_value = clarification_options[0].get("value")
+                        _auto_resolved_opt = clarification_options[0]
 
                     if _auto_resolved_value is None and prior_bookings_category and clarification_options:
                         # Returning client: pick option whose value matches prior category
@@ -2375,6 +2378,7 @@ class BookingMode(BaseModeNode):
                         for opt in clarification_options:
                             if self._normalize_text(opt.get("value", "")) in cat_norm or cat_norm in self._normalize_text(opt.get("value", "")):
                                 _auto_resolved_value = opt.get("value")
+                                _auto_resolved_opt = opt
                                 break
 
                     if _auto_resolved_value is not None:
@@ -2387,6 +2391,21 @@ class BookingMode(BaseModeNode):
                         )
                         updated_context["service_audience_hint"] = _auto_resolved_value
                         updated_context.pop("pending_clarification", None)
+                        # Write canonical service fields so _advance_step() can
+                        # progress from service_selection → ADD_ONS.
+                        # Without these, service_name is absent and the flow
+                        # stays locked in service_selection forever (T2.4 regression).
+                        if _auto_resolved_opt is not None:
+                            updated_context.setdefault(
+                                "service_id", _auto_resolved_opt.get("service_id")
+                            )
+                            updated_context.setdefault(
+                                "service_name", _auto_resolved_opt.get("service_name", "")
+                            )
+                            updated_context.setdefault(
+                                "service_duration_minutes",
+                                _auto_resolved_opt.get("duration_minutes"),
+                            )
                     else:
                         updated_context["pending_clarification"] = {
                             "axis": clarification.get("axis", ""),
