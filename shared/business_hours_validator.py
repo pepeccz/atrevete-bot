@@ -50,6 +50,8 @@ async def is_day_closed(day_of_week: int) -> bool:
 
     Args:
         day_of_week: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
+            Uses Python weekday() convention (Mon=0 ... Sun=6).
+            Internally converts to PostgreSQL DOW (Sun=0, Mon=1 ... Sat=6).
 
     Returns:
         True if day is closed, False if open.
@@ -67,11 +69,14 @@ async def is_day_closed(day_of_week: int) -> bool:
         logger.error(f"Invalid day_of_week: {day_of_week}. Must be 0-6.")
         return True  # Fail closed for invalid input
 
+    # BUG-AVAIL-1 FIX: Convert Python weekday (Mon=0, Sun=6) to PostgreSQL DOW (Sun=0, Mon=1)
+    db_dow = (day_of_week + 1) % 7
+
     try:
         async with get_async_session() as session:
             result = await session.execute(
                 select(BusinessHours.is_closed).where(
-                    BusinessHours.day_of_week == day_of_week
+                    BusinessHours.day_of_week == db_dow
                 )
             )
             row = result.first()
@@ -218,6 +223,8 @@ async def get_business_hours_for_day(day_of_week: int) -> Optional[dict[str, int
 
     Args:
         day_of_week: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
+            Uses Python weekday() convention (Mon=0 ... Sun=6).
+            Internally converts to PostgreSQL DOW (Sun=0, Mon=1 ... Sat=6).
 
     Returns:
         Dictionary with 'start' and 'end' hours if day is open, None if closed.
@@ -235,11 +242,14 @@ async def get_business_hours_for_day(day_of_week: int) -> Optional[dict[str, int
         logger.error(f"Invalid day_of_week: {day_of_week}. Must be 0-6.")
         return None
 
+    # BUG-AVAIL-1 FIX: Convert Python weekday (Mon=0, Sun=6) to PostgreSQL DOW (Sun=0, Mon=1)
+    db_dow = (day_of_week + 1) % 7
+
     try:
         async with get_async_session() as session:
             result = await session.execute(
                 select(BusinessHours).where(
-                    BusinessHours.day_of_week == day_of_week
+                    BusinessHours.day_of_week == db_dow
                 )
             )
             business_hours = result.scalar_one_or_none()

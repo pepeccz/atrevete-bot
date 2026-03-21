@@ -1769,11 +1769,13 @@ class BookingMode(BaseModeNode):
                  * resolver no match → LLM call with stylist data in context (Path B/F)
         """
         service_name = mode_context.get("service_name", "el servicio solicitado")
-        service_category = mode_context.get("service_category") or ""
+        # BUG-CATEGORY FIX: Default to "Peluquería" when category is empty/None.
+        # An empty category causes list_stylists/find_next_available to fail with
+        # "Categoría inválida: . Usa 'Peluquería' o 'Estética'".
+        service_category = mode_context.get("service_category") or "Peluquería"
         user_message = self._get_last_user_message(state)
         updated_context = dict(mode_context)
-        if service_category:
-            updated_context["service_category"] = service_category
+        updated_context["service_category"] = service_category
         recommended_from_reply = self._recommended_services_from_message(
             user_message,
             cast(list[str] | None, updated_context.get("pending_recommendations")),
