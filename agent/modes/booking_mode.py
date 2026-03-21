@@ -1369,8 +1369,23 @@ class BookingMode(BaseModeNode):
                 messages = self._build_messages(state, _SYSTEM_SERVICE_SELECTION)
             result = await self._run_agentic_loop(messages, tools=[])
 
+            # BUG-001 FIX: _advance_step() needs the search_services result in
+            # tool_results to populate service_name / pending_clarification.
+            # The agentic loop above runs with tools=[] so result.tool_results
+            # is always empty — inject the pre-fetched result synthetically.
+            from agent.modes.base import AgenticLoopResult as _AgenticLoopResult
+
+            synthetic_result = _AgenticLoopResult(
+                response_text=result.response_text,
+                tool_results={
+                    **result.tool_results,
+                    "search_services": search_result,
+                },
+                error=result.error,
+                tool_events=result.tool_events,
+            )
             next_step, final_context = self._advance_step(
-                result, BookingSubstep.SERVICE_SELECTION, updated_context
+                synthetic_result, BookingSubstep.SERVICE_SELECTION, updated_context
             )
             return {
                 **self._response_updates(state, result.response_text),

@@ -274,16 +274,24 @@ class BaseModeNode(ABC):
 
         # No prior disclosure found — strip any LLM-generated greeting/self-intro
         # before prepending our canonical disclosure (prevents double greetings).
-        _GREETING_STRIP_PATTERN = re.compile(
-            r"^\s*"
-            r"(?:[¡!]?[Hh]ola[!,\s]+)?"  # optional ¡Hola!, Hola, etc.
-            r"(?:[Bb]uen(?:as?|os?)?\s+(?:d[ií]as?|tardes?|noches?)[!,\s]+)?"  # optional salutation
-            r"(?:Soy\s+Maite[,\s]+"  # Soy Maite,
-            r"(?:la\s+asistenta\s+virtual\s+con\s+[Ii][Aa]\s+de\s+Atr[eé]vete\s+Peluquer[ií]a\s*)?"
-            r"[.!\s]*)+",  # self-intro sentence(s)
+        # BUG-006 FIX: use a two-pass strip:
+        # Pass 1 — remove leading "¡Hola!/Hola/Buenas..." opener (with or without emoji)
+        # Pass 2 — remove full self-intro "Soy Maite, la asistenta..." sentence if present
+        # Both passes are anchored to the start of the string so only leading text is removed.
+        _GREETING_OPENER_PATTERN = re.compile(
+            r"^[¡!]?"
+            r"(?:hola|buenas?(?:\s+(?:d[ií]as?|tardes?|noches?))?)"
+            r"[^.!?]*"          # anything up to the first sentence boundary
+            r"[.!?]?\s*"        # optional punctuation + whitespace
+            r"(?:\S+\s*)?",     # optional single emoji/word immediately after punctuation
             re.IGNORECASE,
         )
-        stripped = _GREETING_STRIP_PATTERN.sub("", response_text).lstrip()
+        _SELF_INTRO_PATTERN = re.compile(
+            r"^soy\s+maite[^.!?]*[.!?]?\s*",
+            re.IGNORECASE,
+        )
+        stripped = _GREETING_OPENER_PATTERN.sub("", response_text).lstrip()
+        stripped = _SELF_INTRO_PATTERN.sub("", stripped).lstrip()
         if stripped != response_text:
             self.logger.debug(
                 "_maybe_prepend_intro: stripped LLM self-intro from first-turn response"
