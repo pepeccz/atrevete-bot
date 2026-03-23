@@ -31,7 +31,7 @@ from agent.services.availability_service import (
     get_stylist_by_id,
     is_holiday,
 )
-from agent.modes.booking_context import InterpretationReason
+from agent.modes.booking_context_v7 import InterpretationReason
 from agent.tools.calendar_tools import (
     generate_time_slots_async,
     get_stylists_by_category,

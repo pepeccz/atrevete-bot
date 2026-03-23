@@ -14,7 +14,6 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.state.schemas import ConversationState
-from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,25 +30,107 @@ _prompt_cache: dict[str, Any] = {
 CACHE_KEY = "system_prompt_v1"
 CACHE_TTL_MINUTES = 10
 
-_BOOKING_PROMPT_LEGACY_STEP_ALIASES = {
-    "customer_data": "notes",
-    "datetime_selection": "slot_selection",
-}
-
-_BOOKING_SUBSTEP_FILE_MAP: dict[str, str] = {
-    "service_selection": "service_selection.md",
-    "add_ons": "add_ons.md",
-    "stylist_selection": "stylist_selection.md",
-    "slot_selection": "slot_selection.md",
-    "customer_name": "customer_name.md",
-    "notes": "notes.md",
-    "confirmation": "confirmation.md",
-    "completed": "completed.md",
+_STEP_VISIBLE_FIELDS: dict[str, set[str]] = {
+    "service_selection": {
+        "customer_phone",
+        "service_name",
+        "service_category",
+        "pending_clarification",
+        "candidate_services",
+        "candidate_service_ids",
+        "pending_recommendations",
+        "recommendations_shown",
+        "service_audience_hint",
+        "implicit_service_hint",
+        "selected_services",
+        "service_duration_minutes",
+        "conversation_summary",
+    },
+    "add_ons": {
+        "customer_phone",
+        "service_name",
+        "service_category",
+        "service_duration_minutes",
+        "selected_services",
+        "add_ons_options",
+        "add_ons_declined",
+        "pending_recommendations",
+        "recommendations_shown",
+        "conversation_summary",
+    },
+    "stylist_selection": {
+        "customer_phone",
+        "service_name",
+        "service_category",
+        "service_duration_minutes",
+        "selected_services",
+        "prefetched_stylists",
+        "soonest_any_slot",
+        "soonest_any_slot_candidate",
+        "recurrent_stylist_name",
+        "recurrent_stylist_slot_summary",
+        "prefetch_error_type",
+        "conversation_summary",
+    },
+    "slot_selection": {
+        "customer_phone",
+        "service_name",
+        "service_duration_minutes",
+        "stylist_name",
+        "stylist_id",
+        "selected_services",
+        "offered_slots",
+        "selected_slot",
+        "slot_summary",
+        "availability_start_date",
+        "availability_time_range",
+        "substitution_made",
+        "substitution_reason",
+        "date_requested",
+        "date_substituted",
+        "min_valid_date",
+        "no_slots_for_stylist",
+        "prefetch_error_type",
+        "conversation_summary",
+    },
+    "customer_name": {
+        "customer_phone",
+        "service_name",
+        "stylist_name",
+        "conversation_summary",
+    },
+    "notes": {
+        "customer_phone",
+        "service_name",
+        "stylist_name",
+        "slot_summary",
+        "selected_services",
+        "conversation_summary",
+    },
+    "confirmation": {
+        "customer_phone",
+        "service_name",
+        "stylist_name",
+        "slot_summary",
+        "notes",
+        "selected_services",
+        "service_duration_minutes",
+        "conversation_summary",
+    },
+    "completed": {
+        "customer_phone",
+        "service_name",
+        "stylist_name",
+        "slot_summary",
+        "notes",
+        "selected_services",
+        "conversation_summary",
+    },
 }
 
 _MODE_OVERLAY_FILES: dict[str, str] = {
     "GREETING": "modes/greeting.md",
-    "BOOKING": "modes/booking.md",
+    "BOOKING": "modes/booking_v7.md",
     "GENERAL": "modes/general.md",
     "ESCALATION": "modes/escalation.md",
 }
@@ -156,38 +237,6 @@ def clear_prompt_cache() -> None:
     logger.info("System prompt cache cleared")
 
 
-def _use_substep_prompts() -> bool:
-    """Return whether booking substep overlays are enabled."""
-
-    try:
-        return get_settings().USE_SUBSTEP_PROMPTS
-    except Exception:
-        return True
-
-
-def _resolve_booking_substep(
-    mode_context: dict,
-    step_info: dict | None = None,
-    substep: str | None = None,
-) -> str | None:
-    """Resolve the canonical booking substep from explicit or legacy inputs."""
-
-    from agent.modes.booking_context import normalize_booking_substep
-
-    raw_substep = substep or mode_context.get("booking_step")
-    if raw_substep is None and step_info is not None:
-        raw_substep = step_info.get("step_name")
-    if raw_substep is None:
-        return None
-
-    aliased = _BOOKING_PROMPT_LEGACY_STEP_ALIASES.get(str(raw_substep).lower(), raw_substep)
-
-    try:
-        return normalize_booking_substep(str(aliased).lower()).value
-    except ValueError:
-        return None
-
-
 def load_mode_overlay(
     mode_name: str | None,
     mode_context: dict,
@@ -195,35 +244,15 @@ def load_mode_overlay(
     substep: str | None = None,
 ) -> str:
     """Load the appropriate mode overlay for the current prompt context."""
-
     if not mode_name:
         return ""
-
     normalized_mode = mode_name.strip().upper()
-
-    if normalized_mode != "BOOKING":
-        overlay_path = _MODE_OVERLAY_FILES.get(normalized_mode)
-        if overlay_path is None:
-            logger.warning("load_mode_overlay: unknown mode '%s'", mode_name)
-            return ""
-
-        subdir, file_name = overlay_path.rsplit("/", 1)
-        return load_markdown(file_name, subdir)
-
-    if not _use_substep_prompts():
-        overlay_path = _MODE_OVERLAY_FILES["BOOKING"]
-        subdir, file_name = overlay_path.rsplit("/", 1)
-        return load_markdown(file_name, subdir)
-
-    resolved_substep = _resolve_booking_substep(mode_context, step_info, substep)
-    if resolved_substep is None:
+    overlay_path = _MODE_OVERLAY_FILES.get(normalized_mode)
+    if overlay_path is None:
+        logger.warning("load_mode_overlay: unknown mode '%s'", mode_name)
         return ""
-
-    file_name = _BOOKING_SUBSTEP_FILE_MAP.get(resolved_substep)
-    if not file_name:
-        return ""
-
-    return load_markdown(file_name, "modes/booking")
+    subdir, file_name = overlay_path.rsplit("/", 1)
+    return load_markdown(file_name, subdir)
 
 
 # ============================================================================
@@ -273,22 +302,30 @@ def build_step_context(
         step_name = step_info.get("step_name", "unknown")
         parts.append(f"Paso actual: {step_name}")
 
-    # Add collected data from mode_context
+    # Per-step data scoping — filter mode_context to prevent data leakage
+    booking_step = mode_context.get("booking_step", "")
+    visible_fields = _STEP_VISIBLE_FIELDS.get(booking_step)
+    if visible_fields is not None:
+        scoped_ctx = {k: v for k, v in mode_context.items() if k in visible_fields}
+    else:
+        scoped_ctx = mode_context  # fallback: show all
+
+    # Add collected data from scoped context
     collected_data = []
-    if mode_context.get("service_name"):
-        collected_data.append(f"Servicio: {mode_context['service_name']}")
-    if mode_context.get("stylist_name"):
-        collected_data.append(f"Estilista: {mode_context['stylist_name']}")
-    if mode_context.get("selected_services"):
+    if scoped_ctx.get("service_name"):
+        collected_data.append(f"Servicio: {scoped_ctx['service_name']}")
+    if scoped_ctx.get("stylist_name"):
+        collected_data.append(f"Estilista: {scoped_ctx['stylist_name']}")
+    if scoped_ctx.get("selected_services"):
         collected_data.append(
-            "Servicios seleccionados: " + ", ".join(mode_context["selected_services"])
+            "Servicios seleccionados: " + ", ".join(scoped_ctx["selected_services"])
         )
-    if mode_context.get("recurrent_stylist_name"):
-        recurrent_line = f"Estilista habitual: {mode_context['recurrent_stylist_name']}"
-        if mode_context.get("recurrent_stylist_slot_summary"):
-            recurrent_line += f" ({mode_context['recurrent_stylist_slot_summary']})"
+    if scoped_ctx.get("recurrent_stylist_name"):
+        recurrent_line = f"Estilista habitual: {scoped_ctx['recurrent_stylist_name']}"
+        if scoped_ctx.get("recurrent_stylist_slot_summary"):
+            recurrent_line += f" ({scoped_ctx['recurrent_stylist_slot_summary']})"
         collected_data.append(recurrent_line)
-    prefetch_error_type = mode_context.get("prefetch_error_type")
+    prefetch_error_type = scoped_ctx.get("prefetch_error_type")
     if prefetch_error_type == "tool_error":
         collected_data.append(
             "⚠️ PREFETCH FALLIDO (error técnico): usá list_stylists como herramienta de respaldo."
@@ -298,38 +335,38 @@ def build_step_context(
             "⚠️ SIN DISPONIBILIDAD: no hay estilistas disponibles. "
             "Informá al cliente y sugiere otro día."
         )
-    prefetched_stylists = mode_context.get("prefetched_stylists")
+    prefetched_stylists = scoped_ctx.get("prefetched_stylists")
     if prefetched_stylists:
         collected_data.append("Estilistas disponibles:")
         for stylist in prefetched_stylists:
             collected_data.append(
                 f"  - {stylist['name']}: {stylist.get('next_slot_summary', 'Sin disponibilidad')}"
             )
-    if mode_context.get("soonest_any_slot"):
+    if scoped_ctx.get("soonest_any_slot"):
         collected_data.append(
-            f"Cualquier profesional disponible: {mode_context['soonest_any_slot']}"
+            f"Cualquier profesional disponible: {scoped_ctx['soonest_any_slot']}"
         )
-    if mode_context.get("slot_summary"):
-        collected_data.append(f"Horario: {mode_context['slot_summary']}")
-    if mode_context.get("notes"):
-        collected_data.append(f"Notas: {mode_context['notes']}")
-    if mode_context.get("pending_recommendations"):
+    if scoped_ctx.get("slot_summary"):
+        collected_data.append(f"Horario: {scoped_ctx['slot_summary']}")
+    if scoped_ctx.get("notes"):
+        collected_data.append(f"Notas: {scoped_ctx['notes']}")
+    if scoped_ctx.get("pending_recommendations"):
         collected_data.append(
-            "Servicios sugeridos: " + ", ".join(mode_context["pending_recommendations"])
+            "Servicios sugeridos: " + ", ".join(scoped_ctx["pending_recommendations"])
         )
-    if mode_context.get("availability_start_date"):
+    if scoped_ctx.get("availability_start_date"):
         collected_data.append(
-            f"Fecha pedida por la clienta: {mode_context['availability_start_date']}"
+            f"Fecha pedida por la clienta: {scoped_ctx['availability_start_date']}"
         )
-    if mode_context.get("availability_time_range"):
+    if scoped_ctx.get("availability_time_range"):
         collected_data.append(
-            f"Franja pedida por la clienta: {mode_context['availability_time_range']}"
+            f"Franja pedida por la clienta: {scoped_ctx['availability_time_range']}"
         )
-    if mode_context.get("substitution_made"):
-        substitution_reason = mode_context.get("substitution_reason")
-        date_requested = mode_context.get("date_requested")
-        date_substituted = mode_context.get("date_substituted")
-        min_valid_date = mode_context.get("min_valid_date")
+    if scoped_ctx.get("substitution_made"):
+        substitution_reason = scoped_ctx.get("substitution_reason")
+        date_requested = scoped_ctx.get("date_requested")
+        date_substituted = scoped_ctx.get("date_substituted")
+        min_valid_date = scoped_ctx.get("min_valid_date")
 
         if substitution_reason == "minimum_days_rule" and date_requested and min_valid_date:
             collected_data.append(
@@ -341,14 +378,76 @@ def build_step_context(
             collected_data.append(
                 f"Fecha solicitada ajustada: {date_requested} -> {date_substituted}"
             )
-    if mode_context.get("no_slots_for_stylist"):
-        stylist_name = mode_context.get("stylist_name") or "la estilista elegida"
+    if scoped_ctx.get("no_slots_for_stylist"):
+        stylist_name = scoped_ctx.get("stylist_name") or "la estilista elegida"
         collected_data.append(
             f"Sin disponibilidad para {stylist_name} en el rango solicitado"
         )
 
+    # Surface pending clarification so LLM can present options to user
+    pending_clarification = scoped_ctx.get("pending_clarification")
+    if pending_clarification:
+        axis = pending_clarification.get("axis", "")
+        hint = pending_clarification.get("question_hint", "")
+        options = pending_clarification.get("options", [])
+        audience_hint = scoped_ctx.get("service_audience_hint")
+
+        # Check if any option matches the audience hint — skip re-asking if so
+        matched_option = None
+        if audience_hint and axis == "audience":
+            hint_lower = audience_hint.lower()
+            for opt in options:
+                val_lower = opt.get("value", "").lower()
+                label_lower = opt.get("label", "").lower()
+                if (
+                    hint_lower in val_lower
+                    or val_lower in hint_lower
+                    or hint_lower in label_lower
+                ):
+                    matched_option = opt
+                    break
+
+        if matched_option:
+            # Hint already matches — tell LLM to use it directly
+            label = matched_option.get("label", matched_option.get("value", ""))
+            service_name = matched_option.get("service_name", "")
+            collected_data.append(
+                f"CLARIFICACIÓN RESUELTA: La clienta ya indicó '{audience_hint}'. "
+                f"Usa directamente la opción '{label}'"
+                + (f" ({service_name})" if service_name else "")
+                + ". No vuelvas a preguntar."
+            )
+        else:
+            # No match — show all options for LLM to ask
+            collected_data.append(f"CLARIFICACIÓN PENDIENTE ({axis}):")
+            collected_data.append(f"  Pregunta: {hint}")
+            collected_data.append("  Opciones:")
+            for i, opt in enumerate(options, 1):
+                label = opt.get("label", opt.get("value", ""))
+                description = opt.get("description", "")
+                if description:
+                    collected_data.append(f"  {i}. {label} — {description}")
+                else:
+                    collected_data.append(f"  {i}. {label}")
+            collected_data.append(
+                f"  Pista del sistema: {audience_hint or 'ninguna'}"
+            )
+            collected_data.append(
+                "  INSTRUCCIÓN: Presentá estas opciones al cliente de forma natural "
+                "para resolver la clarificación."
+            )
+
+    # Surface candidate services for disambiguation context
+    candidate_services = scoped_ctx.get("candidate_services")
+    if candidate_services and not scoped_ctx.get("service_name"):
+        names = [
+            s.get("name", "") for s in candidate_services[:5] if isinstance(s, dict)
+        ]
+        if names:
+            collected_data.append("Servicios candidatos: " + ", ".join(names))
+
     # Intent carry-over: include implicit_service_hint if present (once-only pattern)
-    implicit_service_hint = mode_context.get("implicit_service_hint")
+    implicit_service_hint = scoped_ctx.get("implicit_service_hint")
     if implicit_service_hint:
         collected_data.append(f"Petición original de la clienta: {implicit_service_hint}")
 
@@ -434,4 +533,5 @@ __all__ = [
     "load_mode_overlay",
     "build_step_context",
     "build_layered_messages",
+    "_STEP_VISIBLE_FIELDS",
 ]

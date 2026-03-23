@@ -54,6 +54,7 @@ if "langchain_core" not in sys.modules:
 # Now import the loader
 from agent.prompts.loader import (
     CACHE_TTL_MINUTES,
+    _STEP_VISIBLE_FIELDS,
     build_layered_messages,
     build_step_context,
     clear_prompt_cache,
@@ -642,20 +643,6 @@ class TestLoadModeOverlay:
         assert result == ""
         mock_logger.warning.assert_called_once()
 
-    def test_load_mode_overlay_booking_keeps_substep_behavior(self):
-        with patch("agent.prompts.loader._use_substep_prompts", return_value=True), patch(
-            "agent.prompts.loader._resolve_booking_substep",
-            return_value="slot_selection",
-        ), patch(
-            "agent.prompts.loader.load_markdown",
-            return_value="booking slot prompt",
-        ) as mock_load_markdown:
-            result = load_mode_overlay("booking", {}, substep="slot_selection")
-
-        assert result == "booking slot prompt"
-        mock_load_markdown.assert_called_once_with("slot_selection.md", "modes/booking")
-
-
 class TestPromptCacheIntegration:
     """Integration tests for prompt caching functionality."""
 
@@ -857,3 +844,159 @@ class TestConfirmationMdNoNamePermission:
         assert "Confirmacion" in content or "confirmacion" in content.lower()
         assert "Reglas de Transicion" in content
         assert "Preservacion de Contexto" in content
+
+
+# =============================================================================
+# T-5: Per-step data scoping — _STEP_VISIBLE_FIELDS filtering
+# =============================================================================
+
+
+class TestStepVisibleFieldsScoping:
+    """T-5.4 — Verify per-step data scoping filters mode_context correctly."""
+
+    def test_service_selection_does_not_see_prefetched_stylists(self):
+        """service_selection step must NOT leak prefetched_stylists into context."""
+        state = {"user_message": "quiero un corte"}
+        mode_context = {
+            "booking_step": "service_selection",
+            "service_name": "Corte",
+            "prefetched_stylists": [
+                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes 10:00"},
+            ],
+            "soonest_any_slot": "Lunes 10:00",
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "Corte" in context
+        assert "Ana" not in context
+        assert "Estilistas disponibles" not in context
+        assert "Cualquier profesional" not in context
+
+    def test_stylist_selection_does_see_prefetched_stylists(self):
+        """stylist_selection step MUST see prefetched_stylists."""
+        state = {"user_message": "quien me puede atender?"}
+        mode_context = {
+            "booking_step": "stylist_selection",
+            "service_name": "Corte",
+            "prefetched_stylists": [
+                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes 10:00"},
+            ],
+            "soonest_any_slot": "Lunes 10:00",
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "Ana" in context
+        assert "Estilistas disponibles" in context
+        assert "Cualquier profesional" in context
+
+    def test_unknown_substep_sees_all_fields_fallback(self):
+        """Unknown booking_step must fall back to showing all fields (no filtering)."""
+        state = {"user_message": "hola"}
+        mode_context = {
+            "booking_step": "unknown_step_xyz",
+            "service_name": "Corte",
+            "prefetched_stylists": [
+                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes 10:00"},
+            ],
+            "stylist_name": "Ana",
+            "slot_summary": "Lunes 10:00",
+            "notes": "Nota de prueba",
+        }
+
+        context = build_step_context(state, mode_context)
+
+        # All fields should be visible in fallback
+        assert "Corte" in context
+        assert "Ana" in context
+        assert "Lunes 10:00" in context
+        assert "Nota de prueba" in context
+
+    def test_empty_booking_step_sees_all_fields_fallback(self):
+        """Empty/absent booking_step must fall back to showing all fields."""
+        state = {"user_message": "hola"}
+        mode_context = {
+            "service_name": "Corte",
+            "prefetched_stylists": [
+                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes 10:00"},
+            ],
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "Corte" in context
+        assert "Ana" in context
+
+    def test_all_defined_substeps_have_entries_in_map(self):
+        """Every substep in _BOOKING_SUBSTEP_FILE_MAP must have a _STEP_VISIBLE_FIELDS entry."""
+        from agent.prompts.loader import _BOOKING_SUBSTEP_FILE_MAP
+
+        for substep in _BOOKING_SUBSTEP_FILE_MAP:
+            assert substep in _STEP_VISIBLE_FIELDS, (
+                f"Substep '{substep}' is in _BOOKING_SUBSTEP_FILE_MAP "
+                f"but missing from _STEP_VISIBLE_FIELDS"
+            )
+
+    def test_slot_selection_does_not_see_candidate_services(self):
+        """slot_selection step must NOT leak candidate_services."""
+        state = {"user_message": "dame turno"}
+        mode_context = {
+            "booking_step": "slot_selection",
+            "service_name": "Corte",
+            "stylist_name": "Ana",
+            "candidate_services": [{"name": "Tinte"}, {"name": "Mechas"}],
+            "offered_slots": ["Lunes 10:00", "Martes 11:00"],
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "Corte" in context
+        assert "Ana" in context
+        assert "Servicios candidatos" not in context
+
+    def test_confirmation_sees_notes_but_not_prefetched_stylists(self):
+        """confirmation step must see notes but NOT prefetched_stylists."""
+        state = {"user_message": "confirmo"}
+        mode_context = {
+            "booking_step": "confirmation",
+            "service_name": "Corte",
+            "stylist_name": "Ana",
+            "slot_summary": "Lunes 10:00",
+            "notes": "Sin alergias",
+            "prefetched_stylists": [
+                {"name": "Laura", "id": "sty-2", "next_slot_summary": "Martes 09:00"},
+            ],
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "Corte" in context
+        assert "Ana" in context
+        assert "Lunes 10:00" in context
+        assert "Sin alergias" in context
+        assert "Laura" not in context
+        assert "Estilistas disponibles" not in context
+
+    def test_customer_name_step_minimal_context(self):
+        """customer_name step should only see minimal fields."""
+        state = {"user_message": "me llamo Maria"}
+        mode_context = {
+            "booking_step": "customer_name",
+            "service_name": "Corte",
+            "stylist_name": "Ana",
+            "slot_summary": "Lunes 10:00",
+            "notes": "Nota previa",
+            "prefetched_stylists": [
+                {"name": "Laura", "id": "sty-2", "next_slot_summary": "Martes 09:00"},
+            ],
+        }
+
+        context = build_step_context(state, mode_context)
+
+        assert "Corte" in context
+        assert "Ana" in context
+        # slot_summary and notes are NOT in customer_name's visible fields
+        assert "Lunes 10:00" not in context
+        assert "Nota previa" not in context
+        assert "Laura" not in context

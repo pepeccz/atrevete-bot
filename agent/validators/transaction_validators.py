@@ -195,7 +195,9 @@ async def validate_slot_availability(
                 "stylist_id": str(stylist_id),
                 "conflicting_appointment_id": str(conflict.id),
                 "conflict_start": conflict.start_time.isoformat(),
-                "conflict_end": conflict.end_time.isoformat()
+                "conflict_end": (
+                    conflict.start_time + timedelta(minutes=conflict.duration_minutes)
+                ).isoformat()
             }
         )
 

@@ -158,12 +158,38 @@ def _is_booking_related_query(user_message: str) -> bool:
         # Time/slots
         "horario", "horarios", "hora", "horas", "hueco", "huecos",
         "cuándo", "cuando", "mañana", "tarde", "semana",
+        # Temporal — days of week
+        "lunes", "martes", "miércoles", "jueves", "viernes", "sábado",
+        "hoy", "mañana", "pasado", "semana que viene", "próxima semana",
+        # Booking verbs
+        "reservar", "agendar", "cancelar", "cambiar", "modificar", "confirmar",
+        # Preferences
+        "preferencia", "prefiero", "cualquiera", "no importa", "da igual",
+        # Retry
+        "intentar", "otra vez", "de nuevo", "reintentar",
+        # Questions
+        "cuántas", "cuáles", "tiene", "hay",
         # Current service context
         "cuánto tarda", "cuanto tarda", "duración", "duracion",
         "cuánto dura", "cuanto dura",
         "cuánto cuesta", "cuanto cuesta", "precio",
     }
     return any(term in msg_lower for term in BOOKING_RELATED_TERMS)
+
+
+# Phrases that explicitly signal the user wants to LEAVE booking mode
+_BOOKING_EXIT_PHRASES = {
+    "salir", "otra cosa", "dejalo", "dejémoslo",
+    "no quiero reservar", "olvidalo",
+}
+
+
+def _wants_to_exit_booking(message: str) -> bool:
+    """Check if the user explicitly wants to leave the booking flow."""
+    if not message:
+        return False
+    msg_lower = message.lower()
+    return any(phrase in msg_lower for phrase in _BOOKING_EXIT_PHRASES)
 
 
 def _normalize_handoff_text(value: str) -> str:
@@ -283,11 +309,12 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     5. intent=escalate → ESCALATION
     6. current_mode=BOOKING and intent ask_info → GENERAL with preserved draft
     7. current_mode=BOOKING and intent not cancel/reject/ask_info → stay BOOKING
+    7.5 current_mode=ESCALATION and intent not book → stay ESCALATION (inertia)
     8. intent=book → BOOKING
     9. intent=greet (not in BOOKING) → GREETING
     10. Default → GENERAL
     """
-    from agent.modes.booking_context import preserve_booking_context
+    from agent.modes.booking_context_v7 import preserve_booking_context_v7 as preserve_booking_context
     from agent.state.schemas import transition_mode
 
     conversation_id = state.get("conversation_id", "unknown")
@@ -328,7 +355,10 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     # are classified as "confirm" instead of falling to the LLM as "reject".
     intent_router = _get_intent_router()
     _mode_context = state.get("mode_context") or {}
-    _booking_step = str(_mode_context.get("booking_step") or "") or None
+    # Derive v7-equivalent booking_step for intent classifier bare-digit shortcut
+    _booking_step = None
+    if _mode_context.get("offered_slots") and not _mode_context.get("selected_slot"):
+        _booking_step = "slot_selection"
     try:
         from agent.routing.intent_router import IntentResult
         intent_result = await intent_router.classify(
@@ -374,10 +404,18 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     # Rule 4: Unknown customers only go through GREETING on their FIRST
     # interaction. The is_first_interaction guard prevents re-entry loops
     # when customer_name is None on subsequent turns.
+    # Booking inertia (T-2.3): also skip if booking_step is active — prevents
+    # bouncing back to GREETING mid-booking when customer_name is None.
+    _has_active_booking = bool(
+        _mode_context.get("service_id")
+        or _mode_context.get("offered_slots")
+        or _mode_context.get("selected_slot")
+    )
     if (
         not customer_name
         and is_first_interaction
         and current_mode != "BOOKING"
+        and not _has_active_booking
         and intent_result.intent in ("greet", "ambiguous")
     ):
         greeting_context = {
@@ -417,6 +455,15 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
                 user_message[:80],
             )
             return {"mode_context": {**intent_data}, "last_node": "router"}
+        # Booking inertia: if booking data is being collected and the user hasn't
+        # explicitly asked to leave, keep them in BOOKING to avoid accidental
+        # digressions (T-2.3).
+        if _has_active_booking and not _wants_to_exit_booking(user_message):
+            logger.info(
+                "router_node: ask_info in active BOOKING kept via inertia | message=%r",
+                user_message[:80],
+            )
+            return {"mode_context": {**intent_data}, "last_node": "router"}
         # Truly unrelated → digress to GENERAL with preserved draft context
         transition_update = transition_mode(state, "GENERAL")
         draft_contexts = dict(transition_update.get("draft_contexts") or {})
@@ -433,6 +480,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
 
     # Rule 7: Stay in BOOKING unless cancel/reject or GENERAL digression
     if current_mode == "BOOKING" and intent_result.intent not in ("cancel", "reject", "ask_info"):
+        return {"mode_context": {**intent_data}, "last_node": "router"}
+
+    # Rule 7.5: Stay in ESCALATION unless the user starts a new topic (book)
+    # Mirrors Rule 7 (BOOKING inertia). The escalation FSM collects issue
+    # summary and contact preference; responses like "Por WhatsApp" are
+    # classified as confirm/ambiguous by the router but must NOT eject the
+    # user from the intake flow.
+    if current_mode == "ESCALATION" and intent_result.intent not in ("book",):
         return {"mode_context": {**intent_data}, "last_node": "router"}
 
     # Rule 8: Book intent → BOOKING
@@ -486,7 +541,9 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         )
         transition_update = transition_mode(state, "ESCALATION")
         if current_mode == "BOOKING":
-            from agent.modes.booking_context import preserve_booking_context
+            from agent.modes.booking_context_v7 import (
+                preserve_booking_context_v7 as preserve_booking_context,
+            )
             draft_contexts = dict(transition_update.get("draft_contexts") or {})
             draft_contexts["BOOKING"] = preserve_booking_context(
                 state.get("mode_context") or {},
@@ -594,7 +651,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
     """
     from agent.modes.greeting_mode import GreetingMode
     from agent.modes.general_mode import GeneralMode
-    from agent.modes.booking_mode import BookingMode
+    from agent.modes.booking_mode_v7 import BookingModeV7
     from agent.modes.escalation_mode import EscalationMode
     from agent.modes.confirmation_reply_node import confirmation_reply_node
     from agent.routing.intent_router import IntentResult
@@ -645,7 +702,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
             raw_input="",
             mode_hint="BOOKING",
         )
-        mode = BookingMode(tools=[], llm_client=_get_llm())
+        mode = BookingModeV7(tools=[], llm_client=_get_llm())
         result = await mode.handle(state=state, intent=intent)
         return {**result, "last_node": "booking"}
 

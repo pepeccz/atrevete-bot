@@ -2,8 +2,10 @@
 Greeting Mode — v6.0 Mode-Based Architecture (customer-name-handling refactor).
 
 Handles lightweight first contact for low-intent greetings. This mode NEVER
-extracts or mentions the customer's name. Customer creation uses
-`pending_whatsapp_name` (from Chatwoot sender.name) silently.
+mentions the customer's name in responses. Customer creation uses
+`pending_whatsapp_name` (from Chatwoot sender.name) as the PRIMARY source,
+with a regex fallback that extracts the name from message text when WhatsApp
+metadata is unavailable.
 
 Flow:
 1. If customer already exists (returning): warm name-free greeting → target mode
@@ -14,7 +16,7 @@ Target mode after greeting is determined by `last_intent` in mode_context:
 - "ask_info" → GENERAL (user greeted AND has a question)
 - anything else → GENERAL (default)
 
-NO name extraction from message text. NO name in any response.
+NO name in any response.
 """
 
 import logging
@@ -79,6 +81,52 @@ _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset({
     "peinado",
     "quiero",
 })
+
+
+# ── Name extraction fallback (when pending_whatsapp_name is unavailable) ───────
+# Patterns match common Spanish self-introduction phrases.
+# WhatsApp metadata (pending_whatsapp_name) ALWAYS takes priority over these.
+NAME_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(
+        r"(?:me llamo|mi nombre es)\s+"
+        r"([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+)?)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:^|\.\s+)[Ss]oy\s+"
+        r"([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+)?)",
+    ),
+]
+
+_FALSE_POSITIVE_NAMES: frozenset[str] = frozenset({
+    "nueva", "nuevo", "cliente", "clienta",
+    "de", "la", "el", "un", "una",
+})
+
+
+def _extract_name_from_message(text: str | None) -> str | None:
+    """
+    Try to extract a customer name from the user's message text.
+
+    Matches patterns like "me llamo María", "soy Juan", "mi nombre es Ana López".
+    Returns the name in title case, or None if no valid name is found.
+
+    This is a FALLBACK — only called when pending_whatsapp_name is unavailable.
+    """
+    if not text:
+        return None
+
+    for pattern in NAME_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            candidate = match.group(1).strip()
+            # Filter false positives: single-word matches that are common words
+            tokens = candidate.lower().split()
+            if all(t in _FALSE_POSITIVE_NAMES for t in tokens):
+                continue
+            return candidate.title()
+
+    return None
 
 
 def _normalize_text(text: str | None) -> str:
@@ -260,6 +308,17 @@ class GreetingMode(BaseModeNode):
         # Create customer silently using pending_whatsapp_name (from Chatwoot sender.name)
         # ADR-3: Soft-fail — customer creation failure does NOT escalate, just continues
         pending_name = state.get("pending_whatsapp_name")
+
+        # ── Fallback: extract name from message text when WhatsApp metadata is absent
+        if not pending_name:
+            extracted = _extract_name_from_message(last_user_message)
+            if extracted:
+                self.logger.info(
+                    "GreetingMode: extracted name from message text (fallback): %s",
+                    extracted,
+                )
+                pending_name = extracted
+
         existing_id = state.get("customer_id")
 
         customer_id: str | None = existing_id or None

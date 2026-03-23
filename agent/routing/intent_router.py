@@ -32,7 +32,7 @@ class IntentResult:
     Structured result from the v6.0 intent classifier.
 
     Fields:
-        intent: One of: greet, book, ask_info, confirm, reject, cancel, escalate, ambiguous
+        intent: One of: greet, book, ask_info, confirm, reject, cancel, escalate, retry, ambiguous
         confidence: Float 0.0-1.0 (1.0 = certain keyword match, <0.8 = LLM inferred)
         raw_input: Original user message (for debugging)
         mode_hint: Suggested mode for router_node (GREETING/BOOKING/GENERAL/ESCALATION),
@@ -68,6 +68,10 @@ class IntentResult:
         """Return True if user wants to cancel."""
         return self.intent in ("cancel", "reject")
 
+    def is_retry(self) -> bool:
+        """Return True if user wants to retry a failed action."""
+        return self.intent == "retry"
+
 
 if TYPE_CHECKING:
     from langchain_openai import ChatOpenAI
@@ -84,7 +88,7 @@ logger = logging.getLogger(__name__)
 # Valid intents for the v6.0 classifier
 _VALID_INTENTS: frozenset[str] = frozenset({
     "greet", "book", "ask_info", "confirm", "reject",
-    "cancel", "escalate", "ambiguous",
+    "cancel", "escalate", "retry", "ambiguous",
 })
 
 # Confidence threshold above which the keyword fast-path skips the LLM
@@ -183,6 +187,20 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "reclamar",
         "queja",
     ],
+    "retry": [
+        "intentar",
+        "intentalo",
+        "otra vez",
+        "de nuevo",
+        "reintentar",
+        "vuelve a intentar",
+        "intenta de nuevo",
+        "intentalo de nuevo",
+        "volver a intentar",
+        "probemos de nuevo",
+        "una vez mas",
+        "repetir",
+    ],
 }
 
 
@@ -239,6 +257,7 @@ def _intent_to_mode_hint(intent: str) -> str | None:
         "confirm": None,
         "reject": None,
         "cancel": None,
+        "retry": None,
         "ambiguous": None,
     }
     return _map.get(intent)
@@ -435,7 +454,7 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
 _LLM_SYSTEM_PROMPT = """\
 Eres un clasificador de intenciones para un asistente de reservas de peluquería.
 Clasifica el mensaje del usuario en UNA de estas intenciones:
-greet, book, ask_info, confirm, reject, cancel, escalate, ambiguous
+greet, book, ask_info, confirm, reject, cancel, escalate, retry, ambiguous
 
 Responde ÚNICAMENTE con JSON válido, sin comentarios ni texto extra:
 {"intent": "<intención>", "confidence": <0.0-1.0>}
@@ -448,6 +467,7 @@ Intenciones:
 - reject: rechaza algo propuesto
 - cancel: quiere cancelar una cita existente
 - escalate: quiere hablar con una persona real
+- retry: quiere volver a intentar algo que falló (ej: "intentalo de nuevo", "otra vez", "probemos de nuevo")
 - ambiguous: no queda claro
 
 REGLA IMPORTANTE: Si el mensaje contiene un saludo ("hola", "buenas") JUNTO \

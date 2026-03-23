@@ -17,7 +17,7 @@ from typing import Any
 from uuid import UUID
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -33,30 +33,63 @@ class BookSchema(BaseModel):
     customer_id: str = Field(
         description="Customer UUID as string (automatically registered in first interaction)"
     )
-    first_name: str = Field(
-        description="Customer's first name for this appointment (e.g., 'Pepe')"
-    )
+    first_name: str = Field(description="Customer's first name for this appointment (e.g., 'Pepe')")
     last_name: str | None = Field(
         default=None,
-        description="Customer's last name for this appointment (optional, e.g., 'Cabeza Cruz')"
+        description="Customer's last name for this appointment (optional, e.g., 'Cabeza Cruz')",
     )
     notes: str | None = Field(
         default=None,
-        description="Appointment-specific notes (allergies, preferences, special requests)"
+        description="Appointment-specific notes (allergies, preferences, special requests)",
     )
     services: list[str] = Field(
         description="List of service names as strings (e.g., ['Corte de Caballero', 'Barba'])"
     )
     stylist_id: str = Field(
-        description="Stylist UUID as string (from check_availability tool)"
+        default="__RESOLVE_FROM_SLOT__",
+        description=(
+            "Stylist UUID as string. If slot_index is provided, this is auto-resolved "
+            "— you can omit it."
+        ),
     )
     start_time: str = Field(
-        description="Appointment start time in ISO 8601 format with timezone (e.g., '2025-11-08T10:00:00+01:00')"
+        default="__RESOLVE_FROM_SLOT__",
+        description=(
+            "Appointment start time in ISO 8601 format with timezone. "
+            "If slot_index is provided, this is auto-resolved — you can omit it."
+        ),
+    )
+    slot_index: int | None = Field(
+        default=None,
+        description=(
+            "PREFERRED: 1-based index of the chosen slot from '## Horarios ofrecidos'. "
+            "When provided, stylist_id and start_time are auto-resolved — you can omit them. "
+            "Example: user chose option 2 → slot_index=2"
+        ),
     )
     conversation_id: str | None = Field(
         default=None,
-        description="Chatwoot conversation ID for this customer (from conversation state)"
+        description="Chatwoot conversation ID for this customer (from conversation state)",
     )
+
+    @field_validator("stylist_id", "customer_id")
+    @classmethod
+    def validate_uuid_format(cls, v: str, info) -> str:
+        """Reject empty strings and non-UUID values before they reach the DB.
+
+        Exception: allow sentinel value '__RESOLVE_FROM_SLOT__' for stylist_id
+        when slot_index resolution is expected (resolved by _pre_tool_call hook).
+        """
+        if not v or not v.strip():
+            raise ValueError("UUID cannot be empty")
+        # Allow sentinel value — will be resolved by _pre_tool_call before execution
+        if v == "__RESOLVE_FROM_SLOT__":
+            return v
+        try:
+            UUID(v)
+        except ValueError:
+            raise ValueError(f"Invalid UUID format: '{v}'")
+        return v
 
 
 # ============================================================================
@@ -73,7 +106,8 @@ async def book(
     services: list[str],
     stylist_id: str,
     start_time: str,
-    conversation_id: str | None = None
+    slot_index: int | None = None,
+    conversation_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Create a new appointment booking (atomic transaction).
@@ -162,10 +196,7 @@ async def book(
         # Step 1: Resolve service names to UUIDs
         from agent.utils.service_resolver import resolve_service_names
 
-        logger.info(
-            f"Resolving service names: {services}",
-            extra={"services": services}
-        )
+        logger.info(f"Resolving service names: {services}", extra={"services": services})
 
         service_uuids, ambiguity_info = await resolve_service_names(services)
 
@@ -173,13 +204,16 @@ async def book(
         if ambiguity_info:
             logger.warning(
                 f"Ambiguous service query in book(): '{ambiguity_info['query']}'",
-                extra={"query": ambiguity_info['query'], "options_count": len(ambiguity_info['options'])}
+                extra={
+                    "query": ambiguity_info["query"],
+                    "options_count": len(ambiguity_info["options"]),
+                },
             )
             return {
                 "success": False,
                 "error_code": "AMBIGUOUS_SERVICE",
                 "error_message": f"El servicio '{ambiguity_info['query']}' es ambiguo. Por favor, especifica cuál quieres.",
-                "details": ambiguity_info
+                "details": ambiguity_info,
             }
 
         # If no services resolved, return error
@@ -189,12 +223,12 @@ async def book(
                 "success": False,
                 "error_code": "SERVICES_NOT_FOUND",
                 "error_message": f"No se encontraron los servicios solicitados: {', '.join(services)}",
-                "details": {"services": services}
+                "details": {"services": services},
             }
 
         logger.info(
             f"Services resolved: {len(service_uuids)} UUIDs",
-            extra={"service_uuids": [str(uuid) for uuid in service_uuids]}
+            extra={"service_uuids": [str(uuid) for uuid in service_uuids]},
         )
 
         # Step 2: Parse customer and stylist UUIDs
@@ -207,7 +241,7 @@ async def book(
                 "success": False,
                 "error_code": "INVALID_UUID",
                 "error_message": "ID inválido en los parámetros de reserva",
-                "details": {"error": str(e)}
+                "details": {"error": str(e)},
             }
 
         # Step 3: Parse start time
@@ -219,7 +253,7 @@ async def book(
                 "success": False,
                 "error_code": "INVALID_DATETIME",
                 "error_message": "Formato de fecha/hora inválido",
-                "details": {"error": str(e)}
+                "details": {"error": str(e)},
             }
 
         logger.info(
@@ -231,8 +265,8 @@ async def book(
                 "services": services,
                 "service_count": len(service_uuids),
                 "stylist_id": stylist_id,
-                "start_time": start_time
-            }
+                "start_time": start_time,
+            },
         )
 
         # Step 4: Execute BookingTransaction
@@ -246,7 +280,7 @@ async def book(
             first_name=first_name,
             last_name=last_name,
             notes=notes,
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
         )
 
         return result
@@ -257,7 +291,7 @@ async def book(
             "success": False,
             "error_code": "BOOKING_ERROR",
             "error_message": "Error al procesar la reserva",
-            "details": {"error": str(e)}
+            "details": {"error": str(e)},
         }
 
 
@@ -266,11 +300,7 @@ async def book(
 # ============================================================================
 
 
-async def get_service_by_name(
-    service_name: str,
-    fuzzy: bool = True,
-    limit: int = 5
-) -> list[Any]:
+async def get_service_by_name(service_name: str, fuzzy: bool = True, limit: int = 5) -> list[Any]:
     """
     Get services by name with fuzzy matching using RapidFuzz.
 
@@ -313,7 +343,7 @@ async def get_service_by_name(
                     choices_dict.keys(),
                     scorer=fuzz.WRatio,
                     score_cutoff=45,  # Same threshold as search_services
-                    limit=limit
+                    limit=limit,
                 )
 
                 # Extract matched service objects
@@ -345,11 +375,9 @@ async def get_service_by_name(
 
         except Exception as e:
             logger.error(
-                f"Error in get_service_by_name('{service_name}', fuzzy={fuzzy}): {e}",
-                exc_info=True
+                f"Error in get_service_by_name('{service_name}', fuzzy={fuzzy}): {e}", exc_info=True
             )
             return []  # Return empty list on error, never None
-
 
     # Edge case: If async for loop exits without returning (should never happen)
     logger.warning(

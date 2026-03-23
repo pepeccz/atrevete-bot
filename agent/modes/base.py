@@ -17,7 +17,6 @@ from agent.prompts.loader import build_layered_messages, build_step_context, get
 from agent.state.schemas import ConversationState
 from shared.config import get_settings
 
-
 # ============================================================================
 # AgenticLoopResult — Return type for _run_agentic_loop()
 # ============================================================================
@@ -221,7 +220,7 @@ class BaseModeNode(ABC):
     def _sanitize_response(text: str) -> str:
         """
         Strip pseudo-tool-call text and action narration from LLM output before user delivery.
-        
+
         Removes patterns like:
         - "Voy a..." (upcoming actions)
         - "Déjame..." (let me/me deixa)
@@ -230,7 +229,7 @@ class BaseModeNode(ABC):
         - "Permíteme..." (allow me)
         """
         cleaned = _TOOL_CALL_PATTERN.sub("", text)
-        
+
         # Strip action narration sentences (only if at sentence start)
         # These indicate the LLM is narrating upcoming tool calls instead of executing silently
         narration_patterns = [
@@ -243,7 +242,7 @@ class BaseModeNode(ABC):
         ]
         for pattern in narration_patterns:
             cleaned = re.sub(pattern, "", cleaned, flags=re.MULTILINE | re.IGNORECASE)
-        
+
         # Clean up excess whitespace
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         cleaned = cleaned.strip()
@@ -281,13 +280,13 @@ class BaseModeNode(ABC):
         _GREETING_OPENER_PATTERN = re.compile(
             r"^[¡!]?"
             r"(?:hola|buenas?(?:\s+(?:d[ií]as?|tardes?|noches?))?)"
-            r"[^.!?]*"          # anything up to the first sentence boundary
-            r"[.!?]?\s*"        # optional punctuation + whitespace
-            r"(?:\S+\s*)?",     # optional single emoji/word immediately after punctuation
+            r"[^.!?]*"  # anything up to the first sentence boundary
+            r"[.!?]?\s*"  # optional punctuation + whitespace
+            r"(?:\S+\s*)?",  # optional single emoji/word immediately after punctuation
             re.IGNORECASE,
         )
         _SELF_INTRO_PATTERN = re.compile(
-            r"^soy\s+maite[^.!?]*[.!?]?\s*",
+            r"^(?:soy\s+maite|maite[,.]?\s+(?:tu|la|su)\s+asistent)[^.!?]*[.!?]?\s*",
             re.IGNORECASE,
         )
         stripped = _GREETING_OPENER_PATTERN.sub("", response_text).lstrip()
@@ -306,6 +305,28 @@ class BaseModeNode(ABC):
 
         # Prepend the mandatory EU AI Act disclosure
         return f"{FIRST_TURN_INTRO} {response_text}", True
+
+    async def _pre_tool_call(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Hook called before each tool invocation in the agentic loop.
+
+        Subclasses can override to intercept and transform tool arguments
+        before the tool executes. Default: pass-through (returns tool_args unchanged).
+
+        The hook receives the raw LLM dict BEFORE Pydantic validation, so it can
+        resolve placeholder values (e.g. slot_index → stylist_id).
+
+        Args:
+            tool_name: Name of the tool about to be called.
+            tool_args: Arguments the LLM provided for the tool (raw dict).
+
+        Returns:
+            Modified tool_args dict (or original if no changes needed).
+        """
+        return tool_args
 
     async def _run_agentic_loop(
         self,
@@ -356,17 +377,28 @@ class BaseModeNode(ABC):
                     tool_name = tool_call.get("name", "")
                     tool_args = tool_call.get("args", {})
 
+                    # Pre-tool-call hook: allows subclasses to transform args
+                    try:
+                        tool_args = await self._pre_tool_call(tool_name, tool_args)
+                    except Exception as exc:
+                        self.logger.warning(
+                            "_pre_tool_call failed for %s: %s — using original args",
+                            tool_name,
+                            exc,
+                        )
+
                     if tool_name in tool_map:
                         try:
                             result = await tool_map[tool_name].ainvoke(tool_args)
-                            tool_results[tool_name] = result
                         except Exception as exc:
                             self.logger.error("Tool %s failed: %s", tool_name, exc)
                             result = {"error": str(exc)}
-                            tool_results[tool_name] = result
                     else:
                         result = {"error": f"Unknown tool: {tool_name}"}
-                        tool_results[tool_name] = result
+
+                    # Accumulate results in a list per tool name (BUG-1 fix:
+                    # multiple calls to the same tool no longer overwrite)
+                    tool_results.setdefault(tool_name, []).append(result)
 
                     working_messages.append(
                         ToolMessage(

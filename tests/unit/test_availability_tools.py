@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from agent.modes.booking_context import InterpretationReason
+from agent.modes.booking_context_v7 import InterpretationReason
 from agent.tools import availability_tools as availability_tools_module
 
 

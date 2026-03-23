@@ -758,6 +758,8 @@ class TestBookingDigressions:
 
     @pytest.mark.asyncio
     async def test_ask_info_digression_preserves_booking_draft(self):
+        """Phase 2 (booking-flow-resilience): with active booking_step, unrelated
+        ask_info stays in BOOKING via inertia guard. Only exit phrases leave."""
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -775,7 +777,7 @@ class TestBookingDigressions:
             "selected_slot": {"start_time": "2026-03-20T10:00:00+01:00"},
             "slot_summary": "20/03 10:00",
             "notes": None,
-            "pending_cancel": False,
+            "pending_cancel_context": None,
             "candidate_services": [{"id": "svc-1", "name": "Cortar"}],
         }
 
@@ -783,12 +785,9 @@ class TestBookingDigressions:
             mock_get_router.return_value = _make_mock_router("ask_info")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GENERAL"
-        preserved = result["draft_contexts"]["BOOKING"]
-        assert preserved["booking_step"] == "slot_selection"
-        assert preserved["service_id"] == "svc-1"
-        assert preserved["stylist_id"] == "sty-1"
-        assert preserved["selected_slot"]["start_time"] == "2026-03-20T10:00:00+01:00"
+        # Booking inertia: stays in BOOKING (no exit phrase)
+        returned_mode = result.get("current_mode")
+        assert returned_mode is None or returned_mode == "BOOKING"
 
     @pytest.mark.asyncio
     async def test_book_reentry_restores_saved_booking_draft(self):
@@ -1112,8 +1111,8 @@ class TestRule6BookingRelatedGuard:
         assert returned_mode is None or returned_mode == "BOOKING"
 
     @pytest.mark.asyncio
-    async def test_rule6_unrelated_ask_info_still_digresses_to_general(self):
-        """ask_info about unrelated topic during BOOKING digresses to GENERAL."""
+    async def test_rule6_unrelated_ask_info_with_active_booking_stays_via_inertia(self):
+        """Phase 2: ask_info about unrelated topic + active booking_step → stays BOOKING."""
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -1134,13 +1133,13 @@ class TestRule6BookingRelatedGuard:
             mock_get_router.return_value = _make_mock_router("ask_info")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GENERAL"
-        assert "draft_contexts" in result
-        assert "BOOKING" in result["draft_contexts"]
+        # Booking inertia keeps user in BOOKING
+        returned_mode = result.get("current_mode")
+        assert returned_mode is None or returned_mode == "BOOKING"
 
     @pytest.mark.asyncio
-    async def test_rule6_product_question_digresses_to_general(self):
-        """ask_info about products (not booking-related) digresses to GENERAL."""
+    async def test_rule6_product_question_with_active_booking_stays_via_inertia(self):
+        """Phase 2: ask_info about products + active booking_step → stays BOOKING."""
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -1158,12 +1157,13 @@ class TestRule6BookingRelatedGuard:
             mock_get_router.return_value = _make_mock_router("ask_info")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GENERAL"
-        assert "draft_contexts" in result
+        # Booking inertia keeps user in BOOKING
+        returned_mode = result.get("current_mode")
+        assert returned_mode is None or returned_mode == "BOOKING"
 
     @pytest.mark.asyncio
-    async def test_rule6_teneis_parking_digresses_to_general(self):
-        """ask_info about parking (unrelated) digresses to GENERAL."""
+    async def test_rule6_teneis_parking_with_active_booking_stays_via_inertia(self):
+        """Phase 2: ask_info about parking + active booking_step → stays BOOKING."""
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -1180,4 +1180,6 @@ class TestRule6BookingRelatedGuard:
             mock_get_router.return_value = _make_mock_router("ask_info")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GENERAL"
+        # Booking inertia keeps user in BOOKING
+        returned_mode = result.get("current_mode")
+        assert returned_mode is None or returned_mode == "BOOKING"

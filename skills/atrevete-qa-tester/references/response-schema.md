@@ -1,249 +1,258 @@
-# LLM Turn Response Schema
+# QA Trace Output Format
 
 ## Overview
 
-This document defines the JSON schema that the LLM MUST return on every turn of a QA conversation. The schema maps directly to the `LLMTurnResponse` dataclass in `tests/e2e/harness/run_models.py`.
+This document defines the trace report format that the tester sub-agent produces at the end of a conversational QA session. The sub-agent no longer returns JSON per turn -- it runs the full conversation loop and returns a COMPLETE markdown trace as its final output.
 
-## Schema
+The trace serves as both the test result and the audit trail. The orchestrator can parse it for pass/fail decisions, bug counts, and performance metrics.
+
+## Trace Structure
+
+```markdown
+# QA Trace: {flow_id}
+
+## Metadata
+- **Persona**: {persona_name} ({persona_role})
+- **Flow**: {flow_id}
+- **Conversation ID**: {conversation_id}
+- **Total Turns**: {N}
+- **Result**: {result_status}
+- **Bugs Found**: {bug_count}
+- **Avg Latency**: {avg_latency_ms}ms
+
+## Conversation
+
+| Turn | Speaker | Message | Milestone | Bugs | Latency |
+|------|---------|---------|-----------|------|---------|
+| ... | ... | ... | ... | ... | ... |
+
+## Bugs
+
+{bug_details_or_none}
+
+## Agent State (Final)
 
 ```json
-{
-  "reply": "string (required)",
-  "flow_status": "string enum (required)",
-  "milestone_reached": "string | null (required)",
-  "bugs": "array of BugReport (required, may be empty)",
-  "should_stop": "boolean (required)",
-  "stop_reason": "string (required, empty string if should_stop=false)"
-}
+{final_state_json}
+```
+
+## Summary
+
+{summary_text}
 ```
 
 ## Field Definitions
 
-### `reply`
+### Metadata Fields
 
-- **Type**: `string`
-- **Required**: Yes
-- **Description**: The next WhatsApp message to send to the bot, written in Spanish and matching the persona's personality and reply style.
-- **Constraints**:
-  - Must be non-empty
-  - Must be in Spanish
-  - Should be 1-2 sentences max (like a real WhatsApp message)
-  - Must stay in character for the persona
-  - Must NOT reveal the message is from a test agent
+| Field | Type | Description |
+|-------|------|-------------|
+| `Persona` | string | Display name and role, e.g. `Maria Garcia (new_client)` |
+| `Flow` | string | The `flow_id` being tested, e.g. `new-booking` |
+| `Conversation ID` | UUID | The unique conversation ID used for all CLI calls |
+| `Total Turns` | integer | Number of user-bot turn pairs completed |
+| `Result` | enum | Final outcome (see Result Status below) |
+| `Bugs Found` | integer | Total count of bugs detected across all turns |
+| `Avg Latency` | integer | Average bot response time in milliseconds |
 
-### `flow_status`
+### Result Status
 
-- **Type**: `string` (enum)
-- **Required**: Yes
-- **Valid values**:
+| Value | Meaning |
+|-------|---------|
+| `completed` | Flow reached its final milestone successfully |
+| `escalated` | Human handoff occurred (may or may not be expected) |
+| `stuck` | Bot entered a loop or stopped progressing |
+| `error` | Agent error (timeouts, crashes, tool failures) |
+| `max_turns` | Hit the 20-turn safety limit without completion |
+| `infra_error` | Infrastructure failure (Redis down, agent not running) |
 
-| Value | Meaning | When to Use |
-|-------|---------|-------------|
-| `in_progress` | Conversation is advancing normally | Default for most turns |
-| `completed` | The flow's completion condition has been met | Bot confirmed booking, escalation resolved, etc. |
-| `escalated` | Human handoff occurred or was committed to | Bot offered human contact AND persona accepted |
-| `stuck` | Bot is looping, confused, or not progressing | Same question repeated 3+ times, nonsensical replies |
+### Conversation Table
 
-### `milestone_reached`
+Each turn pair produces TWO rows: one for the user message, one for the bot response.
 
-- **Type**: `string | null`
-- **Required**: Yes
-- **Description**: The `id` of the milestone that was reached or advanced during THIS turn. Set to `null` if no new milestone was reached.
-- **Valid values**: Must be one of the milestone IDs defined in the flow, or `null`.
-- **Examples**:
-  - `"greeting_done"` — bot greeted and user expressed intent
-  - `"service_resolved"` — service type was confirmed
-  - `"stylist_resolved"` — stylist was selected
-  - `"booking_completed"` — booking was confirmed and persisted
-  - `null` — turn was a continuation within the same milestone
+| Column | Description |
+|--------|-------------|
+| Turn | Turn number (1-based). Both user and bot rows share the same turn number |
+| Speaker | `User` or `Bot` |
+| Message | The actual message text (truncate to ~100 chars in table, full text in bugs section if needed) |
+| Milestone | Milestone ID reached on this turn, or `--` if none |
+| Bugs | Comma-separated bug category shortcodes, or `--` if none |
+| Latency | Bot response time (only on Bot rows), or `--` for User rows |
 
-### `bugs`
+### Bug Detail Section
 
-- **Type**: `array` of `BugReport` objects
-- **Required**: Yes (use empty array `[]` if no bugs detected)
-- **Description**: Semantic issues detected in the bot's reply that keyword matching would miss.
+Each bug gets its own subsection:
 
-#### BugReport Object
+```markdown
+### Bug {N}: {category}
+- **Turns**: {turn_numbers}
+- **Evidence**: {description of what went wrong with quotes from the conversation}
+- **Severity**: {low | medium | high | critical}
+```
+
+**Severity guidelines**:
+
+| Severity | Criteria |
+|----------|----------|
+| `critical` | Booking made with wrong data, hallucinated service/stylist booked |
+| `high` | Context loss that blocks the flow, ignored preference that changes the outcome |
+| `medium` | Redundant questions, minor context loss that doesn't block flow |
+| `low` | Tone issues, slightly awkward phrasing, cosmetic language mixing |
+
+### Agent State (Final)
+
+The JSON output from `qa_turn_helper.py state` at the end of the conversation. Always captured before producing the trace. Structure:
 
 ```json
 {
-  "category": "string enum (required)",
-  "evidence": "string (required)",
-  "turns": "array of integers (required)"
+  "has_checkpoint": true,
+  "current_mode": "BOOKING",
+  "mode_context": {},
+  "customer_name": "Maria Garcia",
+  "is_first_interaction": false,
+  "error_count": 0,
+  "mode_history": ["GREETING", "BOOKING"]
 }
 ```
 
-**`category`** — one of:
+### Summary
 
-| Category | Description |
-|----------|-------------|
-| `redundant_question` | Bot re-asks information the user already provided |
-| `ignored_preference` | Bot ignores a preference the user explicitly stated |
-| `context_loss` | Bot forgets information from earlier in the conversation |
-| `hallucination` | Bot mentions services, stylists, or prices that don't exist |
-| `wrong_language` | Bot responds in a language other than Spanish |
+A 1-2 sentence human-readable summary covering:
+- Whether the flow completed as expected
+- Key bugs found (if any)
+- Any notable observations (unusual latency, unexpected mode transitions, etc.)
 
-**`evidence`** — a brief human-readable explanation of what went wrong. Should reference the specific content that triggered the bug detection.
+## Example: Successful Booking Flow
 
-**`turns`** — array of turn numbers involved in the bug. For `redundant_question`, include both the turn where info was first given and the turn where it was re-asked.
+```markdown
+# QA Trace: new-booking
 
-### `should_stop`
+## Metadata
+- **Persona**: Maria Garcia (new_client)
+- **Flow**: new-booking
+- **Conversation ID**: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+- **Total Turns**: 7
+- **Result**: completed
+- **Bugs Found**: 0
+- **Avg Latency**: 1150ms
 
-- **Type**: `boolean`
-- **Required**: Yes
-- **Description**: Whether the LLM believes the conversation should terminate after this turn.
-- **Set to `true` when**:
-  - The flow's completion condition is met (e.g., booking confirmed)
-  - Escalation was accepted by the persona
-  - The bot is completely stuck and further turns won't help
-- **Set to `false` when**:
-  - The conversation is still progressing normally
-  - More information exchange is needed
+## Conversation
 
-**Important**: This is a SUGGESTION to the script layer. Scripts enforce hard limits (max turns, timeout, dead loop) independently. The LLM's `should_stop` only signals semantic completion.
+| Turn | Speaker | Message | Milestone | Bugs | Latency |
+|------|---------|---------|-----------|------|---------|
+| 1 | User | Hola, buenas tardes, quiero pedir una cita | -- | -- | -- |
+| 1 | Bot | Hola! Bienvenida a Atrevete. Como te llamas? | greeting_done | -- | 1320ms |
+| 2 | User | Me llamo Maria Garcia | -- | -- | -- |
+| 2 | Bot | Encantada Maria! Que servicio te gustaria? | name_collected | -- | 980ms |
+| 3 | User | Quiero un corte de cabello y un tinte por favor | -- | -- | -- |
+| 3 | Bot | Perfecto! Corte y tinte para dama. Queres agregar algo mas? | service_resolved | -- | 1100ms |
+| 4 | User | No gracias, solo eso | -- | -- | -- |
+| 4 | Bot | Dale! Tenes preferencia de estilista? | addons_handled | -- | 890ms |
+| 5 | User | No, cualquiera esta bien | -- | -- | -- |
+| 5 | Bot | Te muestro los horarios disponibles para esta semana... Jueves 10:00 con Luciana? | stylist_resolved | -- | 1450ms |
+| 6 | User | El jueves me viene bien, si | -- | -- | -- |
+| 6 | Bot | Perfecto! Te confirmo: Corte + Tinte, jueves 10:00 con Luciana. Confirmas? | slot_resolved | -- | 1200ms |
+| 7 | User | Si, confirmo la cita | -- | -- | -- |
+| 7 | Bot | Listo! Tu cita quedo confirmada. Te esperamos el jueves! | booking_completed | -- | 1110ms |
 
-### `stop_reason`
+## Bugs
 
-- **Type**: `string`
-- **Required**: Yes
-- **Description**: Explanation of why the conversation should stop. Must be an empty string `""` when `should_stop` is `false`.
-- **Examples**:
-  - `"Booking confirmed by bot, appointment details provided"`
-  - `"Human handoff accepted, escalation complete"`
-  - `"Bot stuck in loop asking same question for 3 turns"`
-  - `""` (when `should_stop` is `false`)
+No bugs detected.
 
-## Examples
-
-### Normal booking turn (in progress)
+## Agent State (Final)
 
 ```json
 {
-  "reply": "Para dama, por favor.",
-  "flow_status": "in_progress",
-  "milestone_reached": "service_resolved",
-  "bugs": [],
-  "should_stop": false,
-  "stop_reason": ""
+  "has_checkpoint": true,
+  "current_mode": "BOOKING",
+  "mode_context": {"booking_confirmed": true},
+  "customer_name": "Maria Garcia",
+  "is_first_interaction": false,
+  "error_count": 0,
+  "mode_history": ["GREETING", "BOOKING"]
 }
 ```
 
-### Turn with bug detected
+## Summary
+
+Flow completed successfully in 7 turns. New client Maria Garcia booked corte + tinte for Thursday with no issues. Average latency 1150ms within acceptable range.
+```
+
+## Example: Trace With Bugs
+
+```markdown
+# QA Trace: returning-booking
+
+## Metadata
+- **Persona**: Carlos Ruiz (returning_client)
+- **Flow**: returning-booking
+- **Conversation ID**: f9e8d7c6-b5a4-3210-fedc-ba9876543210
+- **Total Turns**: 9
+- **Result**: completed
+- **Bugs Found**: 2
+- **Avg Latency**: 1380ms
+
+## Conversation
+
+| Turn | Speaker | Message | Milestone | Bugs | Latency |
+|------|---------|---------|-----------|------|---------|
+| 1 | User | Hola, quiero reservar mi corte de siempre | -- | -- | -- |
+| 1 | Bot | Hola! Bienvenido a Atrevete. Como te llamas? | greeting_done | -- | 1200ms |
+| 2 | User | Soy Carlos Ruiz, ya soy cliente | -- | -- | -- |
+| 2 | Bot | Hola Carlos! Que servicio te gustaria? | name_collected | -- | 950ms |
+| 3 | User | El de siempre, corte de caballero | -- | -- | -- |
+| 3 | Bot | Corte de caballero, perfecto! Es para caballero, verdad? | -- | redundant | 1100ms |
+| 4 | User | Si, de caballero, ya te lo dije | -- | -- | -- |
+| 4 | Bot | Perfecto! Algun servicio adicional? | service_resolved | -- | 880ms |
+| 5 | User | No, solo el corte | -- | -- | -- |
+| 5 | Bot | Tenes preferencia de estilista? | addons_handled | -- | 920ms |
+| 6 | User | El que tenga antes | -- | -- | -- |
+| 6 | Bot | Lunes 11:00 con Sofia. Te queda bien? | stylist_resolved | -- | 1650ms |
+| 7 | User | Dale, perfecto | -- | -- | -- |
+| 7 | Bot | Como te llamas para la reserva? | -- | context_loss | 1400ms |
+| 8 | User | Ya te dije, Carlos Ruiz | -- | -- | -- |
+| 8 | Bot | Perdon Carlos! Confirmas corte caballero lunes 11:00 con Sofia? | slot_resolved | -- | 1300ms |
+| 9 | User | Si, confirmado | -- | -- | -- |
+| 9 | Bot | Listo! Tu cita quedo confirmada. Nos vemos el lunes! | booking_completed | -- | 1020ms |
+
+## Bugs
+
+### Bug 1: redundant_question
+- **Turns**: 3
+- **Evidence**: User said "corte de caballero" on turn 3. Bot asked "es para caballero, verdad?" on the same turn despite the user being explicit.
+- **Severity**: medium
+
+### Bug 2: context_loss
+- **Turns**: 2, 7
+- **Evidence**: User provided name "Carlos Ruiz" on turn 2. Bot asked "como te llamas para la reserva?" on turn 7, forgetting the name.
+- **Severity**: high
+
+## Agent State (Final)
 
 ```json
 {
-  "reply": "Ya te dije, para dama.",
-  "flow_status": "in_progress",
-  "milestone_reached": null,
-  "bugs": [
-    {
-      "category": "redundant_question",
-      "evidence": "User said 'corte para dama' on turn 2, bot asked 'es para dama o caballero?' on turn 4",
-      "turns": [2, 4]
-    }
-  ],
-  "should_stop": false,
-  "stop_reason": ""
+  "has_checkpoint": true,
+  "current_mode": "BOOKING",
+  "mode_context": {"booking_confirmed": true},
+  "customer_name": "Carlos Ruiz",
+  "is_first_interaction": false,
+  "error_count": 0,
+  "mode_history": ["GREETING", "BOOKING"]
 }
 ```
 
-### Booking completed
+## Summary
 
-```json
-{
-  "reply": "Perfecto, muchas gracias!",
-  "flow_status": "completed",
-  "milestone_reached": "booking_completed",
-  "bugs": [],
-  "should_stop": true,
-  "stop_reason": "Booking confirmed by bot with appointment details"
-}
+Flow completed in 9 turns (expected ~6). Two bugs found: a redundant clarification question about service gender (medium) and a name context loss on turn 7 that forced the user to repeat their name (high severity). Both suggest state management issues in the booking mode.
 ```
 
-### Escalation accepted
+## Parsing the Trace Programmatically
 
-```json
-{
-  "reply": "Si, prefiero hablar con alguien del equipo.",
-  "flow_status": "escalated",
-  "milestone_reached": "escalation_completed",
-  "bugs": [],
-  "should_stop": true,
-  "stop_reason": "Human handoff accepted, bot confirmed follow-up"
-}
-```
+The trace is designed for human readability first, but can be parsed:
 
-### Indecisive client asking questions
+- **Metadata**: Regex on `- **{Key}**: {value}` lines.
+- **Result**: Extract from `- **Result**: {value}` -- one of the enum values above.
+- **Bug count**: Extract from `- **Bugs Found**: {N}` or count `### Bug N:` headers.
+- **Pass/fail heuristic**: `result == "completed" && bugs_found == 0` is a clean pass. `result == "completed" && bugs_found > 0` is a pass with issues. Anything else is a failure.
 
-```json
-{
-  "reply": "Mmm, no estoy seguro. Que me recomendas para un cambio de look?",
-  "flow_status": "in_progress",
-  "milestone_reached": "discovery_started",
-  "bugs": [],
-  "should_stop": false,
-  "stop_reason": ""
-}
-```
-
-### Multiple bugs in one turn
-
-```json
-{
-  "reply": "Quiero con Luciana, ya te lo dije.",
-  "flow_status": "in_progress",
-  "milestone_reached": null,
-  "bugs": [
-    {
-      "category": "ignored_preference",
-      "evidence": "User requested Luciana on turn 3, bot assigned Sofia on turn 5",
-      "turns": [3, 5]
-    },
-    {
-      "category": "context_loss",
-      "evidence": "Bot asked for service type again despite confirming 'corte dama' on turn 2",
-      "turns": [2, 5]
-    }
-  ],
-  "should_stop": false,
-  "stop_reason": ""
-}
-```
-
-### Bot stuck in a loop
-
-```json
-{
-  "reply": "Es para dama, ya te lo dije tres veces.",
-  "flow_status": "stuck",
-  "milestone_reached": null,
-  "bugs": [
-    {
-      "category": "redundant_question",
-      "evidence": "Bot asked 'dama o caballero' on turns 3, 5, and 7 despite user answering each time",
-      "turns": [3, 5, 7]
-    }
-  ],
-  "should_stop": true,
-  "stop_reason": "Bot stuck in loop, asking same question for 3 consecutive turns"
-}
-```
-
-## Mapping to Python Dataclass
-
-The JSON response maps directly to `LLMTurnResponse` in `tests/e2e/harness/run_models.py`:
-
-| JSON Field | Dataclass Field | Python Type |
-|------------|----------------|-------------|
-| `reply` | `reply` | `str` |
-| `flow_status` | `flow_status` | `str` |
-| `milestone_reached` | `milestone_reached` | `str \| None` |
-| `bugs` | `bugs` | `list[dict[str, Any]]` |
-| `should_stop` | `should_stop` | `bool` |
-| `stop_reason` | `stop_reason` | `str` |
-
-## Parsing Notes
-
-- The LLM MUST be called with `response_format: { type: "json_object" }` to enforce valid JSON output.
-- If JSON parsing fails, retry once. If it fails again, record the error and use a generic fallback reply (e.g., `"Si, dale."`) with `flow_status: "in_progress"`, no bugs, and `should_stop: false`.
-- The `bugs` array uses `list[dict[str, Any]]` rather than a typed dataclass to allow flexibility for additional bug categories without code changes.
+The orchestrator can use these heuristics to decide whether to flag the run for human review.

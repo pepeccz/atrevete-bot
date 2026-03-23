@@ -1,196 +1,365 @@
-# CLAUDE.md
+# AGENTS.md — Atrévete Bot
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Repository Overview
 
-## Project Overview
+**Atrévete Bot** is an AI-powered WhatsApp booking assistant for a beauty salon. It handles customer bookings via WhatsApp through Chatwoot, managing appointments across 5 stylists using a DB-first calendar architecture with Google Calendar as a push-only mirror.
 
-Atrévete Bot is an AI-powered WhatsApp booking assistant for a beauty salon. Manages appointments across 5 stylists using LangGraph v6.0 mode-based architecture with GPT-4.1-mini via OpenRouter. DB-first calendar (PostgreSQL as source of truth, Google Calendar as push-only mirror).
+### Tech Stack
 
-## Development Commands
+| Component | Technology |
+|-----------|------------|
+| **Agent** | Python 3.11+, LangGraph 0.6.7+, LangChain 0.3.0+ |
+| **LLM** | GPT-4.1-mini via OpenRouter (openai/gpt-4.1-mini) |
+| **API** | FastAPI 0.116.1, Pydantic 2.x, Uvicorn 0.30.0+ |
+| **Database** | PostgreSQL 15+, SQLAlchemy 2.0+ (asyncpg), Alembic 1.13+ |
+| **Cache** | Redis Stack (RedisSearch, RedisJSON) |
+| **Admin Panel** | Next.js 15.0.3 (App Router), React 18.3.1, Tailwind CSS |
+| **External APIs** | Google Calendar API, Chatwoot API |
+| **Testing** | pytest 8.3.0+, pytest-asyncio 0.24.0+ |
+| **Code Quality** | black (line length 100), ruff, mypy |
 
-### Testing
+### Key External Dependencies
 
-```bash
-# All tests (60% coverage minimum enforced)
-DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest
+- Google Calendar API (5 stylist calendars)
+- Chatwoot API (WhatsApp integration)
+- OpenRouter API (LLM gateway)
+- PostgreSQL 15+ (data persistence)
+- Redis Stack (checkpointing + RedisSearch/RedisJSON for LangGraph)
 
-# Unit tests only
-DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/unit/
+---
 
-# Integration tests
-DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/integration/
+## Documentation Precedence
 
-# Specific test file or test function
-DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/unit/test_booking_mode.py -v
-DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/unit/test_booking_mode.py::test_function_name -v
+When guidance conflicts, follow this hierarchy (highest priority first):
+
+```
+1. CLAUDE.md (operational details) >
+2. AGENTS.md (repository governance) >
+3. Component AGENTS.md (component-specific) >
+4. skills/* (pattern libraries)
 ```
 
-Test markers: `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.e2e`, `@pytest.mark.slow`
+### Boundary Rules
 
-### Code Quality
+| Question | Where to Look |
+|----------|---------------|
+| How do I run tests? | **CLAUDE.md** (commands) |
+| What's the database schema? | **CLAUDE.md** (models) |
+| How do I add a new agent mode? | **agent/AGENTS.md** → **atrevete-agent** skill |
+| How do I create a migration? | **database/AGENTS.md** → **atrevete-database** skill |
+| What's the project architecture? | **AGENTS.md** (this file) |
+| How do I write a FastAPI route? | **api/AGENTS.md** → **atrevete-api** skill |
+| How do I style React components? | **atrevete-admin** skill → **tailwind-4** skill |
 
-```bash
-black .          # Format (line length: 100, Python 3.11)
-ruff check .     # Lint (E, W, F, I, B, C4, UP rules)
-mypy .           # Type check (strict for shared/ and database/, relaxed for agent/)
+### Decision Tree
+
+```
+Need operational command (docker, test, migrate)?
+  → CLAUDE.md
+
+Need repository structure or navigation?
+  → AGENTS.md (this file)
+
+Working on a specific component?
+  → Component AGENTS.md (agent/, api/, database/)
+
+Need detailed patterns or examples?
+  → skills/* (auto-invoked based on context)
 ```
 
-### Database
+---
+
+## Project Navigation
+
+```
+atrevete-bot/
+├── AGENTS.md              # This file — repository governance
+├── CLAUDE.md              # Operational guide — READ THIS FIRST
+├── README.md              # Project overview and quick start
+│
+├── api/                   # FastAPI webhook receiver
+│   ├── AGENTS.md          # API-specific guidance
+│   ├── main.py            # FastAPI app factory
+│   ├── models/            # Pydantic models
+│   ├── routes/            # API endpoints
+│   │   ├── chatwoot.py    # Chatwoot webhook handler
+│   │   └── admin.py       # Admin API endpoints
+│   ├── services/          # Business logic
+│   └── middleware/        # CORS, logging, rate limiting
+│
+├── agent/                 # LangGraph orchestrator
+│   ├── AGENTS.md          # Agent-specific guidance
+│   ├── main.py            # Redis Streams consumer
+│   ├── graphs/            # StateGraph definitions
+│   │   └── conversation_flow.py   # v6.0 mode-based graph
+│   ├── modes/             # Mode nodes (v6.0)
+│   │   ├── greeting_mode.py       # GREETING mode
+│   │   ├── booking_mode.py        # BOOKING mode
+│   │   ├── general_mode.py        # GENERAL mode
+│   │   └── escalation_mode.py     # ESCALATION mode
+│   ├── routing/           # Intent router
+│   │   └── intent_router.py       # Keyword + LLM hybrid classifier
+│   ├── tools/             # 8 LangChain tools
+│   ├── prompts/           # System prompts
+│   │   ├── shared/        # Core prompts (identity, rules, glossary)
+│   │   └── modes/         # Mode-specific overlays
+│   ├── state/             # State schemas and checkpointer
+│   ├── services/          # Business logic (availability, GCal push)
+│   └── workers/           # Background workers (archiver)
+│
+├── database/              # SQLAlchemy models & Alembic migrations
+│   ├── AGENTS.md          # Database-specific guidance
+│   ├── models.py          # 9 core models + calendar models
+│   ├── connection.py      # Async engine and session factory
+│   ├── alembic/           # Migration files
+│   └── seeds/             # Data seeding
+│
+├── admin-panel/           # Next.js 15 admin interface
+│   ├── src/
+│   │   ├── app/           # Next.js App Router
+│   │   ├── components/    # React components
+│   │   ├── contexts/      # Auth context
+│   │   ├── hooks/         # Custom hooks
+│   │   └── lib/           # API client, types
+│   └── package.json
+│
+├── shared/                # Shared utilities
+│   ├── config.py          # Pydantic Settings (env vars)
+│   ├── chatwoot_client.py # Chatwoot API client
+│   ├── redis_client.py    # Redis connection
+│   ├── logging_config.py  # Structured logging
+│   └── circuit_breaker.py # Circuit breaker pattern
+│
+├── tests/                 # Test suite
+│   ├── unit/              # Unit tests
+│   ├── integration/       # Integration tests
+│   └── mocks/             # API mocks
+│
+├── skills/                # AI agent skills
+│   ├── atrevete/          # Main project skill
+│   ├── atrevete-agent/    # Agent patterns
+│   ├── atrevete-api/      # FastAPI patterns
+│   ├── atrevete-database/ # SQLAlchemy patterns
+│   ├── atrevete-admin/    # Next.js patterns
+│   ├── atrevete-shared/   # Shared utilities
+│   └── skill-sync/        # Skill sync tool
+│
+├── docker/                # Docker configurations
+├── docs/                  # Documentation
+│   ├── prd/               # Product Requirements
+│   ├── architecture/      # Architecture docs
+│   └── migrations/        # Migration guides
+│
+├── docker-compose.yml     # Service orchestration
+├── requirements.txt       # Python dependencies
+└── .env_example           # Environment variables template
+```
+
+---
+
+## Component Map
+
+Each component has its own AGENTS.md with specific guidance:
+
+| Component | Location | AGENTS.md | Purpose |
+|-----------|----------|-----------|---------|
+| **Agent** | `agent/` | [agent/AGENTS.md](agent/AGENTS.md) | LangGraph orchestrator, modes, routing, tools |
+| **API** | `api/` | [api/AGENTS.md](api/AGENTS.md) | FastAPI routes, webhooks, services |
+| **Database** | `database/` | [database/AGENTS.md](database/AGENTS.md) | SQLAlchemy models, migrations |
+| **Shared** | `shared/` | N/A (use `atrevete-shared` skill) | Config, clients, utilities |
+| **Admin Panel** | `admin-panel/` | N/A (use `atrevete-admin` skill) | Next.js 15 React components |
+
+---
+
+### Auto-invoke Skills
+
+When performing these actions, ALWAYS invoke the corresponding skill FIRST:
+
+| Action | Skill |
+|--------|-------|
+| After creating/modifying a skill | `skill-sync` |
+| Choosing a QA persona | `atrevete-qa-context` |
+| Creating React components | `atrevete-admin` |
+| Creating UI components | `atrevete-admin` |
+| Creating agent tools | `atrevete-agent` |
+| Creating migrations | `atrevete-database` |
+| Creating new prompt module | `atrevete-prompts` |
+| Creating utilities | `atrevete-shared` |
+| Creating webhooks | `atrevete-api` |
+| Creating/modifying mode nodes | `atrevete-agent` |
+| Creating/modifying models | `atrevete-database` |
+| Creating/modifying services | `atrevete-api` |
+| Editing agent system prompts | `atrevete-prompts` |
+| Editing identity.md or critical_rules.md | `atrevete-prompts` |
+| Evaluating a QA conversation | `atrevete-qa-evaluator` |
+| Executing a conversational QA run | `atrevete-qa-tester` |
+| General Atrévete Bot development questions | `atrevete` |
+| Generating a QA report | `atrevete-qa-evaluator` |
+| Loading QA context | `atrevete-qa-context` |
+| Modifying core prompt rules | `atrevete-prompts` |
+| Modifying files in agent/prompts/ | `atrevete-prompts` |
+| Modifying mode prompt instructions | `atrevete-prompts` |
+| Preparing a conversational QA scenario | `atrevete-qa-context` |
+| Project overview and architecture | `atrevete` |
+| Regenerate AGENTS.md Auto-invoke tables | `skill-sync` |
+| Reviewing prompt quality | `atrevete-prompts` |
+| Scoring a conversational flow | `atrevete-qa-evaluator` |
+| Simulating a WhatsApp user | `atrevete-qa-tester` |
+| Troubleshoot missing skill in auto-invoke | `skill-sync` |
+| Validating a QA flow end to end | `atrevete-qa-tester` |
+| Working on API routes | `atrevete-api` |
+| Working on Chatwoot | `atrevete-api` |
+| Working on Chatwoot client | `atrevete-shared` |
+| Working on FastAPI | `atrevete-api` |
+| Working on LangGraph | `atrevete-agent` |
+| Working on Next.js | `atrevete-admin` |
+| Working on Redis | `atrevete-shared` |
+| Working on admin-panel/ | `atrevete-admin` |
+| Working on agent/ | `atrevete-agent` |
+| Working on atrevete-bot | `atrevete` |
+| Working on config | `atrevete-shared` |
+| Working on database models | `atrevete-database` |
+| Working on prompt .md files | `atrevete-prompts` |
+| Working on prompts | `atrevete-agent` |
+| Working on routing | `atrevete-agent` |
+| Working on shared/ | `atrevete-shared` |
+| Working on state management | `atrevete-agent` |
+| Working on system prompts | `atrevete-prompts` |
+| Working with SQLAlchemy | `atrevete-database` |
+
+---
+
+## Quick Reference
+
+### Environment Setup
 
 ```bash
-# Create migration (note: uses psycopg driver, NOT asyncpg)
+# Create virtual environment (Python 3.11+ required)
+python3.11 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with real API keys - see docs/external-services-setup.md
+```
+
+### Running Services
+
+```bash
+# Start all services (PostgreSQL, Redis, API, Agent, Archiver)
+docker-compose up -d
+
+# Check service health
+docker-compose ps
+
+# View logs
+docker-compose logs -f api      # FastAPI webhook receiver
+docker-compose logs -f agent    # LangGraph orchestrator
+docker-compose logs -f archiver # Conversation archival worker
+
+# Restart specific service
+docker-compose restart api
+```
+
+### Database Operations
+
+```bash
+# Create new migration
 DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic revision --autogenerate -m "description"
 
 # Apply migrations
 DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic upgrade head
 
-# Check current version
+# Check current migration version
 DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic current
 
-# Direct DB access
+# Access PostgreSQL directly
+PGPASSWORD="changeme_min16chars_secure_password" psql -h localhost -U atrevete -d atrevete_db
+
+# Access via Docker
 docker exec -it atrevete-postgres psql -U atrevete -d atrevete_db
 ```
 
-### Docker
+### Testing
 
 ```bash
-docker-compose up -d              # Start all services
-docker-compose ps                 # Check health
-docker-compose logs -f agent      # Agent logs
-docker-compose logs -f api        # API logs
-docker-compose restart api        # Restart specific service
+# Run all tests with coverage (minimum 85% required)
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest
+
+# Run unit tests only
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/unit/
+
+# Run integration tests
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/integration/
+
+# Run specific test file
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/unit/test_customer_tools.py
+
+# Run specific test with verbose output
+DATABASE_URL="postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/pytest tests/unit/test_customer_tools.py::test_create_customer -v
 ```
 
-### Admin Panel (Next.js)
+### Code Quality
 
 ```bash
-cd admin-panel && npm install
-npm run dev      # Dev server
-npm run build    # Production build
-npm run lint     # Lint
+# Format code (line length: 100, Python 3.11)
+black .
+
+# Lint code
+ruff check .
+
+# Type check (strict for shared/ and database/, relaxed for agent/ and admin/)
+mypy .
 ```
 
-## Architecture
+### Admin Panel Development
 
-### Message Flow
+```bash
+# Navigate to admin panel
+cd admin-panel
 
+# Install dependencies
+npm install
+
+# Run development server (with hot reload)
+npm run dev
+
+# Build for production
+npm run build
+
+# Lint frontend code
+npm run lint
 ```
-WhatsApp → Chatwoot webhook → FastAPI (api/) → Redis Streams → Agent (LangGraph) → Redis → Chatwoot API → WhatsApp
-```
 
-### Agent Graph (v6.0)
-
-```
-preprocess → router → [GREETING | BOOKING | GENERAL | ESCALATION] → summarize → END
-```
-
-- **GREETING**: First contact + name collection. Fires ONCE per new customer, then transitions.
-- **BOOKING**: Multi-step appointment flow with 4 tools (availability, booking, search, customer).
-- **GENERAL**: FAQs and info queries with 2 read-only tools (query_info, search_services).
-- **ESCALATION**: Human handoff. Triggered by intent or `error_count >= 3`.
-
-### Routing Priority (router_node)
-
-1. `escalation_triggered=True` → ESCALATION
-2. `error_count >= 3` → ESCALATION
-3. `is_first_interaction=True` or `customer_name is None` → GREETING
-4. `intent == escalate` → ESCALATION
-5. Currently in BOOKING and not cancel/reject → stay BOOKING
-6. `intent == book` → BOOKING
-7. `intent == greet` and not in BOOKING → GREETING
-8. Default → GENERAL
-
-### Key Components
-
-| Component | Entry Point | Purpose |
-|-----------|-------------|---------|
-| Agent | `agent/main.py` | Redis Streams consumer, LangGraph orchestrator |
-| API | `api/main.py` | FastAPI webhooks + admin endpoints |
-| Database | `database/models.py` | 9 SQLAlchemy models (UUID PKs, JSONB metadata) |
-| Admin Panel | `admin-panel/src/app/` | Next.js App Router |
-| Shared | `shared/config.py` | Pydantic Settings, Redis client, Chatwoot client |
-
-### DB-First Calendar
-
-PostgreSQL is source of truth for availability (<100ms). Google Calendar is a push-only mirror (async, fire-and-forget after DB commit).
+---
 
 ## Critical Rules
 
-1. **Config access**: ALWAYS use `shared/config.py` via `get_settings()`. NEVER use `os.getenv()`.
-2. **State updates**: ALWAYS use `add_message()` from `agent/state/helpers.py`. NEVER mutate state directly.
-3. **No state spread**: NEVER use `{**state}` in node return values — causes message duplication via `operator.add` reducer.
-4. **Partial returns**: Node returns must be partial dicts — only include fields you intend to change.
-5. **Annotated reducers**: ALWAYS use `Annotated[T, reducer_fn]` for custom reducers. Bare types silently fall back to REPLACE semantics.
-6. **Mode transitions**: ALWAYS use `transition_mode()` helper — resets `mode_context` via `__reset__` sentinel.
-7. **Async I/O**: ALWAYS use `async/await` for all I/O operations.
-8. **Spanish user-facing**: All bot responses in Spanish. Code and docs in English.
-9. **UUID PKs**: All database models use UUID primary keys.
-10. **Timezone-aware**: ALWAYS use `DateTime(timezone=True)`. Canonical timezone: `Europe/Madrid`.
-11. **Transient fields**: `user_message` must survive the full pipeline — set by caller, read by mode nodes, cleared only in `summarize_node`.
+These rules apply across ALL components:
 
-## State Schema (v6.0)
+1. **ALWAYS use `shared/config.py`** — NEVER use `os.getenv()` directly
+2. **ALWAYS use `add_message()` helper** — NEVER mutate state directly
+3. **NEVER use `{**state}` spread** in node return values — causes message duplication
+4. **ALWAYS use `Annotated[T, reducer_fn]`** for custom reducers in state schema
+5. **ALWAYS use async/await** for all I/O operations
+6. **ALWAYS maintain Spanish** for user-facing content, English for code/docs
+7. **NEVER start services** (docker, npm, etc.) unless explicitly requested
+8. **ALWAYS use Pydantic Settings** for environment variables
+9. **ALWAYS use UUID** for primary keys (not auto-increment)
+10. **ALWAYS use `DateTime(timezone=True)`** for timestamps
 
-Key fields in `ConversationState` (`agent/state/schemas.py`):
+---
 
-- `messages: Annotated[list, operator.add]` — Conversation history
-- `current_mode: str` — Active mode (GREETING/BOOKING/GENERAL/ESCALATION)
-- `mode_context: Annotated[dict, merge_dicts]` — Mode-specific transient data
-- `mode_history: Annotated[list[str], operator.add]` — Mode transition log
-- `is_first_interaction: bool` — True only on first message
-- `customer_name: str | None` — Name collected in GREETING mode
-- `user_message: str | None` — Current user message (transient)
+## Resources
 
-Message format: `{"role": "user"|"assistant", "content": str, "timestamp": str}` (roles are NEVER "human" or "ai").
+- **[CLAUDE.md](CLAUDE.md)** — Comprehensive development guide (most up-to-date)
+- **[README.md](README.md)** — Project overview and quick start
+- **[skills/](skills/)** — AI agent skills for detailed patterns
 
-## Tools (8 LangChain tools)
+---
 
-1. `query_info` — Unified info retrieval (services, FAQs, hours, policies)
-2. `search_services` — Fuzzy search across 92 services
-3. `manage_customer` — Customer CRUD (get, create, update)
-4. `get_customer_history` — Appointment history
-5. `check_availability` — Check availability for specific date
-6. `find_next_available` — Multi-date search for next slots
-7. `book` — Atomic booking (auto-confirms, no payment flow)
-8. `escalate_to_human` — Human handoff
-
-Tools declare state changes via `_internal_flags` in return values.
-
-## Prompt System (v6.1)
-
-```
-agent/prompts/
-├── loader.py          # get_system_prompt(), load_markdown() with 10-min TTL cache
-├── shared/            # identity.md, critical_rules.md, glossary.md, recovery.md
-└── modes/             # greeting.md, booking.md, general.md, escalation.md
-```
-
-System prompt = shared components (~2,200 tokens, cached). Mode overlay = mode-specific instructions (~800 tokens, per request).
-
-## Resilience Layer
-
-Multi-provider LLM fallback (controlled by `RESILIENCE_ENABLED` env var):
-- Primary: `openai/gpt-4.1-mini`
-- Fallback: `deepseek/deepseek-chat`
-- Emergency: `meta-llama/llama-3.1-8b-instruct`
-
-Error classification: TRANSIENT (retry with backoff), RATE_LIMIT (retry after delay), PERMANENT/VALIDATION/PARTIAL_FAILURE (fail immediately). Per-conversation retry budget: max 5.
-
-## Documentation Hierarchy
-
-```
-CLAUDE.md (this file — operational details) > AGENTS.md (governance) > Component AGENTS.md > skills/*
-```
-
-Component-specific guidance lives in `agent/AGENTS.md`, `api/AGENTS.md`, `database/AGENTS.md`. Detailed patterns in `skills/` (auto-invoked based on context — see AGENTS.md for mapping).
-
-## Tech Stack
-
-| Layer | Stack |
-|-------|-------|
-| Agent | Python 3.11+, LangGraph 0.6.7+, LangChain 0.3.0+, GPT-4.1-mini via OpenRouter |
-| API | FastAPI 0.116.1, Pydantic 2.x, Uvicorn 0.30.0+ |
-| Database | PostgreSQL 15+, SQLAlchemy 2.0+ (asyncpg), Alembic 1.13+ |
-| Cache/Queue | Redis Stack (Streams, RedisSearch, RedisJSON) |
-| Admin Panel | Next.js 15, React 18, Tailwind CSS 3.4, shadcn/ui, FullCalendar 6.1 |
-| Testing | pytest 8.3+, pytest-asyncio 0.24+ (asyncio_mode=auto) |
-| Quality | black (100 cols), ruff, mypy |
+**Last Updated**: March 2026  
+**Version**: 1.0 (Mode-based architecture v6.0)

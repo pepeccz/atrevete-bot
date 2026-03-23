@@ -1,0 +1,88 @@
+{
+  "flow_id": "indecision",
+  "persona_id": "luis_indecisive_client",
+  "conversation_id": "f04b81d9-d59b-4ecc-a2bd-503c5891c3e4",
+  "outcome": "dead_loop",
+  "milestone_reached": "service_resolved",
+  "milestones_hit": [
+    "recommendation_given",
+    "service_resolved"
+  ],
+  "total_turns": 6,
+  "total_duration_ms": 51411,
+  "termination_reason": "Stuck at 'service_resolved' for 4 turns",
+  "appointment_in_db": false,
+  "db_count_last_hour": 0,
+  "db_verification": {
+    "found": false,
+    "count": 0,
+    "details": "not checked"
+  },
+  "final_state": {
+    "appointment_created": false
+  },
+  "bugs_observed": [],
+  "bugs_summary": "none",
+  "fixes_validation": {
+    "NEW-C (friday-no-loop)": "N/A",
+    "BUG-001 (book-on-confirm)": "N/A",
+    "BUG-002 (no-action-narration)": "PASS",
+    "NEW-B (addon-implicit-decline)": "PASS"
+  },
+  "turns": [
+    {
+      "turn_number": 1,
+      "user_message": "Hola! Quer\u00eda preguntar... no s\u00e9 bien qu\u00e9 hacerme, pero quiero algo para caballero. \u00bfMe pod\u00e9s ayudar?",
+      "agent_response": "\u00a1Hola! \ud83c\udf38 Soy Maite, la asistenta virtual con IA de Atr\u00e9vete Peluquer\u00eda. \u00a1Claro que s\u00ed! \ud83d\ude0a Entiendo que a veces es dif\u00edcil decidir.\n\nTenemos varios servicios pensados para caballero:\n\n1.  *Corte Caballero:* 40 min, incluye lavado.\n2.  *Color Caballero:* 30 min, para un cambio de look o cubrir canas.\n3.  *Barba:* 15 min, arreglo y modelado.\n4.  *Manicura Caballero:* 30 min, para unas manos cuidadas.\n\n\u00bfTe gustar\u00eda que te cuente m\u00e1s sobre alguno de estos o tienes alguna idea en mente?",
+      "timed_out": false,
+      "latency_ms": 9292,
+      "milestone_reached": "recommendation_given",
+      "bugs": []
+    },
+    {
+      "turn_number": 2,
+      "user_message": "Hmm... \u00bfy si tambi\u00e9n me hago la barba? Aunque bueno, empecemos con el corte.",
+      "agent_response": "\u00a1Perfecto! Empecemos con el *Corte Caballero* de 40 minutos. \ud83d\ude0a\n\n\u00bfQuieres que busquemos disponibilidad para este servicio?",
+      "timed_out": false,
+      "latency_ms": 8321,
+      "milestone_reached": "service_resolved",
+      "bugs": []
+    },
+    {
+      "turn_number": 3,
+      "user_message": "Prefiero el viernes a la tarde, si tienen disponibilidad.",
+      "agent_response": "Lo siento, tuve un problema consultando la informaci\u00f3n \ud83d\udc95.\n\nParece que no puedo buscar la disponibilidad en este momento. \u00bfTe gustar\u00eda que te conecte con el equipo para que te ayuden a encontrar un hueco para tu corte el viernes por la tarde?",
+      "timed_out": false,
+      "latency_ms": 9700,
+      "milestone_reached": "service_resolved",
+      "bugs": []
+    },
+    {
+      "turn_number": 4,
+      "user_message": "El viernes a la tarde por favor.",
+      "agent_response": "Lo siento, tuve un problema consultando la informaci\u00f3n \ud83d\udc95.\n\nParece que no puedo buscar la disponibilidad en este momento. \u00bfTe gustar\u00eda que te conecte con el equipo para que te ayuden a encontrar un hueco para tu corte el viernes por la tarde?",
+      "timed_out": false,
+      "latency_ms": 8600,
+      "milestone_reached": "service_resolved",
+      "bugs": []
+    },
+    {
+      "turn_number": 5,
+      "user_message": "El viernes a la tarde por favor.",
+      "agent_response": "Lo siento, tuve un problema consultando la informaci\u00f3n \ud83d\udc95.\n\nParece que no puedo buscar la disponibilidad en este momento. \u00bfTe gustar\u00eda que te conecte con el equipo para que te ayuden a encontrar un hueco para tu corte el viernes por la tarde?",
+      "timed_out": false,
+      "latency_ms": 7473,
+      "milestone_reached": "service_resolved",
+      "bugs": []
+    },
+    {
+      "turn_number": 6,
+      "user_message": "El viernes a la tarde por favor.",
+      "agent_response": "Lo siento, tuve un problema consultando la informaci\u00f3n \ud83d\udc95.\n\nParece que no puedo buscar la disponibilidad en este momento. \u00bfTe gustar\u00eda que te conecte con el equipo para que te ayuden a encontrar un hueco para tu corte el viernes por la tarde?",
+      "timed_out": false,
+      "latency_ms": 7435,
+      "milestone_reached": "service_resolved",
+      "bugs": []
+    }
+  ]
+}

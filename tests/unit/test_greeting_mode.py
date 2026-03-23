@@ -6,7 +6,7 @@ Coverage:
 - New customer flow: create customer silently with pending_whatsapp_name → GENERAL
 - New customer without sender_name: create customer without name → GENERAL
 - Name-free responses: NO customer name appears in any response
-- No name extraction: _heuristic_extract and _extract_name are REMOVED
+- Name extraction fallback: regex-based name extraction from message text
 
 All LLM calls are mocked — tests do NOT require a real LLM.
 """
@@ -19,6 +19,7 @@ from agent.modes.greeting_mode import (
     GreetingMode,
     _WELCOME_NEW,
     _WELCOME_RETURNING,
+    _extract_name_from_message,
 )
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
@@ -269,37 +270,135 @@ class TestGreetingModeNewCustomerNoName:
 
 
 # =============================================================================
-# Name extraction removed
+# Name extraction fallback (regex from message text)
 # =============================================================================
 
 
-class TestGreetingModeNoNameExtraction:
-    """Verify that all name extraction methods have been removed."""
+class TestExtractNameFromMessage:
+    """Unit tests for _extract_name_from_message() regex fallback."""
 
-    def test_no_heuristic_extract_method(self):
-        """_heuristic_extract method must not exist."""
+    def test_me_llamo_simple(self):
+        assert _extract_name_from_message("Hola, me llamo María") == "María"
+
+    def test_me_llamo_two_words(self):
+        assert _extract_name_from_message("me llamo Ana López") == "Ana López"
+
+    def test_mi_nombre_es(self):
+        assert _extract_name_from_message("mi nombre es Carlos") == "Carlos"
+
+    def test_mi_nombre_es_case_insensitive(self):
+        assert _extract_name_from_message("Mi Nombre Es pedro") == "Pedro"
+
+    def test_soy_at_start(self):
+        assert _extract_name_from_message("Soy Juan") == "Juan"
+
+    def test_soy_after_period(self):
+        assert _extract_name_from_message("Hola. Soy Laura") == "Laura"
+
+    def test_soy_lowercase_at_start(self):
+        assert _extract_name_from_message("soy Rosa") == "Rosa"
+
+    def test_accented_name(self):
+        assert _extract_name_from_message("me llamo josé") == "José"
+
+    def test_false_positive_nueva_cliente(self):
+        """Common words like 'nueva' or 'cliente' must NOT be extracted."""
+        assert _extract_name_from_message("Soy nueva") is None
+        assert _extract_name_from_message("soy cliente") is None
+        assert _extract_name_from_message("soy un cliente") is None
+
+    def test_no_match_returns_none(self):
+        assert _extract_name_from_message("hola buenas tardes") is None
+        assert _extract_name_from_message("quiero un turno") is None
+
+    def test_none_input(self):
+        assert _extract_name_from_message(None) is None
+
+    def test_empty_string(self):
+        assert _extract_name_from_message("") is None
+
+
+class TestGreetingModeNameExtractionFallback:
+    """Integration tests: name fallback is used when pending_whatsapp_name is absent."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_extracts_name_when_whatsapp_name_missing(self):
+        """When pending_whatsapp_name is None and user says 'me llamo X', extract X."""
         mode = make_greeting_mode()
-        assert not hasattr(mode, "_heuristic_extract")
+        state = create_initial_state("conv-fb-001", "+34612345678")
+        state["customer_name"] = None
+        state["pending_whatsapp_name"] = None
+        state["messages"] = [
+            {
+                "role": "user",
+                "content": "Hola, me llamo María",
+                "timestamp": "2026-03-18T10:00:00+01:00",
+            }
+        ]
 
-    def test_no_extract_name_method(self):
-        """_extract_name method must not exist."""
+        mock_result = {"id": "cust-uuid-fb-001", "first_name": "María"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
+
+        # Name should be extracted from message and set in state
+        assert result.get("customer_name") == "María"
+
+        # Customer creation should use the extracted name
+        call_args = mock_mc.ainvoke.call_args[0][0]
+        assert call_args["data"]["first_name"] == "María"
+
+    @pytest.mark.asyncio
+    async def test_whatsapp_name_takes_priority_over_message_extraction(self):
+        """pending_whatsapp_name must win over text extraction."""
         mode = make_greeting_mode()
-        assert not hasattr(mode, "_extract_name")
+        state = create_initial_state("conv-fb-002", "+34612345678")
+        state["customer_name"] = None
+        state["pending_whatsapp_name"] = "WhatsApp Name"
+        state["messages"] = [
+            {
+                "role": "user",
+                "content": "Hola, me llamo Otra Persona",
+                "timestamp": "2026-03-18T10:00:00+01:00",
+            }
+        ]
 
-    def test_no_is_valid_name_function(self):
-        """_is_valid_name function must not exist in module."""
-        import agent.modes.greeting_mode as gm
-        assert not hasattr(gm, "_is_valid_name")
+        mock_result = {"id": "cust-uuid-fb-002", "first_name": "WhatsApp Name"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
 
-    def test_no_non_name_words_constant(self):
-        """_NON_NAME_WORDS constant must not exist in module."""
-        import agent.modes.greeting_mode as gm
-        assert not hasattr(gm, "_NON_NAME_WORDS")
+        # WhatsApp name should win
+        assert result.get("customer_name") == "WhatsApp Name"
+        call_args = mock_mc.ainvoke.call_args[0][0]
+        assert call_args["data"]["first_name"] == "WhatsApp Name"
 
-    def test_no_filler_words_constant(self):
-        """_FILLER_WORDS constant must not exist in module."""
-        import agent.modes.greeting_mode as gm
-        assert not hasattr(gm, "_FILLER_WORDS")
+    @pytest.mark.asyncio
+    async def test_no_name_anywhere_still_creates_customer(self):
+        """When neither WhatsApp nor message has a name, customer is still created."""
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-fb-003", "+34612345678")
+        state["customer_name"] = None
+        state["pending_whatsapp_name"] = None
+        state["messages"] = [
+            {
+                "role": "user",
+                "content": "hola buenas tardes",
+                "timestamp": "2026-03-18T10:00:00+01:00",
+            }
+        ]
+
+        mock_result = {"id": "cust-uuid-fb-003"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent())
+
+        # Customer created without name
+        mock_mc.ainvoke.assert_called_once()
+        call_args = mock_mc.ainvoke.call_args[0][0]
+        assert "first_name" not in call_args.get("data", {})
+        # customer_name should NOT be set
+        assert "customer_name" not in result or result.get("customer_name") is None
 
 
 # =============================================================================
