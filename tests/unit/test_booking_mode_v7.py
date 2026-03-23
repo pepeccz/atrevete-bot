@@ -645,7 +645,8 @@ class TestPreResolvers:
         state = make_state()
         state["mode_context"] = {"service_audience_hint": "adult_female"}
 
-        BookingModeV7._resolve_audience_hint(state, ctx)
+        mode = BookingModeV7.__new__(BookingModeV7)
+        mode._resolve_audience_hint(state, ctx)
 
         assert ctx.service_audience_hint == "adult_female"
 
@@ -654,9 +655,30 @@ class TestPreResolvers:
         state = make_state()
         state["mode_context"] = {"service_audience_hint": "adult_female"}
 
-        BookingModeV7._resolve_audience_hint(state, ctx)
+        mode = BookingModeV7.__new__(BookingModeV7)
+        mode._resolve_audience_hint(state, ctx)
 
         assert ctx.service_audience_hint == "adult_male"
+
+    def test_resolve_audience_hint_from_user_message(self):
+        ctx = BookingContextV7()
+        state = make_state()
+        state["messages"] = [{"role": "user", "content": "Para dama"}]
+
+        mode = BookingModeV7.__new__(BookingModeV7)
+        mode._resolve_audience_hint(state, ctx)
+
+        assert ctx.service_audience_hint == "adult_female"
+
+    def test_resolve_audience_hint_mujer_adulta(self):
+        ctx = BookingContextV7()
+        state = make_state()
+        state["messages"] = [{"role": "user", "content": "Soy mujer adulta"}]
+
+        mode = BookingModeV7.__new__(BookingModeV7)
+        mode._resolve_audience_hint(state, ctx)
+
+        assert ctx.service_audience_hint == "adult_female"
 
 
 # =============================================================================

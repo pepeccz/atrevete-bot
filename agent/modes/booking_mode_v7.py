@@ -238,8 +238,7 @@ class BookingModeV7(BaseModeNode):
             if state_id:
                 ctx.customer_id = str(state_id)
 
-    @staticmethod
-    def _resolve_audience_hint(state: ConversationState, ctx: BookingContextV7) -> None:
+    def _resolve_audience_hint(self, state: ConversationState, ctx: BookingContextV7) -> None:
         """Extract service_audience_hint from mode_context handoff or user message.
 
         The greeting/router may have already detected an audience hint (e.g. "corte
@@ -260,6 +259,18 @@ class BookingModeV7(BaseModeNode):
             extracted = extract_service_audience_hint(implicit)
             if extracted:
                 ctx.service_audience_hint = extracted
+                return
+
+        # Try extracting from current user message (e.g. "para dama", "soy mujer")
+        user_msg = self._get_last_user_message(state)
+        if user_msg:
+            extracted = extract_service_audience_hint(user_msg)
+            if extracted:
+                ctx.service_audience_hint = extracted
+                logger.info(
+                    "_resolve_audience_hint: extracted '%s' from user message",
+                    extracted,
+                )
 
     # ──────────────────────────────────────────────────────────────────────
     # Pre-tool-call hook (slot_index → stylist_id + start_time resolution)
