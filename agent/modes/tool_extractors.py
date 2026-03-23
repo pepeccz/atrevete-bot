@@ -66,6 +66,58 @@ def extract_service_audience_hint(value: str | None) -> str | None:
 
 
 # ============================================================================
+# Pre-resolvers (called before prompt building)
+# ============================================================================
+
+
+def resolve_pending_clarification(ctx: BookingContextV7) -> bool:
+    """Attempt to resolve a pending audience clarification using service_audience_hint.
+
+    Called as a pre-resolver in BookingModeV7.handle() AFTER _resolve_audience_hint()
+    and BEFORE _build_messages(). If the pending clarification axis is "audience" and
+    service_audience_hint matches one of the options, this function MUTATES ctx:
+    - Sets service_id, service_name, service_category, service_duration_minutes
+    - Appends to selected_services (NOT overwrite)
+    - Clears pending_clarification and candidate_services
+    Returns True if resolution happened, False otherwise.
+    """
+    if ctx.pending_clarification is None:
+        return False
+    if ctx.pending_clarification.get("axis") != "audience":
+        return False
+    if ctx.service_audience_hint is None:
+        return False
+
+    hint_lower = _normalize_text(ctx.service_audience_hint)
+    options = ctx.pending_clarification.get("options", [])
+
+    for opt in options:
+        val = _normalize_text(opt.get("value"))
+        label = _normalize_text(opt.get("label"))
+        if hint_lower in val or val in hint_lower or hint_lower in label:
+            ctx.service_id = str(opt["service_id"])
+            ctx.service_name = opt["service_name"]
+            ctx.service_category = opt.get("category")
+            ctx.service_duration_minutes = opt.get("duration_minutes")
+            ctx.service_family = opt.get("family")
+            # APPEND, not overwrite (same pattern as Shape 1 lines 115-118)
+            if opt["service_name"] not in ctx.selected_services:
+                ctx.selected_services = [opt["service_name"]] + [
+                    s for s in ctx.selected_services if s != opt["service_name"]
+                ]
+            ctx.pending_clarification = None
+            ctx.candidate_services = []
+            logger.info(
+                "resolve_pending_clarification: auto-resolved '%s' via audience hint '%s'",
+                opt["service_name"],
+                ctx.service_audience_hint,
+            )
+            return True
+
+    return False
+
+
+# ============================================================================
 # Safe parsing
 # ============================================================================
 
@@ -122,6 +174,15 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
         # Infer audience hint if not already set
         if not ctx.service_audience_hint:
             ctx.service_audience_hint = extract_service_audience_hint(svc.get("name"))
+        # Extract combo recommendations if present and not yet loaded
+        combo_recs = svc.get("combo_recommendations", [])
+        if combo_recs and not ctx.pending_recommendations:
+            ctx.pending_recommendations = [str(r) for r in combo_recs if str(r).strip()]
+            ctx.recommendations_shown = False
+            logger.info(
+                "extract_service_fields: %d combo recommendations loaded",
+                len(ctx.pending_recommendations),
+            )
         logger.info(
             "extract_service_fields: resolved service '%s' (id=%s)",
             svc.get("name"),
@@ -148,7 +209,10 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
             ctx.service_name = svc["name"]
             ctx.service_category = svc.get("category")
             ctx.service_duration_minutes = svc.get("duration_minutes")
-            ctx.selected_services = [svc["name"]]
+            if svc["name"] not in ctx.selected_services:
+                ctx.selected_services = [svc["name"]] + [
+                    s for s in ctx.selected_services if s != svc["name"]
+                ]
             ctx.pending_clarification = None
             ctx.candidate_services = []
             if not ctx.service_audience_hint:
@@ -295,6 +359,13 @@ def extract_booking_result(result: dict, ctx: BookingContextV7) -> None:
         )
     else:
         ctx.book_failure_count = getattr(ctx, "book_failure_count", 0) + 1
+        error_code = result.get("error_code", "")
+        if error_code == "SLOT_TAKEN":
+            ctx.offered_slots = None  # Force refresh on next availability check
+            ctx.selected_slot = None  # Clear stale selection
+            logger.info(
+                "extract_booking_result: SLOT_TAKEN — cleared offered_slots for refresh"
+            )
         logger.info(
             "extract_booking_result: booking failed (error_code=%s, failure_count=%d)",
             result.get("error_code"),

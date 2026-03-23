@@ -72,6 +72,11 @@ class BookingContextV7:
     soonest_any_slot: str | None = None
     recurrent_stylist_hint: str | None = None
 
+    # ── Combo recommendations (populated by extract_service_fields) ────
+    pending_recommendations: list[str] = field(default_factory=list)
+    recommendations_shown: bool = False
+    recommendations_declined: bool = False
+
     # ── Book failure tracking ────────────────────────────────────────────
     book_failure_count: int = 0
 

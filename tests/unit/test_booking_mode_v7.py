@@ -21,8 +21,10 @@ from agent.modes.booking_mode_v7 import (
     BookingModeV7,
     _build_disambiguation_section,
     _build_offered_slots_section,
+    _build_recommendations_section,
     _build_stylists_section,
     _contains_name_token,
+    _detect_recommendation_decline,
     _normalize_text,
     _redact_name_tokens,
 )
@@ -190,7 +192,6 @@ class TestCancelEscalateDetection:
             "mejor no",
             "he cambiado de opinión",
             "cambié de opinión",
-            "no gracias",
             "paso",
             "ya no quiero",
             "lo cancelo",
@@ -299,18 +300,26 @@ class TestBuildDisambiguationSection:
         result = _build_disambiguation_section(ctx)
         assert result == ""
 
-    def test_auto_resolves_audience_with_hint(self):
+    def test_renders_empty_after_pre_resolver_cleared_clarification(self):
+        """After resolve_pending_clarification clears pending_clarification, renders empty."""
         ctx = BookingContextV7(
             service_audience_hint="adult_female",
+            pending_clarification=None,  # Pre-resolver already cleared it
+        )
+
+        result = _build_disambiguation_section(ctx)
+
+        assert result == ""
+
+    def test_renders_pending_when_not_auto_resolved(self):
+        """When hint doesn't match (pre-resolver returned False), renders pending options."""
+        ctx = BookingContextV7(
+            service_audience_hint="baby",
             pending_clarification={
                 "axis": "audience",
                 "question_hint": "¿Para quién es?",
                 "options": [
-                    {
-                        "value": "adult_female",
-                        "label": "Mujer adulta",
-                        "service_name": "Corte mujer",
-                    },
+                    {"value": "adult_female", "label": "Mujer adulta"},
                     {"value": "adult_male", "label": "Hombre adulto"},
                 ],
             },
@@ -318,8 +327,10 @@ class TestBuildDisambiguationSection:
 
         result = _build_disambiguation_section(ctx)
 
-        assert "CLARIFICACIÓN RESUELTA" in result
-        assert "No vuelvas a preguntar" in result
+        assert "CLARIFICACIÓN PENDIENTE (audience)" in result
+        assert "Mujer adulta" in result
+        assert "Hombre adulto" in result
+        assert "CLARIFICACIÓN RESUELTA" not in result
 
     def test_candidate_services_shown(self):
         ctx = BookingContextV7(
@@ -744,3 +755,137 @@ class TestPreToolCallCustomerIdInjection:
         assert result["stylist_id"] == "aaa-bbb"
         assert result["start_time"] == "2026-03-25T10:00:00+01:00"
         assert "slot_index" not in result
+
+
+# =============================================================================
+# 14. Combo Recommendations — _build_recommendations_section (Phase 4)
+# =============================================================================
+
+
+class TestBuildRecommendationsSection:
+    """Test _build_recommendations_section prompt rendering."""
+
+    def test_renders_when_pending_and_not_shown(self):
+        """Pending recommendations that haven't been shown yet → render section."""
+        ctx = BookingContextV7(
+            pending_recommendations=["Hidratación", "Corte de Señora"],
+            recommendations_shown=False,
+            recommendations_declined=False,
+        )
+
+        result = _build_recommendations_section(ctx)
+
+        assert "SERVICIOS RECOMENDADOS" in result
+        assert "Hidratación" in result
+        assert "Corte de Señora" in result
+
+    def test_empty_when_declined(self):
+        """Declined recommendations → empty string."""
+        ctx = BookingContextV7(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=True,
+            recommendations_declined=True,
+        )
+
+        assert _build_recommendations_section(ctx) == ""
+
+    def test_empty_when_already_shown(self):
+        """Already shown once → empty string (don't repeat)."""
+        ctx = BookingContextV7(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=True,
+            recommendations_declined=False,
+        )
+
+        assert _build_recommendations_section(ctx) == ""
+
+    def test_empty_when_no_recommendations(self):
+        """No pending recommendations → empty string."""
+        ctx = BookingContextV7()
+
+        assert _build_recommendations_section(ctx) == ""
+
+
+# =============================================================================
+# 15. Combo Recommendations — _detect_recommendation_decline (Phase 4)
+# =============================================================================
+
+
+class TestDetectRecommendationDecline:
+    """Test _detect_recommendation_decline add-on decline detection."""
+
+    def test_detects_no_gracias(self):
+        """'no gracias' should trigger decline when recommendations shown."""
+        ctx = BookingContextV7(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=True,
+            recommendations_declined=False,
+        )
+
+        assert _detect_recommendation_decline("no gracias, solo eso", ctx) is True
+        assert ctx.recommendations_declined is True
+
+    def test_detects_solo_eso(self):
+        """'solo eso' should trigger decline."""
+        ctx = BookingContextV7(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=True,
+        )
+
+        assert _detect_recommendation_decline("solo eso", ctx) is True
+        assert ctx.recommendations_declined is True
+
+    def test_ignores_before_shown(self):
+        """Should not detect decline before recommendations are shown."""
+        ctx = BookingContextV7(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=False,
+        )
+
+        assert _detect_recommendation_decline("no gracias", ctx) is False
+        assert ctx.recommendations_declined is False
+
+    def test_ignores_when_no_recommendations(self):
+        """No pending recommendations → no decline detection."""
+        ctx = BookingContextV7()
+
+        assert _detect_recommendation_decline("no gracias", ctx) is False
+
+    def test_ignores_when_already_declined(self):
+        """Already declined → don't re-process."""
+        ctx = BookingContextV7(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=True,
+            recommendations_declined=True,
+        )
+
+        assert _detect_recommendation_decline("no gracias", ctx) is False
+
+    def test_non_decline_message_returns_false(self):
+        """Normal booking message should not trigger decline."""
+        ctx = BookingContextV7(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=True,
+        )
+
+        assert _detect_recommendation_decline("sí, quiero la hidratación", ctx) is False
+        assert ctx.recommendations_declined is False
+
+
+# =============================================================================
+# 16. "no gracias" conflict fix — Phase 4 (T-14)
+# =============================================================================
+
+
+class TestNoGraciasConflictFix:
+    """Verify 'no gracias' no longer triggers cancel intent."""
+
+    def test_no_gracias_does_not_cancel(self):
+        """'no gracias' should NOT trigger cancel — it's too generic."""
+        mode = make_booking_mode_v7()
+        state = make_state(user_message="no gracias")
+        intent = make_intent("book")
+
+        result = mode._check_special_intents(state, "no gracias", intent)
+
+        assert result is None  # No cancel — normal flow continues

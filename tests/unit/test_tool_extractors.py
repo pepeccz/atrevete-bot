@@ -19,6 +19,7 @@ from agent.modes.tool_extractors import (
     extract_service_fields,
     extract_slot_fields,
     extract_stylist_fields,
+    resolve_pending_clarification,
 )
 
 
@@ -694,3 +695,347 @@ class TestApplyAllToolResults:
             "book",
         }
         assert expected == set(TOOL_EXTRACTORS.keys())
+
+
+# ============================================================================
+# resolve_pending_clarification (Phase 1 — Pending Clarification Resolver)
+# ============================================================================
+
+
+class TestResolvePendingClarification:
+    """Test resolve_pending_clarification pre-resolver."""
+
+    def test_no_pending_returns_false(self):
+        """No pending_clarification → no-op."""
+        ctx = BookingContextV7(
+            service_audience_hint="adult_female",
+            pending_clarification=None,
+        )
+        assert resolve_pending_clarification(ctx) is False
+
+    def test_non_audience_axis_returns_false(self):
+        """hair_length axis → not auto-resolvable."""
+        ctx = BookingContextV7(
+            pending_clarification={
+                "axis": "hair_length",
+                "options": [
+                    {
+                        "value": "short",
+                        "label": "Corto",
+                        "service_id": "uuid-1",
+                        "service_name": "Corte Corto",
+                    },
+                ],
+            },
+            service_audience_hint="adult_female",
+        )
+        assert resolve_pending_clarification(ctx) is False
+        assert ctx.pending_clarification is not None
+
+    def test_no_hint_returns_false(self):
+        """Audience axis but no hint → can't resolve."""
+        ctx = BookingContextV7(
+            pending_clarification={
+                "axis": "audience",
+                "options": [
+                    {
+                        "value": "adult_female",
+                        "label": "Mujer",
+                        "service_id": "uuid-1",
+                        "service_name": "Corte Mujer",
+                    },
+                ],
+            },
+        )
+        assert resolve_pending_clarification(ctx) is False
+
+    def test_audience_match_resolves(self):
+        """Audience hint matches option → mutates ctx correctly."""
+        ctx = BookingContextV7(
+            service_audience_hint="adult_female",
+            pending_clarification={
+                "axis": "audience",
+                "question_hint": "¿Para quién es?",
+                "options": [
+                    {
+                        "value": "adult_female",
+                        "label": "Mujer",
+                        "service_id": "uuid-1",
+                        "service_name": "Corte Mujer",
+                        "category": "corte",
+                        "duration_minutes": 45,
+                    },
+                    {
+                        "value": "adult_male",
+                        "label": "Hombre",
+                        "service_id": "uuid-2",
+                        "service_name": "Corte Hombre",
+                        "category": "corte",
+                        "duration_minutes": 30,
+                    },
+                ],
+            },
+        )
+        result = resolve_pending_clarification(ctx)
+
+        assert result is True
+        assert ctx.service_id == "uuid-1"
+        assert ctx.service_name == "Corte Mujer"
+        assert ctx.service_category == "corte"
+        assert ctx.service_duration_minutes == 45
+        assert ctx.selected_services == ["Corte Mujer"]
+        assert ctx.pending_clarification is None
+        assert ctx.candidate_services == []
+
+    def test_audience_match_appends_to_existing_services(self):
+        """Second service resolved via clarification appends, not overwrites."""
+        ctx = BookingContextV7(
+            selected_services=["Tinte Mujer"],
+            service_audience_hint="adult_female",
+            pending_clarification={
+                "axis": "audience",
+                "options": [
+                    {
+                        "value": "adult_female",
+                        "label": "Mujer",
+                        "service_id": "uuid-corte-f",
+                        "service_name": "Corte Mujer",
+                    },
+                    {
+                        "value": "adult_male",
+                        "label": "Hombre",
+                        "service_id": "uuid-corte-m",
+                        "service_name": "Corte Hombre",
+                    },
+                ],
+            },
+        )
+        result = resolve_pending_clarification(ctx)
+
+        assert result is True
+        assert ctx.service_id == "uuid-corte-f"
+        assert ctx.service_name == "Corte Mujer"
+        assert ctx.selected_services == ["Corte Mujer", "Tinte Mujer"]
+        assert ctx.pending_clarification is None
+
+    def test_no_match_returns_false(self):
+        """Hint doesn't match any option → leave pending."""
+        ctx = BookingContextV7(
+            service_audience_hint="baby",
+            pending_clarification={
+                "axis": "audience",
+                "options": [
+                    {
+                        "value": "adult_female",
+                        "label": "Mujer",
+                        "service_id": "uuid-1",
+                        "service_name": "Corte Mujer",
+                    },
+                    {
+                        "value": "adult_male",
+                        "label": "Hombre",
+                        "service_id": "uuid-2",
+                        "service_name": "Corte Hombre",
+                    },
+                ],
+            },
+        )
+        result = resolve_pending_clarification(ctx)
+
+        assert result is False
+        assert ctx.pending_clarification is not None
+        assert ctx.selected_services == []
+
+
+# ============================================================================
+# extract_booking_result — SLOT_TAKEN cleanup (Phase 2)
+# ============================================================================
+
+
+class TestExtractBookingResultSlotTaken:
+    """Test SLOT_TAKEN-specific cleanup in extract_booking_result."""
+
+    def test_slot_taken_clears_offered_slots(self):
+        """SLOT_TAKEN error should clear offered_slots to force refresh."""
+        ctx = BookingContextV7(
+            offered_slots=[
+                {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-24T10:00:00"},
+                {"stylist_id": "s1", "time": "11:00", "full_datetime": "2026-03-24T11:00:00"},
+            ],
+            selected_slot={"stylist_id": "s1", "start_time": "2026-03-24T10:00:00"},
+            book_failure_count=0,
+        )
+        extract_booking_result(
+            {"success": False, "error_code": "SLOT_TAKEN", "message": "Slot already booked"},
+            ctx,
+        )
+
+        assert ctx.offered_slots is None
+        assert ctx.selected_slot is None
+        assert ctx.book_failure_count == 1
+
+    def test_non_slot_taken_preserves_offered_slots(self):
+        """Other errors should NOT clear offered_slots."""
+        ctx = BookingContextV7(
+            offered_slots=[{"stylist_id": "s1", "time": "10:00"}],
+            book_failure_count=0,
+        )
+        extract_booking_result(
+            {"success": False, "error_code": "VALIDATION_ERROR", "message": "Missing field"},
+            ctx,
+        )
+
+        assert ctx.offered_slots is not None
+        assert len(ctx.offered_slots) == 1
+        assert ctx.book_failure_count == 1
+
+    def test_slot_taken_no_prior_slots(self):
+        """SLOT_TAKEN with no prior offered_slots — no crash."""
+        ctx = BookingContextV7(offered_slots=None, book_failure_count=0)
+        extract_booking_result(
+            {"success": False, "error_code": "SLOT_TAKEN"},
+            ctx,
+        )
+
+        assert ctx.offered_slots is None
+        assert ctx.book_failure_count == 1
+
+
+# ============================================================================
+# extract_service_fields Shape 3 — multi-service append (Phase 3)
+# ============================================================================
+
+
+class TestExtractServiceFieldsShape3Append:
+    """Test Shape 3 single-match APPEND behavior (Phase 3 fix)."""
+
+    def test_shape3_single_appends_not_overwrites(self):
+        """Single Shape 3 result should append to existing selected_services."""
+        ctx = BookingContextV7(
+            service_id="uuid-tinte",
+            service_name="Tinte Mujer",
+            selected_services=["Tinte Mujer"],
+        )
+        extract_service_fields(
+            {"services": [{"id": "uuid-corte", "name": "Corte Mujer", "category": "corte"}]},
+            ctx,
+        )
+
+        assert ctx.selected_services == ["Corte Mujer", "Tinte Mujer"]
+        assert ctx.service_id == "uuid-corte"
+        assert ctx.service_name == "Corte Mujer"
+
+    def test_shape3_single_no_duplicate(self):
+        """If service already in list, don't duplicate."""
+        ctx = BookingContextV7(
+            service_id="uuid-corte",
+            service_name="Corte Mujer",
+            selected_services=["Corte Mujer"],
+        )
+        extract_service_fields(
+            {"services": [{"id": "uuid-corte", "name": "Corte Mujer", "category": "corte"}]},
+            ctx,
+        )
+
+        assert ctx.selected_services == ["Corte Mujer"]
+
+    def test_shape3_first_service_empty_list(self):
+        """First service via Shape 3 on empty list."""
+        ctx = BookingContextV7(selected_services=[])
+        extract_service_fields(
+            {"services": [{"id": "uuid-1", "name": "Corte Mujer", "category": "corte"}]},
+            ctx,
+        )
+
+        assert ctx.selected_services == ["Corte Mujer"]
+        assert ctx.service_id == "uuid-1"
+        assert ctx.service_name == "Corte Mujer"
+
+
+# ============================================================================
+# extract_service_fields — combo recommendations (Phase 4)
+# ============================================================================
+
+
+class TestExtractComboRecommendations:
+    """Test combo_recommendations extraction from Shape 1 resolved_service."""
+
+    def test_shape1_extracts_combo_recommendations(self):
+        """Shape 1 with combo_recommendations populates pending_recommendations."""
+        ctx = BookingContextV7()
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-tinte",
+                    "name": "Tinte",
+                    "duration_minutes": 90,
+                    "category": "HAIRDRESSING",
+                    "combo_recommendations": ["Hidratación", "Corte de Señora"],
+                },
+                "count": 1,
+                "query": "tinte",
+            },
+            ctx,
+        )
+
+        assert ctx.pending_recommendations == ["Hidratación", "Corte de Señora"]
+        assert ctx.recommendations_shown is False
+
+    def test_does_not_overwrite_existing_recommendations(self):
+        """If pending_recommendations already set, don't overwrite."""
+        ctx = BookingContextV7(pending_recommendations=["Existing Recommendation"])
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-tinte",
+                    "name": "Tinte",
+                    "duration_minutes": 90,
+                    "category": "HAIRDRESSING",
+                    "combo_recommendations": ["New Recommendation"],
+                },
+                "count": 1,
+                "query": "tinte",
+            },
+            ctx,
+        )
+
+        assert ctx.pending_recommendations == ["Existing Recommendation"]
+
+    def test_empty_combo_recommendations_ignored(self):
+        """Empty combo_recommendations list does not populate pending."""
+        ctx = BookingContextV7()
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-corte",
+                    "name": "Corte de Dama",
+                    "duration_minutes": 45,
+                    "category": "HAIRDRESSING",
+                    "combo_recommendations": [],
+                },
+                "count": 1,
+                "query": "corte dama",
+            },
+            ctx,
+        )
+
+        assert ctx.pending_recommendations == []
+
+    def test_no_combo_recommendations_key(self):
+        """Missing combo_recommendations key does not crash."""
+        ctx = BookingContextV7()
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-corte",
+                    "name": "Corte de Dama",
+                    "duration_minutes": 45,
+                    "category": "HAIRDRESSING",
+                },
+                "count": 1,
+                "query": "corte dama",
+            },
+            ctx,
+        )
+
+        assert ctx.pending_recommendations == []

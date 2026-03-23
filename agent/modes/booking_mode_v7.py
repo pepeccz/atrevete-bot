@@ -22,7 +22,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agent.modes.base import AgenticLoopResult, BaseModeNode
 from agent.modes.booking_context_v7 import BookingContextV7
-from agent.modes.tool_extractors import apply_all_tool_results, extract_service_audience_hint
+from agent.modes.tool_extractors import (
+    apply_all_tool_results,
+    extract_service_audience_hint,
+    resolve_pending_clarification,
+)
 from agent.prompts.loader import get_system_prompt, load_markdown
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
@@ -51,10 +55,22 @@ _CANCEL_PHRASES: frozenset[str] = frozenset({
     "mejor lo dejo",
     "he cambiado de opinion",
     "cambie de opinion",
-    "no gracias",
     "paso",
     "ya no quiero",
     "lo cancelo",
+})
+
+_ADDON_DECLINE_PHRASES: frozenset[str] = frozenset({
+    "no gracias",
+    "solo eso",
+    "nada mas",
+    "con eso esta bien",
+    "no quiero nada mas",
+    "solo lo que pedi",
+    "no necesito nada mas",
+    "asi esta bien",
+    "no hace falta",
+    "esta bien asi",
 })
 
 _ESCALATE_PHRASES: frozenset[str] = frozenset({
@@ -168,6 +184,11 @@ class BookingModeV7(BaseModeNode):
         self._resolve_customer_from_state(state, ctx)
         self._resolve_audience_hint(state, ctx)
 
+        # 1c. Pre-resolve: attempt to resolve pending service clarification
+        resolved = resolve_pending_clarification(ctx)
+        if resolved:
+            logger.info("BookingModeV7: auto-resolved pending service clarification")
+
         # 2. Fast-path: cancel / escalate (before LLM call)
         user_message = self._get_last_user_message(state)
         special = self._check_special_intents(state, user_message, intent)
@@ -187,6 +208,9 @@ class BookingModeV7(BaseModeNode):
 
         # 6. Extract tool results → update context
         apply_all_tool_results(result.tool_results, ctx)
+
+        # 6b. Check if user declined recommendations
+        _detect_recommendation_decline(user_message, ctx)
 
         # 7. Build response with state updates
         return self._build_response(state, ctx, result)
@@ -502,6 +526,12 @@ class BookingModeV7(BaseModeNode):
         if disambiguation:
             parts.append(f"\n## Clarificación\n{disambiguation}")
 
+        # Combo recommendations
+        recommendations = _build_recommendations_section(ctx)
+        if recommendations:
+            parts.append(f"\n## Recomendaciones\n{recommendations}")
+            ctx.recommendations_shown = True  # Mark as shown
+
         # Prefetched stylists
         stylists_section = _build_stylists_section(ctx)
         if stylists_section:
@@ -677,7 +707,12 @@ def _redact_name_tokens(text: str, name: str) -> str:
 
 
 def _build_disambiguation_section(ctx: BookingContextV7) -> str:
-    """Build prompt section for pending disambiguation/clarification."""
+    """Build prompt section for pending disambiguation/clarification.
+
+    Pure renderer — no auto-resolve logic. The resolve_pending_clarification()
+    pre-resolver handles audience matching BEFORE this function is called.
+    If pending_clarification was already resolved, this renders empty.
+    """
     lines: list[str] = []
 
     if ctx.pending_clarification:
@@ -685,25 +720,6 @@ def _build_disambiguation_section(ctx: BookingContextV7) -> str:
         hint = ctx.pending_clarification.get("question_hint", "")
         options = ctx.pending_clarification.get("options", [])
 
-        # Check if audience_hint auto-resolves the clarification
-        if ctx.service_audience_hint and axis == "audience":
-            hint_lower = ctx.service_audience_hint.lower()
-            for opt in options:
-                val = (opt.get("value") or "").lower()
-                label = (opt.get("label") or "").lower()
-                if hint_lower in val or val in hint_lower or hint_lower in label:
-                    label_display = opt.get("label", opt.get("value", ""))
-                    service_name = opt.get("service_name", "")
-                    lines.append(
-                        f"CLARIFICACIÓN RESUELTA: La clienta ya indicó "
-                        f"'{ctx.service_audience_hint}'. "
-                        f"Usa directamente la opción '{label_display}'"
-                        + (f" ({service_name})" if service_name else "")
-                        + ". No vuelvas a preguntar."
-                    )
-                    return "\n".join(lines)
-
-        # No auto-resolve — show options for LLM to ask
         lines.append(f"CLARIFICACIÓN PENDIENTE ({axis}):")
         lines.append(f"  Pregunta: {hint}")
         for i, opt in enumerate(options, 1):
@@ -717,6 +733,49 @@ def _build_disambiguation_section(ctx: BookingContextV7) -> str:
             lines.append(f"Servicios candidatos: {', '.join(names)}")
 
     return "\n".join(lines)
+
+
+def _build_recommendations_section(ctx: BookingContextV7) -> str:
+    """Build prompt section for combo service recommendations.
+
+    Renders once per booking flow. Returns empty string if:
+    - No pending recommendations
+    - User declined recommendations
+    - Recommendations were already shown
+    """
+    if not ctx.pending_recommendations or ctx.recommendations_declined:
+        return ""
+    if ctx.recommendations_shown:
+        return ""  # Already shown once — don't repeat
+
+    lines = ["SERVICIOS RECOMENDADOS (complementos opcionales):"]
+    for rec in ctx.pending_recommendations:
+        lines.append(f"  - {rec}")
+    lines.append(
+        "Sugiere estos servicios de forma natural. "
+        "Si la clienta dice que no, respeta su decisión y continúa."
+    )
+    return "\n".join(lines)
+
+
+def _detect_recommendation_decline(message: str, ctx: BookingContextV7) -> bool:
+    """Check if user declined add-on recommendations.
+
+    Only checks when recommendations have been shown and not yet declined.
+    Returns True if decline detected and ctx.recommendations_declined was set.
+    """
+    if not ctx.pending_recommendations:
+        return False
+    if ctx.recommendations_declined:
+        return False
+    if not ctx.recommendations_shown:
+        return False  # Haven't shown yet — can't decline what wasn't offered
+
+    msg_normalized = _normalize_text(message)
+    if any(phrase in msg_normalized for phrase in _ADDON_DECLINE_PHRASES):
+        ctx.recommendations_declined = True
+        return True
+    return False
 
 
 def _build_stylists_section(ctx: BookingContextV7) -> str:
