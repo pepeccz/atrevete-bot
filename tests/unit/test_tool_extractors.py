@@ -212,6 +212,83 @@ class TestExtractServiceFieldsShape2:
         assert len(ctx.pending_clarification["options"]) == 2
         assert ctx.service_id is None  # NOT resolved yet
 
+    def test_audience_clarification_auto_resolves_when_hint_matches(self):
+        """When selected_services already has a service and a new search returns
+        clarification_needed with axis=audience, auto-resolve inline if the
+        service_audience_hint matches an option. This prevents same-turn
+        clobbering of resolved services."""
+        ctx = BookingContextV7()
+        ctx.selected_services = ["Cultura de Color"]
+        ctx.service_audience_hint = "dama"
+        result = {
+            "clarification_needed": {
+                "axis": "audience",
+                "question_hint": "¿El corte es para caballero, dama, niño, niña o bebé?",
+                "options": [
+                    {
+                        "label": "Caballero",
+                        "value": "caballero",
+                        "service_name": "Corte Caballero",
+                        "service_id": "cc1",
+                        "duration_minutes": 30,
+                    },
+                    {
+                        "label": "Dama",
+                        "value": "dama",
+                        "service_name": "Cortar",
+                        "service_id": "cd1",
+                        "duration_minutes": 40,
+                    },
+                ],
+            },
+        }
+        extract_service_fields(result, ctx)
+
+        # Should auto-resolve without setting pending_clarification
+        assert ctx.pending_clarification is None
+        assert "Cortar" in ctx.selected_services
+        assert "Cultura de Color" in ctx.selected_services
+        assert len(ctx.selected_services) == 2
+
+    def test_audience_clarification_not_auto_resolved_without_hint(self):
+        """Without service_audience_hint, clarification should be set normally."""
+        ctx = BookingContextV7()
+        ctx.selected_services = ["Cultura de Color"]
+        # No service_audience_hint set
+        result = {
+            "clarification_needed": {
+                "axis": "audience",
+                "question_hint": "¿El corte es para caballero o dama?",
+                "options": [
+                    {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
+                    {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                ],
+            },
+        }
+        extract_service_fields(result, ctx)
+
+        assert ctx.pending_clarification is not None
+        assert ctx.pending_clarification["axis"] == "audience"
+
+    def test_non_audience_clarification_always_sets_pending(self):
+        """Non-audience clarification should always set pending, even with services."""
+        ctx = BookingContextV7()
+        ctx.selected_services = ["Cultura de Color"]
+        ctx.service_audience_hint = "dama"
+        result = {
+            "clarification_needed": {
+                "axis": "hair_density",
+                "options": [
+                    {"label": "Normal", "value": "normal", "service_name": "Mechas", "service_id": "m1"},
+                    {"label": "Largo", "value": "largo", "service_name": "Mechas XL", "service_id": "m2"},
+                ],
+            },
+        }
+        extract_service_fields(result, ctx)
+
+        assert ctx.pending_clarification is not None
+        assert ctx.pending_clarification["axis"] == "hair_density"
+
 
 # ============================================================================
 # extract_service_fields — Shape 3 (services list)

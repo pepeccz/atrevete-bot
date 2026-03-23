@@ -201,10 +201,35 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
 
     # Shape 2: clarification_needed — ambiguous, needs user input
     if "clarification_needed" in result:
-        ctx.pending_clarification = result["clarification_needed"]
+        clarification = result["clarification_needed"]
+        # Guard: don't overwrite if we already have services selected and this
+        # clarification can be auto-resolved by resolve_pending_clarification.
+        # This prevents a same-turn search_services pair (one resolved, one
+        # needing clarification) from clobbering the resolved service's state.
+        if ctx.selected_services and clarification.get("axis") == "audience" and ctx.service_audience_hint:
+            # Check if any option matches the existing hint — if so, skip
+            hint_lower = _normalize_text(ctx.service_audience_hint)
+            options = clarification.get("options", [])
+            for opt in options:
+                val = _normalize_text(opt.get("value"))
+                if hint_lower in val or val in hint_lower:
+                    # Auto-resolve inline instead of deferring
+                    svc_name = opt["service_name"]
+                    if svc_name not in ctx.selected_services:
+                        ctx.selected_services = [svc_name] + [
+                            s for s in ctx.selected_services if s != svc_name
+                        ]
+                    logger.info(
+                        "extract_service_fields: auto-resolved clarification "
+                        "for '%s' (audience hint '%s' matched)",
+                        svc_name,
+                        ctx.service_audience_hint,
+                    )
+                    return
+        ctx.pending_clarification = clarification
         logger.info(
             "extract_service_fields: clarification needed (axis=%s)",
-            result["clarification_needed"].get("axis"),
+            clarification.get("axis"),
         )
         return
 
