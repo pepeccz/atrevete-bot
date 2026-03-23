@@ -155,6 +155,15 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
 
     Also infers service_audience_hint from service name if not already set.
     """
+    # ── Guard: skip mutation if services are locked (SLOT_TAKEN retry protection)
+    if ctx.services_locked:
+        logger.info(
+            "extract_service_fields: SKIPPED — services_locked=True "
+            "(selected_services=%s)",
+            ctx.selected_services,
+        )
+        return
+
     # Shape 1: resolved_service — unambiguous single match
     if "resolved_service" in result:
         svc = result["resolved_service"]
@@ -424,3 +433,12 @@ def apply_all_tool_results(tool_results: dict[str, Any], ctx: BookingContextV7) 
                     "apply_all_tool_results: extractor crashed for tool '%s'",
                     tool_name,
                 )
+
+    # ── Post-extraction lock: freeze services after any resolution ──
+    if not ctx.services_locked and ctx.selected_services:
+        ctx.services_locked = True
+        logger.info(
+            "apply_all_tool_results: services_locked=True "
+            "(selected_services=%s)",
+            ctx.selected_services,
+        )

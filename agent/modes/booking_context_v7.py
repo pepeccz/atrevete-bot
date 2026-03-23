@@ -80,6 +80,9 @@ class BookingContextV7:
     # ── Book failure tracking ────────────────────────────────────────────
     book_failure_count: int = 0
 
+    # ── Service lock (prevents overwrite during SLOT_TAKEN retry) ──────
+    services_locked: bool = False
+
     # ── Internal (not serialized) ───────────────────────────────────────
     _booking_completed: bool = field(default=False, repr=False)
 

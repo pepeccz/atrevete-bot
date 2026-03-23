@@ -344,8 +344,8 @@ class TestExtractSlotFields:
 
         assert ctx.selected_slot is None
 
-    def test_always_overwrites_previous_slots(self):
-        """DESIGN-1: offered_slots is ALWAYS overwritten."""
+    def test_skips_overwrite_when_slots_already_set(self):
+        """Guard: offered_slots is NOT overwritten if already populated."""
         ctx = BookingContextV7(
             offered_slots=[
                 {"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}
@@ -357,7 +357,8 @@ class TestExtractSlotFields:
         result = {"available_slots": new_slots, "error": None}
         extract_slot_fields(result, ctx)
 
-        assert ctx.offered_slots == new_slots
+        # Guard prevents overwrite — original slots preserved
+        assert ctx.offered_slots == [{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
 
     def test_find_next_available_legacy_shape(self):
         """find_next_available with available_stylists (legacy format)."""
@@ -1039,3 +1040,153 @@ class TestExtractComboRecommendations:
         )
 
         assert ctx.pending_recommendations == []
+
+
+# ============================================================================
+# services_locked guard (booking-retry-resilience Phase 2)
+# ============================================================================
+
+
+class TestServicesLocked:
+    """Test services_locked lifecycle: default, lock trigger, guard, serialization."""
+
+    def test_services_locked_false_by_default(self):
+        """New BookingContextV7 defaults to services_locked=False."""
+        ctx = BookingContextV7()
+        assert ctx.services_locked is False
+
+    def test_apply_all_locks_after_service_resolve(self):
+        """apply_all_tool_results sets services_locked=True after Shape 1 resolve."""
+        ctx = BookingContextV7()
+        apply_all_tool_results(
+            {
+                "search_services": {
+                    "resolved_service": {
+                        "id": "uuid-corte",
+                        "name": "Corte Caballero",
+                        "duration_minutes": 30,
+                        "category": "HAIRDRESSING",
+                    },
+                    "count": 1,
+                    "query": "corte caballero",
+                },
+            },
+            ctx,
+        )
+
+        assert ctx.services_locked is True
+        assert ctx.selected_services == ["Corte Caballero"]
+        assert ctx.service_id == "uuid-corte"
+
+    def test_extract_service_fields_skips_when_locked(self):
+        """When services_locked=True, extract_service_fields does NOT mutate ctx."""
+        ctx = BookingContextV7(
+            services_locked=True,
+            service_id="uuid-corte",
+            service_name="Corte Caballero",
+            selected_services=["Corte Caballero", "Barba"],
+        )
+        # Try to overwrite with a different service
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-tinte",
+                    "name": "Tinte",
+                    "duration_minutes": 90,
+                    "category": "HAIRDRESSING",
+                },
+                "count": 1,
+                "query": "tinte",
+            },
+            ctx,
+        )
+
+        # Nothing changed
+        assert ctx.service_id == "uuid-corte"
+        assert ctx.service_name == "Corte Caballero"
+        assert ctx.selected_services == ["Corte Caballero", "Barba"]
+
+    def test_two_services_same_turn_both_resolve(self):
+        """Two search_services in same turn: both resolve before lock engages."""
+        ctx = BookingContextV7()
+        apply_all_tool_results(
+            {
+                "search_services": [
+                    {
+                        "resolved_service": {
+                            "id": "uuid-corte",
+                            "name": "Corte Caballero",
+                            "duration_minutes": 30,
+                            "category": "HAIRDRESSING",
+                        },
+                        "count": 1,
+                        "query": "corte caballero",
+                    },
+                    {
+                        "resolved_service": {
+                            "id": "uuid-barba",
+                            "name": "Barba",
+                            "duration_minutes": 20,
+                            "category": "HAIRDRESSING",
+                        },
+                        "count": 1,
+                        "query": "barba",
+                    },
+                ],
+            },
+            ctx,
+        )
+
+        # Both services resolved
+        assert "Corte Caballero" in ctx.selected_services
+        assert "Barba" in ctx.selected_services
+        # Lock engages AFTER loop
+        assert ctx.services_locked is True
+
+    def test_slot_taken_retry_preserves_services(self):
+        """After SLOT_TAKEN retry, re-calling search_services does NOT drop add-ons."""
+        ctx = BookingContextV7(
+            services_locked=True,
+            service_id="uuid-corte",
+            service_name="Corte Caballero",
+            selected_services=["Corte Caballero", "Barba"],
+        )
+        # Retry: LLM re-calls search_services for only the primary service
+        apply_all_tool_results(
+            {
+                "search_services": {
+                    "resolved_service": {
+                        "id": "uuid-corte",
+                        "name": "Corte Caballero",
+                        "duration_minutes": 30,
+                        "category": "HAIRDRESSING",
+                    },
+                    "count": 1,
+                    "query": "corte caballero",
+                },
+            },
+            ctx,
+        )
+
+        # Both services preserved — Barba NOT dropped
+        assert ctx.selected_services == ["Corte Caballero", "Barba"]
+        assert ctx.services_locked is True
+
+    def test_services_locked_reset_on_new_context(self):
+        """New BookingContextV7 always starts with services_locked=False."""
+        ctx = BookingContextV7()
+        assert ctx.services_locked is False
+
+    def test_services_locked_survives_serialization(self):
+        """services_locked=True persists through to_mode_context/from_mode_context."""
+        ctx = BookingContextV7(
+            services_locked=True,
+            service_id="uuid-corte",
+            service_name="Corte Caballero",
+            selected_services=["Corte Caballero"],
+        )
+        serialized = ctx.to_mode_context()
+        restored = BookingContextV7.from_mode_context(serialized)
+
+        assert restored.services_locked is True
+        assert restored.selected_services == ["Corte Caballero"]

@@ -128,11 +128,6 @@ async def get_busy_periods(
     async def _fetch(sess: AsyncSession) -> list[dict[str, Any]]:
         periods = []
 
-        # BUG-AVAIL-2 FIX: Strip tzinfo before binding to TIMESTAMP WITHOUT TIME ZONE columns.
-        # asyncpg raises DataError when passing offset-aware datetimes to TIMESTAMP columns.
-        start_naive = start_time.replace(tzinfo=None)
-        end_naive = end_time.replace(tzinfo=None)
-
         # Query appointments (PENDING or CONFIRMED only)
         appt_result = await sess.execute(
             select(Appointment).where(
@@ -140,8 +135,8 @@ async def get_busy_periods(
                     Appointment.stylist_id == stylist_id,
                     Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
                     # Overlap check: appointment overlaps with the time range
-                    Appointment.start_time < end_naive,
-                    Appointment.start_time + Appointment.duration_minutes * timedelta(minutes=1) > start_naive,
+                    Appointment.start_time < end_time,
+                    Appointment.start_time + Appointment.duration_minutes * timedelta(minutes=1) > start_time,
                 )
             )
         )
@@ -163,8 +158,8 @@ async def get_busy_periods(
                 and_(
                     BlockingEvent.stylist_id == stylist_id,
                     # Overlap check
-                    BlockingEvent.start_time < end_naive,
-                    BlockingEvent.end_time > start_naive,
+                    BlockingEvent.start_time < end_time,
+                    BlockingEvent.end_time > start_time,
                 )
             )
         )
