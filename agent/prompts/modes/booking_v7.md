@@ -41,6 +41,20 @@ Sigue este orden como GUÍA, pero adáptate si la clienta proporciona datos fuer
 
 ---
 
+## Múltiples servicios
+
+Cuando la clienta pide más de un servicio (ej: "corte y tinte", "mechas y tratamiento"):
+1. Llamá a `search_services` UNA VEZ POR CADA servicio en la MISMA vuelta
+2. Resolvé TODOS los servicios ANTES de llamar a `check_availability`
+3. Pasá TODOS los nombres de servicios en la lista `services` de `book()`
+4. NUNCA busques varios servicios en una sola llamada (ej: `search_services("corte y tinte")` es INCORRECTO)
+
+Ejemplo: "Quiero corte y tinte" →
+- `search_services(query="corte")` + `search_services(query="tinte")` en la misma vuelta
+- Luego `check_availability(...)` una sola vez
+
+---
+
 ## Uso de herramientas
 
 | Herramienta | Cuándo usarla |

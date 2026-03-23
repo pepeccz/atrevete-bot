@@ -155,13 +155,28 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
 
     Also infers service_audience_hint from service name if not already set.
     """
-    # ── Guard: skip mutation if services are locked (SLOT_TAKEN retry protection)
+    # ── Guard: when locked, protect scalar fields but allow appending to selected_services
     if ctx.services_locked:
-        logger.info(
-            "extract_service_fields: SKIPPED — services_locked=True "
-            "(selected_services=%s)",
-            ctx.selected_services,
+        svc = result.get("resolved_service") or (
+            result.get("services", [None])[0]
+            if isinstance(result.get("services"), list)
+            and len(result.get("services", [])) == 1
+            else None
         )
+        if svc and svc.get("name") and svc["name"] not in ctx.selected_services:
+            ctx.selected_services.append(svc["name"])
+            logger.info(
+                "extract_service_fields: services_locked but APPENDED '%s' "
+                "(selected_services=%s)",
+                svc["name"],
+                ctx.selected_services,
+            )
+        else:
+            logger.info(
+                "extract_service_fields: services_locked, no new service to append "
+                "(selected_services=%s)",
+                ctx.selected_services,
+            )
         return
 
     # Shape 1: resolved_service — unambiguous single match
@@ -378,6 +393,16 @@ def extract_booking_result(result: dict, ctx: BookingContextV7) -> None:
     Sets _booking_completed flag on success. On failure, the LLM
     sees the error in tool output and handles it conversationally.
     """
+    # Lock services on FIRST book() attempt (success OR failure).
+    # This prevents SLOT_TAKEN retry from clobbering selected_services.
+    if not ctx.services_locked:
+        ctx.services_locked = True
+        logger.info(
+            "extract_booking_result: services_locked=True on first book() attempt "
+            "(selected_services=%s)",
+            ctx.selected_services,
+        )
+
     if result.get("success"):
         ctx._booking_completed = True
         ctx.book_failure_count = 0
@@ -459,14 +484,5 @@ def apply_all_tool_results(tool_results: dict[str, Any], ctx: BookingContextV7) 
                     tool_name,
                 )
 
-    # ── Post-extraction lock: freeze services once we've moved past service
-    # selection into slot selection.  Before offered_slots exist the user may
-    # still add add-on services, so we don't lock yet.  Once slots have been
-    # offered we lock to prevent a SLOT_TAKEN retry from overwriting services.
-    if not ctx.services_locked and ctx.selected_services and ctx.offered_slots:
-        ctx.services_locked = True
-        logger.info(
-            "apply_all_tool_results: services_locked=True "
-            "(selected_services=%s, offered_slots present)",
-            ctx.selected_services,
-        )
+    # Lock removed from here — moved to extract_booking_result().
+    # Services can be added until the first book() attempt.

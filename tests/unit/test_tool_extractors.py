@@ -1155,8 +1155,8 @@ class TestServicesLocked:
         assert ctx.selected_services == ["Corte Caballero"]
         assert ctx.service_id == "uuid-corte"
 
-    def test_apply_all_locks_when_offered_slots_present(self):
-        """apply_all_tool_results sets services_locked=True when offered_slots exist."""
+    def test_apply_all_does_not_lock_even_with_offered_slots(self):
+        """apply_all_tool_results no longer locks — lock moved to book()."""
         ctx = BookingContextV7(
             offered_slots=[{"time": "10:00", "stylist_id": "s1"}],
         )
@@ -1176,11 +1176,11 @@ class TestServicesLocked:
             ctx,
         )
 
-        assert ctx.services_locked is True
+        assert ctx.services_locked is False  # Lock moved to book()
         assert ctx.selected_services == ["Corte Caballero"]
 
-    def test_extract_service_fields_skips_when_locked(self):
-        """When services_locked=True, extract_service_fields does NOT mutate ctx."""
+    def test_extract_service_fields_appends_when_locked(self):
+        """When services_locked=True, scalars are protected but selected_services appends."""
         ctx = BookingContextV7(
             services_locked=True,
             service_id="uuid-corte",
@@ -1202,10 +1202,11 @@ class TestServicesLocked:
             ctx,
         )
 
-        # Nothing changed
+        # Scalars protected — NOT overwritten
         assert ctx.service_id == "uuid-corte"
         assert ctx.service_name == "Corte Caballero"
-        assert ctx.selected_services == ["Corte Caballero", "Barba"]
+        # But Tinte was appended
+        assert ctx.selected_services == ["Corte Caballero", "Barba", "Tinte"]
 
     def test_two_services_same_turn_both_resolve(self):
         """Two search_services in same turn: both resolve before lock engages."""
@@ -1245,7 +1246,11 @@ class TestServicesLocked:
         assert ctx.services_locked is False
 
     def test_slot_taken_retry_preserves_services(self):
-        """After SLOT_TAKEN retry, re-calling search_services does NOT drop add-ons."""
+        """After SLOT_TAKEN retry, re-calling search_services does NOT drop add-ons.
+
+        With partial lock: scalars are protected, and "Corte Caballero" is already
+        in selected_services so the dedup guard prevents duplicate append.
+        """
         ctx = BookingContextV7(
             services_locked=True,
             service_id="uuid-corte",
@@ -1269,7 +1274,7 @@ class TestServicesLocked:
             ctx,
         )
 
-        # Both services preserved — Barba NOT dropped
+        # Both services preserved — Barba NOT dropped, no duplicate Corte
         assert ctx.selected_services == ["Corte Caballero", "Barba"]
         assert ctx.services_locked is True
 
@@ -1323,8 +1328,8 @@ class TestServicesLocked:
         # Still not locked (no offered_slots)
         assert ctx.services_locked is False
 
-    def test_services_locked_engages_when_slots_offered_same_turn(self):
-        """Lock engages when both selected_services and offered_slots exist."""
+    def test_services_not_locked_on_slots_offered_same_turn(self):
+        """Lock no longer engages from apply_all — only from book()."""
         ctx = BookingContextV7()
         apply_all_tool_results(
             {
@@ -1353,7 +1358,203 @@ class TestServicesLocked:
             ctx,
         )
 
-        # Both selected_services and offered_slots present → locked
-        assert ctx.services_locked is True
+        # Lock no longer triggers from apply_all — moved to book()
+        assert ctx.services_locked is False
         assert ctx.selected_services == ["Corte Caballero"]
         assert ctx.offered_slots is not None
+
+
+# ============================================================================
+# Multi-service booking fix (SC-1 through SC-5)
+# ============================================================================
+
+
+class TestMultiServiceBookingFix:
+    """Tests for multi-service booking fix: partial lock + deferred lock trigger."""
+
+    def test_cross_turn_multi_service_appends(self):
+        """SC-1: Cross-turn multi-service — second service appends after slots offered."""
+        ctx = BookingContextV7(
+            service_id="uuid-corte",
+            service_name="Corte de Señora",
+            selected_services=["Corte de Señora"],
+            services_locked=False,
+            offered_slots=[
+                {
+                    "time": "10:00",
+                    "stylist_id": "s1",
+                    "date": "2026-03-27",
+                    "full_datetime": "2026-03-27T10:00:00+01:00",
+                }
+            ],
+        )
+        # User says "y también tinte" — LLM calls search_services("tinte")
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-tinte",
+                    "name": "Tinte",
+                    "duration_minutes": 90,
+                    "category": "HAIRDRESSING",
+                },
+                "count": 1,
+                "query": "tinte",
+            },
+            ctx,
+        )
+
+        # Both services present; services_locked remains False (no book() yet)
+        assert "Corte de Señora" in ctx.selected_services
+        assert "Tinte" in ctx.selected_services
+        assert ctx.services_locked is False
+
+    def test_locked_appends_without_scalar_overwrite(self):
+        """SC-3: Locked context appends new service without overwriting scalars."""
+        ctx = BookingContextV7(
+            services_locked=True,
+            service_id="uuid-corte",
+            service_name="Corte de Señora",
+            service_category="HAIRDRESSING",
+            service_duration_minutes=45,
+            selected_services=["Corte de Señora"],
+        )
+        # LLM calls search_services("tinte") after a failed book()
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-tinte",
+                    "name": "Tinte",
+                    "duration_minutes": 90,
+                    "category": "HAIRDRESSING",
+                },
+                "count": 1,
+                "query": "tinte",
+            },
+            ctx,
+        )
+
+        # Scalars unchanged
+        assert ctx.service_id == "uuid-corte"
+        assert ctx.service_name == "Corte de Señora"
+        assert ctx.service_category == "HAIRDRESSING"
+        assert ctx.service_duration_minutes == 45
+        # But Tinte was appended
+        assert ctx.selected_services == ["Corte de Señora", "Tinte"]
+
+    def test_locked_shape3_single_appends(self):
+        """SC-3 variant: Shape 3 single result also appends when locked."""
+        ctx = BookingContextV7(
+            services_locked=True,
+            service_id="uuid-corte",
+            service_name="Corte de Señora",
+            selected_services=["Corte de Señora"],
+        )
+        extract_service_fields(
+            {
+                "services": [
+                    {"id": "uuid-tinte", "name": "Tinte", "category": "HAIRDRESSING"}
+                ],
+                "count": 1,
+                "query": "tinte",
+            },
+            ctx,
+        )
+
+        assert ctx.service_id == "uuid-corte"  # Scalar protected
+        assert ctx.selected_services == ["Corte de Señora", "Tinte"]
+
+    def test_locked_dedup_prevents_duplicate(self):
+        """When locked, duplicate service names are NOT appended."""
+        ctx = BookingContextV7(
+            services_locked=True,
+            service_id="uuid-corte",
+            service_name="Corte de Señora",
+            selected_services=["Corte de Señora", "Tinte"],
+        )
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-tinte",
+                    "name": "Tinte",
+                    "duration_minutes": 90,
+                    "category": "HAIRDRESSING",
+                },
+                "count": 1,
+                "query": "tinte",
+            },
+            ctx,
+        )
+
+        # No duplicate
+        assert ctx.selected_services == ["Corte de Señora", "Tinte"]
+
+    def test_no_lock_on_slot_offering(self):
+        """SC-4: Lock does NOT engage when slots are offered (only on book())."""
+        ctx = BookingContextV7(
+            selected_services=["Corte de Señora"],
+            services_locked=False,
+        )
+        apply_all_tool_results(
+            {
+                "check_availability": {
+                    "available_slots": [
+                        {
+                            "time": "10:00",
+                            "stylist_id": "s1",
+                            "date": "2026-03-27",
+                            "full_datetime": "2026-03-27T10:00:00+01:00",
+                        }
+                    ],
+                    "error": None,
+                },
+            },
+            ctx,
+        )
+
+        assert ctx.services_locked is False
+        assert ctx.offered_slots is not None
+
+    def test_lock_on_book_failure(self):
+        """SC-5: Lock engages on book() failure (e.g. SLOT_TAKEN)."""
+        ctx = BookingContextV7(
+            services_locked=False,
+            selected_services=["Corte de Señora", "Tinte"],
+        )
+        extract_booking_result(
+            {"success": False, "error_code": "SLOT_TAKEN", "message": "Slot taken"},
+            ctx,
+        )
+
+        assert ctx.services_locked is True
+
+    def test_lock_on_book_success(self):
+        """Lock engages on book() success too."""
+        ctx = BookingContextV7(
+            services_locked=False,
+            selected_services=["Corte de Señora"],
+        )
+        extract_booking_result(
+            {
+                "success": True,
+                "appointment_id": "apt-123",
+                "stylist_id": "s1",
+            },
+            ctx,
+        )
+
+        assert ctx.services_locked is True
+        assert ctx._booking_completed is True
+
+    def test_lock_idempotent_on_second_book(self):
+        """Second book() call does not crash — lock already True."""
+        ctx = BookingContextV7(
+            services_locked=True,
+            selected_services=["Corte de Señora"],
+        )
+        extract_booking_result(
+            {"success": False, "error_code": "SLOT_TAKEN"},
+            ctx,
+        )
+
+        assert ctx.services_locked is True
+        assert ctx.book_failure_count == 1
