@@ -715,6 +715,44 @@ class TestPreToolCallCustomerIdInjection:
         assert result["customer_id"] == "ERROR:llama_a_manage_customer_primero"
 
     @pytest.mark.asyncio
+    async def test_injects_selected_services_from_context(self):
+        """When ctx has selected_services, they are injected into book() args."""
+        mode = make_booking_mode_v7()
+        mode._ctx = BookingContextV7(
+            customer_id="550e8400-e29b-41d4-a716-446655440000",
+            selected_services=["Corte Caballero", "Barba"],
+        )
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte Caballero"],  # LLM forgot Barba
+            "first_name": "Pepe",
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        assert result["services"] == ["Corte Caballero", "Barba"]
+        assert result["customer_id"] == "550e8400-e29b-41d4-a716-446655440000"
+
+    @pytest.mark.asyncio
+    async def test_does_not_inject_empty_selected_services(self):
+        """When ctx has no selected_services, don't overwrite LLM's services arg."""
+        mode = make_booking_mode_v7()
+        mode._ctx = BookingContextV7(
+            customer_id="550e8400-e29b-41d4-a716-446655440000",
+            selected_services=[],  # Empty
+        )
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte Caballero"],
+            "first_name": "Pepe",
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        # LLM's services preserved since ctx has empty list
+        assert result["services"] == ["Corte Caballero"]
+
+    @pytest.mark.asyncio
     async def test_non_book_tool_passes_through(self):
         """Non-book tools should not be intercepted."""
         mode = make_booking_mode_v7()

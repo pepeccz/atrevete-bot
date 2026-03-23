@@ -434,11 +434,14 @@ def apply_all_tool_results(tool_results: dict[str, Any], ctx: BookingContextV7) 
                     tool_name,
                 )
 
-    # ── Post-extraction lock: freeze services after any resolution ──
-    if not ctx.services_locked and ctx.selected_services:
+    # ── Post-extraction lock: freeze services once we've moved past service
+    # selection into slot selection.  Before offered_slots exist the user may
+    # still add add-on services, so we don't lock yet.  Once slots have been
+    # offered we lock to prevent a SLOT_TAKEN retry from overwriting services.
+    if not ctx.services_locked and ctx.selected_services and ctx.offered_slots:
         ctx.services_locked = True
         logger.info(
             "apply_all_tool_results: services_locked=True "
-            "(selected_services=%s)",
+            "(selected_services=%s, offered_slots present)",
             ctx.selected_services,
         )

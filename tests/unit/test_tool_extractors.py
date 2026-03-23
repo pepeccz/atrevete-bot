@@ -1055,9 +1055,34 @@ class TestServicesLocked:
         ctx = BookingContextV7()
         assert ctx.services_locked is False
 
-    def test_apply_all_locks_after_service_resolve(self):
-        """apply_all_tool_results sets services_locked=True after Shape 1 resolve."""
+    def test_apply_all_does_not_lock_without_offered_slots(self):
+        """apply_all_tool_results does NOT lock when offered_slots is absent."""
         ctx = BookingContextV7()
+        apply_all_tool_results(
+            {
+                "search_services": {
+                    "resolved_service": {
+                        "id": "uuid-corte",
+                        "name": "Corte Caballero",
+                        "duration_minutes": 30,
+                        "category": "HAIRDRESSING",
+                    },
+                    "count": 1,
+                    "query": "corte caballero",
+                },
+            },
+            ctx,
+        )
+
+        assert ctx.services_locked is False  # No offered_slots → not locked
+        assert ctx.selected_services == ["Corte Caballero"]
+        assert ctx.service_id == "uuid-corte"
+
+    def test_apply_all_locks_when_offered_slots_present(self):
+        """apply_all_tool_results sets services_locked=True when offered_slots exist."""
+        ctx = BookingContextV7(
+            offered_slots=[{"time": "10:00", "stylist_id": "s1"}],
+        )
         apply_all_tool_results(
             {
                 "search_services": {
@@ -1076,7 +1101,6 @@ class TestServicesLocked:
 
         assert ctx.services_locked is True
         assert ctx.selected_services == ["Corte Caballero"]
-        assert ctx.service_id == "uuid-corte"
 
     def test_extract_service_fields_skips_when_locked(self):
         """When services_locked=True, extract_service_fields does NOT mutate ctx."""
@@ -1140,8 +1164,8 @@ class TestServicesLocked:
         # Both services resolved
         assert "Corte Caballero" in ctx.selected_services
         assert "Barba" in ctx.selected_services
-        # Lock engages AFTER loop
-        assert ctx.services_locked is True
+        # Lock does NOT engage without offered_slots
+        assert ctx.services_locked is False
 
     def test_slot_taken_retry_preserves_services(self):
         """After SLOT_TAKEN retry, re-calling search_services does NOT drop add-ons."""
@@ -1190,3 +1214,69 @@ class TestServicesLocked:
 
         assert restored.services_locked is True
         assert restored.selected_services == ["Corte Caballero"]
+
+    def test_addon_service_resolves_before_slots_offered(self):
+        """Add-on service on a subsequent turn resolves when no offered_slots yet."""
+        ctx = BookingContextV7(
+            service_id="uuid-corte",
+            service_name="Corte Caballero",
+            selected_services=["Corte Caballero"],
+            services_locked=False,  # No offered_slots → not locked
+        )
+        # User says "y también barba" on a subsequent turn
+        apply_all_tool_results(
+            {
+                "search_services": {
+                    "resolved_service": {
+                        "id": "uuid-barba",
+                        "name": "Barba",
+                        "duration_minutes": 20,
+                        "category": "HAIRDRESSING",
+                    },
+                    "count": 1,
+                    "query": "barba",
+                },
+            },
+            ctx,
+        )
+
+        # Add-on resolves because services_locked is still False
+        assert "Barba" in ctx.selected_services
+        assert "Corte Caballero" in ctx.selected_services
+        # Still not locked (no offered_slots)
+        assert ctx.services_locked is False
+
+    def test_services_locked_engages_when_slots_offered_same_turn(self):
+        """Lock engages when both selected_services and offered_slots exist."""
+        ctx = BookingContextV7()
+        apply_all_tool_results(
+            {
+                "search_services": {
+                    "resolved_service": {
+                        "id": "uuid-corte",
+                        "name": "Corte Caballero",
+                        "duration_minutes": 30,
+                        "category": "HAIRDRESSING",
+                    },
+                    "count": 1,
+                    "query": "corte caballero",
+                },
+                "check_availability": {
+                    "available_slots": [
+                        {
+                            "time": "10:00",
+                            "stylist_id": "s1",
+                            "date": "2026-03-27",
+                            "full_datetime": "2026-03-27T10:00:00+01:00",
+                        }
+                    ],
+                    "error": None,
+                },
+            },
+            ctx,
+        )
+
+        # Both selected_services and offered_slots present → locked
+        assert ctx.services_locked is True
+        assert ctx.selected_services == ["Corte Caballero"]
+        assert ctx.offered_slots is not None

@@ -286,6 +286,14 @@ class BookingModeV7(BaseModeNode):
 
         ctx: BookingContextV7 | None = getattr(self, "_ctx", None)
 
+        # ── Hard gate: always inject selected_services ─────────────────────
+        if ctx and ctx.selected_services:
+            tool_args["services"] = list(ctx.selected_services)
+            logger.info(
+                "_pre_tool_call: injected selected_services=%s into book() args",
+                ctx.selected_services,
+            )
+
         # ── Hard gate: always inject real customer_id ──────────────────────
         if ctx and ctx.customer_id:
             tool_args["customer_id"] = ctx.customer_id
