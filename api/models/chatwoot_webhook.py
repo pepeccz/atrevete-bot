@@ -1,5 +1,7 @@
 """Pydantic models for Chatwoot webhook payloads."""
 
+import re
+
 import phonenumbers
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -80,6 +82,10 @@ class ChatwootMessageEvent(BaseModel):
     @classmethod
     def validate_phone_e164(cls, v: str) -> str:
         """Validate and normalize phone number to E.164 format."""
+        # QA test phone bypass — +34999xxxxxx is the reserved QA safety prefix
+        if re.match(r"^\+34999\d{6}$", v):
+            return v
+
         try:
             # Parse with default region Spain
             parsed = phonenumbers.parse(v, "ES")

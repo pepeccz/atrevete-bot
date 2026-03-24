@@ -17,16 +17,17 @@ services:
       - ./shared:/app/shared
       - ./database:/app/database
       - ./agent:/app/agent
-      - ./service-account-key.json:/app/service-account-key.json:ro
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/api --reload-dir /app/shared --reload-dir /app/database --reload-dir /app/agent
 
   # Agent service with volume mounts (manual restart needed for agent changes)
   agent:
+    environment:
+      - GOOGLE_SERVICE_ACCOUNT_JSON=/app/service-account-key-stub.json
     volumes:
       - ./agent:/app/agent
       - ./shared:/app/shared
       - ./database:/app/database
-      - ./service-account-key.json:/app/service-account-key.json:ro
+      - ./service-account-key-stub.json:/app/service-account-key-stub.json:ro
 
   # Workers with volume mounts (manual restart needed)
   archiver:
@@ -40,14 +41,12 @@ services:
       - ./agent:/app/agent
       - ./shared:/app/shared
       - ./database:/app/database
-      - ./service-account-key.json:/app/service-account-key.json:ro
 
   gcal-sync-worker:
     volumes:
       - ./agent:/app/agent
       - ./shared:/app/shared
       - ./database:/app/database
-      - ./service-account-key.json:/app/service-account-key.json:ro
 
   # Admin Panel with Next.js dev server (hot-reload + Turbopack)
   admin-panel:

@@ -75,7 +75,6 @@ services:
     container_name: atrevete-api
     env_file: .env
     volumes:
-      - ./service-account-key.json:/app/service-account-key.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8000:8000"
@@ -101,8 +100,6 @@ services:
       dockerfile: docker/Dockerfile.agent
     container_name: atrevete-agent
     env_file: .env
-    volumes:
-      - ./service-account-key.json:/app/service-account-key.json:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,8 +150,6 @@ services:
     env_file: .env
     environment:
       - TZ=Europe/Madrid
-    volumes:
-      - ./service-account-key.json:/app/service-account-key.json:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -180,8 +175,6 @@ services:
     env_file: .env
     environment:
       - TZ=Europe/Madrid
-    volumes:
-      - ./service-account-key.json:/app/service-account-key.json:ro
     depends_on:
       postgres:
         condition: service_healthy

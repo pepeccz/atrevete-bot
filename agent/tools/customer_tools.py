@@ -12,6 +12,7 @@ The manage_customer() tool uses an action parameter to route to the appropriate 
 """
 
 import logging
+import re
 from typing import Any, Literal
 from uuid import UUID
 
@@ -47,6 +48,10 @@ def normalize_phone(phone: str) -> str | None:
         "+34 612 34 56 78" -> "+34612345678"
         "invalid" -> None
     """
+    # QA test phone bypass — +34999xxxxxx is the reserved QA safety prefix
+    if re.match(r"^\+34999\d{6}$", phone):
+        return phone
+
     try:
         # Default to Spain (ES) region for numbers without country code
         parsed = phonenumbers.parse(phone, "ES")

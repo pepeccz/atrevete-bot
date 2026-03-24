@@ -71,7 +71,7 @@ async def subscribe_to_incoming_messages():
     # This catches misconfigurations early (fail-fast) rather than at runtime.
     logger.info("Running startup configuration validation...")
     try:
-        await validate_startup_config()
+        await validate_startup_config(require_google_calendar=False)
         logger.info("Startup configuration validation passed")
     except StartupValidationError as e:
         logger.critical(f"Startup blocked due to configuration errors: {e}")

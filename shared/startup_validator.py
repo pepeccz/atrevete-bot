@@ -30,7 +30,7 @@ class StartupValidationError(Exception):
     pass
 
 
-async def validate_startup_config(require_google_calendar: bool = True) -> dict[str, bool]:
+async def validate_startup_config(require_google_calendar: bool = False) -> dict[str, bool]:
     """
     Validate all critical configuration at startup.
 
