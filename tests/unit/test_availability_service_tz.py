@@ -184,3 +184,99 @@ class TestGetBusyPeriodsTimezoneAware:
         assert result[0]["type"] == "blocking_event"
         assert result[0]["start"] == block_start
         assert result[0]["end"] == block_end
+
+
+class TestGetBusyPeriodsOverlapDetection:
+    """REQ-BAF-2: Verify Python-side overlap filter correctness after broad-range SQL fetch."""
+
+    @pytest.mark.asyncio
+    async def test_overlapping_appointment_included(self):
+        """Appointment that overlaps the query range is included in result (REQ-BAF-2)."""
+        stylist_id = uuid4()
+        # Appointment starts before our range end and ends after our range start → overlap
+        appt_start = datetime(2026, 3, 27, 10, 0, tzinfo=MADRID_TZ)  # 10:00
+        duration = 60  # ends at 11:00
+        appt = _make_mock_appointment(stylist_id, appt_start, duration_minutes=duration)
+
+        # Range: 09:30 – 11:30 (appointment at 10:00–11:00 overlaps)
+        query_start = datetime(2026, 3, 27, 9, 30, tzinfo=MADRID_TZ)
+        query_end = datetime(2026, 3, 27, 11, 30, tzinfo=MADRID_TZ)
+
+        session = _mock_session_with_results([appt], [])
+        result = await get_busy_periods(stylist_id, query_start, query_end, session=session)
+
+        assert len(result) == 1
+        assert result[0]["type"] == "appointment"
+        assert result[0]["start"] == appt_start
+
+    @pytest.mark.asyncio
+    async def test_appointment_ending_exactly_at_range_start_excluded(self):
+        """Appointment that ends exactly at range start is NOT an overlap (REQ-BAF-2).
+
+        The Python filter uses strict `>` (appointment end > range start).
+        An appointment ending at exactly the range start is NOT overlapping.
+        """
+        stylist_id = uuid4()
+        # Appointment ends at 10:00 (range start) — NOT overlapping
+        appt_start = datetime(2026, 3, 27, 9, 0, tzinfo=MADRID_TZ)  # 09:00
+        duration = 60  # ends at 10:00
+        appt = _make_mock_appointment(stylist_id, appt_start, duration_minutes=duration)
+
+        # Range starts exactly when the appointment ends
+        query_start = datetime(2026, 3, 27, 10, 0, tzinfo=MADRID_TZ)
+        query_end = datetime(2026, 3, 27, 18, 0, tzinfo=MADRID_TZ)
+
+        # The broad SQL fetch would include this appointment (start >= start - 12h)
+        # but the Python filter must exclude it (appointment end NOT > range start)
+        session = _mock_session_with_results([appt], [])
+        result = await get_busy_periods(stylist_id, query_start, query_end, session=session)
+
+        assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_appointment_entirely_outside_range_excluded(self):
+        """Appointment with end_time before range start is excluded by Python filter (REQ-BAF-2)."""
+        stylist_id = uuid4()
+        # Appointment starts at 07:00 and ends at 08:00 — entirely before query range 10:00–18:00
+        appt_start = datetime(2026, 3, 27, 7, 0, tzinfo=MADRID_TZ)
+        duration = 60  # ends at 08:00
+        appt = _make_mock_appointment(stylist_id, appt_start, duration_minutes=duration)
+
+        query_start = datetime(2026, 3, 27, 10, 0, tzinfo=MADRID_TZ)
+        query_end = datetime(2026, 3, 27, 18, 0, tzinfo=MADRID_TZ)
+
+        # Broad SQL fetch would include it (07:00 >= 10:00 - 12h = 22:00 prev day → yes)
+        session = _mock_session_with_results([appt], [])
+        result = await get_busy_periods(stylist_id, query_start, query_end, session=session)
+
+        # Python filter: appt end (08:00) > range start (10:00) → False → excluded
+        assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_multiple_appointments_some_overlapping(self):
+        """Only overlapping appointments are returned; outside ones are excluded (REQ-BAF-2)."""
+        stylist_id = uuid4()
+
+        # Appointment 1: overlaps (10:00 – 11:00, range 10:30 – 18:00)
+        appt_overlap = _make_mock_appointment(
+            stylist_id,
+            datetime(2026, 3, 27, 10, 0, tzinfo=MADRID_TZ),
+            duration_minutes=60,
+            first_name="Overlap",
+        )
+        # Appointment 2: outside range (07:00 – 08:00, range 10:30 – 18:00)
+        appt_outside = _make_mock_appointment(
+            stylist_id,
+            datetime(2026, 3, 27, 7, 0, tzinfo=MADRID_TZ),
+            duration_minutes=60,
+            first_name="Outside",
+        )
+
+        query_start = datetime(2026, 3, 27, 10, 30, tzinfo=MADRID_TZ)
+        query_end = datetime(2026, 3, 27, 18, 0, tzinfo=MADRID_TZ)
+
+        session = _mock_session_with_results([appt_overlap, appt_outside], [])
+        result = await get_busy_periods(stylist_id, query_start, query_end, session=session)
+
+        assert len(result) == 1
+        assert result[0]["title"] == "Cita: Overlap"

@@ -14,6 +14,16 @@ from enum import StrEnum
 from typing import Any
 
 
+CLEARABLE_NONE_FIELDS: frozenset[str] = frozenset({"offered_slots", "selected_slot"})
+"""Fields that must be serialized even when their value is None.
+
+merge_dicts performs a shallow merge ({**current, **update}). If a key is ABSENT from
+the update dict, the stale value in current survives. These two fields must be explicitly
+set to None (rather than omitted) so that merge_dicts can overwrite stale values after
+SLOT_TAKEN clears them.
+"""
+
+
 class InterpretationReason(StrEnum):
     """Canonical semantic reasons produced while interpreting availability results.
 
@@ -151,12 +161,18 @@ class BookingContextV7:
         return "\n".join(f"❌ {label.capitalize()}: pendiente" for label in missing)
 
     def to_mode_context(self) -> dict[str, Any]:
-        """Serialize to dict for mode_context storage."""
+        """Serialize to dict for mode_context storage.
+
+        Fields in CLEARABLE_NONE_FIELDS are always included even when None, so that
+        merge_dicts can overwrite stale values already present in LangGraph state.
+        All other None/empty values are omitted to keep mode_context lean.
+        """
         raw = dataclasses.asdict(self)
         return {
             k: v
             for k, v in raw.items()
-            if not k.startswith("_") and v is not None and v != [] and v != {}
+            if not k.startswith("_")
+            and (k in CLEARABLE_NONE_FIELDS or (v is not None and v != [] and v != {}))
         }
 
     @classmethod

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.modes.booking_context_v7 import BookingContextV7
+from agent.modes.booking_context_v7 import CLEARABLE_NONE_FIELDS, BookingContextV7
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -134,11 +134,15 @@ class TestToModeContext:
     def test_empty_context_excludes_none_and_empty_collections(self):
         ctx = BookingContextV7()
         result = ctx.to_mode_context()
-        # None and empty list/dict values are excluded, but False/0 are kept
+        # Non-clearable None and empty list/dict values are excluded
         assert "service_id" not in result
         assert "selected_services" not in result
         assert "candidate_services" not in result
-        assert "offered_slots" not in result
+        # CLEARABLE fields (offered_slots, selected_slot) ARE included even when None
+        assert "offered_slots" in result
+        assert result["offered_slots"] is None
+        assert "selected_slot" in result
+        assert result["selected_slot"] is None
         # False and 0 ARE serialized (they're meaningful state)
         assert result.get("recommendations_shown") is False
         assert result.get("book_failure_count") == 0
@@ -172,16 +176,43 @@ class TestToModeContext:
         assert result["selected_slot"] == slot
 
     def test_excludes_empty_dicts(self):
-        """Empty dicts are filtered out just like empty lists."""
-        # This verifies the v != {} filter
+        """Empty dicts are filtered out just like empty lists (non-clearable fields only)."""
         ctx = BookingContextV7()
         result = ctx.to_mode_context()
-        # None, empty list, empty dict values excluded
-        # But False/0 values ARE kept (they are meaningful state)
+        # Only clearable fields may be None; everything else must be non-falsy
         for key, val in result.items():
+            if key in CLEARABLE_NONE_FIELDS:
+                continue  # These are allowed to be None
             assert val is not None
             assert val != []
             assert val != {}
+
+    # ── REQ-BAF-1 tests (clearable None serialization) ────────────────────
+
+    def test_clearable_fields_serialized_as_none_when_cleared(self):
+        """offered_slots=None → key MUST be present with None value (REQ-BAF-1)."""
+        ctx = BookingContextV7()
+        ctx.offered_slots = None  # SLOT_TAKEN clears this
+        ctx.selected_slot = None  # SLOT_TAKEN clears this too
+        result = ctx.to_mode_context()
+
+        assert "offered_slots" in result
+        assert result["offered_slots"] is None
+        assert "selected_slot" in result
+        assert result["selected_slot"] is None
+
+    def test_clearable_fields_serialized_with_data(self):
+        """offered_slots=[...] → key present with full list (regression guard, REQ-BAF-1)."""
+        slots = [{"date": "2026-03-25", "time": "10:00", "stylist_name": "María"}]
+        ctx = BookingContextV7(offered_slots=slots)
+        result = ctx.to_mode_context()
+
+        assert "offered_slots" in result
+        assert result["offered_slots"] == slots
+
+    def test_clearable_none_fields_constant_correct(self):
+        """CLEARABLE_NONE_FIELDS contains exactly offered_slots and selected_slot."""
+        assert CLEARABLE_NONE_FIELDS == frozenset({"offered_slots", "selected_slot"})
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -228,6 +259,34 @@ class TestRoundTrip:
         assert restored.service_name == "Tinte"
         assert restored.stylist_name == "Ana"
         assert restored.stylist_id is None
+
+    def test_round_trip_clearable_none_after_merge_dicts(self):
+        """REQ-BAF-1: Round-trip fidelity after simulated merge_dicts with None clearable field.
+
+        Simulates the full SLOT_TAKEN recovery cycle:
+        1. Previous turn set offered_slots = [old slots] in mode_context
+        2. SLOT_TAKEN clears offered_slots = None on context
+        3. to_mode_context() includes {"offered_slots": None}
+        4. merge_dicts({offered_slots: [old]}, {offered_slots: None}) = {offered_slots: None}
+        5. from_mode_context() reconstructs ctx with offered_slots = None
+        """
+        # Step 1: simulate stale state in mode_context (what LangGraph has stored)
+        stale_state = {"offered_slots": [{"date": "2026-03-24", "time": "10:00"}]}
+
+        # Step 2-3: SLOT_TAKEN handler cleared offered_slots, to_mode_context returns None
+        cleared_ctx = BookingContextV7()
+        cleared_ctx.offered_slots = None
+        update_dict = cleared_ctx.to_mode_context()
+        assert "offered_slots" in update_dict
+        assert update_dict["offered_slots"] is None
+
+        # Step 4: simulate merge_dicts (shallow merge — update wins)
+        merged = {**stale_state, **update_dict}
+        assert merged["offered_slots"] is None
+
+        # Step 5: from_mode_context reads back correctly
+        restored = BookingContextV7.from_mode_context(merged)
+        assert restored.offered_slots is None  # Stale value overwritten
 
 
 # ═══════════════════════════════════════════════════════════════════════

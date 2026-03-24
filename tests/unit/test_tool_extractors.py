@@ -519,6 +519,46 @@ class TestExtractSlotFields:
         # Empty list is falsy, so no overwrite
         assert ctx.offered_slots == [{"time": "09:00"}]
 
+    def test_guard_blocks_overwrite_when_refresh_not_needed(self):
+        """REQ-BAF-3: Guard skips overwrite when offered_slots set AND needs_refresh=False."""
+        stale_slots = [{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
+        ctx = BookingContextV7(
+            offered_slots=stale_slots,
+            needs_availability_refresh=False,  # Normal turn — no refresh requested
+        )
+        new_slots = [{"time": "11:00", "stylist": "María", "date": "2026-03-27"}]
+        extract_slot_fields({"available_slots": new_slots, "error": None}, ctx)
+
+        # Guard should have fired — original slots preserved
+        assert ctx.offered_slots == stale_slots
+
+    def test_guard_allows_overwrite_when_refresh_needed(self):
+        """REQ-BAF-3: Guard lets SLOT_TAKEN refresh through when needs_refresh=True."""
+        stale_slots = [{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
+        ctx = BookingContextV7(
+            offered_slots=stale_slots,
+            needs_availability_refresh=True,  # SLOT_TAKEN set this flag
+        )
+        fresh_slots = [{"time": "11:00", "stylist": "María", "date": "2026-03-27"}]
+        extract_slot_fields({"available_slots": fresh_slots, "error": None}, ctx)
+
+        # Guard should NOT have fired — fresh slots replace stale ones
+        assert ctx.offered_slots == fresh_slots
+        # Flag is cleared after successful refresh
+        assert ctx.needs_availability_refresh is False
+
+    def test_guard_allows_overwrite_when_no_existing_slots(self):
+        """Guard condition: offered_slots=None (even with needs_refresh=False) lets through."""
+        ctx = BookingContextV7(
+            offered_slots=None,  # No slots yet — first availability call
+            needs_availability_refresh=False,
+        )
+        new_slots = [{"time": "10:00", "stylist": "María", "date": "2026-03-27"}]
+        extract_slot_fields({"available_slots": new_slots, "error": None}, ctx)
+
+        # No slots before → always writes
+        assert ctx.offered_slots == new_slots
+
 
 # ============================================================================
 # extract_stylist_fields

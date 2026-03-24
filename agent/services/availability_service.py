@@ -129,18 +129,28 @@ async def get_busy_periods(
         periods = []
 
         # Query appointments (PENDING or CONFIRMED only)
+        # Broad range fetch — exact overlap filtered in Python to avoid tz-naive vs
+        # tz-aware DataError in SQL datetime arithmetic (same pattern as
+        # get_calendar_events_for_range, line 628). The SQL interval arithmetic
+        # `start_time + duration * timedelta(minutes=1)` produces TIMESTAMP WITHOUT
+        # TIME ZONE which asyncpg refuses to compare against a tz-aware param.
         appt_result = await sess.execute(
             select(Appointment).where(
                 and_(
                     Appointment.stylist_id == stylist_id,
                     Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
-                    # Overlap check: appointment overlaps with the time range
                     Appointment.start_time < end_time,
-                    Appointment.start_time + Appointment.duration_minutes * timedelta(minutes=1) > start_time,
+                    Appointment.start_time >= start_time - timedelta(hours=12),
                 )
             )
         )
-        appointments = appt_result.scalars().all()
+        all_appointments = appt_result.scalars().all()
+
+        # Python-side exact overlap filter: appointment ends after range start
+        appointments = [
+            appt for appt in all_appointments
+            if appt.start_time + timedelta(minutes=appt.duration_minutes) > start_time
+        ]
 
         for appt in appointments:
             appt_end = appt.start_time + timedelta(minutes=appt.duration_minutes)

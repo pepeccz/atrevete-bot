@@ -338,7 +338,9 @@ def extract_slot_fields(result: dict, ctx: BookingContextV7) -> None:
         # asked for new availability. This prevents a spurious check_availability
         # call (e.g. during name collection) from replacing the slots the user
         # already chose from, which would make slot_index resolve to the wrong slot.
-        if ctx.offered_slots:
+        # Exception: needs_availability_refresh=True (set by SLOT_TAKEN) forces
+        # the overwrite so a fresh availability check replaces stale slots.
+        if ctx.offered_slots and not ctx.needs_availability_refresh:
             logger.warning(
                 "extract_slot_fields: offered_slots already set (%d slots), "
                 "skipping overwrite with %d new slots. "
