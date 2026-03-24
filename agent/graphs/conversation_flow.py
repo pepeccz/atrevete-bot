@@ -416,13 +416,13 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         and is_first_interaction
         and current_mode != "BOOKING"
         and not _has_active_booking
+        and intent_result.intent in ("greet", "ambiguous")
     ):
         greeting_context = {
             **(state.get("mode_context") or {}),
             **intent_data,
             "is_first_interaction": is_first_interaction,
             "turn_count": turn_count,
-            "deferred_intent": intent_result.intent,
         }
         return {
             "current_mode": "GREETING",

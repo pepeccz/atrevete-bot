@@ -175,13 +175,8 @@ class TestRouterNodeRules:
     # ── Rule 4a/4b: first turn / unknown customer ─────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_rule4a_first_interaction_booking_routes_to_greeting_with_deferred(self):
-        """First interaction with booking intent routes to GREETING with deferred_intent.
-
-        After name-collection-skip (REQ-NCS-1), ALL nameless first-interaction
-        users route through GREETING regardless of intent. The original intent
-        is preserved as deferred_intent for seamless transition after greeting.
-        """
+    async def test_rule4a_first_interaction_booking_routes_to_booking(self):
+        """First interaction with booking intent should bypass GREETING."""
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -197,10 +192,9 @@ class TestRouterNodeRules:
             mock_get_router.return_value = _make_mock_router("book")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
+        assert result["current_mode"] == "BOOKING"
         assert result["mode_context"]["is_first_interaction"] is True
         assert result["mode_context"]["last_intent"] == "book"
-        assert result["mode_context"]["deferred_intent"] == "book"
         mock_get_router.return_value.classify.assert_called_once()
 
     # ── Rule 4b: first turn / unknown customer fallback to GREETING ───────────
@@ -863,8 +857,7 @@ class TestFirstTurnRouterExamples:
     """Concrete first-turn routing examples for the routing fix."""
 
     @pytest.mark.asyncio
-    async def test_first_turn_quiero_agendar_routes_to_greeting_with_deferred(self):
-        """name-collection-skip: nameless first turn routes to GREETING with deferred_intent."""
+    async def test_first_turn_quiero_agendar_routes_to_booking(self):
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -878,8 +871,7 @@ class TestFirstTurnRouterExamples:
             mock_get_router.return_value = _make_mock_router("book")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
-        assert result["mode_context"]["deferred_intent"] == "book"
+        assert result["current_mode"] == "BOOKING"
 
     @pytest.mark.asyncio
     async def test_first_turn_hola_routes_to_greeting(self):
@@ -936,8 +928,7 @@ class TestFirstTurnRouterExamples:
         assert result["mode_context"]["last_intent"] == "ambiguous"
 
     @pytest.mark.asyncio
-    async def test_first_turn_quiero_reservar_routes_to_greeting_with_deferred(self):
-        """name-collection-skip: nameless first turn routes to GREETING with deferred_intent."""
+    async def test_first_turn_quiero_reservar_routes_to_booking(self):
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -951,8 +942,7 @@ class TestFirstTurnRouterExamples:
             mock_get_router.return_value = _make_mock_router("book")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
-        assert result["mode_context"]["deferred_intent"] == "book"
+        assert result["current_mode"] == "BOOKING"
 
     @pytest.mark.asyncio
     async def test_returning_customer_agendar_routes_to_booking(self):
