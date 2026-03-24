@@ -565,6 +565,11 @@ class BookingModeV7(BaseModeNode):
             parts.append(f"\n## Recomendaciones\n{recommendations}")
             ctx.recommendations_shown = True  # Mark as shown
 
+        # Service details (transparency)
+        details_section = _build_service_details_section(ctx)
+        if details_section:
+            parts.append(f"\n## Detalle de servicios\n{details_section}")
+
         # Prefetched stylists
         stylists_section = _build_stylists_section(ctx)
         if stylists_section:
@@ -788,6 +793,22 @@ def _build_recommendations_section(ctx: BookingContextV7) -> str:
         "Sugiere estos servicios de forma natural. "
         "Si la clienta dice que no, respeta su decisión y continúa."
     )
+    return "\n".join(lines)
+
+
+def _build_service_details_section(ctx: BookingContextV7) -> str:
+    """Build prompt section describing what each selected service includes."""
+    if not ctx.selected_services_details:
+        return ""
+    lines: list[str] = []
+    for detail in ctx.selected_services_details:
+        name = detail.get("name", "")
+        dur = detail.get("duration")
+        desc = detail.get("description", "")
+        if not desc:
+            continue
+        dur_str = f" ({dur}min)" if dur else ""
+        lines.append(f"- **{name}**{dur_str}: {desc}")
     return "\n".join(lines)
 
 

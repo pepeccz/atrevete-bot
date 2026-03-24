@@ -165,6 +165,7 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
         )
         if svc and svc.get("name") and svc["name"] not in ctx.selected_services:
             ctx.selected_services.append(svc["name"])
+            _upsert_service_detail(ctx, svc)
             logger.info(
                 "extract_service_fields: services_locked but APPENDED '%s' "
                 "(selected_services=%s)",
@@ -207,6 +208,8 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
                 "extract_service_fields: %d combo recommendations loaded",
                 len(ctx.pending_recommendations),
             )
+        # Extract service description for transparency
+        _upsert_service_detail(ctx, svc)
         logger.info(
             "extract_service_fields: resolved service '%s' (id=%s)",
             svc.get("name"),
@@ -266,6 +269,7 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
             ctx.candidate_services = []
             if not ctx.service_audience_hint:
                 ctx.service_audience_hint = extract_service_audience_hint(svc.get("name"))
+            _upsert_service_detail(ctx, svc)
             logger.info(
                 "extract_service_fields: auto-resolved single candidate '%s'",
                 svc.get("name"),
@@ -429,6 +433,27 @@ def extract_booking_result(result: dict, ctx: BookingContextV7) -> None:
             "extract_booking_result: booking failed (error_code=%s, failure_count=%d)",
             result.get("error_code"),
             ctx.book_failure_count,
+        )
+
+
+def _upsert_service_detail(ctx: BookingContextV7, svc: dict) -> None:
+    """Add or update a service's detail entry in selected_services_details.
+
+    Deduplicates by name. Only stores entries where description is non-null.
+    Caps list at 5 entries to prevent context overflow.
+    """
+    desc = svc.get("description")
+    if not desc:
+        return
+    name = svc.get("name", "")
+    duration = svc.get("duration_minutes")
+    # Remove existing entry for same service (upsert)
+    ctx.selected_services_details = [
+        d for d in ctx.selected_services_details if d.get("name") != name
+    ]
+    if len(ctx.selected_services_details) < 5:
+        ctx.selected_services_details.append(
+            {"name": name, "duration": duration, "description": desc}
         )
 
 

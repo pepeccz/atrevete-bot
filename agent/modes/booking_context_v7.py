@@ -44,6 +44,7 @@ class BookingContextV7:
 
     # ── Services list (primary + add-ons, passed to book().services) ────
     selected_services: list[str] = field(default_factory=list)
+    selected_services_details: list[dict[str, Any]] = field(default_factory=list)
 
     # ── Stylist (populated by extract_stylist_fields or pre-resolver) ───
     stylist_id: str | None = None
