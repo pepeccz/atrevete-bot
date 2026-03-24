@@ -297,6 +297,20 @@ class BookingModeV7(BaseModeNode):
 
         ctx: BookingContextV7 | None = getattr(self, "_ctx", None)
 
+        # ── Hard gate: reject book() if customer has no real name ──────────
+        if ctx:
+            cname = ctx.customer_name
+            if not cname or cname.strip().lower() in ("cliente", ""):
+                logger.warning(
+                    "_pre_tool_call: book() rejected — customer_name is %r, "
+                    "must collect real name first",
+                    cname,
+                )
+                return {
+                    **tool_args,
+                    "customer_id": "ERROR:pregunta_el_nombre_del_cliente_primero",
+                }
+
         # ── Hard gate: always inject selected_services ─────────────────────
         if ctx and ctx.selected_services:
             tool_args["services"] = list(ctx.selected_services)

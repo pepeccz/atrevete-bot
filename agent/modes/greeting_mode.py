@@ -438,11 +438,17 @@ class GreetingMode(BaseModeNode):
                 return fallback_response
 
         if response_text:
-            # Also reject responses that ask for name
+            # Reject responses that ask for name ONLY when a name source already exists.
+            # When no name is known, the LLM should be allowed to ask.
             lower = response_text.lower()
-            if any(token in lower for token in ("nombre", "llamo", "llamas", "llamarte")):
+            has_name_source = bool(
+                state.get("customer_name") or state.get("pending_whatsapp_name")
+            )
+            if has_name_source and any(
+                token in lower for token in ("nombre", "llamo", "llamas", "llamarte")
+            ):
                 self.logger.warning(
-                    "GreetingMode: LLM asked for name in response, using fallback"
+                    "GreetingMode: LLM asked for name when name already known, using fallback"
                 )
                 return fallback_response
             return response_text
