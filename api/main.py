@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from api.middleware.rate_limiting import RateLimitMiddleware
-from api.routes import admin, chatwoot, conversations, google_oauth, system
+from api.routes import admin, chatwoot, conversations, google_oauth, system, token_usage
 from api.routes import settings as settings_routes
 from shared.config import get_settings
 from shared.logging_config import configure_logging
@@ -59,6 +59,9 @@ app.include_router(settings_routes.router, tags=["settings"])
 
 # Include system management router (services, logs)
 app.include_router(system.router, tags=["system"])
+
+# Include token usage tracking router
+app.include_router(token_usage.router, tags=["token-usage"])
 
 
 # =========================================================================

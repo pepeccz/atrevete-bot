@@ -18,6 +18,26 @@ from agent.state.schemas import ConversationState
 from shared.config import get_settings
 
 # ============================================================================
+# ToolCallRejection — Returned by _pre_tool_call to reject a tool invocation
+# ============================================================================
+
+
+@dataclass
+class ToolCallRejection:
+    """Structured rejection from _pre_tool_call — skips tool execution cleanly.
+
+    When _pre_tool_call returns this instead of a dict, the agentic loop:
+    1. Skips tool.ainvoke()
+    2. Builds a rejection dict with {"rejected": True, ...}
+    3. Appends it as a ToolMessage so the LLM sees the rejection reason
+    """
+
+    name: str  # Tool name that was rejected (e.g. "book")
+    error_code: str  # Machine code: NO_OFFERED_SLOTS, NO_CUSTOMER_NAME, etc.
+    error_message: str  # Spanish message for LLM context
+
+
+# ============================================================================
 # AgenticLoopResult — Return type for _run_agentic_loop()
 # ============================================================================
 
@@ -211,10 +231,47 @@ class BaseModeNode(ABC):
         if self.llm is None:
             return None
         try:
-            return await self.llm.ainvoke(messages)
+            response = await self.llm.ainvoke(messages)
+            await self._track_token_usage(response)
+            return response
         except Exception as exc:
             self.logger.error("LLM call failed: %s", exc)
             return None
+
+    async def _track_token_usage(self, response: Any) -> None:
+        """
+        Extract token usage from LLM response and record it.
+
+        Fire-and-forget: errors are logged at DEBUG, never raised.
+        Supports both usage_metadata (LangChain) and response_metadata.token_usage formats.
+        """
+        try:
+            # Primary: LangChain usage_metadata (dict with input_tokens, output_tokens)
+            usage = getattr(response, "usage_metadata", None)
+            if usage and isinstance(usage, dict):
+                input_tokens = usage.get("input_tokens", 0) or 0
+                output_tokens = usage.get("output_tokens", 0) or 0
+            else:
+                # Fallback: response_metadata.token_usage (OpenAI format)
+                resp_meta = getattr(response, "response_metadata", None)
+                if resp_meta and isinstance(resp_meta, dict):
+                    token_usage = resp_meta.get("token_usage", {})
+                    if token_usage:
+                        input_tokens = token_usage.get("prompt_tokens", 0) or 0
+                        output_tokens = token_usage.get("completion_tokens", 0) or 0
+                    else:
+                        return
+                else:
+                    return
+
+            if input_tokens > 0 or output_tokens > 0:
+                from agent.services.token_tracking import record_token_usage
+
+                await record_token_usage(
+                    input_tokens=input_tokens, output_tokens=output_tokens
+                )
+        except Exception as e:
+            self.logger.debug("Token tracking failed: %s", e)
 
     @staticmethod
     def _sanitize_response(text: str) -> str:
@@ -310,11 +367,12 @@ class BaseModeNode(ABC):
         self,
         tool_name: str,
         tool_args: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | ToolCallRejection:
         """Hook called before each tool invocation in the agentic loop.
 
         Subclasses can override to intercept and transform tool arguments
-        before the tool executes. Default: pass-through (returns tool_args unchanged).
+        before the tool executes, or return a ToolCallRejection to prevent
+        execution entirely.
 
         The hook receives the raw LLM dict BEFORE Pydantic validation, so it can
         resolve placeholder values (e.g. slot_index → stylist_id).
@@ -324,7 +382,8 @@ class BaseModeNode(ABC):
             tool_args: Arguments the LLM provided for the tool (raw dict).
 
         Returns:
-            Modified tool_args dict (or original if no changes needed).
+            Modified tool_args dict (or original if no changes needed),
+            or ToolCallRejection to skip tool execution.
         """
         return tool_args
 
@@ -367,6 +426,7 @@ class BaseModeNode(ABC):
             while iterations < MAX_TOOL_ROUNDS:
                 llm_with_tools = self.llm.bind_tools(active_tools) if active_tools else self.llm
                 response = await llm_with_tools.ainvoke(working_messages)
+                await self._track_token_usage(response)
 
                 if not (hasattr(response, "tool_calls") and response.tool_calls):
                     break
@@ -378,6 +438,7 @@ class BaseModeNode(ABC):
                     tool_args = tool_call.get("args", {})
 
                     # Pre-tool-call hook: allows subclasses to transform args
+                    # or reject the call entirely via ToolCallRejection
                     try:
                         tool_args = await self._pre_tool_call(tool_name, tool_args)
                     except Exception as exc:
@@ -387,7 +448,22 @@ class BaseModeNode(ABC):
                             exc,
                         )
 
-                    if tool_name in tool_map:
+                    # Check if _pre_tool_call rejected the call
+                    if isinstance(tool_args, ToolCallRejection):
+                        rejection = tool_args
+                        result = {
+                            "rejected": True,
+                            "error_code": rejection.error_code,
+                            "error_message": rejection.error_message,
+                            "tool_name": rejection.name,
+                        }
+                        self.logger.info(
+                            "Tool %s rejected by _pre_tool_call: %s — %s",
+                            rejection.name,
+                            rejection.error_code,
+                            rejection.error_message,
+                        )
+                    elif tool_name in tool_map:
                         try:
                             result = await tool_map[tool_name].ainvoke(tool_args)
                         except Exception as exc:

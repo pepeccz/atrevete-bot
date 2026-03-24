@@ -5,6 +5,7 @@ CRITICAL: Access ALL environment variables through this module.
 NEVER use os.getenv() directly in application code.
 """
 
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic import Field
@@ -77,6 +78,16 @@ class Settings(BaseSettings):
     SITE_NAME: str = Field(
         default="Atrévete Bot",
         description="Site name for OpenRouter rankings (optional)"
+    )
+
+    # Token Cost Tracking (EUR per 1M tokens)
+    TOKEN_PRICE_INPUT: Decimal = Field(
+        default=Decimal("0.15"),
+        description="Price per 1M input tokens in EUR (gpt-4.1-mini default)",
+    )
+    TOKEN_PRICE_OUTPUT: Decimal = Field(
+        default=Decimal("0.60"),
+        description="Price per 1M output tokens in EUR (gpt-4.1-mini default)",
     )
 
     # Resilience Layer (Multi-Provider Fallback + Retry)

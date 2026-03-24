@@ -101,6 +101,18 @@ async def summarize_conversation(state: ConversationState) -> dict:
         )
 
         response = await llm.ainvoke([{"role": "user", "content": prompt_text}])
+        # Fire-and-forget token tracking
+        try:
+            usage = getattr(response, "usage_metadata", None)
+            if usage and isinstance(usage, dict):
+                _in = usage.get("input_tokens", 0) or 0
+                _out = usage.get("output_tokens", 0) or 0
+                if _in > 0 or _out > 0:
+                    from agent.services.token_tracking import record_token_usage
+
+                    await record_token_usage(input_tokens=_in, output_tokens=_out)
+        except Exception:
+            pass  # Token tracking must never affect summarization
         new_summary_text = str(response.content).strip()
 
         # Step 6: Combine with existing summary if present

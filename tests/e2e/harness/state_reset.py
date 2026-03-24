@@ -5,13 +5,20 @@ from __future__ import annotations
 from typing import Iterable
 
 import redis.asyncio as redis
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class StateResetHarness:
-    """Reset Redis-backed artifacts created during QA conversations."""
+    """Reset Redis + PostgreSQL artifacts created during QA conversations."""
 
-    def __init__(self, redis_client: redis.Redis):
+    def __init__(
+        self,
+        redis_client: redis.Redis,
+        db_session: AsyncSession | None = None,
+    ):
         self.redis = redis_client
+        self.db_session = db_session
 
     async def reset_conversation_checkpoints(self, conversation_id: str) -> int:
         """Reset all LangGraph checkpoint key families for a conversation.
@@ -41,6 +48,20 @@ class StateResetHarness:
             ]
         )
 
+    async def reset_db_customer(self, phone: str) -> bool:
+        """Delete a customer from PostgreSQL by exact phone match.
+
+        Returns True if a row was deleted, False otherwise.
+        """
+        if not self.db_session or not phone:
+            return False
+        result = await self.db_session.execute(
+            text("DELETE FROM customers WHERE phone = :phone"),
+            {"phone": phone},
+        )
+        await self.db_session.commit()
+        return result.rowcount > 0
+
     async def reset_test_artifacts(self, conversation_id: str) -> int:
         return await self._delete_matching_patterns(
             [
@@ -57,11 +78,13 @@ class StateResetHarness:
         checkpoints_deleted = await self.reset_conversation_checkpoints(conversation_id)
         customer_deleted = await self.reset_customer_data(customer_phone)
         artifacts_deleted = await self.reset_test_artifacts(conversation_id)
+        db_customer_deleted = await self.reset_db_customer(customer_phone or "")
         clean = await self.verify_clean(conversation_id)
         return {
             "checkpoints_deleted": checkpoints_deleted,
             "customer_deleted": customer_deleted,
             "artifacts_deleted": artifacts_deleted,
+            "db_customer_deleted": db_customer_deleted,
             "clean": clean,
         }
 

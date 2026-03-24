@@ -47,7 +47,6 @@ def _full_context() -> BookingContextV7:
         customer_name="Pepe",
         customer_id="cust-001",
         notes="Sin alergia",
-        pending_clarification=None,
         candidate_services=[],
     )
 
@@ -132,10 +131,17 @@ class TestFromModeContext:
 
 
 class TestToModeContext:
-    def test_empty_context_is_empty_dict(self):
+    def test_empty_context_excludes_none_and_empty_collections(self):
         ctx = BookingContextV7()
         result = ctx.to_mode_context()
-        assert result == {}
+        # None and empty list/dict values are excluded, but False/0 are kept
+        assert "service_id" not in result
+        assert "selected_services" not in result
+        assert "candidate_services" not in result
+        assert "offered_slots" not in result
+        # False and 0 ARE serialized (they're meaningful state)
+        assert result.get("recommendations_shown") is False
+        assert result.get("book_failure_count") == 0
 
     def test_excludes_none_values(self):
         ctx = BookingContextV7(service_id="abc")
@@ -170,8 +176,12 @@ class TestToModeContext:
         # This verifies the v != {} filter
         ctx = BookingContextV7()
         result = ctx.to_mode_context()
-        # All None/empty values excluded
-        assert len(result) == 0
+        # None, empty list, empty dict values excluded
+        # But False/0 values ARE kept (they are meaningful state)
+        for key, val in result.items():
+            assert val is not None
+            assert val != []
+            assert val != {}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -452,7 +462,7 @@ class TestEdgeCases:
         restored = BookingContextV7.from_mode_context(d)
         assert restored.recurrent_stylist_hint == "María"
 
-    def test_pending_clarification_round_trip(self):
+    def test_pending_clarifications_round_trip(self):
         clarification = {
             "axis": "audience",
             "question_hint": "¿Es para caballero o dama?",
@@ -461,9 +471,9 @@ class TestEdgeCases:
                 {"label": "Caballero", "value": "adult_male"},
             ],
         }
-        ctx = BookingContextV7(pending_clarification=clarification)
+        ctx = BookingContextV7(pending_clarifications=[clarification])
         restored = BookingContextV7.from_mode_context(ctx.to_mode_context())
-        assert restored.pending_clarification == clarification
+        assert restored.pending_clarifications == [clarification]
 
     def test_candidate_services_round_trip(self):
         candidates = [

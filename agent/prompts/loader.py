@@ -36,6 +36,7 @@ _STEP_VISIBLE_FIELDS: dict[str, set[str]] = {
         "service_name",
         "service_category",
         "pending_clarification",
+        "pending_clarifications",
         "candidate_services",
         "candidate_service_ids",
         "pending_recommendations",
@@ -385,7 +386,10 @@ def build_step_context(
         )
 
     # Surface pending clarification so LLM can present options to user
-    pending_clarification = scoped_ctx.get("pending_clarification")
+    # Supports both new list (pending_clarifications) and legacy scalar
+    _pc_list = scoped_ctx.get("pending_clarifications") or []
+    _pc_legacy = scoped_ctx.get("pending_clarification")
+    pending_clarification = _pc_list[0] if _pc_list else _pc_legacy
     if pending_clarification:
         axis = pending_clarification.get("axis", "")
         hint = pending_clarification.get("question_hint", "")

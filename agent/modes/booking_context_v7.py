@@ -64,7 +64,7 @@ class BookingContextV7:
     notes: str | None = None
 
     # ── Disambiguation state (from search_services shapes 2 & 3) ───────
-    pending_clarification: dict[str, Any] | None = None
+    pending_clarifications: list[dict[str, Any]] = field(default_factory=list)
     candidate_services: list[dict[str, Any]] = field(default_factory=list)
 
     # ── Hints (from pre-resolvers) ──────────────────────────────────────
@@ -80,6 +80,7 @@ class BookingContextV7:
 
     # ── Book failure tracking ────────────────────────────────────────────
     book_failure_count: int = 0
+    needs_availability_refresh: bool = False
 
     # ── Service lock (prevents overwrite during SLOT_TAKEN retry) ──────
     services_locked: bool = False

@@ -35,6 +35,7 @@ Sigue este orden como GUÍA, pero adáptate si la clienta proporciona datos fuer
 5b. Si la clienta pide un servicio genérico sin especificar audiencia (ej: "corte de cabello", "tinte"), pregunta para quién es antes de llamar a `search_services` o `book()`.
 6. Si ya tenés horarios ofrecidos (sección "## Horarios ofrecidos"), NO llames a `check_availability` ni `find_next_available` de nuevo, a menos que la clienta pida explícitamente otros horarios, otras fechas u otra estilista. Volver a buscar disponibilidad borra los horarios que ya le ofreciste.
 6b. Si `book()` devuelve error SLOT_TAKEN, los horarios ofrecidos se han borrado automáticamente. Llama a `check_availability` de nuevo para obtener horarios actualizados antes de ofrecer alternativas.
+6c. Después de un error SLOT_TAKEN, `book()` está BLOQUEADO por código hasta que llames a `check_availability` o `find_next_available` y obtengas horarios nuevos. No intentes reservar con los datos anteriores — el sistema rechazará la llamada automáticamente. Llama a `check_availability` de forma proactiva para desbloquear la reserva.
 7. Si no hay huecos para la estilista elegida, ofrece ampliar rango de fechas u otra profesional.
 8. Si la clienta da varios datos a la vez ("corte con Pilar mañana a las 10"), procesa TODOS
    usando múltiples herramientas en la misma vuelta — no pidas datos que ya te dieron.

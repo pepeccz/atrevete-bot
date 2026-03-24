@@ -71,48 +71,55 @@ def extract_service_audience_hint(value: str | None) -> str | None:
 
 
 def resolve_pending_clarification(ctx: BookingContextV7) -> bool:
-    """Attempt to resolve a pending audience clarification using service_audience_hint.
+    """Attempt to resolve the first matching audience clarification from the queue.
 
     Called as a pre-resolver in BookingModeV7.handle() AFTER _resolve_audience_hint()
-    and BEFORE _build_messages(). If the pending clarification axis is "audience" and
-    service_audience_hint matches one of the options, this function MUTATES ctx:
+    and BEFORE _build_messages(). Iterates ctx.pending_clarifications looking for the
+    first entry with axis="audience" that matches service_audience_hint. On match:
     - Sets service_id, service_name, service_category, service_duration_minutes
     - Appends to selected_services (NOT overwrite)
-    - Clears pending_clarification and candidate_services
+    - Removes the matched entry from pending_clarifications
+    - Clears candidate_services
     Returns True if resolution happened, False otherwise.
     """
-    if ctx.pending_clarification is None:
-        return False
-    if ctx.pending_clarification.get("axis") != "audience":
+    if not ctx.pending_clarifications:
         return False
     if ctx.service_audience_hint is None:
         return False
 
     hint_lower = _normalize_text(ctx.service_audience_hint)
-    options = ctx.pending_clarification.get("options", [])
 
-    for opt in options:
-        val = _normalize_text(opt.get("value"))
-        label = _normalize_text(opt.get("label"))
-        if hint_lower in val or val in hint_lower or hint_lower in label:
-            ctx.service_id = str(opt["service_id"])
-            ctx.service_name = opt["service_name"]
-            ctx.service_category = opt.get("category")
-            ctx.service_duration_minutes = opt.get("duration_minutes")
-            ctx.service_family = opt.get("family")
-            # APPEND, not overwrite (same pattern as Shape 1 lines 115-118)
-            if opt["service_name"] not in ctx.selected_services:
-                ctx.selected_services = [opt["service_name"]] + [
-                    s for s in ctx.selected_services if s != opt["service_name"]
-                ]
-            ctx.pending_clarification = None
-            ctx.candidate_services = []
-            logger.info(
-                "resolve_pending_clarification: auto-resolved '%s' via audience hint '%s'",
-                opt["service_name"],
-                ctx.service_audience_hint,
-            )
-            return True
+    for idx, clarification in enumerate(ctx.pending_clarifications):
+        if clarification.get("axis") != "audience":
+            continue
+
+        options = clarification.get("options", [])
+        for opt in options:
+            val = _normalize_text(opt.get("value"))
+            label = _normalize_text(opt.get("label"))
+            if hint_lower in val or val in hint_lower or hint_lower in label:
+                ctx.service_id = str(opt["service_id"])
+                ctx.service_name = opt["service_name"]
+                ctx.service_category = opt.get("category")
+                ctx.service_duration_minutes = opt.get("duration_minutes")
+                ctx.service_family = opt.get("family")
+                # APPEND, not overwrite (same pattern as Shape 1)
+                if opt["service_name"] not in ctx.selected_services:
+                    ctx.selected_services = [opt["service_name"]] + [
+                        s for s in ctx.selected_services
+                        if s != opt["service_name"]
+                    ]
+                # Remove the resolved entry from the queue
+                ctx.pending_clarifications.pop(idx)
+                ctx.candidate_services = []
+                logger.info(
+                    "resolve_pending_clarification: auto-resolved '%s' "
+                    "via audience hint '%s' (queue_size=%d)",
+                    opt["service_name"],
+                    ctx.service_audience_hint,
+                    len(ctx.pending_clarifications),
+                )
+                return True
 
     return False
 
@@ -149,7 +156,7 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
 
     Handles 3 shapes:
     - Shape 1 (resolved_service): set service_id, service_name, etc.
-    - Shape 2 (clarification_needed): set pending_clarification, candidate_services
+    - Shape 2 (clarification_needed): append to pending_clarifications, set candidate_services
     - Shape 3 (services list): set candidate_services
       If exactly 1 result, auto-resolve to service fields.
 
@@ -193,8 +200,16 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
             ctx.selected_services = [svc["name"]] + [
                 s for s in ctx.selected_services if s != svc["name"]
             ]
-        # Clear disambiguation state
-        ctx.pending_clarification = None
+        # Clear disambiguation: remove only clarification entries whose options
+        # include the resolved service (preserve unrelated clarifications)
+        resolved_name = svc["name"]
+        ctx.pending_clarifications = [
+            pc for pc in ctx.pending_clarifications
+            if not any(
+                opt.get("service_name") == resolved_name
+                for opt in pc.get("options", [])
+            )
+        ]
         ctx.candidate_services = []
         # Infer audience hint if not already set
         if not ctx.service_audience_hint:
@@ -220,12 +235,12 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
     # Shape 2: clarification_needed — ambiguous, needs user input
     if "clarification_needed" in result:
         clarification = result["clarification_needed"]
-        # Guard: don't overwrite if we already have services selected and this
-        # clarification can be auto-resolved by resolve_pending_clarification.
-        # This prevents a same-turn search_services pair (one resolved, one
-        # needing clarification) from clobbering the resolved service's state.
-        if ctx.selected_services and clarification.get("axis") == "audience" and ctx.service_audience_hint:
-            # Check if any option matches the existing hint — if so, skip
+        # Guard: if we have an audience hint that matches, auto-resolve inline
+        # instead of queueing (prevents unnecessary disambiguation prompts).
+        if (
+            clarification.get("axis") == "audience"
+            and ctx.service_audience_hint
+        ):
             hint_lower = _normalize_text(ctx.service_audience_hint)
             options = clarification.get("options", [])
             for opt in options:
@@ -244,10 +259,12 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
                         ctx.service_audience_hint,
                     )
                     return
-        ctx.pending_clarification = clarification
+        ctx.pending_clarifications.append(clarification)
         logger.info(
-            "extract_service_fields: clarification needed (axis=%s)",
+            "extract_service_fields: clarification queued (axis=%s, "
+            "queue_size=%d)",
             clarification.get("axis"),
+            len(ctx.pending_clarifications),
         )
         return
 
@@ -265,7 +282,15 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
                 ctx.selected_services = [svc["name"]] + [
                     s for s in ctx.selected_services if s != svc["name"]
                 ]
-            ctx.pending_clarification = None
+            # Remove only matching clarification entries (preserve unrelated)
+            resolved_name = svc["name"]
+            ctx.pending_clarifications = [
+                pc for pc in ctx.pending_clarifications
+                if not any(
+                    opt.get("service_name") == resolved_name
+                    for opt in pc.get("options", [])
+                )
+            ]
             ctx.candidate_services = []
             if not ctx.service_audience_hint:
                 ctx.service_audience_hint = extract_service_audience_hint(svc.get("name"))
@@ -324,6 +349,7 @@ def extract_slot_fields(result: dict, ctx: BookingContextV7) -> None:
             return
         ctx.offered_slots = slots
         ctx.book_failure_count = 0  # Reset failure counter on new availability
+        ctx.needs_availability_refresh = False  # Fresh availability clears SLOT_TAKEN block
         logger.info("extract_slot_fields: %d slots offered, book_failure_count reset", len(slots))
 
         # If ALL slots come from the same stylist, auto-set stylist_id/name
@@ -396,7 +422,19 @@ def extract_booking_result(result: dict, ctx: BookingContextV7) -> None:
 
     Sets _booking_completed flag on success. On failure, the LLM
     sees the error in tool output and handles it conversationally.
+
+    Rejections (from ToolCallRejection) are a no-op — they don't count as
+    a real book() attempt, so no side effects (no services_locked, no
+    book_failure_count increment, no needs_availability_refresh change).
     """
+    # Early return for rejected tool calls — no side effects
+    if result.get("rejected"):
+        logger.info(
+            "extract_booking_result: skipping rejected book() (error_code=%s)",
+            result.get("error_code"),
+        )
+        return
+
     # Lock services on FIRST book() attempt (success OR failure).
     # This prevents SLOT_TAKEN retry from clobbering selected_services.
     if not ctx.services_locked:
@@ -426,6 +464,7 @@ def extract_booking_result(result: dict, ctx: BookingContextV7) -> None:
         if error_code == "SLOT_TAKEN":
             ctx.offered_slots = None  # Force refresh on next availability check
             ctx.selected_slot = None  # Clear stale selection
+            ctx.needs_availability_refresh = True  # Block book() until fresh availability
             logger.info(
                 "extract_booking_result: SLOT_TAKEN — cleared offered_slots for refresh"
             )

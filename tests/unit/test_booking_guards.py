@@ -1,0 +1,574 @@
+"""Unit tests for booking-state-integrity guards (Phase 6).
+
+Coverage:
+- _pre_tool_call Guard 1: reject book() when offered_slots is empty (REQ-BSI-1)
+- _pre_tool_call Guard 2: reject book() when needs_availability_refresh=True (REQ-BSI-2)
+- _pre_tool_call Guard 3: reject book() when selected_services is empty (REQ-BSI-4)
+- _pre_tool_call Guard 4: reject book() when customer_name missing (REQ-BRF-1)
+- _pre_tool_call Guard 5: reject book() when customer_id missing (REQ-BRF-1)
+- _pre_tool_call passthrough: non-book tools unaffected
+- get_tools() circuit breaker: excludes book when book_failure_count >= 3 (REQ-BSI-3)
+- ToolCallRejection in agentic loop: ainvoke skipped, ToolMessage with rejection (REQ-BRF-1)
+
+All LLM calls are mocked — tests do NOT require a real LLM or DB.
+"""
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from agent.modes.base import ToolCallRejection
+from agent.modes.booking_context_v7 import BookingContextV7
+from agent.modes.booking_mode_v7 import BookingModeV7
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _make_mode() -> BookingModeV7:
+    """Create a BookingModeV7 with a mocked LLM."""
+    mock_llm = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.content = "ok"
+    mock_response.tool_calls = []
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+    mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+    return BookingModeV7(tools=[], llm_client=mock_llm)
+
+
+# =============================================================================
+# Guard 1: reject book() when offered_slots is empty (REQ-BSI-1)
+# =============================================================================
+
+
+class TestGuardEmptyOfferedSlots:
+    """REQ-BSI-1: _pre_tool_call rejects book() when offered_slots is None/empty."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_book_when_offered_slots_none(self):
+        """Scenario 1: offered_slots=None -> ToolCallRejection."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=None,
+            selected_services=["Corte Caballero"],
+            customer_name="Pedro",
+        )
+        args = {"customer_id": "cust-1", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_OFFERED_SLOTS"
+
+    @pytest.mark.asyncio
+    async def test_rejects_book_when_offered_slots_empty_list(self):
+        """Scenario 1 variant: offered_slots=[] (falsy) -> ToolCallRejection."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[],
+            selected_services=["Corte Caballero"],
+            customer_name="Pedro",
+        )
+        args = {"customer_id": "cust-1", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_OFFERED_SLOTS"
+
+    @pytest.mark.asyncio
+    async def test_allows_book_when_offered_slots_populated(self):
+        """Scenario 2: offered_slots has slots -> no guard rejection."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[
+                {
+                    "stylist_id": "s1",
+                    "time": "10:00",
+                    "full_datetime": "2026-03-27T10:00:00+01:00",
+                    "stylist_name": "Maria",
+                },
+                {
+                    "stylist_id": "s1",
+                    "time": "11:00",
+                    "full_datetime": "2026-03-27T11:00:00+01:00",
+                    "stylist_name": "Maria",
+                },
+                {
+                    "stylist_id": "s2",
+                    "time": "12:00",
+                    "full_datetime": "2026-03-27T12:00:00+01:00",
+                    "stylist_name": "Ana",
+                },
+            ],
+            selected_services=["Corte Caballero"],
+            customer_name="Pedro",
+            customer_id="cust-1",
+            needs_availability_refresh=False,
+        )
+        args = {"customer_id": "cust-1", "slot_index": 2}
+
+        result = await mode._pre_tool_call("book", args)
+
+        # Guard did NOT fire — slot_index was resolved, result is a dict
+        assert not isinstance(result, ToolCallRejection)
+
+
+# =============================================================================
+# Guard 2: reject book() when needs_availability_refresh=True (REQ-BSI-2)
+# =============================================================================
+
+
+class TestGuardNeedsAvailabilityRefresh:
+    """REQ-BSI-2 scenario 3: _pre_tool_call rejects book() when refresh flag is True."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_book_when_refresh_needed(self):
+        """needs_availability_refresh=True -> ToolCallRejection."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[
+                {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
+            ],
+            needs_availability_refresh=True,
+            selected_services=["Corte Caballero"],
+            customer_name="Pedro",
+        )
+        args = {"customer_id": "cust-1", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NEEDS_AVAILABILITY_REFRESH"
+
+    @pytest.mark.asyncio
+    async def test_allows_book_when_refresh_not_needed(self):
+        """needs_availability_refresh=False -> guard does not fire."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[
+                {
+                    "stylist_id": "s1",
+                    "time": "10:00",
+                    "full_datetime": "2026-03-27T10:00:00+01:00",
+                    "stylist_name": "Maria",
+                }
+            ],
+            needs_availability_refresh=False,
+            selected_services=["Corte Caballero"],
+            customer_name="Pedro",
+            customer_id="cust-1",
+        )
+        args = {"customer_id": "cust-1", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert not isinstance(result, ToolCallRejection)
+
+
+# =============================================================================
+# Guard 3: reject book() when selected_services is empty (REQ-BSI-4)
+# =============================================================================
+
+
+class TestGuardEmptyServices:
+    """REQ-BSI-4: _pre_tool_call rejects book() when selected_services is empty."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_book_when_services_empty(self):
+        """Scenario 1: selected_services=[] -> ToolCallRejection."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[
+                {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
+            ],
+            selected_services=[],
+            needs_availability_refresh=False,
+            customer_name="Pedro",
+        )
+        args = {"customer_id": "cust-1", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_SELECTED_SERVICES"
+
+    @pytest.mark.asyncio
+    async def test_allows_book_when_services_populated(self):
+        """Scenario 2: selected_services has items -> guard does not fire."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[
+                {
+                    "stylist_id": "s1",
+                    "time": "10:00",
+                    "full_datetime": "2026-03-27T10:00:00+01:00",
+                    "stylist_name": "Maria",
+                }
+            ],
+            selected_services=["Corte Caballero"],
+            needs_availability_refresh=False,
+            customer_name="Pedro",
+            customer_id="cust-1",
+        )
+        args = {"customer_id": "cust-1", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert not isinstance(result, ToolCallRejection)
+
+
+# =============================================================================
+# Guard 4: reject book() when customer_name missing (REQ-BRF-1)
+# =============================================================================
+
+
+class TestGuardNoCustomerName:
+    """REQ-BRF-1: _pre_tool_call rejects book() when customer_name is None/empty."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_book_when_customer_name_none(self):
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[
+                {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
+            ],
+            selected_services=["Corte Caballero"],
+            needs_availability_refresh=False,
+            customer_name=None,
+        )
+        args = {"customer_id": "cust-1", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_CUSTOMER_NAME"
+
+    @pytest.mark.asyncio
+    async def test_rejects_book_when_customer_name_is_cliente(self):
+        """'Cliente' placeholder is treated as missing name."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[
+                {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
+            ],
+            selected_services=["Corte Caballero"],
+            needs_availability_refresh=False,
+            customer_name="Cliente",
+        )
+        args = {"customer_id": "cust-1", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_CUSTOMER_NAME"
+
+
+# =============================================================================
+# Guard 5: reject book() when customer_id missing (REQ-BRF-1)
+# =============================================================================
+
+
+class TestGuardNoCustomerId:
+    """REQ-BRF-1: _pre_tool_call rejects book() when customer_id is None."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_book_when_customer_id_none(self):
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[
+                {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
+            ],
+            selected_services=["Corte Caballero"],
+            needs_availability_refresh=False,
+            customer_name="Pedro",
+            customer_id=None,
+        )
+        args = {"customer_id": "cust-1", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_CUSTOMER_ID"
+
+
+# =============================================================================
+# Non-book tools pass through unmodified
+# =============================================================================
+
+
+class TestNonBookToolsPassthrough:
+    """Non-book tools should not be intercepted by any guard."""
+
+    @pytest.mark.asyncio
+    async def test_search_services_passthrough(self):
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(offered_slots=None, selected_services=[])
+        args = {"query": "corte"}
+
+        result = await mode._pre_tool_call("search_services", args)
+
+        assert result == {"query": "corte"}
+
+    @pytest.mark.asyncio
+    async def test_check_availability_passthrough(self):
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(offered_slots=None, needs_availability_refresh=True)
+        args = {"date": "2026-03-27", "stylist_id": "s1"}
+
+        result = await mode._pre_tool_call("check_availability", args)
+
+        assert result == {"date": "2026-03-27", "stylist_id": "s1"}
+
+    @pytest.mark.asyncio
+    async def test_manage_customer_passthrough(self):
+        mode = _make_mode()
+        mode._ctx = BookingContextV7()
+        args = {"action": "get", "phone": "+34612345678"}
+
+        result = await mode._pre_tool_call("manage_customer", args)
+
+        assert result == {"action": "get", "phone": "+34612345678"}
+
+
+# =============================================================================
+# Circuit breaker: get_tools() excludes book when book_failure_count >= 3
+# =============================================================================
+
+
+class TestCircuitBreakerGetTools:
+    """REQ-BSI-3: get_tools() excludes book when book_failure_count >= 3."""
+
+    def test_excludes_book_at_failure_count_3(self):
+        """Scenario 1: book_failure_count=3 -> book tool removed."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(book_failure_count=3)
+
+        tools = mode.get_tools()
+        tool_names = [t.name for t in tools]
+
+        assert "book" not in tool_names
+
+    def test_excludes_book_at_failure_count_above_3(self):
+        """Scenario 1 variant: book_failure_count=5 -> book tool still removed."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(book_failure_count=5)
+
+        tools = mode.get_tools()
+        tool_names = [t.name for t in tools]
+
+        assert "book" not in tool_names
+
+    def test_includes_book_at_failure_count_below_3(self):
+        """Scenario 2: book_failure_count=1 -> book tool present."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(book_failure_count=1)
+
+        tools = mode.get_tools()
+        tool_names = [t.name for t in tools]
+
+        assert "book" in tool_names
+
+    def test_includes_book_at_failure_count_0(self):
+        """Scenario 2 variant: fresh context (count=0) -> book tool present."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(book_failure_count=0)
+
+        tools = mode.get_tools()
+        tool_names = [t.name for t in tools]
+
+        assert "book" in tool_names
+
+    def test_includes_book_at_failure_count_2(self):
+        """Scenario 2 edge case: count=2 (prompt warning fires, but tool stays)."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(book_failure_count=2)
+
+        tools = mode.get_tools()
+        tool_names = [t.name for t in tools]
+
+        assert "book" in tool_names
+
+    def test_includes_book_when_no_ctx(self):
+        """No _ctx attribute at all -> all tools returned (safe fallback)."""
+        mode = _make_mode()
+        # Don't set _ctx at all
+
+        tools = mode.get_tools()
+        tool_names = [t.name for t in tools]
+
+        assert "book" in tool_names
+
+    def test_other_tools_always_present(self):
+        """Even when book is excluded, other booking tools remain."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(book_failure_count=3)
+
+        tools = mode.get_tools()
+        tool_names = [t.name for t in tools]
+
+        assert "check_availability" in tool_names
+        assert "search_services" in tool_names
+        assert "manage_customer" in tool_names
+
+
+# =============================================================================
+# Guard priority: first matching guard wins
+# =============================================================================
+
+
+class TestGuardPriority:
+    """Guards fire in order: empty slots > refresh needed > empty services > name > id."""
+
+    @pytest.mark.asyncio
+    async def test_empty_slots_takes_priority_over_refresh(self):
+        """Both empty slots AND refresh=True -> NO_OFFERED_SLOTS wins."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=None,
+            needs_availability_refresh=True,
+            selected_services=[],
+            customer_name="Pedro",
+        )
+        args = {"customer_id": "cust-1"}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_OFFERED_SLOTS"
+
+    @pytest.mark.asyncio
+    async def test_refresh_takes_priority_over_empty_services(self):
+        """Slots exist, refresh=True, services empty -> NEEDS_AVAILABILITY_REFRESH wins."""
+        mode = _make_mode()
+        mode._ctx = BookingContextV7(
+            offered_slots=[{"stylist_id": "s1", "time": "10:00"}],
+            needs_availability_refresh=True,
+            selected_services=[],
+            customer_name="Pedro",
+        )
+        args = {"customer_id": "cust-1"}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NEEDS_AVAILABILITY_REFRESH"
+
+
+# =============================================================================
+# ToolCallRejection in agentic loop (REQ-BRF-1)
+# =============================================================================
+
+
+class TestToolCallRejectionInAgenticLoop:
+    """REQ-BRF-1: ToolCallRejection skips ainvoke, produces structured ToolMessage."""
+
+    @pytest.mark.asyncio
+    async def test_rejection_skips_ainvoke_and_produces_tool_message(self):
+        """When _pre_tool_call returns ToolCallRejection, tool.ainvoke is NOT called
+        and the loop produces a ToolMessage with the rejection dict."""
+        mode = _make_mode()
+
+        # Set up context that will cause NO_OFFERED_SLOTS rejection
+        mode._ctx = BookingContextV7(
+            offered_slots=None,
+            selected_services=["Corte Caballero"],
+            customer_name="Pedro",
+        )
+
+        # Create a mock tool for "book"
+        mock_book_tool = MagicMock()
+        mock_book_tool.name = "book"
+        mock_book_tool.ainvoke = AsyncMock(return_value={"success": True})
+
+        # Set up LLM to return a tool call on first invocation, then plain text
+        tool_call_response = MagicMock()
+        tool_call_response.content = ""
+        tool_call_response.tool_calls = [
+            {"name": "book", "args": {"customer_id": "cust-1"}, "id": "call-1"}
+        ]
+        tool_call_response.usage_metadata = None
+        tool_call_response.response_metadata = {}
+
+        final_response = MagicMock()
+        final_response.content = "No tienes disponibilidad consultada."
+        final_response.tool_calls = []
+        final_response.usage_metadata = None
+        final_response.response_metadata = {}
+
+        mock_llm = AsyncMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        mock_llm.ainvoke = AsyncMock(side_effect=[tool_call_response, final_response])
+        mode.llm = mock_llm
+
+        result = await mode._run_agentic_loop(
+            messages=[],
+            tools=[mock_book_tool],
+        )
+
+        # tool.ainvoke should NOT have been called (rejection skips it)
+        mock_book_tool.ainvoke.assert_not_called()
+
+        # The tool_results should contain the rejection dict
+        assert "book" in result.tool_results
+        rejection_result = result.tool_results["book"][0]
+        assert rejection_result["rejected"] is True
+        assert rejection_result["error_code"] == "NO_OFFERED_SLOTS"
+        assert rejection_result["tool_name"] == "book"
+
+    @pytest.mark.asyncio
+    async def test_non_rejected_tool_still_invoked(self):
+        """When _pre_tool_call returns modified args (not rejection), ainvoke IS called."""
+        mode = _make_mode()
+
+        # Set up context that will NOT trigger rejection
+        mode._ctx = BookingContextV7(
+            offered_slots=[
+                {
+                    "stylist_id": "s1",
+                    "time": "10:00",
+                    "full_datetime": "2026-03-27T10:00:00+01:00",
+                    "stylist_name": "Maria",
+                }
+            ],
+            selected_services=["Corte Caballero"],
+            customer_name="Pedro",
+            customer_id="cust-1",
+            needs_availability_refresh=False,
+        )
+
+        # Create a mock tool for "search_services" (not book, so no guards)
+        mock_tool = MagicMock()
+        mock_tool.name = "search_services"
+        mock_tool.ainvoke = AsyncMock(
+            return_value={"services": [{"id": "s1", "name": "Corte"}], "count": 1}
+        )
+
+        tool_call_response = MagicMock()
+        tool_call_response.content = ""
+        tool_call_response.tool_calls = [
+            {"name": "search_services", "args": {"query": "corte"}, "id": "call-1"}
+        ]
+        tool_call_response.usage_metadata = None
+        tool_call_response.response_metadata = {}
+
+        final_response = MagicMock()
+        final_response.content = "Encontre un servicio."
+        final_response.tool_calls = []
+        final_response.usage_metadata = None
+        final_response.response_metadata = {}
+
+        mock_llm = AsyncMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        mock_llm.ainvoke = AsyncMock(side_effect=[tool_call_response, final_response])
+        mode.llm = mock_llm
+
+        result = await mode._run_agentic_loop(
+            messages=[],
+            tools=[mock_tool],
+        )
+
+        # tool.ainvoke WAS called
+        mock_tool.ainvoke.assert_called_once()

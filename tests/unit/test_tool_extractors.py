@@ -107,9 +107,16 @@ class TestExtractServiceFieldsShape1:
         assert ctx.service_family == "corte"
         assert ctx.selected_services == ["Corte de Dama"]
 
-    def test_resolved_service_clears_disambiguation(self):
+    def test_resolved_service_clears_matching_disambiguation(self):
         ctx = BookingContextV7(
-            pending_clarification={"axis": "audience"},
+            pending_clarifications=[
+                {
+                    "axis": "audience",
+                    "options": [
+                        {"service_name": "Corte de Dama", "service_id": "abc-123"},
+                    ],
+                }
+            ],
             candidate_services=[{"id": "x", "name": "X"}],
         )
         result = {
@@ -124,7 +131,7 @@ class TestExtractServiceFieldsShape1:
         }
         extract_service_fields(result, ctx)
 
-        assert ctx.pending_clarification is None
+        assert ctx.pending_clarifications == []
         assert ctx.candidate_services == []
 
     def test_resolved_service_sets_audience_hint(self):
@@ -207,9 +214,9 @@ class TestExtractServiceFieldsShape2:
         }
         extract_service_fields(result, ctx)
 
-        assert ctx.pending_clarification is not None
-        assert ctx.pending_clarification["axis"] == "hair_density"
-        assert len(ctx.pending_clarification["options"]) == 2
+        assert len(ctx.pending_clarifications) == 1
+        assert ctx.pending_clarifications[0]["axis"] == "hair_density"
+        assert len(ctx.pending_clarifications[0]["options"]) == 2
         assert ctx.service_id is None  # NOT resolved yet
 
     def test_audience_clarification_auto_resolves_when_hint_matches(self):
@@ -244,8 +251,8 @@ class TestExtractServiceFieldsShape2:
         }
         extract_service_fields(result, ctx)
 
-        # Should auto-resolve without setting pending_clarification
-        assert ctx.pending_clarification is None
+        # Should auto-resolve without appending to pending_clarifications
+        assert ctx.pending_clarifications == []
         assert "Cortar" in ctx.selected_services
         assert "Cultura de Color" in ctx.selected_services
         assert len(ctx.selected_services) == 2
@@ -267,8 +274,8 @@ class TestExtractServiceFieldsShape2:
         }
         extract_service_fields(result, ctx)
 
-        assert ctx.pending_clarification is not None
-        assert ctx.pending_clarification["axis"] == "audience"
+        assert len(ctx.pending_clarifications) == 1
+        assert ctx.pending_clarifications[0]["axis"] == "audience"
 
     def test_non_audience_clarification_always_sets_pending(self):
         """Non-audience clarification should always set pending, even with services."""
@@ -286,8 +293,8 @@ class TestExtractServiceFieldsShape2:
         }
         extract_service_fields(result, ctx)
 
-        assert ctx.pending_clarification is not None
-        assert ctx.pending_clarification["axis"] == "hair_density"
+        assert len(ctx.pending_clarifications) == 1
+        assert ctx.pending_clarifications[0]["axis"] == "hair_density"
 
 
 # ============================================================================
@@ -319,7 +326,7 @@ class TestExtractServiceFieldsShape3:
         assert ctx.service_duration_minutes == 60
         assert ctx.selected_services == ["Bioterapia Facial"]
         assert ctx.candidate_services == []
-        assert ctx.pending_clarification is None
+        assert ctx.pending_clarifications == []
 
     def test_multiple_candidates_stored(self):
         ctx = BookingContextV7()
@@ -784,46 +791,49 @@ class TestResolvePendingClarification:
     """Test resolve_pending_clarification pre-resolver."""
 
     def test_no_pending_returns_false(self):
-        """No pending_clarification → no-op."""
+        """Empty pending_clarifications → no-op."""
         ctx = BookingContextV7(
             service_audience_hint="adult_female",
-            pending_clarification=None,
         )
         assert resolve_pending_clarification(ctx) is False
 
     def test_non_audience_axis_returns_false(self):
         """hair_length axis → not auto-resolvable."""
         ctx = BookingContextV7(
-            pending_clarification={
-                "axis": "hair_length",
-                "options": [
-                    {
-                        "value": "short",
-                        "label": "Corto",
-                        "service_id": "uuid-1",
-                        "service_name": "Corte Corto",
-                    },
-                ],
-            },
+            pending_clarifications=[
+                {
+                    "axis": "hair_length",
+                    "options": [
+                        {
+                            "value": "short",
+                            "label": "Corto",
+                            "service_id": "uuid-1",
+                            "service_name": "Corte Corto",
+                        },
+                    ],
+                },
+            ],
             service_audience_hint="adult_female",
         )
         assert resolve_pending_clarification(ctx) is False
-        assert ctx.pending_clarification is not None
+        assert len(ctx.pending_clarifications) == 1
 
     def test_no_hint_returns_false(self):
         """Audience axis but no hint → can't resolve."""
         ctx = BookingContextV7(
-            pending_clarification={
-                "axis": "audience",
-                "options": [
-                    {
-                        "value": "adult_female",
-                        "label": "Mujer",
-                        "service_id": "uuid-1",
-                        "service_name": "Corte Mujer",
-                    },
-                ],
-            },
+            pending_clarifications=[
+                {
+                    "axis": "audience",
+                    "options": [
+                        {
+                            "value": "adult_female",
+                            "label": "Mujer",
+                            "service_id": "uuid-1",
+                            "service_name": "Corte Mujer",
+                        },
+                    ],
+                },
+            ],
         )
         assert resolve_pending_clarification(ctx) is False
 
@@ -831,28 +841,30 @@ class TestResolvePendingClarification:
         """Audience hint matches option → mutates ctx correctly."""
         ctx = BookingContextV7(
             service_audience_hint="adult_female",
-            pending_clarification={
-                "axis": "audience",
-                "question_hint": "¿Para quién es?",
-                "options": [
-                    {
-                        "value": "adult_female",
-                        "label": "Mujer",
-                        "service_id": "uuid-1",
-                        "service_name": "Corte Mujer",
-                        "category": "corte",
-                        "duration_minutes": 45,
-                    },
-                    {
-                        "value": "adult_male",
-                        "label": "Hombre",
-                        "service_id": "uuid-2",
-                        "service_name": "Corte Hombre",
-                        "category": "corte",
-                        "duration_minutes": 30,
-                    },
-                ],
-            },
+            pending_clarifications=[
+                {
+                    "axis": "audience",
+                    "question_hint": "¿Para quién es?",
+                    "options": [
+                        {
+                            "value": "adult_female",
+                            "label": "Mujer",
+                            "service_id": "uuid-1",
+                            "service_name": "Corte Mujer",
+                            "category": "corte",
+                            "duration_minutes": 45,
+                        },
+                        {
+                            "value": "adult_male",
+                            "label": "Hombre",
+                            "service_id": "uuid-2",
+                            "service_name": "Corte Hombre",
+                            "category": "corte",
+                            "duration_minutes": 30,
+                        },
+                    ],
+                },
+            ],
         )
         result = resolve_pending_clarification(ctx)
 
@@ -862,7 +874,7 @@ class TestResolvePendingClarification:
         assert ctx.service_category == "corte"
         assert ctx.service_duration_minutes == 45
         assert ctx.selected_services == ["Corte Mujer"]
-        assert ctx.pending_clarification is None
+        assert ctx.pending_clarifications == []
         assert ctx.candidate_services == []
 
     def test_audience_match_appends_to_existing_services(self):
@@ -870,23 +882,25 @@ class TestResolvePendingClarification:
         ctx = BookingContextV7(
             selected_services=["Tinte Mujer"],
             service_audience_hint="adult_female",
-            pending_clarification={
-                "axis": "audience",
-                "options": [
-                    {
-                        "value": "adult_female",
-                        "label": "Mujer",
-                        "service_id": "uuid-corte-f",
-                        "service_name": "Corte Mujer",
-                    },
-                    {
-                        "value": "adult_male",
-                        "label": "Hombre",
-                        "service_id": "uuid-corte-m",
-                        "service_name": "Corte Hombre",
-                    },
-                ],
-            },
+            pending_clarifications=[
+                {
+                    "axis": "audience",
+                    "options": [
+                        {
+                            "value": "adult_female",
+                            "label": "Mujer",
+                            "service_id": "uuid-corte-f",
+                            "service_name": "Corte Mujer",
+                        },
+                        {
+                            "value": "adult_male",
+                            "label": "Hombre",
+                            "service_id": "uuid-corte-m",
+                            "service_name": "Corte Hombre",
+                        },
+                    ],
+                },
+            ],
         )
         result = resolve_pending_clarification(ctx)
 
@@ -894,35 +908,74 @@ class TestResolvePendingClarification:
         assert ctx.service_id == "uuid-corte-f"
         assert ctx.service_name == "Corte Mujer"
         assert ctx.selected_services == ["Corte Mujer", "Tinte Mujer"]
-        assert ctx.pending_clarification is None
+        assert ctx.pending_clarifications == []
 
     def test_no_match_returns_false(self):
         """Hint doesn't match any option → leave pending."""
         ctx = BookingContextV7(
             service_audience_hint="baby",
-            pending_clarification={
-                "axis": "audience",
-                "options": [
-                    {
-                        "value": "adult_female",
-                        "label": "Mujer",
-                        "service_id": "uuid-1",
-                        "service_name": "Corte Mujer",
-                    },
-                    {
-                        "value": "adult_male",
-                        "label": "Hombre",
-                        "service_id": "uuid-2",
-                        "service_name": "Corte Hombre",
-                    },
-                ],
-            },
+            pending_clarifications=[
+                {
+                    "axis": "audience",
+                    "options": [
+                        {
+                            "value": "adult_female",
+                            "label": "Mujer",
+                            "service_id": "uuid-1",
+                            "service_name": "Corte Mujer",
+                        },
+                        {
+                            "value": "adult_male",
+                            "label": "Hombre",
+                            "service_id": "uuid-2",
+                            "service_name": "Corte Hombre",
+                        },
+                    ],
+                },
+            ],
         )
         result = resolve_pending_clarification(ctx)
 
         assert result is False
-        assert ctx.pending_clarification is not None
+        assert len(ctx.pending_clarifications) == 1
         assert ctx.selected_services == []
+
+    def test_queue_pops_only_matching_entry(self):
+        """REQ-BRF-6: Resolve pops only the matched entry, preserves others."""
+        ctx = BookingContextV7(
+            service_audience_hint="adult_female",
+            pending_clarifications=[
+                {
+                    "axis": "audience",
+                    "options": [
+                        {
+                            "value": "adult_female",
+                            "label": "Mujer",
+                            "service_id": "uuid-corte-f",
+                            "service_name": "Corte Mujer",
+                        },
+                    ],
+                },
+                {
+                    "axis": "hair_density",
+                    "options": [
+                        {
+                            "value": "normal",
+                            "label": "Normal",
+                            "service_id": "uuid-mechas",
+                            "service_name": "Mechas",
+                        },
+                    ],
+                },
+            ],
+        )
+        result = resolve_pending_clarification(ctx)
+
+        assert result is True
+        assert ctx.service_name == "Corte Mujer"
+        # Only the audience entry was popped, hair_density remains
+        assert len(ctx.pending_clarifications) == 1
+        assert ctx.pending_clarifications[0]["axis"] == "hair_density"
 
 
 # ============================================================================
@@ -1558,3 +1611,319 @@ class TestMultiServiceBookingFix:
 
         assert ctx.services_locked is True
         assert ctx.book_failure_count == 1
+
+
+# ============================================================================
+# SLOT_TAKEN refresh flag (booking-state-integrity REQ-BSI-2)
+# ============================================================================
+
+
+class TestSlotTakenRefreshFlag:
+    """REQ-BSI-2: needs_availability_refresh set/cleared on SLOT_TAKEN and fresh availability."""
+
+    def test_slot_taken_sets_refresh_flag(self):
+        """Scenario 1: SLOT_TAKEN sets needs_availability_refresh=True."""
+        ctx = BookingContextV7(
+            offered_slots=[
+                {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-24T10:00:00"}
+            ],
+            selected_slot={"stylist_id": "s1", "start_time": "2026-03-24T10:00:00"},
+            needs_availability_refresh=False,
+        )
+        extract_booking_result(
+            {"success": False, "error_code": "SLOT_TAKEN", "message": "Slot already booked"},
+            ctx,
+        )
+
+        assert ctx.needs_availability_refresh is True
+        assert ctx.offered_slots is None
+        assert ctx.selected_slot is None
+
+    def test_non_slot_taken_does_not_set_refresh_flag(self):
+        """Other error codes do NOT set needs_availability_refresh."""
+        ctx = BookingContextV7(
+            offered_slots=[{"stylist_id": "s1", "time": "10:00"}],
+            needs_availability_refresh=False,
+        )
+        extract_booking_result(
+            {"success": False, "error_code": "VALIDATION_ERROR", "message": "Bad data"},
+            ctx,
+        )
+
+        assert ctx.needs_availability_refresh is False
+
+    def test_fresh_availability_clears_refresh_flag(self):
+        """Scenario 2: extract_slot_fields clears needs_availability_refresh on fresh slots."""
+        ctx = BookingContextV7(
+            needs_availability_refresh=True,
+            offered_slots=None,
+        )
+        extract_slot_fields(
+            {
+                "available_slots": [
+                    {
+                        "time": "11:00",
+                        "end_time": "12:00",
+                        "stylist": "Maria",
+                        "stylist_id": "s1",
+                        "date": "2026-03-27",
+                        "full_datetime": "2026-03-27T11:00:00+01:00",
+                    }
+                ],
+                "error": None,
+            },
+            ctx,
+        )
+
+        assert ctx.needs_availability_refresh is False
+        assert ctx.offered_slots is not None
+        assert len(ctx.offered_slots) == 1
+
+    def test_refresh_flag_default_is_false(self):
+        """New BookingContextV7 defaults needs_availability_refresh=False."""
+        ctx = BookingContextV7()
+        assert ctx.needs_availability_refresh is False
+
+    def test_booking_success_does_not_set_refresh_flag(self):
+        """Successful booking does NOT set the refresh flag."""
+        ctx = BookingContextV7(
+            needs_availability_refresh=False,
+            offered_slots=[{"stylist_id": "s1", "time": "10:00"}],
+        )
+        extract_booking_result(
+            {
+                "success": True,
+                "appointment_id": "apt-123",
+                "stylist_id": "s1",
+            },
+            ctx,
+        )
+
+        assert ctx.needs_availability_refresh is False
+        assert ctx._booking_completed is True
+
+    def test_refresh_flag_survives_serialization(self):
+        """needs_availability_refresh=True persists through to_mode_context/from_mode_context."""
+        ctx = BookingContextV7(needs_availability_refresh=True, book_failure_count=1)
+        serialized = ctx.to_mode_context()
+        restored = BookingContextV7.from_mode_context(serialized)
+
+        assert restored.needs_availability_refresh is True
+        assert restored.book_failure_count == 1
+
+
+# ============================================================================
+# extract_booking_result — Rejected results (REQ-BRF-2)
+# ============================================================================
+
+
+class TestExtractBookingResultRejected:
+    """REQ-BRF-2: Rejected book() results cause no side effects."""
+
+    def test_rejected_result_no_failure_count_increment(self):
+        """Rejected result should NOT increment book_failure_count."""
+        ctx = BookingContextV7(book_failure_count=0)
+        extract_booking_result(
+            {"rejected": True, "error_code": "NO_OFFERED_SLOTS", "tool_name": "book"},
+            ctx,
+        )
+
+        assert ctx.book_failure_count == 0
+
+    def test_rejected_result_no_services_locked(self):
+        """Rejected result should NOT set services_locked."""
+        ctx = BookingContextV7(services_locked=False)
+        extract_booking_result(
+            {"rejected": True, "error_code": "NO_CUSTOMER_NAME", "tool_name": "book"},
+            ctx,
+        )
+
+        assert ctx.services_locked is False
+
+    def test_rejected_result_no_booking_completed(self):
+        """Rejected result should NOT set _booking_completed."""
+        ctx = BookingContextV7()
+        extract_booking_result(
+            {"rejected": True, "error_code": "NEEDS_AVAILABILITY_REFRESH", "tool_name": "book"},
+            ctx,
+        )
+
+        assert ctx._booking_completed is False
+
+    def test_rejected_result_preserves_needs_availability_refresh(self):
+        """Rejected result should NOT change needs_availability_refresh."""
+        ctx = BookingContextV7(needs_availability_refresh=True)
+        extract_booking_result(
+            {"rejected": True, "error_code": "NEEDS_AVAILABILITY_REFRESH", "tool_name": "book"},
+            ctx,
+        )
+
+        assert ctx.needs_availability_refresh is True
+
+    def test_real_failure_still_increments(self):
+        """Non-rejected failure should still increment book_failure_count."""
+        ctx = BookingContextV7(book_failure_count=0)
+        extract_booking_result(
+            {"success": False, "error_code": "VALIDATION_ERROR"},
+            ctx,
+        )
+
+        assert ctx.book_failure_count == 1
+        assert ctx.services_locked is True
+
+
+# ============================================================================
+# Clarification queue — Shape 1 + Shape 2 interleaving (REQ-BRF-4, REQ-BRF-5)
+# ============================================================================
+
+
+class TestClarificationQueueBehavior:
+    """REQ-BRF-4/5: pending_clarifications is a queue, not a scalar."""
+
+    def test_shape2_appends_to_queue(self):
+        """Two Shape 2 results should produce 2 entries in the queue."""
+        ctx = BookingContextV7()
+        # First clarification
+        extract_service_fields(
+            {
+                "clarification_needed": {
+                    "axis": "audience",
+                    "options": [
+                        {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
+                        {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                    ],
+                },
+            },
+            ctx,
+        )
+        assert len(ctx.pending_clarifications) == 1
+
+        # Second clarification (different axis)
+        extract_service_fields(
+            {
+                "clarification_needed": {
+                    "axis": "hair_density",
+                    "options": [
+                        {"label": "Normal", "value": "normal", "service_name": "Mechas", "service_id": "m1"},
+                        {"label": "Largo", "value": "largo", "service_name": "Mechas XL", "service_id": "m2"},
+                    ],
+                },
+            },
+            ctx,
+        )
+        assert len(ctx.pending_clarifications) == 2
+        assert ctx.pending_clarifications[0]["axis"] == "audience"
+        assert ctx.pending_clarifications[1]["axis"] == "hair_density"
+
+    def test_shape1_then_shape2_preserves_both(self):
+        """REQ-BRF-4: Shape 1 (tinte) then Shape 2 (corte clarification).
+        selected_services has tinte, pending_clarifications has corte entry."""
+        ctx = BookingContextV7()
+        # Shape 1: resolved tinte
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-tinte",
+                    "name": "Tinte Completo",
+                    "duration_minutes": 90,
+                    "category": "HAIRDRESSING",
+                },
+                "count": 1,
+                "query": "tinte",
+            },
+            ctx,
+        )
+        assert ctx.selected_services == ["Tinte Completo"]
+
+        # Shape 2: clarification for corte
+        extract_service_fields(
+            {
+                "clarification_needed": {
+                    "axis": "audience",
+                    "options": [
+                        {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
+                        {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                    ],
+                },
+            },
+            ctx,
+        )
+        assert ctx.selected_services == ["Tinte Completo"]
+        assert len(ctx.pending_clarifications) == 1
+        assert ctx.pending_clarifications[0]["axis"] == "audience"
+
+    def test_shape2_then_shape1_preserves_both(self):
+        """REQ-BRF-4: Reversed order — Shape 2 (corte clarification) then Shape 1 (tinte).
+        selected_services has tinte, pending_clarifications still has corte entry."""
+        ctx = BookingContextV7()
+        # Shape 2: clarification for corte
+        extract_service_fields(
+            {
+                "clarification_needed": {
+                    "axis": "audience",
+                    "options": [
+                        {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
+                        {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                    ],
+                },
+            },
+            ctx,
+        )
+        assert len(ctx.pending_clarifications) == 1
+
+        # Shape 1: resolved tinte (unrelated to the pending corte clarification)
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "uuid-tinte",
+                    "name": "Tinte Completo",
+                    "duration_minutes": 90,
+                    "category": "HAIRDRESSING",
+                },
+                "count": 1,
+                "query": "tinte",
+            },
+            ctx,
+        )
+        assert ctx.selected_services == ["Tinte Completo"]
+        # Tinte does NOT match any option in the corte clarification, so it stays
+        assert len(ctx.pending_clarifications) == 1
+
+    def test_shape1_clears_only_matching_clarification(self):
+        """REQ-BRF-5: Shape 1 resolving 'Corte Caballero' removes only the matching
+        clarification entry, not unrelated ones."""
+        ctx = BookingContextV7(
+            pending_clarifications=[
+                {
+                    "axis": "audience",
+                    "options": [
+                        {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
+                        {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                    ],
+                },
+                {
+                    "axis": "hair_density",
+                    "options": [
+                        {"label": "Normal", "value": "normal", "service_name": "Mechas", "service_id": "m1"},
+                    ],
+                },
+            ],
+        )
+        # Resolve Corte Caballero — should remove the audience entry but keep hair_density
+        extract_service_fields(
+            {
+                "resolved_service": {
+                    "id": "cc1",
+                    "name": "Corte Caballero",
+                    "duration_minutes": 30,
+                    "category": "HAIRDRESSING",
+                },
+                "count": 1,
+                "query": "corte caballero",
+            },
+            ctx,
+        )
+
+        assert ctx.selected_services == ["Corte Caballero"]
+        assert len(ctx.pending_clarifications) == 1
+        assert ctx.pending_clarifications[0]["axis"] == "hair_density"

@@ -21,6 +21,9 @@ import type {
   CreateCalendarPayload,
   UpdateCalendarPayload,
   OverlapCheckResponse,
+  TokenUsageList,
+  CurrentMonthUsage,
+  TokenPricing,
 } from "./types";
 
 const API_BASE_URL =
@@ -990,6 +993,22 @@ class ApiClient {
     await this.request(`/api/admin/google/calendars/${encodeURIComponent(calendarId)}`, {
       method: "DELETE",
     });
+  }
+
+  // =========================================================================
+  // Token Usage
+  // =========================================================================
+
+  async getTokenUsage(months: number = 12): Promise<TokenUsageList> {
+    return this.request<TokenUsageList>(`/api/token-usage?months=${months}`);
+  }
+
+  async getCurrentMonthTokenUsage(): Promise<CurrentMonthUsage> {
+    return this.request<CurrentMonthUsage>("/api/token-usage/current");
+  }
+
+  async getTokenPricing(): Promise<TokenPricing> {
+    return this.request<TokenPricing>("/api/token-usage/pricing");
   }
 }
 

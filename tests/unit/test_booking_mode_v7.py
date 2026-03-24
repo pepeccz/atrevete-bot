@@ -279,14 +279,16 @@ class TestNameRedaction:
 class TestBuildDisambiguationSection:
     def test_with_pending_clarification(self):
         ctx = BookingContextV7(
-            pending_clarification={
-                "axis": "audience",
-                "question_hint": "¿Para quién es?",
-                "options": [
-                    {"value": "adult_female", "label": "Mujer adulta"},
-                    {"value": "adult_male", "label": "Hombre adulto"},
-                ],
-            }
+            pending_clarifications=[
+                {
+                    "axis": "audience",
+                    "question_hint": "¿Para quién es?",
+                    "options": [
+                        {"value": "adult_female", "label": "Mujer adulta"},
+                        {"value": "adult_male", "label": "Hombre adulto"},
+                    ],
+                }
+            ]
         )
 
         result = _build_disambiguation_section(ctx)
@@ -301,10 +303,10 @@ class TestBuildDisambiguationSection:
         assert result == ""
 
     def test_renders_empty_after_pre_resolver_cleared_clarification(self):
-        """After resolve_pending_clarification clears pending_clarification, renders empty."""
+        """After resolve_pending_clarification clears pending_clarifications, renders empty."""
         ctx = BookingContextV7(
             service_audience_hint="adult_female",
-            pending_clarification=None,  # Pre-resolver already cleared it
+            # pending_clarifications defaults to [] — pre-resolver already cleared it
         )
 
         result = _build_disambiguation_section(ctx)
@@ -315,14 +317,16 @@ class TestBuildDisambiguationSection:
         """When hint doesn't match (pre-resolver returned False), renders pending options."""
         ctx = BookingContextV7(
             service_audience_hint="baby",
-            pending_clarification={
-                "axis": "audience",
-                "question_hint": "¿Para quién es?",
-                "options": [
-                    {"value": "adult_female", "label": "Mujer adulta"},
-                    {"value": "adult_male", "label": "Hombre adulto"},
-                ],
-            },
+            pending_clarifications=[
+                {
+                    "axis": "audience",
+                    "question_hint": "¿Para quién es?",
+                    "options": [
+                        {"value": "adult_female", "label": "Mujer adulta"},
+                        {"value": "adult_male", "label": "Hombre adulto"},
+                    ],
+                },
+            ],
         )
 
         result = _build_disambiguation_section(ctx)
@@ -687,19 +691,30 @@ class TestPreResolvers:
 
 
 class TestPreToolCallCustomerIdInjection:
-    """Verify that _pre_tool_call always injects real customer_id for book()."""
+    """Verify that _pre_tool_call always injects real customer_id for book().
+
+    All tests provide valid offered_slots, selected_services, customer_name,
+    and customer_id so that guards pass and we test the injection logic.
+    """
 
     @pytest.mark.asyncio
     async def test_injects_real_customer_id_from_context(self):
         """When ctx has customer_id, it overwrites whatever the LLM passed."""
         mode = make_booking_mode_v7()
         mode._ctx = BookingContextV7(
-            customer_id="550e8400-e29b-41d4-a716-446655440000"
+            customer_id="550e8400-e29b-41d4-a716-446655440000",
+            customer_name="Pepe",
+            offered_slots=[
+                {"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00", "stylist_name": "Ana"}
+            ],
+            selected_services=["Corte de Caballero"],
+            needs_availability_refresh=False,
         )
         tool_args = {
             "customer_id": "FAKE-LLM-HALLUCINATED-UUID",
             "services": ["Corte de Caballero"],
             "first_name": "Pepe",
+            "slot_index": 1,
         }
 
         result = await mode._pre_tool_call("book", tool_args)
@@ -707,10 +722,19 @@ class TestPreToolCallCustomerIdInjection:
         assert result["customer_id"] == "550e8400-e29b-41d4-a716-446655440000"
 
     @pytest.mark.asyncio
-    async def test_injects_sentinel_when_no_customer_id(self):
-        """When ctx has no customer_id, inject sentinel that fails BookSchema validation."""
+    async def test_rejects_when_no_customer_id(self):
+        """When ctx has no customer_id, ToolCallRejection is returned."""
+        from agent.modes.base import ToolCallRejection
+
         mode = make_booking_mode_v7()
-        mode._ctx = BookingContextV7()  # No customer_id
+        mode._ctx = BookingContextV7(
+            customer_name="Pepe",
+            offered_slots=[
+                {"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00"}
+            ],
+            selected_services=["Corte de Caballero"],
+            needs_availability_refresh=False,
+        )
         tool_args = {
             "customer_id": "FAKE-UUID",
             "services": ["Corte de Caballero"],
@@ -719,11 +743,14 @@ class TestPreToolCallCustomerIdInjection:
 
         result = await mode._pre_tool_call("book", tool_args)
 
-        assert result["customer_id"] == "ERROR:llama_a_manage_customer_primero"
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_CUSTOMER_ID"
 
     @pytest.mark.asyncio
-    async def test_injects_sentinel_when_no_ctx(self):
-        """When _ctx is None (edge case), inject sentinel."""
+    async def test_rejects_when_no_ctx(self):
+        """When _ctx is None (edge case), ToolCallRejection is returned."""
+        from agent.modes.base import ToolCallRejection
+
         mode = make_booking_mode_v7()
         mode._ctx = None
         tool_args = {
@@ -734,7 +761,8 @@ class TestPreToolCallCustomerIdInjection:
 
         result = await mode._pre_tool_call("book", tool_args)
 
-        assert result["customer_id"] == "ERROR:llama_a_manage_customer_primero"
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_CUSTOMER_ID"
 
     @pytest.mark.asyncio
     async def test_injects_selected_services_from_context(self):
@@ -742,12 +770,18 @@ class TestPreToolCallCustomerIdInjection:
         mode = make_booking_mode_v7()
         mode._ctx = BookingContextV7(
             customer_id="550e8400-e29b-41d4-a716-446655440000",
+            customer_name="Pepe",
             selected_services=["Corte Caballero", "Barba"],
+            offered_slots=[
+                {"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00", "stylist_name": "Ana"}
+            ],
+            needs_availability_refresh=False,
         )
         tool_args = {
             "customer_id": "FAKE",
             "services": ["Corte Caballero"],  # LLM forgot Barba
             "first_name": "Pepe",
+            "slot_index": 1,
         }
 
         result = await mode._pre_tool_call("book", tool_args)
@@ -756,12 +790,19 @@ class TestPreToolCallCustomerIdInjection:
         assert result["customer_id"] == "550e8400-e29b-41d4-a716-446655440000"
 
     @pytest.mark.asyncio
-    async def test_does_not_inject_empty_selected_services(self):
-        """When ctx has no selected_services, don't overwrite LLM's services arg."""
+    async def test_rejects_when_empty_selected_services(self):
+        """When ctx has no selected_services, ToolCallRejection is returned."""
+        from agent.modes.base import ToolCallRejection
+
         mode = make_booking_mode_v7()
         mode._ctx = BookingContextV7(
             customer_id="550e8400-e29b-41d4-a716-446655440000",
-            selected_services=[],  # Empty
+            customer_name="Pepe",
+            selected_services=[],  # Empty → guard fires
+            offered_slots=[
+                {"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00"}
+            ],
+            needs_availability_refresh=False,
         )
         tool_args = {
             "customer_id": "FAKE",
@@ -771,8 +812,8 @@ class TestPreToolCallCustomerIdInjection:
 
         result = await mode._pre_tool_call("book", tool_args)
 
-        # LLM's services preserved since ctx has empty list
-        assert result["services"] == ["Corte Caballero"]
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_SELECTED_SERVICES"
 
     @pytest.mark.asyncio
     async def test_non_book_tool_passes_through(self):
@@ -792,6 +833,9 @@ class TestPreToolCallCustomerIdInjection:
         mode = make_booking_mode_v7()
         mode._ctx = BookingContextV7(
             customer_id="550e8400-e29b-41d4-a716-446655440000",
+            customer_name="Pepe",
+            selected_services=["Corte"],
+            needs_availability_refresh=False,
             offered_slots=[
                 {
                     "stylist_id": "aaa-bbb",

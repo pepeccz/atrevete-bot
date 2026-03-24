@@ -20,7 +20,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from agent.modes.base import AgenticLoopResult, BaseModeNode
+from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.modes.booking_context_v7 import BookingContextV7
 from agent.modes.tool_extractors import (
     apply_all_tool_results,
@@ -146,8 +146,16 @@ class BookingModeV7(BaseModeNode):
         return "BOOKING"
 
     def get_tools(self) -> list:
-        """Return all 7 booking tools (lazy-loaded)."""
-        return _get_all_booking_tools()
+        """Return booking tools, excluding book() after 3+ failures (circuit breaker)."""
+        tools = _get_all_booking_tools()
+        ctx: BookingContextV7 | None = getattr(self, "_ctx", None)
+        if ctx and ctx.book_failure_count >= 3:
+            logger.warning(
+                "get_tools: book excluded — book_failure_count=%d",
+                ctx.book_failure_count,
+            )
+            tools = [t for t in tools if t.name != "book"]
+        return tools
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -280,22 +288,52 @@ class BookingModeV7(BaseModeNode):
         self,
         tool_name: str,
         tool_args: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | ToolCallRejection:
         """Inject real customer_id and resolve slot_index before book() executes.
 
         Always intercepts book() calls to:
-        1. Inject the REAL customer_id from context — never trust the LLM's value.
-           If no customer_id exists in context, inject a sentinel that will fail
-           validation, forcing the LLM to call manage_customer first.
-        2. Resolve slot_index to stylist_id + start_time from offered_slots.
+        1. Guard preconditions — return ToolCallRejection if not met (no sentinel
+           strings injected into fields).
+        2. Inject the REAL customer_id from context — never trust the LLM's value.
+        3. Resolve slot_index to stylist_id + start_time from offered_slots.
 
         Backwards compatible: if slot_index is absent but stylist_id is already
-        a real UUID (not the sentinel), the args pass through unchanged.
+        a real UUID, the args pass through unchanged.
         """
         if tool_name != "book":
             return tool_args
 
         ctx: BookingContextV7 | None = getattr(self, "_ctx", None)
+
+        # ── Guard: reject book() when no slots have been offered ────────
+        if ctx and not ctx.offered_slots:
+            logger.warning("_pre_tool_call: book() rejected — offered_slots is empty")
+            return ToolCallRejection(
+                name="book",
+                error_code="NO_OFFERED_SLOTS",
+                error_message="Consulta disponibilidad primero",
+            )
+
+        # ── Guard: reject book() when availability needs refresh ────────
+        if ctx and ctx.needs_availability_refresh:
+            logger.warning(
+                "_pre_tool_call: book() rejected — needs_availability_refresh is True"
+            )
+            return ToolCallRejection(
+                name="book",
+                error_code="NEEDS_AVAILABILITY_REFRESH",
+                error_message="El horario anterior estaba ocupado, "
+                "consulta disponibilidad de nuevo",
+            )
+
+        # ── Guard: reject book() when services list is empty ────────────
+        if ctx and not ctx.selected_services:
+            logger.warning("_pre_tool_call: book() rejected — selected_services is empty")
+            return ToolCallRejection(
+                name="book",
+                error_code="NO_SELECTED_SERVICES",
+                error_message="Confirma los servicios primero",
+            )
 
         # ── Hard gate: reject book() if customer has no real name ──────────
         if ctx:
@@ -306,10 +344,23 @@ class BookingModeV7(BaseModeNode):
                     "must collect real name first",
                     cname,
                 )
-                return {
-                    **tool_args,
-                    "customer_id": "ERROR:pregunta_el_nombre_del_cliente_primero",
-                }
+                return ToolCallRejection(
+                    name="book",
+                    error_code="NO_CUSTOMER_NAME",
+                    error_message="Pregunta el nombre del cliente primero",
+                )
+
+        # ── Hard gate: reject book() if no customer_id ─────────────────────
+        if not (ctx and ctx.customer_id):
+            logger.warning(
+                "_pre_tool_call: book() rejected — no customer_id in context"
+            )
+            return ToolCallRejection(
+                name="book",
+                error_code="NO_CUSTOMER_ID",
+                error_message="Llama a manage_customer primero para obtener "
+                "el customer_id",
+            )
 
         # ── Hard gate: always inject selected_services ─────────────────────
         if ctx and ctx.selected_services:
@@ -320,15 +371,7 @@ class BookingModeV7(BaseModeNode):
             )
 
         # ── Hard gate: always inject real customer_id ──────────────────────
-        if ctx and ctx.customer_id:
-            tool_args["customer_id"] = ctx.customer_id
-        else:
-            # Force clear error — LLM must call manage_customer first
-            tool_args["customer_id"] = "ERROR:llama_a_manage_customer_primero"
-            logger.warning(
-                "_pre_tool_call: book() called without customer_id in context — "
-                "injecting sentinel to force manage_customer call"
-            )
+        tool_args["customer_id"] = ctx.customer_id
 
         # ── slot_index resolution ──────────────────────────────────────────
         if tool_args.get("slot_index") is None:
@@ -355,9 +398,12 @@ class BookingModeV7(BaseModeNode):
             return tool_args
 
         slot = offered[array_index]
-        tool_args["stylist_id"] = slot.get("stylist_id", tool_args.get("stylist_id", ""))
+        tool_args["stylist_id"] = slot.get(
+            "stylist_id", tool_args.get("stylist_id", "")
+        )
         tool_args["start_time"] = slot.get(
-            "full_datetime", slot.get("start_time", tool_args.get("start_time", ""))
+            "full_datetime",
+            slot.get("start_time", tool_args.get("start_time", "")),
         )
         # Remove slot_index — BookSchema doesn't need it after resolution
         del tool_args["slot_index"]
@@ -749,14 +795,15 @@ def _build_disambiguation_section(ctx: BookingContextV7) -> str:
 
     Pure renderer — no auto-resolve logic. The resolve_pending_clarification()
     pre-resolver handles audience matching BEFORE this function is called.
-    If pending_clarification was already resolved, this renders empty.
+    Renders the first entry in pending_clarifications (FIFO queue).
     """
     lines: list[str] = []
 
-    if ctx.pending_clarification:
-        axis = ctx.pending_clarification.get("axis", "")
-        hint = ctx.pending_clarification.get("question_hint", "")
-        options = ctx.pending_clarification.get("options", [])
+    pending = ctx.pending_clarifications[0] if ctx.pending_clarifications else None
+    if pending:
+        axis = pending.get("axis", "")
+        hint = pending.get("question_hint", "")
+        options = pending.get("options", [])
 
         lines.append(f"CLARIFICACIÓN PENDIENTE ({axis}):")
         lines.append(f"  Pregunta: {hint}")

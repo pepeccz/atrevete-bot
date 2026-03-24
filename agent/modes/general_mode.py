@@ -44,11 +44,11 @@ class GeneralMode(BaseModeNode):
         if isinstance(envelope.get("clarification_needed"), dict):
             clarification = envelope["clarification_needed"]
             return {
-                "pending_clarification": {
+                "pending_clarifications": [{
                     "axis": clarification.get("axis", ""),
                     "question_hint": clarification.get("question_hint", ""),
                     "options": clarification.get("options", []),
-                }
+                }]
             }
 
         services = envelope.get("services")

@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, Activity, Users, Scissors, CalendarX, Settings2, Bell, Calendar } from "lucide-react";
+import { Clock, Activity, Users, Scissors, CalendarX, Settings2, Bell, Calendar, Coins } from "lucide-react";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,6 +48,13 @@ const configSections = [
     icon: CalendarX,
     href: "/holidays",
     color: "bg-red-500",
+  },
+  {
+    title: "Consumo de Tokens",
+    description: "Seguimiento del consumo y coste de tokens del modelo de IA",
+    icon: Coins,
+    href: "/settings/usage",
+    color: "bg-emerald-500",
   },
   {
     title: "Estado del Sistema",

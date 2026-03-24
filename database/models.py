@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     ARRAY,
+    BigInteger,
     DATE,
     TIME,
     TIMESTAMP,
@@ -33,6 +34,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     text,
     func,
 )
@@ -1464,4 +1466,59 @@ class GoogleOAuthCredential(Base):
             f"<GoogleOAuthCredential(id={self.id}, "
             f"email='{self.connected_email}', "
             f"is_active={self.is_active})>"
+        )
+
+
+# ============================================================================
+# Token Usage Model — LLM token consumption tracking
+# ============================================================================
+
+
+class TokenUsage(Base):
+    """
+    Monthly aggregated LLM token usage.
+
+    One row per (year, month) — uses PostgreSQL UPSERT to atomically
+    increment counters on each LLM call. Used for cost tracking in
+    the admin panel.
+    """
+
+    __tablename__ = "token_usage"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+
+    # Period
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Token counters
+    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    total_requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    # Constraints and indexes
+    __table_args__ = (
+        UniqueConstraint("year", "month", name="uq_token_usage_year_month"),
+        Index("idx_token_usage_year_month", "year", "month"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<TokenUsage(id={self.id}, "
+            f"year={self.year}, month={self.month}, "
+            f"input={self.input_tokens}, output={self.output_tokens})>"
         )

@@ -283,9 +283,13 @@ def _build_general_booking_handoff(state: ConversationState, user_message: str) 
     if isinstance(resolved_service, dict):
         return _service_to_booking_context(resolved_service)
 
+    # Support both plural (new) and singular (legacy) key
+    pending_clarifications = handoff.get("pending_clarifications")
+    if isinstance(pending_clarifications, list) and pending_clarifications:
+        return {"pending_clarifications": pending_clarifications}
     pending_clarification = handoff.get("pending_clarification")
     if isinstance(pending_clarification, dict):
-        return {"pending_clarification": pending_clarification}
+        return {"pending_clarifications": [pending_clarification]}
 
     candidate_services = handoff.get("candidate_services")
     if isinstance(candidate_services, list):
