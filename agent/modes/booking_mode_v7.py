@@ -328,6 +328,12 @@ class BookingModeV7(BaseModeNode):
                 )
             return tool_args
 
+        # Log manage_customer calls to debug name collection issues
+        if tool_name == "manage_customer":
+            logger.info("_pre_tool_call: manage_customer called with action=%s, phone=%s, data=%s",
+                       tool_args.get("action"), tool_args.get("phone"), tool_args.get("data"))
+            return tool_args
+
         if tool_name != "book":
             return tool_args
 
@@ -515,18 +521,11 @@ class BookingModeV7(BaseModeNode):
 
         extract_customer_fields(parsed, self._ctx)
 
-        # Append a context note so the LLM sees the updated name in this turn
-        name = parsed.get("first_name", "")
         logger.info(
             "_post_tool_result: manage_customer — extracted name=%s, ctx.customer_name=%s",
-            name,
+            parsed.get("first_name", ""),
             self._ctx.customer_name,
         )
-        if name and isinstance(result, str):
-            result = result + f"\n[Nombre registrado: {name}]"
-            logger.debug(
-                "_post_tool_result: manage_customer mid-loop — appended context note",
-            )
 
         return result
 
