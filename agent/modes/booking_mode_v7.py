@@ -328,10 +328,35 @@ class BookingModeV7(BaseModeNode):
                 )
             return tool_args
 
-        # Log manage_customer calls to debug name collection issues
+        # Validate manage_customer calls and reject stale customer_ids
         if tool_name == "manage_customer":
+            action = tool_args.get("action")
+            phone = tool_args.get("phone")
+            data = tool_args.get("data") or {}
+
             logger.info("_pre_tool_call: manage_customer called with action=%s, phone=%s, data=%s",
-                       tool_args.get("action"), tool_args.get("phone"), tool_args.get("data"))
+                       action, phone, data)
+
+            # Guard: reject update() with customer_id if we have a ctx and it doesn't match
+            ctx_mc: BookingContextV7 | None = getattr(self, "_ctx", None)
+            if action == "update" and data.get("customer_id") and ctx_mc:
+                provided_cid = str(data["customer_id"]).lower()
+                ctx_cid = str(ctx_mc.customer_id).lower() if ctx_mc.customer_id else ""
+
+                # If provided customer_id doesn't match context, reject and tell LLM to use create
+                if ctx_cid and provided_cid != ctx_cid:
+                    logger.warning(
+                        "_pre_tool_call: rejecting manage_customer(update) — stale customer_id. "
+                        "Provided=%s, Context=%s. Tell LLM to call create instead.",
+                        provided_cid, ctx_cid
+                    )
+                    return ToolCallRejection(
+                        name="manage_customer",
+                        error_code="STALE_CUSTOMER_ID",
+                        error_message="Ese customer_id no es válido para este cliente. "
+                                     "Llama manage_customer(action='create'...) para crear o recuperar el cliente correcto.",
+                    )
+
             return tool_args
 
         if tool_name != "book":

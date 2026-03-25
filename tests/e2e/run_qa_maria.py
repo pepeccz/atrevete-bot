@@ -25,7 +25,8 @@ OUTGOING_CHANNEL = "outgoing_messages"
 # ── QA run identity ─────────────────────────────────────────────────────────
 RUN_ID = uuid.uuid4().hex[:8]
 CONVERSATION_ID = f"qa-maria2-{RUN_ID}"
-CUSTOMER_PHONE = f"+549222{RUN_ID[:7]}"  # unique QA phone
+# Extract digits from RUN_ID for phone (manage_customer requires numeric phone)
+CUSTOMER_PHONE = f"+549222{int(RUN_ID, 16) % 10000000:07d}"  # unique QA phone, digits only
 SENDER_NAME = "María (QA)"
 
 MAX_TURNS = 15
