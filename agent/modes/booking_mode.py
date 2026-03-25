@@ -303,10 +303,16 @@ class BookingMode(BaseModeNode):
         # 6. Extract tool results → update context
         apply_all_tool_results(result.tool_results, ctx)
 
-        # 6b. Check if user declined recommendations
+        # 6b. GAP-04 fix: attempt to resolve stylist from user message when the
+        # LLM called list_stylists this turn and the user expressed a preference.
+        # Runs only when stylist_id is still unset after the agentic loop.
+        if not ctx.stylist_id and ctx.prefetched_stylists and user_message:
+            _try_resolve_stylist_from_message(user_message, ctx)
+
+        # 6c. Check if user declined recommendations
         _detect_recommendation_decline(user_message, ctx)
 
-        # 6c. P1/P2/P3 fix: extract customer name from user message if still missing.
+        # 6d. P1/P2/P3 fix: extract customer name from user message if still missing.
         # When the LLM asked for the name and the user replied, the LLM may
         # acknowledge the name without calling manage_customer. We extract it
         # from the conversation context to avoid the manage_customer loop.
@@ -585,48 +591,95 @@ class BookingMode(BaseModeNode):
         tool_args["customer_id"] = ctx.customer_id
 
         # ── slot_index resolution ──────────────────────────────────────────
-        if tool_args.get("slot_index") is None:
-            return tool_args
-
         offered = ctx.offered_slots if ctx else None
+        slot_index = tool_args.get("slot_index")
 
-        if not offered:
-            logger.warning(
-                "_pre_tool_call: slot_index=%s but no offered_slots in context",
-                tool_args["slot_index"],
+        if slot_index is not None:
+            # PREFERRED path: resolve stylist_id + start_time from the indexed slot.
+            # Any stylist_id the LLM passed directly is OVERWRITTEN — slot is authoritative.
+            if not offered:
+                logger.warning(
+                    "_pre_tool_call: slot_index=%s but no offered_slots in context",
+                    slot_index,
+                )
+                return tool_args
+
+            array_index = slot_index - 1  # 1-based → 0-based
+
+            if array_index < 0 or array_index >= len(offered):
+                logger.warning(
+                    "_pre_tool_call: slot_index=%d out of range (offered_slots has %d items)",
+                    slot_index,
+                    len(offered),
+                )
+                return tool_args
+
+            slot = offered[array_index]
+            tool_args["stylist_id"] = slot.get("stylist_id", tool_args.get("stylist_id", ""))
+            tool_args["start_time"] = slot.get(
+                "full_datetime",
+                slot.get("start_time", tool_args.get("start_time", "")),
             )
-            return tool_args
+            # Remove slot_index — BookSchema doesn't need it after resolution
+            del tool_args["slot_index"]
 
-        slot_index = tool_args["slot_index"]
-        array_index = slot_index - 1  # 1-based → 0-based
-
-        if array_index < 0 or array_index >= len(offered):
-            logger.warning(
-                "_pre_tool_call: slot_index=%d out of range (offered_slots has %d items)",
+            stylist_name = slot.get("stylist_name", slot.get("stylist", "???"))
+            logger.info(
+                "_pre_tool_call: resolved slot_index=%d → stylist=%s, "
+                "stylist_id=%s, start_time=%s (offered_slots has %d items)",
                 slot_index,
+                stylist_name,
+                tool_args["stylist_id"],
+                tool_args["start_time"],
                 len(offered),
             )
             return tool_args
 
-        slot = offered[array_index]
-        tool_args["stylist_id"] = slot.get("stylist_id", tool_args.get("stylist_id", ""))
-        tool_args["start_time"] = slot.get(
-            "full_datetime",
-            slot.get("start_time", tool_args.get("start_time", "")),
-        )
-        # Remove slot_index — BookSchema doesn't need it after resolution
-        del tool_args["slot_index"]
+        # ── No slot_index: validate directly-passed stylist_id ────────────
+        # GAP-09/10: if no slot_index, the LLM is passing stylist_id directly.
+        # Validate it is a UUID that actually appears in offered_slots so that
+        # stale or hallucinated UUIDs cannot reach BookingTransaction.
+        current_stylist_id = tool_args.get("stylist_id", "")
 
-        stylist_name = slot.get("stylist_name", slot.get("stylist", "???"))
-        logger.info(
-            "_pre_tool_call: resolved slot_index=%d → stylist=%s, "
-            "stylist_id=%s, start_time=%s (offered_slots has %d items)",
-            slot_index,
-            stylist_name,
-            tool_args["stylist_id"],
-            tool_args["start_time"],
-            len(offered),
-        )
+        # Gate: sentinel still present means the LLM forgot to pass slot_index
+        if current_stylist_id == "__RESOLVE_FROM_SLOT__":
+            logger.warning(
+                "_pre_tool_call: book() rejected — stylist_id is sentinel "
+                "__RESOLVE_FROM_SLOT__ and no slot_index was provided"
+            )
+            return ToolCallRejection(
+                name="book",
+                error_code="MISSING_SLOT_INDEX",
+                error_message=(
+                    "Debés pasar slot_index con el número del horario elegido (1, 2, 3…). "
+                    "NO pases stylist_id directamente. "
+                    "Revisá '## Horarios ofrecidos' y llamá book(slot_index=N)."
+                ),
+            )
+
+        # Gate: if offered_slots exist, verify the directly-passed stylist_id
+        # belongs to one of the offered slots. A UUID from the chat history that
+        # no longer matches any available slot is stale and must be rejected.
+        if offered and current_stylist_id and current_stylist_id != "__RESOLVE_FROM_SLOT__":
+            offered_stylist_ids = {s.get("stylist_id") for s in offered if s.get("stylist_id")}
+            if offered_stylist_ids and current_stylist_id not in offered_stylist_ids:
+                logger.warning(
+                    "_pre_tool_call: book() rejected — stylist_id=%s is not in offered_slots "
+                    "(offered: %s). Use slot_index to select the correct slot.",
+                    current_stylist_id,
+                    offered_stylist_ids,
+                )
+                return ToolCallRejection(
+                    name="book",
+                    error_code="STALE_STYLIST_ID",
+                    error_message=(
+                        f"El stylist_id '{current_stylist_id}' no coincide con ninguno "
+                        "de los horarios ofrecidos. "
+                        "Usá slot_index con el número del horario (1, 2, 3…) "
+                        "en lugar de pasar stylist_id directamente."
+                    ),
+                )
+
         return tool_args
 
     async def _post_tool_result(
@@ -694,6 +747,26 @@ class BookingMode(BaseModeNode):
             logger.info(
                 "_post_tool_result: check_availability — extracted offered_slots (count=%d)",
                 len(self._ctx.offered_slots),
+            )
+
+        elif tool_name == "list_stylists":
+            # GAP-04 fix: extract stylist list mid-loop so the dynamic context
+            # can show the prefetched stylists section before the LLM responds.
+            # Also attempt to resolve stylist_id if the user already expressed a
+            # preference (e.g., "quiero con Ana") in their current message.
+            from agent.modes.tool_extractors import extract_stylist_fields
+
+            extract_stylist_fields(parsed, self._ctx)
+            # Attempt to auto-resolve stylist from user message if not yet set
+            if not self._ctx.stylist_id and self._ctx.prefetched_stylists:
+                user_msg = getattr(self, "_dynamic_context_state", None)
+                if user_msg is not None:
+                    last_user = self._get_last_user_message(user_msg)
+                    _try_resolve_stylist_from_message(last_user, self._ctx)
+            logger.info(
+                "_post_tool_result: list_stylists — %d stylists loaded, stylist_id=%s",
+                len(self._ctx.prefetched_stylists),
+                self._ctx.stylist_id,
             )
 
         return result
@@ -1088,6 +1161,45 @@ _NAME_STOPWORDS: frozenset[str] = frozenset(
 )
 
 
+def _try_resolve_stylist_from_message(user_message: str, ctx: BookingContext) -> None:
+    """Attempt to resolve stylist_id/stylist_name from the user's message.
+
+    GAP-04 fix: When the user says "quiero con Ana" or "para Pilar" and
+    prefetched_stylists already contains the stylist list, this function
+    matches the user's stated preference against the list and sets
+    ctx.stylist_id and ctx.stylist_name so the dynamic context shows
+    "✅ Estilista: Ana" instead of "❌ Estilista: pendiente".
+
+    Only runs when stylist_id is still None (i.e., not already resolved by
+    slot selection). Uses accent-insensitive token matching. If multiple
+    names match, the first match wins (rare edge case — stylist names are
+    unique in practice).
+    """
+    if not user_message or not ctx.prefetched_stylists:
+        return
+    if ctx.stylist_id:
+        return  # Already resolved — nothing to do
+
+    normalized_msg = _normalize_text(user_message)
+    for stylist in ctx.prefetched_stylists:
+        name = stylist.get("name", "")
+        stylist_id = stylist.get("id") or stylist.get("stylist_id")
+        if not name or not stylist_id:
+            continue
+        # Match on any word token of the stylist's first name (≥ 3 chars)
+        name_tokens = [tok for tok in re.split(r"\W+", _normalize_text(name)) if len(tok) >= 3]
+        if any(tok in normalized_msg for tok in name_tokens):
+            ctx.stylist_id = str(stylist_id)
+            ctx.stylist_name = name
+            logger.info(
+                "_try_resolve_stylist_from_message: resolved stylist_id=%s name=%r "
+                "from user message token match",
+                ctx.stylist_id,
+                name,
+            )
+            return
+
+
 def _extract_name_from_conversation(
     state: ConversationState, user_message: str, ctx: BookingContext
 ) -> None:
@@ -1204,39 +1316,62 @@ def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext)
     if len(messages) < 2:
         return
 
-    # Scan the last 4 messages for the pattern: assistant(summary) → user(confirm)
-    recent = messages[-4:]
-    for i in range(len(recent) - 1):
+    # Scan the last 10 messages for the two-part pattern:
+    # 1. An assistant message with a confirmation summary marker (anywhere in the window)
+    # 2. The LAST user message (anywhere after that summary) is an affirmative reply
+    #
+    # Window of 10 covers: summary (1) + up to 4 Q&A exchanges (8 messages) + confirmation (1).
+    # The previous window of 4 + strict adjacency requirement was too narrow — it missed
+    # confirmation when the user asked a follow-up question between the summary and "sí".
+    #
+    # Algorithm:
+    # - Find the most recent assistant message with a summary marker
+    # - Find the most recent user message that comes AFTER that summary
+    # - If that user message is affirmative → confirmation detected
+    recent = messages[-10:]
+
+    # Step 1: find the most recent summary (scan from the end)
+    summary_index: int | None = None
+    for i in range(len(recent) - 1, -1, -1):
         msg = recent[i]
-        next_msg = recent[i + 1]
-
-        if msg.get("role") != "assistant" or next_msg.get("role") != "user":
+        if msg.get("role") != "assistant":
             continue
-
         assistant_text = _normalize_text(msg.get("content", ""))
-        user_text = _normalize_text(next_msg.get("content", ""))
+        if any(marker in assistant_text for marker in _CONFIRMATION_SUMMARY_MARKERS):
+            summary_index = i
+            break
 
-        # Check if assistant message contains confirmation summary markers
-        has_summary = any(marker in assistant_text for marker in _CONFIRMATION_SUMMARY_MARKERS)
-        if not has_summary:
-            continue
+    if summary_index is None:
+        return  # No summary found in recent window
 
-        # Check if user message is an affirmative confirmation
-        # We check both exact match and "starts with" to handle "sí, dale" etc.
-        user_tokens = set(re.split(r"[\s,;.!?]+", user_text))
-        has_confirmation = any(
-            phrase in user_tokens or user_text.startswith(phrase)
-            for phrase in _USER_CONFIRMATION_PHRASES
+    # Step 2: find the most recent user message AFTER the summary
+    last_user_after_summary: dict | None = None
+    for j in range(summary_index + 1, len(recent)):
+        if recent[j].get("role") == "user":
+            last_user_after_summary = recent[j]  # Keep updating to get the LAST one
+
+    if last_user_after_summary is None:
+        return  # No user message after the summary
+
+    # Step 3: check if that user message is an affirmative confirmation
+    user_text = _normalize_text(last_user_after_summary.get("content", ""))
+    user_tokens = set(re.split(r"[\s,;.!?]+", user_text))
+    has_confirmation = any(
+        phrase in user_tokens or user_text.startswith(phrase)
+        for phrase in _USER_CONFIRMATION_PHRASES
+    )
+
+    if has_confirmation:
+        ctx.confirmation_shown = True
+        logger.info(
+            "_detect_confirmation_exchange: confirmation detected — "
+            "assistant showed summary (at recent[%d]), user confirmed with %r "
+            "(%d messages apart)",
+            summary_index,
+            last_user_after_summary.get("content", "")[:50],
+            len(recent) - 1 - summary_index,
         )
-
-        if has_confirmation:
-            ctx.confirmation_shown = True
-            logger.info(
-                "_detect_confirmation_exchange: confirmation detected — "
-                "assistant showed summary, user confirmed with %r",
-                next_msg.get("content", "")[:50],
-            )
-            return
+        return
 
 
 def _normalize_text(text: str | None) -> str:
