@@ -1,0 +1,49 @@
+change: p0-booking-fix
+priority: P0
+status: archived
+created: "2026-03-25"
+implemented: "2026-03-25"
+
+artifacts:
+  proposal: done
+  spec: done
+  design: done
+  tasks: done
+  apply-progress: done
+  verify-report: done
+  archive-report: done
+
+blockers:
+  - id: B1
+    title: QA harness missing stylist seed — state_reset.py never calls seed_stylists()
+    file: tests/e2e/harness/state_reset.py
+    complexity: S
+    status: fixed
+    fix: Added lazy import of seed_stylists + await seed_stylists() after cleanup_db() in reset_conversation_state()
+
+  - id: B2
+    title: extract_customer_fields exists=False path — failure_count assertion missing in tests
+    file: tests/unit/test_tool_extractors.py
+    function: TestExtractCustomerFields.test_customer_not_found
+    complexity: XS
+    status: fixed
+    fix: Added "assert ctx.manage_customer_failure_count == 1" to test_customer_not_found
+
+  - id: B2-code
+    title: extract_customer_fields exists=False — code already fixed
+    file: agent/modes/tool_extractors.py
+    lines: "619-626"
+    status: was-already-implemented
+    note: Code fix pre-existed. Only the test assertion was missing.
+
+verify:
+  result: 146 passed, 1 pre-existing failure (test_tool_extractors_registry_complete — unrelated)
+  pre_existing_failures:
+    - tests/unit/test_qa_*.py — missing ClassifierOutput, TestingContext imports
+    - tests/unit/test_state_reset.py — missing AsyncDatabaseCleaner, CheckpointToolEvidenceAdapter
+
+engram_topic_keys:
+  proposal: sdd/p0-booking-fix/proposal
+  spec: sdd/p0-booking-fix/spec
+  design: sdd/p0-booking-fix/design
+  tasks: sdd/p0-booking-fix/tasks

@@ -26,7 +26,7 @@ class StateResetHarness:
 
     async def reset_conversation_checkpoints(self, conversation_id: str) -> int:
         """Reset all LangGraph checkpoint key families for a conversation.
-        
+
         Matches production patterns from conversation_delete_service.py:
         - checkpoint:{thread_id}:*
         - checkpoint_write:{thread_id}:*
@@ -147,6 +147,12 @@ class StateResetHarness:
 
         # DB cleanup — creates its own session, safe for QA phone numbers only.
         db_result = await self.cleanup_db(customer_phone or "")
+
+        # Re-seed stylists after cleanup so they are always present for the next test.
+        # seed_stylists() is idempotent (check-before-insert by slug) so this is safe.
+        from database.seeds.stylists import seed_stylists
+
+        await seed_stylists()
 
         clean = await self.verify_clean(conversation_id)
         return {

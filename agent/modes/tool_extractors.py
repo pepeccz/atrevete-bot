@@ -612,6 +612,19 @@ def extract_customer_fields(result: dict, ctx: BookingContext) -> None:
         )
         return
 
+    # Detect "customer not found" responses from action='get' — no "id" or "first_name"
+    # will be extracted, so treat this as a failed attempt for circuit-breaker purposes.
+    # Without this check the counter never increments and the agent can loop indefinitely
+    # re-issuing action='get' instead of switching to action='create'.
+    if result.get("exists") is False:
+        ctx.manage_customer_failure_count += 1
+        logger.warning(
+            "extract_customer_fields: customer not found (exists=False, count=%d): %s",
+            ctx.manage_customer_failure_count,
+            result.get("message", "no message"),
+        )
+        return
+
     # All success shapes include "id" for the customer UUID
     customer_id = result.get("id") or result.get("customer_id")
     if customer_id:

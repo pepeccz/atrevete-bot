@@ -669,7 +669,7 @@ class TestExtractCustomerFields:
         assert ctx.customer_name == "Pepe"
 
     def test_customer_not_found(self):
-        """get with non-existent phone — no fields set."""
+        """get with non-existent phone — no fields set, failure counter incremented."""
         ctx = BookingContext()
         result = {
             "exists": False,
@@ -680,6 +680,7 @@ class TestExtractCustomerFields:
 
         assert ctx.customer_id is None
         assert ctx.customer_name is None
+        assert ctx.manage_customer_failure_count == 1
 
     def test_only_id_set_when_no_name(self):
         ctx = BookingContext()

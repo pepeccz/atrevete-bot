@@ -4,7 +4,9 @@ Seed script for stylists table.
 Populates the database with stylists using slug as the stable identity key.
 Google Calendar IDs are assigned via the admin panel OAuth flow — not by this script.
 
-NOTE: Only Pilar is seeded by default. Create other stylists manually via the admin panel.
+Canonical stylist roster (6 active professionals):
+  Peluquería: Ana, Ana Maria, Marta, Pilar, Victor
+  Estética: Rosa
 """
 
 import asyncio
@@ -20,8 +22,38 @@ from database.models import ServiceCategory, Stylist
 # the admin panel's OAuth-backed calendar picker (PUT /api/admin/stylists/{id}/calendar).
 STYLISTS_DATA: list[dict[str, Any]] = [
     {
+        "name": "Ana",
+        "slug": "ana",
+        "category": ServiceCategory.HAIRDRESSING,
+        "is_active": True,
+    },
+    {
+        "name": "Ana Maria",
+        "slug": "ana-maria",
+        "category": ServiceCategory.HAIRDRESSING,
+        "is_active": True,
+    },
+    {
+        "name": "Marta",
+        "slug": "marta",
+        "category": ServiceCategory.HAIRDRESSING,
+        "is_active": True,
+    },
+    {
         "name": "Pilar",
         "slug": "pilar",
+        "category": ServiceCategory.HAIRDRESSING,
+        "is_active": True,
+    },
+    {
+        "name": "Rosa",
+        "slug": "rosa",
+        "category": ServiceCategory.AESTHETICS,
+        "is_active": True,
+    },
+    {
+        "name": "Victor",
+        "slug": "victor",
         "category": ServiceCategory.HAIRDRESSING,
         "is_active": True,
     },
