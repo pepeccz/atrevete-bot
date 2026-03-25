@@ -316,6 +316,16 @@ class BookingModeV7(BaseModeNode):
         Backwards compatible: if slot_index is absent but stylist_id is already
         a real UUID, the args pass through unchanged.
         """
+        if tool_name == "search_services":
+            ctx_ss: BookingContextV7 | None = getattr(self, "_ctx", None)
+            if ctx_ss and ctx_ss.service_audience_hint and not tool_args.get("audience"):
+                tool_args["audience"] = ctx_ss.service_audience_hint
+                logger.info(
+                    "_pre_tool_call: injected audience=%s into search_services",
+                    ctx_ss.service_audience_hint,
+                )
+            return tool_args
+
         if tool_name != "book":
             return tool_args
 
