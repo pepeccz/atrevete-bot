@@ -8,6 +8,10 @@ import redis.asyncio as redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Safety guard: only allow DB cleanup for QA test phone numbers.
+# This prevents accidental deletion of real customer data.
+_QA_PHONE_PREFIX = "+34999"
+
 
 class StateResetHarness:
     """Reset Redis + PostgreSQL artifacts created during QA conversations."""
@@ -62,6 +66,68 @@ class StateResetHarness:
         await self.db_session.commit()
         return result.rowcount > 0
 
+    async def cleanup_db(self, phone: str) -> dict[str, int | bool]:
+        """Delete all PostgreSQL data for a QA test phone number.
+
+        Creates its own DB session — no injection needed.
+
+        Safety: only processes phone numbers starting with ``_QA_PHONE_PREFIX``
+        (+34999) to prevent accidental deletion of real customer data.
+
+        Returns a dict with:
+            appointments_deleted (int): number of appointments removed.
+            customer_deleted (bool): True if the customer row was removed.
+        """
+        if not phone or not phone.startswith(_QA_PHONE_PREFIX):
+            # Not a QA number — refuse to touch the DB.
+            return {"appointments_deleted": 0, "customer_deleted": False}
+
+        from database.connection import get_async_session
+
+        appointments_deleted = 0
+        customer_deleted = False
+
+        async with get_async_session() as session:
+            # Delete appointments first (FK constraint: appointments.customer_id
+            # references customers.id with ondelete="CASCADE", but we delete
+            # explicitly so we can report the count).
+            appt_result = await session.execute(
+                text(
+                    "DELETE FROM appointments "
+                    "WHERE customer_id = ("
+                    "  SELECT id FROM customers WHERE phone = :phone LIMIT 1"
+                    ")"
+                ),
+                {"phone": phone},
+            )
+            appointments_deleted = appt_result.rowcount
+
+            # Delete conversation history rows linked to this customer
+            # (CASCADE will remove messages automatically).
+            await session.execute(
+                text(
+                    "DELETE FROM conversation_history "
+                    "WHERE customer_id = ("
+                    "  SELECT id FROM customers WHERE phone = :phone LIMIT 1"
+                    ")"
+                ),
+                {"phone": phone},
+            )
+
+            # Delete the customer row itself.
+            cust_result = await session.execute(
+                text("DELETE FROM customers WHERE phone = :phone"),
+                {"phone": phone},
+            )
+            customer_deleted = cust_result.rowcount > 0
+
+            await session.commit()
+
+        return {
+            "appointments_deleted": appointments_deleted,
+            "customer_deleted": customer_deleted,
+        }
+
     async def reset_test_artifacts(self, conversation_id: str) -> int:
         return await self._delete_matching_patterns(
             [
@@ -76,15 +142,19 @@ class StateResetHarness:
         customer_phone: str | None = "+34600000000",
     ) -> dict[str, int | bool]:
         checkpoints_deleted = await self.reset_conversation_checkpoints(conversation_id)
-        customer_deleted = await self.reset_customer_data(customer_phone)
+        customer_redis_deleted = await self.reset_customer_data(customer_phone)
         artifacts_deleted = await self.reset_test_artifacts(conversation_id)
-        db_customer_deleted = await self.reset_db_customer(customer_phone or "")
+
+        # DB cleanup — creates its own session, safe for QA phone numbers only.
+        db_result = await self.cleanup_db(customer_phone or "")
+
         clean = await self.verify_clean(conversation_id)
         return {
             "checkpoints_deleted": checkpoints_deleted,
-            "customer_deleted": customer_deleted,
+            "customer_redis_deleted": customer_redis_deleted,
             "artifacts_deleted": artifacts_deleted,
-            "db_customer_deleted": db_customer_deleted,
+            "appointments_deleted": db_result["appointments_deleted"],
+            "customer_deleted": db_result["customer_deleted"],
             "clean": clean,
         }
 
