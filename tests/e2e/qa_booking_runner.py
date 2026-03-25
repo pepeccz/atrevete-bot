@@ -38,13 +38,14 @@ BATCH_WINDOW = 3.5  # slightly more generous
 
 # ─────────────────────────── Helpers ────────────────────────────
 
+
 def generate_conversation_id() -> str:
     return f"qa-maria-{uuid.uuid4().hex[:10]}"
 
 
 def generate_phone() -> str:
     """QA-safe phone that won't collide with real customers."""
-    return f"+549110000{uuid.uuid4().int % 100000:05d}"
+    return f"+34999{uuid.uuid4().int % 1000000:06d}"
 
 
 def get_redis_client_with_password() -> aioredis.Redis:
@@ -61,19 +62,20 @@ def get_redis_client_with_password() -> aioredis.Redis:
 
 # ──────────────────────── Main Runner ──────────────────────────
 
+
 async def run_qa_flow() -> dict[str, Any]:
     conversation_id = generate_conversation_id()
     customer_phone = generate_phone()
     sender_name = "María QA"
     run_started_at = datetime.now(UTC)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"QA FLOW: booking_complete")
     print(f"Persona: maria_new_client (María)")
     print(f"Conversation ID: {conversation_id}")
     print(f"Phone: {customer_phone}")
     print(f"Started: {run_started_at.isoformat()}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # Setup Redis
     redis_client = get_redis_client_with_password()
@@ -113,7 +115,7 @@ async def run_qa_flow() -> dict[str, Any]:
     try:
         while turn_number < MAX_TURNS:
             turn_number += 1
-            print(f"\n{'─'*50}")
+            print(f"\n{'─' * 50}")
             print(f"TURN {turn_number}")
             print(f"USER → {current_message}")
             sys.stdout.flush()
@@ -183,9 +185,7 @@ async def run_qa_flow() -> dict[str, Any]:
 
             if raw_payloads:
                 messages = [
-                    str(p.get("message", "")).strip()
-                    for p in raw_payloads
-                    if p.get("message")
+                    str(p.get("message", "")).strip() for p in raw_payloads if p.get("message")
                 ]
                 agent_response = "\n\n".join(m for m in messages if m)
                 consecutive_timeouts = 0
@@ -193,16 +193,18 @@ async def run_qa_flow() -> dict[str, Any]:
             if timed_out or not agent_response:
                 print(f"BOT  → [TIMEOUT after {RESPONSE_TIMEOUT}s]")
                 consecutive_timeouts += 1
-                turns.append({
-                    "turn_number": turn_number,
-                    "user_message": current_message,
-                    "agent_response": None,
-                    "milestone_reached": None,
-                    "bugs": [],
-                    "timed_out": True,
-                    "latency_ms": latency_ms,
-                    "flow_status": "in_progress",
-                })
+                turns.append(
+                    {
+                        "turn_number": turn_number,
+                        "user_message": current_message,
+                        "agent_response": None,
+                        "milestone_reached": None,
+                        "bugs": [],
+                        "timed_out": True,
+                        "latency_ms": latency_ms,
+                        "flow_status": "in_progress",
+                    }
+                )
                 if consecutive_timeouts >= 2:
                     outcome = "timeout"
                     termination_reason = "Bot unresponsive for 2 consecutive turns"
@@ -215,13 +217,11 @@ async def run_qa_flow() -> dict[str, Any]:
             sys.stdout.flush()
 
             # ── Step 4: LLM Reasoning — I AM María ──
-            turn_milestone, bugs, reply, should_stop, stop_reason, flow_status = (
-                reason_as_maria(
-                    turn_number=turn_number,
-                    agent_response=agent_response,
-                    conversation_history=conversation_history,
-                    last_milestone=last_milestone,
-                )
+            turn_milestone, bugs, reply, should_stop, stop_reason, flow_status = reason_as_maria(
+                turn_number=turn_number,
+                agent_response=agent_response,
+                conversation_history=conversation_history,
+                last_milestone=last_milestone,
             )
 
             print(f"MILESTONE → {turn_milestone or '(none)'}")
@@ -238,16 +238,18 @@ async def run_qa_flow() -> dict[str, Any]:
                 conversation_history = conversation_history[-6:]
 
             # Record turn
-            turns.append({
-                "turn_number": turn_number,
-                "user_message": current_message,
-                "agent_response": agent_response,
-                "milestone_reached": turn_milestone,
-                "bugs": bugs,
-                "timed_out": False,
-                "latency_ms": latency_ms,
-                "flow_status": flow_status,
-            })
+            turns.append(
+                {
+                    "turn_number": turn_number,
+                    "user_message": current_message,
+                    "agent_response": agent_response,
+                    "milestone_reached": turn_milestone,
+                    "bugs": bugs,
+                    "timed_out": False,
+                    "latency_ms": latency_ms,
+                    "flow_status": flow_status,
+                }
+            )
             all_bugs.extend(bugs)
 
             # Update milestone tracking
@@ -322,6 +324,7 @@ async def run_qa_flow() -> dict[str, Any]:
 
 # ────────────────── LLM Reasoning: I AM María ──────────────────
 
+
 def reason_as_maria(
     turn_number: int,
     agent_response: str,
@@ -345,23 +348,55 @@ def reason_as_maria(
     if turn_number > 2 and "dama" in history_text:
         if re.search(r"para (dama|caballero|ni[ñn]o|ni[ñn]a)", resp_lower):
             if not any(sig in resp_lower for sig in ["confirma", "es para dama", "seleccionaste"]):
-                bugs.append({
-                    "category": "redundant_question",
-                    "evidence": f"Turn {turn_number}: Bot re-asked dama/caballero variant after María already stated 'dama' on turn 1",
-                    "turns": [1, turn_number],
-                })
+                bugs.append(
+                    {
+                        "category": "redundant_question",
+                        "evidence": f"Turn {turn_number}: Bot re-asked dama/caballero variant after María already stated 'dama' on turn 1",
+                        "turns": [1, turn_number],
+                    }
+                )
 
     # wrong_language: no Spanish indicators
-    spanish_words = ["hola", "turno", "servicio", "estilista", "disponible", "corte",
-                     "reserv", "confirm", "gracias", "perfecto", "horario", "fecha",
-                     "el", "la", "de", "para", "con", "un", "una", "qué", "que",
-                     "sí", "si", "por favor", "cómo", "como"]
-    if agent_response and not any(w in resp_lower for w in spanish_words) and len(agent_response) > 20:
-        bugs.append({
-            "category": "wrong_language",
-            "evidence": f"Turn {turn_number}: Response lacks Spanish: '{agent_response[:80]}'",
-            "turns": [turn_number],
-        })
+    spanish_words = [
+        "hola",
+        "turno",
+        "servicio",
+        "estilista",
+        "disponible",
+        "corte",
+        "reserv",
+        "confirm",
+        "gracias",
+        "perfecto",
+        "horario",
+        "fecha",
+        "el",
+        "la",
+        "de",
+        "para",
+        "con",
+        "un",
+        "una",
+        "qué",
+        "que",
+        "sí",
+        "si",
+        "por favor",
+        "cómo",
+        "como",
+    ]
+    if (
+        agent_response
+        and not any(w in resp_lower for w in spanish_words)
+        and len(agent_response) > 20
+    ):
+        bugs.append(
+            {
+                "category": "wrong_language",
+                "evidence": f"Turn {turn_number}: Response lacks Spanish: '{agent_response[:80]}'",
+                "turns": [turn_number],
+            }
+        )
 
     # ── Milestone Detection ──
     milestone = detect_milestone(resp_lower, history_text, last_milestone, turn_number)
@@ -398,46 +433,102 @@ def detect_milestone(
 
     # booking_completed — definitive booking confirmation
     completed_signals = [
-        "reservado", "agendado", "turno confirmado", "quedo reservado",
-        "quedó reservado", "quedo agendado", "quedó agendado",
-        "ya tenés tu turno", "ya tienes tu turno", "tu turno ha sido",
-        "reserva exitosa", "confirmado exitosamente", "confirmación de turno",
-        "te esperamos", "nos vemos",
+        "reservado",
+        "agendado",
+        "turno confirmado",
+        "quedo reservado",
+        "quedó reservado",
+        "quedo agendado",
+        "quedó agendado",
+        "ya tenés tu turno",
+        "ya tienes tu turno",
+        "tu turno ha sido",
+        "reserva exitosa",
+        "confirmado exitosamente",
+        "confirmación de turno",
+        "te esperamos",
+        "nos vemos",
     ]
     if any(s in resp_lower for s in completed_signals):
         return "booking_completed"
 
     # confirmation_done — bot showing summary asking for confirmation
     confirm_signals = [
-        "confirmás", "confirmas", "¿confirmás", "confirmar el turno",
-        "está todo bien", "esta todo bien", "¿está todo bien",
-        "resumen de tu turno", "resumen del turno",
-        "¿confirmo", "confirmo el turno", "los datos son correctos",
+        "confirmás",
+        "confirmas",
+        "¿confirmás",
+        "confirmar el turno",
+        "está todo bien",
+        "esta todo bien",
+        "¿está todo bien",
+        "resumen de tu turno",
+        "resumen del turno",
+        "¿confirmo",
+        "confirmo el turno",
+        "los datos son correctos",
         "te confirmo los datos",
     ]
     if any(s in resp_lower for s in confirm_signals):
-        if last_milestone in (None, "greeting_done", "service_resolved",
-                              "addons_handled", "stylist_resolved", "slot_resolved"):
+        if last_milestone in (
+            None,
+            "greeting_done",
+            "service_resolved",
+            "addons_handled",
+            "stylist_resolved",
+            "slot_resolved",
+        ):
             return "confirmation_done"
 
     # slot_resolved — bot offered or confirmed a time slot
     slot_signals = [
-        "horario disponible", "turnos disponibles", "opciones de horario",
-        "tenemos disponible", "podemos agendar", "jueves",
-        "disponible el", "a las ", "10:00", "11:00", "12:00", "14:00", "15:00",
-        "16:00", "17:00", "18:00", "qué horario", "que horario",
-        "seleccioná el horario", "elegí el horario",
+        "horario disponible",
+        "turnos disponibles",
+        "opciones de horario",
+        "tenemos disponible",
+        "podemos agendar",
+        "jueves",
+        "disponible el",
+        "a las ",
+        "10:00",
+        "11:00",
+        "12:00",
+        "14:00",
+        "15:00",
+        "16:00",
+        "17:00",
+        "18:00",
+        "qué horario",
+        "que horario",
+        "seleccioná el horario",
+        "elegí el horario",
     ]
     if any(s in resp_lower for s in slot_signals):
-        if last_milestone in (None, "greeting_done", "service_resolved",
-                              "addons_handled", "stylist_resolved"):
+        if last_milestone in (
+            None,
+            "greeting_done",
+            "service_resolved",
+            "addons_handled",
+            "stylist_resolved",
+        ):
             return "slot_resolved"
 
     # stylist_resolved — bot asking about or confirming stylist
     stylist_signals = [
-        "estilista", "algún estilista", "alguna estilista", "preferís",
-        "preferis", "con quién", "con quien", "el profesional", "la profesional",
-        "cualquiera", "luciana", "sofia", "daniela", "valentina", "camila",
+        "estilista",
+        "algún estilista",
+        "alguna estilista",
+        "preferís",
+        "preferis",
+        "con quién",
+        "con quien",
+        "el profesional",
+        "la profesional",
+        "cualquiera",
+        "luciana",
+        "sofia",
+        "daniela",
+        "valentina",
+        "camila",
     ]
     if any(s in resp_lower for s in stylist_signals):
         if last_milestone in (None, "greeting_done", "service_resolved", "addons_handled"):
@@ -445,9 +536,17 @@ def detect_milestone(
 
     # addons_handled — bot offering add-ons / extras
     addon_signals = [
-        "adicional", "adicionales", "extra", "extras", "sumar",
-        "tratamiento", "complementario", "aprovechá", "aprovecha",
-        "también te puedo", "podría sumar",
+        "adicional",
+        "adicionales",
+        "extra",
+        "extras",
+        "sumar",
+        "tratamiento",
+        "complementario",
+        "aprovechá",
+        "aprovecha",
+        "también te puedo",
+        "podría sumar",
     ]
     if any(s in resp_lower for s in addon_signals):
         if last_milestone in (None, "greeting_done", "service_resolved"):
@@ -455,9 +554,16 @@ def detect_milestone(
 
     # service_resolved — bot confirmed service or asking for clarification
     service_signals = [
-        "corte de cabello", "corte para dama", "servicio de corte",
-        "qué servicio", "que servicio", "para dama", "seleccionaste",
-        "elegiste", "corte dama", "servicio elegido",
+        "corte de cabello",
+        "corte para dama",
+        "servicio de corte",
+        "qué servicio",
+        "que servicio",
+        "para dama",
+        "seleccionaste",
+        "elegiste",
+        "corte dama",
+        "servicio elegido",
     ]
     if any(s in resp_lower for s in service_signals):
         if last_milestone in (None, "greeting_done"):
@@ -465,9 +571,14 @@ def detect_milestone(
 
     # greeting_done — first turn, bot greeted
     greeting_signals = [
-        "hola", "bienvenida", "bienvenido", "en qué te puedo",
-        "cómo puedo ayudarte", "como puedo ayudarte",
-        "qué necesitás", "que necesitas",
+        "hola",
+        "bienvenida",
+        "bienvenido",
+        "en qué te puedo",
+        "cómo puedo ayudarte",
+        "como puedo ayudarte",
+        "qué necesitás",
+        "que necesitas",
     ]
     if any(s in resp_lower for s in greeting_signals) and turn_number == 1:
         return "greeting_done"
@@ -490,31 +601,52 @@ def generate_maria_reply(
 
     # Bot asking for confirmation → confirm
     confirm_signals = [
-        "confirmás", "confirmas", "¿confirmás", "confirmar el turno",
-        "está todo bien", "esta todo bien", "¿está todo bien",
-        "los datos son correctos", "te confirmo",
+        "confirmás",
+        "confirmas",
+        "¿confirmás",
+        "confirmar el turno",
+        "está todo bien",
+        "esta todo bien",
+        "¿está todo bien",
+        "los datos son correctos",
+        "te confirmo",
     ]
     if any(s in resp_lower for s in confirm_signals):
         return "Sí, confirmo."
 
     # Bot offering add-ons → decline
     addon_signals = [
-        "adicional", "adicionales", "extra", "sumar", "tratamiento", "complementario",
+        "adicional",
+        "adicionales",
+        "extra",
+        "sumar",
+        "tratamiento",
+        "complementario",
     ]
     if any(s in resp_lower for s in addon_signals):
         return "No, gracias."
 
     # Bot asking about stylist → no preference
     stylist_signals = [
-        "estilista", "preferís", "preferis", "con quién", "con quien", "alguna",
+        "estilista",
+        "preferís",
+        "preferis",
+        "con quién",
+        "con quien",
+        "alguna",
     ]
     if any(s in resp_lower for s in stylist_signals):
         return "Cualquiera está bien."
 
     # Bot showing time slots → pick first option
     slot_signals = [
-        "horario", "disponible", "a las", "turnos disponibles", "opciones",
-        "tenemos", "podemos agendar",
+        "horario",
+        "disponible",
+        "a las",
+        "turnos disponibles",
+        "opciones",
+        "tenemos",
+        "podemos agendar",
     ]
     if any(s in resp_lower for s in slot_signals):
         # Look for numbered list
@@ -536,8 +668,14 @@ def generate_maria_reply(
 
     # Bot asking for service type clarification
     service_clarify = [
-        "qué servicio", "que servicio", "para dama o", "dama o caballero",
-        "qué tipo de", "que tipo de", "para quién", "para quien",
+        "qué servicio",
+        "que servicio",
+        "para dama o",
+        "dama o caballero",
+        "qué tipo de",
+        "que tipo de",
+        "para quién",
+        "para quien",
     ]
     if any(s in resp_lower for s in service_clarify):
         return "Corte de cabello para dama, por favor."
@@ -549,15 +687,25 @@ def generate_maria_reply(
 
     # Bot asking for date
     date_signals = [
-        "para cuándo", "para cuando", "qué día", "que dia",
-        "cuándo", "cuando", "fecha", "elegí el día",
+        "para cuándo",
+        "para cuando",
+        "qué día",
+        "que dia",
+        "cuándo",
+        "cuando",
+        "fecha",
+        "elegí el día",
     ]
     if any(s in resp_lower for s in date_signals):
         return "El jueves que viene."
 
     # Bot greeted and awaiting intent → state full booking intent
     greeting_signals = [
-        "hola", "bienvenida", "en qué te puedo", "cómo puedo", "como puedo",
+        "hola",
+        "bienvenida",
+        "en qué te puedo",
+        "cómo puedo",
+        "como puedo",
     ]
     if any(s in resp_lower for s in greeting_signals) and turn_number <= 2:
         return "Quiero reservar un turno para corte de cabello para dama, para el jueves que viene."
@@ -572,6 +720,7 @@ def generate_maria_reply(
 
 
 # ────────────────────── DB Verification ────────────────────────
+
 
 async def verify_appointment_in_db(
     after: datetime,
@@ -629,6 +778,7 @@ async def verify_appointment_in_db(
 
 # ──────────────────── Tool Trace Extraction ─────────────────────
 
+
 def extract_tool_trace_from_turns(turns: list[dict]) -> list[str]:
     """Infer tool calls from milestone progression."""
     tools: list[str] = []
@@ -646,25 +796,25 @@ def extract_tool_trace_from_turns(turns: list[dict]) -> list[str]:
 
 # ────────────────────── Bugs Summary ───────────────────────────
 
+
 def build_bugs_summary(all_bugs: list[dict]) -> str:
     if not all_bugs:
         return "No semantic bugs detected."
     lines = []
     for bug in all_bugs:
-        lines.append(
-            f"[{bug['category']}] Turn(s) {bug.get('turns', '?')}: {bug['evidence']}"
-        )
+        lines.append(f"[{bug['category']}] Turn(s) {bug.get('turns', '?')}: {bug['evidence']}")
     return "\n".join(lines)
 
 
 # ──────────────────────────── Main ─────────────────────────────
 
+
 async def main() -> None:
     result = await run_qa_flow()
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("FINAL QA RESULT")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(json.dumps(result, indent=2, default=str))
 
 

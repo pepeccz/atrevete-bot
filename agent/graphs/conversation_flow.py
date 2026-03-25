@@ -84,10 +84,7 @@ async def check_customer_exists(phone: str) -> tuple[bool, Customer | None]:
             customer = result.scalar_one_or_none()
             return (customer is not None, customer)
         except Exception as e:
-            logger.error(
-                f"Error checking customer exists for phone {phone}: {e}",
-                exc_info=True
-            )
+            logger.error(f"Error checking customer exists for phone {phone}: {e}", exc_info=True)
             return (False, None)
 
 
@@ -111,6 +108,7 @@ def _get_llm_client():
     """
     from langchain_openai import ChatOpenAI
     from shared.config import get_settings
+
     settings = get_settings()
     return ChatOpenAI(
         model=settings.LLM_MODEL,
@@ -129,6 +127,7 @@ def _get_intent_router():
         from langchain_openai import ChatOpenAI
         from agent.routing.intent_router import IntentRouter
         from shared.config import get_settings
+
         settings = get_settings()
         llm = ChatOpenAI(
             model=settings.LLM_MODEL,
@@ -152,35 +151,89 @@ def _is_booking_related_query(user_message: str) -> bool:
     # Keywords that indicate the question is about the current booking
     BOOKING_RELATED_TERMS = {
         # Stylists
-        "estilista", "peluquera", "peluquero", "profesional", "profesionales",
-        "quién", "quien", "cuál", "cual", "cuáles", "cuales",
-        "disponible", "disponibles", "disponibilidad",
+        "estilista",
+        "peluquera",
+        "peluquero",
+        "profesional",
+        "profesionales",
+        "quién",
+        "quien",
+        "cuál",
+        "cual",
+        "cuáles",
+        "cuales",
+        "disponible",
+        "disponibles",
+        "disponibilidad",
         # Time/slots
-        "horario", "horarios", "hora", "horas", "hueco", "huecos",
-        "cuándo", "cuando", "mañana", "tarde", "semana",
+        "horario",
+        "horarios",
+        "hora",
+        "horas",
+        "hueco",
+        "huecos",
+        "cuándo",
+        "cuando",
+        "mañana",
+        "tarde",
+        "semana",
         # Temporal — days of week
-        "lunes", "martes", "miércoles", "jueves", "viernes", "sábado",
-        "hoy", "mañana", "pasado", "semana que viene", "próxima semana",
+        "lunes",
+        "martes",
+        "miércoles",
+        "jueves",
+        "viernes",
+        "sábado",
+        "hoy",
+        "mañana",
+        "pasado",
+        "semana que viene",
+        "próxima semana",
         # Booking verbs
-        "reservar", "agendar", "cancelar", "cambiar", "modificar", "confirmar",
+        "reservar",
+        "agendar",
+        "cancelar",
+        "cambiar",
+        "modificar",
+        "confirmar",
         # Preferences
-        "preferencia", "prefiero", "cualquiera", "no importa", "da igual",
+        "preferencia",
+        "prefiero",
+        "cualquiera",
+        "no importa",
+        "da igual",
         # Retry
-        "intentar", "otra vez", "de nuevo", "reintentar",
+        "intentar",
+        "otra vez",
+        "de nuevo",
+        "reintentar",
         # Questions
-        "cuántas", "cuáles", "tiene", "hay",
+        "cuántas",
+        "cuáles",
+        "tiene",
+        "hay",
         # Current service context
-        "cuánto tarda", "cuanto tarda", "duración", "duracion",
-        "cuánto dura", "cuanto dura",
-        "cuánto cuesta", "cuanto cuesta", "precio",
+        "cuánto tarda",
+        "cuanto tarda",
+        "duración",
+        "duracion",
+        "cuánto dura",
+        "cuanto dura",
+        "cuánto cuesta",
+        "cuanto cuesta",
+        "precio",
     }
     return any(term in msg_lower for term in BOOKING_RELATED_TERMS)
 
 
 # Phrases that explicitly signal the user wants to LEAVE booking mode
 _BOOKING_EXIT_PHRASES = {
-    "salir", "otra cosa", "dejalo", "dejémoslo",
-    "no quiero reservar", "olvidalo",
+    "salir",
+    "otra cosa",
+    "dejalo",
+    "dejémoslo",
+    "no quiero reservar",
+    "olvidalo",
 }
 
 
@@ -318,7 +371,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     9. intent=greet (not in BOOKING) → GREETING
     10. Default → GENERAL
     """
-    from agent.modes.booking_context_v7 import preserve_booking_context_v7 as preserve_booking_context
+    from agent.modes.booking_context import preserve_booking_context
     from agent.state.schemas import transition_mode
 
     conversation_id = state.get("conversation_id", "unknown")
@@ -340,8 +393,11 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     logger.info(
         "router_node | conversation_id=%s | current_mode=%s | is_first=%s | "
         "customer_name=%s | error_count=%d",
-        conversation_id, current_mode, is_first_interaction,
-        customer_name, error_count,
+        conversation_id,
+        current_mode,
+        is_first_interaction,
+        customer_name,
+        error_count,
     )
 
     # Rule 1: Already escalated
@@ -359,12 +415,13 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     # are classified as "confirm" instead of falling to the LLM as "reject".
     intent_router = _get_intent_router()
     _mode_context = state.get("mode_context") or {}
-    # Derive v7-equivalent booking_step for intent classifier bare-digit shortcut
+    # Derive booking_step for intent classifier bare-digit shortcut
     _booking_step = None
     if _mode_context.get("offered_slots") and not _mode_context.get("selected_slot"):
         _booking_step = "slot_selection"
     try:
         from agent.routing.intent_router import IntentResult
+
         intent_result = await intent_router.classify(
             text=user_message,
             current_mode=current_mode,
@@ -377,6 +434,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             exc,
         )
         from agent.routing.intent_router import IntentResult
+
         intent_result = IntentResult(
             intent="ambiguous",
             confidence=0.0,
@@ -534,6 +592,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     # This catches phrases that score 0.70 in _keyword_matches() and miss the
     # 0.80 fast-path threshold.
     from agent.routing.intent_router import _is_explicit_handoff
+
     if (
         intent_result.intent in ("ask_info", "ambiguous")
         and current_mode != "ESCALATION"
@@ -545,9 +604,8 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         )
         transition_update = transition_mode(state, "ESCALATION")
         if current_mode == "BOOKING":
-            from agent.modes.booking_context_v7 import (
-                preserve_booking_context_v7 as preserve_booking_context,
-            )
+            from agent.modes.booking_context import preserve_booking_context
+
             draft_contexts = dict(transition_update.get("draft_contexts") or {})
             draft_contexts["BOOKING"] = preserve_booking_context(
                 state.get("mode_context") or {},
@@ -655,7 +713,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
     """
     from agent.modes.greeting_mode import GreetingMode
     from agent.modes.general_mode import GeneralMode
-    from agent.modes.booking_mode_v7 import BookingModeV7
+    from agent.modes.booking_mode import BookingMode
     from agent.modes.escalation_mode import EscalationMode
     from agent.modes.confirmation_reply_node import confirmation_reply_node
     from agent.routing.intent_router import IntentResult
@@ -706,7 +764,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
             raw_input="",
             mode_hint="BOOKING",
         )
-        mode = BookingModeV7(tools=[], llm_client=_get_llm())
+        mode = BookingMode(tools=[], llm_client=_get_llm())
         result = await mode.handle(state=state, intent=intent)
         return {**result, "last_node": "booking"}
 
@@ -736,13 +794,17 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
 
     graph.set_entry_point("preprocess")
     graph.add_edge("preprocess", "router")
-    graph.add_conditional_edges("router", mode_dispatcher, {
-        "greeting": "greeting",
-        "general": "general",
-        "booking": "booking",
-        "escalation": "escalation",
-        "confirmation_reply": "confirmation_reply",
-    })
+    graph.add_conditional_edges(
+        "router",
+        mode_dispatcher,
+        {
+            "greeting": "greeting",
+            "general": "general",
+            "booking": "booking",
+            "escalation": "escalation",
+            "confirmation_reply": "confirmation_reply",
+        },
+    )
     graph.add_edge("greeting", "summarize")
     graph.add_edge("general", "summarize")
     graph.add_edge("booking", "summarize")

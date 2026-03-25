@@ -23,19 +23,21 @@ REDIS_URL = "redis://localhost:6379/0"
 REDIS_PASSWORD = "9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda"
 INCOMING_STREAM = "incoming_messages_stream"
 PUBSUB_CHANNEL = "outgoing_messages"
-RESPONSE_TIMEOUT = 35.0   # 30s + some margin for 3s batching window
-BATCH_WINDOW_SECS = 3.5   # extra wait after injecting for batch flush
+RESPONSE_TIMEOUT = 35.0  # 30s + some margin for 3s batching window
+BATCH_WINDOW_SECS = 3.5  # extra wait after injecting for batch flush
 
 DB_URL = "postgresql://atrevete:a3f7c2e9d1b8f4a6c5e2d9b3f8a1c4e7@localhost:5432/atrevete_db"
 
 
-def build_payload(conversation_id: str, phone: str, message_text: str, sender_name: str = "Carlos López") -> dict:
+def build_payload(
+    conversation_id: str, phone: str, message_text: str, sender_name: str = "Carlos López"
+) -> dict:
     """Build the message payload exactly as agent/main.py expects it."""
     return {
         "conversation_id": conversation_id,
-        "customer_phone": phone,           # key: customer_phone
-        "message_text": message_text,      # key: message_text
-        "sender_name": sender_name,        # key: sender_name
+        "customer_phone": phone,  # key: customer_phone
+        "message_text": message_text,  # key: message_text
+        "sender_name": sender_name,  # key: sender_name
         "timestamp": time.time(),
     }
 
@@ -44,11 +46,11 @@ def extract_first_slot(text: str) -> str:
     """Extract the first slot option from the bot's response."""
     patterns = [
         # "El martes a las 10:00" or "El lunes 10:00"
-        r'(?:El |el )?([Ll]unes|[Mm]artes|[Mm]iércoles|[Jj]ueves|[Vv]iernes|[Ss]ábado)[,\s]+(?:a las?\s+)?(\d{1,2}:\d{2})',
+        r"(?:El |el )?([Ll]unes|[Mm]artes|[Mm]iércoles|[Jj]ueves|[Vv]iernes|[Ss]ábado)[,\s]+(?:a las?\s+)?(\d{1,2}:\d{2})",
         # "1. martes a las 10:00"
-        r'(?:\d+[.)]\s*)([Ll]unes|[Mm]artes|[Mm]iércoles|[Jj]ueves|[Vv]iernes|[Ss]ábado)[,\s]+(?:a las?\s+)?(\d{1,2}:\d{2})',
+        r"(?:\d+[.)]\s*)([Ll]unes|[Mm]artes|[Mm]iércoles|[Jj]ueves|[Vv]iernes|[Ss]ábado)[,\s]+(?:a las?\s+)?(\d{1,2}:\d{2})",
         # bare "martes 10:00"
-        r'([Ll]unes|[Mm]artes|[Mm]iércoles|[Jj]ueves|[Vv]iernes|[Ss]ábado)\s+(\d{1,2}:\d{2})',
+        r"([Ll]unes|[Mm]artes|[Mm]iércoles|[Jj]ueves|[Vv]iernes|[Ss]ábado)\s+(\d{1,2}:\d{2})",
     ]
 
     for pattern in patterns:
@@ -59,9 +61,9 @@ def extract_first_slot(text: str) -> str:
             return f"El {day} a las {time_str}"
 
     # Fallback: numbered list → send "1"
-    for line in text.split('\n'):
+    for line in text.split("\n"):
         line = line.strip()
-        if re.match(r'^[1-9][.)]\s+', line):
+        if re.match(r"^[1-9][.)]\s+", line):
             return "1"
 
     return "1"  # ultimate fallback
@@ -69,19 +71,52 @@ def extract_first_slot(text: str) -> str:
 
 DYNAMIC_RESPONSES = {
     "variant_question": {
-        "keywords": ["para caballero", "para dama", "tipo de corte", "qué tipo de corte", "dama o caballero"],
+        "keywords": [
+            "para caballero",
+            "para dama",
+            "tipo de corte",
+            "qué tipo de corte",
+            "dama o caballero",
+        ],
         "response": "Caballero",
     },
     "slot_question": {
-        "keywords": ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado",
-                     "disponible", "horario", "10:00", "11:00", "09:00", "08:00",
-                     "qué día", "qué hora", "te viene bien", "te queda bien", "podría ser",
-                     "opción", "elegí", "elegir", "elige"],
+        "keywords": [
+            "lunes",
+            "martes",
+            "miércoles",
+            "jueves",
+            "viernes",
+            "sábado",
+            "disponible",
+            "horario",
+            "10:00",
+            "11:00",
+            "09:00",
+            "08:00",
+            "qué día",
+            "qué hora",
+            "te viene bien",
+            "te queda bien",
+            "podría ser",
+            "opción",
+            "elegí",
+            "elegir",
+            "elige",
+        ],
         "response": None,  # dynamically extracted
     },
     "addon_question": {
-        "keywords": ["add-on", "adicional", "shampoo", "acondicionador", "tratamiento",
-                     "¿querés", "también te ofrezco", "incluir algo más"],
+        "keywords": [
+            "add-on",
+            "adicional",
+            "shampoo",
+            "acondicionador",
+            "tratamiento",
+            "¿querés",
+            "también te ofrezco",
+            "incluir algo más",
+        ],
         "response": "No gracias",
     },
     "name_question": {
@@ -93,16 +128,32 @@ DYNAMIC_RESPONSES = {
         "response": "Sin notas",
     },
     "confirmation_question": {
-        "keywords": ["confirmá", "confirmar", "¿confirmás", "estás de acuerdo",
-                     "¿todo bien", "para confirmar", "confirmamos"],
+        "keywords": [
+            "confirmá",
+            "confirmar",
+            "¿confirmás",
+            "estás de acuerdo",
+            "¿todo bien",
+            "para confirmar",
+            "confirmamos",
+        ],
         "response": "Sí, confirmo",
     },
 }
 
 BOOKING_DONE_KEYWORDS = [
-    "reserva confirmada", "turno confirmado", "reservado", "agendado",
-    "¡listo", "todo listo", "nos vemos", "te esperamos", "quedó reservado",
-    "quedó agendado", "se registró", "appointment confirmed",
+    "reserva confirmada",
+    "turno confirmado",
+    "reservado",
+    "agendado",
+    "¡listo",
+    "todo listo",
+    "nos vemos",
+    "te esperamos",
+    "quedó reservado",
+    "quedó agendado",
+    "se registró",
+    "appointment confirmed",
 ]
 
 
@@ -122,7 +173,13 @@ def decide_response(bot_text: str, turn_number: int) -> str | None:
         return slot
 
     # Check remaining patterns in priority order
-    for key in ["variant_question", "addon_question", "name_question", "notes_question", "confirmation_question"]:
+    for key in [
+        "variant_question",
+        "addon_question",
+        "name_question",
+        "notes_question",
+        "confirmation_question",
+    ]:
         entry = DYNAMIC_RESPONSES[key]
         if any(kw in text_lower for kw in entry["keywords"]):
             return entry["response"]
@@ -202,24 +259,28 @@ async def run_qa(conversation_id: str, phone: str) -> list[dict]:
 
         if agent_response is None:
             print(f"  ⚠️  TIMEOUT — no response for conversation_id={conversation_id}")
-            turns.append({
-                "turn_number": turn_number,
-                "user_message": current_message,
-                "agent_response": None,
-                "response_latency_ms": int(RESPONSE_TIMEOUT * 1000),
-                "timed_out": True,
-            })
+            turns.append(
+                {
+                    "turn_number": turn_number,
+                    "user_message": current_message,
+                    "agent_response": None,
+                    "response_latency_ms": int(RESPONSE_TIMEOUT * 1000),
+                    "timed_out": True,
+                }
+            )
             break
 
         print(f"  BOT  → {agent_response[:300]}{'...' if len(agent_response) > 300 else ''}")
         print(f"  ⏱  {latency_ms}ms")
 
-        turns.append({
-            "turn_number": turn_number,
-            "user_message": current_message,
-            "agent_response": agent_response,
-            "response_latency_ms": latency_ms,
-        })
+        turns.append(
+            {
+                "turn_number": turn_number,
+                "user_message": current_message,
+                "agent_response": agent_response,
+                "response_latency_ms": latency_ms,
+            }
+        )
 
         # Check if booking is completed
         response_lower = agent_response.lower()
@@ -247,6 +308,7 @@ async def check_db() -> int:
     """Count appointments created in the last hour."""
     try:
         import asyncpg
+
         conn = await asyncpg.connect(DB_URL)
         count = await conn.fetchval(
             "SELECT count(*)::int FROM appointments WHERE created_at > now() - interval '1 hour'"
@@ -260,7 +322,7 @@ async def check_db() -> int:
 
 async def main():
     conversation_id = str(uuid.uuid4())
-    phone = "+5491199887766"
+    phone = "+34999887766"
 
     print("=" * 60)
     print("QA ROUND 8 — returning_client / carlos_returning_client")
@@ -279,7 +341,7 @@ async def main():
     for t in turns:
         print(f"\nTurn {t['turn_number']} ({t.get('response_latency_ms', '?')}ms):")
         print(f"  User : {t['user_message']}")
-        resp = t.get('agent_response')
+        resp = t.get("agent_response")
         if resp:
             print(f"  Agent: {resp[:400]}{'...' if len(resp) > 400 else ''}")
         else:
@@ -301,16 +363,21 @@ async def main():
     print("MILESTONE ANALYSIS")
     print("=" * 60)
 
-    all_text = " ".join(
-        (t.get("agent_response") or "").lower() for t in turns
-    )
+    all_text = " ".join((t.get("agent_response") or "").lower() for t in turns)
 
     milestones = {
-        "greeting_done": any(kw in all_text for kw in ["hola", "bienvenid", "cómo te puedo", "puedo ayudarte"]),
+        "greeting_done": any(
+            kw in all_text for kw in ["hola", "bienvenid", "cómo te puedo", "puedo ayudarte"]
+        ),
         "service_resolved": any(kw in all_text for kw in ["corte caballero", "caballero"]),
         "stylist_locked": "luciana" in all_text,
-        "slot_resolved": any(kw in all_text for kw in ["lunes", "martes", "miércoles", "jueves", "viernes", "reservad", "agendad"]),
-        "confirmation_done": any(kw in all_text for kw in ["confirmad", "confirmamos", "agendad", "reservad"]),
+        "slot_resolved": any(
+            kw in all_text
+            for kw in ["lunes", "martes", "miércoles", "jueves", "viernes", "reservad", "agendad"]
+        ),
+        "confirmation_done": any(
+            kw in all_text for kw in ["confirmad", "confirmamos", "agendad", "reservad"]
+        ),
         "booking_completed": any(kw in all_text for kw in BOOKING_DONE_KEYWORDS),
     }
 

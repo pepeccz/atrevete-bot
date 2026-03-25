@@ -1,5 +1,5 @@
 """
-BookingContextV7 — Slim data-bag for the LLM-driven booking flow.
+BookingContext — Slim data-bag for the LLM-driven booking flow.
 
 Replaces the rigid BookingDraftContext + BookingSubstep enum from v6.
 Every field maps 1:1 to either a BookSchema requirement or a prompt
@@ -38,7 +38,7 @@ class InterpretationReason(StrEnum):
 
 
 @dataclass
-class BookingContextV7:
+class BookingContext:
     """Collected booking data for the LLM-driven booking flow.
 
     Fields are organized in logical groups matching the booking workflow.
@@ -96,6 +96,9 @@ class BookingContextV7:
     # ── Service lock (prevents overwrite during SLOT_TAKEN retry) ──────
     services_locked: bool = False
 
+    # ── Confirmation gate (prevents book() without user confirmation) ──
+    confirmation_shown: bool = False
+
     # ── Internal (not serialized) ───────────────────────────────────────
     _booking_completed: bool = field(default=False, repr=False)
 
@@ -137,6 +140,7 @@ class BookingContextV7:
         self.manage_customer_failure_count = 0
         self.needs_availability_refresh = False
         self.services_locked = False
+        self.confirmation_shown = False
 
     def is_ready_to_book(self) -> bool:
         """Check if all REQUIRED fields for book() are present."""
@@ -149,15 +153,19 @@ class BookingContextV7:
     def collected_summary(self) -> str:
         """Render human-readable summary of collected data for prompt injection."""
         lines: list[str] = []
-        if self.service_name:
-            parts = [self.service_name]
+        # P4 fix: fallback to first selected_services entry when service_name is None
+        display_service_name = self.service_name
+        if not display_service_name and self.selected_services:
+            display_service_name = self.selected_services[0]
+        if display_service_name:
+            parts = [display_service_name]
             if self.service_duration_minutes:
                 parts.append(f"{self.service_duration_minutes} min")
             if self.service_category:
                 parts.append(self.service_category)
             lines.append(f"✅ Servicio: {' — '.join(parts)}")
         if self.selected_services and len(self.selected_services) > 1:
-            extras = [s for s in self.selected_services if s != self.service_name]
+            extras = [s for s in self.selected_services if s != display_service_name]
             if extras:
                 lines.append(f"✅ Servicios adicionales: {', '.join(extras)}")
         if self.service_audience_hint:
@@ -220,20 +228,20 @@ class BookingContextV7:
         }
 
     @classmethod
-    def from_mode_context(cls, mode_context: dict[str, Any]) -> BookingContextV7:
+    def from_mode_context(cls, mode_context: dict[str, Any]) -> BookingContext:
         """Hydrate from mode_context dict (tolerant of missing/extra keys)."""
         field_names = {f.name for f in dataclasses.fields(cls) if not f.name.startswith("_")}
         filtered = {k: v for k, v in mode_context.items() if k in field_names}
         return cls(**filtered)
 
 
-def preserve_booking_context_v7(
+def preserve_booking_context(
     context: dict[str, Any] | None,
     target_mode: str,
 ) -> dict[str, Any]:
-    """Snapshot v7 booking context for draft storage during mode transition.
+    """Snapshot booking context for draft storage during mode transition.
 
-    v7 mode_context is already a clean dict (no stale FSM fields), so a simple
+    mode_context is already a clean dict (no stale FSM fields), so a simple
     shallow copy is sufficient — no field-filtering needed.
     """
     if not context:

@@ -14,6 +14,7 @@ Key lessons applied:
 - When asked for date/day: say a concrete day to trigger slot listing
 - Timeout 30s per turn
 """
+
 import asyncio
 import json
 import os
@@ -25,42 +26,46 @@ from datetime import datetime, timezone
 import redis.asyncio as aioredis
 
 # ── Config ───────────────────────────────────────────────────────────────────
-REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda")
+REDIS_PASSWORD = os.environ.get(
+    "REDIS_PASSWORD", "9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda"
+)
 REDIS_URL = os.environ.get("REDIS_URL", f"redis://:{REDIS_PASSWORD}@localhost:6379/0")
 INCOMING_STREAM = "incoming_messages_stream"
 OUTGOING_CHANNEL = "outgoing_messages"
 RESPONSE_TIMEOUT = 30.0
 CONVERSATION_ID = str(uuid.uuid4())
-CUSTOMER_PHONE = "+5491199990010"
+CUSTOMER_PHONE = "+34999990010"
 
 print(f"[HARNESS] QA-R10 | conversation_id={CONVERSATION_ID}")
 
 
 # ── Adaptive FSM ──────────────────────────────────────────────────────────────
 
+
 class FlowState:
     """
     Deterministic FSM. Each state has ONE expected bot pattern and ONE fixed reply.
     Order matters — earlier checks take priority.
     """
+
     PHASE_INIT = "init"
-    PHASE_GREETED = "greeted"               # sent T1, waiting for recommendation
+    PHASE_GREETED = "greeted"  # sent T1, waiting for recommendation
     PHASE_SERVICES_SHOWN = "services_shown"  # service list shown, choose service
     PHASE_SERVICE_SELECTED = "service_selected"  # service named, await confirm
     PHASE_SERVICE_CONFIRMED = "service_confirmed"  # confirmed service
-    PHASE_ADDON_ASKED = "addon_asked"        # addon offered, declining
+    PHASE_ADDON_ASKED = "addon_asked"  # addon offered, declining
     PHASE_ADDON_DECLINED = "addon_declined"  # declined addon, await stylist q
-    PHASE_STYLIST_ASKED = "stylist_asked"    # stylist asked, reply cualquiera
-    PHASE_STYLIST_GIVEN = "stylist_given"    # given stylist, await date/slot ask
-    PHASE_DATE_ASKED = "date_asked"          # bot asked for day → say "mañana"
-    PHASE_DATE_GIVEN = "date_given"          # day given, await slot list
-    PHASE_SLOTS_SHOWN = "slots_shown"        # slots listed, pick "1"
-    PHASE_SLOT_SELECTED = "slot_selected"    # slot picked, await name q
-    PHASE_NAME_ASKED = "name_asked"          # name asked, give name
-    PHASE_NAME_GIVEN = "name_given"          # name given, await notes q
-    PHASE_NOTES_ASKED = "notes_asked"        # notes asked, give "Sin notas"
-    PHASE_NOTES_GIVEN = "notes_given"        # notes given, await confirm summary
-    PHASE_CONFIRM_ASKED = "confirm_asked"    # summary shown, confirm
+    PHASE_STYLIST_ASKED = "stylist_asked"  # stylist asked, reply cualquiera
+    PHASE_STYLIST_GIVEN = "stylist_given"  # given stylist, await date/slot ask
+    PHASE_DATE_ASKED = "date_asked"  # bot asked for day → say "mañana"
+    PHASE_DATE_GIVEN = "date_given"  # day given, await slot list
+    PHASE_SLOTS_SHOWN = "slots_shown"  # slots listed, pick "1"
+    PHASE_SLOT_SELECTED = "slot_selected"  # slot picked, await name q
+    PHASE_NAME_ASKED = "name_asked"  # name asked, give name
+    PHASE_NAME_GIVEN = "name_given"  # name given, await notes q
+    PHASE_NOTES_ASKED = "notes_asked"  # notes asked, give "Sin notas"
+    PHASE_NOTES_GIVEN = "notes_given"  # notes given, await confirm summary
+    PHASE_CONFIRM_ASKED = "confirm_asked"  # summary shown, confirm
     PHASE_DONE = "done"
 
     def __init__(self):
@@ -85,7 +90,11 @@ class FlowState:
         # ── Phase: GREETED → waiting for service list or recommendation ───────
         if self.phase == self.PHASE_GREETED:
             # Bot asks if corte is for "caballero" (variant confirmation step)
-            if "caballero" in msg and "?" in last_agent and ("para un" in msg or "para quien" in msg or "dama" in msg or "niño" in msg):
+            if (
+                "caballero" in msg
+                and "?" in last_agent
+                and ("para un" in msg or "para quien" in msg or "dama" in msg or "niño" in msg)
+            ):
                 self.phase = self.PHASE_SERVICE_SELECTED
                 return "Sí, caballero"
             # Bot says "has elegido" → service already resolved
@@ -111,7 +120,11 @@ class FlowState:
             if "cambiamos" in msg or "cuál querés" in msg or "cuál elegís" in msg:
                 return "1"
             # Bot asks variant confirmation "¿el corte es para un caballero?"
-            if "caballero" in msg and "?" in last_agent and ("para un" in msg or "dama" in msg or "niño" in msg):
+            if (
+                "caballero" in msg
+                and "?" in last_agent
+                and ("para un" in msg or "dama" in msg or "niño" in msg)
+            ):
                 self.phase = self.PHASE_SERVICE_SELECTED
                 return "Sí, caballero"
             # Bot confirmed the service selection / asks to proceed
@@ -120,7 +133,12 @@ class FlowState:
                     # Skip to addon handling
                     self.phase = self.PHASE_ADDON_ASKED
                     return "No, solo el corte"
-                if "disponibilidad" in msg or "buscar" in msg or "confirmar" in msg or "?" in last_agent:
+                if (
+                    "disponibilidad" in msg
+                    or "buscar" in msg
+                    or "confirmar" in msg
+                    or "?" in last_agent
+                ):
                     self.phase = self.PHASE_SERVICE_SELECTED
                     return "Sí, ese servicio"
             return "Sí, ese servicio"
@@ -128,7 +146,11 @@ class FlowState:
         # ── Phase: SERVICE_SELECTED → confirmed, may offer addons ─────────────
         if self.phase == self.PHASE_SERVICE_SELECTED:
             # Bot asking audience/variant: "¿para un adulto, niño, niña?" (MUST have both adult+child options)
-            if ("niño" in msg or "niña" in msg) and ("adulto" in msg or "dama" in msg) and "?" in last_agent:
+            if (
+                ("niño" in msg or "niña" in msg)
+                and ("adulto" in msg or "dama" in msg)
+                and "?" in last_agent
+            ):
                 return "Adulto, caballero"
             # Bot offering addon
             if "agregar" in msg or "adicional" in msg or "barba" in msg or "tratamiento" in msg:
@@ -196,13 +218,23 @@ class FlowState:
         if self.phase == self.PHASE_STYLIST_GIVEN:
             # Bot shows numbered slots
             if ("1." in last_agent or "1)" in last_agent) and (
-                "disponib" in msg or "horario" in msg or "turno" in msg or "opcion" in msg
-                or "viene" in msg or "mejor" in msg
+                "disponib" in msg
+                or "horario" in msg
+                or "turno" in msg
+                or "opcion" in msg
+                or "viene" in msg
+                or "mejor" in msg
             ):
                 self.phase = self.PHASE_SLOTS_SHOWN
                 return "1"
             # Bot asking for date/day preference
-            if "día" in msg or "fecha" in msg or "cuándo" in msg or "horario" in msg or "momento" in msg:
+            if (
+                "día" in msg
+                or "fecha" in msg
+                or "cuándo" in msg
+                or "horario" in msg
+                or "momento" in msg
+            ):
                 self.phase = self.PHASE_DATE_ASKED
                 return "mañana por la mañana"
             # Bot asking for slot directly
@@ -265,14 +297,21 @@ class FlowState:
                 self.phase = self.PHASE_NAME_ASKED
                 return "Luis Martínez"
             # "¿Hay algo más que deba saber para tu cita?" → this is the notes step
-            if "nota" in msg or "algo más" in msg or "deba saber" in msg or "preferencia" in msg or "primera vez" in msg or "primera" in msg:
+            if (
+                "nota" in msg
+                or "algo más" in msg
+                or "deba saber" in msg
+                or "preferencia" in msg
+                or "primera vez" in msg
+                or "primera" in msg
+            ):
                 self.phase = self.PHASE_NOTES_ASKED
                 return "Sin notas"
             if "confirmar" in msg or "confirma" in msg or "resumen" in msg:
                 self.phase = self.PHASE_CONFIRM_ASKED
                 return "Sí, confirmo"
             # Still showing slots?
-            if ("1." in last_agent or "1)" in last_agent):
+            if "1." in last_agent or "1)" in last_agent:
                 print(f"[FSM-DEBUG] slot_selected: still showing slots, sending 1")
                 return "1"
             if "?" in last_agent:
@@ -290,8 +329,15 @@ class FlowState:
 
         # ── Phase: NAME_GIVEN → waiting for notes question ────────────────────
         if self.phase == self.PHASE_NAME_GIVEN:
-            if ("nota" in msg or "alguna nota" in msg or "comentario" in msg or "observación" in msg
-                    or "algo más" in msg or "deba saber" in msg or "preferencia" in msg):
+            if (
+                "nota" in msg
+                or "alguna nota" in msg
+                or "comentario" in msg
+                or "observación" in msg
+                or "algo más" in msg
+                or "deba saber" in msg
+                or "preferencia" in msg
+            ):
                 self.phase = self.PHASE_NOTES_ASKED
                 return "Sin notas"
             if "confirmar" in msg or "confirma" in msg or "resumen" in msg:
@@ -309,8 +355,15 @@ class FlowState:
 
         # ── Phase: NOTES_GIVEN → waiting for confirmation summary ─────────────
         if self.phase == self.PHASE_NOTES_GIVEN:
-            if ("confirmar" in msg or "confirma" in msg or "resumen" in msg or "luis" in msg
-                    or "martes" in msg or "pilar" in msg or "luciana" in msg):
+            if (
+                "confirmar" in msg
+                or "confirma" in msg
+                or "resumen" in msg
+                or "luis" in msg
+                or "martes" in msg
+                or "pilar" in msg
+                or "luciana" in msg
+            ):
                 self.phase = self.PHASE_CONFIRM_ASKED
                 return "Sí, confirmo"
             if "nota" in msg or "algo más" in msg or "deba saber" in msg:
@@ -324,7 +377,13 @@ class FlowState:
 
         # ── Phase: CONFIRM_ASKED → confirm ────────────────────────────────────
         if self.phase == self.PHASE_CONFIRM_ASKED:
-            if "confirmado" in msg or "reserva" in msg and "éxito" in msg or "cita" in msg and "reserv" in msg:
+            if (
+                "confirmado" in msg
+                or "reserva" in msg
+                and "éxito" in msg
+                or "cita" in msg
+                and "reserv" in msg
+            ):
                 self.phase = self.PHASE_DONE
                 self.done = True
                 return None
@@ -353,6 +412,7 @@ async def run_qa():
             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.2)
             if not msg:
                 break
+
     await drain_stale()
 
     async def wait_for_response(conv_id: str, timeout: float) -> dict | None:
@@ -403,50 +463,74 @@ async def run_qa():
 
             if response is None:
                 print(f"[TURN {turn_num}] TIMEOUT after {RESPONSE_TIMEOUT}s")
-                trace.append({
-                    "turn_number": turn_num,
-                    "user_message": user_msg,
-                    "agent_response": "<<TIMEOUT>>",
-                    "latency_ms": int(RESPONSE_TIMEOUT * 1000),
-                    "phase": state.phase,
-                })
+                trace.append(
+                    {
+                        "turn_number": turn_num,
+                        "user_message": user_msg,
+                        "agent_response": "<<TIMEOUT>>",
+                        "latency_ms": int(RESPONSE_TIMEOUT * 1000),
+                        "phase": state.phase,
+                    }
+                )
                 break
 
             agent_msg = response.get("message") or response.get("message_text", "<<NO MESSAGE>>")
             last_agent_msg = agent_msg
             print(f"[TURN {turn_num}] AGENT ({latency_ms}ms): {agent_msg[:300]}")
 
-            trace.append({
-                "turn_number": turn_num,
-                "user_message": user_msg,
-                "agent_response": agent_msg,
-                "latency_ms": latency_ms,
-                "phase": state.phase,
-            })
+            trace.append(
+                {
+                    "turn_number": turn_num,
+                    "user_message": user_msg,
+                    "agent_response": agent_msg,
+                    "latency_ms": latency_ms,
+                    "phase": state.phase,
+                }
+            )
 
             # Milestone detection from agent response
             msg_lower = agent_msg.lower()
-            if ("hola" in msg_lower or "bienvenido" in msg_lower or "maite" in msg_lower) and "greeting_done" not in state.milestones:
+            if (
+                "hola" in msg_lower or "bienvenido" in msg_lower or "maite" in msg_lower
+            ) and "greeting_done" not in state.milestones:
                 state.milestones.append("greeting_done")
             if "corte caballero" in msg_lower and "recommendation_given" not in state.milestones:
                 state.milestones.append("recommendation_given")
-            if "elegido" in msg_lower and "corte" in msg_lower and "service_resolved" not in state.milestones:
+            if (
+                "elegido" in msg_lower
+                and "corte" in msg_lower
+                and "service_resolved" not in state.milestones
+            ):
                 state.milestones.append("service_resolved")
-            if ("agregar" in msg_lower or "adicional" in msg_lower) and "addons_offered" not in state.milestones:
+            if (
+                "agregar" in msg_lower or "adicional" in msg_lower
+            ) and "addons_offered" not in state.milestones:
                 state.milestones.append("addons_offered")
-            if ("estilista" in msg_lower or "peluquero" in msg_lower) and "stylist_asked" not in state.milestones:
+            if (
+                "estilista" in msg_lower or "peluquero" in msg_lower
+            ) and "stylist_asked" not in state.milestones:
                 state.milestones.append("stylist_asked")
-            if ("1." in agent_msg or "1)" in agent_msg) and ("horario" in msg_lower or "disponib" in msg_lower) and "slots_shown" not in state.milestones:
+            if (
+                ("1." in agent_msg or "1)" in agent_msg)
+                and ("horario" in msg_lower or "disponib" in msg_lower)
+                and "slots_shown" not in state.milestones
+            ):
                 state.milestones.append("slots_shown")
             if ("nombre" in msg_lower) and "name_asked" not in state.milestones:
                 state.milestones.append("name_asked")
             if ("nota" in msg_lower) and "notes_asked" not in state.milestones:
                 state.milestones.append("notes_asked")
             # booking_confirmed: must be a success message, not a failure
-            if ("booking_confirmed" not in state.milestones
-                    and ("confirmado" in msg_lower or "reservada" in msg_lower or "reservado" in msg_lower)
-                    and "problema" not in msg_lower
-                    and "error" not in msg_lower):
+            if (
+                "booking_confirmed" not in state.milestones
+                and (
+                    "confirmado" in msg_lower
+                    or "reservada" in msg_lower
+                    or "reservado" in msg_lower
+                )
+                and "problema" not in msg_lower
+                and "error" not in msg_lower
+            ):
                 state.milestones.append("booking_confirmed")
                 state.done = True
 
@@ -476,10 +560,17 @@ async def check_db() -> int:
     """Check PostgreSQL for appointments via docker exec."""
     result = subprocess.run(
         [
-            "docker", "exec", "atrevete-postgres",
-            "psql", "-U", "atrevete", "-d", "atrevete_db",
-            "-t", "-c",
-            "SELECT count(*) FROM appointments WHERE created_at > now() - interval '1 hour';"
+            "docker",
+            "exec",
+            "atrevete-postgres",
+            "psql",
+            "-U",
+            "atrevete",
+            "-d",
+            "atrevete_db",
+            "-t",
+            "-c",
+            "SELECT count(*) FROM appointments WHERE created_at > now() - interval '1 hour';",
         ],
         capture_output=True,
         text=True,
@@ -499,20 +590,22 @@ async def check_db() -> int:
 async def main():
     result = await run_qa()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("QA-R10 RESULT")
-    print("="*60)
+    print("=" * 60)
     print(f"Status:             {result['status']}")
     print(f"Turn count:         {result['turn_count']}")
     print(f"Final phase:        {result['final_phase']}")
     print(f"Milestones hit:     {result['milestones_hit']}")
-    print(f"appointment_in_db:  {result['appointment_in_db']} (count={result['db_appointment_count']})")
+    print(
+        f"appointment_in_db:  {result['appointment_in_db']} (count={result['db_appointment_count']})"
+    )
     print(f"conversation_id:    {result['conversation_id']}")
     print("\n--- FULL TRACE ---")
     for t in result["trace"]:
-        print(f"\n[T{t['turn_number']}] PHASE={t.get('phase','?')} | USER: {t['user_message']}")
+        print(f"\n[T{t['turn_number']}] PHASE={t.get('phase', '?')} | USER: {t['user_message']}")
         print(f"[T{t['turn_number']}] AGENT ({t['latency_ms']}ms): {t['agent_response'][:400]}")
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
 
     # Save JSON result
     with open("/tmp/qa_r10_result.json", "w") as f:

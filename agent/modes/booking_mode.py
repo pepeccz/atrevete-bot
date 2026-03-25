@@ -1,5 +1,5 @@
 """
-Booking Mode v7 — LLM-Driven Booking Architecture.
+Booking Mode — LLM-Driven Booking Architecture.
 
 Replaces the rigid BookingSubstep FSM (3,500 LOC) with a single agentic loop
 where the LLM drives conversation flow based on collected data, not code-enforced
@@ -21,7 +21,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
-from agent.modes.booking_context_v7 import BookingContextV7
+from agent.modes.booking_context import BookingContext
 from agent.modes.tool_extractors import (
     apply_all_tool_results,
     extract_service_audience_hint,
@@ -122,6 +122,55 @@ _CANCEL_NEGATION_TOKENS: frozenset[str] = frozenset(
 # History window for message context
 _HISTORY_LIMIT = 8
 
+# Confirmation summary detection — patterns that indicate the LLM showed
+# a confirmation summary to the user (Spanish booking context)
+_CONFIRMATION_SUMMARY_MARKERS: tuple[str, ...] = (
+    "resumen de tu cita",
+    "resumen de la cita",
+    "confirmo la cita",
+    "confirmo tu cita",
+    "confirmamos la cita",
+    "confirmamos tu cita",
+    "confirmamos?",
+    "¿confirmo?",
+    "¿confirmo la cita?",
+    "¿confirmamos?",
+    "¿te confirmo",
+    "¿lo confirmo",
+    "¿quieres que confirme",
+    "¿queres que confirme",
+    "datos de tu cita",
+    "datos de la cita",
+)
+
+# User affirmative phrases that confirm a booking after summary is shown
+_USER_CONFIRMATION_PHRASES: tuple[str, ...] = (
+    "si",
+    "sí",
+    "dale",
+    "ok",
+    "perfecto",
+    "va",
+    "adelante",
+    "bueno",
+    "confirmo",
+    "confirma",
+    "confirmalo",
+    "confirmá",
+    "confirmar",
+    "de acuerdo",
+    "genial",
+    "claro",
+    "por supuesto",
+    "venga",
+    "listo",
+    "hecho",
+    "eso",
+    "correcto",
+    "exacto",
+    "tal cual",
+)
+
 # ============================================================================
 # Tool registry — all booking tools, available every turn
 # ============================================================================
@@ -150,11 +199,11 @@ def _get_all_booking_tools() -> list:
 
 
 # ============================================================================
-# BookingModeV7
+# BookingMode
 # ============================================================================
 
 
-class BookingModeV7(BaseModeNode):
+class BookingMode(BaseModeNode):
     """LLM-driven booking mode — single agentic loop, all tools available.
 
     Replaces the rigid BookingMode FSM with a flow where:
@@ -171,7 +220,7 @@ class BookingModeV7(BaseModeNode):
     def get_tools(self) -> list:
         """Return booking tools, excluding failed tools via circuit breaker."""
         tools = _get_all_booking_tools()
-        ctx: BookingContextV7 | None = getattr(self, "_ctx", None)
+        ctx: BookingContext | None = getattr(self, "_ctx", None)
         if ctx:
             if ctx.book_failure_count >= 3:
                 logger.warning(
@@ -195,7 +244,7 @@ class BookingModeV7(BaseModeNode):
         """Process one turn of the booking conversation.
 
         Flow:
-        1. Hydrate BookingContextV7 from mode_context
+        1. Hydrate BookingContext from mode_context
         2. Pre-resolve: inject customer info, audience hint from state
         3. Check cancel/escalate intents (fast path — no LLM call)
         4. Build unified prompt with dynamic data sections
@@ -207,7 +256,7 @@ class BookingModeV7(BaseModeNode):
 
         # 0. Escalation guard: if awaiting_human, forward to ESCALATION immediately
         if mode_context.get("awaiting_human"):
-            logger.info("BookingModeV7: awaiting_human=True, forwarding to ESCALATION")
+            logger.info("BookingMode: awaiting_human=True, forwarding to ESCALATION")
             response = "Te paso con una persona del equipo. Un momento. 🙏"
             return {
                 **transition_mode(state, "ESCALATION"),
@@ -216,7 +265,7 @@ class BookingModeV7(BaseModeNode):
                 "user_message": None,
             }
 
-        ctx = BookingContextV7.from_mode_context(mode_context)
+        ctx = BookingContext.from_mode_context(mode_context)
 
         # 1. Pre-resolve: populate context deterministically
         self._resolve_customer_from_state(state, ctx)
@@ -228,7 +277,11 @@ class BookingModeV7(BaseModeNode):
         user_message_for_resolver = self._get_last_user_message(state)
         resolved = resolve_pending_clarification(ctx, user_message=user_message_for_resolver)
         if resolved:
-            logger.info("BookingModeV7: auto-resolved pending service clarification")
+            logger.info("BookingMode: auto-resolved pending service clarification")
+
+        # 1d. Pre-resolve: detect confirmation exchange (summary shown + user confirmed)
+        if not ctx.confirmation_shown:
+            _detect_confirmation_exchange(state, ctx)
 
         # 2. Fast-path: cancel / escalate (before LLM call)
         user_message = self._get_last_user_message(state)
@@ -253,6 +306,13 @@ class BookingModeV7(BaseModeNode):
         # 6b. Check if user declined recommendations
         _detect_recommendation_decline(user_message, ctx)
 
+        # 6c. P1/P2/P3 fix: extract customer name from user message if still missing.
+        # When the LLM asked for the name and the user replied, the LLM may
+        # acknowledge the name without calling manage_customer. We extract it
+        # from the conversation context to avoid the manage_customer loop.
+        if not ctx.customer_name and user_message:
+            _extract_name_from_conversation(state, user_message, ctx)
+
         # 7. Build response with state updates
         return self._build_response(state, ctx, result)
 
@@ -261,7 +321,7 @@ class BookingModeV7(BaseModeNode):
     # ──────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _resolve_customer_from_state(state: ConversationState, ctx: BookingContextV7) -> None:
+    def _resolve_customer_from_state(state: ConversationState, ctx: BookingContext) -> None:
         """Inject customer name and ID from state if not already in context.
 
         Handles returning customers whose data was collected in GREETING mode.
@@ -277,7 +337,7 @@ class BookingModeV7(BaseModeNode):
             if state_id:
                 ctx.customer_id = str(state_id)
 
-    def _resolve_audience_hint(self, state: ConversationState, ctx: BookingContextV7) -> None:
+    def _resolve_audience_hint(self, state: ConversationState, ctx: BookingContext) -> None:
         """Extract service_audience_hint from mode_context handoff or user message.
 
         The greeting/router may have already detected an audience hint (e.g. "corte
@@ -334,7 +394,7 @@ class BookingModeV7(BaseModeNode):
         a real UUID, the args pass through unchanged.
         """
         if tool_name == "search_services":
-            ctx_ss: BookingContextV7 | None = getattr(self, "_ctx", None)
+            ctx_ss: BookingContext | None = getattr(self, "_ctx", None)
             if ctx_ss and ctx_ss.service_audience_hint and not tool_args.get("audience"):
                 tool_args["audience"] = ctx_ss.service_audience_hint
                 logger.info(
@@ -343,7 +403,7 @@ class BookingModeV7(BaseModeNode):
                 )
             return tool_args
 
-        # Validate manage_customer calls and reject stale customer_ids
+        # Validate manage_customer calls: bypass name-only calls, reject stale customer_ids
         if tool_name == "manage_customer":
             action = tool_args.get("action")
             phone = tool_args.get("phone")
@@ -356,8 +416,41 @@ class BookingModeV7(BaseModeNode):
                 data,
             )
 
+            # P1/P2/P3 fix: intercept name-only manage_customer calls.
+            # When the LLM calls manage_customer just to "save" a name (create or update
+            # with only first_name/last_name), bypass the actual tool call and store the
+            # name directly in ctx.customer_name. This avoids the fragile manage_customer
+            # loop where the tool fails or returns unexpected data.
+            ctx_mc: BookingContext | None = getattr(self, "_ctx", None)
+            if ctx_mc and action in ("create", "update"):
+                first_name = data.get("first_name") or tool_args.get("first_name")
+                last_name = data.get("last_name") or tool_args.get("last_name")
+                # Detect name-only calls: the data dict contains ONLY name fields
+                # (first_name, last_name) and optionally customer_id for updates.
+                name_only_keys = {"first_name", "last_name", "customer_id"}
+                data_keys = set(data.keys()) if data else set()
+                is_name_only = bool(first_name) and data_keys <= name_only_keys
+
+                if is_name_only:
+                    # Build full name from parts
+                    full_name = first_name.strip()
+                    if last_name and last_name.strip():
+                        full_name = f"{full_name} {last_name.strip()}"
+                    ctx_mc.customer_name = full_name
+                    logger.info(
+                        "_pre_tool_call: bypassed manage_customer (name-only) — "
+                        "stored customer_name=%r directly in context",
+                        full_name,
+                    )
+                    return ToolCallRejection(
+                        name="manage_customer",
+                        error_code="NAME_STORED_DIRECTLY",
+                        error_message=f"Nombre guardado: {full_name}. "
+                        "No necesitás llamar a manage_customer para el nombre. "
+                        "Continuá con la reserva.",
+                    )
+
             # Guard: reject update() with customer_id if we have a ctx and it doesn't match
-            ctx_mc: BookingContextV7 | None = getattr(self, "_ctx", None)
             if action == "update" and data.get("customer_id") and ctx_mc:
                 provided_cid = str(data["customer_id"]).lower()
                 ctx_cid = str(ctx_mc.customer_id).lower() if ctx_mc.customer_id else ""
@@ -382,7 +475,7 @@ class BookingModeV7(BaseModeNode):
         if tool_name != "book":
             return tool_args
 
-        ctx: BookingContextV7 | None = getattr(self, "_ctx", None)
+        ctx: BookingContext | None = getattr(self, "_ctx", None)
 
         # ── Guard: reject book() when no slots have been offered ────────
         if ctx and not ctx.offered_slots:
@@ -458,6 +551,26 @@ class BookingModeV7(BaseModeNode):
                 name="book",
                 error_code="NO_CUSTOMER_ID",
                 error_message="Llama a manage_customer primero para obtener el customer_id",
+            )
+
+        # ── Hard gate: reject book() if confirmation summary not shown ─────
+        # The LLM MUST show a confirmation summary and the user MUST reply
+        # with an affirmative before book() can execute. This prevents the
+        # LLM from skipping the mandatory confirmation step.
+        if ctx and not ctx.confirmation_shown:
+            logger.warning(
+                "_pre_tool_call: book() rejected — confirmation_shown is False. "
+                "LLM must present summary and wait for user confirmation first."
+            )
+            return ToolCallRejection(
+                name="book",
+                error_code="CONFIRMATION_NOT_SHOWN",
+                error_message=(
+                    "ANTES de llamar a book(), debés mostrar el resumen de confirmación "
+                    "con todos los datos (nombre, servicio, estilista, fecha, hora) "
+                    "y ESPERAR a que la clienta confirme con 'sí', 'dale', 'ok', etc. "
+                    "Mostrá el resumen ahora y NO llames a book() hasta recibir confirmación."
+                ),
             )
 
         # ── Hard gate: always inject selected_services ─────────────────────
@@ -604,7 +717,7 @@ class BookingModeV7(BaseModeNode):
         working_messages[idx] = SystemMessage(content=fresh_context)
         logger.debug("_refresh_dynamic_context: rebuilt SystemMessage at index %d", idx)
 
-    async def _maybe_prefetch_stylists(self, ctx: BookingContextV7) -> None:
+    async def _maybe_prefetch_stylists(self, ctx: BookingContext) -> None:
         """Prefetch stylist options when service is resolved but no stylist yet.
 
         This saves one LLM round-trip by providing stylist options in the prompt.
@@ -644,7 +757,7 @@ class BookingModeV7(BaseModeNode):
         state: ConversationState,
         user_message: str,
         intent: Any,
-        ctx: "BookingContextV7 | None" = None,
+        ctx: "BookingContext | None" = None,
     ) -> dict | None:
         """Check for cancel/escalate before running the agentic loop.
 
@@ -680,7 +793,7 @@ class BookingModeV7(BaseModeNode):
             is_negated = any(neg in msg_lower for neg in _CANCEL_NEGATION_TOKENS)
             if not is_negated:
                 logger.info(
-                    "BookingModeV7: cancel intent detected, transitioning to GENERAL "
+                    "BookingMode: cancel intent detected, transitioning to GENERAL "
                     "(has_active_context=%s)",
                     has_active_context,
                 )
@@ -696,7 +809,7 @@ class BookingModeV7(BaseModeNode):
         is_escalate = intent_name == "escalate" or any(p in msg_lower for p in _ESCALATE_PHRASES)
 
         if is_escalate:
-            logger.info("BookingModeV7: escalate intent detected, transitioning to ESCALATION")
+            logger.info("BookingMode: escalate intent detected, transitioning to ESCALATION")
             response = "Te paso con una persona del equipo. Un momento. 🙏"
             return {
                 **transition_mode(state, "ESCALATION"),
@@ -732,12 +845,12 @@ class BookingModeV7(BaseModeNode):
     # Prompt Building
     # ──────────────────────────────────────────────────────────────────────
 
-    async def _build_messages(self, state: ConversationState, ctx: BookingContextV7) -> list:
+    async def _build_messages(self, state: ConversationState, ctx: BookingContext) -> list:
         """Build the complete message list for the agentic loop.
 
         Structure:
         1. SystemMessage: Cached shared prompt (identity + rules + glossary)
-        2. SystemMessage: Unified booking prompt (booking_v7.md — static instructions)
+        2. SystemMessage: Unified booking prompt (booking.md — static instructions)
         3. SystemMessage: Dynamic context (collected/missing data, temporal, stylists)
         4. Conversation history (last N messages as HumanMessage/AIMessage)
         """
@@ -748,7 +861,7 @@ class BookingModeV7(BaseModeNode):
         messages.append(SystemMessage(content=system_prompt))
 
         # 2. Booking mode prompt (static instructions + tool guidance)
-        booking_prompt = load_markdown("booking_v7.md", "modes")
+        booking_prompt = load_markdown("booking.md", "modes")
         if booking_prompt:
             messages.append(SystemMessage(content=booking_prompt))
 
@@ -770,7 +883,7 @@ class BookingModeV7(BaseModeNode):
         return messages
 
     @staticmethod
-    def _build_dynamic_context(state: ConversationState, ctx: BookingContextV7) -> str:
+    def _build_dynamic_context(state: ConversationState, ctx: BookingContext) -> str:
         """Build the dynamic context section injected as SystemMessage.
 
         Contains: temporal context, phone, collected data, missing data,
@@ -844,6 +957,13 @@ class BookingModeV7(BaseModeNode):
                 "pedile a la clienta que lo confirme al llegar al salón."
             )
 
+        # Confirmation gate status
+        if ctx.confirmation_shown:
+            parts.append(
+                "\n✅ CONFIRMACIÓN RECIBIDA: la clienta confirmó el resumen. "
+                "Podés llamar a `book()` ahora."
+            )
+
         return "\n".join(parts)
 
     # ──────────────────────────────────────────────────────────────────────
@@ -853,7 +973,7 @@ class BookingModeV7(BaseModeNode):
     def _build_response(
         self,
         state: ConversationState,
-        ctx: BookingContextV7,
+        ctx: BookingContext,
         result: AgenticLoopResult,
     ) -> dict:
         """Build the final state update dict.
@@ -886,9 +1006,15 @@ class BookingModeV7(BaseModeNode):
         if disclosure_sent:
             updates["ai_disclosure_sent"] = True
 
+        # P1/P2/P3 fix: propagate customer_name from booking context to state
+        # so the router and other nodes see the name without requiring
+        # manage_customer to have stored it.
+        if ctx.customer_name and not state.get("customer_name"):
+            updates["customer_name"] = ctx.customer_name
+
         # If book() succeeded → mark appointment created and transition out
         if ctx._booking_completed:
-            logger.info("BookingModeV7: booking completed, transitioning to GENERAL")
+            logger.info("BookingMode: booking completed, transitioning to GENERAL")
             updates["appointment_created"] = True
             updates.update(transition_mode(state, "GENERAL"))
             # Re-inject mode_context AFTER transition_mode (which resets it)
@@ -904,7 +1030,7 @@ class BookingModeV7(BaseModeNode):
     def _redact_names(self, state: ConversationState, text: str) -> str:
         """Redact customer name tokens from LLM response text.
 
-        The booking_v7.md prompt instructs the LLM not to mention the customer's
+        The booking.md prompt instructs the LLM not to mention the customer's
         name, but this is a hard code-level safety net in case it does.
         """
         names_to_redact: list[str] = []
@@ -918,7 +1044,7 @@ class BookingModeV7(BaseModeNode):
 
         for name in names_to_redact:
             if _contains_name_token(text, name):
-                self.logger.warning("BookingModeV7: redacting customer name tokens from response")
+                self.logger.warning("BookingMode: redacting customer name tokens from response")
                 text = _redact_name_tokens(text, name)
 
         return text
@@ -927,6 +1053,190 @@ class BookingModeV7(BaseModeNode):
 # ============================================================================
 # Module-level helper functions (pure, no class dependency)
 # ============================================================================
+
+
+# ── Name patterns for conversational extraction ─────────────────────────────
+# Matches "me llamo X", "soy X", "mi nombre es X" and bare single/two-word names
+_NAME_INTRO_PATTERN = re.compile(
+    r"(?:me\s+llamo|soy|mi\s+nombre\s+es)\s+([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+"
+    r"(?:\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+)?)",
+    re.IGNORECASE,
+)
+
+# Bare name: 1-2 capitalized words that look like a name (for messages that
+# are ONLY a name, e.g. user replied "María" or "Ana Torres" to "¿Tu nombre?")
+_BARE_NAME_PATTERN = re.compile(
+    r"^([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+"
+    r"(?:\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+)?)\s*[.!]?\s*$"
+)
+
+# Words that look like names but are NOT (common false positives in Spanish)
+_NAME_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "hola",
+        "buenas",
+        "gracias",
+        "dale",
+        "perfecto",
+        "vale",
+        "claro",
+        "bueno",
+        "genial",
+        "bien",
+        "listo",
+    }
+)
+
+
+def _extract_name_from_conversation(
+    state: ConversationState, user_message: str, ctx: BookingContext
+) -> None:
+    """Extract customer name from user message when it looks like a name reply.
+
+    Called when ctx.customer_name is None after the agentic loop. This catches
+    the common case where the LLM asked for the name and the user replied with
+    just their name (e.g. "María", "Me llamo Ana Torres").
+
+    Only triggers when the PREVIOUS assistant message asked for the name
+    (contains "nombre" or similar). This prevents false positives from random
+    capitalized words in normal conversation.
+    """
+    if not user_message or not user_message.strip():
+        return
+
+    # Only try extraction if the previous assistant message asked for the name
+    messages = state.get("messages", [])
+    if not _previous_assistant_asked_for_name(messages):
+        return
+
+    # Try structured patterns first: "me llamo X", "soy X", "mi nombre es X"
+    match = _NAME_INTRO_PATTERN.search(user_message)
+    if match:
+        name = match.group(1).strip()
+        if name.lower() not in _NAME_STOPWORDS:
+            ctx.customer_name = name
+            logger.info(
+                "_extract_name_from_conversation: extracted name=%r from intro pattern",
+                name,
+            )
+            return
+
+    # Try bare name pattern (user replied with just their name)
+    match = _BARE_NAME_PATTERN.match(user_message.strip())
+    if match:
+        name = match.group(1).strip()
+        if name.lower() not in _NAME_STOPWORDS:
+            ctx.customer_name = name
+            logger.info(
+                "_extract_name_from_conversation: extracted name=%r from bare name pattern",
+                name,
+            )
+            return
+
+
+def _previous_assistant_asked_for_name(messages: list[dict]) -> bool:
+    """Check if the most recent assistant message asked for the customer's name.
+
+    Looks for name-asking patterns like "nombre", "¿cómo te llamas?", etc.
+    in the last assistant message.
+    """
+    # Find the last assistant message
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = (msg.get("content") or "").lower()
+            name_ask_patterns = (
+                "nombre",
+                "como te llamas",
+                "cómo te llamás",
+                "a nombre de",
+                "tu nombre",
+                "su nombre",
+                "decime tu nombre",
+                "dime tu nombre",
+                "quien seria",
+                "quién sería",
+            )
+            return any(pattern in content for pattern in name_ask_patterns)
+    return False
+
+
+def _is_booking_data_complete(ctx: BookingContext) -> bool:
+    """Check if all required booking fields are populated.
+
+    This is used as a guard for _detect_confirmation_exchange to prevent
+    premature confirmation_shown when the user says "sí" to a non-booking
+    question (e.g., "¿Para dama?" → "Sí").
+
+    Required fields:
+    - service_id or selected_services (service chosen)
+    - stylist_id (stylist chosen)
+    - offered_slots (availability checked = date/time in progress)
+    - customer_name or customer_id (customer identified)
+    """
+    has_service = bool(ctx.service_id or ctx.selected_services)
+    has_stylist = bool(ctx.stylist_id)
+    has_slots = bool(ctx.offered_slots)
+    has_customer = bool(ctx.customer_name or ctx.customer_id)
+    return has_service and has_stylist and has_slots and has_customer
+
+
+def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext) -> None:
+    """Detect if the previous turn was a confirmation summary + user affirmative.
+
+    Scans the last few messages looking for:
+    1. An assistant message containing confirmation summary markers
+    2. A subsequent user message with an affirmative response
+
+    If both are found in sequence AND all booking data is complete, sets
+    ctx.confirmation_shown = True so the book() gate in _pre_tool_call will
+    allow the booking to proceed.
+
+    The data-completeness guard prevents premature confirmation when the user
+    says "sí" to a non-booking question (e.g., clarification about service
+    audience or hair type).
+    """
+    # Guard: don't set confirmation_shown unless all booking data is collected.
+    # This prevents "sí" to "¿Para dama?" from opening the book() gate.
+    if not _is_booking_data_complete(ctx):
+        return
+
+    messages = state.get("messages", [])
+    if len(messages) < 2:
+        return
+
+    # Scan the last 4 messages for the pattern: assistant(summary) → user(confirm)
+    recent = messages[-4:]
+    for i in range(len(recent) - 1):
+        msg = recent[i]
+        next_msg = recent[i + 1]
+
+        if msg.get("role") != "assistant" or next_msg.get("role") != "user":
+            continue
+
+        assistant_text = _normalize_text(msg.get("content", ""))
+        user_text = _normalize_text(next_msg.get("content", ""))
+
+        # Check if assistant message contains confirmation summary markers
+        has_summary = any(marker in assistant_text for marker in _CONFIRMATION_SUMMARY_MARKERS)
+        if not has_summary:
+            continue
+
+        # Check if user message is an affirmative confirmation
+        # We check both exact match and "starts with" to handle "sí, dale" etc.
+        user_tokens = set(re.split(r"[\s,;.!?]+", user_text))
+        has_confirmation = any(
+            phrase in user_tokens or user_text.startswith(phrase)
+            for phrase in _USER_CONFIRMATION_PHRASES
+        )
+
+        if has_confirmation:
+            ctx.confirmation_shown = True
+            logger.info(
+                "_detect_confirmation_exchange: confirmation detected — "
+                "assistant showed summary, user confirmed with %r",
+                next_msg.get("content", "")[:50],
+            )
+            return
 
 
 def _normalize_text(text: str | None) -> str:
@@ -996,7 +1306,7 @@ def _redact_name_tokens(text: str, name: str) -> str:
 # ── Dynamic context section builders ────────────────────────────────────────
 
 
-def _build_disambiguation_section(ctx: BookingContextV7) -> str:
+def _build_disambiguation_section(ctx: BookingContext) -> str:
     """Build prompt section for pending disambiguation/clarification.
 
     Pure renderer — no auto-resolve logic. The resolve_pending_clarification()
@@ -1026,7 +1336,7 @@ def _build_disambiguation_section(ctx: BookingContextV7) -> str:
     return "\n".join(lines)
 
 
-def _build_recommendations_section(ctx: BookingContextV7) -> str:
+def _build_recommendations_section(ctx: BookingContext) -> str:
     """Build prompt section for combo service recommendations.
 
     Renders once per booking flow. Returns empty string if:
@@ -1049,7 +1359,7 @@ def _build_recommendations_section(ctx: BookingContextV7) -> str:
     return "\n".join(lines)
 
 
-def _build_service_details_section(ctx: BookingContextV7) -> str:
+def _build_service_details_section(ctx: BookingContext) -> str:
     """Build prompt section describing what each selected service includes."""
     if not ctx.selected_services_details:
         return ""
@@ -1065,7 +1375,7 @@ def _build_service_details_section(ctx: BookingContextV7) -> str:
     return "\n".join(lines)
 
 
-def _detect_recommendation_decline(message: str, ctx: BookingContextV7) -> bool:
+def _detect_recommendation_decline(message: str, ctx: BookingContext) -> bool:
     """Check if user declined add-on recommendations.
 
     Only checks when recommendations have been shown and not yet declined.
@@ -1085,7 +1395,7 @@ def _detect_recommendation_decline(message: str, ctx: BookingContextV7) -> bool:
     return False
 
 
-def _build_stylists_section(ctx: BookingContextV7) -> str:
+def _build_stylists_section(ctx: BookingContext) -> str:
     """Build prompt section for available stylists."""
     if not ctx.prefetched_stylists:
         return ""
@@ -1105,7 +1415,7 @@ def _build_stylists_section(ctx: BookingContextV7) -> str:
     return "\n".join(lines)
 
 
-def _build_offered_slots_section(ctx: BookingContextV7) -> str:
+def _build_offered_slots_section(ctx: BookingContext) -> str:
     """Build prompt section for currently offered time slots.
 
     Sorts slots by (full_datetime, stylist_name) for deterministic ordering,

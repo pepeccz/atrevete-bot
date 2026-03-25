@@ -131,7 +131,7 @@ _STEP_VISIBLE_FIELDS: dict[str, set[str]] = {
 
 _MODE_OVERLAY_FILES: dict[str, str] = {
     "GREETING": "modes/greeting.md",
-    "BOOKING": "modes/booking_v7.md",
+    "BOOKING": "modes/booking.md",
     "GENERAL": "modes/general.md",
     "ESCALATION": "modes/escalation.md",
 }
@@ -344,9 +344,7 @@ def build_step_context(
                 f"  - {stylist['name']}: {stylist.get('next_slot_summary', 'Sin disponibilidad')}"
             )
     if scoped_ctx.get("soonest_any_slot"):
-        collected_data.append(
-            f"Cualquier profesional disponible: {scoped_ctx['soonest_any_slot']}"
-        )
+        collected_data.append(f"Cualquier profesional disponible: {scoped_ctx['soonest_any_slot']}")
     if scoped_ctx.get("slot_summary"):
         collected_data.append(f"Horario: {scoped_ctx['slot_summary']}")
     if scoped_ctx.get("notes"):
@@ -381,9 +379,7 @@ def build_step_context(
             )
     if scoped_ctx.get("no_slots_for_stylist"):
         stylist_name = scoped_ctx.get("stylist_name") or "la estilista elegida"
-        collected_data.append(
-            f"Sin disponibilidad para {stylist_name} en el rango solicitado"
-        )
+        collected_data.append(f"Sin disponibilidad para {stylist_name} en el rango solicitado")
 
     # Surface pending clarification so LLM can present options to user
     # Supports both new list (pending_clarifications) and legacy scalar
@@ -403,11 +399,7 @@ def build_step_context(
             for opt in options:
                 val_lower = opt.get("value", "").lower()
                 label_lower = opt.get("label", "").lower()
-                if (
-                    hint_lower in val_lower
-                    or val_lower in hint_lower
-                    or hint_lower in label_lower
-                ):
+                if hint_lower in val_lower or val_lower in hint_lower or hint_lower in label_lower:
                     matched_option = opt
                     break
 
@@ -433,9 +425,7 @@ def build_step_context(
                     collected_data.append(f"  {i}. {label} — {description}")
                 else:
                     collected_data.append(f"  {i}. {label}")
-            collected_data.append(
-                f"  Pista del sistema: {audience_hint or 'ninguna'}"
-            )
+            collected_data.append(f"  Pista del sistema: {audience_hint or 'ninguna'}")
             collected_data.append(
                 "  INSTRUCCIÓN: Presentá estas opciones al cliente de forma natural "
                 "para resolver la clarificación."
@@ -444,9 +434,7 @@ def build_step_context(
     # Surface candidate services for disambiguation context
     candidate_services = scoped_ctx.get("candidate_services")
     if candidate_services and not scoped_ctx.get("service_name"):
-        names = [
-            s.get("name", "") for s in candidate_services[:5] if isinstance(s, dict)
-        ]
+        names = [s.get("name", "") for s in candidate_services[:5] if isinstance(s, dict)]
         if names:
             collected_data.append("Servicios candidatos: " + ", ".join(names))
 

@@ -1,11 +1,11 @@
 """
-Tool Result Extractors for BookingModeV7.
+Tool Result Extractors for BookingMode.
 
 Pure functions that extract canonical fields from tool responses into
-BookingContextV7. They do NOT make flow decisions — that's the LLM's job.
+BookingContext. They do NOT make flow decisions — that's the LLM's job.
 
 Each extractor:
-- Receives a parsed dict (tool result) and a BookingContextV7
+- Receives a parsed dict (tool result) and a BookingContext
 - Mutates the context in place
 - Never raises — fails silently with logging
 """
@@ -18,7 +18,7 @@ import re
 import unicodedata
 from typing import Any
 
-from agent.modes.booking_context_v7 import BookingContextV7
+from agent.modes.booking_context import BookingContext
 
 logger = logging.getLogger(__name__)
 
@@ -132,16 +132,16 @@ def extract_service_audience_hint(value: str | None) -> str | None:
 # ============================================================================
 
 
-def resolve_pending_clarification(ctx: BookingContextV7, user_message: str = "") -> bool:
+def resolve_pending_clarification(ctx: BookingContext, user_message: str = "") -> bool:
     """Attempt to resolve pending clarifications from the queue using axis hint maps.
 
-    Called as a pre-resolver in BookingModeV7.handle() AFTER _resolve_audience_hint()
+    Called as a pre-resolver in BookingMode.handle() AFTER _resolve_audience_hint()
     and BEFORE _build_messages(). Iterates ctx.pending_clarifications and attempts
     to match the user's natural-language answer against the appropriate hint map
     for each axis. Handles all 3 axes: audience, hair_density, hair_length.
 
     Args:
-        ctx: The current BookingContextV7 (mutated in place on match).
+        ctx: The current BookingContext (mutated in place on match).
         user_message: The raw user message from the current turn. Used to match
             ALL axes: audience (fallback when ctx.service_audience_hint is None),
             hair_density, and hair_length via their respective hint maps.
@@ -286,9 +286,7 @@ def _match_hint_map(normalized_text: str, hint_map: dict[str, str]) -> str | Non
     return hint_map[best_key] if best_key else None
 
 
-def _apply_resolved_option(
-    ctx: BookingContextV7, opt: dict, axis: str, resolved_value: str
-) -> None:
+def _apply_resolved_option(ctx: BookingContext, opt: dict, axis: str, resolved_value: str) -> None:
     """Apply a resolved clarification option to the booking context."""
     ctx.service_id = str(opt["service_id"])
     ctx.service_name = opt["service_name"]
@@ -338,7 +336,7 @@ def _safe_parse(raw: Any) -> dict | None:
 # ============================================================================
 
 
-def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
+def extract_service_fields(result: dict, ctx: BookingContext) -> None:
     """Extract service data from search_services result. Mutates ctx in place.
 
     Handles 3 shapes:
@@ -493,7 +491,7 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
             )
 
 
-def extract_slot_fields(result: dict, ctx: BookingContextV7) -> None:
+def extract_slot_fields(result: dict, ctx: BookingContext) -> None:
     """Extract slot data from check_availability or find_next_available result.
 
     Sets offered_slots from the result. Does NOT set selected_slot —
@@ -567,7 +565,7 @@ def extract_slot_fields(result: dict, ctx: BookingContextV7) -> None:
         logger.info("extract_slot_fields: soonest_any = %s", ctx.soonest_any_slot)
 
 
-def extract_stylist_fields(result: dict, ctx: BookingContextV7) -> None:
+def extract_stylist_fields(result: dict, ctx: BookingContext) -> None:
     """Extract stylist data from list_stylists result.
 
     Updates prefetched_stylists list. Does NOT auto-assign stylist_id —
@@ -579,7 +577,7 @@ def extract_stylist_fields(result: dict, ctx: BookingContextV7) -> None:
         logger.info("extract_stylist_fields: %d stylists loaded", len(stylists))
 
 
-def extract_customer_fields(result: dict, ctx: BookingContextV7) -> None:
+def extract_customer_fields(result: dict, ctx: BookingContext) -> None:
     """Extract customer data from manage_customer result.
 
     Sets customer_id and customer_name from the response.
@@ -617,7 +615,7 @@ def extract_customer_fields(result: dict, ctx: BookingContextV7) -> None:
         )
 
 
-def extract_booking_result(result: dict, ctx: BookingContextV7) -> None:
+def extract_booking_result(result: dict, ctx: BookingContext) -> None:
     """Extract booking confirmation from book() result.
 
     Sets _booking_completed flag on success. On failure, the LLM
@@ -675,7 +673,7 @@ def extract_booking_result(result: dict, ctx: BookingContextV7) -> None:
         )
 
 
-def _upsert_service_detail(ctx: BookingContextV7, svc: dict) -> None:
+def _upsert_service_detail(ctx: BookingContext, svc: dict) -> None:
     """Add or update a service's detail entry in selected_services_details.
 
     Deduplicates by name. Only stores entries where description is non-null.
@@ -710,7 +708,7 @@ TOOL_EXTRACTORS: dict[str, Any] = {
 }
 
 
-def apply_all_tool_results(tool_results: dict[str, Any], ctx: BookingContextV7) -> None:
+def apply_all_tool_results(tool_results: dict[str, Any], ctx: BookingContext) -> None:
     """Apply all tool results from an agentic loop iteration to context.
 
     Routes each tool name to its extractor function. Unknown tools and
@@ -719,7 +717,7 @@ def apply_all_tool_results(tool_results: dict[str, Any], ctx: BookingContextV7) 
     Args:
         tool_results: Dict mapping tool name → list of raw results (str or dict),
             or a single raw result for backwards compatibility.
-        ctx: BookingContextV7 to mutate in place.
+        ctx: BookingContext to mutate in place.
     """
     for tool_name, raw_results in tool_results.items():
         extractor = TOOL_EXTRACTORS.get(tool_name)

@@ -1,14 +1,14 @@
-"""Unit tests for tool_extractors.py — Phase 2 of booking-mode-v7.
+"""Unit tests for tool_extractors.py.
 
 Tests all extractor functions with realistic tool response shapes,
-verifying that BookingContextV7 is mutated correctly.
+verifying that BookingContext is mutated correctly.
 """
 
 import json
 
 import pytest
 
-from agent.modes.booking_context_v7 import BookingContextV7
+from agent.modes.booking_context import BookingContext
 from agent.modes.tool_extractors import (
     TOOL_EXTRACTORS,
     _safe_parse,
@@ -83,7 +83,7 @@ class TestExtractServiceAudienceHint:
 
 class TestExtractServiceFieldsShape1:
     def test_resolved_service_populates_all_fields(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "resolved_service": {
                 "id": "abc-123",
@@ -108,7 +108,7 @@ class TestExtractServiceFieldsShape1:
         assert ctx.selected_services == ["Corte de Dama"]
 
     def test_resolved_service_clears_matching_disambiguation(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_clarifications=[
                 {
                     "axis": "audience",
@@ -135,7 +135,7 @@ class TestExtractServiceFieldsShape1:
         assert ctx.candidate_services == []
 
     def test_resolved_service_sets_audience_hint(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "resolved_service": {
                 "id": "abc-123",
@@ -150,7 +150,7 @@ class TestExtractServiceFieldsShape1:
         assert ctx.service_audience_hint == "adult_male"
 
     def test_resolved_service_preserves_existing_audience_hint(self):
-        ctx = BookingContextV7(service_audience_hint="child_female")
+        ctx = BookingContext(service_audience_hint="child_female")
         result = {
             "resolved_service": {
                 "id": "abc-123",
@@ -165,7 +165,7 @@ class TestExtractServiceFieldsShape1:
         assert ctx.service_audience_hint == "child_female"
 
     def test_resolved_service_preserves_addon_services(self):
-        ctx = BookingContextV7(selected_services=["Barba"])
+        ctx = BookingContext(selected_services=["Barba"])
         result = {
             "resolved_service": {
                 "id": "abc-123",
@@ -187,7 +187,7 @@ class TestExtractServiceFieldsShape1:
 
 class TestExtractServiceFieldsShape2:
     def test_clarification_sets_pending(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "clarification_needed": {
                 "axis": "hair_density",
@@ -224,7 +224,7 @@ class TestExtractServiceFieldsShape2:
         clarification_needed with axis=audience, auto-resolve inline if the
         service_audience_hint matches an option. This prevents same-turn
         clobbering of resolved services."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         ctx.selected_services = ["Cultura de Color"]
         ctx.service_audience_hint = "dama"
         result = {
@@ -259,7 +259,7 @@ class TestExtractServiceFieldsShape2:
 
     def test_audience_clarification_not_auto_resolved_without_hint(self):
         """Without service_audience_hint, clarification should be set normally."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         ctx.selected_services = ["Cultura de Color"]
         # No service_audience_hint set
         result = {
@@ -267,8 +267,18 @@ class TestExtractServiceFieldsShape2:
                 "axis": "audience",
                 "question_hint": "¿El corte es para caballero o dama?",
                 "options": [
-                    {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
-                    {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                    {
+                        "label": "Caballero",
+                        "value": "caballero",
+                        "service_name": "Corte Caballero",
+                        "service_id": "cc1",
+                    },
+                    {
+                        "label": "Dama",
+                        "value": "dama",
+                        "service_name": "Cortar",
+                        "service_id": "cd1",
+                    },
                 ],
             },
         }
@@ -279,15 +289,25 @@ class TestExtractServiceFieldsShape2:
 
     def test_non_audience_clarification_always_sets_pending(self):
         """Non-audience clarification should always set pending, even with services."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         ctx.selected_services = ["Cultura de Color"]
         ctx.service_audience_hint = "dama"
         result = {
             "clarification_needed": {
                 "axis": "hair_density",
                 "options": [
-                    {"label": "Normal", "value": "normal", "service_name": "Mechas", "service_id": "m1"},
-                    {"label": "Largo", "value": "largo", "service_name": "Mechas XL", "service_id": "m2"},
+                    {
+                        "label": "Normal",
+                        "value": "normal",
+                        "service_name": "Mechas",
+                        "service_id": "m1",
+                    },
+                    {
+                        "label": "Largo",
+                        "value": "largo",
+                        "service_name": "Mechas XL",
+                        "service_id": "m2",
+                    },
                 ],
             },
         }
@@ -304,7 +324,7 @@ class TestExtractServiceFieldsShape2:
 
 class TestExtractServiceFieldsShape3:
     def test_single_candidate_auto_resolves(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "services": [
                 {
@@ -329,7 +349,7 @@ class TestExtractServiceFieldsShape3:
         assert ctx.pending_clarifications == []
 
     def test_multiple_candidates_stored(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "services": [
                 {
@@ -357,7 +377,7 @@ class TestExtractServiceFieldsShape3:
         assert len(ctx.candidate_services) == 2
 
     def test_empty_services_list(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "services": [],
             "count": 0,
@@ -377,7 +397,7 @@ class TestExtractServiceFieldsShape3:
 
 class TestExtractSlotFields:
     def test_check_availability_slots_populated(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "available_slots": [
                 {
@@ -410,7 +430,7 @@ class TestExtractSlotFields:
 
     def test_selected_slot_not_set(self):
         """Extracting slots must NOT set selected_slot — user must choose."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "available_slots": [
                 {
@@ -430,14 +450,10 @@ class TestExtractSlotFields:
 
     def test_skips_overwrite_when_slots_already_set(self):
         """Guard: offered_slots is NOT overwritten if already populated."""
-        ctx = BookingContextV7(
-            offered_slots=[
-                {"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}
-            ]
+        ctx = BookingContext(
+            offered_slots=[{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
         )
-        new_slots = [
-            {"time": "11:00", "stylist": "María", "date": "2026-03-27"}
-        ]
+        new_slots = [{"time": "11:00", "stylist": "María", "date": "2026-03-27"}]
         result = {"available_slots": new_slots, "error": None}
         extract_slot_fields(result, ctx)
 
@@ -446,7 +462,7 @@ class TestExtractSlotFields:
 
     def test_find_next_available_legacy_shape(self):
         """find_next_available with available_stylists (legacy format)."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "available_stylists": [
                 {
@@ -478,7 +494,7 @@ class TestExtractSlotFields:
 
     def test_find_next_available_v42_soonest_any(self):
         """find_next_available v4.2: soonest_any slot is extracted."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "available_stylists": [],
             "selected_stylist_slots": [
@@ -510,7 +526,7 @@ class TestExtractSlotFields:
 
     def test_empty_slots_does_not_overwrite(self):
         """If result has no slots at all, offered_slots stays unchanged."""
-        ctx = BookingContextV7(offered_slots=[{"time": "09:00"}])
+        ctx = BookingContext(offered_slots=[{"time": "09:00"}])
         result = {
             "available_slots": [],
             "error": None,
@@ -522,7 +538,7 @@ class TestExtractSlotFields:
     def test_guard_blocks_overwrite_when_refresh_not_needed(self):
         """REQ-BAF-3: Guard skips overwrite when offered_slots set AND needs_refresh=False."""
         stale_slots = [{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=stale_slots,
             needs_availability_refresh=False,  # Normal turn — no refresh requested
         )
@@ -535,7 +551,7 @@ class TestExtractSlotFields:
     def test_guard_allows_overwrite_when_refresh_needed(self):
         """REQ-BAF-3: Guard lets SLOT_TAKEN refresh through when needs_refresh=True."""
         stale_slots = [{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=stale_slots,
             needs_availability_refresh=True,  # SLOT_TAKEN set this flag
         )
@@ -549,7 +565,7 @@ class TestExtractSlotFields:
 
     def test_guard_allows_overwrite_when_no_existing_slots(self):
         """Guard condition: offered_slots=None (even with needs_refresh=False) lets through."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=None,  # No slots yet — first availability call
             needs_availability_refresh=False,
         )
@@ -567,7 +583,7 @@ class TestExtractSlotFields:
 
 class TestExtractStylistFields:
     def test_stylists_populated(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "stylists": [
                 {"id": "s1", "name": "María", "category": "HAIRDRESSING"},
@@ -582,7 +598,7 @@ class TestExtractStylistFields:
 
     def test_does_not_auto_assign_stylist_id(self):
         """Even with 1 stylist, stylist_id is NOT auto-assigned."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "stylists": [
                 {"id": "s1", "name": "María", "category": "HAIRDRESSING"},
@@ -596,7 +612,7 @@ class TestExtractStylistFields:
         assert len(ctx.prefetched_stylists) == 1
 
     def test_empty_stylists(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {"stylists": [], "count": 0}
         extract_stylist_fields(result, ctx)
 
@@ -610,7 +626,7 @@ class TestExtractStylistFields:
 
 class TestExtractCustomerFields:
     def test_get_customer_success(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "id": "cust-abc",
             "phone": "+34612345678",
@@ -625,7 +641,7 @@ class TestExtractCustomerFields:
         assert ctx.customer_name == "Pepe"
 
     def test_create_customer_success(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "id": "cust-new",
             "phone": "+34612345678",
@@ -640,7 +656,7 @@ class TestExtractCustomerFields:
         assert ctx.customer_name == "Laura"
 
     def test_update_customer_success(self):
-        ctx = BookingContextV7(customer_id="cust-abc", customer_name="Pedro")
+        ctx = BookingContext(customer_id="cust-abc", customer_name="Pedro")
         result = {
             "success": True,
             "customer_id": "cust-abc",
@@ -654,7 +670,7 @@ class TestExtractCustomerFields:
 
     def test_customer_not_found(self):
         """get with non-existent phone — no fields set."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "exists": False,
             "phone": "+34999999999",
@@ -666,7 +682,7 @@ class TestExtractCustomerFields:
         assert ctx.customer_name is None
 
     def test_only_id_set_when_no_name(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {"id": "cust-abc"}
         extract_customer_fields(result, ctx)
 
@@ -681,7 +697,7 @@ class TestExtractCustomerFields:
 
 class TestExtractBookingResult:
     def test_booking_success(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "success": True,
             "appointment_id": "apt-123",
@@ -699,7 +715,7 @@ class TestExtractBookingResult:
         assert ctx._booking_completed is True
 
     def test_booking_failure(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "success": False,
             "error_code": "SLOT_TAKEN",
@@ -711,7 +727,7 @@ class TestExtractBookingResult:
         assert ctx._booking_completed is False
 
     def test_booking_ambiguous_service_failure(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "success": False,
             "error_code": "AMBIGUOUS_SERVICE",
@@ -730,18 +746,18 @@ class TestExtractBookingResult:
 
 class TestApplyAllToolResults:
     def test_empty_results(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         apply_all_tool_results({}, ctx)
         assert ctx.service_id is None
         assert ctx.customer_id is None
 
     def test_unknown_tool_ignored(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         apply_all_tool_results({"query_info": {"some": "data"}}, ctx)
         assert ctx.service_id is None  # No crash, no mutation
 
     def test_single_tool_routed(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "search_services": {
                 "resolved_service": {
@@ -760,7 +776,7 @@ class TestApplyAllToolResults:
         assert ctx.service_name == "Corte de Dama"
 
     def test_multiple_tools_in_one_turn(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         results = {
             "search_services": {
                 "resolved_service": {
@@ -793,19 +809,21 @@ class TestApplyAllToolResults:
         assert len(ctx.offered_slots) == 1
 
     def test_json_string_result_parsed(self):
-        ctx = BookingContextV7()
-        result_json = json.dumps({
-            "stylists": [
-                {"id": "s1", "name": "María", "category": "HAIRDRESSING"},
-            ],
-            "count": 1,
-        })
+        ctx = BookingContext()
+        result_json = json.dumps(
+            {
+                "stylists": [
+                    {"id": "s1", "name": "María", "category": "HAIRDRESSING"},
+                ],
+                "count": 1,
+            }
+        )
         apply_all_tool_results({"list_stylists": result_json}, ctx)
 
         assert len(ctx.prefetched_stylists) == 1
 
     def test_unparseable_result_skipped(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         apply_all_tool_results({"search_services": "not json at all"}, ctx)
         assert ctx.service_id is None  # No crash
 
@@ -832,14 +850,14 @@ class TestResolvePendingClarification:
 
     def test_no_pending_returns_false(self):
         """Empty pending_clarifications → no-op."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_audience_hint="adult_female",
         )
         assert resolve_pending_clarification(ctx) is False
 
     def test_non_audience_axis_returns_false(self):
         """hair_length axis → not auto-resolvable."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_clarifications=[
                 {
                     "axis": "hair_length",
@@ -860,7 +878,7 @@ class TestResolvePendingClarification:
 
     def test_no_hint_returns_false(self):
         """Audience axis but no hint → can't resolve."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_clarifications=[
                 {
                     "axis": "audience",
@@ -879,7 +897,7 @@ class TestResolvePendingClarification:
 
     def test_audience_match_resolves(self):
         """Audience hint matches option → mutates ctx correctly."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_audience_hint="adult_female",
             pending_clarifications=[
                 {
@@ -919,7 +937,7 @@ class TestResolvePendingClarification:
 
     def test_audience_match_appends_to_existing_services(self):
         """Second service resolved via clarification appends, not overwrites."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_services=["Tinte Mujer"],
             service_audience_hint="adult_female",
             pending_clarifications=[
@@ -952,7 +970,7 @@ class TestResolvePendingClarification:
 
     def test_no_match_returns_false(self):
         """Hint doesn't match any option → leave pending."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_audience_hint="baby",
             pending_clarifications=[
                 {
@@ -982,7 +1000,7 @@ class TestResolvePendingClarification:
 
     def test_queue_pops_only_matching_entry(self):
         """REQ-BRF-6: Resolve pops only the matched entry, preserves others."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_audience_hint="adult_female",
             pending_clarifications=[
                 {
@@ -1028,7 +1046,7 @@ class TestExtractBookingResultSlotTaken:
 
     def test_slot_taken_clears_offered_slots(self):
         """SLOT_TAKEN error should clear offered_slots to force refresh."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=[
                 {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-24T10:00:00"},
                 {"stylist_id": "s1", "time": "11:00", "full_datetime": "2026-03-24T11:00:00"},
@@ -1047,7 +1065,7 @@ class TestExtractBookingResultSlotTaken:
 
     def test_non_slot_taken_preserves_offered_slots(self):
         """Other errors should NOT clear offered_slots."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=[{"stylist_id": "s1", "time": "10:00"}],
             book_failure_count=0,
         )
@@ -1062,7 +1080,7 @@ class TestExtractBookingResultSlotTaken:
 
     def test_slot_taken_no_prior_slots(self):
         """SLOT_TAKEN with no prior offered_slots — no crash."""
-        ctx = BookingContextV7(offered_slots=None, book_failure_count=0)
+        ctx = BookingContext(offered_slots=None, book_failure_count=0)
         extract_booking_result(
             {"success": False, "error_code": "SLOT_TAKEN"},
             ctx,
@@ -1082,7 +1100,7 @@ class TestExtractServiceFieldsShape3Append:
 
     def test_shape3_single_appends_not_overwrites(self):
         """Single Shape 3 result should append to existing selected_services."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_id="uuid-tinte",
             service_name="Tinte Mujer",
             selected_services=["Tinte Mujer"],
@@ -1098,7 +1116,7 @@ class TestExtractServiceFieldsShape3Append:
 
     def test_shape3_single_no_duplicate(self):
         """If service already in list, don't duplicate."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_id="uuid-corte",
             service_name="Corte Mujer",
             selected_services=["Corte Mujer"],
@@ -1112,7 +1130,7 @@ class TestExtractServiceFieldsShape3Append:
 
     def test_shape3_first_service_empty_list(self):
         """First service via Shape 3 on empty list."""
-        ctx = BookingContextV7(selected_services=[])
+        ctx = BookingContext(selected_services=[])
         extract_service_fields(
             {"services": [{"id": "uuid-1", "name": "Corte Mujer", "category": "corte"}]},
             ctx,
@@ -1133,7 +1151,7 @@ class TestExtractComboRecommendations:
 
     def test_shape1_extracts_combo_recommendations(self):
         """Shape 1 with combo_recommendations populates pending_recommendations."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         extract_service_fields(
             {
                 "resolved_service": {
@@ -1154,7 +1172,7 @@ class TestExtractComboRecommendations:
 
     def test_does_not_overwrite_existing_recommendations(self):
         """If pending_recommendations already set, don't overwrite."""
-        ctx = BookingContextV7(pending_recommendations=["Existing Recommendation"])
+        ctx = BookingContext(pending_recommendations=["Existing Recommendation"])
         extract_service_fields(
             {
                 "resolved_service": {
@@ -1174,7 +1192,7 @@ class TestExtractComboRecommendations:
 
     def test_empty_combo_recommendations_ignored(self):
         """Empty combo_recommendations list does not populate pending."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         extract_service_fields(
             {
                 "resolved_service": {
@@ -1194,7 +1212,7 @@ class TestExtractComboRecommendations:
 
     def test_no_combo_recommendations_key(self):
         """Missing combo_recommendations key does not crash."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         extract_service_fields(
             {
                 "resolved_service": {
@@ -1221,13 +1239,13 @@ class TestServicesLocked:
     """Test services_locked lifecycle: default, lock trigger, guard, serialization."""
 
     def test_services_locked_false_by_default(self):
-        """New BookingContextV7 defaults to services_locked=False."""
-        ctx = BookingContextV7()
+        """New BookingContext defaults to services_locked=False."""
+        ctx = BookingContext()
         assert ctx.services_locked is False
 
     def test_apply_all_does_not_lock_without_offered_slots(self):
         """apply_all_tool_results does NOT lock when offered_slots is absent."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         apply_all_tool_results(
             {
                 "search_services": {
@@ -1250,7 +1268,7 @@ class TestServicesLocked:
 
     def test_apply_all_does_not_lock_even_with_offered_slots(self):
         """apply_all_tool_results no longer locks — lock moved to book()."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=[{"time": "10:00", "stylist_id": "s1"}],
         )
         apply_all_tool_results(
@@ -1274,7 +1292,7 @@ class TestServicesLocked:
 
     def test_extract_service_fields_appends_when_locked(self):
         """When services_locked=True, scalars are protected but selected_services appends."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=True,
             service_id="uuid-corte",
             service_name="Corte Caballero",
@@ -1303,7 +1321,7 @@ class TestServicesLocked:
 
     def test_two_services_same_turn_both_resolve(self):
         """Two search_services in same turn: both resolve before lock engages."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         apply_all_tool_results(
             {
                 "search_services": [
@@ -1344,7 +1362,7 @@ class TestServicesLocked:
         With partial lock: scalars are protected, and "Corte Caballero" is already
         in selected_services so the dedup guard prevents duplicate append.
         """
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=True,
             service_id="uuid-corte",
             service_name="Corte Caballero",
@@ -1372,27 +1390,27 @@ class TestServicesLocked:
         assert ctx.services_locked is True
 
     def test_services_locked_reset_on_new_context(self):
-        """New BookingContextV7 always starts with services_locked=False."""
-        ctx = BookingContextV7()
+        """New BookingContext always starts with services_locked=False."""
+        ctx = BookingContext()
         assert ctx.services_locked is False
 
     def test_services_locked_survives_serialization(self):
         """services_locked=True persists through to_mode_context/from_mode_context."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=True,
             service_id="uuid-corte",
             service_name="Corte Caballero",
             selected_services=["Corte Caballero"],
         )
         serialized = ctx.to_mode_context()
-        restored = BookingContextV7.from_mode_context(serialized)
+        restored = BookingContext.from_mode_context(serialized)
 
         assert restored.services_locked is True
         assert restored.selected_services == ["Corte Caballero"]
 
     def test_addon_service_resolves_before_slots_offered(self):
         """Add-on service on a subsequent turn resolves when no offered_slots yet."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_id="uuid-corte",
             service_name="Corte Caballero",
             selected_services=["Corte Caballero"],
@@ -1423,7 +1441,7 @@ class TestServicesLocked:
 
     def test_services_not_locked_on_slots_offered_same_turn(self):
         """Lock no longer engages from apply_all — only from book()."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         apply_all_tool_results(
             {
                 "search_services": {
@@ -1467,7 +1485,7 @@ class TestMultiServiceBookingFix:
 
     def test_cross_turn_multi_service_appends(self):
         """SC-1: Cross-turn multi-service — second service appends after slots offered."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_id="uuid-corte",
             service_name="Corte de Señora",
             selected_services=["Corte de Señora"],
@@ -1503,7 +1521,7 @@ class TestMultiServiceBookingFix:
 
     def test_locked_appends_without_scalar_overwrite(self):
         """SC-3: Locked context appends new service without overwriting scalars."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=True,
             service_id="uuid-corte",
             service_name="Corte de Señora",
@@ -1536,7 +1554,7 @@ class TestMultiServiceBookingFix:
 
     def test_locked_shape3_single_appends(self):
         """SC-3 variant: Shape 3 single result also appends when locked."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=True,
             service_id="uuid-corte",
             service_name="Corte de Señora",
@@ -1544,9 +1562,7 @@ class TestMultiServiceBookingFix:
         )
         extract_service_fields(
             {
-                "services": [
-                    {"id": "uuid-tinte", "name": "Tinte", "category": "HAIRDRESSING"}
-                ],
+                "services": [{"id": "uuid-tinte", "name": "Tinte", "category": "HAIRDRESSING"}],
                 "count": 1,
                 "query": "tinte",
             },
@@ -1558,7 +1574,7 @@ class TestMultiServiceBookingFix:
 
     def test_locked_dedup_prevents_duplicate(self):
         """When locked, duplicate service names are NOT appended."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=True,
             service_id="uuid-corte",
             service_name="Corte de Señora",
@@ -1583,7 +1599,7 @@ class TestMultiServiceBookingFix:
 
     def test_no_lock_on_slot_offering(self):
         """SC-4: Lock does NOT engage when slots are offered (only on book())."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_services=["Corte de Señora"],
             services_locked=False,
         )
@@ -1609,7 +1625,7 @@ class TestMultiServiceBookingFix:
 
     def test_lock_on_book_failure(self):
         """SC-5: Lock engages on book() failure (e.g. SLOT_TAKEN)."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=False,
             selected_services=["Corte de Señora", "Tinte"],
         )
@@ -1622,7 +1638,7 @@ class TestMultiServiceBookingFix:
 
     def test_lock_on_book_success(self):
         """On book() success, lock is set briefly then cleared by reset_transient()."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=False,
             selected_services=["Corte de Señora"],
         )
@@ -1642,7 +1658,7 @@ class TestMultiServiceBookingFix:
 
     def test_lock_idempotent_on_second_book(self):
         """Second book() call does not crash — lock already True."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=True,
             selected_services=["Corte de Señora"],
         )
@@ -1665,7 +1681,7 @@ class TestSlotTakenRefreshFlag:
 
     def test_slot_taken_sets_refresh_flag(self):
         """Scenario 1: SLOT_TAKEN sets needs_availability_refresh=True."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=[
                 {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-24T10:00:00"}
             ],
@@ -1683,7 +1699,7 @@ class TestSlotTakenRefreshFlag:
 
     def test_non_slot_taken_does_not_set_refresh_flag(self):
         """Other error codes do NOT set needs_availability_refresh."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=[{"stylist_id": "s1", "time": "10:00"}],
             needs_availability_refresh=False,
         )
@@ -1696,7 +1712,7 @@ class TestSlotTakenRefreshFlag:
 
     def test_fresh_availability_clears_refresh_flag(self):
         """Scenario 2: extract_slot_fields clears needs_availability_refresh on fresh slots."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             needs_availability_refresh=True,
             offered_slots=None,
         )
@@ -1722,13 +1738,13 @@ class TestSlotTakenRefreshFlag:
         assert len(ctx.offered_slots) == 1
 
     def test_refresh_flag_default_is_false(self):
-        """New BookingContextV7 defaults needs_availability_refresh=False."""
-        ctx = BookingContextV7()
+        """New BookingContext defaults needs_availability_refresh=False."""
+        ctx = BookingContext()
         assert ctx.needs_availability_refresh is False
 
     def test_booking_success_does_not_set_refresh_flag(self):
         """Successful booking does NOT set the refresh flag."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             needs_availability_refresh=False,
             offered_slots=[{"stylist_id": "s1", "time": "10:00"}],
         )
@@ -1746,9 +1762,9 @@ class TestSlotTakenRefreshFlag:
 
     def test_refresh_flag_survives_serialization(self):
         """needs_availability_refresh=True persists through to_mode_context/from_mode_context."""
-        ctx = BookingContextV7(needs_availability_refresh=True, book_failure_count=1)
+        ctx = BookingContext(needs_availability_refresh=True, book_failure_count=1)
         serialized = ctx.to_mode_context()
-        restored = BookingContextV7.from_mode_context(serialized)
+        restored = BookingContext.from_mode_context(serialized)
 
         assert restored.needs_availability_refresh is True
         assert restored.book_failure_count == 1
@@ -1764,7 +1780,7 @@ class TestExtractBookingResultRejected:
 
     def test_rejected_result_no_failure_count_increment(self):
         """Rejected result should NOT increment book_failure_count."""
-        ctx = BookingContextV7(book_failure_count=0)
+        ctx = BookingContext(book_failure_count=0)
         extract_booking_result(
             {"rejected": True, "error_code": "NO_OFFERED_SLOTS", "tool_name": "book"},
             ctx,
@@ -1774,7 +1790,7 @@ class TestExtractBookingResultRejected:
 
     def test_rejected_result_no_services_locked(self):
         """Rejected result should NOT set services_locked."""
-        ctx = BookingContextV7(services_locked=False)
+        ctx = BookingContext(services_locked=False)
         extract_booking_result(
             {"rejected": True, "error_code": "NO_CUSTOMER_NAME", "tool_name": "book"},
             ctx,
@@ -1784,7 +1800,7 @@ class TestExtractBookingResultRejected:
 
     def test_rejected_result_no_booking_completed(self):
         """Rejected result should NOT set _booking_completed."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         extract_booking_result(
             {"rejected": True, "error_code": "NEEDS_AVAILABILITY_REFRESH", "tool_name": "book"},
             ctx,
@@ -1794,7 +1810,7 @@ class TestExtractBookingResultRejected:
 
     def test_rejected_result_preserves_needs_availability_refresh(self):
         """Rejected result should NOT change needs_availability_refresh."""
-        ctx = BookingContextV7(needs_availability_refresh=True)
+        ctx = BookingContext(needs_availability_refresh=True)
         extract_booking_result(
             {"rejected": True, "error_code": "NEEDS_AVAILABILITY_REFRESH", "tool_name": "book"},
             ctx,
@@ -1804,7 +1820,7 @@ class TestExtractBookingResultRejected:
 
     def test_real_failure_still_increments(self):
         """Non-rejected failure should still increment book_failure_count."""
-        ctx = BookingContextV7(book_failure_count=0)
+        ctx = BookingContext(book_failure_count=0)
         extract_booking_result(
             {"success": False, "error_code": "VALIDATION_ERROR"},
             ctx,
@@ -1824,15 +1840,25 @@ class TestClarificationQueueBehavior:
 
     def test_shape2_appends_to_queue(self):
         """Two Shape 2 results should produce 2 entries in the queue."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         # First clarification
         extract_service_fields(
             {
                 "clarification_needed": {
                     "axis": "audience",
                     "options": [
-                        {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
-                        {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                        {
+                            "label": "Caballero",
+                            "value": "caballero",
+                            "service_name": "Corte Caballero",
+                            "service_id": "cc1",
+                        },
+                        {
+                            "label": "Dama",
+                            "value": "dama",
+                            "service_name": "Cortar",
+                            "service_id": "cd1",
+                        },
                     ],
                 },
             },
@@ -1846,8 +1872,18 @@ class TestClarificationQueueBehavior:
                 "clarification_needed": {
                     "axis": "hair_density",
                     "options": [
-                        {"label": "Normal", "value": "normal", "service_name": "Mechas", "service_id": "m1"},
-                        {"label": "Largo", "value": "largo", "service_name": "Mechas XL", "service_id": "m2"},
+                        {
+                            "label": "Normal",
+                            "value": "normal",
+                            "service_name": "Mechas",
+                            "service_id": "m1",
+                        },
+                        {
+                            "label": "Largo",
+                            "value": "largo",
+                            "service_name": "Mechas XL",
+                            "service_id": "m2",
+                        },
                     ],
                 },
             },
@@ -1860,7 +1896,7 @@ class TestClarificationQueueBehavior:
     def test_shape1_then_shape2_preserves_both(self):
         """REQ-BRF-4: Shape 1 (tinte) then Shape 2 (corte clarification).
         selected_services has tinte, pending_clarifications has corte entry."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         # Shape 1: resolved tinte
         extract_service_fields(
             {
@@ -1883,8 +1919,18 @@ class TestClarificationQueueBehavior:
                 "clarification_needed": {
                     "axis": "audience",
                     "options": [
-                        {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
-                        {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                        {
+                            "label": "Caballero",
+                            "value": "caballero",
+                            "service_name": "Corte Caballero",
+                            "service_id": "cc1",
+                        },
+                        {
+                            "label": "Dama",
+                            "value": "dama",
+                            "service_name": "Cortar",
+                            "service_id": "cd1",
+                        },
                     ],
                 },
             },
@@ -1897,15 +1943,25 @@ class TestClarificationQueueBehavior:
     def test_shape2_then_shape1_preserves_both(self):
         """REQ-BRF-4: Reversed order — Shape 2 (corte clarification) then Shape 1 (tinte).
         selected_services has tinte, pending_clarifications still has corte entry."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         # Shape 2: clarification for corte
         extract_service_fields(
             {
                 "clarification_needed": {
                     "axis": "audience",
                     "options": [
-                        {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
-                        {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                        {
+                            "label": "Caballero",
+                            "value": "caballero",
+                            "service_name": "Corte Caballero",
+                            "service_id": "cc1",
+                        },
+                        {
+                            "label": "Dama",
+                            "value": "dama",
+                            "service_name": "Cortar",
+                            "service_id": "cd1",
+                        },
                     ],
                 },
             },
@@ -1934,19 +1990,34 @@ class TestClarificationQueueBehavior:
     def test_shape1_clears_only_matching_clarification(self):
         """REQ-BRF-5: Shape 1 resolving 'Corte Caballero' removes only the matching
         clarification entry, not unrelated ones."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_clarifications=[
                 {
                     "axis": "audience",
                     "options": [
-                        {"label": "Caballero", "value": "caballero", "service_name": "Corte Caballero", "service_id": "cc1"},
-                        {"label": "Dama", "value": "dama", "service_name": "Cortar", "service_id": "cd1"},
+                        {
+                            "label": "Caballero",
+                            "value": "caballero",
+                            "service_name": "Corte Caballero",
+                            "service_id": "cc1",
+                        },
+                        {
+                            "label": "Dama",
+                            "value": "dama",
+                            "service_name": "Cortar",
+                            "service_id": "cd1",
+                        },
                     ],
                 },
                 {
                     "axis": "hair_density",
                     "options": [
-                        {"label": "Normal", "value": "normal", "service_name": "Mechas", "service_id": "m1"},
+                        {
+                            "label": "Normal",
+                            "value": "normal",
+                            "service_name": "Mechas",
+                            "service_id": "m1",
+                        },
                     ],
                 },
             ],
@@ -1979,9 +2050,9 @@ class TestClarificationQueueBehavior:
 class TestExtractBookingResultResetTransient:
     """Task 4.2: reset_transient() is called on success but NOT on failure."""
 
-    def _populated_ctx(self) -> BookingContextV7:
+    def _populated_ctx(self) -> BookingContext:
         """Return a context with transient fields populated (typical post-booking state)."""
-        return BookingContextV7(
+        return BookingContext(
             service_id="svc-001",
             service_name="Corte de Dama",
             stylist_id="sty-001",
@@ -2201,9 +2272,9 @@ class TestAudienceClarificationFix:
     - Pre-existing ctx.service_audience_hint still works
     """
 
-    def _make_ctx(self, hint: str | None = None) -> BookingContextV7:
+    def _make_ctx(self, hint: str | None = None) -> BookingContext:
         """Create a context with pending audience clarification."""
-        return BookingContextV7(
+        return BookingContext(
             service_audience_hint=hint,
             pending_clarifications=[dict(_AUDIENCE_CLARIFICATION)],
         )
@@ -2317,7 +2388,7 @@ class TestAudienceClarificationFix:
 
     def test_resolved_service_appended_not_overwritten(self):
         """When existing service is in selected_services, resolved one is prepended."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_audience_hint=None,
             selected_services=["Tinte Color"],
             pending_clarifications=[dict(_AUDIENCE_CLARIFICATION)],
@@ -2336,7 +2407,7 @@ class TestAudienceClarificationFix:
 
     def test_candidate_services_cleared_after_resolution(self):
         """candidate_services is cleared after audience resolution."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_audience_hint=None,
             candidate_services=[{"id": "x", "name": "X"}],
             pending_clarifications=[dict(_AUDIENCE_CLARIFICATION)],

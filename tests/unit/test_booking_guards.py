@@ -6,9 +6,12 @@ Coverage:
 - _pre_tool_call Guard 3: reject book() when selected_services is empty (REQ-BSI-4)
 - _pre_tool_call Guard 4: reject book() when customer_name missing (REQ-BRF-1)
 - _pre_tool_call Guard 5: reject book() when customer_id missing (REQ-BRF-1)
+- _pre_tool_call Guard 6: reject book() when confirmation_shown is False
 - _pre_tool_call passthrough: non-book tools unaffected
 - get_tools() circuit breaker: excludes book when book_failure_count >= 3 (REQ-BSI-3)
 - ToolCallRejection in agentic loop: ainvoke skipped, ToolMessage with rejection (REQ-BRF-1)
+- _detect_confirmation_exchange: premature confirmation_shown prevention
+- _detect_confirmation_exchange: confirmation_shown set when data is complete
 
 All LLM calls are mocked — tests do NOT require a real LLM or DB.
 """
@@ -18,8 +21,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agent.modes.base import ToolCallRejection
-from agent.modes.booking_context_v7 import BookingContextV7
-from agent.modes.booking_mode_v7 import BookingModeV7
+from agent.modes.booking_context import BookingContext
+from agent.modes.booking_mode import BookingMode, _detect_confirmation_exchange
 
 
 # =============================================================================
@@ -27,15 +30,15 @@ from agent.modes.booking_mode_v7 import BookingModeV7
 # =============================================================================
 
 
-def _make_mode() -> BookingModeV7:
-    """Create a BookingModeV7 with a mocked LLM."""
+def _make_mode() -> BookingMode:
+    """Create a BookingMode with a mocked LLM."""
     mock_llm = AsyncMock()
     mock_response = MagicMock()
     mock_response.content = "ok"
     mock_response.tool_calls = []
     mock_llm.ainvoke = AsyncMock(return_value=mock_response)
     mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-    return BookingModeV7(tools=[], llm_client=mock_llm)
+    return BookingMode(tools=[], llm_client=mock_llm)
 
 
 # =============================================================================
@@ -50,7 +53,7 @@ class TestGuardEmptyOfferedSlots:
     async def test_rejects_book_when_offered_slots_none(self):
         """Scenario 1: offered_slots=None -> ToolCallRejection."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=None,
             selected_services=["Corte Caballero"],
             customer_name="Pedro",
@@ -66,7 +69,7 @@ class TestGuardEmptyOfferedSlots:
     async def test_rejects_book_when_offered_slots_empty_list(self):
         """Scenario 1 variant: offered_slots=[] (falsy) -> ToolCallRejection."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[],
             selected_services=["Corte Caballero"],
             customer_name="Pedro",
@@ -82,7 +85,7 @@ class TestGuardEmptyOfferedSlots:
     async def test_allows_book_when_offered_slots_populated(self):
         """Scenario 2: offered_slots has slots -> no guard rejection."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[
                 {
                     "stylist_id": "s1",
@@ -107,6 +110,7 @@ class TestGuardEmptyOfferedSlots:
             customer_name="Pedro",
             customer_id="cust-1",
             needs_availability_refresh=False,
+            confirmation_shown=True,
         )
         args = {"customer_id": "cust-1", "slot_index": 2}
 
@@ -128,7 +132,7 @@ class TestGuardNeedsAvailabilityRefresh:
     async def test_rejects_book_when_refresh_needed(self):
         """needs_availability_refresh=True -> ToolCallRejection."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[
                 {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
             ],
@@ -147,7 +151,7 @@ class TestGuardNeedsAvailabilityRefresh:
     async def test_allows_book_when_refresh_not_needed(self):
         """needs_availability_refresh=False -> guard does not fire."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[
                 {
                     "stylist_id": "s1",
@@ -160,6 +164,7 @@ class TestGuardNeedsAvailabilityRefresh:
             selected_services=["Corte Caballero"],
             customer_name="Pedro",
             customer_id="cust-1",
+            confirmation_shown=True,
         )
         args = {"customer_id": "cust-1", "slot_index": 1}
 
@@ -180,7 +185,7 @@ class TestGuardEmptyServices:
     async def test_rejects_book_when_services_empty(self):
         """Scenario 1: selected_services=[] -> ToolCallRejection."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[
                 {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
             ],
@@ -199,7 +204,7 @@ class TestGuardEmptyServices:
     async def test_allows_book_when_services_populated(self):
         """Scenario 2: selected_services has items -> guard does not fire."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[
                 {
                     "stylist_id": "s1",
@@ -212,6 +217,7 @@ class TestGuardEmptyServices:
             needs_availability_refresh=False,
             customer_name="Pedro",
             customer_id="cust-1",
+            confirmation_shown=True,
         )
         args = {"customer_id": "cust-1", "slot_index": 1}
 
@@ -231,7 +237,7 @@ class TestGuardNoCustomerName:
     @pytest.mark.asyncio
     async def test_rejects_book_when_customer_name_none(self):
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[
                 {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
             ],
@@ -250,7 +256,7 @@ class TestGuardNoCustomerName:
     async def test_rejects_book_when_customer_name_is_cliente(self):
         """'Cliente' placeholder is treated as missing name."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[
                 {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
             ],
@@ -277,7 +283,7 @@ class TestGuardNoCustomerId:
     @pytest.mark.asyncio
     async def test_rejects_book_when_customer_id_none(self):
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[
                 {"stylist_id": "s1", "time": "10:00", "full_datetime": "2026-03-27T10:00:00+01:00"}
             ],
@@ -305,7 +311,7 @@ class TestNonBookToolsPassthrough:
     @pytest.mark.asyncio
     async def test_search_services_passthrough(self):
         mode = _make_mode()
-        mode._ctx = BookingContextV7(offered_slots=None, selected_services=[])
+        mode._ctx = BookingContext(offered_slots=None, selected_services=[])
         args = {"query": "corte"}
 
         result = await mode._pre_tool_call("search_services", args)
@@ -315,7 +321,7 @@ class TestNonBookToolsPassthrough:
     @pytest.mark.asyncio
     async def test_check_availability_passthrough(self):
         mode = _make_mode()
-        mode._ctx = BookingContextV7(offered_slots=None, needs_availability_refresh=True)
+        mode._ctx = BookingContext(offered_slots=None, needs_availability_refresh=True)
         args = {"date": "2026-03-27", "stylist_id": "s1"}
 
         result = await mode._pre_tool_call("check_availability", args)
@@ -325,7 +331,7 @@ class TestNonBookToolsPassthrough:
     @pytest.mark.asyncio
     async def test_manage_customer_passthrough(self):
         mode = _make_mode()
-        mode._ctx = BookingContextV7()
+        mode._ctx = BookingContext()
         args = {"action": "get", "phone": "+34612345678"}
 
         result = await mode._pre_tool_call("manage_customer", args)
@@ -344,7 +350,7 @@ class TestCircuitBreakerGetTools:
     def test_excludes_book_at_failure_count_3(self):
         """Scenario 1: book_failure_count=3 -> book tool removed."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(book_failure_count=3)
+        mode._ctx = BookingContext(book_failure_count=3)
 
         tools = mode.get_tools()
         tool_names = [t.name for t in tools]
@@ -354,7 +360,7 @@ class TestCircuitBreakerGetTools:
     def test_excludes_book_at_failure_count_above_3(self):
         """Scenario 1 variant: book_failure_count=5 -> book tool still removed."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(book_failure_count=5)
+        mode._ctx = BookingContext(book_failure_count=5)
 
         tools = mode.get_tools()
         tool_names = [t.name for t in tools]
@@ -364,7 +370,7 @@ class TestCircuitBreakerGetTools:
     def test_includes_book_at_failure_count_below_3(self):
         """Scenario 2: book_failure_count=1 -> book tool present."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(book_failure_count=1)
+        mode._ctx = BookingContext(book_failure_count=1)
 
         tools = mode.get_tools()
         tool_names = [t.name for t in tools]
@@ -374,7 +380,7 @@ class TestCircuitBreakerGetTools:
     def test_includes_book_at_failure_count_0(self):
         """Scenario 2 variant: fresh context (count=0) -> book tool present."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(book_failure_count=0)
+        mode._ctx = BookingContext(book_failure_count=0)
 
         tools = mode.get_tools()
         tool_names = [t.name for t in tools]
@@ -384,7 +390,7 @@ class TestCircuitBreakerGetTools:
     def test_includes_book_at_failure_count_2(self):
         """Scenario 2 edge case: count=2 (prompt warning fires, but tool stays)."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(book_failure_count=2)
+        mode._ctx = BookingContext(book_failure_count=2)
 
         tools = mode.get_tools()
         tool_names = [t.name for t in tools]
@@ -404,7 +410,7 @@ class TestCircuitBreakerGetTools:
     def test_other_tools_always_present(self):
         """Even when book is excluded, other booking tools remain."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(book_failure_count=3)
+        mode._ctx = BookingContext(book_failure_count=3)
 
         tools = mode.get_tools()
         tool_names = [t.name for t in tools]
@@ -426,7 +432,7 @@ class TestGuardPriority:
     async def test_empty_slots_takes_priority_over_refresh(self):
         """Both empty slots AND refresh=True -> NO_OFFERED_SLOTS wins."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=None,
             needs_availability_refresh=True,
             selected_services=[],
@@ -443,7 +449,7 @@ class TestGuardPriority:
     async def test_refresh_takes_priority_over_empty_services(self):
         """Slots exist, refresh=True, services empty -> NEEDS_AVAILABILITY_REFRESH wins."""
         mode = _make_mode()
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[{"stylist_id": "s1", "time": "10:00"}],
             needs_availability_refresh=True,
             selected_services=[],
@@ -472,7 +478,7 @@ class TestToolCallRejectionInAgenticLoop:
         mode = _make_mode()
 
         # Set up context that will cause NO_OFFERED_SLOTS rejection
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=None,
             selected_services=["Corte Caballero"],
             customer_name="Pedro",
@@ -524,7 +530,7 @@ class TestToolCallRejectionInAgenticLoop:
         mode = _make_mode()
 
         # Set up context that will NOT trigger rejection
-        mode._ctx = BookingContextV7(
+        mode._ctx = BookingContext(
             offered_slots=[
                 {
                     "stylist_id": "s1",
@@ -572,3 +578,256 @@ class TestToolCallRejectionInAgenticLoop:
 
         # tool.ainvoke WAS called
         mock_tool.ainvoke.assert_called_once()
+
+
+# =============================================================================
+# Guard 6: reject book() when confirmation_shown is False
+# =============================================================================
+
+
+class TestConfirmationGate:
+    """Confirmation gate: _pre_tool_call rejects book() when confirmation_shown is False."""
+
+    @pytest.mark.asyncio
+    async def test_confirmation_gate_blocks_book_without_summary(self):
+        """All booking data collected but confirmation_shown=False -> CONFIRMATION_NOT_SHOWN."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            offered_slots=[
+                {
+                    "stylist_id": "s1",
+                    "time": "10:00",
+                    "full_datetime": "2026-03-27T10:00:00+01:00",
+                    "stylist_name": "Maria",
+                }
+            ],
+            selected_services=["Corte Dama"],
+            customer_name="Laura García",
+            customer_id="cust-123",
+            needs_availability_refresh=False,
+            confirmation_shown=False,
+        )
+        args = {"customer_id": "cust-123", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "CONFIRMATION_NOT_SHOWN"
+
+    @pytest.mark.asyncio
+    async def test_confirmation_gate_allows_book_after_confirmation(self):
+        """confirmation_shown=True -> book() proceeds (no rejection)."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            offered_slots=[
+                {
+                    "stylist_id": "s1",
+                    "time": "10:00",
+                    "full_datetime": "2026-03-27T10:00:00+01:00",
+                    "stylist_name": "Maria",
+                }
+            ],
+            selected_services=["Corte Dama"],
+            customer_name="Laura García",
+            customer_id="cust-123",
+            needs_availability_refresh=False,
+            confirmation_shown=True,
+        )
+        args = {"customer_id": "cust-123", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        # No rejection — returned modified args dict
+        assert not isinstance(result, ToolCallRejection)
+        assert isinstance(result, dict)
+
+
+# =============================================================================
+# Confirmation detection: premature vs correct confirmation_shown
+# =============================================================================
+
+
+class TestDetectConfirmationExchange:
+    """_detect_confirmation_exchange must guard against premature confirmation_shown."""
+
+    def test_confirmation_shown_not_set_on_early_si(self):
+        """User says 'sí' but booking data is incomplete (no stylist_id) ->
+        confirmation_shown stays False."""
+        ctx = BookingContext(
+            service_id="svc-1",
+            service_name="Corte Dama",
+            selected_services=["Corte Dama"],
+            stylist_id=None,  # <-- missing
+            offered_slots=None,  # <-- missing
+            customer_name="Laura",
+            customer_id="cust-1",
+            confirmation_shown=False,
+        )
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Para dama o caballero?"},
+                {"role": "user", "content": "sí"},
+            ],
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_confirmation_shown_not_set_when_no_customer(self):
+        """All data except customer -> confirmation_shown stays False."""
+        ctx = BookingContext(
+            service_id="svc-1",
+            selected_services=["Corte Dama"],
+            stylist_id="stylist-1",
+            offered_slots=[{"stylist_id": "stylist-1", "time": "10:00"}],
+            customer_name=None,  # <-- missing
+            customer_id=None,  # <-- missing
+            confirmation_shown=False,
+        )
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Confirmo la cita?"},
+                {"role": "user", "content": "sí, dale"},
+            ],
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_confirmation_shown_not_set_when_no_services(self):
+        """All data except services -> confirmation_shown stays False."""
+        ctx = BookingContext(
+            service_id=None,
+            selected_services=[],  # <-- missing
+            stylist_id="stylist-1",
+            offered_slots=[{"stylist_id": "stylist-1", "time": "10:00"}],
+            customer_name="Laura",
+            customer_id="cust-1",
+            confirmation_shown=False,
+        )
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Confirmo la cita?"},
+                {"role": "user", "content": "dale"},
+            ],
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_confirmation_shown_set_on_complete_data_si(self):
+        """All booking data complete + summary marker + user 'sí' ->
+        confirmation_shown = True."""
+        ctx = BookingContext(
+            service_id="svc-1",
+            service_name="Corte Dama",
+            selected_services=["Corte Dama"],
+            stylist_id="stylist-1",
+            stylist_name="María",
+            offered_slots=[
+                {
+                    "stylist_id": "stylist-1",
+                    "time": "10:00",
+                    "full_datetime": "2026-03-27T10:00:00+01:00",
+                }
+            ],
+            customer_name="Laura García",
+            customer_id="cust-123",
+            confirmation_shown=False,
+        )
+        state = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Aquí tienes el resumen de tu cita:\n"
+                        "- Servicio: Corte Dama\n"
+                        "- Estilista: María\n"
+                        "- Fecha: jueves 27 de marzo a las 10:00\n"
+                        "¿Confirmo la cita?"
+                    ),
+                },
+                {"role": "user", "content": "sí, dale"},
+            ],
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is True
+
+    def test_confirmation_shown_set_with_confirmamos_marker(self):
+        """Summary with '¿confirmamos?' marker + user 'perfecto' -> True."""
+        ctx = BookingContext(
+            service_id="svc-2",
+            selected_services=["Tinte"],
+            stylist_id="stylist-2",
+            offered_slots=[{"stylist_id": "stylist-2", "time": "14:00"}],
+            customer_name="Ana",
+            customer_id="cust-456",
+            confirmation_shown=False,
+        )
+        state = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Tinte con Lucía el viernes a las 14:00. ¿Confirmamos?",
+                },
+                {"role": "user", "content": "perfecto"},
+            ],
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is True
+
+    def test_confirmation_not_set_when_no_summary_marker(self):
+        """All data complete but assistant message has NO summary marker ->
+        confirmation_shown stays False even if user says 'sí'."""
+        ctx = BookingContext(
+            service_id="svc-1",
+            selected_services=["Corte Dama"],
+            stylist_id="stylist-1",
+            offered_slots=[{"stylist_id": "stylist-1", "time": "10:00"}],
+            customer_name="Laura",
+            customer_id="cust-1",
+            confirmation_shown=False,
+        )
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Para qué día te gustaría la cita?"},
+                {"role": "user", "content": "sí"},
+            ],
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_confirmation_not_set_when_user_not_affirmative(self):
+        """All data complete, summary shown, but user says something non-affirmative ->
+        confirmation_shown stays False."""
+        ctx = BookingContext(
+            service_id="svc-1",
+            selected_services=["Corte Dama"],
+            stylist_id="stylist-1",
+            offered_slots=[{"stylist_id": "stylist-1", "time": "10:00"}],
+            customer_name="Laura",
+            customer_id="cust-1",
+            confirmation_shown=False,
+        )
+        state = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Resumen de tu cita: Corte Dama. ¿Confirmo?",
+                },
+                {"role": "user", "content": "espera, puedo cambiar la hora?"},
+            ],
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False

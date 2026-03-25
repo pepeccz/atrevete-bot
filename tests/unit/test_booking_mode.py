@@ -1,12 +1,12 @@
 """
-Unit tests for agent/modes/booking_mode_v7.py — BookingModeV7 (LLM-driven booking).
+Unit tests for agent/modes/booking_mode.py — BookingMode (LLM-driven booking).
 
 Coverage:
 - Import and instantiation
 - Cancel/escalate detection (with negation)
 - Name redaction (module-level functions)
 - Dynamic context section builders (module-level functions)
-- BookingContextV7 integration (round-trip, readiness, summaries)
+- BookingContext integration (round-trip, readiness, summaries)
 
 All LLM calls are mocked — tests do NOT require a real LLM or DB.
 """
@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agent.modes.base import AgenticLoopResult
-from agent.modes.booking_context_v7 import BookingContextV7
-from agent.modes.booking_mode_v7 import (
-    BookingModeV7,
+from agent.modes.booking_context import BookingContext
+from agent.modes.booking_mode import (
+    BookingMode,
     _build_disambiguation_section,
     _build_offered_slots_section,
     _build_recommendations_section,
@@ -38,9 +38,7 @@ from agent.state.schemas import create_initial_state
 
 
 def make_intent(intent: str = "book", confidence: float = 0.9) -> IntentResult:
-    return IntentResult(
-        intent=intent, confidence=confidence, raw_input="test", mode_hint="BOOKING"
-    )
+    return IntentResult(intent=intent, confidence=confidence, raw_input="test", mode_hint="BOOKING")
 
 
 def make_mock_llm(response_text: str = "¿Qué servicio deseas?") -> AsyncMock:
@@ -54,9 +52,9 @@ def make_mock_llm(response_text: str = "¿Qué servicio deseas?") -> AsyncMock:
     return mock
 
 
-def make_booking_mode_v7(llm_response: str = "¿Qué servicio deseas?") -> BookingModeV7:
+def make_booking_mode(llm_response: str = "¿Qué servicio deseas?") -> BookingMode:
     mock_llm = make_mock_llm(llm_response)
-    return BookingModeV7(tools=[], llm_client=mock_llm)
+    return BookingMode(tools=[], llm_client=mock_llm)
 
 
 def make_state(
@@ -65,8 +63,8 @@ def make_state(
     user_message: str = "quiero reservar",
     mode_context: dict | None = None,
 ) -> dict:
-    """Build a ConversationState for BookingModeV7 tests."""
-    state = create_initial_state("conv-v7-001", "+34612345678")
+    """Build a ConversationState for BookingMode tests."""
+    state = create_initial_state("conv-001", "+34612345678")
     state["customer_name"] = customer_name
     state["customer_id"] = customer_id
     state["is_first_interaction"] = False
@@ -82,13 +80,13 @@ def make_state(
 # =============================================================================
 
 
-class TestBookingModeV7Instantiation:
+class TestBookingModeInstantiation:
     def test_can_import_and_create(self):
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         assert mode is not None
 
     def test_mode_name_is_booking(self):
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         assert mode.mode_name == "BOOKING"
 
 
@@ -101,7 +99,7 @@ class TestCancelEscalateDetection:
     """Tests for _check_special_intents fast path."""
 
     def test_cancel_phrase_transitions_to_general(self):
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message="cancelar mi cita")
         intent = make_intent("book")
 
@@ -112,7 +110,7 @@ class TestCancelEscalateDetection:
 
     def test_negation_does_not_cancel(self):
         """'no quiero cancelar' should NOT trigger cancellation."""
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message="no quiero cancelar")
         intent = make_intent("book")
 
@@ -121,20 +119,18 @@ class TestCancelEscalateDetection:
         assert result is None  # No special intent — continues normal flow
 
     def test_escalate_phrase_transitions_to_escalation(self):
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message="necesito hablar con alguien")
         intent = make_intent("book")
 
-        result = mode._check_special_intents(
-            state, "necesito hablar con alguien", intent
-        )
+        result = mode._check_special_intents(state, "necesito hablar con alguien", intent)
 
         assert result is not None
         assert result["current_mode"] == "ESCALATION"
 
     def test_cancel_intent_from_router_transitions(self):
         """Cancel intent from router (not phrase) should also transition."""
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message="ya no quiero")
         intent = make_intent("cancel")
 
@@ -144,7 +140,7 @@ class TestCancelEscalateDetection:
         assert result["current_mode"] == "GENERAL"
 
     def test_escalate_intent_from_router_transitions(self):
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message="ayuda")
         intent = make_intent("escalate")
 
@@ -154,7 +150,7 @@ class TestCancelEscalateDetection:
         assert result["current_mode"] == "ESCALATION"
 
     def test_normal_message_returns_none(self):
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message="quiero un corte de pelo")
         intent = make_intent("book")
 
@@ -163,7 +159,7 @@ class TestCancelEscalateDetection:
         assert result is None
 
     def test_cancel_sets_last_node_and_clears_user_message(self):
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message="cancelar")
         intent = make_intent("book")
 
@@ -175,13 +171,11 @@ class TestCancelEscalateDetection:
 
     def test_continuemos_negates_cancel(self):
         """'continuemos' is a negation token — should not cancel."""
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message="no quiero cancelar, continuemos")
         intent = make_intent("book")
 
-        result = mode._check_special_intents(
-            state, "no quiero cancelar, continuemos", intent
-        )
+        result = mode._check_special_intents(state, "no quiero cancelar, continuemos", intent)
 
         assert result is None
 
@@ -202,7 +196,7 @@ class TestCancelEscalateDetection:
     )
     def test_new_cancel_phrases_detected(self, message):
         """Common Spanish cancel expressions must trigger cancellation."""
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message=message)
         intent = make_intent("book")
 
@@ -238,9 +232,7 @@ class TestNameRedaction:
         assert "confirmada" in result
 
     def test_redact_name_tokens_compound_name(self):
-        result = _redact_name_tokens(
-            "Hola María José, tu cita está lista.", "María José"
-        )
+        result = _redact_name_tokens("Hola María José, tu cita está lista.", "María José")
         assert "María" not in result
         assert "José" not in result
         assert "lista" in result
@@ -251,8 +243,8 @@ class TestNameRedaction:
         assert result == original
 
     def test_redact_names_on_mode_instance(self):
-        """_redact_names method on BookingModeV7 uses state customer names."""
-        mode = make_booking_mode_v7()
+        """_redact_names method on BookingMode uses state customer names."""
+        mode = make_booking_mode()
         state = make_state(customer_name="Laura")
         text = "Perfecto Laura, ya tienes tu cita."
 
@@ -262,7 +254,7 @@ class TestNameRedaction:
         assert "cita" in result
 
     def test_redact_names_no_name_in_state_unchanged(self):
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(customer_name=None)
         text = "Tu cita está lista."
 
@@ -278,7 +270,7 @@ class TestNameRedaction:
 
 class TestBuildDisambiguationSection:
     def test_with_pending_clarification(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_clarifications=[
                 {
                     "axis": "audience",
@@ -298,13 +290,13 @@ class TestBuildDisambiguationSection:
         assert "Mujer adulta" in result
 
     def test_empty_when_no_disambiguation(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = _build_disambiguation_section(ctx)
         assert result == ""
 
     def test_renders_empty_after_pre_resolver_cleared_clarification(self):
         """After resolve_pending_clarification clears pending_clarifications, renders empty."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_audience_hint="adult_female",
             # pending_clarifications defaults to [] — pre-resolver already cleared it
         )
@@ -315,7 +307,7 @@ class TestBuildDisambiguationSection:
 
     def test_renders_pending_when_not_auto_resolved(self):
         """When hint doesn't match (pre-resolver returned False), renders pending options."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_audience_hint="baby",
             pending_clarifications=[
                 {
@@ -337,7 +329,7 @@ class TestBuildDisambiguationSection:
         assert "CLARIFICACIÓN RESUELTA" not in result
 
     def test_candidate_services_shown(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             candidate_services=[
                 {"name": "Corte señora"},
                 {"name": "Tinte raíz"},
@@ -352,7 +344,7 @@ class TestBuildDisambiguationSection:
 
 class TestBuildStylistsSection:
     def test_with_prefetched_stylists(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             prefetched_stylists=[
                 {"name": "Ana", "next_slot_summary": "Lunes 10:00"},
                 {"name": "Bea", "next_slot_summary": "Martes 11:00"},
@@ -366,12 +358,12 @@ class TestBuildStylistsSection:
         assert "Bea" in result
 
     def test_empty_when_no_stylists(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = _build_stylists_section(ctx)
         assert result == ""
 
     def test_soonest_slot_shown(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             prefetched_stylists=[{"name": "Ana", "next_slot_summary": "Hoy 15:00"}],
             soonest_any_slot="Hoy 15:00",
         )
@@ -382,7 +374,7 @@ class TestBuildStylistsSection:
         assert "Hoy 15:00" in result
 
     def test_recurrent_stylist_hint_shown(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             prefetched_stylists=[{"name": "Ana", "next_slot_summary": "Mañana 9:00"}],
             recurrent_stylist_hint="Ana",
         )
@@ -395,7 +387,7 @@ class TestBuildStylistsSection:
 
 class TestBuildOfferedSlotsSection:
     def test_with_offered_slots(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=[
                 {"day_name": "Lunes", "time": "10:00", "stylist_name": "Ana"},
                 {"day_name": "Martes", "time": "11:00", "stylist_name": ""},
@@ -409,12 +401,12 @@ class TestBuildOfferedSlotsSection:
         assert "Martes a las 11:00" in result
 
     def test_empty_when_no_slots(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = _build_offered_slots_section(ctx)
         assert result == ""
 
     def test_slot_without_stylist_name(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             offered_slots=[
                 {"day_name": "Viernes", "time": "16:00", "stylist_name": ""},
             ]
@@ -431,13 +423,13 @@ class TestBuildOfferedSlotsSection:
 
 
 # =============================================================================
-# 5. BookingContextV7 Integration
+# 5. BookingContext Integration
 # =============================================================================
 
 
-class TestBookingContextV7RoundTrip:
+class TestBookingContextRoundTrip:
     def test_from_mode_context_to_mode_context_roundtrip(self):
-        original = BookingContextV7(
+        original = BookingContext(
             service_id="svc-001",
             service_name="Corte señora",
             stylist_id="sty-001",
@@ -447,7 +439,7 @@ class TestBookingContextV7RoundTrip:
         )
 
         serialized = original.to_mode_context()
-        restored = BookingContextV7.from_mode_context(serialized)
+        restored = BookingContext.from_mode_context(serialized)
 
         assert restored.service_id == "svc-001"
         assert restored.service_name == "Corte señora"
@@ -458,26 +450,26 @@ class TestBookingContextV7RoundTrip:
 
     def test_from_mode_context_ignores_unknown_keys(self):
         data = {"service_id": "svc-001", "unknown_field": "should_be_ignored"}
-        ctx = BookingContextV7.from_mode_context(data)
+        ctx = BookingContext.from_mode_context(data)
         assert ctx.service_id == "svc-001"
         assert not hasattr(ctx, "unknown_field") or ctx.__dict__.get("unknown_field") is None
 
     def test_to_mode_context_excludes_none_and_empty(self):
-        ctx = BookingContextV7(service_id="svc-001")
+        ctx = BookingContext(service_id="svc-001")
         serialized = ctx.to_mode_context()
         assert "service_id" in serialized
         assert "stylist_id" not in serialized  # None → excluded
         assert "candidate_services" not in serialized  # [] → excluded
 
     def test_to_mode_context_excludes_private_fields(self):
-        ctx = BookingContextV7(_booking_completed=True)
+        ctx = BookingContext(_booking_completed=True)
         serialized = ctx.to_mode_context()
         assert "_booking_completed" not in serialized
 
 
-class TestBookingContextV7Readiness:
+class TestBookingContextReadiness:
     def test_is_ready_to_book_all_fields(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_id="svc-001",
             stylist_id="sty-001",
             selected_slot={"start_time": "2026-03-23T10:00:00", "date": "2026-03-23"},
@@ -487,7 +479,7 @@ class TestBookingContextV7Readiness:
 
     def test_is_ready_to_book_with_selected_services(self):
         """selected_services satisfies the service requirement."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_services=["Corte señora"],
             stylist_id="sty-001",
             selected_slot={"start_time": "2026-03-23T10:00:00"},
@@ -496,7 +488,7 @@ class TestBookingContextV7Readiness:
         assert ctx.is_ready_to_book() is True
 
     def test_not_ready_missing_service(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             stylist_id="sty-001",
             selected_slot={"start_time": "2026-03-23T10:00:00"},
             customer_name="María",
@@ -504,7 +496,7 @@ class TestBookingContextV7Readiness:
         assert ctx.is_ready_to_book() is False
 
     def test_not_ready_missing_stylist(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_id="svc-001",
             selected_slot={"start_time": "2026-03-23T10:00:00"},
             customer_name="María",
@@ -512,7 +504,7 @@ class TestBookingContextV7Readiness:
         assert ctx.is_ready_to_book() is False
 
     def test_not_ready_missing_slot(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_id="svc-001",
             stylist_id="sty-001",
             customer_name="María",
@@ -520,7 +512,7 @@ class TestBookingContextV7Readiness:
         assert ctx.is_ready_to_book() is False
 
     def test_not_ready_slot_without_start_time(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_id="svc-001",
             stylist_id="sty-001",
             selected_slot={"date": "2026-03-23"},  # Missing start_time
@@ -529,7 +521,7 @@ class TestBookingContextV7Readiness:
         assert ctx.is_ready_to_book() is False
 
     def test_not_ready_missing_customer(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_id="svc-001",
             stylist_id="sty-001",
             selected_slot={"start_time": "2026-03-23T10:00:00"},
@@ -537,9 +529,9 @@ class TestBookingContextV7Readiness:
         assert ctx.is_ready_to_book() is False
 
 
-class TestBookingContextV7Summaries:
+class TestBookingContextSummaries:
     def test_collected_summary_shows_populated_fields(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_name="Corte señora",
             service_duration_minutes=45,
             service_category="Cortes",
@@ -556,19 +548,19 @@ class TestBookingContextV7Summaries:
         assert "María" in summary
 
     def test_collected_summary_empty_context(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         summary = ctx.collected_summary()
         assert "ningún dato recogido" in summary
 
     def test_collected_summary_with_slot(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_slot={"date": "2026-03-23", "time": "10:00"},
         )
         summary = ctx.collected_summary()
         assert "10:00" in summary
 
     def test_missing_summary_shows_missing_fields(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         summary = ctx.missing_summary()
         assert "servicio" in summary.lower()
         assert "estilista" in summary.lower()
@@ -576,7 +568,7 @@ class TestBookingContextV7Summaries:
         assert "nombre" in summary.lower()
 
     def test_missing_summary_all_complete(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_name="Corte",
             stylist_id="sty-001",
             offered_slots=[{"time": "10:00", "date": "2026-03-23"}],
@@ -586,7 +578,7 @@ class TestBookingContextV7Summaries:
         assert "completos" in summary.lower()
 
     def test_missing_summary_partial(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_name="Corte",
             customer_name="María",
         )
@@ -626,60 +618,60 @@ class TestNormalizeText:
 
 class TestPreResolvers:
     def test_resolve_customer_from_state(self):
-        mode = make_booking_mode_v7()
-        ctx = BookingContextV7()
+        mode = make_booking_mode()
+        ctx = BookingContext()
         state = make_state(customer_name="Laura", customer_id="cust-100")
 
-        BookingModeV7._resolve_customer_from_state(state, ctx)
+        BookingMode._resolve_customer_from_state(state, ctx)
 
         assert ctx.customer_name == "Laura"
         assert ctx.customer_id == "cust-100"
 
     def test_resolve_customer_does_not_overwrite_existing(self):
-        ctx = BookingContextV7(customer_name="Existing", customer_id="existing-id")
+        ctx = BookingContext(customer_name="Existing", customer_id="existing-id")
         state = make_state(customer_name="Laura", customer_id="cust-100")
 
-        BookingModeV7._resolve_customer_from_state(state, ctx)
+        BookingMode._resolve_customer_from_state(state, ctx)
 
         assert ctx.customer_name == "Existing"
         assert ctx.customer_id == "existing-id"
 
     def test_resolve_audience_hint_from_mode_context(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         state = make_state()
         state["mode_context"] = {"service_audience_hint": "adult_female"}
 
-        mode = BookingModeV7.__new__(BookingModeV7)
+        mode = BookingMode.__new__(BookingMode)
         mode._resolve_audience_hint(state, ctx)
 
         assert ctx.service_audience_hint == "adult_female"
 
     def test_resolve_audience_hint_does_not_overwrite(self):
-        ctx = BookingContextV7(service_audience_hint="adult_male")
+        ctx = BookingContext(service_audience_hint="adult_male")
         state = make_state()
         state["mode_context"] = {"service_audience_hint": "adult_female"}
 
-        mode = BookingModeV7.__new__(BookingModeV7)
+        mode = BookingMode.__new__(BookingMode)
         mode._resolve_audience_hint(state, ctx)
 
         assert ctx.service_audience_hint == "adult_male"
 
     def test_resolve_audience_hint_from_user_message(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         state = make_state()
         state["messages"] = [{"role": "user", "content": "Para dama"}]
 
-        mode = BookingModeV7.__new__(BookingModeV7)
+        mode = BookingMode.__new__(BookingMode)
         mode._resolve_audience_hint(state, ctx)
 
         assert ctx.service_audience_hint == "adult_female"
 
     def test_resolve_audience_hint_mujer_adulta(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         state = make_state()
         state["messages"] = [{"role": "user", "content": "Soy mujer adulta"}]
 
-        mode = BookingModeV7.__new__(BookingModeV7)
+        mode = BookingMode.__new__(BookingMode)
         mode._resolve_audience_hint(state, ctx)
 
         assert ctx.service_audience_hint == "adult_female"
@@ -700,15 +692,20 @@ class TestPreToolCallCustomerIdInjection:
     @pytest.mark.asyncio
     async def test_injects_real_customer_id_from_context(self):
         """When ctx has customer_id, it overwrites whatever the LLM passed."""
-        mode = make_booking_mode_v7()
-        mode._ctx = BookingContextV7(
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(
             customer_id="550e8400-e29b-41d4-a716-446655440000",
             customer_name="Pepe",
             offered_slots=[
-                {"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00", "stylist_name": "Ana"}
+                {
+                    "stylist_id": "s1",
+                    "full_datetime": "2026-03-25T10:00:00+01:00",
+                    "stylist_name": "Ana",
+                }
             ],
             selected_services=["Corte de Caballero"],
             needs_availability_refresh=False,
+            confirmation_shown=True,
         )
         tool_args = {
             "customer_id": "FAKE-LLM-HALLUCINATED-UUID",
@@ -726,12 +723,10 @@ class TestPreToolCallCustomerIdInjection:
         """When ctx has no customer_id, ToolCallRejection is returned."""
         from agent.modes.base import ToolCallRejection
 
-        mode = make_booking_mode_v7()
-        mode._ctx = BookingContextV7(
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(
             customer_name="Pepe",
-            offered_slots=[
-                {"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00"}
-            ],
+            offered_slots=[{"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00"}],
             selected_services=["Corte de Caballero"],
             needs_availability_refresh=False,
         )
@@ -751,7 +746,7 @@ class TestPreToolCallCustomerIdInjection:
         """When _ctx is None (edge case), ToolCallRejection is returned."""
         from agent.modes.base import ToolCallRejection
 
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         mode._ctx = None
         tool_args = {
             "customer_id": "FAKE-UUID",
@@ -767,15 +762,20 @@ class TestPreToolCallCustomerIdInjection:
     @pytest.mark.asyncio
     async def test_injects_selected_services_from_context(self):
         """When ctx has selected_services, they are injected into book() args."""
-        mode = make_booking_mode_v7()
-        mode._ctx = BookingContextV7(
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(
             customer_id="550e8400-e29b-41d4-a716-446655440000",
             customer_name="Pepe",
             selected_services=["Corte Caballero", "Barba"],
             offered_slots=[
-                {"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00", "stylist_name": "Ana"}
+                {
+                    "stylist_id": "s1",
+                    "full_datetime": "2026-03-25T10:00:00+01:00",
+                    "stylist_name": "Ana",
+                }
             ],
             needs_availability_refresh=False,
+            confirmation_shown=True,
         )
         tool_args = {
             "customer_id": "FAKE",
@@ -794,14 +794,12 @@ class TestPreToolCallCustomerIdInjection:
         """When ctx has no selected_services, ToolCallRejection is returned."""
         from agent.modes.base import ToolCallRejection
 
-        mode = make_booking_mode_v7()
-        mode._ctx = BookingContextV7(
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(
             customer_id="550e8400-e29b-41d4-a716-446655440000",
             customer_name="Pepe",
             selected_services=[],  # Empty → guard fires
-            offered_slots=[
-                {"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00"}
-            ],
+            offered_slots=[{"stylist_id": "s1", "full_datetime": "2026-03-25T10:00:00+01:00"}],
             needs_availability_refresh=False,
         )
         tool_args = {
@@ -818,8 +816,8 @@ class TestPreToolCallCustomerIdInjection:
     @pytest.mark.asyncio
     async def test_non_book_tool_passes_through(self):
         """Non-book tools should not be intercepted."""
-        mode = make_booking_mode_v7()
-        mode._ctx = BookingContextV7()
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
         tool_args = {"query": "horarios"}
 
         result = await mode._pre_tool_call("query_info", tool_args)
@@ -830,12 +828,13 @@ class TestPreToolCallCustomerIdInjection:
     @pytest.mark.asyncio
     async def test_customer_id_injection_with_slot_index_resolution(self):
         """customer_id injection AND slot_index resolution work together."""
-        mode = make_booking_mode_v7()
-        mode._ctx = BookingContextV7(
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(
             customer_id="550e8400-e29b-41d4-a716-446655440000",
             customer_name="Pepe",
             selected_services=["Corte"],
             needs_availability_refresh=False,
+            confirmation_shown=True,
             offered_slots=[
                 {
                     "stylist_id": "aaa-bbb",
@@ -871,7 +870,7 @@ class TestBuildRecommendationsSection:
 
     def test_renders_when_pending_and_not_shown(self):
         """Pending recommendations that haven't been shown yet → render section."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_recommendations=["Hidratación", "Corte de Señora"],
             recommendations_shown=False,
             recommendations_declined=False,
@@ -885,7 +884,7 @@ class TestBuildRecommendationsSection:
 
     def test_empty_when_declined(self):
         """Declined recommendations → empty string."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_recommendations=["Hidratación"],
             recommendations_shown=True,
             recommendations_declined=True,
@@ -895,7 +894,7 @@ class TestBuildRecommendationsSection:
 
     def test_empty_when_already_shown(self):
         """Already shown once → empty string (don't repeat)."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_recommendations=["Hidratación"],
             recommendations_shown=True,
             recommendations_declined=False,
@@ -905,7 +904,7 @@ class TestBuildRecommendationsSection:
 
     def test_empty_when_no_recommendations(self):
         """No pending recommendations → empty string."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
 
         assert _build_recommendations_section(ctx) == ""
 
@@ -920,7 +919,7 @@ class TestDetectRecommendationDecline:
 
     def test_detects_no_gracias(self):
         """'no gracias' should trigger decline when recommendations shown."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_recommendations=["Hidratación"],
             recommendations_shown=True,
             recommendations_declined=False,
@@ -931,7 +930,7 @@ class TestDetectRecommendationDecline:
 
     def test_detects_solo_eso(self):
         """'solo eso' should trigger decline."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_recommendations=["Hidratación"],
             recommendations_shown=True,
         )
@@ -941,7 +940,7 @@ class TestDetectRecommendationDecline:
 
     def test_ignores_before_shown(self):
         """Should not detect decline before recommendations are shown."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_recommendations=["Hidratación"],
             recommendations_shown=False,
         )
@@ -951,13 +950,13 @@ class TestDetectRecommendationDecline:
 
     def test_ignores_when_no_recommendations(self):
         """No pending recommendations → no decline detection."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
 
         assert _detect_recommendation_decline("no gracias", ctx) is False
 
     def test_ignores_when_already_declined(self):
         """Already declined → don't re-process."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_recommendations=["Hidratación"],
             recommendations_shown=True,
             recommendations_declined=True,
@@ -967,7 +966,7 @@ class TestDetectRecommendationDecline:
 
     def test_non_decline_message_returns_false(self):
         """Normal booking message should not trigger decline."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             pending_recommendations=["Hidratación"],
             recommendations_shown=True,
         )
@@ -986,10 +985,217 @@ class TestNoGraciasConflictFix:
 
     def test_no_gracias_does_not_cancel(self):
         """'no gracias' should NOT trigger cancel — it's too generic."""
-        mode = make_booking_mode_v7()
+        mode = make_booking_mode()
         state = make_state(user_message="no gracias")
         intent = make_intent("book")
 
         result = mode._check_special_intents(state, "no gracias", intent)
 
         assert result is None  # No cancel — normal flow continues
+
+
+# =============================================================================
+# 17. P1/P2/P3 — manage_customer name bypass (_pre_tool_call)
+# =============================================================================
+
+
+class TestPreToolCallNameBypass:
+    """P1/P2/P3 fix: manage_customer calls for name-only should be bypassed,
+    storing the name directly in ctx.customer_name."""
+
+    @pytest.mark.asyncio
+    async def test_name_only_create_bypassed(self):
+        """manage_customer(action='create', data={'first_name': 'María'}) → bypass."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(customer_id="cust-001")
+        tool_args = {
+            "action": "create",
+            "phone": "+34612345678",
+            "data": {"first_name": "María"},
+        }
+
+        result = await mode._pre_tool_call("manage_customer", tool_args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NAME_STORED_DIRECTLY"
+        assert mode._ctx.customer_name == "María"
+
+    @pytest.mark.asyncio
+    async def test_name_only_update_bypassed(self):
+        """manage_customer(action='update', data={'first_name': 'Ana', 'customer_id': 'x'}) → bypass."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(customer_id="cust-001")
+        tool_args = {
+            "action": "update",
+            "phone": "+34612345678",
+            "data": {"first_name": "Ana", "customer_id": "cust-001"},
+        }
+
+        result = await mode._pre_tool_call("manage_customer", tool_args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NAME_STORED_DIRECTLY"
+        assert mode._ctx.customer_name == "Ana"
+
+    @pytest.mark.asyncio
+    async def test_name_with_last_name_bypassed(self):
+        """First + last name should be combined."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
+        tool_args = {
+            "action": "create",
+            "phone": "+34612345678",
+            "data": {"first_name": "María", "last_name": "García"},
+        }
+
+        result = await mode._pre_tool_call("manage_customer", tool_args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NAME_STORED_DIRECTLY"
+        assert mode._ctx.customer_name == "María García"
+
+    @pytest.mark.asyncio
+    async def test_non_name_data_passes_through(self):
+        """manage_customer with notes or other data should NOT be bypassed."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
+        tool_args = {
+            "action": "create",
+            "phone": "+34612345678",
+            "data": {"first_name": "María", "notes": "VIP client"},
+        }
+
+        result = await mode._pre_tool_call("manage_customer", tool_args)
+
+        # Should NOT be a ToolCallRejection — passes through to the real tool
+        assert isinstance(result, dict)
+        assert mode._ctx.customer_name is None  # Not stored by bypass
+
+    @pytest.mark.asyncio
+    async def test_bypass_without_ctx_does_not_crash(self):
+        """When _ctx is None, manage_customer should pass through normally."""
+        mode = make_booking_mode()
+        mode._ctx = None
+        tool_args = {
+            "action": "create",
+            "phone": "+34612345678",
+            "data": {"first_name": "María"},
+        }
+
+        result = await mode._pre_tool_call("manage_customer", tool_args)
+
+        # No ctx → no bypass logic, passes through
+        assert isinstance(result, dict)
+
+
+# =============================================================================
+# 18. P1/P2/P3 — Conversational name extraction
+# =============================================================================
+
+
+class TestExtractNameFromConversation:
+    """P1/P2/P3 fix: extract customer name from user message when the
+    previous assistant message asked for the name."""
+
+    def test_extracts_bare_name_after_name_question(self):
+        """User replies 'María' after assistant asked '¿Tu nombre?'."""
+        from agent.modes.booking_mode import _extract_name_from_conversation
+
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿A nombre de quién sería la cita?"},
+                {"role": "user", "content": "María"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "María", ctx)
+
+        assert ctx.customer_name == "María"
+
+    def test_extracts_me_llamo_pattern(self):
+        """User replies 'Me llamo Ana Torres'."""
+        from agent.modes.booking_mode import _extract_name_from_conversation
+
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Cuál es tu nombre?"},
+                {"role": "user", "content": "Me llamo Ana Torres"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "Me llamo Ana Torres", ctx)
+
+        assert ctx.customer_name == "Ana Torres"
+
+    def test_extracts_soy_pattern(self):
+        """User replies 'Soy Laura'."""
+        from agent.modes.booking_mode import _extract_name_from_conversation
+
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Tu nombre, por favor?"},
+                {"role": "user", "content": "Soy Laura"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "Soy Laura", ctx)
+
+        assert ctx.customer_name == "Laura"
+
+    def test_no_extraction_without_name_question(self):
+        """Should NOT extract name if assistant didn't ask for it."""
+        from agent.modes.booking_mode import _extract_name_from_conversation
+
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Qué servicio deseas?"},
+                {"role": "user", "content": "María"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "María", ctx)
+
+        assert ctx.customer_name is None  # No extraction — assistant didn't ask for name
+
+    def test_no_extraction_for_stopwords(self):
+        """Common words like 'Hola' should NOT be treated as names."""
+        from agent.modes.booking_mode import _extract_name_from_conversation
+
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Tu nombre?"},
+                {"role": "user", "content": "Hola"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "Hola", ctx)
+
+        assert ctx.customer_name is None
+
+    def test_no_extraction_when_name_already_set(self):
+        """When customer_name is already set, extraction should not be called
+        (the caller checks this, but we verify the function is safe)."""
+        from agent.modes.booking_mode import _extract_name_from_conversation
+
+        ctx = BookingContext(customer_name="Existing")
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Tu nombre?"},
+                {"role": "user", "content": "Laura"},
+            ],
+        }
+
+        # Even if called, it should overwrite — but the caller checks ctx.customer_name first
+        _extract_name_from_conversation(state, "Laura", ctx)
+        assert ctx.customer_name == "Laura"

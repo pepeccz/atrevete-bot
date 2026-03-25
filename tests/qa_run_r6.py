@@ -9,6 +9,7 @@ NOT the Chatwoot webhook payload.
 Responses are published to "outgoing_messages" Pub/Sub channel with:
   {"conversation_id": "...", "customer_phone": "...", "message": "..."}
 """
+
 import asyncio
 import json
 import time
@@ -25,14 +26,14 @@ RESPONSE_TIMEOUT = 45.0  # seconds per turn
 
 # ---------- conversation setup ----------
 CONVERSATION_ID = str(uuid.uuid4())
-CUSTOMER_PHONE = "+5491100000099"
+CUSTOMER_PHONE = "+34999000099"
 SENDER_NAME = "María García"
 
-print(f"\n{'='*60}")
+print(f"\n{'=' * 60}")
 print(f"QA-R6 booking_complete | persona: maria_new_client")
 print(f"conversation_id: {CONVERSATION_ID}")
 print(f"timestamp: {datetime.now(UTC).isoformat()}")
-print(f"{'='*60}\n")
+print(f"{'=' * 60}\n")
 
 
 def build_payload(text: str) -> dict:
@@ -68,7 +69,7 @@ async def run_qa():
     print(f"[SETUP] Subscribed to {OUTGOING_PUBSUB} | confirm: {msg}")
 
     turns = []
-    
+
     # ----- T1: Initial booking request -----
     # Give all info upfront to minimize clarification
     current_user_msg = "Hola, quiero un turno para corte de cabello dama el jueves que viene, sin preferencia de estilista"
@@ -112,41 +113,53 @@ async def run_qa():
 
         if agent_response is None:
             print(f"[T{turn_num}] ⚠️  TIMEOUT — no response in {RESPONSE_TIMEOUT}s")
-            turns.append({
-                "turn_number": turn_num,
-                "user_message": current_user_msg,
-                "agent_response": None,
-                "response_latency_ms": None,
-                "timeout": True,
-                "ts_utc": ts_utc,
-            })
+            turns.append(
+                {
+                    "turn_number": turn_num,
+                    "user_message": current_user_msg,
+                    "agent_response": None,
+                    "response_latency_ms": None,
+                    "timeout": True,
+                    "ts_utc": ts_utc,
+                }
+            )
             break
 
         agent_preview = agent_response[:200] if agent_response else ""
         print(f"[T{turn_num}] BOT  ← ({latency_ms}ms)")
         print(f"         '{agent_preview}'")
 
-        turns.append({
-            "turn_number": turn_num,
-            "user_message": current_user_msg,
-            "agent_response": agent_response,
-            "response_latency_ms": latency_ms,
-            "timeout": False,
-            "ts_utc": ts_utc,
-        })
+        turns.append(
+            {
+                "turn_number": turn_num,
+                "user_message": current_user_msg,
+                "agent_response": agent_response,
+                "response_latency_ms": latency_ms,
+                "timeout": False,
+                "ts_utc": ts_utc,
+            }
+        )
 
         # ---- Check for completion ----
         resp_lower = agent_response.lower()
 
         completion_signals = [
-            "turno confirmado", "cita confirmada", "reserva confirmada",
-            "tu turno quedó", "¡listo", "quedó registrado", "¡reservado",
-            "✅", "turno para el", "tu cita para", "confirmado el turno",
+            "turno confirmado",
+            "cita confirmada",
+            "reserva confirmada",
+            "tu turno quedó",
+            "¡listo",
+            "quedó registrado",
+            "¡reservado",
+            "✅",
+            "turno para el",
+            "tu cita para",
+            "confirmado el turno",
         ]
         if any(kw in resp_lower for kw in completion_signals):
             print(f"\n✅ [BOOKING COMPLETED] Signal detected at T{turn_num}")
             break
-        
+
         if turn_num >= 15:
             print(f"\n⚠️  [MAX TURNS REACHED]")
             break
@@ -162,70 +175,151 @@ async def run_qa():
 
 def _decide_next_message(resp_lower: str, turn_num: int) -> str:
     """Adaptive harness — decide next user message based on bot response."""
-    
+
     # Service confirmation
-    if any(kw in resp_lower for kw in [
-        "¿cuál servicio", "qué servicio", "que servicio",
-        "primer servicio", "segundo servicio", "confirmar servicio",
-        "corte de cabello dama", "corte dama",
-        "¿es correcto", "es correcto", "¿confirmamos el servicio",
-    ]):
+    if any(
+        kw in resp_lower
+        for kw in [
+            "¿cuál servicio",
+            "qué servicio",
+            "que servicio",
+            "primer servicio",
+            "segundo servicio",
+            "confirmar servicio",
+            "corte de cabello dama",
+            "corte dama",
+            "¿es correcto",
+            "es correcto",
+            "¿confirmamos el servicio",
+        ]
+    ):
         return "Sí, el primer servicio"
 
     # Add-ons
-    if any(kw in resp_lower for kw in [
-        "complemento", "add-on", "addon", "tratamiento",
-        "hidratación", "hidratacion", "color adicional", 
-        "agregar algo", "¿querés agregar", "queres agregar", 
-        "servicio adicional", "¿algún adicional", "algun adicional",
-        "¿querés algún", "queres algun",
-    ]):
+    if any(
+        kw in resp_lower
+        for kw in [
+            "complemento",
+            "add-on",
+            "addon",
+            "tratamiento",
+            "hidratación",
+            "hidratacion",
+            "color adicional",
+            "agregar algo",
+            "¿querés agregar",
+            "queres agregar",
+            "servicio adicional",
+            "¿algún adicional",
+            "algun adicional",
+            "¿querés algún",
+            "queres algun",
+        ]
+    ):
         return "No gracias"
 
     # Stylist selection
-    if any(kw in resp_lower for kw in [
-        "estilista", "con quién", "con quien",
-        "preferís", "preferis", "alguna estilista",
-    ]):
+    if any(
+        kw in resp_lower
+        for kw in [
+            "estilista",
+            "con quién",
+            "con quien",
+            "preferís",
+            "preferis",
+            "alguna estilista",
+        ]
+    ):
         return "Sin preferencia, cualquiera está bien"
 
     # Slot / time selection
-    if any(kw in resp_lower for kw in [
-        "seleccioná", "selecciona", "elegí", "elegi",
-        "horario", "opción", "opcion", "1.", "2.", "3.",
-        "disponible", "slot", "turno disponible", "podría ser",
-        "podria ser", "cuál te", "cual te",
-    ]):
+    if any(
+        kw in resp_lower
+        for kw in [
+            "seleccioná",
+            "selecciona",
+            "elegí",
+            "elegi",
+            "horario",
+            "opción",
+            "opcion",
+            "1.",
+            "2.",
+            "3.",
+            "disponible",
+            "slot",
+            "turno disponible",
+            "podría ser",
+            "podria ser",
+            "cuál te",
+            "cual te",
+        ]
+    ):
         return "1"
 
     # Name
-    if any(kw in resp_lower for kw in [
-        "nombre", "cómo te llamas", "como te llamas", "tu nombre",
-        "¿me das tu nombre", "me das tu nombre",
-    ]):
+    if any(
+        kw in resp_lower
+        for kw in [
+            "nombre",
+            "cómo te llamas",
+            "como te llamas",
+            "tu nombre",
+            "¿me das tu nombre",
+            "me das tu nombre",
+        ]
+    ):
         return "María García"
 
     # Notes
-    if any(kw in resp_lower for kw in [
-        "nota", "notas", "algún comentario", "comentario",
-        "¿alguna nota", "alguna nota",
-    ]):
+    if any(
+        kw in resp_lower
+        for kw in [
+            "nota",
+            "notas",
+            "algún comentario",
+            "comentario",
+            "¿alguna nota",
+            "alguna nota",
+        ]
+    ):
         return "Sin notas"
 
     # Confirmation
-    if any(kw in resp_lower for kw in [
-        "confirmar", "confirmás", "confirmas",
-        "¿confirmamos", "¿todo bien", "todo bien",
-        "¿procedo", "procedo", "¿está bien", "esta bien",
-        "¿lo confirmamos", "lo confirmamos",
-    ]):
+    if any(
+        kw in resp_lower
+        for kw in [
+            "confirmar",
+            "confirmás",
+            "confirmas",
+            "¿confirmamos",
+            "¿todo bien",
+            "todo bien",
+            "¿procedo",
+            "procedo",
+            "¿está bien",
+            "esta bien",
+            "¿lo confirmamos",
+            "lo confirmamos",
+        ]
+    ):
         return "Sí, confirmo"
 
     # Greeting without action
-    if any(kw in resp_lower for kw in [
-        "¡hola", "hola,", "bienvenid", "puedo ayudarte",
-        "¿en qué te puedo", "en que te puedo",
-    ]) and turn_num == 1:
+    if (
+        any(
+            kw in resp_lower
+            for kw in [
+                "¡hola",
+                "hola,",
+                "bienvenid",
+                "puedo ayudarte",
+                "¿en qué te puedo",
+                "en que te puedo",
+            ]
+        )
+        and turn_num == 1
+    ):
         return "Quiero sacar un turno para corte de cabello dama el jueves que viene"
 
     # Generic affirmative for anything else
@@ -235,12 +329,20 @@ def _decide_next_message(resp_lower: str, turn_num: int) -> str:
 async def check_db():
     """Check PostgreSQL for recent appointments."""
     import subprocess
+
     result = subprocess.run(
         [
-            "docker", "exec", "atrevete-postgres",
-            "psql", "-U", "atrevete", "-d", "atrevete_db",
-            "-t", "-c",
-            "SELECT count(*) FROM appointments WHERE created_at > now() - interval '1 hour';"
+            "docker",
+            "exec",
+            "atrevete-postgres",
+            "psql",
+            "-U",
+            "atrevete",
+            "-d",
+            "atrevete_db",
+            "-t",
+            "-c",
+            "SELECT count(*) FROM appointments WHERE created_at > now() - interval '1 hour';",
         ],
         capture_output=True,
         text=True,
@@ -256,13 +358,14 @@ async def check_db():
 async def check_logs_for_steps():
     """Grep agent logs for booking_step progression."""
     import subprocess
+
     result = subprocess.run(
         ["docker", "logs", "atrevete-agent", "--tail", "500"],
         capture_output=True,
         text=True,
     )
     logs = result.stdout + result.stderr
-    
+
     steps_seen = []
     step_keywords = [
         "service_selection",
@@ -279,64 +382,83 @@ async def check_logs_for_steps():
         "AgenticLoopResult",
         "synthetic",
     ]
-    
+
     for kw in step_keywords:
         if kw in logs:
-            matching_lines = [l for l in logs.split('\n') if kw in l]
-            steps_seen.append({
-                "keyword": kw,
-                "count": len(matching_lines),
-                "sample": matching_lines[-1][:200] if matching_lines else "",
-            })
-    
+            matching_lines = [l for l in logs.split("\n") if kw in l]
+            steps_seen.append(
+                {
+                    "keyword": kw,
+                    "count": len(matching_lines),
+                    "sample": matching_lines[-1][:200] if matching_lines else "",
+                }
+            )
+
     # Extract the relevant section of logs for our conversation
-    conv_lines = [l for l in logs.split('\n') if CONVERSATION_ID in l]
-    
+    conv_lines = [l for l in logs.split("\n") if CONVERSATION_ID in l]
+
     return steps_seen, logs[-4000:], conv_lines
 
 
 async def main():
     start = time.monotonic()
-    
+
     # Run the conversation
     turns = await run_qa()
-    
+
     total_time = time.monotonic() - start
-    
+
     # Check DB
     db_count, db_stdout, db_stderr = await check_db()
-    
+
     # Check agent logs
     steps_seen, log_tail, conv_lines = await check_logs_for_steps()
-    
+
     # ---- Evaluate results ----
     completed_turns = [t for t in turns if not t.get("timeout")]
     timed_out = any(t.get("timeout") for t in turns)
-    
+
     last_response = completed_turns[-1]["agent_response"] if completed_turns else ""
-    booking_confirmed = any(
-        kw in (last_response or "").lower()
-        for kw in ["confirmado", "tu turno", "reserva", "listo", "quedó", "✅"]
-    ) if last_response else False
-    
+    booking_confirmed = (
+        any(
+            kw in (last_response or "").lower()
+            for kw in ["confirmado", "tu turno", "reserva", "listo", "quedó", "✅"]
+        )
+        if last_response
+        else False
+    )
+
     appointment_in_db = db_count > 0
-    
+
     # Milestones
     all_responses = " ".join(t.get("agent_response", "") or "" for t in completed_turns).lower()
     milestones_hit = []
     milestone_checks = {
         "greeting_done": ["hola", "bienvenid", "saludos", "cómo puedo"],
         "service_resolved": ["corte de cabello", "corte dama", "servicio confirmado"],
-        "addons_handled": ["add-on", "complemento", "tratamiento", "no gracias", "sin adicionales", "ningún adicional"],
+        "addons_handled": [
+            "add-on",
+            "complemento",
+            "tratamiento",
+            "no gracias",
+            "sin adicionales",
+            "ningún adicional",
+        ],
         "stylist_resolved": ["estilista", "cualquier", "sin preferencia"],
         "slot_resolved": ["horario", "disponible", "seleccionaste", "1.", "turno para", "jueves"],
         "confirmation_done": ["confirmar", "confirmo", "confirmado", "procedemos"],
-        "booking_completed": ["turno confirmado", "cita confirmada", "reserva confirmada", "quedó registrado", "✅"],
+        "booking_completed": [
+            "turno confirmado",
+            "cita confirmada",
+            "reserva confirmada",
+            "quedó registrado",
+            "✅",
+        ],
     }
     for milestone, keywords in milestone_checks.items():
         if any(kw in all_responses for kw in keywords):
             milestones_hit.append(milestone)
-    
+
     # Determine pass/fail
     if timed_out and len(completed_turns) == 0:
         status = "FAIL"
@@ -353,26 +475,26 @@ async def main():
     else:
         status = "FAIL"
         fail_reason = "NO_CONFIRMATION"
-    
+
     # ---- Print summary ----
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"QA-R6 RESULTS — booking_complete / maria_new_client")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"STATUS          : {status}" + (f" ({fail_reason})" if fail_reason else ""))
     print(f"Turn count      : {len(completed_turns)}/{len(turns)} (timeout={timed_out})")
     print(f"Total time      : {total_time:.1f}s")
     print(f"Booking confirmed (response): {booking_confirmed}")
     print(f"Appointment in DB (last 1h) : {appointment_in_db} (count={db_count})")
     print(f"\nMilestones hit  : {milestones_hit}")
-    
+
     print(f"\n--- BOOKING STEP PROGRESSION ---")
     for s in steps_seen:
         print(f"  [{s['keyword']}] × {s['count']}  | last: {s['sample'][:150]}")
-    
+
     print(f"\n--- LOGS FOR THIS CONVERSATION ({len(conv_lines)} lines) ---")
     for line in conv_lines[-30:]:
         print(f"  {line[:250]}")
-    
+
     print(f"\n--- CONVERSATION TRACE ---")
     for t in turns:
         r_preview = (t.get("agent_response") or "")[:200]

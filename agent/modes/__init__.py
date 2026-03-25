@@ -3,7 +3,7 @@ Mode nodes for v6.0 conversation architecture.
 
 4 independent mode nodes replace the single FSM mega-node:
 - GreetingMode: First contact, name collection (fires ONCE per new customer)
-- BookingModeV7: LLM-driven appointment booking flow
+- BookingMode: LLM-driven appointment booking flow
 - GeneralMode: FAQ / informational queries (read-only tools)
 - EscalationMode: Human handoff
 """

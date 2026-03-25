@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent.modes.booking_context_v7 import BookingContextV7
+from agent.modes.booking_context import BookingContext
 from agent.modes.tool_extractors import _upsert_service_detail, extract_service_fields
-from agent.modes.booking_mode_v7 import _build_service_details_section
+from agent.modes.booking_mode import _build_service_details_section
 
 
 # ============================================================================
@@ -25,7 +25,7 @@ class TestUpsertServiceDetail:
     """T-9: _upsert_service_detail — dedup, null skip, cap at 5."""
 
     def test_single_service_detail(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         svc = {"name": "Cortar", "duration_minutes": 40, "description": "Corte completo con lavado"}
         _upsert_service_detail(ctx, svc)
         assert len(ctx.selected_services_details) == 1
@@ -36,7 +36,7 @@ class TestUpsertServiceDetail:
         }
 
     def test_upsert_deduplicates_by_name(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         svc1 = {"name": "Cortar", "duration_minutes": 40, "description": "Desc v1"}
         svc2 = {"name": "Cortar", "duration_minutes": 45, "description": "Desc v2"}
         _upsert_service_detail(ctx, svc1)
@@ -46,22 +46,22 @@ class TestUpsertServiceDetail:
         assert ctx.selected_services_details[0]["duration"] == 45
 
     def test_null_description_skipped(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         _upsert_service_detail(ctx, {"name": "Cortar", "duration_minutes": 40, "description": None})
         assert ctx.selected_services_details == []
 
     def test_empty_description_skipped(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         _upsert_service_detail(ctx, {"name": "Cortar", "duration_minutes": 40, "description": ""})
         assert ctx.selected_services_details == []
 
     def test_missing_description_key_skipped(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         _upsert_service_detail(ctx, {"name": "Cortar", "duration_minutes": 40})
         assert ctx.selected_services_details == []
 
     def test_cap_at_5(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         for i in range(7):
             _upsert_service_detail(
                 ctx,
@@ -73,7 +73,7 @@ class TestUpsertServiceDetail:
 
     def test_upsert_within_cap_allows_replacement(self):
         """Replacing an existing entry should not increase count beyond cap."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         for i in range(5):
             _upsert_service_detail(
                 ctx,
@@ -98,11 +98,11 @@ class TestBuildServiceDetailsSection:
     """T-10: _build_service_details_section — rendering."""
 
     def test_empty_list_returns_empty_string(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         assert _build_service_details_section(ctx) == ""
 
     def test_single_entry_with_duration(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_services_details=[
                 {"name": "Cortar", "duration": 40, "description": "Corte con lavado"}
             ]
@@ -111,7 +111,7 @@ class TestBuildServiceDetailsSection:
         assert result == "- **Cortar** (40min): Corte con lavado"
 
     def test_single_entry_without_duration(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_services_details=[
                 {"name": "Cortar", "duration": None, "description": "Corte con lavado"}
             ]
@@ -120,7 +120,7 @@ class TestBuildServiceDetailsSection:
         assert result == "- **Cortar**: Corte con lavado"
 
     def test_multi_entry(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_services_details=[
                 {"name": "Cortar", "duration": 40, "description": "Corte con lavado"},
                 {"name": "Tinte", "duration": 90, "description": "Coloración completa"},
@@ -133,7 +133,7 @@ class TestBuildServiceDetailsSection:
         assert "**Tinte**" in lines[1]
 
     def test_null_description_filtered(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_services_details=[
                 {"name": "Cortar", "duration": 40, "description": "Corte con lavado"},
                 {"name": "Tinte", "duration": 90, "description": None},
@@ -153,7 +153,7 @@ class TestExtractServiceFieldsDetails:
     """T-11: Shape 1 + Shape 3 populate selected_services_details."""
 
     def test_shape1_resolved_service_with_description(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "resolved_service": {
                 "id": "uuid-1",
@@ -171,7 +171,7 @@ class TestExtractServiceFieldsDetails:
         )
 
     def test_shape1_resolved_service_without_description(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "resolved_service": {
                 "id": "uuid-1",
@@ -184,7 +184,7 @@ class TestExtractServiceFieldsDetails:
         assert ctx.selected_services_details == []
 
     def test_shape3_single_result_with_description(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = {
             "services": [
                 {
@@ -201,7 +201,7 @@ class TestExtractServiceFieldsDetails:
         assert ctx.selected_services_details[0]["name"] == "Tinte"
 
     def test_services_locked_appends_detail(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             services_locked=True,
             selected_services=["Cortar"],
             service_id="uuid-1",
@@ -220,7 +220,7 @@ class TestExtractServiceFieldsDetails:
         assert ctx.selected_services_details[0]["name"] == "Tinte"
 
     def test_multi_service_accumulates_details(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result1 = {
             "resolved_service": {
                 "id": "uuid-1",
@@ -256,7 +256,7 @@ class TestSerializationRoundTrip:
     """T-12: to_mode_context / from_mode_context preserves selected_services_details."""
 
     def test_round_trip_preserves_details(self):
-        original = BookingContextV7(
+        original = BookingContext(
             service_name="Cortar",
             selected_services=["Cortar"],
             selected_services_details=[
@@ -264,15 +264,15 @@ class TestSerializationRoundTrip:
             ],
         )
         serialized = original.to_mode_context()
-        restored = BookingContextV7.from_mode_context(serialized)
+        restored = BookingContext.from_mode_context(serialized)
         assert restored.selected_services_details == original.selected_services_details
 
     def test_round_trip_empty_details_not_serialized(self):
-        original = BookingContextV7(service_name="Cortar")
+        original = BookingContext(service_name="Cortar")
         serialized = original.to_mode_context()
         # Empty lists are filtered out by to_mode_context
         assert "selected_services_details" not in serialized
-        restored = BookingContextV7.from_mode_context(serialized)
+        restored = BookingContext.from_mode_context(serialized)
         assert restored.selected_services_details == []
 
     def test_round_trip_multiple_details(self):
@@ -280,11 +280,11 @@ class TestSerializationRoundTrip:
             {"name": "Cortar", "duration": 40, "description": "Corte con lavado"},
             {"name": "Tinte", "duration": 90, "description": "Coloración completa"},
         ]
-        original = BookingContextV7(
+        original = BookingContext(
             selected_services=["Cortar", "Tinte"],
             selected_services_details=details,
         )
         serialized = original.to_mode_context()
-        restored = BookingContextV7.from_mode_context(serialized)
+        restored = BookingContext.from_mode_context(serialized)
         assert len(restored.selected_services_details) == 2
         assert restored.selected_services_details == details

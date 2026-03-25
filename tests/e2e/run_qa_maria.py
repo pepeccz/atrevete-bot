@@ -2,6 +2,7 @@
 QA Tester — booking_complete / maria_new_client
 Injects messages via Redis Streams; captures bot replies via Pub/Sub.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +19,9 @@ import redis.asyncio as redis
 
 # ── Redis config ────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda")
+REDIS_PASSWORD = os.getenv(
+    "REDIS_PASSWORD", "9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda"
+)
 INCOMING_STREAM = "incoming_messages_stream"
 OUTGOING_CHANNEL = "outgoing_messages"
 
@@ -26,7 +29,7 @@ OUTGOING_CHANNEL = "outgoing_messages"
 RUN_ID = uuid.uuid4().hex[:8]
 CONVERSATION_ID = f"qa-maria2-{RUN_ID}"
 # Extract digits from RUN_ID for phone (manage_customer requires numeric phone)
-CUSTOMER_PHONE = f"+549222{int(RUN_ID, 16) % 10000000:07d}"  # unique QA phone, digits only
+CUSTOMER_PHONE = f"+34999{int(RUN_ID, 16) % 1000000:06d}"  # unique QA phone, +34999 prefix passes normalize_phone()
 SENDER_NAME = "María (QA)"
 
 MAX_TURNS = 15
@@ -62,6 +65,7 @@ OPENING_MESSAGE = "Hola, quiero sacar un turno para corte de dama para el jueves
 
 # ── State ────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class TurnRecord:
     turn_number: int
@@ -92,6 +96,7 @@ class ConversationResult:
 # ── LLM turn reasoning ───────────────────────────────────────────────────────
 # I AM the LLM — I reason about the bot reply inline as the María persona.
 
+
 def llm_reason(
     turn_number: int,
     conversation_history: list[str],
@@ -104,7 +109,7 @@ def llm_reason(
     """
     history_text = "\n".join(conversation_history[-6:]) if conversation_history else "(ninguno)"
     bot_lower = bot_reply.lower()
-    
+
     bugs: list[dict[str, Any]] = []
     milestone_reached = None
     flow_status = "in_progress"
@@ -113,7 +118,9 @@ def llm_reason(
 
     # ── Milestone detection ──────────────────────────────────────────────────
     # greeting_done: bot greeted and I expressed booking intent (turn 0 always)
-    if turn_number == 1 and any(w in bot_lower for w in ["hola", "bienvenid", "¡hola", "corte", "turno"]):
+    if turn_number == 1 and any(
+        w in bot_lower for w in ["hola", "bienvenid", "¡hola", "corte", "turno"]
+    ):
         milestone_reached = "greeting_done"
 
     # service_resolved: bot confirmed the service variant (dama)
@@ -121,25 +128,50 @@ def llm_reason(
         milestone_reached = "service_resolved"
 
     # addons_handled: bot offered or we declined add-ons
-    if any(w in bot_lower for w in ["adicional", "adicionales", "extra", "sumar", "complementario", "tratamiento"]):
+    if any(
+        w in bot_lower
+        for w in ["adicional", "adicionales", "extra", "sumar", "complementario", "tratamiento"]
+    ):
         milestone_reached = "addons_handled"
 
     # stylist_resolved: bot asked about stylist preference
-    if any(w in bot_lower for w in ["estilista", "profesional", "luciana", "sofía", "cualquiera", "preferís"]):
+    if any(
+        w in bot_lower
+        for w in ["estilista", "profesional", "luciana", "sofía", "cualquiera", "preferís"]
+    ):
         milestone_reached = "stylist_resolved"
 
     # slot_resolved: bot offered time slots
-    if any(w in bot_lower for w in ["horario", "horarios", "turno disponible", "turno", "disponible", "jueves"]):
+    if any(
+        w in bot_lower
+        for w in ["horario", "horarios", "turno disponible", "turno", "disponible", "jueves"]
+    ):
         if "jueves" in bot_lower or "disponible" in bot_lower or "horario" in bot_lower:
             if turn_number >= 3:  # only after a few turns
                 milestone_reached = "slot_resolved"
 
     # confirmation_done: bot asks us to confirm
-    if any(w in bot_lower for w in ["confirmás", "confirmas", "confirmar", "resumen", "¿confirmás", "te confirmo"]):
+    if any(
+        w in bot_lower
+        for w in ["confirmás", "confirmas", "confirmar", "resumen", "¿confirmás", "te confirmo"]
+    ):
         milestone_reached = "confirmation_done"
 
     # booking_completed: bot says the booking was completed
-    if any(w in bot_lower for w in ["reservado", "agendado", "confirmado", "quedó agendado", "quedó reservado", "quedo agendado", "quedo reservado", "listo!", "¡listo"]):
+    if any(
+        w in bot_lower
+        for w in [
+            "reservado",
+            "agendado",
+            "confirmado",
+            "quedó agendado",
+            "quedó reservado",
+            "quedo agendado",
+            "quedo reservado",
+            "listo!",
+            "¡listo",
+        ]
+    ):
         milestone_reached = "booking_completed"
         flow_status = "completed"
         should_stop = True
@@ -148,22 +180,29 @@ def llm_reason(
     # ── Bug detection ────────────────────────────────────────────────────────
     # Check wrong language
     if any(w in bot_lower for w in ["the ", " is ", " are ", " you ", " your "]):
-        bugs.append({
-            "category": "wrong_language",
-            "evidence": f"Bot response appears to contain English on turn {turn_number}",
-            "turns": [turn_number]
-        })
+        bugs.append(
+            {
+                "category": "wrong_language",
+                "evidence": f"Bot response appears to contain English on turn {turn_number}",
+                "turns": [turn_number],
+            }
+        )
 
     # Check redundant questions (track via history)
     # If I already said "dama" and bot asks again
     history_combined = "\n".join(conversation_history)
     if "dama" in history_combined and turn_number > 2:
-        if any(w in bot_lower for w in ["¿es para dama", "para dama o caballero", "para dama, caballero"]):
-            bugs.append({
-                "category": "redundant_question",
-                "evidence": f"User already said 'dama' but bot asks again on turn {turn_number}",
-                "turns": [1, turn_number]
-            })
+        if any(
+            w in bot_lower
+            for w in ["¿es para dama", "para dama o caballero", "para dama, caballero"]
+        ):
+            bugs.append(
+                {
+                    "category": "redundant_question",
+                    "evidence": f"User already said 'dama' but bot asks again on turn {turn_number}",
+                    "turns": [1, turn_number],
+                }
+            )
 
     # ── Generate reply ────────────────────────────────────────────────────────
     reply = _generate_maria_reply(bot_lower, turn_number, conversation_history)
@@ -180,7 +219,7 @@ def llm_reason(
 
 def _generate_maria_reply(bot_lower: str, turn_number: int, history: list[str]) -> str:
     """Generate María's next WhatsApp reply — brief, direct, 1-2 sentences.
-    
+
     María wants: corte de cabello para dama, jueves que viene.
     accept_addons: false, no stylist preference.
     """
@@ -190,39 +229,112 @@ def _generate_maria_reply(bot_lower: str, turn_number: int, history: list[str]) 
         return "María."
 
     # Bot completed or says it's booked
-    if any(w in bot_lower for w in ["reservado", "agendado", "confirmado", "quedó", "quedo", "¡listo", "listo!"]):
+    if any(
+        w in bot_lower
+        for w in ["reservado", "agendado", "confirmado", "quedó", "quedo", "¡listo", "listo!"]
+    ):
         return "Perfecto, muchas gracias!"
 
     # Bot asking for confirmation (summary shown, asking to confirm)
-    if any(w in bot_lower for w in ["confirmás", "confirmas", "confirmar", "¿confirmás", "¿confirmás", "resumen del turno", "resumen"]):
+    if any(
+        w in bot_lower
+        for w in [
+            "confirmás",
+            "confirmas",
+            "confirmar",
+            "¿confirmás",
+            "¿confirmás",
+            "resumen del turno",
+            "resumen",
+        ]
+    ):
         return "Sí, confirmo."
 
     # Bot offering slots / asking for time slot selection
     # Could be numbered list of times or asking "¿qué horario?"
-    if any(w in bot_lower for w in ["horario", "hora disponible", "horarios disponibles", "disponibles para el jueves", "disponible para el jueves"]):
+    if any(
+        w in bot_lower
+        for w in [
+            "horario",
+            "hora disponible",
+            "horarios disponibles",
+            "disponibles para el jueves",
+            "disponible para el jueves",
+        ]
+    ):
         # Look for numbered options
         lines = bot_lower.split("\n")
         for line in lines:
             if any(char.isdigit() for char in line):
                 for ch in "123456789":
-                    if f"{ch}." in line or f"{ch})" in line or f"{ch}-" in line or line.strip().startswith(ch):
+                    if (
+                        f"{ch}." in line
+                        or f"{ch})" in line
+                        or f"{ch}-" in line
+                        or line.strip().startswith(ch)
+                    ):
                         return f"El {ch}, por favor."
         return "El primero que tengas disponible, dale."
 
     # Bot asking about add-ons / servicios adicionales
-    if any(w in bot_lower for w in ["adicional", "adicionales", "sumar", "extra", "extras", "complementario", "tratamiento", "keratina", "nutrición", "nutricion"]):
+    if any(
+        w in bot_lower
+        for w in [
+            "adicional",
+            "adicionales",
+            "sumar",
+            "extra",
+            "extras",
+            "complementario",
+            "tratamiento",
+            "keratina",
+            "nutrición",
+            "nutricion",
+        ]
+    ):
         return "No, gracias, solo el corte."
 
     # Bot asking for stylist preference
-    if any(w in bot_lower for w in ["estilista", "profesional", "preferís", "preferis", "preferis alguna", "quién te atienda", "quien te atienda"]):
+    if any(
+        w in bot_lower
+        for w in [
+            "estilista",
+            "profesional",
+            "preferís",
+            "preferis",
+            "preferis alguna",
+            "quién te atienda",
+            "quien te atienda",
+        ]
+    ):
         return "Me da igual cualquiera, gracias."
 
     # Bot asking for gender variant of service (dama/caballero/niño)
-    if any(w in bot_lower for w in ["para dama", "para caballero", "para niño", "dama o caballero", "para dama, caballero"]):
+    if any(
+        w in bot_lower
+        for w in [
+            "para dama",
+            "para caballero",
+            "para niño",
+            "dama o caballero",
+            "para dama, caballero",
+        ]
+    ):
         return "Para dama."
 
     # Bot offering a specific service and asking to pick (like "¿te gustaría Cortar?")
-    if any(w in bot_lower for w in ["cortar", "¿te gustaría", "te gustaria", "cuál te apetece", "cual te apetece", "qué servicio", "que servicio"]):
+    if any(
+        w in bot_lower
+        for w in [
+            "cortar",
+            "¿te gustaría",
+            "te gustaria",
+            "cuál te apetece",
+            "cual te apetece",
+            "qué servicio",
+            "que servicio",
+        ]
+    ):
         return "Sí, el corte, por favor."
 
     # Bot saying no availability for Thursday and asking about other options
@@ -234,14 +346,27 @@ def _generate_maria_reply(bot_lower: str, turn_number: int, history: list[str]) 
         return "Sí, cualquier día de esa semana está bien."
 
     # Bot reporting an error and asking to connect to the team
-    if any(w in bot_lower for w in ["problema consultando", "tuve un problema", "conectarte con el equipo", "ayudarte mejor"]):
+    if any(
+        w in bot_lower
+        for w in [
+            "problema consultando",
+            "tuve un problema",
+            "conectarte con el equipo",
+            "ayudarte mejor",
+        ]
+    ):
         return "No, por favor intentá de nuevo."
 
     # Bot listed options (numbered list) and asked us to pick one
     # Check if there are numbered lines
     lines = bot_lower.split("\n")
-    numbered_lines = [l for l in lines if l.strip() and (l.strip()[0].isdigit() or l.strip().startswith("-"))]
-    if numbered_lines and any(w in bot_lower for w in ["cuál", "cual", "opción", "opcion", "elegir", "preferís", "preferis"]):
+    numbered_lines = [
+        l for l in lines if l.strip() and (l.strip()[0].isdigit() or l.strip().startswith("-"))
+    ]
+    if numbered_lines and any(
+        w in bot_lower
+        for w in ["cuál", "cual", "opción", "opcion", "elegir", "preferís", "preferis"]
+    ):
         return "La primera opción, por favor."
 
     # Default — mild acknowledgement
@@ -250,13 +375,14 @@ def _generate_maria_reply(bot_lower: str, turn_number: int, history: list[str]) 
 
 # ── Redis harness ─────────────────────────────────────────────────────────────
 
+
 async def run_qa_flow() -> ConversationResult:
     redis_client = redis.from_url(
         REDIS_URL,
         password=REDIS_PASSWORD,
         decode_responses=True,
     )
-    
+
     turns: list[TurnRecord] = []
     conversation_history: list[str] = []
     last_milestone: str | None = None
@@ -281,7 +407,7 @@ async def run_qa_flow() -> ConversationResult:
     try:
         while turn_number < MAX_TURNS:
             turn_number += 1
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             print(f"[Turn {turn_number}] User: {current_message}")
 
             timestamp_sent = datetime.now(UTC).isoformat()
@@ -354,7 +480,7 @@ async def run_qa_flow() -> ConversationResult:
             if raw_messages_buf:
                 bot_reply = "\n\n".join(raw_messages_buf)
                 latency_ms = int((time.monotonic() - t0) * 1000)
-            
+
             print(f"[Turn {turn_number}] Bot:  {bot_reply or '(timeout)'}")
 
             # Step 4: LLM Reasoning (I AM the LLM)
@@ -386,7 +512,9 @@ async def run_qa_flow() -> ConversationResult:
             turn_bugs = llm_resp["bugs"]
             bugs_summary.extend(turn_bugs)
 
-            print(f"[Turn {turn_number}] milestone={milestone} status={flow_status} stop={should_stop}")
+            print(
+                f"[Turn {turn_number}] milestone={milestone} status={flow_status} stop={should_stop}"
+            )
             if turn_bugs:
                 print(f"[Turn {turn_number}] BUGS: {turn_bugs}")
 
@@ -460,17 +588,17 @@ async def run_qa_flow() -> ConversationResult:
 
 
 async def main() -> None:
-    print(f"\n{'#'*60}")
+    print(f"\n{'#' * 60}")
     print(f"  QA Run: booking_complete / maria_new_client")
     print(f"  Run ID: {RUN_ID}")
     print(f"  Started: {datetime.now(UTC).isoformat()}")
-    print(f"{'#'*60}\n")
+    print(f"{'#' * 60}\n")
 
     result = await run_qa_flow()
 
-    print(f"\n{'#'*60}")
+    print(f"\n{'#' * 60}")
     print(f"  RESULT SUMMARY")
-    print(f"{'#'*60}")
+    print(f"{'#' * 60}")
     print(json.dumps(asdict(result), indent=2, default=str))
 
 

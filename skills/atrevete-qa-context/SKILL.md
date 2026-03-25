@@ -88,6 +88,17 @@ N. {final_step_mode} -- {final_step_expect_summary} [COMPLETION]
 - Keep phone numbers exact (used as `--phone` argument in `qa_turn_helper.py`).
 - The orchestrator MUST resolve persona + flow BEFORE launching the sub-agent. The sub-agent receives the assembled block, never raw file references.
 
+## ⚠️ CRITICAL: Phone Number Format
+
+**El salón opera en España. TODOS los teléfonos de personas QA DEBEN ser formato español: `+34XXXXXXXXX`.**
+
+Números argentinos (`+549...`), mexicanos (`+52...`) u otros formatos FALLAN en `normalize_phone()` y rompen el harness antes de que los tests lleguen a ejecutarse.
+
+- ✅ Correcto: `+34600000001`, `+34612345678`
+- ❌ Incorrecto: `+5491100010001`, `+521234567890`
+
+Si al preparar un escenario el phone de la persona no es `+34`, **corrígelo antes de delegarlo al tester sub-agent**.
+
 ## Available Personas and Flows
 
 To list available scenarios, parse the `personas` and `flows` keys from the frontmatter. Common pairings:

@@ -31,7 +31,7 @@ from agent.services.availability_service import (
     get_stylist_by_id,
     is_holiday,
 )
-from agent.modes.booking_context_v7 import InterpretationReason
+from agent.modes.booking_context import InterpretationReason
 from agent.tools.calendar_tools import (
     generate_time_slots_async,
     get_stylists_by_category,
@@ -69,20 +69,16 @@ class CheckAvailabilitySchema(BaseModel):
     )
     time_range: str | None = Field(
         default=None,
-        description="Optional time range: 'morning', 'afternoon', or specific like '14:00-18:00'"
+        description="Optional time range: 'morning', 'afternoon', or specific like '14:00-18:00'",
     )
     stylist_id: str | None = Field(
-        default=None,
-        description="Optional preferred stylist UUID as string"
+        default=None, description="Optional preferred stylist UUID as string"
     )
 
 
 @tool(args_schema=CheckAvailabilitySchema)
 async def check_availability(
-    service_category: str,
-    date: str,
-    time_range: str | None = None,
-    stylist_id: str | None = None
+    service_category: str, date: str, time_range: str | None = None, stylist_id: str | None = None
 ) -> dict[str, Any]:
     """
     Check availability across stylist calendars with natural date parsing.
@@ -180,7 +176,9 @@ async def check_availability(
                 "date_too_soon": True,
                 "days_until_appointment": validation["days_until_appointment"],
                 "date_requested": requested_date.date().isoformat(),
-                "min_valid_date": (datetime.now(MADRID_TZ) + timedelta(days=MINIMUM_DAYS)).date().isoformat(),
+                "min_valid_date": (datetime.now(MADRID_TZ) + timedelta(days=MINIMUM_DAYS))
+                .date()
+                .isoformat(),
                 "substitution_reason": InterpretationReason.MINIMUM_DAYS_RULE.value,
             }
 
@@ -254,14 +252,16 @@ async def check_availability(
 
             # Convert to output format (slots already have correct string format from availability_service)
             for slot in available_slots:
-                all_slots.append({
-                    "time": slot["time"],  # Already "HH:MM" string
-                    "end_time": slot["end_time"],  # Already "HH:MM" string
-                    "stylist": stylist.name,
-                    "stylist_id": str(stylist.id),
-                    "date": requested_date.strftime("%Y-%m-%d"),
-                    "full_datetime": slot["full_datetime"],  # Already ISO string
-                })
+                all_slots.append(
+                    {
+                        "time": slot["time"],  # Already "HH:MM" string
+                        "end_time": slot["end_time"],  # Already "HH:MM" string
+                        "stylist": stylist.name,
+                        "stylist_id": str(stylist.id),
+                        "date": requested_date.strftime("%Y-%m-%d"),
+                        "full_datetime": slot["full_datetime"],  # Already ISO string
+                    }
+                )
 
         # Filter by time_range if specified
         if time_range:
@@ -301,15 +301,13 @@ class FindNextAvailableSchema(BaseModel):
     )
     time_range: str | None = Field(
         default=None,
-        description="Optional time range: 'morning', 'afternoon', or specific like '14:00-18:00'"
+        description="Optional time range: 'morning', 'afternoon', or specific like '14:00-18:00'",
     )
     stylist_id: str | None = Field(
-        default=None,
-        description="Optional preferred stylist UUID as string"
+        default=None, description="Optional preferred stylist UUID as string"
     )
     max_days_to_search: int = Field(
-        default=10,
-        description="Maximum number of days to search ahead (default: 10)"
+        default=10, description="Maximum number of days to search ahead (default: 10)"
     )
     start_date: str | None = Field(
         default=None,
@@ -317,7 +315,7 @@ class FindNextAvailableSchema(BaseModel):
             "Optional preferred start date in natural language or ISO format. "
             "If specified, search starts from this date (respecting 3-day rule). "
             "Accepts: 'mañana', 'viernes', '15 de diciembre', '2025-12-15'"
-        )
+        ),
     )
     service_duration_minutes: int | None = Field(
         default=None,
@@ -325,7 +323,7 @@ class FindNextAvailableSchema(BaseModel):
             "Duration of the selected service in minutes. "
             "Used to ensure proper slot spacing (e.g., 70-min service won't show 10:00 and 10:30). "
             "If not provided, uses conservative 90-minute estimate."
-        )
+        ),
     )
 
 
@@ -549,8 +547,8 @@ async def find_next_available(
             if soonest_any:
                 # Check if it's a different stylist than selected
                 soonest_any["is_soonest_any"] = True
-                soonest_any["is_different_stylist"] = (
-                    soonest_any["stylist_id"] != str(selected_stylist_uuid)
+                soonest_any["is_different_stylist"] = soonest_any["stylist_id"] != str(
+                    selected_stylist_uuid
                 )
                 logger.info(
                     f"Soonest any slot: {soonest_any['time']} on {soonest_any['date']} "
@@ -569,7 +567,9 @@ async def find_next_available(
 
             # Check if we have enough slots for all stylists (3 per stylist for v4.2)
             if all(len(slots) >= MAX_SLOTS_PER_STYLIST for slots in all_slots_by_stylist.values()):
-                logger.info(f"Found {MAX_SLOTS_PER_STYLIST} slots for all stylists, stopping search")
+                logger.info(
+                    f"Found {MAX_SLOTS_PER_STYLIST} slots for all stylists, stopping search"
+                )
                 break
 
             # Skip closed days using database-driven validation
@@ -649,13 +649,15 @@ async def find_next_available(
                     for slot in truncated_slots
                 ]
 
-                available_stylists.append({
-                    "stylist_name": stylist.name,
-                    "stylist_id": str(stylist.id),
-                    "slots": simplified_slots,
-                    "slots_shown": len(simplified_slots),
-                    "slots_total": len(stylist_slots)
-                })
+                available_stylists.append(
+                    {
+                        "stylist_name": stylist.name,
+                        "stylist_id": str(stylist.id),
+                        "slots": simplified_slots,
+                        "slots_shown": len(simplified_slots),
+                        "slots_total": len(stylist_slots),
+                    }
+                )
                 total_slots_found += len(stylist_slots)
 
                 # v4.2: Store selected stylist's slots separately

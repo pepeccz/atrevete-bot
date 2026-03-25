@@ -414,7 +414,7 @@ class BaseModeNode(ABC):
     ) -> None:
         """Hook called after each tool round to refresh stale SystemMessages.
 
-        Subclasses (e.g. BookingModeV7) can override to rebuild the dynamic
+        Subclasses (e.g. BookingMode) can override to rebuild the dynamic
         context SystemMessage so the LLM sees up-to-date "Datos recogidos"
         after tools like manage_customer update the context mid-loop.
 
@@ -457,6 +457,9 @@ class BaseModeNode(ABC):
             working_messages = list(messages)
             iterations = 0
             response: Any | None = None
+            # R3: Tool-call dedup guard — cache keyed by (tool_name, sorted_args)
+            # On cache hit, return cached result without re-invoking the tool.
+            seen_tool_calls: dict[str, Any] = {}
 
             while iterations < MAX_TOOL_ROUNDS:
                 llm_with_tools = self.llm.bind_tools(active_tools) if active_tools else self.llm
@@ -498,14 +501,30 @@ class BaseModeNode(ABC):
                             rejection.error_code,
                             rejection.error_message,
                         )
-                    elif tool_name in tool_map:
-                        try:
-                            result = await tool_map[tool_name].ainvoke(tool_args)
-                        except Exception as exc:
-                            self.logger.error("Tool %s failed: %s", tool_name, exc)
-                            result = {"error": str(exc)}
                     else:
-                        result = {"error": f"Unknown tool: {tool_name}"}
+                        # R3: Dedup guard — skip execution if identical call was
+                        # already made in this agentic loop invocation.
+                        dedup_args = (
+                            sorted(tool_args.items()) if isinstance(tool_args, dict) else tool_args
+                        )
+                        dedup_key = f"{tool_name}:{dedup_args}"
+
+                        if dedup_key in seen_tool_calls:
+                            result = seen_tool_calls[dedup_key]
+                            self.logger.warning(
+                                "dedup: skipping duplicate %s call — returning cached result",
+                                tool_name,
+                            )
+                        elif tool_name in tool_map:
+                            try:
+                                result = await tool_map[tool_name].ainvoke(tool_args)
+                            except Exception as exc:
+                                self.logger.error("Tool %s failed: %s", tool_name, exc)
+                                result = {"error": str(exc)}
+                            # Cache successful result for dedup
+                            seen_tool_calls[dedup_key] = result
+                        else:
+                            result = {"error": f"Unknown tool: {tool_name}"}
 
                     # Post-tool-call hook: allows subclasses to process results
                     # mid-loop (e.g. extract customer name before LLM response)

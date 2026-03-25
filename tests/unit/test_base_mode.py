@@ -64,9 +64,12 @@ async def test_run_agentic_loop_stops_after_max_tool_rounds():
     llm = MagicMock()
     llm_with_tools = MagicMock()
     llm.bind_tools.return_value = llm_with_tools
+    # Use DIFFERENT args per round to avoid dedup guard caching
     llm_with_tools.ainvoke = AsyncMock(
         side_effect=[
-            _make_response(tool_calls=[{"id": f"tc-{idx}", "name": "loop_tool", "args": {}}])
+            _make_response(
+                tool_calls=[{"id": f"tc-{idx}", "name": "loop_tool", "args": {"round": idx}}]
+            )
             for idx in range(MAX_TOOL_ROUNDS)
         ]
     )
@@ -79,11 +82,121 @@ async def test_run_agentic_loop_stops_after_max_tool_rounds():
         tools=[_make_tool("loop_tool", {"round": "ok"})],
     )
 
-    assert result.tool_results["loop_tool"] == {"round": "ok"}
+    # tool_results accumulates results as lists (BUG-1 fix: multiple calls append)
+    assert result.tool_results["loop_tool"][-1] == {"round": "ok"}
     assert llm_with_tools.ainvoke.await_count == MAX_TOOL_ROUNDS
-    mode.logger.warning.assert_called_once()
+    # Check that the MAX_TOOL_ROUNDS warning was logged (among other potential warnings)
+    warning_calls = [
+        call for call in mode.logger.warning.call_args_list if "MAX_TOOL_ROUNDS" in str(call)
+    ]
+    assert len(warning_calls) == 1
 
 
 def test_create_initial_state_default_is_first_interaction():
     state = create_initial_state("conv-base-001", "+34600000000")
     assert state["is_first_interaction"] is True
+
+
+# =============================================================================
+# Dedup guard: identical tool calls in same loop return cached result
+# =============================================================================
+
+
+class TestDedupGuard:
+    """R3: Tool-call dedup guard caches identical calls within one agentic loop."""
+
+    @pytest.mark.asyncio
+    async def test_dedup_guard_caches_identical_calls(self):
+        """Identical tool calls in the same loop -> tool executed once, cached result reused."""
+        llm = MagicMock()
+        llm_with_tools = MagicMock()
+        llm.bind_tools.return_value = llm_with_tools
+
+        # LLM calls the same tool twice with identical args, then returns text
+        llm_with_tools.ainvoke = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[
+                        {
+                            "id": "tc-1",
+                            "name": "check_availability",
+                            "args": {"date": "2026-03-27"},
+                        },
+                        {
+                            "id": "tc-2",
+                            "name": "check_availability",
+                            "args": {"date": "2026-03-27"},
+                        },
+                    ]
+                ),
+                _make_response(content="Listo, revisé la disponibilidad."),
+            ]
+        )
+
+        tool = _make_tool("check_availability", {"slots": ["10:00", "11:00"]})
+        mode = _DummyMode(tools=[], llm_client=llm)
+
+        result = await mode._run_agentic_loop(
+            messages=[SimpleNamespace(content="¿hay disponibilidad?")],
+            tools=[tool],
+        )
+
+        # Tool was invoked only ONCE despite being called twice
+        assert tool.ainvoke.await_count == 1
+        # Both results are present in tool_results (list of 2, both identical)
+        assert len(result.tool_results["check_availability"]) == 2
+        assert result.tool_results["check_availability"][0] == {"slots": ["10:00", "11:00"]}
+        assert result.tool_results["check_availability"][1] == {"slots": ["10:00", "11:00"]}
+
+    @pytest.mark.asyncio
+    async def test_dedup_guard_allows_different_args(self):
+        """Same tool with different args -> both calls execute normally."""
+        llm = MagicMock()
+        llm_with_tools = MagicMock()
+        llm.bind_tools.return_value = llm_with_tools
+
+        # LLM calls same tool twice with DIFFERENT args
+        llm_with_tools.ainvoke = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[
+                        {
+                            "id": "tc-1",
+                            "name": "check_availability",
+                            "args": {"date": "2026-03-27"},
+                        },
+                        {
+                            "id": "tc-2",
+                            "name": "check_availability",
+                            "args": {"date": "2026-03-28"},
+                        },
+                    ]
+                ),
+                _make_response(content="Te muestro disponibilidad para ambos días."),
+            ]
+        )
+
+        call_count = 0
+        results_by_date = {
+            "2026-03-27": {"slots": ["10:00"]},
+            "2026-03-28": {"slots": ["14:00"]},
+        }
+
+        async def _side_effect(args):
+            nonlocal call_count
+            call_count += 1
+            return results_by_date.get(args.get("date"), {"slots": []})
+
+        tool = _make_tool("check_availability")
+        tool.ainvoke = AsyncMock(side_effect=_side_effect)
+
+        mode = _DummyMode(tools=[], llm_client=llm)
+
+        result = await mode._run_agentic_loop(
+            messages=[SimpleNamespace(content="¿disponibilidad jueves y viernes?")],
+            tools=[tool],
+        )
+
+        # Both calls executed (different args = different dedup keys)
+        assert call_count == 2
+        assert len(result.tool_results["check_availability"]) == 2

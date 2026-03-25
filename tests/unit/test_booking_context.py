@@ -1,4 +1,4 @@
-"""Unit tests for BookingContextV7 dataclass.
+"""Unit tests for BookingContext dataclass.
 
 Covers: instantiation, query methods (is_ready_to_book, collected_summary,
 missing_summary), serialization (from_mode_context, to_mode_context),
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.modes.booking_context_v7 import CLEARABLE_NONE_FIELDS, BookingContextV7
+from agent.modes.booking_context import CLEARABLE_NONE_FIELDS, BookingContext
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -17,9 +17,9 @@ from agent.modes.booking_context_v7 import CLEARABLE_NONE_FIELDS, BookingContext
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _full_context() -> BookingContextV7:
+def _full_context() -> BookingContext:
     """Return a fully populated context for reuse across tests."""
-    return BookingContextV7(
+    return BookingContext(
         service_id="svc-001",
         service_name="Corte de Dama",
         service_category="HAIRDRESSING",
@@ -29,9 +29,7 @@ def _full_context() -> BookingContextV7:
         service_audience_hint="adult_female",
         stylist_id="sty-001",
         stylist_name="María",
-        prefetched_stylists=[
-            {"name": "María", "next_slot_summary": "Lunes 25 a las 10:00"}
-        ],
+        prefetched_stylists=[{"name": "María", "next_slot_summary": "Lunes 25 a las 10:00"}],
         soonest_any_slot="Lunes 25 a las 10:00 con María",
         selected_slot={
             "start_time": "2026-03-25T10:00:00+01:00",
@@ -51,9 +49,9 @@ def _full_context() -> BookingContextV7:
     )
 
 
-def _minimal_ready_context() -> BookingContextV7:
+def _minimal_ready_context() -> BookingContext:
     """Minimum fields needed for is_ready_to_book() == True."""
-    return BookingContextV7(
+    return BookingContext(
         service_id="svc-001",
         stylist_id="sty-001",
         selected_slot={"start_time": "2026-03-25T10:00:00+01:00"},
@@ -68,7 +66,7 @@ def _minimal_ready_context() -> BookingContextV7:
 
 class TestFromModeContext:
     def test_empty_dict(self):
-        ctx = BookingContextV7.from_mode_context({})
+        ctx = BookingContext.from_mode_context({})
         assert ctx.service_id is None
         assert ctx.stylist_id is None
         assert ctx.selected_slot is None
@@ -79,7 +77,7 @@ class TestFromModeContext:
 
     def test_full_dict(self):
         original = _full_context()
-        ctx = BookingContextV7.from_mode_context(original.to_mode_context())
+        ctx = BookingContext.from_mode_context(original.to_mode_context())
         assert ctx.service_id == "svc-001"
         assert ctx.service_name == "Corte de Dama"
         assert ctx.service_category == "HAIRDRESSING"
@@ -92,12 +90,14 @@ class TestFromModeContext:
 
     def test_ignores_unknown_keys(self):
         """v6 keys like booking_step are silently ignored."""
-        ctx = BookingContextV7.from_mode_context({
-            "booking_step": "service_selection",
-            "last_intent": "book",
-            "unknown_field": True,
-            "service_id": "svc-999",
-        })
+        ctx = BookingContext.from_mode_context(
+            {
+                "booking_step": "service_selection",
+                "last_intent": "book",
+                "unknown_field": True,
+                "service_id": "svc-999",
+            }
+        )
         assert ctx.service_id == "svc-999"
         # No error raised — unknown keys silently dropped
 
@@ -105,20 +105,24 @@ class TestFromModeContext:
         """None values for list fields are accepted as-is by the constructor."""
         # from_mode_context passes raw values — None for list fields
         # is valid since the dataclass defaults are only for missing keys
-        ctx = BookingContextV7.from_mode_context({
-            "selected_services": None,
-            "prefetched_stylists": None,
-            "candidate_services": None,
-        })
+        ctx = BookingContext.from_mode_context(
+            {
+                "selected_services": None,
+                "prefetched_stylists": None,
+                "candidate_services": None,
+            }
+        )
         # None is set directly (not coerced to [])
         assert ctx.selected_services is None
         assert ctx.prefetched_stylists is None
 
     def test_partial_dict(self):
-        ctx = BookingContextV7.from_mode_context({
-            "service_id": "svc-001",
-            "customer_name": "Ana",
-        })
+        ctx = BookingContext.from_mode_context(
+            {
+                "service_id": "svc-001",
+                "customer_name": "Ana",
+            }
+        )
         assert ctx.service_id == "svc-001"
         assert ctx.customer_name == "Ana"
         assert ctx.stylist_id is None
@@ -132,7 +136,7 @@ class TestFromModeContext:
 
 class TestToModeContext:
     def test_empty_context_excludes_none_and_empty_collections(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = ctx.to_mode_context()
         # Non-clearable None and empty list/dict values are excluded
         assert "service_id" not in result
@@ -148,36 +152,36 @@ class TestToModeContext:
         assert result.get("book_failure_count") == 0
 
     def test_excludes_none_values(self):
-        ctx = BookingContextV7(service_id="abc")
+        ctx = BookingContext(service_id="abc")
         result = ctx.to_mode_context()
         assert "service_id" in result
         assert "stylist_id" not in result
 
     def test_excludes_empty_lists(self):
-        ctx = BookingContextV7(service_id="abc", selected_services=[])
+        ctx = BookingContext(service_id="abc", selected_services=[])
         result = ctx.to_mode_context()
         assert "selected_services" not in result
 
     def test_excludes_internal_fields(self):
-        ctx = BookingContextV7(service_id="abc")
+        ctx = BookingContext(service_id="abc")
         ctx._booking_completed = True
         result = ctx.to_mode_context()
         assert "_booking_completed" not in result
 
     def test_includes_populated_lists(self):
-        ctx = BookingContextV7(selected_services=["Corte de Dama"])
+        ctx = BookingContext(selected_services=["Corte de Dama"])
         result = ctx.to_mode_context()
         assert result["selected_services"] == ["Corte de Dama"]
 
     def test_includes_dict_fields(self):
         slot = {"start_time": "2026-03-25T10:00:00+01:00", "date": "2026-03-25"}
-        ctx = BookingContextV7(selected_slot=slot)
+        ctx = BookingContext(selected_slot=slot)
         result = ctx.to_mode_context()
         assert result["selected_slot"] == slot
 
     def test_excludes_empty_dicts(self):
         """Empty dicts are filtered out just like empty lists (non-clearable fields only)."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         result = ctx.to_mode_context()
         # Only clearable fields may be None; everything else must be non-falsy
         for key, val in result.items():
@@ -191,7 +195,7 @@ class TestToModeContext:
 
     def test_clearable_fields_serialized_as_none_when_cleared(self):
         """offered_slots=None → key MUST be present with None value (REQ-BAF-1)."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         ctx.offered_slots = None  # SLOT_TAKEN clears this
         ctx.selected_slot = None  # SLOT_TAKEN clears this too
         result = ctx.to_mode_context()
@@ -204,7 +208,7 @@ class TestToModeContext:
     def test_clearable_fields_serialized_with_data(self):
         """offered_slots=[...] → key present with full list (regression guard, REQ-BAF-1)."""
         slots = [{"date": "2026-03-25", "time": "10:00", "stylist_name": "María"}]
-        ctx = BookingContextV7(offered_slots=slots)
+        ctx = BookingContext(offered_slots=slots)
         result = ctx.to_mode_context()
 
         assert "offered_slots" in result
@@ -225,7 +229,7 @@ class TestRoundTrip:
         """from_mode_context(ctx.to_mode_context()) preserves all non-None fields."""
         original = _full_context()
         serialized = original.to_mode_context()
-        restored = BookingContextV7.from_mode_context(serialized)
+        restored = BookingContext.from_mode_context(serialized)
 
         assert restored.service_id == original.service_id
         assert restored.service_name == original.service_name
@@ -242,19 +246,19 @@ class TestRoundTrip:
         assert restored.selected_services == original.selected_services
 
     def test_round_trip_empty_context(self):
-        original = BookingContextV7()
+        original = BookingContext()
         serialized = original.to_mode_context()
-        restored = BookingContextV7.from_mode_context(serialized)
+        restored = BookingContext.from_mode_context(serialized)
         assert restored.service_id is None
         assert restored.selected_services == []
 
     def test_round_trip_partial_context(self):
-        original = BookingContextV7(
+        original = BookingContext(
             service_id="svc-001",
             service_name="Tinte",
             stylist_name="Ana",
         )
-        restored = BookingContextV7.from_mode_context(original.to_mode_context())
+        restored = BookingContext.from_mode_context(original.to_mode_context())
         assert restored.service_id == "svc-001"
         assert restored.service_name == "Tinte"
         assert restored.stylist_name == "Ana"
@@ -274,7 +278,7 @@ class TestRoundTrip:
         stale_state = {"offered_slots": [{"date": "2026-03-24", "time": "10:00"}]}
 
         # Step 2-3: SLOT_TAKEN handler cleared offered_slots, to_mode_context returns None
-        cleared_ctx = BookingContextV7()
+        cleared_ctx = BookingContext()
         cleared_ctx.offered_slots = None
         update_dict = cleared_ctx.to_mode_context()
         assert "offered_slots" in update_dict
@@ -285,7 +289,7 @@ class TestRoundTrip:
         assert merged["offered_slots"] is None
 
         # Step 5: from_mode_context reads back correctly
-        restored = BookingContextV7.from_mode_context(merged)
+        restored = BookingContext.from_mode_context(merged)
         assert restored.offered_slots is None  # Stale value overwritten
 
 
@@ -342,7 +346,7 @@ class TestIsReadyToBook:
         assert ctx.is_ready_to_book() is True
 
     def test_empty_context_is_false(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         assert ctx.is_ready_to_book() is False
 
 
@@ -353,11 +357,11 @@ class TestIsReadyToBook:
 
 class TestCollectedSummary:
     def test_empty(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         assert ctx.collected_summary() == "(ningún dato recogido todavía)"
 
     def test_service_only(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_name="Corte de Dama",
             service_duration_minutes=45,
             service_category="HAIRDRESSING",
@@ -366,18 +370,18 @@ class TestCollectedSummary:
         assert "✅ Servicio: Corte de Dama — 45 min — HAIRDRESSING" in summary
 
     def test_service_without_duration(self):
-        ctx = BookingContextV7(service_name="Tinte")
+        ctx = BookingContext(service_name="Tinte")
         summary = ctx.collected_summary()
         assert "✅ Servicio: Tinte" in summary
         assert "min" not in summary
 
     def test_stylist_line(self):
-        ctx = BookingContextV7(stylist_name="María")
+        ctx = BookingContext(stylist_name="María")
         summary = ctx.collected_summary()
         assert "✅ Estilista: María" in summary
 
     def test_slot_with_date_and_time(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_slot={
                 "date": "2026-03-25",
                 "time": "10:00",
@@ -388,12 +392,12 @@ class TestCollectedSummary:
         assert "✅ Horario: 2026-03-25 a las 10:00" in summary
 
     def test_customer_name(self):
-        ctx = BookingContextV7(customer_name="Pepe")
+        ctx = BookingContext(customer_name="Pepe")
         summary = ctx.collected_summary()
         assert "✅ Nombre: Pepe" in summary
 
     def test_notes(self):
-        ctx = BookingContextV7(notes="Sin alergia")
+        ctx = BookingContext(notes="Sin alergia")
         summary = ctx.collected_summary()
         assert "✅ Notas: Sin alergia" in summary
 
@@ -409,7 +413,7 @@ class TestCollectedSummary:
         assert summary.count("\n") >= 4
 
     def test_additional_services(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_name="Corte de Dama",
             selected_services=["Corte de Dama", "Tinte", "Peinado"],
         )
@@ -418,7 +422,7 @@ class TestCollectedSummary:
 
     def test_no_additional_services_when_single(self):
         """Single selected service does NOT show additional services line."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_name="Corte de Dama",
             selected_services=["Corte de Dama"],
         )
@@ -433,7 +437,7 @@ class TestCollectedSummary:
 
 class TestMissingSummary:
     def test_all_missing(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         summary = ctx.missing_summary()
         assert "❌ Servicio: pendiente" in summary
         assert "❌ Estilista: pendiente" in summary
@@ -447,7 +451,7 @@ class TestMissingSummary:
         assert "❌" not in summary
 
     def test_partial_missing(self):
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_name="Corte de Dama",
             service_id="svc-001",
             stylist_id="sty-001",
@@ -461,7 +465,7 @@ class TestMissingSummary:
 
     def test_service_satisfied_by_selected_services(self):
         """selected_services alone satisfies the service requirement."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             selected_services=["Corte de Dama"],
             stylist_id="sty-001",
             selected_slot={"start_time": "2026-03-25T10:00:00+01:00"},
@@ -478,24 +482,24 @@ class TestMissingSummary:
 
 class TestBookingCompletedFlag:
     def test_default_is_false(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         assert ctx._booking_completed is False
 
     def test_not_in_repr(self):
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         assert "_booking_completed" not in repr(ctx)
 
     def test_excluded_from_to_mode_context(self):
-        ctx = BookingContextV7(service_id="abc")
+        ctx = BookingContext(service_id="abc")
         ctx._booking_completed = True
         d = ctx.to_mode_context()
         assert "_booking_completed" not in d
 
     def test_not_restored_from_mode_context(self):
         """_booking_completed is ephemeral — not round-tripped."""
-        ctx = BookingContextV7(service_id="abc")
+        ctx = BookingContext(service_id="abc")
         ctx._booking_completed = True
-        restored = BookingContextV7.from_mode_context(ctx.to_mode_context())
+        restored = BookingContext.from_mode_context(ctx.to_mode_context())
         assert restored._booking_completed is False
 
 
@@ -507,18 +511,18 @@ class TestBookingCompletedFlag:
 class TestEdgeCases:
     def test_offered_slots_none_vs_empty(self):
         """offered_slots can be None (default) or a list."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         assert ctx.offered_slots is None
 
-        ctx2 = BookingContextV7(offered_slots=[])
+        ctx2 = BookingContext(offered_slots=[])
         assert ctx2.offered_slots == []
 
     def test_recurrent_stylist_hint(self):
         """recurrent_stylist_hint field exists and serializes."""
-        ctx = BookingContextV7(recurrent_stylist_hint="María")
+        ctx = BookingContext(recurrent_stylist_hint="María")
         d = ctx.to_mode_context()
         assert d["recurrent_stylist_hint"] == "María"
-        restored = BookingContextV7.from_mode_context(d)
+        restored = BookingContext.from_mode_context(d)
         assert restored.recurrent_stylist_hint == "María"
 
     def test_pending_clarifications_round_trip(self):
@@ -530,8 +534,8 @@ class TestEdgeCases:
                 {"label": "Caballero", "value": "adult_male"},
             ],
         }
-        ctx = BookingContextV7(pending_clarifications=[clarification])
-        restored = BookingContextV7.from_mode_context(ctx.to_mode_context())
+        ctx = BookingContext(pending_clarifications=[clarification])
+        restored = BookingContext.from_mode_context(ctx.to_mode_context())
         assert restored.pending_clarifications == [clarification]
 
     def test_candidate_services_round_trip(self):
@@ -539,17 +543,17 @@ class TestEdgeCases:
             {"name": "Corte de Dama", "id": "svc-001"},
             {"name": "Corte Caballero", "id": "svc-002"},
         ]
-        ctx = BookingContextV7(candidate_services=candidates)
-        restored = BookingContextV7.from_mode_context(ctx.to_mode_context())
+        ctx = BookingContext(candidate_services=candidates)
+        restored = BookingContext.from_mode_context(ctx.to_mode_context())
         assert restored.candidate_services == candidates
 
     def test_service_audience_hint_serializes(self):
-        ctx = BookingContextV7(service_audience_hint="adult_female")
+        ctx = BookingContext(service_audience_hint="adult_female")
         d = ctx.to_mode_context()
         assert d["service_audience_hint"] == "adult_female"
 
     def test_soonest_any_slot_serializes(self):
-        ctx = BookingContextV7(soonest_any_slot="Lunes 25 a las 10:00")
+        ctx = BookingContext(soonest_any_slot="Lunes 25 a las 10:00")
         d = ctx.to_mode_context()
         assert d["soonest_any_slot"] == "Lunes 25 a las 10:00"
 
@@ -560,11 +564,11 @@ class TestEdgeCases:
 
 
 class TestResetTransient:
-    """Task 4.1: Unit tests for BookingContextV7.reset_transient()."""
+    """Task 4.1: Unit tests for BookingContext.reset_transient()."""
 
-    def _full_transient_context(self) -> BookingContextV7:
+    def _full_transient_context(self) -> BookingContext:
         """Return a context with all transient fields populated."""
-        return BookingContextV7(
+        return BookingContext(
             # Identity fields (must NOT be cleared)
             service_id="svc-001",
             service_name="Corte de Dama",
@@ -747,7 +751,7 @@ class TestResetTransient:
 
     def test_reset_transient_on_empty_context(self):
         """Calling reset_transient on a fresh context is a no-op."""
-        ctx = BookingContextV7()
+        ctx = BookingContext()
         ctx.reset_transient()  # Should not raise
         assert ctx.selected_services == []
         assert ctx.book_failure_count == 0
@@ -763,46 +767,46 @@ class TestCollectedSummaryAudience:
 
     def test_audience_hint_adult_female_shows_dama(self):
         """service_audience_hint='adult_female' → '✅ Audiencia: dama'."""
-        ctx = BookingContextV7(service_audience_hint="adult_female")
+        ctx = BookingContext(service_audience_hint="adult_female")
         summary = ctx.collected_summary()
         assert "✅ Audiencia: dama" in summary
 
     def test_audience_hint_adult_male_shows_caballero(self):
         """service_audience_hint='adult_male' → '✅ Audiencia: caballero'."""
-        ctx = BookingContextV7(service_audience_hint="adult_male")
+        ctx = BookingContext(service_audience_hint="adult_male")
         summary = ctx.collected_summary()
         assert "✅ Audiencia: caballero" in summary
 
     def test_audience_hint_child_male_shows_nino(self):
-        ctx = BookingContextV7(service_audience_hint="child_male")
+        ctx = BookingContext(service_audience_hint="child_male")
         summary = ctx.collected_summary()
         assert "✅ Audiencia: niño" in summary
 
     def test_audience_hint_child_female_shows_nina(self):
-        ctx = BookingContextV7(service_audience_hint="child_female")
+        ctx = BookingContext(service_audience_hint="child_female")
         summary = ctx.collected_summary()
         assert "✅ Audiencia: niña" in summary
 
     def test_audience_hint_baby_shows_bebe(self):
-        ctx = BookingContextV7(service_audience_hint="baby")
+        ctx = BookingContext(service_audience_hint="baby")
         summary = ctx.collected_summary()
         assert "✅ Audiencia: bebé" in summary
 
     def test_audience_hint_none_no_audiencia_line(self):
         """When service_audience_hint is None, no Audiencia line appears."""
-        ctx = BookingContextV7(service_name="Corte de Dama")
+        ctx = BookingContext(service_name="Corte de Dama")
         summary = ctx.collected_summary()
         assert "Audiencia" not in summary
 
     def test_audience_hint_unknown_value_falls_back_to_raw(self):
         """Unknown hint value falls back to the raw string."""
-        ctx = BookingContextV7(service_audience_hint="unknown_value")
+        ctx = BookingContext(service_audience_hint="unknown_value")
         summary = ctx.collected_summary()
         assert "✅ Audiencia: unknown_value" in summary
 
     def test_audience_hint_appears_in_full_context(self):
         """_full_context() has audience_hint set — confirm it appears in summary."""
-        ctx = BookingContextV7(
+        ctx = BookingContext(
             service_name="Corte de Dama",
             service_audience_hint="adult_female",
             stylist_name="María",
@@ -813,3 +817,63 @@ class TestCollectedSummaryAudience:
         assert "✅ Servicio: Corte de Dama" in summary
         assert "✅ Estilista: María" in summary
         assert "✅ Nombre: Pepe" in summary
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# collected_summary — P4 fallback (service_name=None with selected_services)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCollectedSummaryFallbackServiceName:
+    """P4 fix: when service_name is None but selected_services has entries,
+    collected_summary() should use the first entry from selected_services."""
+
+    def test_fallback_to_first_selected_service(self):
+        """service_name=None, selected_services=['Corte de Dama'] → shows 'Corte de Dama'."""
+        ctx = BookingContext(
+            service_name=None,
+            selected_services=["Corte de Dama"],
+        )
+        summary = ctx.collected_summary()
+        assert "✅ Servicio: Corte de Dama" in summary
+
+    def test_fallback_with_duration_and_category(self):
+        """Fallback service name also renders duration and category."""
+        ctx = BookingContext(
+            service_name=None,
+            selected_services=["Tinte Raíz"],
+            service_duration_minutes=60,
+            service_category="HAIRDRESSING",
+        )
+        summary = ctx.collected_summary()
+        assert "✅ Servicio: Tinte Raíz — 60 min — HAIRDRESSING" in summary
+
+    def test_no_fallback_when_service_name_present(self):
+        """When service_name IS set, it takes priority over selected_services."""
+        ctx = BookingContext(
+            service_name="Corte Premium",
+            selected_services=["Corte de Dama"],
+        )
+        summary = ctx.collected_summary()
+        assert "✅ Servicio: Corte Premium" in summary
+        assert "Corte de Dama" not in summary.split("\n")[0]  # Not in the service line
+
+    def test_no_service_line_when_both_empty(self):
+        """When both are empty/None, no service line appears."""
+        ctx = BookingContext(
+            service_name=None,
+            selected_services=[],
+        )
+        summary = ctx.collected_summary()
+        assert "✅ Servicio:" not in summary
+
+    def test_fallback_with_multiple_selected_services(self):
+        """When multiple services selected, fallback uses the first one."""
+        ctx = BookingContext(
+            service_name=None,
+            selected_services=["Corte de Dama", "Tinte", "Peinado"],
+        )
+        summary = ctx.collected_summary()
+        assert "✅ Servicio: Corte de Dama" in summary
+        # Additional services should also be rendered
+        assert "✅ Servicios adicionales: Tinte, Peinado" in summary

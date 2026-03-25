@@ -25,7 +25,7 @@ INCOMING_STREAM = "incoming_messages_stream"
 PUBSUB_CHANNEL = "outgoing_messages"
 
 CONVERSATION_ID = str(uuid.uuid4())
-PHONE_NUMBER = f"+5491100{CONVERSATION_ID[:8].replace('-', '')}"
+PHONE_NUMBER = f"+34999{CONVERSATION_ID[:8].replace('-', '')[:6]}"
 CHATWOOT_CONTACT_ID = 9901  # synthetic test contact
 CHATWOOT_CONVERSATION_ID = 9901
 
@@ -75,7 +75,9 @@ async def run_qa():
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             try:
-                msg = await asyncio.wait_for(pubsub.get_message(ignore_subscribe_messages=True), timeout=min(1.0, remaining))
+                msg = await asyncio.wait_for(
+                    pubsub.get_message(ignore_subscribe_messages=True), timeout=min(1.0, remaining)
+                )
             except asyncio.TimeoutError:
                 continue
             if msg is None:
@@ -123,7 +125,9 @@ async def run_qa():
     # ══════════════════════════════════════════════════════════════
 
     # T1 — opening
-    t1 = await send_and_capture(1, "Hola, quiero un corte caballero con Luciana esta semana a la mañana")
+    t1 = await send_and_capture(
+        1, "Hola, quiero un corte caballero con Luciana esta semana a la mañana"
+    )
     turns.append(t1)
     if t1["timed_out"]:
         print("[QA-R10] TIMEOUT on T1 — aborting")
@@ -147,7 +151,18 @@ async def run_qa():
     def classify_bot_response(text: str) -> str:
         t = text.lower()
         # confirmation screen
-        if any(w in t for w in ["confirmar", "confirmás", "confirmas", "confirmación", "¿confirmás", "todo listo", "¿está bien"]):
+        if any(
+            w in t
+            for w in [
+                "confirmar",
+                "confirmás",
+                "confirmas",
+                "confirmación",
+                "¿confirmás",
+                "todo listo",
+                "¿está bien",
+            ]
+        ):
             return "CONFIRM"
         # asking name
         if any(w in t for w in ["nombre", "cómo te llamás", "como te llamas", "tu nombre"]):
@@ -156,16 +171,63 @@ async def run_qa():
         if any(w in t for w in ["nota", "adicional", "comentario", "algún detalle", "alguna nota"]):
             return "ASK_NOTES"
         # add-ons
-        if any(w in t for w in ["barbería", "barba", "producto", "tratamiento", "hidratación", "mechas", "tintura", "adicional", "add-on", "además", "¿querés agregar", "querés sumar"]):
+        if any(
+            w in t
+            for w in [
+                "barbería",
+                "barba",
+                "producto",
+                "tratamiento",
+                "hidratación",
+                "mechas",
+                "tintura",
+                "adicional",
+                "add-on",
+                "además",
+                "¿querés agregar",
+                "querés sumar",
+            ]
+        ):
             return "ADDON"
         # numbered list of slots (contains hour patterns)
-        if any(w in t for w in ["1️⃣", "2️⃣", "3️⃣", "lunes", "martes", "miércoles", "jueves", "viernes", "09:", "10:", "11:", "8:", "hs"]):
+        if any(
+            w in t
+            for w in [
+                "1️⃣",
+                "2️⃣",
+                "3️⃣",
+                "lunes",
+                "martes",
+                "miércoles",
+                "jueves",
+                "viernes",
+                "09:",
+                "10:",
+                "11:",
+                "8:",
+                "hs",
+            ]
+        ):
             return "SLOT_LIST"
         # numbered stylist list
-        if any(w in t for w in ["luciana", "estilista", "estilis", "¿con quién", "con quien", "con cuál", "con cual"]):
+        if any(
+            w in t
+            for w in [
+                "luciana",
+                "estilista",
+                "estilis",
+                "¿con quién",
+                "con quien",
+                "con cuál",
+                "con cual",
+            ]
+        ):
             return "STYLIST_LIST"
         # service variant
-        if any(w in t for w in ["caballero", "dama", "tipo de corte", "¿para caballero", "para caballero"]):
+        if any(
+            w in t
+            for w in ["caballero", "dama", "tipo de corte", "¿para caballero", "para caballero"]
+        ):
             return "SERVICE_VARIANT"
         # error
         if any(w in t for w in ["error", "problema", "disculpá", "disculpa", "inconveniente"]):
@@ -184,7 +246,21 @@ async def run_qa():
         print(f"[QA-R10] category={category}")
 
         # Terminal success conditions
-        if any(w in last_bot.lower() for w in ["turno confirmado", "cita confirmada", "reserva confirmada", "ya está agendado", "quedó agendado", "registrado", "¡listo!", "¡perfecto", "nos vemos", "te esperamos"]):
+        if any(
+            w in last_bot.lower()
+            for w in [
+                "turno confirmado",
+                "cita confirmada",
+                "reserva confirmada",
+                "ya está agendado",
+                "quedó agendado",
+                "registrado",
+                "¡listo!",
+                "¡perfecto",
+                "nos vemos",
+                "te esperamos",
+            ]
+        ):
             print("[QA-R10] BOOKING COMPLETED detected in bot response")
             completed = True
             break
@@ -230,6 +306,7 @@ async def run_qa():
 async def check_db() -> int:
     """Check appointment count created in last hour."""
     import asyncpg
+
     conn = await asyncpg.connect(
         "postgresql://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db"
     )
@@ -265,15 +342,18 @@ async def main():
         appointment_in_db = False
 
     # Milestones
-    all_responses = " ".join(
-        (t["agent_response"] or "") for t in turns
-    ).lower()
+    all_responses = " ".join((t["agent_response"] or "") for t in turns).lower()
     milestones = {
         "greeting_done": any("hola" in (t["agent_response"] or "").lower() for t in turns[:2]),
         "service_resolved": "corte" in all_responses or "caballero" in all_responses,
         "stylist_locked": "luciana" in all_responses,
-        "slot_resolved": any(x in all_responses for x in ["lunes", "martes", "miércoles", "jueves", "viernes", "turno"]),
-        "confirmation_done": any(x in all_responses for x in ["confirma", "confirmado", "listo", "agendado"]),
+        "slot_resolved": any(
+            x in all_responses
+            for x in ["lunes", "martes", "miércoles", "jueves", "viernes", "turno"]
+        ),
+        "confirmation_done": any(
+            x in all_responses for x in ["confirma", "confirmado", "listo", "agendado"]
+        ),
         "booking_completed": completed or appointment_in_db,
     }
 
