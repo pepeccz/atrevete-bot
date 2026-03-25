@@ -198,11 +198,7 @@ def _calculate_service_score(query: str, service: "Service") -> float:
 
     # Weighted final score
     final_score = (
-        (name_score * 0.5)
-        + (desc_score * 0.1)
-        + (tag_score * 0.4)
-        + substring_boost
-        + tag_boost
+        (name_score * 0.5) + (desc_score * 0.1) + (tag_score * 0.4) + substring_boost + tag_boost
     )
 
     return min(final_score, 100)  # Cap at 100
@@ -216,7 +212,7 @@ class SearchServicesSchema(BaseModel):
             "Search query string to match against service names. "
             "Examples: 'corte largo', 'tinte rubio', 'manicura francesa'"
         ),
-        min_length=1
+        min_length=1,
     )
 
     category: Literal["Peluquería", "Estética"] | None = Field(
@@ -226,14 +222,11 @@ class SearchServicesSchema(BaseModel):
             "- 'Peluquería': Hair services only\n"
             "- 'Estética': Aesthetics services only\n"
             "- None: Search across all categories"
-        )
+        ),
     )
 
     max_results: int = Field(
-        default=5,
-        description="Maximum number of results to return (default: 5)",
-        ge=1,
-        le=10
+        default=5, description="Maximum number of results to return (default: 5)", ge=1, le=10
     )
 
     audience: str | None = Field(
@@ -242,7 +235,7 @@ class SearchServicesSchema(BaseModel):
             "Optional audience hint to filter results by target demographic. "
             "Examples: 'adult_female', 'adult_male', 'child_female', 'child_male'. "
             "When provided, filters or prioritizes results matching the audience."
-        )
+        ),
     )
 
     hair_density: Literal["normal", "extra"] | None = Field(
@@ -253,7 +246,7 @@ class SearchServicesSchema(BaseModel):
             "Pass this if the customer has already mentioned their hair density "
             "(e.g. 'pelo fino/normal' → 'normal'; 'pelo grueso/denso/muy largo' → 'extra'). "
             "When provided, avoids a follow-up clarification question."
-        )
+        ),
     )
 
     hair_length: Literal["short_medium", "long"] | None = Field(
@@ -263,7 +256,7 @@ class SearchServicesSchema(BaseModel):
             "Pass this if the customer has already mentioned their hair length "
             "(e.g. 'pelo corto o medio' → 'short_medium'; 'pelo largo' → 'long'). "
             "When provided, avoids a follow-up clarification question."
-        )
+        ),
     )
 
 
@@ -453,10 +446,9 @@ async def search_services(
             services = list(result.scalars().all())
 
             logger.info(
-                f"Fetched {len(services)} services from database" +
-                (f" (category: {category})" if category else "")
+                f"Fetched {len(services)} services from database"
+                + (f" (category: {category})" if category else "")
             )
-
 
         # Step 2: Fuzzy match using RapidFuzz
         if not services:
@@ -465,7 +457,7 @@ async def search_services(
                 "services": [],
                 "count": 0,
                 "query": query,
-                "message": "No hay servicios disponibles en este momento"
+                "message": "No hay servicios disponibles en este momento",
             }
 
         # Apply synonym expansion (fallback for LLM normalization)
@@ -491,6 +483,7 @@ async def search_services(
                 (svc, score)
                 for svc, score in scored_services
                 if _matches_audience(svc.name, svc.description, audience)
+                or (svc.metadata_ or {}).get("audience") == audience
             ]
             # Fall back to unfiltered results if no audience match found
             scored_services = audience_filtered if audience_filtered else scored_services
@@ -514,7 +507,7 @@ async def search_services(
                 "services": [],
                 "count": 0,
                 "query": query,
-                "message": f"No se encontraron servicios que coincidan con '{query}'"
+                "message": f"No se encontraron servicios que coincidan con '{query}'",
             }
 
         top_service_objects = [svc for svc, _ in top_matches]
@@ -542,11 +535,19 @@ async def search_services(
             and disambiguation_result.axis == "audience"
             and audience is not None
         ):
+            # Try 1: keyword filter on service name/description
             audience_narrowed = [
                 svc
                 for svc in top_service_objects
                 if _matches_audience(svc.name, svc.description, audience)
             ]
+            # Try 2: metadata filter (for services like "Tinte" that lack gendered names)
+            if not audience_narrowed:
+                audience_narrowed = [
+                    svc
+                    for svc in top_service_objects
+                    if (svc.metadata_ or {}).get("audience") == audience
+                ]
             if audience_narrowed:
                 logger.info(
                     f"Suppressing audience clarification: re-running resolve_candidates on "
@@ -554,12 +555,12 @@ async def search_services(
                 )
                 disambiguation_result = resolve_candidates(
                     audience_narrowed,
-                    # audience already applied via keyword filter — do NOT pass it again
+                    # audience already applied via keyword/metadata filter — do NOT pass it again
                     hair_density=hair_density,
                     hair_length=hair_length,
                 )
             else:
-                # No keyword-matched services — keep the original clarification payload as-is
+                # Neither keyword nor metadata matched — keep original clarification
                 logger.debug(
                     f"Audience narrowing yielded 0 results for '{audience}'; "
                     f"keeping original ClarificationPayload"
@@ -604,24 +605,30 @@ async def search_services(
 
         # Step 4c: Fallback — return plain ranked matches (metadata-free services)
         # ``disambiguation_result`` is a list[Service] in this branch
-        fallback_services = disambiguation_result if isinstance(disambiguation_result, list) else top_service_objects
+        fallback_services = (
+            disambiguation_result
+            if isinstance(disambiguation_result, list)
+            else top_service_objects
+        )
         matched_scores = {svc.id: score for svc, score in top_matches}
 
         matched_services = []
         for service_obj in fallback_services:
             match_score = matched_scores.get(service_obj.id, 0)
-            matched_services.append({
-                "id": str(service_obj.id),
-                "name": service_obj.name,
-                "description": service_obj.description[:150] if service_obj.description else None,
-                "duration_minutes": service_obj.duration_minutes,
-                "category": service_obj.category.value,
-                "match_score": int(match_score),
-            })
+            matched_services.append(
+                {
+                    "id": str(service_obj.id),
+                    "name": service_obj.name,
+                    "description": service_obj.description[:150]
+                    if service_obj.description
+                    else None,
+                    "duration_minutes": service_obj.duration_minutes,
+                    "category": service_obj.category.value,
+                    "match_score": int(match_score),
+                }
+            )
 
-        logger.info(
-            f"Returning {len(matched_services)} services (fallback) for query='{query}'"
-        )
+        logger.info(f"Returning {len(matched_services)} services (fallback) for query='{query}'")
 
         return {
             "services": matched_services,
@@ -631,12 +638,11 @@ async def search_services(
 
     except Exception as e:
         logger.error(
-            f"Error in search_services(query='{query}', category={category}): {e}",
-            exc_info=True
+            f"Error in search_services(query='{query}', category={category}): {e}", exc_info=True
         )
         return {
             "services": [],
             "count": 0,
             "query": query,
-            "error": f"Error al buscar servicios: {str(e)}"
+            "error": f"Error al buscar servicios: {str(e)}",
         }
