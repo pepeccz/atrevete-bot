@@ -218,20 +218,31 @@ class BookingMode(BaseModeNode):
         return "BOOKING"
 
     def get_tools(self) -> list:
-        """Return booking tools, excluding failed tools via circuit breaker."""
+        """Return booking tools, excluding failed tools via circuit breaker.
+
+        GAP-05: The circuit breaker reads self._ctx which is set in handle() BEFORE
+        get_tools() is called (line: self._ctx = ctx → self.get_tools()). This ordering
+        is correct. However, to be resilient if get_tools() is ever called before _ctx is
+        initialized (e.g. during testing or if handle() is refactored), we use getattr
+        with a None default and skip the circuit breaker when ctx is unavailable.
+        This prevents AttributeError and ensures all tools are returned in the safe
+        fallback case (better to allow book() than to crash the agent).
+        """
         tools = _get_all_booking_tools()
         ctx: BookingContext | None = getattr(self, "_ctx", None)
-        if ctx:
-            if ctx.book_failure_count >= 3:
+        if ctx is not None:
+            book_failures = getattr(ctx, "book_failure_count", 0)
+            manage_failures = getattr(ctx, "manage_customer_failure_count", 0)
+            if book_failures >= 3:
                 logger.warning(
                     "get_tools: book excluded — book_failure_count=%d",
-                    ctx.book_failure_count,
+                    book_failures,
                 )
                 tools = [t for t in tools if t.name != "book"]
-            if ctx.manage_customer_failure_count >= 2:
+            if manage_failures >= 2:
                 logger.warning(
                     "get_tools: manage_customer excluded — failure_count=%d",
-                    ctx.manage_customer_failure_count,
+                    manage_failures,
                 )
                 tools = [t for t in tools if t.name != "manage_customer"]
         return tools
@@ -348,10 +359,29 @@ class BookingMode(BaseModeNode):
 
         The greeting/router may have already detected an audience hint (e.g. "corte
         de mujer" → adult_female). Preserve that across turns.
+
+        P0 fix (audience_hint mismatch): the current user message can OVERRIDE a
+        previously set hint. If the user explicitly says "dama" or "caballero" in the
+        current message, that takes priority over whatever was stored in ctx from a
+        prior turn. This prevents booking the wrong service when the audience changes
+        (e.g. user starts with "caballero" context but then asks for "dama").
         """
+        # P0: always check the current user message first — explicit mention overrides stored hint
+        user_msg = self._get_last_user_message(state)
+        if user_msg:
+            extracted = extract_service_audience_hint(user_msg)
+            if extracted and extracted != ctx.service_audience_hint:
+                logger.info(
+                    "_resolve_audience_hint: current message overrides hint %r → %r",
+                    ctx.service_audience_hint,
+                    extracted,
+                )
+                ctx.service_audience_hint = extracted
+                return
+
         if ctx.service_audience_hint:
             logger.debug("_resolve_audience_hint: already set to %s", ctx.service_audience_hint)
-            return  # Already set from a previous turn
+            return  # Already set from a previous turn — no override from message
 
         mc = state.get("mode_context") or {}
         hint = mc.get("service_audience_hint")
@@ -368,8 +398,8 @@ class BookingMode(BaseModeNode):
                 ctx.service_audience_hint = extracted
                 return
 
-        # Try extracting from current user message (e.g. "para dama", "soy mujer")
-        user_msg = self._get_last_user_message(state)
+        # Fallback: try user message (already tried above — this branch won't trigger
+        # unless the first extraction returned None; left for clarity)
         if user_msg:
             extracted = extract_service_audience_hint(user_msg)
             if extracted:
@@ -633,6 +663,22 @@ class BookingMode(BaseModeNode):
                 tool_args["start_time"],
                 len(offered),
             )
+
+            # GAP-01 fix: populate ctx.selected_slot so collected_summary() can render
+            # the date/time in "## Datos recogidos" and the booking summary is complete.
+            if ctx:
+                ctx.selected_slot = {
+                    "date": slot.get("date", slot.get("day_name", "")),
+                    "time": slot.get("time", ""),
+                    "full_datetime": slot.get("full_datetime", ""),
+                    "stylist_id": tool_args["stylist_id"],
+                    "stylist_name": stylist_name,
+                }
+                logger.info(
+                    "_pre_tool_call: GAP-01 populated selected_slot=%s",
+                    ctx.selected_slot,
+                )
+
             return tool_args
 
         # ── No slot_index: validate directly-passed stylist_id ────────────
@@ -1209,31 +1255,40 @@ def _extract_name_from_conversation(
     the common case where the LLM asked for the name and the user replied with
     just their name (e.g. "María", "Me llamo Ana Torres").
 
-    Only triggers when the PREVIOUS assistant message asked for the name
-    (contains "nombre" or similar). This prevents false positives from random
-    capitalized words in normal conversation.
+    GAP-07 fix: Extraction is now attempted in two tiers:
+    1. ALWAYS attempt structured patterns ("me llamo X", "soy X", "mi nombre es X").
+       These are high-precision and safe to run on any message — the intro phrase
+       makes false positives nearly impossible.
+    2. Bare-name pattern ("María") only runs when a RECENT assistant message asked
+       for the name. This prevents false positives from capitalized words like
+       "Perfecto" or service names being mistaken for customer names.
+
+    This ensures that a user who volunteers their name proactively (e.g. "Soy Ana
+    García, quiero un corte") gets captured without needing the bot to ask first.
     """
     if not user_message or not user_message.strip():
         return
 
-    # Only try extraction if the previous assistant message asked for the name
-    messages = state.get("messages", [])
-    if not _previous_assistant_asked_for_name(messages):
-        return
-
-    # Try structured patterns first: "me llamo X", "soy X", "mi nombre es X"
+    # Tier 1: structured intro patterns — always safe, high precision
+    # "me llamo X", "soy X", "mi nombre es X" → explicit name declaration
     match = _NAME_INTRO_PATTERN.search(user_message)
     if match:
         name = match.group(1).strip()
         if name.lower() not in _NAME_STOPWORDS:
             ctx.customer_name = name
             logger.info(
-                "_extract_name_from_conversation: extracted name=%r from intro pattern",
+                "_extract_name_from_conversation: extracted name=%r from intro pattern "
+                "(no name-request required — GAP-07)",
                 name,
             )
             return
 
-    # Try bare name pattern (user replied with just their name)
+    # Tier 2: bare-name pattern — only when bot previously asked for name
+    # (prevents "Perfecto" or service names from being captured as customer names)
+    messages = state.get("messages", [])
+    if not _previous_assistant_asked_for_name(messages):
+        return
+
     match = _BARE_NAME_PATTERN.match(user_message.strip())
     if match:
         name = match.group(1).strip()

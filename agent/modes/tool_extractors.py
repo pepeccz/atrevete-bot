@@ -577,6 +577,24 @@ def extract_stylist_fields(result: dict, ctx: BookingContext) -> None:
         logger.info("extract_stylist_fields: %d stylists loaded", len(stylists))
 
 
+def extract_query_info_fields(result: dict, ctx: BookingContext) -> None:
+    """No-op extractor for query_info tool results.
+
+    GAP-03: query_info is an informational tool (FAQs, hours, location).
+    Its results do not map to BookingContext fields — the LLM reads the
+    tool output directly and crafts a response. This extractor exists so
+    that apply_all_tool_results() doesn't log 'no extractor for query_info'
+    as an unregistered tool and silently drops the result.
+
+    If future requirements need to extract booking-relevant data from
+    query_info (e.g. parsed business hours for slot validation), this is
+    the right place to add that logic.
+    """
+    logger.debug(
+        "extract_query_info_fields: query_info result is informational — no ctx fields updated"
+    )
+
+
 def extract_customer_fields(result: dict, ctx: BookingContext) -> None:
     """Extract customer data from manage_customer result.
 
@@ -705,6 +723,9 @@ TOOL_EXTRACTORS: dict[str, Any] = {
     "list_stylists": extract_stylist_fields,
     "manage_customer": extract_customer_fields,
     "book": extract_booking_result,
+    # GAP-03: query_info is informational — no-op extractor prevents log noise
+    # and provides a hook for future field extraction if needed.
+    "query_info": extract_query_info_fields,
 }
 
 
