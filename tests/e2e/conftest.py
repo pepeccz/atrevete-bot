@@ -10,7 +10,7 @@ import pytest_asyncio
 import redis.asyncio as redis
 
 from shared.config import get_settings
-from tests.e2e.harness.context_manager import TestingContext, TestingContextManager
+from tests.e2e.harness.context_manager import QATestingContext, TestingContextManager
 from tests.e2e.harness.redis_harness import RedisTestHarness
 from tests.e2e.harness.state_reset import StateResetHarness
 
@@ -23,19 +23,25 @@ def qa_test_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def redis_client() -> AsyncGenerator[redis.Redis, None]:
     settings = get_settings()
-    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    conn_kwargs: dict[str, object] = {"decode_responses": True}
+    if settings.REDIS_PASSWORD:
+        conn_kwargs["password"] = settings.REDIS_PASSWORD
+    client = redis.from_url(settings.REDIS_URL, **conn_kwargs)
     await client.ping()
     yield client
     await client.close()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def binary_redis_client() -> AsyncGenerator[redis.Redis, None]:
     settings = get_settings()
-    client = redis.from_url(settings.REDIS_URL, decode_responses=False)
+    conn_kwargs: dict[str, object] = {"decode_responses": False}
+    if settings.REDIS_PASSWORD:
+        conn_kwargs["password"] = settings.REDIS_PASSWORD
+    client = redis.from_url(settings.REDIS_URL, **conn_kwargs)
     await client.ping()
     yield client
     await client.close()
@@ -57,13 +63,15 @@ async def state_reset(redis_client: redis.Redis) -> AsyncGenerator[StateResetHar
 
 
 @pytest.fixture
-def testing_context() -> TestingContext:
+def testing_context() -> QATestingContext:
     manager = TestingContextManager(root_path=Path.cwd())
     return manager.load_context()
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def cleanup_after_test(request: pytest.FixtureRequest, state_reset: StateResetHarness) -> AsyncGenerator[None, None]:
+async def cleanup_after_test(
+    request: pytest.FixtureRequest, state_reset: StateResetHarness
+) -> AsyncGenerator[None, None]:
     yield
     conversation_ids = getattr(request.node, "qa_conversation_ids", [])
     for conversation_id in conversation_ids:
