@@ -521,11 +521,13 @@ class BookingModeV7(BaseModeNode):
 
         # Apply extractors by tool name
         if tool_name == "manage_customer":
+            logger.debug("_post_tool_result: manage_customer parsed result: %s", parsed)
             extract_customer_fields(parsed, self._ctx)
             logger.info(
-                "_post_tool_result: manage_customer — extracted name=%s, customer_id=%s",
+                "_post_tool_result: manage_customer — extracted name=%s, customer_id=%s, full_result=%s",
                 parsed.get("first_name", ""),
                 parsed.get("id", ""),
+                parsed,
             )
 
         elif tool_name == "search_services":
