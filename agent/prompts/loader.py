@@ -176,12 +176,14 @@ async def get_system_prompt() -> str:
     Loads and concatenates:
     - shared/identity.md
     - shared/critical_rules.md
-    - shared/glossary.md
+
+    Note: shared/glossary.md is NOT included — the service catalog is served
+    dynamically by the search_services and query_info tools.
 
     Cached for 10 minutes with async lock for thread safety.
 
     Returns:
-        str: Concatenated system prompt (~2,200 tokens)
+        str: Concatenated system prompt (~1,400 tokens)
     """
     now = datetime.now()
 
@@ -199,15 +201,13 @@ async def get_system_prompt() -> str:
 
         identity = load_markdown("identity.md", "shared")
         critical_rules = load_markdown("critical_rules.md", "shared")
-        glossary = load_markdown("glossary.md", "shared")
 
         # Concatenate with separators
+        # NOTE: glossary.md intentionally excluded — tools serve the service catalog
         parts = [
             identity,
             "\n\n---\n\n",
             critical_rules,
-            "\n\n---\n\n",
-            glossary,
         ]
 
         system_prompt = "".join(parts)
