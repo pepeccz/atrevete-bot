@@ -267,9 +267,7 @@ class BaseModeNode(ABC):
             if input_tokens > 0 or output_tokens > 0:
                 from agent.services.token_tracking import record_token_usage
 
-                await record_token_usage(
-                    input_tokens=input_tokens, output_tokens=output_tokens
-                )
+                await record_token_usage(input_tokens=input_tokens, output_tokens=output_tokens)
         except Exception as e:
             self.logger.debug("Token tracking failed: %s", e)
 
@@ -410,6 +408,20 @@ class BaseModeNode(ABC):
         """
         return result
 
+    def _refresh_dynamic_context(
+        self,
+        working_messages: list,
+    ) -> None:
+        """Hook called after each tool round to refresh stale SystemMessages.
+
+        Subclasses (e.g. BookingModeV7) can override to rebuild the dynamic
+        context SystemMessage so the LLM sees up-to-date "Datos recogidos"
+        after tools like manage_customer update the context mid-loop.
+
+        The base implementation is a no-op.
+        """
+        pass
+
     async def _run_agentic_loop(
         self,
         messages: list,
@@ -515,6 +527,18 @@ class BaseModeNode(ABC):
                             content=str(result),
                             tool_call_id=tool_call.get("id", tool_name),
                         )
+                    )
+
+                # Refresh dynamic context SystemMessage so the LLM sees
+                # up-to-date state on its next invocation (e.g. after
+                # manage_customer sets customer_name, the prompt should
+                # show "✅ Nombre: María" instead of stale "❌ pendiente").
+                try:
+                    self._refresh_dynamic_context(working_messages)
+                except Exception as exc:
+                    self.logger.warning(
+                        "_refresh_dynamic_context failed: %s — continuing with stale context",
+                        exc,
                     )
 
                 iterations += 1

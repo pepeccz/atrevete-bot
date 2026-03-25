@@ -585,6 +585,25 @@ class BookingModeV7(BaseModeNode):
 
         return result
 
+    def _refresh_dynamic_context(self, working_messages: list) -> None:
+        """Rebuild the dynamic context SystemMessage with fresh ctx data.
+
+        After tools like manage_customer update ctx (e.g. setting customer_name),
+        the stale SystemMessage still shows '❌ Nombre: pendiente'. This hook
+        replaces it so the LLM sees '✅ Nombre: María' on its next invocation.
+        """
+        ctx = getattr(self, "_ctx", None)
+        idx = getattr(self, "_dynamic_context_index", None)
+        state = getattr(self, "_dynamic_context_state", None)
+        if ctx is None or idx is None or state is None:
+            return
+        if idx >= len(working_messages):
+            return
+
+        fresh_context = self._build_dynamic_context(state, ctx)
+        working_messages[idx] = SystemMessage(content=fresh_context)
+        logger.debug("_refresh_dynamic_context: rebuilt SystemMessage at index %d", idx)
+
     async def _maybe_prefetch_stylists(self, ctx: BookingContextV7) -> None:
         """Prefetch stylist options when service is resolved but no stylist yet.
 
@@ -735,6 +754,8 @@ class BookingModeV7(BaseModeNode):
 
         # 3. Dynamic context (changes every turn)
         dynamic_context = self._build_dynamic_context(state, ctx)
+        self._dynamic_context_index = len(messages)  # track for mid-loop refresh
+        self._dynamic_context_state = state  # keep ref for rebuild
         messages.append(SystemMessage(content=dynamic_context))
 
         # 4. Conversation history (last N messages for context window)
