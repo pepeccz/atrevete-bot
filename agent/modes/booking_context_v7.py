@@ -88,8 +88,9 @@ class BookingContextV7:
     recommendations_shown: bool = False
     recommendations_declined: bool = False
 
-    # ── Book failure tracking ────────────────────────────────────────────
+    # ── Failure tracking ────────────────────────────────────────────────
     book_failure_count: int = 0
+    manage_customer_failure_count: int = 0
     needs_availability_refresh: bool = False
 
     # ── Service lock (prevents overwrite during SLOT_TAKEN retry) ──────
@@ -133,6 +134,7 @@ class BookingContextV7:
         self.recommendations_shown = False
         self.recommendations_declined = False
         self.book_failure_count = 0
+        self.manage_customer_failure_count = 0
         self.needs_availability_refresh = False
         self.services_locked = False
 
@@ -159,7 +161,9 @@ class BookingContextV7:
             if extras:
                 lines.append(f"✅ Servicios adicionales: {', '.join(extras)}")
         if self.service_audience_hint:
-            display = self._AUDIENCE_DISPLAY.get(self.service_audience_hint, self.service_audience_hint)
+            display = self._AUDIENCE_DISPLAY.get(
+                self.service_audience_hint, self.service_audience_hint
+            )
             lines.append(f"✅ Audiencia: {display}")
         if self.stylist_name:
             lines.append(f"✅ Estilista: {self.stylist_name}")
@@ -192,7 +196,10 @@ class BookingContextV7:
         if not self.offered_slots:
             missing.append("fecha/hora")
         if not self.customer_name:
-            missing.append("nombre")
+            if self.manage_customer_failure_count >= 2:
+                missing.append("nombre (⚠️ guardar falló — pedir confirmación verbal)")
+            else:
+                missing.append("nombre")
         if not missing:
             return "✅ Todos los datos requeridos están completos"
         return "\n".join(f"❌ {label.capitalize()}: pendiente" for label in missing)

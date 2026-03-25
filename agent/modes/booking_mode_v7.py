@@ -43,71 +43,81 @@ logger = logging.getLogger(__name__)
 # intentionally removed. They are valid replies to clarification questions and
 # should NOT cancel an active booking. They are still handled by _SOFT_CANCEL_PHRASES
 # which are only active when there is no booking context.
-_CANCEL_PHRASES: frozenset[str] = frozenset({
-    "cancelar",
-    "anular",
-    "no quiero reservar",
-    "dejalo",
-    "dejalo por ahora",
-    "olvidalo",
-    "dejemoslo",
-    "cancela",
-    "lo dejo",
-    "lo dejo por ahora",
-    "mejor lo dejo",
-    "he cambiado de opinion",
-    "cambie de opinion",
-    "ya no quiero",
-    "lo cancelo",
-    "no quiero hacer la reserva",
-    "no quiero la cita",
-})
+_CANCEL_PHRASES: frozenset[str] = frozenset(
+    {
+        "cancelar",
+        "anular",
+        "no quiero reservar",
+        "dejalo",
+        "dejalo por ahora",
+        "olvidalo",
+        "dejemoslo",
+        "cancela",
+        "lo dejo",
+        "lo dejo por ahora",
+        "mejor lo dejo",
+        "he cambiado de opinion",
+        "cambie de opinion",
+        "ya no quiero",
+        "lo cancelo",
+        "no quiero hacer la reserva",
+        "no quiero la cita",
+    }
+)
 
 # Soft cancel phrases: only trigger cancellation when there is NO active booking
 # context (i.e., selected_services is empty AND pending_clarifications is empty).
 # These are broad negations that can be valid mid-clarification responses.
-_SOFT_CANCEL_PHRASES: frozenset[str] = frozenset({
-    "no me interesa",
-    "mejor no",
-    "paso",
-    "no quiero",
-})
+_SOFT_CANCEL_PHRASES: frozenset[str] = frozenset(
+    {
+        "no me interesa",
+        "mejor no",
+        "paso",
+        "no quiero",
+    }
+)
 
-_ADDON_DECLINE_PHRASES: frozenset[str] = frozenset({
-    "no gracias",
-    "solo eso",
-    "nada mas",
-    "con eso esta bien",
-    "no quiero nada mas",
-    "solo lo que pedi",
-    "no necesito nada mas",
-    "asi esta bien",
-    "no hace falta",
-    "esta bien asi",
-})
+_ADDON_DECLINE_PHRASES: frozenset[str] = frozenset(
+    {
+        "no gracias",
+        "solo eso",
+        "nada mas",
+        "con eso esta bien",
+        "no quiero nada mas",
+        "solo lo que pedi",
+        "no necesito nada mas",
+        "asi esta bien",
+        "no hace falta",
+        "esta bien asi",
+    }
+)
 
-_ESCALATE_PHRASES: frozenset[str] = frozenset({
-    "humano",
-    "persona real",
-    "hablar con alguien",
-    "agente",
-    "quiero hablar con",
-    "operador",
-})
+_ESCALATE_PHRASES: frozenset[str] = frozenset(
+    {
+        "humano",
+        "persona real",
+        "hablar con alguien",
+        "agente",
+        "quiero hablar con",
+        "operador",
+    }
+)
 
 # Negation tokens that neutralize cancel phrases
 # e.g. "no quiero cancelar" is NOT a cancel intent
-_CANCEL_NEGATION_TOKENS: frozenset[str] = frozenset({
-    "no cancelar",
-    "no quiero cancelar",
-    "no anular",
-    "no la canceles",
-    "no canceles",
-    "sigue",
-    "seguimos",
-    "continuemos",
-    "continua",
-})
+_CANCEL_NEGATION_TOKENS: frozenset[str] = frozenset(
+    {
+        "no cancelar",
+        "no quiero cancelar",
+        "no anular",
+        "no la canceles",
+        "no canceles",
+        "sigue",
+        "seguimos",
+        "continuemos",
+        "continua",
+    }
+)
 
 # History window for message context
 _HISTORY_LIMIT = 8
@@ -159,15 +169,22 @@ class BookingModeV7(BaseModeNode):
         return "BOOKING"
 
     def get_tools(self) -> list:
-        """Return booking tools, excluding book() after 3+ failures (circuit breaker)."""
+        """Return booking tools, excluding failed tools via circuit breaker."""
         tools = _get_all_booking_tools()
         ctx: BookingContextV7 | None = getattr(self, "_ctx", None)
-        if ctx and ctx.book_failure_count >= 3:
-            logger.warning(
-                "get_tools: book excluded — book_failure_count=%d",
-                ctx.book_failure_count,
-            )
-            tools = [t for t in tools if t.name != "book"]
+        if ctx:
+            if ctx.book_failure_count >= 3:
+                logger.warning(
+                    "get_tools: book excluded — book_failure_count=%d",
+                    ctx.book_failure_count,
+                )
+                tools = [t for t in tools if t.name != "book"]
+            if ctx.manage_customer_failure_count >= 2:
+                logger.warning(
+                    "get_tools: manage_customer excluded — failure_count=%d",
+                    ctx.manage_customer_failure_count,
+                )
+                tools = [t for t in tools if t.name != "manage_customer"]
         return tools
 
     # ──────────────────────────────────────────────────────────────────────
@@ -244,9 +261,7 @@ class BookingModeV7(BaseModeNode):
     # ──────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _resolve_customer_from_state(
-        state: ConversationState, ctx: BookingContextV7
-    ) -> None:
+    def _resolve_customer_from_state(state: ConversationState, ctx: BookingContextV7) -> None:
         """Inject customer name and ID from state if not already in context.
 
         Handles returning customers whose data was collected in GREETING mode.
@@ -334,8 +349,12 @@ class BookingModeV7(BaseModeNode):
             phone = tool_args.get("phone")
             data = tool_args.get("data") or {}
 
-            logger.info("_pre_tool_call: manage_customer called with action=%s, phone=%s, data=%s",
-                       action, phone, data)
+            logger.info(
+                "_pre_tool_call: manage_customer called with action=%s, phone=%s, data=%s",
+                action,
+                phone,
+                data,
+            )
 
             # Guard: reject update() with customer_id if we have a ctx and it doesn't match
             ctx_mc: BookingContextV7 | None = getattr(self, "_ctx", None)
@@ -348,13 +367,14 @@ class BookingModeV7(BaseModeNode):
                     logger.warning(
                         "_pre_tool_call: rejecting manage_customer(update) — stale customer_id. "
                         "Provided=%s, Context=%s. Tell LLM to call create instead.",
-                        provided_cid, ctx_cid
+                        provided_cid,
+                        ctx_cid,
                     )
                     return ToolCallRejection(
                         name="manage_customer",
                         error_code="STALE_CUSTOMER_ID",
                         error_message="Ese customer_id no es válido para este cliente. "
-                                     "Llama manage_customer(action='create'...) para crear o recuperar el cliente correcto.",
+                        "Llama manage_customer(action='create'...) para crear o recuperar el cliente correcto.",
                     )
 
             return tool_args
@@ -375,9 +395,7 @@ class BookingModeV7(BaseModeNode):
 
         # ── Guard: reject book() when availability needs refresh ────────
         if ctx and ctx.needs_availability_refresh:
-            logger.warning(
-                "_pre_tool_call: book() rejected — needs_availability_refresh is True"
-            )
+            logger.warning("_pre_tool_call: book() rejected — needs_availability_refresh is True")
             return ToolCallRejection(
                 name="book",
                 error_code="NEEDS_AVAILABILITY_REFRESH",
@@ -435,14 +453,11 @@ class BookingModeV7(BaseModeNode):
 
         # ── Hard gate: reject book() if no customer_id ─────────────────────
         if not (ctx and ctx.customer_id):
-            logger.warning(
-                "_pre_tool_call: book() rejected — no customer_id in context"
-            )
+            logger.warning("_pre_tool_call: book() rejected — no customer_id in context")
             return ToolCallRejection(
                 name="book",
                 error_code="NO_CUSTOMER_ID",
-                error_message="Llama a manage_customer primero para obtener "
-                "el customer_id",
+                error_message="Llama a manage_customer primero para obtener el customer_id",
             )
 
         # ── Hard gate: always inject selected_services ─────────────────────
@@ -481,9 +496,7 @@ class BookingModeV7(BaseModeNode):
             return tool_args
 
         slot = offered[array_index]
-        tool_args["stylist_id"] = slot.get(
-            "stylist_id", tool_args.get("stylist_id", "")
-        )
+        tool_args["stylist_id"] = slot.get("stylist_id", tool_args.get("stylist_id", ""))
         tool_args["start_time"] = slot.get(
             "full_datetime",
             slot.get("start_time", tool_args.get("start_time", "")),
@@ -588,9 +601,7 @@ class BookingModeV7(BaseModeNode):
         try:
             from agent.tools.info_tools import list_stylists
 
-            result = await list_stylists.ainvoke(
-                {"category": ctx.service_category or ""}
-            )
+            result = await list_stylists.ainvoke({"category": ctx.service_category or ""})
             parsed = json.loads(result) if isinstance(result, str) else result
             if isinstance(parsed, dict):
                 stylists = parsed.get("stylists", [])
@@ -634,8 +645,7 @@ class BookingModeV7(BaseModeNode):
 
         # Determine if we have an active booking context
         has_active_context = bool(
-            ctx is not None
-            and (ctx.selected_services or ctx.pending_clarifications)
+            ctx is not None and (ctx.selected_services or ctx.pending_clarifications)
         )
 
         # ── Cancel intent ───────────────────────────────────────────────
@@ -664,9 +674,7 @@ class BookingModeV7(BaseModeNode):
                 }
 
         # ── Escalate intent ─────────────────────────────────────────────
-        is_escalate = intent_name == "escalate" or any(
-            p in msg_lower for p in _ESCALATE_PHRASES
-        )
+        is_escalate = intent_name == "escalate" or any(p in msg_lower for p in _ESCALATE_PHRASES)
 
         if is_escalate:
             logger.info("BookingModeV7: escalate intent detected, transitioning to ESCALATION")
@@ -705,9 +713,7 @@ class BookingModeV7(BaseModeNode):
     # Prompt Building
     # ──────────────────────────────────────────────────────────────────────
 
-    async def _build_messages(
-        self, state: ConversationState, ctx: BookingContextV7
-    ) -> list:
+    async def _build_messages(self, state: ConversationState, ctx: BookingContextV7) -> list:
         """Build the complete message list for the agentic loop.
 
         Structure:
@@ -808,6 +814,15 @@ class BookingModeV7(BaseModeNode):
                 "Ofrecé derivar al equipo humano."
             )
 
+        # manage_customer failure circuit breaker
+        if ctx.manage_customer_failure_count >= 2:
+            parts.append(
+                "\n⚠️ No se pudo guardar el nombre (falló 2 veces). "
+                "NO llames a manage_customer de nuevo. "
+                "Continuá la reserva sin guardar el nombre — "
+                "pedile a la clienta que lo confirme al llegar al salón."
+            )
+
         return "\n".join(parts)
 
     # ──────────────────────────────────────────────────────────────────────
@@ -882,9 +897,7 @@ class BookingModeV7(BaseModeNode):
 
         for name in names_to_redact:
             if _contains_name_token(text, name):
-                self.logger.warning(
-                    "BookingModeV7: redacting customer name tokens from response"
-                )
+                self.logger.warning("BookingModeV7: redacting customer name tokens from response")
                 text = _redact_name_tokens(text, name)
 
         return text
@@ -906,9 +919,7 @@ def _normalize_text(text: str | None) -> str:
 def _nfd_lower(text: str) -> str:
     """NFD normalization, lowercase, strip combining marks."""
     return "".join(
-        c
-        for c in unicodedata.normalize("NFD", text.lower())
-        if unicodedata.category(c) != "Mn"
+        c for c in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(c) != "Mn"
     )
 
 

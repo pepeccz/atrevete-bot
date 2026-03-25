@@ -266,8 +266,7 @@ def _label_tokens_match(user_normalized: str, label_normalized: str) -> bool:
         return False
     tokens = re.split(r"\W+", user_normalized)
     return any(
-        len(tok) >= 4 and re.search(rf"\b{re.escape(tok)}\b", label_normalized)
-        for tok in tokens
+        len(tok) >= 4 and re.search(rf"\b{re.escape(tok)}\b", label_normalized) for tok in tokens
     )
 
 
@@ -354,16 +353,14 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
     if ctx.services_locked:
         svc = result.get("resolved_service") or (
             result.get("services", [None])[0]
-            if isinstance(result.get("services"), list)
-            and len(result.get("services", [])) == 1
+            if isinstance(result.get("services"), list) and len(result.get("services", [])) == 1
             else None
         )
         if svc and svc.get("name") and svc["name"] not in ctx.selected_services:
             ctx.selected_services.append(svc["name"])
             _upsert_service_detail(ctx, svc)
             logger.info(
-                "extract_service_fields: services_locked but APPENDED '%s' "
-                "(selected_services=%s)",
+                "extract_service_fields: services_locked but APPENDED '%s' (selected_services=%s)",
                 svc["name"],
                 ctx.selected_services,
             )
@@ -392,11 +389,9 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
         # include the resolved service (preserve unrelated clarifications)
         resolved_name = svc["name"]
         ctx.pending_clarifications = [
-            pc for pc in ctx.pending_clarifications
-            if not any(
-                opt.get("service_name") == resolved_name
-                for opt in pc.get("options", [])
-            )
+            pc
+            for pc in ctx.pending_clarifications
+            if not any(opt.get("service_name") == resolved_name for opt in pc.get("options", []))
         ]
         ctx.candidate_services = []
         # Infer audience hint if not already set
@@ -425,10 +420,7 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
         clarification = result["clarification_needed"]
         # Guard: if we have an audience hint that matches, auto-resolve inline
         # instead of queueing (prevents unnecessary disambiguation prompts).
-        if (
-            clarification.get("axis") == "audience"
-            and ctx.service_audience_hint
-        ):
+        if clarification.get("axis") == "audience" and ctx.service_audience_hint:
             hint_lower = _normalize_text(ctx.service_audience_hint)
             options = clarification.get("options", [])
             for opt in options:
@@ -456,8 +448,7 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
         ]
         ctx.pending_clarifications.append(clarification)
         logger.info(
-            "extract_service_fields: clarification upserted (axis=%s, "
-            "queue_size=%d)",
+            "extract_service_fields: clarification upserted (axis=%s, queue_size=%d)",
             axis,
             len(ctx.pending_clarifications),
         )
@@ -480,10 +471,10 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
             # Remove only matching clarification entries (preserve unrelated)
             resolved_name = svc["name"]
             ctx.pending_clarifications = [
-                pc for pc in ctx.pending_clarifications
+                pc
+                for pc in ctx.pending_clarifications
                 if not any(
-                    opt.get("service_name") == resolved_name
-                    for opt in pc.get("options", [])
+                    opt.get("service_name") == resolved_name for opt in pc.get("options", [])
                 )
             ]
             ctx.candidate_services = []
@@ -593,7 +584,18 @@ def extract_customer_fields(result: dict, ctx: BookingContextV7) -> None:
 
     Sets customer_id and customer_name from the response.
     Handles all 3 manage_customer actions (get, create, update).
+    Tracks failures via manage_customer_failure_count for circuit breaker.
     """
+    # Detect error responses (all failures return {"error": ...})
+    if result.get("error"):
+        ctx.manage_customer_failure_count += 1
+        logger.warning(
+            "extract_customer_fields: manage_customer error (count=%d): %s",
+            ctx.manage_customer_failure_count,
+            result.get("error"),
+        )
+        return
+
     # All success shapes include "id" for the customer UUID
     customer_id = result.get("id") or result.get("customer_id")
     if customer_id:
@@ -604,11 +606,12 @@ def extract_customer_fields(result: dict, ctx: BookingContextV7) -> None:
         ctx.customer_name = first_name
 
     if customer_id or first_name:
-        # Reset book failure counter — user provided new data, so prior
-        # DATA errors (missing customer_id) are now potentially resolved.
+        # Reset failure counters — user provided new data, so prior
+        # errors are now potentially resolved.
         ctx.book_failure_count = 0
+        ctx.manage_customer_failure_count = 0
         logger.info(
-            "extract_customer_fields: customer_id=%s, name=%s (book_failure_count reset)",
+            "extract_customer_fields: customer_id=%s, name=%s (failure counters reset)",
             customer_id,
             first_name,
         )
@@ -664,9 +667,7 @@ def extract_booking_result(result: dict, ctx: BookingContextV7) -> None:
             ctx.offered_slots = None  # Force refresh on next availability check
             ctx.selected_slot = None  # Clear stale selection
             ctx.needs_availability_refresh = True  # Block book() until fresh availability
-            logger.info(
-                "extract_booking_result: SLOT_TAKEN — cleared offered_slots for refresh"
-            )
+            logger.info("extract_booking_result: SLOT_TAKEN — cleared offered_slots for refresh")
         logger.info(
             "extract_booking_result: booking failed (error_code=%s, failure_count=%d)",
             result.get("error_code"),
