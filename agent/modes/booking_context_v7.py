@@ -11,7 +11,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, ClassVar
 
 
 CLEARABLE_NONE_FIELDS: frozenset[str] = frozenset({"offered_slots", "selected_slot"})
@@ -98,9 +98,43 @@ class BookingContextV7:
     # ── Internal (not serialized) ───────────────────────────────────────
     _booking_completed: bool = field(default=False, repr=False)
 
+    # ── Display maps (ClassVar — excluded from dataclass fields) ────────
+    _AUDIENCE_DISPLAY: ClassVar[dict[str, str]] = {
+        "adult_female": "dama",
+        "adult_male": "caballero",
+        "child_male": "niño",
+        "child_female": "niña",
+        "baby": "bebé",
+    }
+
     # ═══════════════════════════════════════════════════════════════════
     # Methods
     # ═══════════════════════════════════════════════════════════════════
+
+    def reset_transient(self) -> None:
+        """Clear all transient booking fields after a successful booking.
+
+        Call this immediately after setting _booking_completed = True so the
+        context is clean for a potential follow-up booking in the same session.
+        Fields that identify the customer (customer_name, customer_id) and
+        stylist (stylist_id, stylist_name) are intentionally preserved as they
+        are likely to be reused.
+        """
+        self.selected_services = []
+        self.selected_services_details = []
+        self.pending_clarifications = []
+        self.candidate_services = []
+        self.service_audience_hint = None
+        self.notes = None
+        self.prefetched_stylists = []
+        self.soonest_any_slot = None
+        self.recurrent_stylist_hint = None
+        self.pending_recommendations = []
+        self.recommendations_shown = False
+        self.recommendations_declined = False
+        self.book_failure_count = 0
+        self.needs_availability_refresh = False
+        self.services_locked = False
 
     def is_ready_to_book(self) -> bool:
         """Check if all REQUIRED fields for book() are present."""
@@ -124,6 +158,9 @@ class BookingContextV7:
             extras = [s for s in self.selected_services if s != self.service_name]
             if extras:
                 lines.append(f"✅ Servicios adicionales: {', '.join(extras)}")
+        if self.service_audience_hint:
+            display = self._AUDIENCE_DISPLAY.get(self.service_audience_hint, self.service_audience_hint)
+            lines.append(f"✅ Audiencia: {display}")
         if self.stylist_name:
             lines.append(f"✅ Estilista: {self.stylist_name}")
         if self.selected_slot:

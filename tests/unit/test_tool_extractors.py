@@ -1621,7 +1621,7 @@ class TestMultiServiceBookingFix:
         assert ctx.services_locked is True
 
     def test_lock_on_book_success(self):
-        """Lock engages on book() success too."""
+        """On book() success, lock is set briefly then cleared by reset_transient()."""
         ctx = BookingContextV7(
             services_locked=False,
             selected_services=["Corte de Señora"],
@@ -1635,7 +1635,9 @@ class TestMultiServiceBookingFix:
             ctx,
         )
 
-        assert ctx.services_locked is True
+        # reset_transient() is called after success, which clears services_locked
+        # so the next booking starts clean
+        assert ctx.services_locked is False
         assert ctx._booking_completed is True
 
     def test_lock_idempotent_on_second_book(self):
@@ -1967,3 +1969,411 @@ class TestClarificationQueueBehavior:
         assert ctx.selected_services == ["Corte Caballero"]
         assert len(ctx.pending_clarifications) == 1
         assert ctx.pending_clarifications[0]["axis"] == "hair_density"
+
+
+# ============================================================================
+# extract_booking_result — reset_transient integration (Task 4.2)
+# ============================================================================
+
+
+class TestExtractBookingResultResetTransient:
+    """Task 4.2: reset_transient() is called on success but NOT on failure."""
+
+    def _populated_ctx(self) -> BookingContextV7:
+        """Return a context with transient fields populated (typical post-booking state)."""
+        return BookingContextV7(
+            service_id="svc-001",
+            service_name="Corte de Dama",
+            stylist_id="sty-001",
+            stylist_name="María",
+            customer_name="Pepe",
+            customer_id="cust-001",
+            selected_slot={"start_time": "2026-03-25T10:00:00+01:00"},
+            offered_slots=[{"time": "10:00", "stylist": "María"}],
+            # Transient fields that reset_transient() should clear
+            selected_services=["Corte de Dama", "Tinte"],
+            service_audience_hint="adult_female",
+            notes="Sin alergia",
+            prefetched_stylists=[{"name": "María"}],
+            soonest_any_slot="Lunes 25 a las 10:00 con María",
+            recurrent_stylist_hint="María",
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=True,
+            recommendations_declined=False,
+            book_failure_count=0,
+            needs_availability_refresh=False,
+            services_locked=True,
+        )
+
+    # ── Success path: reset_transient() IS called ─────────────────────
+
+    def test_success_clears_selected_services(self):
+        """On success, selected_services is cleared by reset_transient()."""
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.selected_services == []
+
+    def test_success_clears_service_audience_hint(self):
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.service_audience_hint is None
+
+    def test_success_clears_notes(self):
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.notes is None
+
+    def test_success_clears_prefetched_stylists(self):
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.prefetched_stylists == []
+
+    def test_success_clears_soonest_any_slot(self):
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.soonest_any_slot is None
+
+    def test_success_clears_pending_recommendations(self):
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.pending_recommendations == []
+
+    def test_success_resets_recommendations_shown(self):
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.recommendations_shown is False
+
+    def test_success_resets_services_locked(self):
+        """reset_transient() clears services_locked — follow-up booking starts clean."""
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.services_locked is False
+
+    def test_success_resets_book_failure_count(self):
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.book_failure_count == 0
+
+    def test_success_sets_booking_completed(self):
+        """_booking_completed flag is set before reset_transient()."""
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx._booking_completed is True
+
+    def test_success_preserves_customer_name(self):
+        """Identity fields are NOT cleared by reset_transient()."""
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.customer_name == "Pepe"
+
+    def test_success_preserves_customer_id(self):
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.customer_id == "cust-001"
+
+    def test_success_preserves_stylist_name(self):
+        ctx = self._populated_ctx()
+        extract_booking_result({"success": True, "appointment_id": "apt-1"}, ctx)
+        assert ctx.stylist_name == "María"
+
+    def test_success_preserves_stylist_id(self):
+        ctx = self._populated_ctx()
+        extract_booking_result(
+            {"success": True, "appointment_id": "apt-1", "stylist_id": "sty-001"},
+            ctx,
+        )
+        assert ctx.stylist_id == "sty-001"
+
+    # ── Failure path: reset_transient() is NOT called ─────────────────
+
+    def test_failure_preserves_selected_services(self):
+        """On failure, selected_services is NOT cleared."""
+        ctx = self._populated_ctx()
+        extract_booking_result(
+            {"success": False, "error_code": "VALIDATION_ERROR", "message": "Missing field"},
+            ctx,
+        )
+        assert ctx.selected_services == ["Corte de Dama", "Tinte"]
+
+    def test_failure_preserves_service_audience_hint(self):
+        ctx = self._populated_ctx()
+        extract_booking_result(
+            {"success": False, "error_code": "VALIDATION_ERROR"},
+            ctx,
+        )
+        assert ctx.service_audience_hint == "adult_female"
+
+    def test_failure_preserves_notes(self):
+        ctx = self._populated_ctx()
+        extract_booking_result(
+            {"success": False, "error_code": "VALIDATION_ERROR"},
+            ctx,
+        )
+        assert ctx.notes == "Sin alergia"
+
+    def test_failure_preserves_pending_recommendations(self):
+        ctx = self._populated_ctx()
+        extract_booking_result(
+            {"success": False, "error_code": "VALIDATION_ERROR"},
+            ctx,
+        )
+        assert ctx.pending_recommendations == ["Hidratación"]
+
+    def test_failure_increments_book_failure_count(self):
+        """On failure, book_failure_count is incremented (NOT reset)."""
+        ctx = self._populated_ctx()
+        extract_booking_result(
+            {"success": False, "error_code": "VALIDATION_ERROR"},
+            ctx,
+        )
+        assert ctx.book_failure_count == 1
+
+    def test_slot_taken_failure_preserves_selected_services(self):
+        """SLOT_TAKEN clears slots but NOT selected_services."""
+        ctx = self._populated_ctx()
+        extract_booking_result(
+            {"success": False, "error_code": "SLOT_TAKEN"},
+            ctx,
+        )
+        assert ctx.selected_services == ["Corte de Dama", "Tinte"]
+        # But offered_slots and selected_slot ARE cleared by SLOT_TAKEN logic
+        assert ctx.offered_slots is None
+        assert ctx.selected_slot is None
+
+    def test_failure_does_not_set_booking_completed(self):
+        """On failure, _booking_completed remains False."""
+        ctx = self._populated_ctx()
+        extract_booking_result(
+            {"success": False, "error_code": "SLOT_TAKEN"},
+            ctx,
+        )
+        assert ctx._booking_completed is False
+
+
+# ============================================================================
+# Bug fixes: audience clarification matching (Hotfix — "dama" must match
+# "Dama / Señora" label; "señora" must resolve to adult_female)
+# ============================================================================
+
+# Shared clarification fixture used across multiple tests
+_AUDIENCE_CLARIFICATION = {
+    "axis": "audience",
+    "question_hint": "¿El corte es para Dama / Señora, Niña o Niño?",
+    "options": [
+        {
+            "label": "Dama / Señora",
+            "value": "adult_female",
+            "service_name": "Corte de Señora",
+            "service_id": "uuid-corte-f",
+            "duration_minutes": 45,
+            "category": "HAIRDRESSING",
+        },
+        {
+            "label": "Niña",
+            "value": "child_female",
+            "service_name": "Corte Niña",
+            "service_id": "uuid-corte-nina",
+            "duration_minutes": 30,
+            "category": "HAIRDRESSING",
+        },
+        {
+            "label": "Niño",
+            "value": "child_male",
+            "service_name": "Corte Niño",
+            "service_id": "uuid-corte-nino",
+            "duration_minutes": 30,
+            "category": "HAIRDRESSING",
+        },
+    ],
+}
+
+
+class TestAudienceClarificationFix:
+    """Bug fix: audience clarification must resolve via natural user phrases.
+
+    Covers:
+    - "dama" → resolves to adult_female (label match + hint map)
+    - "para señora" → resolves to adult_female (hint map fallback)
+    - "para dama" → resolves to adult_female
+    - "es para dama" → resolves to adult_female
+    - "soy dama" → resolves to adult_female (via hint map used in _resolve_audience_hint)
+    - "señora" → resolves to adult_female (new hint map entry)
+    - Pre-existing ctx.service_audience_hint still works
+    """
+
+    def _make_ctx(self, hint: str | None = None) -> BookingContextV7:
+        """Create a context with pending audience clarification."""
+        return BookingContextV7(
+            service_audience_hint=hint,
+            pending_clarifications=[dict(_AUDIENCE_CLARIFICATION)],
+        )
+
+    # ── Tests: hint map covers "dama" and "señora" ──────────────────────────
+
+    def test_dama_resolves_via_hint_map(self):
+        """'dama' alone is in the hint map → adult_female resolved."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="dama")
+        assert result is True
+        assert ctx.service_name == "Corte de Señora"
+        assert ctx.pending_clarifications == []
+
+    def test_senora_resolves_via_hint_map(self):
+        """'señora' (normalized 'senora') is now in the hint map → adult_female resolved."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="señora")
+        assert result is True
+        assert ctx.service_name == "Corte de Señora"
+        assert ctx.pending_clarifications == []
+
+    def test_para_senora_resolves(self):
+        """'para señora' → 'senora' token matches the hint map."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="para señora")
+        assert result is True
+        assert ctx.service_name == "Corte de Señora"
+        assert ctx.pending_clarifications == []
+
+    def test_para_dama_resolves(self):
+        """'para dama' → 'dama' token matches the hint map."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="para dama")
+        assert result is True
+        assert ctx.service_name == "Corte de Señora"
+        assert ctx.pending_clarifications == []
+
+    def test_es_para_dama_resolves(self):
+        """'es para dama' → 'dama' token matches."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="es para dama")
+        assert result is True
+        assert ctx.service_name == "Corte de Señora"
+        assert ctx.pending_clarifications == []
+
+    def test_soy_dama_resolves(self):
+        """'soy dama' → 'dama' token matches."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="soy dama")
+        assert result is True
+        assert ctx.service_name == "Corte de Señora"
+        assert ctx.pending_clarifications == []
+
+    # ── Tests: label token matching ("dama" inside "Dama / Señora") ─────────
+
+    def test_dama_matches_label_token(self):
+        """'dama' appears as a token in label 'Dama / Señora' → matched."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="dama")
+        assert result is True
+        assert ctx.service_id == "uuid-corte-f"
+
+    def test_nina_resolves_to_child_female(self):
+        """'niña' → normalized 'nina' matches 'Nina' label."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="niña")
+        assert result is True
+        assert ctx.service_name == "Corte Niña"
+        assert ctx.service_id == "uuid-corte-nina"
+
+    def test_nino_resolves_to_child_male(self):
+        """'niño' → normalized 'nino' matches 'Niño' label."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="niño")
+        assert result is True
+        assert ctx.service_name == "Corte Niño"
+        assert ctx.service_id == "uuid-corte-nino"
+
+    # ── Tests: pre-existing canonical hint still works ───────────────────────
+
+    def test_canonical_hint_adult_female_still_works(self):
+        """Existing ctx.service_audience_hint='adult_female' → still resolves correctly."""
+        ctx = self._make_ctx(hint="adult_female")
+        result = resolve_pending_clarification(ctx, user_message="")
+        assert result is True
+        assert ctx.service_name == "Corte de Señora"
+
+    def test_canonical_hint_child_female_resolves_nina(self):
+        """Hint='child_female' → resolves to Niña option."""
+        ctx = self._make_ctx(hint="child_female")
+        result = resolve_pending_clarification(ctx, user_message="")
+        assert result is True
+        assert ctx.service_name == "Corte Niña"
+
+    # ── Tests: edge cases ────────────────────────────────────────────────────
+
+    def test_no_hint_and_no_user_message_stays_pending(self):
+        """No hint AND empty user_message → unresolvable → stays pending."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="")
+        assert result is False
+        assert len(ctx.pending_clarifications) == 1
+
+    def test_ambiguous_message_stays_pending(self):
+        """'un corte' → no audience token → stays pending."""
+        ctx = self._make_ctx()
+        result = resolve_pending_clarification(ctx, user_message="un corte")
+        assert result is False
+        assert len(ctx.pending_clarifications) == 1
+
+    def test_resolved_service_appended_not_overwritten(self):
+        """When existing service is in selected_services, resolved one is prepended."""
+        ctx = BookingContextV7(
+            service_audience_hint=None,
+            selected_services=["Tinte Color"],
+            pending_clarifications=[dict(_AUDIENCE_CLARIFICATION)],
+        )
+        result = resolve_pending_clarification(ctx, user_message="dama")
+        assert result is True
+        assert ctx.selected_services[0] == "Corte de Señora"
+        assert "Tinte Color" in ctx.selected_services
+
+    def test_service_id_set_after_resolution(self):
+        """After resolution, service_id and duration are set on ctx."""
+        ctx = self._make_ctx()
+        resolve_pending_clarification(ctx, user_message="dama")
+        assert ctx.service_id == "uuid-corte-f"
+        assert ctx.service_duration_minutes == 45
+
+    def test_candidate_services_cleared_after_resolution(self):
+        """candidate_services is cleared after audience resolution."""
+        ctx = BookingContextV7(
+            service_audience_hint=None,
+            candidate_services=[{"id": "x", "name": "X"}],
+            pending_clarifications=[dict(_AUDIENCE_CLARIFICATION)],
+        )
+        resolve_pending_clarification(ctx, user_message="dama")
+        assert ctx.candidate_services == []
+
+
+class TestAudienceHintMapExpansion:
+    """Verify the expanded _AUDIENCE_HINT_MAP covers new tokens."""
+
+    def test_senora_maps_to_adult_female(self):
+        """extract_service_audience_hint('señora') → 'adult_female'."""
+        assert extract_service_audience_hint("señora") == "adult_female"
+
+    def test_senor_maps_to_adult_male(self):
+        """extract_service_audience_hint('señor') → 'adult_male'."""
+        assert extract_service_audience_hint("señor") == "adult_male"
+
+    def test_chica_maps_to_adult_female(self):
+        assert extract_service_audience_hint("chica") == "adult_female"
+
+    def test_chico_maps_to_adult_male(self):
+        assert extract_service_audience_hint("chico") == "adult_male"
+
+    def test_para_senora_extracts_hint(self):
+        """'para señora' → 'senora' token → adult_female."""
+        assert extract_service_audience_hint("para señora") == "adult_female"
+
+    def test_soy_una_senora_extracts_hint(self):
+        assert extract_service_audience_hint("soy una señora") == "adult_female"
+
+    def test_existing_dama_still_works(self):
+        assert extract_service_audience_hint("dama") == "adult_female"
+
+    def test_existing_caballero_still_works(self):
+        assert extract_service_audience_hint("corte caballero") == "adult_male"
+
+    def test_existing_nina_still_works(self):
+        assert extract_service_audience_hint("peinado niña") == "child_female"

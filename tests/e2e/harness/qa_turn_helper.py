@@ -47,7 +47,10 @@ async def _cmd_health() -> None:
     from shared.redis_client import INCOMING_STREAM
 
     settings = get_settings()
-    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    redis_kwargs: dict[str, Any] = {"decode_responses": True}
+    if settings.REDIS_PASSWORD:
+        redis_kwargs["password"] = settings.REDIS_PASSWORD
+    client = redis.from_url(settings.REDIS_URL, **redis_kwargs)
     try:
         await client.ping()
         stream_exists = await client.exists(INCOMING_STREAM)
@@ -78,7 +81,10 @@ async def _cmd_turn(
     from tests.e2e.harness.redis_harness import RedisTestHarness
 
     settings = get_settings()
-    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    redis_kwargs: dict[str, Any] = {"decode_responses": True}
+    if settings.REDIS_PASSWORD:
+        redis_kwargs["password"] = settings.REDIS_PASSWORD
+    client = redis.from_url(settings.REDIS_URL, **redis_kwargs)
     harness = RedisTestHarness(redis_client=client)
     try:
         result = await harness.execute_turn(
@@ -112,7 +118,10 @@ async def _cmd_reset(conversation_id: str, phone: str) -> None:
     from tests.e2e.harness.state_reset import StateResetHarness
 
     settings = get_settings()
-    client = redis.from_url(settings.REDIS_URL, decode_responses=False)
+    redis_kwargs_bin: dict[str, Any] = {"decode_responses": False}
+    if settings.REDIS_PASSWORD:
+        redis_kwargs_bin["password"] = settings.REDIS_PASSWORD
+    client = redis.from_url(settings.REDIS_URL, **redis_kwargs_bin)
     harness = StateResetHarness(redis_client=client)
     try:
         result = await harness.reset_conversation_state(
@@ -134,8 +143,13 @@ async def _cmd_state(conversation_id: str) -> None:
     from tests.e2e.harness.redis_harness import RedisTestHarness
 
     settings = get_settings()
-    client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    binary_client = redis.from_url(settings.REDIS_URL, decode_responses=False)
+    redis_kwargs_txt: dict[str, Any] = {"decode_responses": True}
+    redis_kwargs_bin2: dict[str, Any] = {"decode_responses": False}
+    if settings.REDIS_PASSWORD:
+        redis_kwargs_txt["password"] = settings.REDIS_PASSWORD
+        redis_kwargs_bin2["password"] = settings.REDIS_PASSWORD
+    client = redis.from_url(settings.REDIS_URL, **redis_kwargs_txt)
+    binary_client = redis.from_url(settings.REDIS_URL, **redis_kwargs_bin2)
     harness = RedisTestHarness(redis_client=client, binary_redis_client=binary_client)
     try:
         state = await harness.capture_final_state(conversation_id)

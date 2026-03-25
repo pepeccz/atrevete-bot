@@ -39,25 +39,38 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # Cancel/Escalate detection phrases (Spanish, accent-normalized)
+# NOTE: broad conversational negations ("no me interesa", "mejor no") have been
+# intentionally removed. They are valid replies to clarification questions and
+# should NOT cancel an active booking. They are still handled by _SOFT_CANCEL_PHRASES
+# which are only active when there is no booking context.
 _CANCEL_PHRASES: frozenset[str] = frozenset({
     "cancelar",
     "anular",
-    "no quiero",
+    "no quiero reservar",
     "dejalo",
     "dejalo por ahora",
     "olvidalo",
-    "no me interesa",
     "dejemoslo",
     "cancela",
     "lo dejo",
     "lo dejo por ahora",
-    "mejor no",
     "mejor lo dejo",
     "he cambiado de opinion",
     "cambie de opinion",
-    "paso",
     "ya no quiero",
     "lo cancelo",
+    "no quiero hacer la reserva",
+    "no quiero la cita",
+})
+
+# Soft cancel phrases: only trigger cancellation when there is NO active booking
+# context (i.e., selected_services is empty AND pending_clarifications is empty).
+# These are broad negations that can be valid mid-clarification responses.
+_SOFT_CANCEL_PHRASES: frozenset[str] = frozenset({
+    "no me interesa",
+    "mejor no",
+    "paso",
+    "no quiero",
 })
 
 _ADDON_DECLINE_PHRASES: frozenset[str] = frozenset({
@@ -193,13 +206,16 @@ class BookingModeV7(BaseModeNode):
         self._resolve_audience_hint(state, ctx)
 
         # 1c. Pre-resolve: attempt to resolve pending service clarification
-        resolved = resolve_pending_clarification(ctx)
+        # Pass the user message so hair_density/hair_length axes can be matched
+        # via hint maps (the audience axis uses service_audience_hint instead).
+        user_message_for_resolver = self._get_last_user_message(state)
+        resolved = resolve_pending_clarification(ctx, user_message=user_message_for_resolver)
         if resolved:
             logger.info("BookingModeV7: auto-resolved pending service clarification")
 
         # 2. Fast-path: cancel / escalate (before LLM call)
         user_message = self._get_last_user_message(state)
-        special = self._check_special_intents(state, user_message, intent)
+        special = self._check_special_intents(state, user_message, intent, ctx)
         if special is not None:
             return special
 
@@ -350,6 +366,30 @@ class BookingModeV7(BaseModeNode):
                     error_message="Pregunta el nombre del cliente primero",
                 )
 
+            # ── Name splitting: split on LAST space so compound first names are preserved
+            # Examples: "Ana Torres" → first="Ana", last="Torres"
+            #           "María de los Ángeles Vega" → first="María de los Ángeles", last="Vega"
+            #           "Pedro" → first="Pedro", last=""
+            name = cname.strip()
+            if " " in name:
+                parts = name.rsplit(" ", 1)
+                first_name = parts[0]
+                last_name = parts[1]
+            else:
+                first_name = name
+                last_name = ""
+            tool_args["first_name"] = first_name
+            if last_name:
+                tool_args["last_name"] = last_name
+            elif "last_name" in tool_args:
+                tool_args["last_name"] = ""
+            logger.info(
+                "_pre_tool_call: split customer_name=%r → first_name=%r, last_name=%r",
+                name,
+                first_name,
+                last_name,
+            )
+
         # ── Hard gate: reject book() if no customer_id ─────────────────────
         if not (ctx and ctx.customer_id):
             logger.warning(
@@ -462,6 +502,7 @@ class BookingModeV7(BaseModeNode):
         state: ConversationState,
         user_message: str,
         intent: Any,
+        ctx: "BookingContextV7 | None" = None,
     ) -> dict | None:
         """Check for cancel/escalate before running the agentic loop.
 
@@ -469,18 +510,39 @@ class BookingModeV7(BaseModeNode):
         or None to continue normal processing.
 
         Cancel negation detection: "no quiero cancelar" → NOT a cancel.
+
+        Cancel scoping (REQ-MSF-4): _SOFT_CANCEL_PHRASES are only treated as
+        cancellations when there is NO active booking context (selected_services
+        is empty AND pending_clarifications is empty). This prevents broad
+        negations like "no me interesa" from cancelling an in-progress booking
+        when the user is simply answering a clarification question.
         """
         intent_name = self._extract_intent_name(intent)
         msg_lower = _normalize_text(user_message)
 
+        # Determine if we have an active booking context
+        has_active_context = bool(
+            ctx is not None
+            and (ctx.selected_services or ctx.pending_clarifications)
+        )
+
         # ── Cancel intent ───────────────────────────────────────────────
+        # Always check explicit cancel phrases
         is_cancel = intent_name == "cancel" or any(p in msg_lower for p in _CANCEL_PHRASES)
+
+        # Only check soft phrases when there is NO active booking context
+        if not is_cancel and not has_active_context:
+            is_cancel = any(p in msg_lower for p in _SOFT_CANCEL_PHRASES)
 
         if is_cancel:
             # Check for negation: "no quiero cancelar" is NOT a cancel
             is_negated = any(neg in msg_lower for neg in _CANCEL_NEGATION_TOKENS)
             if not is_negated:
-                logger.info("BookingModeV7: cancel intent detected, transitioning to GENERAL")
+                logger.info(
+                    "BookingModeV7: cancel intent detected, transitioning to GENERAL "
+                    "(has_active_context=%s)",
+                    has_active_context,
+                )
                 response = "Entendido, cancelamos la reserva. ¿Puedo ayudarte en algo más? 😊"
                 return {
                     **transition_mode(state, "GENERAL"),

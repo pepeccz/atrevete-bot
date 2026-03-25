@@ -23,21 +23,83 @@ from agent.modes.booking_context_v7 import BookingContextV7
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# Audience hint extraction (ported from booking_mode.py)
+# Axis hint maps (audience, hair_density, hair_length)
 # ============================================================================
 
 _AUDIENCE_HINT_MAP: dict[str, str] = {
+    # adult_male
     "caballero": "adult_male",
     "hombre": "adult_male",
     "adulto": "adult_male",
+    "senor": "adult_male",
+    "chico": "adult_male",
+    # adult_female
     "dama": "adult_female",
     "mujer": "adult_female",
     "adulta": "adult_female",
+    "senora": "adult_female",
+    "chica": "adult_female",
+    "seorita": "adult_female",
+    "srita": "adult_female",
+    # child_male
     "nino": "child_male",
     "nene": "child_male",
+    "chiquitin": "child_male",
+    # child_female
     "nina": "child_female",
     "nena": "child_female",
+    "chiquitina": "child_female",
+    # baby
     "bebe": "baby",
+}
+
+# Maps Spanish natural language → hair_density axis values used by resolve_candidates()
+# Axis values: "normal" | "extra"
+_HAIR_DENSITY_HINT_MAP: dict[str, str] = {
+    "normal": "normal",
+    "medio": "normal",
+    "fino": "normal",
+    "cabello normal": "normal",
+    "pelo normal": "normal",
+    "pelo fino": "normal",
+    "cabello fino": "normal",
+    "cabello medio": "normal",
+    "pelo medio": "normal",
+    "poco pelo": "normal",
+    "grueso": "extra",
+    "denso": "extra",
+    "espeso": "extra",
+    "mucho pelo": "extra",
+    "bastante pelo": "extra",
+    "pelo grueso": "extra",
+    "cabello grueso": "extra",
+    "pelo denso": "extra",
+    "cabello denso": "extra",
+    "pelo espeso": "extra",
+    "cabello espeso": "extra",
+    "muy largo": "extra",
+    "pelo muy largo": "extra",
+    "cabello muy largo": "extra",
+    "extra grueso": "extra",
+}
+
+# Maps Spanish natural language → hair_length axis values used by resolve_candidates()
+# Axis values: "short_medium" | "long"
+_HAIR_LENGTH_HINT_MAP: dict[str, str] = {
+    "corto": "short_medium",
+    "medio": "short_medium",
+    "por los hombros": "short_medium",
+    "pelo corto": "short_medium",
+    "pelo medio": "short_medium",
+    "cabello corto": "short_medium",
+    "cabello medio": "short_medium",
+    "corto o medio": "short_medium",
+    "largo": "long",
+    "muy largo": "long",
+    "pelo largo": "long",
+    "cabello largo": "long",
+    "pelo muy largo": "long",
+    "cabello muy largo": "long",
 }
 
 
@@ -70,58 +132,184 @@ def extract_service_audience_hint(value: str | None) -> str | None:
 # ============================================================================
 
 
-def resolve_pending_clarification(ctx: BookingContextV7) -> bool:
-    """Attempt to resolve the first matching audience clarification from the queue.
+def resolve_pending_clarification(ctx: BookingContextV7, user_message: str = "") -> bool:
+    """Attempt to resolve pending clarifications from the queue using axis hint maps.
 
     Called as a pre-resolver in BookingModeV7.handle() AFTER _resolve_audience_hint()
-    and BEFORE _build_messages(). Iterates ctx.pending_clarifications looking for the
-    first entry with axis="audience" that matches service_audience_hint. On match:
+    and BEFORE _build_messages(). Iterates ctx.pending_clarifications and attempts
+    to match the user's natural-language answer against the appropriate hint map
+    for each axis. Handles all 3 axes: audience, hair_density, hair_length.
+
+    Args:
+        ctx: The current BookingContextV7 (mutated in place on match).
+        user_message: The raw user message from the current turn. Used to match
+            ALL axes: audience (fallback when ctx.service_audience_hint is None),
+            hair_density, and hair_length via their respective hint maps.
+
+    On a successful match for any axis:
     - Sets service_id, service_name, service_category, service_duration_minutes
     - Appends to selected_services (NOT overwrite)
     - Removes the matched entry from pending_clarifications
     - Clears candidate_services
-    Returns True if resolution happened, False otherwise.
+    Returns True if any resolution happened, False otherwise.
+
+    Axis resolution strategy:
+    - audience: derive canonical hint from ctx.service_audience_hint (preferred) OR
+      from user_message via _AUDIENCE_HINT_MAP (fallback), then match against option
+      values/labels using multiple strategies (canonical value, label substring, token).
+    - hair_density: match user_message against _HAIR_DENSITY_HINT_MAP
+    - hair_length: match user_message against _HAIR_LENGTH_HINT_MAP
     """
     if not ctx.pending_clarifications:
         return False
-    if ctx.service_audience_hint is None:
-        return False
 
-    hint_lower = _normalize_text(ctx.service_audience_hint)
+    resolved_any = False
 
-    for idx, clarification in enumerate(ctx.pending_clarifications):
-        if clarification.get("axis") != "audience":
+    # Normalize user message for hint map matching
+    user_text = _normalize_text(user_message)
+
+    # Iterate over a copy so we can safely remove items during iteration
+    remaining_clarifications = list(ctx.pending_clarifications)
+    still_pending: list[dict] = []
+
+    for clarification in remaining_clarifications:
+        axis = clarification.get("axis")
+
+        # ── audience axis: use service_audience_hint OR derive from user_message ──
+        if axis == "audience":
+            # Derive hint from user_message if not already in context.
+            # This handles the common case where the user answers the clarification
+            # question with a natural phrase like "dama", "para señora", "soy mujer",
+            # but the hint was never persisted from a previous turn.
+            audience_hint = ctx.service_audience_hint
+            if audience_hint is None and user_text:
+                audience_hint = _match_hint_map(user_text, _AUDIENCE_HINT_MAP)
+            if audience_hint is None:
+                still_pending.append(clarification)
+                continue
+            hint_lower = _normalize_text(audience_hint)
+            options = clarification.get("options", [])
+            matched = False
+            for opt in options:
+                opt_val = _normalize_text(opt.get("value", ""))
+                opt_label = _normalize_text(opt.get("label", ""))
+                # Match canonical value (e.g. "adult_female" in "adult_female")
+                # OR match label tokens (e.g. "dama" in "dama / senora")
+                # OR the option value is contained in the hint (substring match)
+                if (
+                    hint_lower in opt_val
+                    or opt_val in hint_lower
+                    or hint_lower in opt_label
+                    or _label_tokens_match(hint_lower, opt_label)
+                    or _label_tokens_match(user_text, opt_label)
+                ):
+                    _apply_resolved_option(ctx, opt, axis, audience_hint)
+                    matched = True
+                    resolved_any = True
+                    break
+            if not matched:
+                still_pending.append(clarification)
             continue
 
-        options = clarification.get("options", [])
-        for opt in options:
-            val = _normalize_text(opt.get("value"))
-            label = _normalize_text(opt.get("label"))
-            if hint_lower in val or val in hint_lower or hint_lower in label:
-                ctx.service_id = str(opt["service_id"])
-                ctx.service_name = opt["service_name"]
-                ctx.service_category = opt.get("category")
-                ctx.service_duration_minutes = opt.get("duration_minutes")
-                ctx.service_family = opt.get("family")
-                # APPEND, not overwrite (same pattern as Shape 1)
-                if opt["service_name"] not in ctx.selected_services:
-                    ctx.selected_services = [opt["service_name"]] + [
-                        s for s in ctx.selected_services
-                        if s != opt["service_name"]
-                    ]
-                # Remove the resolved entry from the queue
-                ctx.pending_clarifications.pop(idx)
-                ctx.candidate_services = []
-                logger.info(
-                    "resolve_pending_clarification: auto-resolved '%s' "
-                    "via audience hint '%s' (queue_size=%d)",
-                    opt["service_name"],
-                    ctx.service_audience_hint,
-                    len(ctx.pending_clarifications),
-                )
-                return True
+        # ── hair_density axis: scan user_text against hint map ──
+        if axis == "hair_density":
+            resolved_value = _match_hint_map(user_text, _HAIR_DENSITY_HINT_MAP)
+            if resolved_value:
+                options = clarification.get("options", [])
+                matched = False
+                for opt in options:
+                    if _normalize_text(opt.get("value")) == resolved_value:
+                        _apply_resolved_option(ctx, opt, axis, resolved_value)
+                        matched = True
+                        resolved_any = True
+                        break
+                if not matched:
+                    still_pending.append(clarification)
+            else:
+                still_pending.append(clarification)
+            continue
 
-    return False
+        # ── hair_length axis: scan user_text against hint map ──
+        if axis == "hair_length":
+            resolved_value = _match_hint_map(user_text, _HAIR_LENGTH_HINT_MAP)
+            if resolved_value:
+                options = clarification.get("options", [])
+                matched = False
+                for opt in options:
+                    if _normalize_text(opt.get("value")) == resolved_value:
+                        _apply_resolved_option(ctx, opt, axis, resolved_value)
+                        matched = True
+                        resolved_any = True
+                        break
+                if not matched:
+                    still_pending.append(clarification)
+            else:
+                still_pending.append(clarification)
+            continue
+
+        # ── Unknown axis: keep as-is ──
+        still_pending.append(clarification)
+
+    if resolved_any:
+        ctx.pending_clarifications = still_pending
+
+    return resolved_any
+
+
+def _label_tokens_match(user_normalized: str, label_normalized: str) -> bool:
+    """Return True if any word-token from user_normalized appears in label_normalized.
+
+    Used to match user answers like "dama" against option labels like "dama / senora".
+    Only considers tokens of 4+ characters to avoid false positives from short words.
+    """
+    if not user_normalized or not label_normalized:
+        return False
+    tokens = re.split(r"\W+", user_normalized)
+    return any(
+        len(tok) >= 4 and re.search(rf"\b{re.escape(tok)}\b", label_normalized)
+        for tok in tokens
+    )
+
+
+def _match_hint_map(normalized_text: str, hint_map: dict[str, str]) -> str | None:
+    """Scan normalized_text for keys in hint_map, longest match wins.
+
+    Returns the axis value (e.g. "normal", "extra", "short_medium", "long")
+    if a match is found, None otherwise. Prefers longer keys to avoid
+    false positives from short substrings.
+    """
+    best_key: str | None = None
+    best_len = 0
+    for key, value in hint_map.items():
+        if key in normalized_text and len(key) > best_len:
+            best_key = key
+            best_len = len(key)
+    return hint_map[best_key] if best_key else None
+
+
+def _apply_resolved_option(
+    ctx: BookingContextV7, opt: dict, axis: str, resolved_value: str
+) -> None:
+    """Apply a resolved clarification option to the booking context."""
+    ctx.service_id = str(opt["service_id"])
+    ctx.service_name = opt["service_name"]
+    ctx.service_category = opt.get("category")
+    ctx.service_duration_minutes = opt.get("duration_minutes")
+    ctx.service_family = opt.get("family")
+    # APPEND, not overwrite (same pattern as Shape 1)
+    if opt["service_name"] not in ctx.selected_services:
+        ctx.selected_services = [opt["service_name"]] + [
+            s for s in ctx.selected_services if s != opt["service_name"]
+        ]
+    ctx.candidate_services = []
+    logger.info(
+        "resolve_pending_clarification: auto-resolved '%s' "
+        "via axis '%s'='%s' (remaining_pending=%d)",
+        opt["service_name"],
+        axis,
+        resolved_value,
+        len(ctx.pending_clarifications),
+    )
 
 
 # ============================================================================
@@ -259,11 +447,18 @@ def extract_service_fields(result: dict, ctx: BookingContextV7) -> None:
                         ctx.service_audience_hint,
                     )
                     return
+        # Axis-based upsert: replace existing entry for same axis instead of
+        # blindly appending (prevents duplicate clarification entries for the
+        # same axis when the LLM retries a failed clarification question).
+        axis = clarification.get("axis")
+        ctx.pending_clarifications = [
+            pc for pc in ctx.pending_clarifications if pc.get("axis") != axis
+        ]
         ctx.pending_clarifications.append(clarification)
         logger.info(
-            "extract_service_fields: clarification queued (axis=%s, "
+            "extract_service_fields: clarification upserted (axis=%s, "
             "queue_size=%d)",
-            clarification.get("axis"),
+            axis,
             len(ctx.pending_clarifications),
         )
         return
@@ -456,8 +651,10 @@ def extract_booking_result(result: dict, ctx: BookingContextV7) -> None:
         booked_stylist = result.get("stylist_id")
         if booked_stylist:
             ctx.stylist_id = str(booked_stylist)
+        # Clear all transient booking fields so context is clean for a follow-up booking
+        ctx.reset_transient()
         logger.info(
-            "extract_booking_result: booking succeeded (appointment_id=%s)",
+            "extract_booking_result: booking succeeded (appointment_id=%s), transient fields reset",
             result.get("appointment_id"),
         )
     else:

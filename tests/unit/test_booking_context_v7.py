@@ -552,3 +552,264 @@ class TestEdgeCases:
         ctx = BookingContextV7(soonest_any_slot="Lunes 25 a las 10:00")
         d = ctx.to_mode_context()
         assert d["soonest_any_slot"] == "Lunes 25 a las 10:00"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# reset_transient
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestResetTransient:
+    """Task 4.1: Unit tests for BookingContextV7.reset_transient()."""
+
+    def _full_transient_context(self) -> BookingContextV7:
+        """Return a context with all transient fields populated."""
+        return BookingContextV7(
+            # Identity fields (must NOT be cleared)
+            service_id="svc-001",
+            service_name="Corte de Dama",
+            service_category="HAIRDRESSING",
+            service_duration_minutes=45,
+            service_family="corte",
+            stylist_id="sty-001",
+            stylist_name="María",
+            customer_name="Pepe",
+            customer_id="cust-001",
+            selected_slot={"start_time": "2026-03-25T10:00:00+01:00"},
+            offered_slots=[{"time": "10:00", "stylist": "María"}],
+            # Transient fields (MUST be cleared)
+            selected_services=["Corte de Dama", "Tinte"],
+            selected_services_details=[{"name": "Corte de Dama", "duration": 45}],
+            pending_clarifications=[{"axis": "audience", "options": []}],
+            candidate_services=[{"id": "x", "name": "X"}],
+            service_audience_hint="adult_female",
+            notes="Sin alergia",
+            prefetched_stylists=[{"name": "María"}],
+            soonest_any_slot="Lunes 25 a las 10:00 con María",
+            recurrent_stylist_hint="María",
+            pending_recommendations=["Tinte"],
+            recommendations_shown=True,
+            recommendations_declined=True,
+            book_failure_count=3,
+            needs_availability_refresh=True,
+            services_locked=True,
+        )
+
+    def test_reset_transient_clears_selected_services(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.selected_services == []
+
+    def test_reset_transient_clears_selected_services_details(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.selected_services_details == []
+
+    def test_reset_transient_clears_pending_clarifications(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.pending_clarifications == []
+
+    def test_reset_transient_clears_candidate_services(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.candidate_services == []
+
+    def test_reset_transient_clears_service_audience_hint(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.service_audience_hint is None
+
+    def test_reset_transient_clears_notes(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.notes is None
+
+    def test_reset_transient_clears_prefetched_stylists(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.prefetched_stylists == []
+
+    def test_reset_transient_clears_soonest_any_slot(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.soonest_any_slot is None
+
+    def test_reset_transient_clears_recurrent_stylist_hint(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.recurrent_stylist_hint is None
+
+    def test_reset_transient_clears_pending_recommendations(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.pending_recommendations == []
+
+    def test_reset_transient_resets_recommendations_shown(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.recommendations_shown is False
+
+    def test_reset_transient_resets_recommendations_declined(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.recommendations_declined is False
+
+    def test_reset_transient_resets_book_failure_count(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.book_failure_count == 0
+
+    def test_reset_transient_resets_needs_availability_refresh(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.needs_availability_refresh is False
+
+    def test_reset_transient_resets_services_locked(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.services_locked is False
+
+    def test_reset_transient_preserves_service_id(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.service_id == "svc-001"
+
+    def test_reset_transient_preserves_service_name(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.service_name == "Corte de Dama"
+
+    def test_reset_transient_preserves_service_category(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.service_category == "HAIRDRESSING"
+
+    def test_reset_transient_preserves_service_duration_minutes(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.service_duration_minutes == 45
+
+    def test_reset_transient_preserves_service_family(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.service_family == "corte"
+
+    def test_reset_transient_preserves_stylist_id(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.stylist_id == "sty-001"
+
+    def test_reset_transient_preserves_stylist_name(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.stylist_name == "María"
+
+    def test_reset_transient_preserves_customer_name(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.customer_name == "Pepe"
+
+    def test_reset_transient_preserves_customer_id(self):
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        assert ctx.customer_id == "cust-001"
+
+    def test_reset_transient_all_15_fields_cleared(self):
+        """Integration test: all 15 transient fields are cleared in one call."""
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+
+        # All 15 transient fields must be at default
+        assert ctx.selected_services == []
+        assert ctx.selected_services_details == []
+        assert ctx.pending_clarifications == []
+        assert ctx.candidate_services == []
+        assert ctx.service_audience_hint is None
+        assert ctx.notes is None
+        assert ctx.prefetched_stylists == []
+        assert ctx.soonest_any_slot is None
+        assert ctx.recurrent_stylist_hint is None
+        assert ctx.pending_recommendations == []
+        assert ctx.recommendations_shown is False
+        assert ctx.recommendations_declined is False
+        assert ctx.book_failure_count == 0
+        assert ctx.needs_availability_refresh is False
+        assert ctx.services_locked is False
+
+    def test_reset_transient_idempotent(self):
+        """Calling reset_transient twice is safe."""
+        ctx = self._full_transient_context()
+        ctx.reset_transient()
+        ctx.reset_transient()  # Should not raise
+        assert ctx.selected_services == []
+        assert ctx.book_failure_count == 0
+
+    def test_reset_transient_on_empty_context(self):
+        """Calling reset_transient on a fresh context is a no-op."""
+        ctx = BookingContextV7()
+        ctx.reset_transient()  # Should not raise
+        assert ctx.selected_services == []
+        assert ctx.book_failure_count == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# collected_summary — audience hint (Task 4.3)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCollectedSummaryAudience:
+    """Task 4.3: collected_summary() includes audience hint line."""
+
+    def test_audience_hint_adult_female_shows_dama(self):
+        """service_audience_hint='adult_female' → '✅ Audiencia: dama'."""
+        ctx = BookingContextV7(service_audience_hint="adult_female")
+        summary = ctx.collected_summary()
+        assert "✅ Audiencia: dama" in summary
+
+    def test_audience_hint_adult_male_shows_caballero(self):
+        """service_audience_hint='adult_male' → '✅ Audiencia: caballero'."""
+        ctx = BookingContextV7(service_audience_hint="adult_male")
+        summary = ctx.collected_summary()
+        assert "✅ Audiencia: caballero" in summary
+
+    def test_audience_hint_child_male_shows_nino(self):
+        ctx = BookingContextV7(service_audience_hint="child_male")
+        summary = ctx.collected_summary()
+        assert "✅ Audiencia: niño" in summary
+
+    def test_audience_hint_child_female_shows_nina(self):
+        ctx = BookingContextV7(service_audience_hint="child_female")
+        summary = ctx.collected_summary()
+        assert "✅ Audiencia: niña" in summary
+
+    def test_audience_hint_baby_shows_bebe(self):
+        ctx = BookingContextV7(service_audience_hint="baby")
+        summary = ctx.collected_summary()
+        assert "✅ Audiencia: bebé" in summary
+
+    def test_audience_hint_none_no_audiencia_line(self):
+        """When service_audience_hint is None, no Audiencia line appears."""
+        ctx = BookingContextV7(service_name="Corte de Dama")
+        summary = ctx.collected_summary()
+        assert "Audiencia" not in summary
+
+    def test_audience_hint_unknown_value_falls_back_to_raw(self):
+        """Unknown hint value falls back to the raw string."""
+        ctx = BookingContextV7(service_audience_hint="unknown_value")
+        summary = ctx.collected_summary()
+        assert "✅ Audiencia: unknown_value" in summary
+
+    def test_audience_hint_appears_in_full_context(self):
+        """_full_context() has audience_hint set — confirm it appears in summary."""
+        ctx = BookingContextV7(
+            service_name="Corte de Dama",
+            service_audience_hint="adult_female",
+            stylist_name="María",
+            customer_name="Pepe",
+        )
+        summary = ctx.collected_summary()
+        assert "✅ Audiencia: dama" in summary
+        assert "✅ Servicio: Corte de Dama" in summary
+        assert "✅ Estilista: María" in summary
+        assert "✅ Nombre: Pepe" in summary

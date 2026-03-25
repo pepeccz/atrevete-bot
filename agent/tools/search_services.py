@@ -245,6 +245,27 @@ class SearchServicesSchema(BaseModel):
         )
     )
 
+    hair_density: Literal["normal", "extra"] | None = Field(
+        default=None,
+        description=(
+            "Optional hair density/volume hint to resolve services that have a "
+            "'normal' vs 'extra' (very dense or very long hair) variant. "
+            "Pass this if the customer has already mentioned their hair density "
+            "(e.g. 'pelo fino/normal' → 'normal'; 'pelo grueso/denso/muy largo' → 'extra'). "
+            "When provided, avoids a follow-up clarification question."
+        )
+    )
+
+    hair_length: Literal["short_medium", "long"] | None = Field(
+        default=None,
+        description=(
+            "Optional hair length hint to resolve services that differ by hair length. "
+            "Pass this if the customer has already mentioned their hair length "
+            "(e.g. 'pelo corto o medio' → 'short_medium'; 'pelo largo' → 'long'). "
+            "When provided, avoids a follow-up clarification question."
+        )
+    )
+
 
 # Audience keyword maps for post-filter matching
 _AUDIENCE_KEYWORDS: dict[str, list[str]] = {
@@ -277,6 +298,8 @@ async def search_services(
     category: Literal["Peluquería", "Estética"] | None = None,
     max_results: int = 5,
     audience: str | None = None,
+    hair_density: Literal["normal", "extra"] | None = None,
+    hair_length: Literal["short_medium", "long"] | None = None,
 ) -> dict[str, Any]:
     """
     Search salon services using fuzzy matching.
@@ -295,10 +318,20 @@ async def search_services(
     - User wants to browse complete category
     - User asks "what services do you offer?" (general inquiry)
 
+    **Inline disambiguation (avoids follow-up questions):**
+    If the customer has already mentioned their hair density or hair length,
+    pass those values here to resolve ambiguous services directly:
+    - hair_density="normal": normal/fine hair variant
+    - hair_density="extra": very dense, thick, or very long hair variant
+    - hair_length="short_medium": short or shoulder-length hair
+    - hair_length="long": long hair variant
+
     Args:
         query: Search query string (e.g., "corte pelo largo", "manicura")
         category: Optional category filter ("Peluquería" or "Estética")
         max_results: Maximum number of results to return (1-10, default 5)
+        hair_density: Hair density/volume hint ("normal" or "extra") — pass if known
+        hair_length: Hair length hint ("short_medium" or "long") — pass if known
 
     Returns:
         Stable response envelope (one of three shapes):
@@ -401,7 +434,8 @@ async def search_services(
     try:
         logger.info(
             f"Searching services with query='{query}', category={category}, "
-            f"max_results={max_results}, audience={audience}"
+            f"max_results={max_results}, audience={audience}, "
+            f"hair_density={hair_density}, hair_length={hair_length}"
         )
 
         # Step 1: Fetch all active services from database
@@ -484,7 +518,12 @@ async def search_services(
             }
 
         top_service_objects = [svc for svc, _ in top_matches]
-        disambiguation_result = resolve_candidates(top_service_objects)
+        disambiguation_result = resolve_candidates(
+            top_service_objects,
+            audience=audience,
+            hair_density=hair_density,
+            hair_length=hair_length,
+        )
 
         # Step 4a: Single resolved service via metadata
         if isinstance(disambiguation_result, ResolvedService):
