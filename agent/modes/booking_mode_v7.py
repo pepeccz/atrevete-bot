@@ -484,24 +484,20 @@ class BookingModeV7(BaseModeNode):
         tool_args: dict,
         result: Any,
     ) -> Any:
-        """Apply manage_customer results immediately to ctx, mid-loop.
+        """Apply tool results immediately to ctx, mid-loop.
 
-        When manage_customer sets the customer name in the same turn as the
-        confirmation summary, the SystemMessage is already built with
-        '❌ Nombre: pendiente'. By extracting into ctx here — before the LLM
-        sees the ToolMessage and generates its response — the LLM can read
-        the name from the tool result directly and use it in the summary.
+        Extracts results for key tools (manage_customer, search_services, check_availability)
+        before the LLM sees the ToolMessage. This ensures that ctx is updated so the NEXT
+        LLM invocation (if any) will see fresh "Datos recogidos" with the latest values.
 
-        A context note is appended to the result string so the LLM sees the
-        extracted name explicitly, even if the "Datos recogidos" section still
-        shows the old state.
+        Critical for multi-tool flows in the same agentic loop iteration where the LLM
+        might call search_services then book() — the book() preconditions check ctx
+        values that would be stale if extraction only happened post-loop.
         """
-        logger.debug("_post_tool_result: tool_name=%s, result type=%s", tool_name, type(result).__name__)
-        if tool_name != "manage_customer" or self._ctx is None:
-            logger.debug("_post_tool_result: skipping (tool=%s, ctx=%s)", tool_name, self._ctx is not None)
+        if self._ctx is None:
             return result
 
-        # Parse result (may be a JSON string or already a dict)
+        # Parse result once (may be a JSON string or already a dict)
         parsed: dict | None = None
         if isinstance(result, dict):
             parsed = result
@@ -516,16 +512,36 @@ class BookingModeV7(BaseModeNode):
         if not parsed:
             return result
 
-        # Extract customer fields into ctx immediately (idempotent)
-        from agent.modes.tool_extractors import extract_customer_fields
-
-        extract_customer_fields(parsed, self._ctx)
-
-        logger.info(
-            "_post_tool_result: manage_customer — extracted name=%s, ctx.customer_name=%s",
-            parsed.get("first_name", ""),
-            self._ctx.customer_name,
+        # Import extractors (late import to avoid circular deps)
+        from agent.modes.tool_extractors import (
+            extract_customer_fields,
+            extract_service_fields,
+            extract_slot_fields,
         )
+
+        # Apply extractors by tool name
+        if tool_name == "manage_customer":
+            extract_customer_fields(parsed, self._ctx)
+            logger.info(
+                "_post_tool_result: manage_customer — extracted name=%s, customer_id=%s",
+                parsed.get("first_name", ""),
+                parsed.get("id", ""),
+            )
+
+        elif tool_name == "search_services":
+            extract_service_fields(parsed, self._ctx)
+            logger.info(
+                "_post_tool_result: search_services — extracted service=%s, selected_services=%s",
+                self._ctx.service_name,
+                self._ctx.selected_services,
+            )
+
+        elif tool_name == "check_availability":
+            extract_slot_fields(parsed, self._ctx)
+            logger.info(
+                "_post_tool_result: check_availability — extracted offered_slots (count=%d)",
+                len(self._ctx.offered_slots),
+            )
 
         return result
 

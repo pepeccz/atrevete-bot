@@ -320,20 +320,42 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
     Update customer's name.
 
     Internal function called by manage_customer(action="update").
+
+    If customer_id is not provided, looks up the customer by phone number first.
     """
     customer_id_str = data.get("customer_id")
     first_name = data.get("first_name")
     last_name = data.get("last_name")
     notes = data.get("notes")
 
-    if not customer_id_str:
-        logger.error("customer_id is required for update")
-        return {"error": "customer_id is required", "data": data}
-
     # At least one field must be provided for update
     if not any([first_name, last_name, notes]):
         logger.error("At least one of first_name, last_name, or notes is required for update")
         return {"error": "At least one field (first_name, last_name, notes) is required for update", "data": data}
+
+    # If no customer_id provided, look it up by phone
+    if not customer_id_str:
+        normalized_phone = normalize_phone(phone)
+        if not normalized_phone:
+            logger.error(f"Invalid phone number format: {phone}")
+            return {"error": "Invalid phone number format", "phone": phone}
+
+        try:
+            async with get_async_session() as session:
+                result = await session.execute(
+                    select(Customer).where(Customer.phone == normalized_phone)
+                )
+                customer_lookup = result.scalar_one_or_none()
+
+                if customer_lookup is None:
+                    logger.error(f"Customer not found by phone: {normalized_phone}")
+                    return {"error": "Customer not found", "phone": normalized_phone}
+
+                customer_id_str = str(customer_lookup.id)
+                logger.info(f"Looked up customer_id by phone: {normalized_phone} → {customer_id_str}")
+        except Exception as e:
+            logger.error(f"Error looking up customer by phone: {e}")
+            return {"error": "Failed to look up customer by phone", "phone": phone}
 
     try:
         customer_uuid = UUID(customer_id_str)
