@@ -208,6 +208,10 @@ class BookingContext:
                 missing.append("nombre (⚠️ guardar falló — pedir confirmación verbal)")
             else:
                 missing.append("nombre")
+        # Show customer_id as missing only when we have a name but no ID.
+        # This guides the LLM to call manage_customer before book().
+        if self.customer_name and not self.customer_id:
+            missing.append("customer_id (llamá manage_customer para obtenerlo)")
         if not missing:
             return "✅ Todos los datos requeridos están completos"
         return "\n".join(f"❌ {label.capitalize()}: pendiente" for label in missing)

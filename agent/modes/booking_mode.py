@@ -330,6 +330,10 @@ class BookingMode(BaseModeNode):
         if not ctx.customer_name and user_message:
             _extract_name_from_conversation(state, user_message, ctx)
 
+        # 6e. T-06: extract notes from conversation when bot previously asked for them.
+        if ctx.notes is None and user_message:
+            _extract_notes_from_conversation(state, user_message, ctx)
+
         # 7. Build response with state updates
         return self._build_response(state, ctx, result)
 
@@ -1042,7 +1046,6 @@ class BookingMode(BaseModeNode):
         recommendations = _build_recommendations_section(ctx)
         if recommendations:
             parts.append(f"\n## Recomendaciones\n{recommendations}")
-            ctx.recommendations_shown = True  # Mark as shown
 
         # Service details (transparency)
         details_section = _build_service_details_section(ctx)
@@ -1114,6 +1117,13 @@ class BookingMode(BaseModeNode):
 
         # First-turn intro (EU AI Act compliance)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+
+        # T-03 fix: set recommendations_shown AFTER the LLM has generated its
+        # response — not during _build_dynamic_context() (before LLM sees the
+        # context). This ensures the flag is only set when the LLM had the
+        # recommendations section in its context this turn.
+        if ctx.pending_recommendations and not ctx.recommendations_shown:
+            ctx.recommendations_shown = True
 
         updates: dict[str, Any] = {
             **add_message(state, "assistant", response_text),
@@ -1206,6 +1216,33 @@ _NAME_STOPWORDS: frozenset[str] = frozenset(
     }
 )
 
+# Audience/demographic words that sound like names but describe the service target.
+# BUG-2 fix: "soy caballero" / "para dama" must NOT be captured as customer_name.
+# Normalized (accent-stripped, lowercase) for comparison via _normalize_text().
+_AUDIENCE_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "caballero",
+        "dama",
+        "senora",
+        "senor",
+        "mujer",
+        "hombre",
+        "nino",
+        "nina",
+        "nene",
+        "nena",
+        "bebe",
+        "adulto",
+        "adulta",
+        "chico",
+        "chica",
+        "senorita",
+        "srita",
+        "cliente",
+        "clienta",
+    }
+)
+
 
 def _try_resolve_stylist_from_message(user_message: str, ctx: BookingContext) -> None:
     """Attempt to resolve stylist_id/stylist_name from the user's message.
@@ -1274,7 +1311,9 @@ def _extract_name_from_conversation(
     match = _NAME_INTRO_PATTERN.search(user_message)
     if match:
         name = match.group(1).strip()
-        if name.lower() not in _NAME_STOPWORDS:
+        name_normalized = _normalize_text(name)
+        # BUG-2 fix: reject audience/demographic words (e.g. "soy caballero")
+        if name.lower() not in _NAME_STOPWORDS and name_normalized not in _AUDIENCE_KEYWORDS:
             ctx.customer_name = name
             logger.info(
                 "_extract_name_from_conversation: extracted name=%r from intro pattern "
@@ -1325,6 +1364,74 @@ def _previous_assistant_asked_for_name(messages: list[dict]) -> bool:
             )
             return any(pattern in content for pattern in name_ask_patterns)
     return False
+
+
+def _previous_assistant_asked_for_notes(messages: list[dict]) -> bool:
+    """Check if the most recent assistant message asked for notes/preferences.
+
+    Scans reversed messages for the last assistant turn and checks for
+    notes-asking phrases like 'nota', 'preferencia', 'alergia', etc.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = _normalize_text(msg.get("content") or "")
+            notes_ask_patterns = (
+                "nota",
+                "preferencia",
+                "algo que debamos saber",
+                "algo que deba saber",
+                "alergia",
+                "indicacion",
+                "comentario",
+                "especial",
+            )
+            return any(pattern in content for pattern in notes_ask_patterns)
+    return False
+
+
+def _extract_notes_from_conversation(
+    state: ConversationState, user_message: str, ctx: BookingContext
+) -> None:
+    """Extract notes from user message when the bot just asked for notes/preferences.
+
+    Only runs when:
+    1. The last assistant message asked for notes (_previous_assistant_asked_for_notes).
+    2. ctx.notes is None (not yet collected).
+
+    Decline phrases (e.g. "no", "nada") are ignored — ctx.notes stays None
+    so the LLM can decide whether to re-ask or proceed.
+    """
+    if not user_message or ctx.notes is not None:
+        return
+
+    messages = state.get("messages", [])
+    if not _previous_assistant_asked_for_notes(messages):
+        return
+
+    # If the user's reply is a refusal, skip — don't capture "no" as a note
+    msg_normalized = _normalize_text(user_message)
+    decline_phrases = {
+        "no",
+        "nada",
+        "no gracias",
+        "sin notas",
+        "ninguna",
+        "ninguno",
+        "todo bien",
+        "nada mas",
+        "nada más",
+        "ninguna nota",
+        "sin preferencias",
+    }
+    if msg_normalized.strip() in decline_phrases:
+        return
+
+    # Capture the full message as notes
+    ctx.notes = user_message.strip()
+    logger.info(
+        "_extract_notes_from_conversation: captured notes=%r",
+        ctx.notes,
+    )
 
 
 def _is_booking_data_complete(ctx: BookingContext) -> bool:

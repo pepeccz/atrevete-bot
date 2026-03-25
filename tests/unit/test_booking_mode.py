@@ -19,12 +19,15 @@ from agent.modes.base import AgenticLoopResult
 from agent.modes.booking_context import BookingContext
 from agent.modes.booking_mode import (
     BookingMode,
+    _AUDIENCE_KEYWORDS,
     _build_disambiguation_section,
     _build_offered_slots_section,
     _build_recommendations_section,
     _build_stylists_section,
     _contains_name_token,
     _detect_recommendation_decline,
+    _extract_name_from_conversation,
+    _extract_notes_from_conversation,
     _normalize_text,
     _redact_name_tokens,
 )
@@ -568,11 +571,14 @@ class TestBookingContextSummaries:
         assert "nombre" in summary.lower()
 
     def test_missing_summary_all_complete(self):
+        # T-07: customer_id is now required when customer_name is present.
+        # "All complete" requires both customer_name AND customer_id.
         ctx = BookingContext(
             service_name="Corte",
             stylist_id="sty-001",
             offered_slots=[{"time": "10:00", "date": "2026-03-23"}],
             customer_name="María",
+            customer_id="cust-001",
         )
         summary = ctx.missing_summary()
         assert "completos" in summary.lower()
@@ -1199,3 +1205,280 @@ class TestExtractNameFromConversation:
         # Even if called, it should overwrite — but the caller checks ctx.customer_name first
         _extract_name_from_conversation(state, "Laura", ctx)
         assert ctx.customer_name == "Laura"
+
+
+# =============================================================================
+# T-09: BUG-2 regression — audience keywords rejected as name
+# =============================================================================
+
+
+class TestAudienceKeywordsRejectedAsName:
+    """BUG-2 regression: 'soy caballero' / 'soy dama' must NOT be captured as
+    customer_name. The _AUDIENCE_KEYWORDS set guards against this in
+    _extract_name_from_conversation (Tier 1 — structured intro pattern)."""
+
+    def test_soy_caballero_rejected(self):
+        """'soy caballero' → name not extracted (audience keyword)."""
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿A nombre de quién sería la cita?"},
+                {"role": "user", "content": "soy caballero"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "soy caballero", ctx)
+
+        assert ctx.customer_name is None
+
+    def test_soy_dama_rejected(self):
+        """'soy dama' → name not extracted (audience keyword)."""
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Para quién es el servicio?"},
+                {"role": "user", "content": "soy dama"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "soy dama", ctx)
+
+        assert ctx.customer_name is None
+
+    def test_soy_senora_rejected(self):
+        """'soy señora' → name not extracted (audience keyword, accent-stripped to 'senora')."""
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Tu nombre, por favor?"},
+                {"role": "user", "content": "soy señora"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "soy señora", ctx)
+
+        assert ctx.customer_name is None
+
+    def test_me_llamo_accepted(self):
+        """'me llamo María' → name = 'María' (structured pattern still works)."""
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Tu nombre?"},
+                {"role": "user", "content": "me llamo María"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "me llamo María", ctx)
+
+        assert ctx.customer_name == "María"
+
+    def test_mi_nombre_es_accepted(self):
+        """'mi nombre es Juan' → name = 'Juan'."""
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Tu nombre?"},
+                {"role": "user", "content": "mi nombre es Juan"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "mi nombre es Juan", ctx)
+
+        assert ctx.customer_name == "Juan"
+
+    def test_soy_real_name_accepted(self):
+        """'soy Ana' → name = 'Ana' (real name, not an audience keyword)."""
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Tu nombre?"},
+                {"role": "user", "content": "soy Ana"},
+            ],
+        }
+
+        _extract_name_from_conversation(state, "soy Ana", ctx)
+
+        assert ctx.customer_name == "Ana"
+
+    def test_audience_keywords_constant_contains_key_words(self):
+        """Verify the _AUDIENCE_KEYWORDS set contains the expected demographic words."""
+        assert "caballero" in _AUDIENCE_KEYWORDS
+        assert "dama" in _AUDIENCE_KEYWORDS
+        assert "senora" in _AUDIENCE_KEYWORDS  # accent-stripped form
+
+
+# =============================================================================
+# T-11: Notes extraction tests
+# =============================================================================
+
+
+class TestNotesExtraction:
+    """Tests for _extract_notes_from_conversation:
+    extraction only happens when the bot previously asked for notes."""
+
+    def _state_with_notes_question(self, user_reply: str) -> dict:
+        """Build a minimal state where the last assistant msg asked for notes."""
+        return {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "¿Tenés alguna preferencia o nota que deba saber?",
+                },
+                {"role": "user", "content": user_reply},
+            ],
+        }
+
+    def _state_without_notes_question(self, user_reply: str) -> dict:
+        """Build a state where the bot did NOT ask for notes."""
+        return {
+            "messages": [
+                {"role": "assistant", "content": "¿Qué servicio deseas?"},
+                {"role": "user", "content": user_reply},
+            ],
+        }
+
+    def test_notes_extracted_when_bot_asked(self):
+        """Bot asked for notes, user replied → ctx.notes captures the reply."""
+        ctx = BookingContext()
+        state = self._state_with_notes_question("sin gluten, alergia al polvo")
+
+        _extract_notes_from_conversation(state, "sin gluten, alergia al polvo", ctx)
+
+        assert ctx.notes == "sin gluten, alergia al polvo"
+
+    def test_notes_not_extracted_when_bot_did_not_ask(self):
+        """Bot did NOT ask for notes → ctx.notes stays None even if user mentions something."""
+        ctx = BookingContext()
+        state = self._state_without_notes_question("sin gluten")
+
+        _extract_notes_from_conversation(state, "sin gluten", ctx)
+
+        assert ctx.notes is None
+
+    def test_notes_stay_none_on_decline_no(self):
+        """Bot asked, user replied 'no' → ctx.notes stays None (decline not stored)."""
+        ctx = BookingContext()
+        state = self._state_with_notes_question("no")
+
+        _extract_notes_from_conversation(state, "no", ctx)
+
+        assert ctx.notes is None
+
+    def test_notes_stay_none_on_decline_ninguna(self):
+        """Bot asked, user replied 'ninguna' → ctx.notes stays None."""
+        ctx = BookingContext()
+        state = self._state_with_notes_question("ninguna")
+
+        _extract_notes_from_conversation(state, "ninguna", ctx)
+
+        assert ctx.notes is None
+
+    def test_notes_not_overwritten_when_already_set(self):
+        """ctx.notes already has a value → function is skipped by the early-exit guard."""
+        ctx = BookingContext(notes="preexisting note")
+        state = self._state_with_notes_question("nuevo contenido")
+
+        _extract_notes_from_conversation(state, "nuevo contenido", ctx)
+
+        assert ctx.notes == "preexisting note"
+
+    def test_notes_stay_none_on_decline_nada(self):
+        """'nada' is also a decline phrase → ctx.notes stays None."""
+        ctx = BookingContext()
+        state = self._state_with_notes_question("nada")
+
+        _extract_notes_from_conversation(state, "nada", ctx)
+
+        assert ctx.notes is None
+
+    def test_notes_with_alergia_keyword_in_bot_message(self):
+        """Bot message containing 'alergia' also triggers notes extraction."""
+        ctx = BookingContext()
+        state = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "¿Tenés alguna alergia que deba tener en cuenta?",
+                },
+                {"role": "user", "content": "alergia a la amoxicilina"},
+            ],
+        }
+
+        _extract_notes_from_conversation(state, "alergia a la amoxicilina", ctx)
+
+        assert ctx.notes == "alergia a la amoxicilina"
+
+
+# =============================================================================
+# T-12: recommendations_shown timing
+# =============================================================================
+
+
+class TestRecommendationsShownTiming:
+    """T-03 regression: recommendations_shown must NOT be set during
+    _build_dynamic_context() (before LLM sees the context).
+    It must only be set in _build_response() (after LLM generates its reply)."""
+
+    def test_recommendations_shown_not_set_during_context_build(self):
+        """_build_dynamic_context() alone does NOT set recommendations_shown = True.
+
+        This is the core regression test for T-03: the flag was previously set
+        during context build, before the LLM had a chance to use it.
+        """
+        ctx = BookingContext(
+            pending_recommendations=["Hidratación", "Tinte"],
+            recommendations_shown=False,
+        )
+        state = make_state()
+
+        # Build dynamic context (simulates what happens before the LLM call)
+        BookingMode._build_dynamic_context(state, ctx)
+
+        # Flag must still be False — it's set in _build_response(), not here
+        assert ctx.recommendations_shown is False
+
+    def test_recommendations_section_rendered_when_pending_and_not_shown(self):
+        """When pending_recommendations exist and recommendations_shown=False,
+        the section IS rendered in the dynamic context (the LLM WILL see it)."""
+        ctx = BookingContext(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=False,
+        )
+        state = make_state()
+
+        context_text = BookingMode._build_dynamic_context(state, ctx)
+
+        assert "SERVICIOS RECOMENDADOS" in context_text
+        # But the flag should still be False after context build
+        assert ctx.recommendations_shown is False
+
+    def test_recommendations_shown_set_in_build_response(self):
+        """_build_response() sets recommendations_shown=True after LLM generates reply."""
+        from unittest.mock import MagicMock
+
+        from agent.modes.base import AgenticLoopResult
+
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = BookingContext(
+            customer_name="María",
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=False,
+        )
+
+        # Simulate a minimal AgenticLoopResult (no tool calls)
+        result = AgenticLoopResult(
+            response_text="Te recomiendo también una hidratación.",
+            tool_results=[],
+        )
+
+        # Patch the prompt loader to avoid file I/O
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, result)
+
+        # After _build_response, the flag must be True
+        assert ctx.recommendations_shown is True

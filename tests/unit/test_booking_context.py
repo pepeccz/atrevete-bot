@@ -877,3 +877,66 @@ class TestCollectedSummaryFallbackServiceName:
         assert "✅ Servicio: Corte de Dama" in summary
         # Additional services should also be rendered
         assert "✅ Servicios adicionales: Tinte, Peinado" in summary
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T-10: missing_summary — customer_id conditional
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestMissingSummaryCustomerId:
+    """T-07 / T-10: customer_id appears in missing_summary() ONLY when
+    customer_name is set but customer_id is not yet collected.
+
+    This guides the LLM to call manage_customer before book() — but only
+    after it already knows the customer's name."""
+
+    def test_customer_id_shown_when_name_present_but_no_id(self):
+        """customer_name set, customer_id None → 'customer_id' in missing text.
+
+        Note: missing_summary() applies .capitalize() to label strings, so the
+        output will contain 'Customer_id' (capital C). We compare case-insensitively.
+        """
+        ctx = BookingContext(
+            service_name="Corte de Dama",
+            stylist_id="sty-001",
+            offered_slots=[{"time": "10:00"}],
+            customer_name="María",
+            customer_id=None,
+        )
+
+        summary = ctx.missing_summary()
+
+        assert "customer_id" in summary.lower()
+
+    def test_customer_id_not_shown_when_no_name_either(self):
+        """customer_name None, customer_id None → 'customer_id' NOT in missing text.
+
+        We don't ask for the ID before we even know the name."""
+        ctx = BookingContext(
+            service_name="Corte de Dama",
+            stylist_id="sty-001",
+            offered_slots=[{"time": "10:00"}],
+            customer_name=None,
+            customer_id=None,
+        )
+
+        summary = ctx.missing_summary()
+
+        assert "customer_id" not in summary.lower()
+        # 'nombre' should still be listed as missing
+        assert "nombre" in summary.lower()
+
+    def test_customer_id_not_shown_when_id_present(self):
+        """customer_name set, customer_id set → 'customer_id' NOT in missing text."""
+        ctx = BookingContext(
+            service_name="Corte de Dama",
+            stylist_id="sty-001",
+            offered_slots=[{"time": "10:00"}],
+            customer_name="María",
+            customer_id="cust-001",
+        )
+
+        summary = ctx.missing_summary()
+
+        assert "customer_id" not in summary.lower()
