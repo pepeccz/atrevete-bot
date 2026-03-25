@@ -269,12 +269,14 @@ class BookingModeV7(BaseModeNode):
         de mujer" → adult_female). Preserve that across turns.
         """
         if ctx.service_audience_hint:
+            logger.debug("_resolve_audience_hint: already set to %s", ctx.service_audience_hint)
             return  # Already set from a previous turn
 
         mc = state.get("mode_context") or {}
         hint = mc.get("service_audience_hint")
         if hint:
             ctx.service_audience_hint = hint
+            logger.info("_resolve_audience_hint: restored from mode_context: %s", hint)
             return
 
         # Try extracting from implicit_service_hint (greeting handoff)
@@ -469,6 +471,64 @@ class BookingModeV7(BaseModeNode):
             len(offered),
         )
         return tool_args
+
+    async def _post_tool_result(
+        self,
+        tool_name: str,
+        tool_args: dict,
+        result: Any,
+    ) -> Any:
+        """Apply manage_customer results immediately to ctx, mid-loop.
+
+        When manage_customer sets the customer name in the same turn as the
+        confirmation summary, the SystemMessage is already built with
+        '❌ Nombre: pendiente'. By extracting into ctx here — before the LLM
+        sees the ToolMessage and generates its response — the LLM can read
+        the name from the tool result directly and use it in the summary.
+
+        A context note is appended to the result string so the LLM sees the
+        extracted name explicitly, even if the "Datos recogidos" section still
+        shows the old state.
+        """
+        logger.debug("_post_tool_result: tool_name=%s, result type=%s", tool_name, type(result).__name__)
+        if tool_name != "manage_customer" or self._ctx is None:
+            logger.debug("_post_tool_result: skipping (tool=%s, ctx=%s)", tool_name, self._ctx is not None)
+            return result
+
+        # Parse result (may be a JSON string or already a dict)
+        parsed: dict | None = None
+        if isinstance(result, dict):
+            parsed = result
+        elif isinstance(result, str):
+            try:
+                candidate = json.loads(result)
+                if isinstance(candidate, dict):
+                    parsed = candidate
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        if not parsed:
+            return result
+
+        # Extract customer fields into ctx immediately (idempotent)
+        from agent.modes.tool_extractors import extract_customer_fields
+
+        extract_customer_fields(parsed, self._ctx)
+
+        # Append a context note so the LLM sees the updated name in this turn
+        name = parsed.get("first_name", "")
+        logger.info(
+            "_post_tool_result: manage_customer — extracted name=%s, ctx.customer_name=%s",
+            name,
+            self._ctx.customer_name,
+        )
+        if name and isinstance(result, str):
+            result = result + f"\n[Nombre registrado: {name}]"
+            logger.debug(
+                "_post_tool_result: manage_customer mid-loop — appended context note",
+            )
+
+        return result
 
     async def _maybe_prefetch_stylists(self, ctx: BookingContextV7) -> None:
         """Prefetch stylist options when service is resolved but no stylist yet.

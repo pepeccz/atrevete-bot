@@ -387,6 +387,29 @@ class BaseModeNode(ABC):
         """
         return tool_args
 
+    async def _post_tool_result(
+        self,
+        tool_name: str,
+        tool_args: dict,
+        result: Any,
+    ) -> Any:
+        """Hook called after each tool execution, before appending ToolMessage.
+
+        Subclasses can override to process results mid-loop, allowing context
+        updates to take effect before the LLM generates its final response.
+
+        The base implementation is a no-op pass-through.
+
+        Args:
+            tool_name: Name of the tool that just executed.
+            tool_args: Arguments that were passed to the tool.
+            result: Raw result returned by the tool (str or dict).
+
+        Returns:
+            The (optionally modified) result to be used as the ToolMessage content.
+        """
+        return result
+
     async def _run_agentic_loop(
         self,
         messages: list,
@@ -471,6 +494,17 @@ class BaseModeNode(ABC):
                             result = {"error": str(exc)}
                     else:
                         result = {"error": f"Unknown tool: {tool_name}"}
+
+                    # Post-tool-call hook: allows subclasses to process results
+                    # mid-loop (e.g. extract customer name before LLM response)
+                    try:
+                        result = await self._post_tool_result(tool_name, tool_args, result)
+                    except Exception as exc:
+                        self.logger.warning(
+                            "_post_tool_result failed for %s: %s — using original result",
+                            tool_name,
+                            exc,
+                        )
 
                     # Accumulate results in a list per tool name (BUG-1 fix:
                     # multiple calls to the same tool no longer overwrite)

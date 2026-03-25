@@ -525,6 +525,46 @@ async def search_services(
             hair_length=hair_length,
         )
 
+        # Step 3b: Suppress spurious audience clarification when audience was already provided.
+        #
+        # resolve_candidates() can still return ClarificationPayload(axis="audience") when:
+        #   - The audience-keyword post-filter above found matches (lines 489-496), BUT
+        #   - resolve_candidates() uses metadata_["audience"] matching (different from keyword
+        #     matching), so its internal audience filter may have been ignored (returned empty),
+        #     and the remaining candidates still differ on the "audience" axis.
+        #
+        # Fix: if resolve_candidates returned axis="audience" AND audience was already provided,
+        # apply the keyword-based audience filter ourselves and re-run resolve_candidates on the
+        # narrowed set (without passing audience this time, so it won't loop).  This lets
+        # hair_density / hair_length clarifications still surface correctly.
+        if (
+            isinstance(disambiguation_result, ClarificationPayload)
+            and disambiguation_result.axis == "audience"
+            and audience is not None
+        ):
+            audience_narrowed = [
+                svc
+                for svc in top_service_objects
+                if _matches_audience(svc.name, svc.description, audience)
+            ]
+            if audience_narrowed:
+                logger.info(
+                    f"Suppressing audience clarification: re-running resolve_candidates on "
+                    f"{len(audience_narrowed)} audience-filtered services (audience='{audience}')"
+                )
+                disambiguation_result = resolve_candidates(
+                    audience_narrowed,
+                    # audience already applied via keyword filter — do NOT pass it again
+                    hair_density=hair_density,
+                    hair_length=hair_length,
+                )
+            else:
+                # No keyword-matched services — keep the original clarification payload as-is
+                logger.debug(
+                    f"Audience narrowing yielded 0 results for '{audience}'; "
+                    f"keeping original ClarificationPayload"
+                )
+
         # Step 4a: Single resolved service via metadata
         if isinstance(disambiguation_result, ResolvedService):
             logger.info(

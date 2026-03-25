@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 import uuid
@@ -16,8 +17,8 @@ from typing import Any
 import redis.asyncio as redis
 
 # ── Redis config ────────────────────────────────────────────────────────────
-REDIS_URL = "redis://localhost:6379/0"
-REDIS_PASSWORD = "9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda"
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda")
 INCOMING_STREAM = "incoming_messages_stream"
 OUTGOING_CHANNEL = "outgoing_messages"
 
