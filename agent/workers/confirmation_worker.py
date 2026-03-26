@@ -72,7 +72,9 @@ async def get_dynamic_settings() -> dict[str, Any]:
         settings_service = await get_settings_service()
         return {
             # Confirmation settings
-            "confirmation_hours_before": await settings_service.get("confirmation_hours_before", 48),
+            "confirmation_hours_before": await settings_service.get(
+                "confirmation_hours_before", 48
+            ),
             "auto_cancel_hours_before": await settings_service.get("auto_cancel_hours_before", 24),
             "reminder_hours_before": await settings_service.get("reminder_hours_before", 2),
             "confirmation_template_name": await settings_service.get(
@@ -104,14 +106,25 @@ async def get_dynamic_settings() -> dict[str, Any]:
             "reminder_job_interval": "hourly",
         }
 
+
 # Timezone for all datetime operations
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 # Spanish weekday and month names for date formatting
 WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MONTHS_ES = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
 ]
 
 
@@ -166,9 +179,7 @@ async def get_services_by_ids(session, service_ids: list[UUID]) -> list[Service]
     Returns:
         List of Service objects
     """
-    result = await session.execute(
-        select(Service).where(Service.id.in_(service_ids))
-    )
+    result = await session.execute(select(Service).where(Service.id.in_(service_ids)))
     return list(result.scalars().all())
 
 
@@ -203,6 +214,7 @@ async def create_notification(
 # =============================================================================
 # Job 1: Send Confirmation Requests (48h before)
 # =============================================================================
+
 
 async def send_confirmations() -> None:
     """
@@ -287,9 +299,7 @@ async def send_confirmations() -> None:
 
                     # Get customer name
                     customer_name = (
-                        appointment.customer.first_name
-                        or appointment.first_name
-                        or "Cliente"
+                        appointment.customer.first_name or appointment.first_name or "Cliente"
                     )
 
                     # Build template parameters
@@ -359,6 +369,28 @@ async def send_confirmations() -> None:
                                 f"No se pudo enviar la confirmación para la cita "
                                 f"del {fecha} a las {hora}. Cita inminente."
                             )
+                            try:
+                                from agent.services.webhook_service import trigger_all_webhooks
+
+                                await trigger_all_webhooks(
+                                    {
+                                        "event_type": "confirmation_permanently_failed",
+                                        "appointment_id": str(appointment.id),
+                                        "customer_phone": appointment.customer.phone,
+                                        "customer_name": customer_name,
+                                        "appointment_date": fecha,
+                                        "appointment_time": hora,
+                                        "failure_reason": "imminent_appointment",
+                                        "retry_count": appointment.retry_count,
+                                        "timestamp": now.isoformat(),
+                                    }
+                                )
+                            except Exception as webhook_exc:
+                                logger.warning(
+                                    "Webhook notification failed for appointment %s: %s",
+                                    appointment.id,
+                                    webhook_exc,
+                                )
                         else:
                             appointment.next_retry_at = now + timedelta(
                                 minutes=RETRY_BACKOFF_MINUTES[0]
@@ -382,9 +414,7 @@ async def send_confirmations() -> None:
                         await session.commit()
 
                         errors += 1
-                        logger.error(
-                            f"Failed to send confirmation to {appointment.customer.phone}"
-                        )
+                        logger.error(f"Failed to send confirmation to {appointment.customer.phone}")
 
                 except Exception as e:
                     errors += 1
@@ -418,6 +448,7 @@ async def send_confirmations() -> None:
 # =============================================================================
 # Job 1b: Process Confirmation Retries (failed confirmations)
 # =============================================================================
+
 
 async def process_confirmation_retries() -> None:
     """
@@ -483,6 +514,34 @@ async def process_confirmation_retries() -> None:
                                 entity_id=appointment.id,
                             )
                         )
+                        _appt_time_tg = appointment.start_time.astimezone(MADRID_TZ)
+                        _fecha_tg = format_date_spanish(_appt_time_tg)
+                        _hora_tg = _appt_time_tg.strftime("%H:%M")
+                        _customer_name_tg = (
+                            appointment.customer.first_name or appointment.first_name or "Cliente"
+                        )
+                        try:
+                            from agent.services.webhook_service import trigger_all_webhooks
+
+                            await trigger_all_webhooks(
+                                {
+                                    "event_type": "confirmation_permanently_failed",
+                                    "appointment_id": str(appointment.id),
+                                    "customer_phone": appointment.customer.phone,
+                                    "customer_name": _customer_name_tg,
+                                    "appointment_date": _fecha_tg,
+                                    "appointment_time": _hora_tg,
+                                    "failure_reason": "imminent_appointment",
+                                    "retry_count": appointment.retry_count,
+                                    "timestamp": now.isoformat(),
+                                }
+                            )
+                        except Exception as webhook_exc:
+                            logger.warning(
+                                "Webhook notification failed for appointment %s: %s",
+                                appointment.id,
+                                webhook_exc,
+                            )
                         await session.commit()
                         errors += 1
                         logger.warning(
@@ -509,9 +568,7 @@ async def process_confirmation_retries() -> None:
                     hora = appt_time.strftime("%H:%M")
 
                     customer_name = (
-                        appointment.customer.first_name
-                        or appointment.first_name
-                        or "Cliente"
+                        appointment.customer.first_name or appointment.first_name or "Cliente"
                     )
 
                     auto_cancel_hours = dynamic_settings["auto_cancel_hours_before"]
@@ -585,6 +642,28 @@ async def process_confirmation_retries() -> None:
                                     entity_id=appointment.id,
                                 )
                             )
+                            try:
+                                from agent.services.webhook_service import trigger_all_webhooks
+
+                                await trigger_all_webhooks(
+                                    {
+                                        "event_type": "confirmation_permanently_failed",
+                                        "appointment_id": str(appointment.id),
+                                        "customer_phone": appointment.customer.phone,
+                                        "customer_name": customer_name,
+                                        "appointment_date": fecha,
+                                        "appointment_time": hora,
+                                        "failure_reason": "max_retries_exhausted",
+                                        "retry_count": appointment.retry_count,
+                                        "timestamp": now.isoformat(),
+                                    }
+                                )
+                            except Exception as webhook_exc:
+                                logger.warning(
+                                    "Webhook notification failed for appointment %s: %s",
+                                    appointment.id,
+                                    webhook_exc,
+                                )
                         await session.commit()
                         errors += 1
                         logger.warning(
@@ -612,6 +691,7 @@ async def process_confirmation_retries() -> None:
 # =============================================================================
 # Job 2: Process Auto-Cancellations (24h before, no confirmation)
 # =============================================================================
+
 
 async def process_auto_cancellations() -> None:
     """
@@ -655,7 +735,8 @@ async def process_auto_cancellations() -> None:
                         Appointment.status == AppointmentStatus.PENDING,
                         Appointment.confirmation_sent_at.is_not(None),
                         Appointment.start_time <= deadline,
-                        Appointment.start_time > now,  # Strictly greater - don't cancel appointments in progress
+                        Appointment.start_time
+                        > now,  # Strictly greater - don't cancel appointments in progress
                         or_(
                             Appointment.notification_failed.is_(False),
                             Appointment.retry_count >= MAX_RETRIES,
@@ -687,9 +768,7 @@ async def process_auto_cancellations() -> None:
 
                     # Get customer name
                     customer_name = (
-                        appointment.customer.first_name
-                        or appointment.first_name
-                        or "Cliente"
+                        appointment.customer.first_name or appointment.first_name or "Cliente"
                     )
 
                     # Update appointment status
@@ -781,6 +860,7 @@ async def process_auto_cancellations() -> None:
 # Job 3: Send Reminders (2h before for confirmed appointments)
 # =============================================================================
 
+
 async def send_reminders() -> None:
     """
     Send N-hour reminder templates to confirmed appointments.
@@ -852,9 +932,7 @@ async def send_reminders() -> None:
 
                     # Get customer name
                     customer_name = (
-                        appointment.customer.first_name
-                        or appointment.first_name
-                        or "Cliente"
+                        appointment.customer.first_name or appointment.first_name or "Cliente"
                     )
 
                     # Build template parameters
@@ -908,9 +986,7 @@ async def send_reminders() -> None:
                         )
                     else:
                         errors += 1
-                        logger.error(
-                            f"Failed to send reminder to {appointment.customer.phone}"
-                        )
+                        logger.error(f"Failed to send reminder to {appointment.customer.phone}")
 
                 except Exception as e:
                     errors += 1
@@ -927,8 +1003,7 @@ async def send_reminders() -> None:
     # Log summary
     duration = (datetime.now(MADRID_TZ) - start_time).total_seconds()
     logger.info(
-        f"Completed send_reminders in {duration:.2f}s: "
-        f"sent={reminders_sent}, errors={errors}"
+        f"Completed send_reminders in {duration:.2f}s: sent={reminders_sent}, errors={errors}"
     )
 
     # Update health check
@@ -944,6 +1019,7 @@ async def send_reminders() -> None:
 # =============================================================================
 # Health Check
 # =============================================================================
+
 
 async def update_health_check(
     job_name: str,
@@ -985,9 +1061,7 @@ async def update_health_check(
 
     # Update overall status
     all_healthy = all(
-        job.get("status") == "healthy"
-        for job in health_data.values()
-        if isinstance(job, dict)
+        job.get("status") == "healthy" for job in health_data.values() if isinstance(job, dict)
     )
     health_data["overall_status"] = "healthy" if all_healthy else "unhealthy"
     health_data["last_updated"] = datetime.now(MADRID_TZ).isoformat()
@@ -1005,6 +1079,7 @@ async def update_health_check(
 # =============================================================================
 # Main Entry Point
 # =============================================================================
+
 
 async def async_main() -> None:
     """
@@ -1048,7 +1123,7 @@ async def async_main() -> None:
 
     # Get job times from settings
     confirmation_time = dynamic_settings["confirmation_job_time"]  # "10:00"
-    auto_cancel_time = dynamic_settings["auto_cancel_job_time"]    # "10:00"
+    auto_cancel_time = dynamic_settings["auto_cancel_job_time"]  # "10:00"
     reminder_interval = dynamic_settings["reminder_job_interval"]  # "hourly" or "30min"
 
     logger.info(
@@ -1059,7 +1134,6 @@ async def async_main() -> None:
     )
 
     # Track last execution times to avoid running jobs multiple times
-    last_confirmation_run: str | None = None  # Format: "YYYY-MM-DD"
     last_auto_cancel_run: str | None = None  # Format: "YYYY-MM-DD"
     last_reminder_run: datetime | None = None
 
@@ -1071,14 +1145,6 @@ async def async_main() -> None:
         now = datetime.now(MADRID_TZ)
         current_time = now.strftime("%H:%M")
         current_date = now.strftime("%Y-%m-%d")
-
-        if current_time == confirmation_time and last_confirmation_run != current_date:
-            logger.info(f"Running send_confirmations at {current_time}")
-            try:
-                await send_confirmations()
-            except Exception as e:
-                logger.error(f"Error in send_confirmations: {e}", exc_info=True)
-            last_confirmation_run = current_date
 
         if current_time == auto_cancel_time and last_auto_cancel_run != current_date:
             logger.info(f"Running process_auto_cancellations at {current_time}")
@@ -1105,6 +1171,11 @@ async def async_main() -> None:
                 await send_reminders()
             except Exception as e:
                 logger.error(f"Error in send_reminders: {e}", exc_info=True)
+
+            try:
+                await send_confirmations()
+            except Exception as e:
+                logger.error(f"Error in send_confirmations: {e}", exc_info=True)
 
             try:
                 await process_confirmation_retries()

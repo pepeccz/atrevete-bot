@@ -93,7 +93,7 @@ class ManageCustomerSchema(BaseModel):
             "Additional data for the action:\n"
             "For 'create': {'first_name': str, 'last_name': str (optional), 'notes': str (optional)}\n"
             "For 'update': {'customer_id': str, 'first_name': str (optional), 'last_name': str (optional), 'notes': str (optional)}"
-        )
+        ),
     )
 
 
@@ -111,9 +111,7 @@ class GetCustomerHistorySchema(BaseModel):
 
 @tool(args_schema=ManageCustomerSchema)
 async def manage_customer(
-    action: Literal["get", "create", "update"],
-    phone: str,
-    data: dict[str, Any] | None = None
+    action: Literal["get", "create", "update"], phone: str, data: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """
     Manage customer operations (get, create, update).
@@ -234,7 +232,7 @@ async def _get_customer(phone: str) -> dict[str, Any]:
                 return {
                     "exists": False,
                     "phone": normalized_phone,
-                    "message": "Customer not found. Use action='create' to register this customer."
+                    "message": "Customer not found. Use action='create' to register this customer.",
                 }
 
             logger.info(f"Customer found: {customer.id} for phone {normalized_phone}")
@@ -246,8 +244,12 @@ async def _get_customer(phone: str) -> dict[str, Any]:
                 "last_name": customer.last_name or "",
                 "notes": customer.notes or "",
                 "total_spent": float(customer.total_spent),
-                "last_service_date": customer.last_service_date.isoformat() if customer.last_service_date else None,
-                "preferred_stylist_id": str(customer.preferred_stylist_id) if customer.preferred_stylist_id else None,
+                "last_service_date": customer.last_service_date.isoformat()
+                if customer.last_service_date
+                else None,
+                "preferred_stylist_id": str(customer.preferred_stylist_id)
+                if customer.preferred_stylist_id
+                else None,
                 "created_at": customer.created_at.isoformat(),
             }
 
@@ -290,7 +292,7 @@ async def _create_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
 
             logger.info(
                 f"Customer created: {new_customer.id}",
-                extra={"customer_id": str(new_customer.id), "phone": normalized_phone}
+                extra={"customer_id": str(new_customer.id), "phone": normalized_phone},
             )
 
             return {
@@ -305,7 +307,7 @@ async def _create_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
     except IntegrityError as e:
         logger.warning(
             f"Duplicate phone number detected: {normalized_phone}. Falling back to retrieving existing customer.",
-            extra={"phone": normalized_phone, "error": str(e)}
+            extra={"phone": normalized_phone, "error": str(e)},
         )
         # Customer already exists - retrieve and return existing customer instead of error
         return await _get_customer(normalized_phone)
@@ -331,7 +333,10 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
     # At least one field must be provided for update
     if not any([first_name, last_name, notes]):
         logger.error("At least one of first_name, last_name, or notes is required for update")
-        return {"error": "At least one field (first_name, last_name, notes) is required for update", "data": data}
+        return {
+            "error": "At least one field (first_name, last_name, notes) is required for update",
+            "data": data,
+        }
 
     # If no customer_id provided, look it up by phone
     if not customer_id_str:
@@ -352,7 +357,9 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
                     return {"error": "Customer not found", "phone": normalized_phone}
 
                 customer_id_str = str(customer_lookup.id)
-                logger.info(f"Looked up customer_id by phone: {normalized_phone} → {customer_id_str}")
+                logger.info(
+                    f"Looked up customer_id by phone: {normalized_phone} → {customer_id_str}"
+                )
         except Exception as e:
             logger.error(f"Error looking up customer by phone: {e}")
             return {"error": "Failed to look up customer by phone", "phone": phone}
@@ -365,9 +372,7 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
 
     try:
         async with get_async_session() as session:
-            result = await session.execute(
-                select(Customer).where(Customer.id == customer_uuid)
-            )
+            result = await session.execute(select(Customer).where(Customer.id == customer_uuid))
             customer = result.scalar_one_or_none()
 
             if customer is None:
@@ -387,7 +392,12 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
 
             logger.info(
                 f"Customer updated: {customer_id_str}",
-                extra={"customer_id": customer_id_str, "first_name": first_name, "last_name": last_name, "notes": notes}
+                extra={
+                    "customer_id": customer_id_str,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "notes": notes,
+                },
             )
 
             return {
@@ -399,8 +409,42 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
             }
 
     except SQLAlchemyError as e:
-        logger.error(f"Database error in _update_customer: {e}", extra={"customer_id": customer_id_str})
+        logger.error(
+            f"Database error in _update_customer: {e}", extra={"customer_id": customer_id_str}
+        )
         return {"error": "Failed to update customer name", "details": str(e)}
+
+
+# ============================================================================
+# Confirmation / Reminder Status Derivation Helpers
+# ============================================================================
+
+
+def _derive_confirmation_status(apt: Appointment) -> str:
+    """Derive the current confirmation status of an appointment from raw DB columns.
+
+    Returns one of: "pending" | "sent_awaiting_reply" | "confirmed" |
+    "failed_awaiting_retry" | "permanently_failed"
+    """
+    if apt.status.value == "confirmed":
+        return "confirmed"
+    if apt.notification_failed and apt.retry_count >= 3:
+        return "permanently_failed"
+    if apt.notification_failed:
+        return "failed_awaiting_retry"
+    if apt.confirmation_sent_at is not None:
+        return "sent_awaiting_reply"
+    return "pending"
+
+
+def _derive_reminder_status(apt: Appointment) -> str:
+    """Derive the current reminder status of an appointment from raw DB columns.
+
+    Returns one of: "pending" | "sent"
+    """
+    if apt.reminder_sent_at is not None:
+        return "sent"
+    return "pending"
 
 
 @tool(args_schema=GetCustomerHistorySchema)
@@ -465,7 +509,7 @@ async def get_customer_history(customer_id: str, limit: int = 5) -> dict[str, An
 
             logger.info(
                 f"Retrieved {len(appointments)} appointments for customer {customer_id}",
-                extra={"customer_id": customer_id, "limit": limit}
+                extra={"customer_id": customer_id, "limit": limit},
             )
 
             return {
@@ -479,11 +523,15 @@ async def get_customer_history(customer_id: str, limit: int = 5) -> dict[str, An
                         "status": apt.status.value,
                         "stylist_id": str(apt.stylist_id),
                         "service_ids": [str(sid) for sid in apt.service_ids],
+                        "confirmation_status": _derive_confirmation_status(apt),
+                        "reminder_status": _derive_reminder_status(apt),
                     }
                     for apt in appointments
                 ],
             }
 
     except SQLAlchemyError as e:
-        logger.error(f"Database error in get_customer_history: {e}", extra={"customer_id": customer_id})
+        logger.error(
+            f"Database error in get_customer_history: {e}", extra={"customer_id": customer_id}
+        )
         return {"error": "Failed to retrieve customer history", "details": str(e)}

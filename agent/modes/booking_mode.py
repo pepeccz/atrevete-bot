@@ -317,6 +317,16 @@ class BookingMode(BaseModeNode):
         # 7. Detect stylist hallucinations (R2)
         self._detect_stylist_hallucination(result.response_text or "", ctx)
 
+        # R6 priority fix: when force_stylist_correction is True, the correction
+        # prompt already includes the full stylist list — suppress the list reminder
+        # to avoid duplicate/conflicting instructions to the LLM.
+        if ctx.force_stylist_correction and ctx.force_list_stylists_reminder:
+            logger.debug(
+                "handle: suppressing force_list_stylists_reminder because "
+                "force_stylist_correction takes priority"
+            )
+            ctx.force_list_stylists_reminder = False
+
         # 8. Extract tool results → update context
         apply_all_tool_results(result.tool_results, ctx)
 
@@ -1036,12 +1046,15 @@ class BookingMode(BaseModeNode):
                 hallucinated.append(word)
 
         if hallucinated:
-            logger.warning(
-                "BookingMode: R2 stylist_hallucination detected — invented names: %s. "
-                "Known stylists: %s",
-                hallucinated,
-                list(known_stylists),
-            )
+            log_extra: dict[str, Any] = {
+                "event": "stylist_hallucination_detected",
+                "hallucinated_names": hallucinated,
+                "valid_names": [s["name"] for s in ctx.prefetched_stylists],
+            }
+            conversation_id = getattr(ctx, "conversation_id", None)
+            if conversation_id is not None:
+                log_extra["conversation_id"] = conversation_id
+            logger.warning("Stylist hallucination detected", extra=log_extra)
             ctx.force_stylist_correction = True
         else:
             ctx.force_stylist_correction = False
@@ -1379,6 +1392,11 @@ class BookingMode(BaseModeNode):
                 lines.append(f"✂️ {services_display}")
             if price_line:
                 lines.append(f"💰 {price_parts[0]}")
+            lines.append("")
+            lines.append(
+                "📩 Recibirás un mensaje de confirmación 48h antes de tu cita. "
+                "Respondé SÍ para confirmar o NO para cancelar."
+            )
             lines.append("Te esperamos en Alcobendas 🌸")
             response_text = "\n".join(lines)
             logger.info(

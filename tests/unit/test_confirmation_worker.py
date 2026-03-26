@@ -208,9 +208,7 @@ class TestSendConfirmationsJob:
     @pytest.mark.asyncio
     async def test_send_confirmations_no_appointments(self):
         """Verify job completes cleanly with no appointments."""
-        with patch(
-            "agent.workers.confirmation_worker.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
             mock_session = AsyncMock()
             mock_result = MagicMock()
             mock_result.scalars.return_value.all.return_value = []
@@ -237,9 +235,7 @@ class TestSendConfirmationsJob:
         mock_service = MagicMock()
         mock_service.name = "Corte de pelo"
 
-        with patch(
-            "agent.workers.confirmation_worker.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
             mock_session = AsyncMock()
 
             # Appointments query
@@ -250,17 +246,13 @@ class TestSendConfirmationsJob:
             mock_services_result = MagicMock()
             mock_services_result.scalars.return_value.all.return_value = [mock_service]
 
-            mock_session.execute = AsyncMock(
-                side_effect=[mock_appts_result, mock_services_result]
-            )
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
             mock_session.commit = AsyncMock()
             mock_session.add = MagicMock()
 
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
-            with patch(
-                "agent.workers.confirmation_worker.ChatwootClient"
-            ) as mock_chatwoot_class:
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
                 mock_chatwoot = MagicMock()
                 mock_chatwoot.send_template_message = AsyncMock(return_value=True)
                 mock_chatwoot_class.return_value = mock_chatwoot
@@ -312,16 +304,12 @@ class TestProcessAutoCancellationsJob:
         return appt
 
     @pytest.mark.asyncio
-    async def test_auto_cancellation_updates_status(
-        self, mock_appointment_pending_no_confirm
-    ):
+    async def test_auto_cancellation_updates_status(self, mock_appointment_pending_no_confirm):
         """Verify auto-cancellation updates status to CANCELLED."""
         mock_service = MagicMock()
         mock_service.name = "Tratamiento capilar"
 
-        with patch(
-            "agent.workers.confirmation_worker.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
             mock_session = AsyncMock()
 
             # Appointments query
@@ -334,9 +322,7 @@ class TestProcessAutoCancellationsJob:
             mock_services_result = MagicMock()
             mock_services_result.scalars.return_value.all.return_value = [mock_service]
 
-            mock_session.execute = AsyncMock(
-                side_effect=[mock_appts_result, mock_services_result]
-            )
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
             mock_session.commit = AsyncMock()
             mock_session.add = MagicMock()
 
@@ -368,10 +354,7 @@ class TestProcessAutoCancellationsJob:
                             mock_appointment_pending_no_confirm.status
                             == AppointmentStatus.CANCELLED
                         )
-                        assert (
-                            mock_appointment_pending_no_confirm.cancelled_at
-                            is not None
-                        )
+                        assert mock_appointment_pending_no_confirm.cancelled_at is not None
 
                         # Verify GCal event deleted
                         mock_delete_gcal.assert_called_once()
@@ -412,30 +395,22 @@ class TestSendRemindersJob:
         mock_service = MagicMock()
         mock_service.name = "Manicura"
 
-        with patch(
-            "agent.workers.confirmation_worker.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
             mock_session = AsyncMock()
 
             mock_appts_result = MagicMock()
-            mock_appts_result.scalars.return_value.all.return_value = [
-                mock_confirmed_appointment
-            ]
+            mock_appts_result.scalars.return_value.all.return_value = [mock_confirmed_appointment]
 
             mock_services_result = MagicMock()
             mock_services_result.scalars.return_value.all.return_value = [mock_service]
 
-            mock_session.execute = AsyncMock(
-                side_effect=[mock_appts_result, mock_services_result]
-            )
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
             mock_session.commit = AsyncMock()
             mock_session.add = MagicMock()
 
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
-            with patch(
-                "agent.workers.confirmation_worker.ChatwootClient"
-            ) as mock_chatwoot_class:
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
                 mock_chatwoot = MagicMock()
                 mock_chatwoot.send_template_message = AsyncMock(return_value=True)
                 mock_chatwoot_class.return_value = mock_chatwoot
@@ -534,3 +509,302 @@ class TestGracefulShutdown:
 
         # Reset for other tests
         worker_module.shutdown_requested = False
+
+
+# =============================================================================
+# T-07: Hourly send_confirmations (REQ-C)
+# =============================================================================
+
+
+class TestHourlyConfirmationScheduling:
+    """T-07: send_confirmations is called in the hourly block, not gated by daily date."""
+
+    @pytest.mark.asyncio
+    async def test_send_confirmations_called_when_should_run_reminders(self):
+        """When should_run_reminders is True, send_confirmations must be called."""
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+
+        import agent.workers.confirmation_worker as worker_module
+
+        MADRID_TZ = ZoneInfo("Europe/Madrid")
+
+        dynamic_settings = {
+            "confirmation_hours_before": 48,
+            "auto_cancel_hours_before": 24,
+            "reminder_hours_before": 2,
+            "confirmation_job_time": "23:59",  # Won't match current_time (14:00)
+            "auto_cancel_job_time": "23:59",
+            "reminder_job_interval": "hourly",
+            "confirmation_template_name": "confirmation_48h",
+        }
+
+        mock_confirmations = AsyncMock()
+        mock_reminders = AsyncMock()
+        mock_retries = AsyncMock()
+
+        # Restore original state after test
+        original_shutdown = worker_module.shutdown_requested
+        worker_module.shutdown_requested = False
+
+        try:
+
+            async def fake_sleep(_duration):
+                # Exit after first sleep to limit to one cycle
+                worker_module.shutdown_requested = True
+
+            with (
+                patch.object(worker_module, "send_reminders", mock_reminders),
+                patch.object(worker_module, "send_confirmations", mock_confirmations),
+                patch.object(worker_module, "process_confirmation_retries", mock_retries),
+                patch.object(worker_module, "process_auto_cancellations", new_callable=AsyncMock),
+                patch.object(worker_module.asyncio, "sleep", fake_sleep),
+                patch(
+                    "agent.workers.confirmation_worker.get_dynamic_settings",
+                    new_callable=AsyncMock,
+                    return_value=dynamic_settings,
+                ),
+                patch(
+                    "agent.workers.confirmation_worker.update_health_check",
+                    new_callable=AsyncMock,
+                ),
+            ):
+                await worker_module.async_main()
+        finally:
+            worker_module.shutdown_requested = original_shutdown
+
+        mock_confirmations.assert_called()
+        mock_reminders.assert_called()
+        mock_retries.assert_called()
+
+
+# =============================================================================
+# T-08/T-09/T-10: Webhook alerting for permanent failures (REQ-D)
+# =============================================================================
+
+
+class TestWebhookOnPermanentFailure:
+    """T-11: trigger_all_webhooks is called at all 3 permanent-failure sites."""
+
+    def _make_mock_appointment_for_webhook(self, *, start_time_delta_hours: float = 10.0):
+        """Create a mock appointment for webhook alerting tests."""
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        MADRID_TZ = ZoneInfo("Europe/Madrid")
+        appt = MagicMock()
+        appt.id = uuid4()
+        appt.customer_id = uuid4()
+        appt.status = AppointmentStatus.PENDING
+        appt.start_time = datetime.now(MADRID_TZ) + timedelta(hours=start_time_delta_hours)
+        appt.confirmation_sent_at = None
+        appt.notification_failed = False
+        appt.retry_count = 0
+        appt.next_retry_at = None
+        appt.google_calendar_event_id = None
+        appt.service_ids = [uuid4()]
+
+        mock_customer = MagicMock()
+        mock_customer.phone = "+34612345678"
+        mock_customer.first_name = "Test User"
+        mock_customer.chatwoot_conversation_id = None
+        appt.customer = mock_customer
+
+        mock_stylist = MagicMock()
+        mock_stylist.name = "Ana"
+        appt.stylist = mock_stylist
+
+        return appt
+
+    @pytest.mark.asyncio
+    async def test_site1_webhook_called_on_imminent_appointment_failure(self):
+        """Site 1 (send_confirmations, imminent): webhook fired before commit."""
+        from datetime import timedelta
+
+        mock_service = MagicMock()
+        mock_service.name = "Corte de pelo"
+
+        # Appointment is very soon (less than TIME_GUARD_HOURS away)
+        appt = self._make_mock_appointment_for_webhook(start_time_delta_hours=1.0)
+
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            mock_appts_result = MagicMock()
+            mock_appts_result.scalars.return_value.all.return_value = [appt]
+
+            mock_services_result = MagicMock()
+            mock_services_result.scalars.return_value.all.return_value = [mock_service]
+
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = MagicMock()
+                # Simulate failure — returns False
+                mock_chatwoot.send_template_message = AsyncMock(return_value=False)
+                mock_chatwoot_class.return_value = mock_chatwoot
+
+                with patch(
+                    "agent.workers.confirmation_worker.update_health_check",
+                    new_callable=AsyncMock,
+                ):
+                    with patch(
+                        "agent.services.webhook_service.trigger_all_webhooks",
+                        new_callable=AsyncMock,
+                    ) as mock_webhook:
+                        from agent.workers.confirmation_worker import send_confirmations
+
+                        await send_confirmations()
+
+        # Webhook must have been called
+        mock_webhook.assert_called()
+        call_kwargs = mock_webhook.call_args[0][0]
+        assert call_kwargs["event_type"] == "confirmation_permanently_failed"
+        assert "appointment_id" in call_kwargs
+        assert "customer_phone" in call_kwargs
+        assert call_kwargs["failure_reason"] == "imminent_appointment"
+        assert "timestamp" in call_kwargs
+
+        # DB commit must still have been called
+        assert mock_session.commit.called
+
+    @pytest.mark.asyncio
+    async def test_site1_webhook_failure_does_not_prevent_commit(self):
+        """Site 1: when webhook raises, DB commit still succeeds."""
+        mock_service = MagicMock()
+        mock_service.name = "Corte"
+
+        appt = self._make_mock_appointment_for_webhook(start_time_delta_hours=1.0)
+
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            mock_appts_result = MagicMock()
+            mock_appts_result.scalars.return_value.all.return_value = [appt]
+
+            mock_services_result = MagicMock()
+            mock_services_result.scalars.return_value.all.return_value = [mock_service]
+
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = MagicMock()
+                mock_chatwoot.send_template_message = AsyncMock(return_value=False)
+                mock_chatwoot_class.return_value = mock_chatwoot
+
+                with patch(
+                    "agent.workers.confirmation_worker.update_health_check",
+                    new_callable=AsyncMock,
+                ):
+                    with patch(
+                        "agent.services.webhook_service.trigger_all_webhooks",
+                        new_callable=AsyncMock,
+                        side_effect=Exception("webhook boom"),
+                    ):
+                        from agent.workers.confirmation_worker import send_confirmations
+
+                        # Must not raise
+                        await send_confirmations()
+
+        # DB commit still called even though webhook raised
+        assert mock_session.commit.called
+
+    @pytest.mark.asyncio
+    async def test_site2_webhook_called_on_retry_time_guard(self):
+        """Site 2 (process_confirmation_retries, time-guard): webhook fired before commit."""
+        mock_service = MagicMock()
+        mock_service.name = "Tinte"
+
+        # Appointment is very soon — time guard triggers
+        appt = self._make_mock_appointment_for_webhook(start_time_delta_hours=0.5)
+        appt.notification_failed = True
+        appt.retry_count = 1
+
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            mock_appts_result = MagicMock()
+            mock_appts_result.scalars.return_value.all.return_value = [appt]
+
+            mock_session.execute = AsyncMock(return_value=mock_appts_result)
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch(
+                "agent.workers.confirmation_worker.update_health_check",
+                new_callable=AsyncMock,
+            ):
+                with patch(
+                    "agent.services.webhook_service.trigger_all_webhooks",
+                    new_callable=AsyncMock,
+                ) as mock_webhook:
+                    from agent.workers.confirmation_worker import process_confirmation_retries
+
+                    await process_confirmation_retries()
+
+        mock_webhook.assert_called()
+        call_kwargs = mock_webhook.call_args[0][0]
+        assert call_kwargs["event_type"] == "confirmation_permanently_failed"
+        assert call_kwargs["failure_reason"] == "imminent_appointment"
+        assert mock_session.commit.called
+
+    @pytest.mark.asyncio
+    async def test_site3_webhook_called_on_max_retries_exhausted(self):
+        """Site 3 (process_confirmation_retries, max retries): webhook with max_retries_exhausted."""
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+
+        MADRID_TZ = ZoneInfo("Europe/Madrid")
+        from datetime import datetime
+
+        mock_service = MagicMock()
+        mock_service.name = "Manicura"
+
+        # Appointment is in the future (not imminent), retries exhausted
+        appt = self._make_mock_appointment_for_webhook(start_time_delta_hours=100.0)
+        appt.notification_failed = True
+        appt.retry_count = 2  # Will be incremented to 3 = MAX_RETRIES
+
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            mock_appts_result = MagicMock()
+            mock_appts_result.scalars.return_value.all.return_value = [appt]
+
+            mock_services_result = MagicMock()
+            mock_services_result.scalars.return_value.all.return_value = [mock_service]
+
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = MagicMock()
+                mock_chatwoot.send_template_message = AsyncMock(return_value=False)
+                mock_chatwoot_class.return_value = mock_chatwoot
+
+                with patch(
+                    "agent.workers.confirmation_worker.update_health_check",
+                    new_callable=AsyncMock,
+                ):
+                    with patch(
+                        "agent.services.webhook_service.trigger_all_webhooks",
+                        new_callable=AsyncMock,
+                    ) as mock_webhook:
+                        from agent.workers.confirmation_worker import process_confirmation_retries
+
+                        await process_confirmation_retries()
+
+        mock_webhook.assert_called()
+        call_kwargs = mock_webhook.call_args[0][0]
+        assert call_kwargs["event_type"] == "confirmation_permanently_failed"
+        assert call_kwargs["failure_reason"] == "max_retries_exhausted"
+        assert mock_session.commit.called

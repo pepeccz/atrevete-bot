@@ -1783,3 +1783,66 @@ class TestCodeRenderedConfirmation:
 
         # LLM text should appear (with possible disclosure prefix)
         assert llm_text in response_text
+
+
+# =============================================================================
+# T-02: Post-booking confirmation info text (REQ-A)
+# =============================================================================
+
+
+class TestPostBookingConfirmationText:
+    """T-02: _build_response() includes 48h confirmation info when _booking_completed=True."""
+
+    def _make_completed_ctx(
+        self, *, stylist_name: str = "Ana", services: list | None = None
+    ) -> BookingContext:
+        ctx = BookingContext(
+            stylist_name=stylist_name,
+            stylist_id="sty-001",
+            selected_services=services or ["Corte de Dama"],
+            selected_slot={"date": "lunes 25 de marzo", "time": "10:00"},
+            customer_name="María",
+            customer_id="cust-001",
+        )
+        ctx._booking_completed = True
+        return ctx
+
+    def test_confirmation_text_present_when_booking_completed(self):
+        """When _booking_completed=True, response must include 48h confirmation message."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = self._make_completed_ctx()
+        llm_result = AgenticLoopResult(response_text="OK", tool_results={})
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        response_text = updates["messages"][0]["content"]
+        assert "📩 Recibirás un mensaje de confirmación" in response_text
+        assert "48h" in response_text
+        assert "SÍ" in response_text
+        assert "NO" in response_text
+
+    def test_confirmation_text_absent_when_booking_not_completed(self):
+        """When _booking_completed=False, the 48h confirmation text must NOT appear."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = BookingContext(
+            customer_name="María",
+            selected_services=["Corte"],
+            stylist_name="Ana",
+        )
+        # _booking_completed defaults to False
+        llm_result = AgenticLoopResult(response_text="¿Qué día te viene bien?", tool_results={})
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        response_text = updates["messages"][0]["content"]
+        assert "📩 Recibirás un mensaje de confirmación" not in response_text
