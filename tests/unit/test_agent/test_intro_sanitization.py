@@ -3,11 +3,16 @@ Unit tests for _maybe_prepend_intro() iterative sanitization (BUG-006 v2).
 
 Tests that leading greetings and self-intros are stripped in ANY order
 before the canonical EU AI Act disclosure is prepended.
+
+Also tests F-5 (history scan repairs ai_disclosure_sent) and F-6 (canonical
+short-circuit prevents stripping the canonical text).
 """
 
 import re
 
 import pytest
+
+from agent.modes.base import FIRST_TURN_INTRO as _BASE_FIRST_TURN_INTRO
 
 # The canonical disclosure text (must match base.py FIRST_TURN_INTRO)
 FIRST_TURN_INTRO = "¡Hola! 🌸 Soy Maite, la asistenta virtual con IA de Atrévete Peluquería."
@@ -137,3 +142,165 @@ class TestIntroSanitizationIdempotency:
         second_pass = _simulate_prepend_intro(first_pass, already_disclosed=True)
         assert first_pass == second_pass
         assert first_pass.count(FIRST_TURN_INTRO) == 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# T-12: F-5 — history scan repairs ai_disclosure_sent
+# T-12: F-6 — canonical short-circuit prevents stripping canonical text
+# ────────────────────────────────────────────────────────────────────────────
+#
+# These tests call _maybe_prepend_intro() on a real BaseModeNode subclass
+# (GeneralMode) so we exercise the actual code paths in base.py.
+
+
+def _make_general_mode_for_intro_tests():
+    """Instantiate a GeneralMode with a mock LLM for testing _maybe_prepend_intro."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent.modes.general_mode import GeneralMode
+
+    mock_llm = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.content = "test"
+    mock_response.tool_calls = []
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+    mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+    return GeneralMode(tools=[], llm_client=mock_llm)
+
+
+class TestDisclosureRepairOnHistoryScan:
+    """T-12 / F-5: When history scan finds 'soy maite' in a prior assistant message,
+    _maybe_prepend_intro returns (text, True) — repairing the state flag."""
+
+    def test_history_scan_returns_true_when_disclosure_found(self):
+        """When prior assistant message contains 'soy maite',
+        _maybe_prepend_intro returns (text, True) even with ai_disclosure_sent=False.
+        This is the F-5 repair path: checks history to fix a missed flag.
+        """
+        mode = _make_general_mode_for_intro_tests()
+        # State where ai_disclosure_sent=False but history shows disclosure was already given
+        state = {
+            "ai_disclosure_sent": False,  # flag missing (simulates checkpoint loss)
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": f"{FIRST_TURN_INTRO} ¿En qué puedo ayudarte?",
+                }
+            ],
+        }
+        text = "¿En qué puedo ayudarte hoy?"
+
+        result_text, disclosure_sent = mode._maybe_prepend_intro(text, state)
+
+        # F-5: history scan found "soy maite" → returns (text, True) to repair state
+        assert disclosure_sent is True
+        # Response text must NOT be modified (we found prior disclosure — no need to prepend)
+        assert result_text == text
+
+    def test_history_scan_lowercase_soy_maite(self):
+        """History scan is case-insensitive — lowercase 'soy maite' also triggers repair."""
+        mode = _make_general_mode_for_intro_tests()
+        state = {
+            "ai_disclosure_sent": False,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "¡hola! soy maite, tu asistenta.",
+                }
+            ],
+        }
+        text = "¿Qué servicio necesitas?"
+
+        result_text, disclosure_sent = mode._maybe_prepend_intro(text, state)
+
+        assert disclosure_sent is True
+        assert result_text == text
+
+    def test_no_repair_when_no_prior_disclosure_in_history(self):
+        """When NO prior disclosure in history and ai_disclosure_sent=False,
+        _maybe_prepend_intro prepends the canonical intro and returns (text, True)."""
+        mode = _make_general_mode_for_intro_tests()
+        state = {
+            "ai_disclosure_sent": False,
+            "messages": [
+                {"role": "user", "content": "hola"},
+                {"role": "assistant", "content": "¿En qué puedo ayudarte?"},
+            ],
+        }
+        text = "¿Qué servicio necesitas?"
+
+        result_text, disclosure_sent = mode._maybe_prepend_intro(text, state)
+
+        # No prior disclosure — must prepend canonical intro
+        assert disclosure_sent is True
+        assert result_text.startswith(FIRST_TURN_INTRO)
+        assert "¿Qué servicio necesitas?" in result_text
+
+    def test_no_call_when_flag_already_set(self):
+        """When ai_disclosure_sent=True, no scan, no prepend — returns (text, False)."""
+        mode = _make_general_mode_for_intro_tests()
+        state = {
+            "ai_disclosure_sent": True,
+            "messages": [],
+        }
+        text = "¿Qué servicio necesitas?"
+
+        result_text, disclosure_sent = mode._maybe_prepend_intro(text, state)
+
+        # Flag already set — short-circuit immediately
+        assert disclosure_sent is False
+        assert result_text == text
+
+
+class TestCanonicalShortCircuit:
+    """T-12 / F-6: Responses that already start with the canonical FIRST_TURN_INTRO
+    are short-circuited — not stripped, not re-prefixed.
+    Non-canonical 'soy maite' phrases get stripped and the canonical intro prepended.
+    """
+
+    def test_canonical_text_short_circuits(self):
+        """Response starting with FIRST_TURN_INTRO → (text, True), no stripping."""
+        mode = _make_general_mode_for_intro_tests()
+        state = {"ai_disclosure_sent": False, "messages": []}
+        # The LLM produced the exact canonical intro (rare but possible)
+        text = f"{FIRST_TURN_INTRO} ¿En qué puedo ayudarte?"
+
+        result_text, disclosure_sent = mode._maybe_prepend_intro(text, state)
+
+        # Short-circuit: text is returned as-is (no double prepend)
+        assert disclosure_sent is True
+        assert result_text == text
+        assert result_text.count(FIRST_TURN_INTRO) == 1
+
+    def test_non_canonical_soy_maite_not_short_circuited(self):
+        """Response with 'Soy Maite, ...' (not canonical) → gets stripped + canonical prepended.
+        F-6: loose 'soy maite' check was removed, so non-canonical intro is handled by
+        the strip loop, not by an early return.
+        """
+        mode = _make_general_mode_for_intro_tests()
+        state = {"ai_disclosure_sent": False, "messages": []}
+        # Non-canonical self-intro — should be stripped
+        text = "Soy Maite, tu asistente. ¿Qué necesitas?"
+
+        result_text, disclosure_sent = mode._maybe_prepend_intro(text, state)
+
+        # Must prepend canonical intro (stripping removed the non-canonical one)
+        assert disclosure_sent is True
+        assert result_text.startswith(FIRST_TURN_INTRO)
+        # The body content should still appear
+        assert "¿Qué necesitas?" in result_text
+        # Must not have duplicate canonical intro
+        assert result_text.count(FIRST_TURN_INTRO) == 1
+
+    def test_canonical_full_match_short_circuits(self):
+        """FIRST_TURN_INTRO appearing anywhere in the response also short-circuits."""
+        mode = _make_general_mode_for_intro_tests()
+        state = {"ai_disclosure_sent": False, "messages": []}
+        # FIRST_TURN_INTRO is in the middle — still short-circuits
+        text = f"Algo antes. {FIRST_TURN_INTRO} Algo después."
+
+        result_text, disclosure_sent = mode._maybe_prepend_intro(text, state)
+
+        assert disclosure_sent is True
+        # Text is not modified when canonical text is found
+        assert result_text == text

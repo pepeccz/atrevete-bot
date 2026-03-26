@@ -1482,3 +1482,183 @@ class TestRecommendationsShownTiming:
 
         # After _build_response, the flag must be True
         assert ctx.recommendations_shown is True
+
+
+# =============================================================================
+# T-14: Code-rendered booking confirmation (F-8)
+# =============================================================================
+
+
+class TestCodeRenderedConfirmation:
+    """T-14: When _booking_completed=True, _build_response() replaces LLM text
+    with deterministic confirmation using ctx data (F-8 fix)."""
+
+    def _make_completed_ctx(
+        self,
+        *,
+        stylist_name: str = "Ana",
+        services: list[str] | None = None,
+        date: str = "lunes 25 de marzo",
+        time: str = "10:00",
+        price: str | None = None,
+    ) -> BookingContext:
+        """Build a completed BookingContext with controlled data."""
+        ctx = BookingContext(
+            stylist_name=stylist_name,
+            stylist_id="sty-001",
+            selected_services=services or ["Corte de Dama"],
+            selected_slot={"date": date, "time": time},
+            customer_name="María",
+            customer_id="cust-001",
+        )
+        if price:
+            ctx.selected_services_details = [
+                {"name": services[0] if services else "Corte", "price": price}
+            ]
+        ctx._booking_completed = True
+        return ctx
+
+    def test_confirmation_uses_ctx_data(self):
+        """When _booking_completed=True, response includes stylist_name,
+        selected_services, slot date/time (not generic LLM text)."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = self._make_completed_ctx(
+            stylist_name="Ana",
+            services=["Corte de Dama"],
+            date="lunes 25 de marzo",
+            time="10:00",
+        )
+        llm_result = AgenticLoopResult(
+            response_text="Perfecto, su cita ha sido confirmada.",  # LLM generic text
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        # Extract the response text from the messages update
+        messages = updates.get("messages", [])
+        assert messages, "Expected messages in updates"
+        response_text = messages[0]["content"]
+
+        # Must use ctx data, NOT the LLM's generic text
+        assert "Ana" in response_text, "stylist_name must appear"
+        assert "Corte de Dama" in response_text, "selected_services must appear"
+        assert "lunes 25 de marzo" in response_text, "date must appear"
+        assert "10:00" in response_text, "time must appear"
+        # LLM generic text must NOT appear
+        assert "su cita ha sido confirmada" not in response_text
+
+    def test_confirmation_format_contains_emoji_markers(self):
+        """Response contains '✅', '📅', '💇', '✂️', 'Alcobendas'."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = self._make_completed_ctx(
+            stylist_name="Luciana",
+            services=["Tinte Raíz"],
+            date="martes 26",
+            time="11:00",
+        )
+        llm_result = AgenticLoopResult(
+            response_text="Ha sido reservado.",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        messages = updates.get("messages", [])
+        response_text = messages[0]["content"]
+
+        assert "✅" in response_text
+        assert "📅" in response_text
+        assert "💇" in response_text
+        assert "✂️" in response_text
+        assert "Alcobendas" in response_text
+
+    def test_confirmation_without_price_when_not_available(self):
+        """If selected_services_details has no price, no '💰' line in response."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = self._make_completed_ctx(
+            stylist_name="Pilar",
+            services=["Corte de Dama"],
+        )
+        # No price in services details
+        ctx.selected_services_details = [{"name": "Corte de Dama"}]  # no "price" key
+        llm_result = AgenticLoopResult(
+            response_text="Reserva confirmada.",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        messages = updates.get("messages", [])
+        response_text = messages[0]["content"]
+
+        assert "💰" not in response_text
+
+    def test_confirmation_with_price_when_available(self):
+        """If selected_services_details has price, '💰' line IS shown."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = self._make_completed_ctx(
+            stylist_name="Ana",
+            services=["Corte de Dama"],
+            price="25€",
+        )
+        llm_result = AgenticLoopResult(
+            response_text="Reserva hecha.",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        messages = updates.get("messages", [])
+        response_text = messages[0]["content"]
+
+        assert "💰" in response_text
+        assert "25€" in response_text
+
+    def test_non_completed_booking_uses_llm_text(self):
+        """When _booking_completed=False, LLM text is used (not the code-rendered template)."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = BookingContext(
+            customer_name="María",
+            selected_services=["Corte"],
+            stylist_name="Ana",
+        )
+        # _booking_completed defaults to False
+        llm_text = "¿Qué día te viene bien?"
+        llm_result = AgenticLoopResult(
+            response_text=llm_text,
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        messages = updates.get("messages", [])
+        response_text = messages[0]["content"]
+
+        # LLM text should appear (with possible disclosure prefix)
+        assert llm_text in response_text

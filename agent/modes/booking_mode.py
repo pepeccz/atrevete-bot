@@ -311,6 +311,19 @@ class BookingMode(BaseModeNode):
         self._ctx = ctx
         result = await self._run_agentic_loop(messages, tools=self.get_tools())
 
+        # F-7: Soft guard — warn if service unresolved and search_services was not called
+        if (
+            ctx.service_id is None
+            and not ctx.selected_services
+            and not ctx.pending_clarifications
+            and not result.tool_results.get("search_services")
+        ):
+            logger.warning(
+                "BookingMode: F-7 tool-skip detected — service unresolved after turn "
+                "but search_services was not called. "
+                "LLM may have skipped tool call. service_id=None, selected_services=[]"
+            )
+
         # 6. Extract tool results → update context
         apply_all_tool_results(result.tool_results, ctx)
 
@@ -1108,6 +1121,46 @@ class BookingMode(BaseModeNode):
         """
         response_text = result.response_text or ""
 
+        # F-8: Code-rendered booking confirmation — replace LLM text for success path.
+        # This eliminates LLM hallucination on the critical confirmation message.
+        if ctx._booking_completed:
+            selected_slot = ctx.selected_slot or {}
+            date_str = selected_slot.get("date", "")
+            time_str = selected_slot.get("time", "")
+            stylist = ctx.stylist_name or ""
+            services_display = (
+                ", ".join(ctx.selected_services)
+                if ctx.selected_services
+                else (ctx.service_name or "")
+            )
+            # Build price line only if available in service details
+            price_parts = [
+                d.get("price") for d in (ctx.selected_services_details or []) if d.get("price")
+            ]
+            price_line = f"\n💰 {price_parts[0]}" if price_parts else ""
+            # Build confirmation lines, skipping blank fields
+            lines = ["¡Perfecto! ✅ Cita confirmada:"]
+            if date_str and time_str:
+                lines.append(f"📅 {date_str} a las {time_str}")
+            elif date_str:
+                lines.append(f"📅 {date_str}")
+            if stylist:
+                lines.append(f"💇 {stylist}")
+            if services_display:
+                lines.append(f"✂️ {services_display}")
+            if price_line:
+                lines.append(f"💰 {price_parts[0]}")
+            lines.append("Te esperamos en Alcobendas 🌸")
+            response_text = "\n".join(lines)
+            logger.info(
+                "_build_response: F-8 code-rendered confirmation built "
+                "(date=%s, time=%s, stylist=%s, services=%s)",
+                date_str,
+                time_str,
+                stylist,
+                services_display,
+            )
+
         # Name redaction (privacy guard — LLM must not expose customer names)
         response_text = self._redact_names(state, response_text)
 
@@ -1117,6 +1170,15 @@ class BookingMode(BaseModeNode):
 
         # First-turn intro (EU AI Act compliance)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+
+        # F-2: detect confirmation summary in OUR outgoing response and set deterministic flag
+        if not ctx.confirmation_summary_sent and _is_booking_data_complete(ctx):
+            normalized_resp = _normalize_text(response_text)
+            if any(marker in normalized_resp for marker in _CONFIRMATION_SUMMARY_MARKERS):
+                ctx.confirmation_summary_sent = True
+                logger.info(
+                    "_build_response: confirmation_summary_sent=True (summary detected in response)"
+                )
 
         # T-03 fix: set recommendations_shown AFTER the LLM has generated its
         # response — not during _build_dynamic_context() (before LLM sees the
@@ -1474,49 +1536,29 @@ def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext)
     if not _is_booking_data_complete(ctx):
         return
 
+    # F-2: Step 1 — check deterministic flag instead of scanning assistant messages.
+    # The flag is set by _build_response() when the code detects summary markers in
+    # OUR outgoing response — more reliable than scanning conversation history.
+    if not ctx.confirmation_summary_sent:
+        return  # No summary sent by code yet — can't confirm
+
     messages = state.get("messages", [])
-    if len(messages) < 2:
+    if len(messages) < 1:
         return
 
-    # Scan the last 10 messages for the two-part pattern:
-    # 1. An assistant message with a confirmation summary marker (anywhere in the window)
-    # 2. The LAST user message (anywhere after that summary) is an affirmative reply
-    #
-    # Window of 10 covers: summary (1) + up to 4 Q&A exchanges (8 messages) + confirmation (1).
-    # The previous window of 4 + strict adjacency requirement was too narrow — it missed
-    # confirmation when the user asked a follow-up question between the summary and "sí".
-    #
-    # Algorithm:
-    # - Find the most recent assistant message with a summary marker
-    # - Find the most recent user message that comes AFTER that summary
-    # - If that user message is affirmative → confirmation detected
-    recent = messages[-10:]
-
-    # Step 1: find the most recent summary (scan from the end)
-    summary_index: int | None = None
-    for i in range(len(recent) - 1, -1, -1):
-        msg = recent[i]
-        if msg.get("role") != "assistant":
-            continue
-        assistant_text = _normalize_text(msg.get("content", ""))
-        if any(marker in assistant_text for marker in _CONFIRMATION_SUMMARY_MARKERS):
-            summary_index = i
+    # F-2: Step 2 — find the most recent user message in the last 6 messages
+    recent = messages[-6:]
+    last_user: dict | None = None
+    for msg in reversed(recent):
+        if msg.get("role") == "user":
+            last_user = msg
             break
 
-    if summary_index is None:
-        return  # No summary found in recent window
+    if last_user is None:
+        return  # No user message found
 
-    # Step 2: find the most recent user message AFTER the summary
-    last_user_after_summary: dict | None = None
-    for j in range(summary_index + 1, len(recent)):
-        if recent[j].get("role") == "user":
-            last_user_after_summary = recent[j]  # Keep updating to get the LAST one
-
-    if last_user_after_summary is None:
-        return  # No user message after the summary
-
-    # Step 3: check if that user message is an affirmative confirmation
-    user_text = _normalize_text(last_user_after_summary.get("content", ""))
+    # F-2: Step 3 — check if the last user message is an affirmative confirmation
+    user_text = _normalize_text(last_user.get("content", ""))
     user_tokens = set(re.split(r"[\s,;.!?]+", user_text))
     has_confirmation = any(
         phrase in user_tokens or user_text.startswith(phrase)
@@ -1526,12 +1568,9 @@ def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext)
     if has_confirmation:
         ctx.confirmation_shown = True
         logger.info(
-            "_detect_confirmation_exchange: confirmation detected — "
-            "assistant showed summary (at recent[%d]), user confirmed with %r "
-            "(%d messages apart)",
-            summary_index,
-            last_user_after_summary.get("content", "")[:50],
-            len(recent) - 1 - summary_index,
+            "_detect_confirmation_exchange: F-2 confirmation detected — "
+            "confirmation_summary_sent=True, user confirmed with %r",
+            last_user.get("content", "")[:50],
         )
         return
 

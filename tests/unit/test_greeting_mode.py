@@ -20,6 +20,8 @@ from agent.modes.greeting_mode import (
     _WELCOME_NEW,
     _WELCOME_RETURNING,
     _extract_name_from_message,
+    _has_booking_content,
+    _resolve_target_mode,
 )
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
@@ -31,7 +33,9 @@ from agent.state.schemas import create_initial_state
 
 
 def make_intent(intent: str = "greet", confidence: float = 0.9) -> IntentResult:
-    return IntentResult(intent=intent, confidence=confidence, raw_input="test", mode_hint="GREETING")
+    return IntentResult(
+        intent=intent, confidence=confidence, raw_input="test", mode_hint="GREETING"
+    )
 
 
 def make_mock_llm(response_content: str = "¡Hola! ¿En qué puedo ayudarte?") -> AsyncMock:
@@ -516,8 +520,11 @@ class TestGreetingModeIntentAwareTransition:
         state["pending_whatsapp_name"] = "Pepe"
         state["mode_context"] = {"last_intent": "book", "last_intent_confidence": 0.85}
         state["messages"] = [
-            {"role": "user", "content": "Hola, quiero cortarme el pelo",
-             "timestamp": "2026-03-18T10:00:00+01:00"}
+            {
+                "role": "user",
+                "content": "Hola, quiero cortarme el pelo",
+                "timestamp": "2026-03-18T10:00:00+01:00",
+            }
         ]
 
         mock_result = {"id": "cust-uuid-100"}
@@ -574,3 +581,213 @@ class TestGreetingModeIntentAwareTransition:
         result = await mode.handle(state, make_intent())
 
         assert result["current_mode"] == "GENERAL"
+
+
+# =============================================================================
+# T-13: F-9 — Booking content detection forces BOOKING transition
+# =============================================================================
+
+
+class TestResolveTargetModeBookingContent:
+    """
+    T-13: Unit tests for _resolve_target_mode() with has_booking_content parameter.
+
+    F-9 guardrail: when the user's first message contains clear booking content,
+    _resolve_target_mode() must return "BOOKING" regardless of last_intent.
+    Pure greetings without booking tokens must still return "GENERAL".
+    """
+
+    # ── _has_booking_content() token detection ─────────────────────────────
+
+    def test_booking_service_word_detected(self):
+        """Message with a service name → has_booking_content returns True."""
+        assert _has_booking_content("hola quiero un corte") is True
+
+    def test_booking_verb_turno_detected(self):
+        """Message with 'turno' → True."""
+        assert _has_booking_content("buenas, quería pedir un turno") is True
+
+    def test_booking_verb_reservar_detected(self):
+        """Message with 'reservar' → True."""
+        assert _has_booking_content("quiero reservar una cita") is True
+
+    def test_booking_service_tinte_detected(self):
+        """Message with 'tinte' → True."""
+        assert _has_booking_content("necesito un tinte") is True
+
+    def test_booking_service_mechas_detected(self):
+        """Message with 'mechas' → True."""
+        assert _has_booking_content("me gustaría hacerme unas mechas") is True
+
+    def test_booking_service_barba_detected(self):
+        """Message with 'barba' → True (expanded set)."""
+        assert _has_booking_content("quiero arreglarme la barba") is True
+
+    def test_booking_service_manicura_detected(self):
+        """Message with 'manicura' → True (expanded set)."""
+        assert _has_booking_content("quiero una manicura") is True
+
+    def test_pure_greeting_hola_not_detected(self):
+        """'Hola' alone → has_booking_content returns False."""
+        assert _has_booking_content("Hola") is False
+
+    def test_pure_greeting_buenas_not_detected(self):
+        """'Buenas tardes' → False."""
+        assert _has_booking_content("Buenas tardes") is False
+
+    def test_pure_greeting_question_not_detected(self):
+        """'¿Cómo estáis?' → False."""
+        assert _has_booking_content("¿Cómo estáis?") is False
+
+    def test_empty_message_not_detected(self):
+        """Empty message → False."""
+        assert _has_booking_content("") is False
+
+    def test_none_message_not_detected(self):
+        """None message → False."""
+        assert _has_booking_content(None) is False
+
+    # ── _resolve_target_mode() with has_booking_content ────────────────────
+
+    def test_booking_content_forces_booking_even_with_greet_intent(self):
+        """has_booking_content=True + intent='greet' → 'BOOKING'."""
+        mode_context = {"last_intent": "greet"}
+        assert _resolve_target_mode(mode_context, has_booking_content=True) == "BOOKING"
+
+    def test_booking_content_forces_booking_with_no_intent(self):
+        """has_booking_content=True + no last_intent → 'BOOKING'."""
+        assert _resolve_target_mode({}, has_booking_content=True) == "BOOKING"
+
+    def test_booking_content_forces_booking_with_ambiguous_intent(self):
+        """has_booking_content=True + intent='ambiguous' → 'BOOKING'."""
+        mode_context = {"last_intent": "ambiguous"}
+        assert _resolve_target_mode(mode_context, has_booking_content=True) == "BOOKING"
+
+    def test_no_booking_content_greet_intent_returns_general(self):
+        """has_booking_content=False + intent='greet' → 'GENERAL'."""
+        mode_context = {"last_intent": "greet"}
+        assert _resolve_target_mode(mode_context, has_booking_content=False) == "GENERAL"
+
+    def test_no_booking_content_no_intent_returns_general(self):
+        """has_booking_content=False + no last_intent → 'GENERAL' (default)."""
+        assert _resolve_target_mode({}, has_booking_content=False) == "GENERAL"
+
+    def test_book_intent_returns_booking_regardless_of_content(self):
+        """last_intent='book' always returns 'BOOKING', content flag irrelevant."""
+        mode_context = {"last_intent": "book"}
+        assert _resolve_target_mode(mode_context, has_booking_content=False) == "BOOKING"
+        assert _resolve_target_mode(mode_context, has_booking_content=True) == "BOOKING"
+
+    def test_default_no_content_param_returns_general(self):
+        """Default param (no has_booking_content) + 'greet' → 'GENERAL'."""
+        mode_context = {"last_intent": "greet"}
+        assert _resolve_target_mode(mode_context) == "GENERAL"
+
+
+class TestGreetingModeBookingContentTransition:
+    """
+    T-13: Integration tests — booking content in greeting message forces BOOKING
+    transition through the full GreetingMode.handle() flow.
+    """
+
+    @pytest.mark.asyncio
+    async def test_booking_content_new_customer_forces_booking_transition(self):
+        """
+        New customer says 'Hola, quiero un corte' with intent='greet' →
+        greeting handles it, but transitions to BOOKING (F-9 override).
+        """
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-f9-001", "+34612345678")
+        state["customer_name"] = None
+        state["pending_whatsapp_name"] = "Rosa"
+        # intent='greet' — router did NOT classify as booking
+        state["mode_context"] = {"last_intent": "greet"}
+        state["messages"] = [
+            {
+                "role": "user",
+                "content": "Hola, quiero un corte",
+                "timestamp": "2026-03-18T10:00:00+01:00",
+            }
+        ]
+
+        mock_result = {"id": "cust-f9-001", "first_name": "Rosa"}
+        with patch("agent.modes.greeting_mode.manage_customer") as mock_mc:
+            mock_mc.ainvoke = AsyncMock(return_value=mock_result)
+            result = await mode.handle(state, make_intent("greet"))
+
+        # F-9: must go to BOOKING even though intent was 'greet'
+        assert result["current_mode"] == "BOOKING"
+
+    @pytest.mark.asyncio
+    async def test_booking_content_returning_customer_forces_booking_transition(self):
+        """
+        Returning customer says 'Hola, necesito un tinte' with intent='greet' →
+        transitions to BOOKING (F-9 override).
+        """
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-f9-002", "+34612345678")
+        state["customer_name"] = "Elena"
+        # intent='greet' — router did NOT classify as booking
+        state["mode_context"] = {"last_intent": "greet"}
+
+        # Simulate message in history
+        state["messages"] = [
+            {
+                "role": "user",
+                "content": "Hola, necesito un tinte",
+                "timestamp": "2026-03-18T10:00:00+01:00",
+            }
+        ]
+
+        result = await mode.handle(state, make_intent("greet"))
+
+        # F-9: must go to BOOKING even though intent was 'greet'
+        assert result["current_mode"] == "BOOKING"
+
+    @pytest.mark.asyncio
+    async def test_pure_greeting_no_content_goes_to_general(self):
+        """
+        'Hola' with intent='greet' and no booking content → GENERAL (unchanged).
+        Verifies F-9 does NOT trigger on pure greetings.
+        """
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-f9-003", "+34612345678")
+        state["customer_name"] = "Marcos"
+        state["mode_context"] = {"last_intent": "greet"}
+        state["messages"] = [
+            {
+                "role": "user",
+                "content": "Hola",
+                "timestamp": "2026-03-18T10:00:00+01:00",
+            }
+        ]
+
+        result = await mode.handle(state, make_intent("greet"))
+
+        assert result["current_mode"] == "GENERAL"
+
+    @pytest.mark.asyncio
+    async def test_booking_handoff_context_set_when_booking_content_detected(self):
+        """
+        When booking content is detected and F-9 forces BOOKING transition,
+        mode_context must include opening_booking_request for the handoff.
+        """
+        mode = make_greeting_mode()
+        state = create_initial_state("conv-f9-004", "+34612345678")
+        state["customer_name"] = "Luis"
+        state["mode_context"] = {"last_intent": "greet"}
+        state["messages"] = [
+            {
+                "role": "user",
+                "content": "Hola, quiero reservar una cita para corte",
+                "timestamp": "2026-03-18T10:00:00+01:00",
+            }
+        ]
+
+        result = await mode.handle(state, make_intent("greet"))
+
+        # Must transition to BOOKING
+        assert result["current_mode"] == "BOOKING"
+        # opening_booking_request must be set in mode_context for BOOKING mode
+        mode_ctx = result.get("mode_context", {})
+        assert "opening_booking_request" in mode_ctx

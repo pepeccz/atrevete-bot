@@ -940,3 +940,54 @@ class TestMissingSummaryCustomerId:
         summary = ctx.missing_summary()
 
         assert "customer_id" not in summary.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T-10: confirmation_summary_sent field (F-2)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestConfirmationSummarySent:
+    """T-10: confirmation_summary_sent field default, serialization, and reset."""
+
+    def test_field_default_false(self):
+        """BookingContext() has confirmation_summary_sent=False by default."""
+        ctx = BookingContext()
+        assert ctx.confirmation_summary_sent is False
+
+    def test_field_serializes(self):
+        """to_mode_context() includes confirmation_summary_sent when True."""
+        ctx = BookingContext(confirmation_summary_sent=True)
+        result = ctx.to_mode_context()
+        assert "confirmation_summary_sent" in result
+        assert result["confirmation_summary_sent"] is True
+
+    def test_field_serializes_false(self):
+        """to_mode_context() includes confirmation_summary_sent=False (meaningful state)."""
+        ctx = BookingContext()
+        result = ctx.to_mode_context()
+        # False is a meaningful value — must be serialized
+        assert "confirmation_summary_sent" in result
+        assert result["confirmation_summary_sent"] is False
+
+    def test_field_deserializes(self):
+        """from_mode_context() restores confirmation_summary_sent=True correctly."""
+        ctx = BookingContext.from_mode_context({"confirmation_summary_sent": True})
+        assert ctx.confirmation_summary_sent is True
+
+    def test_field_deserializes_false(self):
+        """from_mode_context() restores confirmation_summary_sent=False correctly."""
+        ctx = BookingContext.from_mode_context({"confirmation_summary_sent": False})
+        assert ctx.confirmation_summary_sent is False
+
+    def test_round_trip_true(self):
+        """confirmation_summary_sent=True survives to_mode_context → from_mode_context."""
+        ctx = BookingContext(confirmation_summary_sent=True)
+        restored = BookingContext.from_mode_context(ctx.to_mode_context())
+        assert restored.confirmation_summary_sent is True
+
+    def test_resets_on_reset_transient(self):
+        """reset_transient() sets confirmation_summary_sent back to False."""
+        ctx = BookingContext(confirmation_summary_sent=True)
+        ctx.reset_transient()
+        assert ctx.confirmation_summary_sent is False

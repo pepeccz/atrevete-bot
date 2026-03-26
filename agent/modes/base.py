@@ -324,7 +324,7 @@ class BaseModeNode(ABC):
         # Check 2: Scan existing messages for prior disclosure
         for msg in state.get("messages", []):
             if msg.get("role") == "assistant" and "soy maite" in (msg.get("content") or "").lower():
-                return response_text, False
+                return response_text, True  # Repair: mark as sent so state flag persists
 
         # No prior disclosure found — strip any LLM-generated greeting/self-intro
         # before prepending our canonical disclosure (prevents double greetings).
@@ -359,10 +359,10 @@ class BaseModeNode(ABC):
                 "_maybe_prepend_intro: stripped LLM self-intro from first-turn response"
             )
 
-        # Also check if LLM still introduced itself (partial match not caught by regex)
+        # Also check if LLM still introduced itself using the canonical intro text
         if response_text.startswith(FIRST_TURN_INTRO[:20]):
             return response_text, True
-        if "soy maite" in response_text.lower():
+        if FIRST_TURN_INTRO in response_text:
             return response_text, True
 
         # Prepend the mandatory EU AI Act disclosure

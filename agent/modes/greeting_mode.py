@@ -60,27 +60,39 @@ _AUDIENCE_HINT_MAP: dict[str, str] = {
     "hijo": "child_male",
 }
 
-# Tokens that signal booking intent in the greeting message
-_BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset({
-    "mujer",
-    "hombre",
-    "nino",
-    "nina",
-    "dama",
-    "caballero",
-    "corte",
-    "tinte",
-    "color",
-    "peluqueria",
-    "adulta",
-    "adulto",
-    "turno",
-    "reservar",
-    "cita",
-    "mechas",
-    "peinado",
-    "quiero",
-})
+# Tokens that signal booking intent in the greeting message.
+# F-9: These tokens are used both for booking handoff context AND for
+# deterministic BOOKING transition override in _resolve_target_mode().
+_BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset(
+    {
+        # People / gender / audience (from _AUDIENCE_HINT_MAP)
+        "mujer",
+        "hombre",
+        "nino",
+        "nina",
+        "dama",
+        "caballero",
+        "adulta",
+        "adulto",
+        # Action verbs / booking intent
+        "turno",
+        "reservar",
+        "reserva",
+        "cita",
+        "quiero",
+        "necesito",
+        "queria",  # "quería" normalized → no accent
+        # Services
+        "corte",
+        "tinte",
+        "color",
+        "mechas",
+        "peinado",
+        "manicura",
+        "barba",
+        "peluqueria",
+    }
+)
 
 
 # ── Name extraction fallback (when pending_whatsapp_name is unavailable) ───────
@@ -98,10 +110,19 @@ NAME_PATTERNS: list[re.Pattern[str]] = [
     ),
 ]
 
-_FALSE_POSITIVE_NAMES: frozenset[str] = frozenset({
-    "nueva", "nuevo", "cliente", "clienta",
-    "de", "la", "el", "un", "una",
-})
+_FALSE_POSITIVE_NAMES: frozenset[str] = frozenset(
+    {
+        "nueva",
+        "nuevo",
+        "cliente",
+        "clienta",
+        "de",
+        "la",
+        "el",
+        "un",
+        "una",
+    }
+)
 
 
 def _extract_name_from_message(text: str | None) -> str | None:
@@ -188,19 +209,33 @@ def _build_booking_handoff_context(message: str | None) -> dict:
     return ctx
 
 
-def _resolve_target_mode(mode_context: dict) -> str:
+def _resolve_target_mode(mode_context: dict, has_booking_content: bool = False) -> str:
     """
     Determine which mode to transition to after the greeting.
 
-    ADR-4: Widened gate — also routes to BOOKING when has_booking_content is True
-    (not just when last_intent == "book").
+    ADR-4 / F-9: Widened gate — routes to BOOKING when:
+    - last_intent == "book" or "reschedule" (LLM intent router result), OR
+    - has_booking_content is True (deterministic keyword detection override)
+
+    F-9 rationale: when the user's first message contains clear booking content
+    (service names, booking verbs, audience tokens), we force BOOKING regardless
+    of the intent router's classification. This reduces LLM-compliance dependency
+    on the critical first-turn routing decision.
+
+    Args:
+        mode_context: Current mode context dict from ConversationState.
+        has_booking_content: True when booking-intent tokens were detected in
+            the user's greeting message by _has_booking_content().
 
     Returns:
-        "BOOKING" if last_intent == "book" or "reschedule",
+        "BOOKING" if last_intent == "book"/"reschedule" OR has_booking_content,
         "GENERAL" otherwise (including greet, ask_info, ambiguous, etc.)
     """
     last_intent = (mode_context or {}).get("last_intent", "greet")
     if last_intent in ("book", "reschedule"):
+        return "BOOKING"
+    # F-9: Deterministic override — booking content detected in first message
+    if has_booking_content:
         return "BOOKING"
     return "GENERAL"
 
@@ -270,7 +305,8 @@ class GreetingMode(BaseModeNode):
         booking_handoff = _build_booking_handoff_context(last_user_message)
         has_booking_content = bool(booking_handoff)
 
-        target_mode = _resolve_target_mode(mode_context)
+        # F-9: Pass has_booking_content so booking content forces BOOKING transition
+        target_mode = _resolve_target_mode(mode_context, has_booking_content=has_booking_content)
 
         # ── Branch 1: Returning customer (name already known) ────────────
         if customer_name:
@@ -392,7 +428,8 @@ class GreetingMode(BaseModeNode):
 
         def _nfd_lower(text: str) -> str:
             return "".join(
-                c for c in unicodedata.normalize("NFD", text.lower())
+                c
+                for c in unicodedata.normalize("NFD", text.lower())
                 if unicodedata.category(c) != "Mn"
             )
 
@@ -441,17 +478,13 @@ class GreetingMode(BaseModeNode):
             # Also reject responses that ask for name
             lower = response_text.lower()
             if any(token in lower for token in ("nombre", "llamo", "llamas", "llamarte")):
-                self.logger.warning(
-                    "GreetingMode: LLM asked for name in response, using fallback"
-                )
+                self.logger.warning("GreetingMode: LLM asked for name in response, using fallback")
                 return fallback_response
             return response_text
 
         return fallback_response
 
-    async def _create_customer(
-        self, state: ConversationState, name: str | None
-    ) -> str | None:
+    async def _create_customer(self, state: ConversationState, name: str | None) -> str | None:
         """
         Create a new customer record in the database.
 
@@ -470,11 +503,13 @@ class GreetingMode(BaseModeNode):
             if name:
                 data["first_name"] = name
 
-            result = await manage_customer.ainvoke({
-                "action": "create",
-                "phone": customer_phone,
-                "data": data,
-            })
+            result = await manage_customer.ainvoke(
+                {
+                    "action": "create",
+                    "phone": customer_phone,
+                    "data": data,
+                }
+            )
 
             if isinstance(result, dict) and "id" in result and "error" not in result:
                 customer_id = str(result["id"])

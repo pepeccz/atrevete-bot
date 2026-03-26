@@ -719,8 +719,8 @@ class TestDetectConfirmationExchange:
         assert ctx.confirmation_shown is False
 
     def test_confirmation_shown_set_on_complete_data_si(self):
-        """All booking data complete + summary marker + user 'sí' ->
-        confirmation_shown = True."""
+        """All booking data complete + confirmation_summary_sent=True + user 'sí' ->
+        confirmation_shown = True (F-2: uses deterministic flag, not message scanning)."""
         ctx = BookingContext(
             service_id="svc-1",
             service_name="Corte Dama",
@@ -737,6 +737,7 @@ class TestDetectConfirmationExchange:
             customer_name="Laura García",
             customer_id="cust-123",
             confirmation_shown=False,
+            confirmation_summary_sent=True,  # F-2: flag set by _build_response()
         )
         state = {
             "messages": [
@@ -759,7 +760,8 @@ class TestDetectConfirmationExchange:
         assert ctx.confirmation_shown is True
 
     def test_confirmation_shown_set_with_confirmamos_marker(self):
-        """Summary with '¿confirmamos?' marker + user 'perfecto' -> True."""
+        """Summary sent (confirmation_summary_sent=True) + user 'perfecto' -> True.
+        F-2: flag-based detection replaces message marker scanning."""
         ctx = BookingContext(
             service_id="svc-2",
             selected_services=["Tinte"],
@@ -768,6 +770,7 @@ class TestDetectConfirmationExchange:
             customer_name="Ana",
             customer_id="cust-456",
             confirmation_shown=False,
+            confirmation_summary_sent=True,  # F-2: flag set by _build_response()
         )
         state = {
             "messages": [

@@ -34,7 +34,17 @@ class GeneralMode(BaseModeNode):
 
     @staticmethod
     def _extract_booking_handoff(tool_results: dict[str, Any]) -> dict[str, Any] | None:
-        envelope = tool_results.get("search_services")
+        raw = tool_results.get("search_services")
+        # Normalize: _run_agentic_loop stores results as lists (one entry per call)
+        if isinstance(raw, list):
+            if not raw:
+                return None
+            envelope = raw[-1]  # take the most recent call result
+        elif isinstance(raw, dict):
+            envelope = raw  # legacy/test shape
+        else:
+            return None
+
         if not isinstance(envelope, dict):
             return None
 
@@ -44,11 +54,13 @@ class GeneralMode(BaseModeNode):
         if isinstance(envelope.get("clarification_needed"), dict):
             clarification = envelope["clarification_needed"]
             return {
-                "pending_clarifications": [{
-                    "axis": clarification.get("axis", ""),
-                    "question_hint": clarification.get("question_hint", ""),
-                    "options": clarification.get("options", []),
-                }]
+                "pending_clarifications": [
+                    {
+                        "axis": clarification.get("axis", ""),
+                        "question_hint": clarification.get("question_hint", ""),
+                        "options": clarification.get("options", []),
+                    }
+                ]
             }
 
         services = envelope.get("services")
@@ -70,6 +82,7 @@ class GeneralMode(BaseModeNode):
         Returns:
             Partial state update dict with assistant response appended
         """
+        from agent.tools.escalation_tools import escalate_to_human
         from agent.tools.info_tools import query_info
         from agent.tools.search_services import search_services
 
@@ -80,11 +93,11 @@ class GeneralMode(BaseModeNode):
         if self._use_optimized_prompts():
             langchain_messages = list(
                 await self._build_layered_messages(
-                state,
-                mode_context,
-                step_name="general_query",
-                include_history=True,
-                history_limit=8,
+                    state,
+                    mode_context,
+                    step_name="general_query",
+                    include_history=True,
+                    history_limit=8,
                 )
             )
         else:
@@ -97,10 +110,7 @@ class GeneralMode(BaseModeNode):
             )
             conversation_summary = state.get("conversation_summary")
             if conversation_summary:
-                system_content += (
-                    "\n\nContexto previo de la conversación:\n"
-                    f"{conversation_summary}"
-                )
+                system_content += f"\n\nContexto previo de la conversación:\n{conversation_summary}"
 
             langchain_messages = [SystemMessage(content=system_content)]
             for msg in messages_history[-8:]:
@@ -111,10 +121,10 @@ class GeneralMode(BaseModeNode):
                 elif role == "assistant":
                     langchain_messages.append(AIMessage(content=content))
 
-        # Run agentic loop with read-only tools
+        # Run agentic loop with read-only tools + escalation
         result = await self._run_agentic_loop(
             langchain_messages,
-            tools=[query_info, search_services],
+            tools=[query_info, search_services, escalate_to_human],
         )
 
         self.logger.info(
@@ -139,5 +149,8 @@ class GeneralMode(BaseModeNode):
         }
         if disclosure_sent:
             updates["ai_disclosure_sent"] = True
+        # Propagate escalation if escalate_to_human was called
+        if result.tool_results.get("escalate_to_human"):
+            updates["escalation_triggered"] = True
 
         return updates
