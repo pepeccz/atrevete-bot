@@ -311,7 +311,9 @@ class BookingMode(BaseModeNode):
         self._ctx = ctx
         result = await self._run_agentic_loop(messages, tools=self.get_tools())
 
-        # F-7: Soft guard — warn if service unresolved and search_services was not called
+        # F-7: Soft guard — warn if service unresolved and search_services was not called.
+        # Sets force_search_services_reminder=True so _build_dynamic_context injects a
+        # ⚠️ Recordatorio into the next turn's system context, nudging the LLM.
         if (
             ctx.service_id is None
             and not ctx.selected_services
@@ -323,6 +325,9 @@ class BookingMode(BaseModeNode):
                 "but search_services was not called. "
                 "LLM may have skipped tool call. service_id=None, selected_services=[]"
             )
+            ctx.force_search_services_reminder = True
+        else:
+            ctx.force_search_services_reminder = False
 
         # 6. Extract tool results → update context
         apply_all_tool_results(result.tool_results, ctx)
@@ -1074,6 +1079,14 @@ class BookingMode(BaseModeNode):
         slots_section = _build_offered_slots_section(ctx)
         if slots_section:
             parts.append(f"\n## Horarios ofrecidos\n{slots_section}")
+
+        # F-7: Tool-skip reminder — injected when LLM skipped search_services last turn
+        if ctx.force_search_services_reminder:
+            parts.append(
+                "\n⚠️ Recordatorio: el servicio sigue sin resolver. "
+                "DEBES llamar search_services antes de continuar. "
+                "No hagas preguntas al usuario sin haber llamado la tool primero."
+            )
 
         # Book failure circuit breaker
         if ctx.book_failure_count >= 2:

@@ -100,6 +100,9 @@ class BookingContext:
     confirmation_shown: bool = False
     confirmation_summary_sent: bool = False  # F-2: set by code when summary is rendered
 
+    # ── Tool-skip reminder (F-7: injected when LLM skips search_services) ──
+    force_search_services_reminder: bool = False
+
     # ── Internal (not serialized) ───────────────────────────────────────
     _booking_completed: bool = field(default=False, repr=False)
 
@@ -143,6 +146,7 @@ class BookingContext:
         self.services_locked = False
         self.confirmation_shown = False
         self.confirmation_summary_sent = False
+        self.force_search_services_reminder = False
 
     def is_ready_to_book(self) -> bool:
         """Check if all REQUIRED fields for book() are present."""
