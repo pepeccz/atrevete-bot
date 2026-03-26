@@ -328,29 +328,36 @@ class BaseModeNode(ABC):
 
         # No prior disclosure found — strip any LLM-generated greeting/self-intro
         # before prepending our canonical disclosure (prevents double greetings).
-        # BUG-006 FIX: use a two-pass strip:
-        # Pass 1 — remove leading "¡Hola!/Hola/Buenas..." opener (with or without emoji)
-        # Pass 2 — remove full self-intro "Soy Maite, la asistenta..." sentence if present
-        # Both passes are anchored to the start of the string so only leading text is removed.
+        # BUG-006 FIX (v2): use an iterative loop (max 5 passes) so patterns are
+        # stripped in ANY order — handles "Soy Maite... ¡Hola!..." as well as the
+        # more common "¡Hola! Soy Maite...". All patterns are ^-anchored so only
+        # the LEADING portion of the response is ever removed.
         _GREETING_OPENER_PATTERN = re.compile(
-            r"^[¡!]?"
+            r"^[\s\U0001F300-\U0001FAFF]*"  # optional leading emoji/whitespace
+            r"[¡!]?"
             r"(?:hola|buenas?(?:\s+(?:d[ií]as?|tardes?|noches?))?)"
             r"[^.!?]*"  # anything up to the first sentence boundary
             r"[.!?]?\s*"  # optional punctuation + whitespace
-            r"(?:\S+\s*)?",  # optional single emoji/word immediately after punctuation
+            r"[\U0001F300-\U0001FAFF\s]*",  # optional trailing emoji/whitespace
             re.IGNORECASE,
         )
         _SELF_INTRO_PATTERN = re.compile(
             r"^(?:soy\s+maite|maite[,.]?\s+(?:tu|la|su)\s+asistent)[^.!?]*[.!?]?\s*",
             re.IGNORECASE,
         )
-        stripped = _GREETING_OPENER_PATTERN.sub("", response_text).lstrip()
-        stripped = _SELF_INTRO_PATTERN.sub("", stripped).lstrip()
-        if stripped != response_text:
+        _MAX_STRIP_ITERATIONS = 5
+        any_stripped = False
+        for _ in range(_MAX_STRIP_ITERATIONS):
+            prev = response_text
+            response_text = _GREETING_OPENER_PATTERN.sub("", response_text).lstrip()
+            response_text = _SELF_INTRO_PATTERN.sub("", response_text).lstrip()
+            if response_text == prev:
+                break  # stable — nothing more to strip
+            any_stripped = True
+        if any_stripped:
             self.logger.debug(
                 "_maybe_prepend_intro: stripped LLM self-intro from first-turn response"
             )
-            response_text = stripped
 
         # Also check if LLM still introduced itself (partial match not caught by regex)
         if response_text.startswith(FIRST_TURN_INTRO[:20]):
