@@ -1,10 +1,10 @@
 """
-Unit tests for Google Calendar push idempotency via requestId.
+Unit tests for Google Calendar push parameters.
 
 Tests verify that:
-- push_appointment_to_gcal passes requestId=str(appointment_id) to events().insert()
-- requestId is stable across retries (same value on all attempts)
-- push_blocking_event_to_gcal passes requestId=str(blocking_event_id)
+- push_appointment_to_gcal does NOT pass requestId to events().insert()
+- requestId is absent on all retry attempts
+- push_blocking_event_to_gcal does NOT pass requestId to events().insert()
 
 All GCal API calls are mocked — no real network or DB access.
 asyncio_mode = "auto" (set in pyproject.toml) — no @pytest.mark.asyncio needed.
@@ -12,11 +12,10 @@ asyncio_mode = "auto" (set in pyproject.toml) — no @pytest.mark.asyncio needed
 
 import contextlib
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, call, patch
-from uuid import UUID, uuid4
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-import pytest
 from googleapiclient.errors import HttpError
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
@@ -61,20 +60,21 @@ def _make_http_error(status: int, reason: str = "Service Unavailable") -> HttpEr
 
 
 # ---------------------------------------------------------------------------
-# Test: Appointment push passes requestId
+# Test: Appointment push does NOT pass requestId
 # ---------------------------------------------------------------------------
 
 
-class TestAppointmentPushIdempotency:
-    """Verify that push_appointment_to_gcal passes the correct requestId."""
+class TestAppointmentPushParams:
+    """Verify that push_appointment_to_gcal does not pass requestId to events().insert()."""
 
-    async def test_normal_push_uses_appointment_id_as_request_id(self):
+    async def test_appointment_push_does_not_pass_request_id(self):
         """
-        Normal successful push: requestId must equal str(appointment_id).
+        Normal successful push: requestId must NOT be present in events().insert() kwargs.
 
         Scenario:
         - GCal service is available, returns a new event on first call
-        - events().insert() is called exactly once with requestId=str(appointment_id)
+        - events().insert() is called exactly once, without requestId
+        - calendarId and body ARE passed (core parameters must remain)
         """
         appointment_id = uuid4()
         stylist_id = uuid4()
@@ -117,27 +117,27 @@ class TestAppointmentPushIdempotency:
 
         assert result == "evt-001"
 
-        # Verify events().insert() was called with requestId=str(appointment_id)
         insert_call_kwargs = mock_service.events.return_value.insert.call_args
         assert insert_call_kwargs is not None, "events().insert() was never called"
-        assert insert_call_kwargs.kwargs.get("requestId") == str(appointment_id), (
-            f"Expected requestId={str(appointment_id)!r}, "
-            f"got {insert_call_kwargs.kwargs.get('requestId')!r}"
-        )
-        # calendarId must also be correct
-        assert insert_call_kwargs.kwargs.get("calendarId") == calendar_id
 
-    async def test_retry_uses_same_request_id(self):
+        # requestId must NOT be present — it is not a valid GCal REST API parameter
+        assert "requestId" not in insert_call_kwargs.kwargs, (
+            f"requestId should not be passed to events().insert(), "
+            f"got kwargs={insert_call_kwargs.kwargs!r}"
+        )
+
+        # Core parameters must still be present
+        assert insert_call_kwargs.kwargs.get("calendarId") == calendar_id
+        assert "body" in insert_call_kwargs.kwargs
+
+    async def test_appointment_push_retry_does_not_pass_request_id(self):
         """
-        Timeout-then-recovery: requestId must be identical on all retry attempts.
+        Timeout-then-recovery: requestId must be absent on all retry attempts.
 
         Scenario:
         - First call raises HttpError 503 (transient failure)
         - Second call succeeds and returns the event
-        - GCal deduplication guarantees only one event is created because requestId is stable
-
-        Implementation note: _retry_with_backoff wraps create_event_with_retry, which captures
-        request_id from the outer scope — so it's the same object across retries.
+        - Neither attempt should pass requestId to events().insert()
         """
         appointment_id = uuid4()
         stylist_id = uuid4()
@@ -147,7 +147,7 @@ class TestAppointmentPushIdempotency:
         # Build service mock: first insert fails 503, second succeeds
         mock_service = MagicMock()
         error_503 = _make_http_error(503)
-        success_response = {"id": "evt-dedup-002", "status": "confirmed"}
+        success_response = {"id": "evt-retry-002", "status": "confirmed"}
 
         mock_insert_request = MagicMock()
         mock_insert_request.execute.side_effect = [error_503, success_response]
@@ -186,7 +186,7 @@ class TestAppointmentPushIdempotency:
                 status="pending",
             )
 
-        assert result == "evt-dedup-002"
+        assert result == "evt-retry-002"
 
         # events().insert() was called twice (one failure + one success)
         assert mock_service.events.return_value.insert.call_count == 2, (
@@ -194,32 +194,30 @@ class TestAppointmentPushIdempotency:
             f"got {mock_service.events.return_value.insert.call_count}"
         )
 
-        # Both calls must use the SAME requestId (idempotency key must be stable)
+        # Neither call must pass requestId
         all_calls = mock_service.events.return_value.insert.call_args_list
-        request_ids = [c.kwargs.get("requestId") for c in all_calls]
-        assert len(set(request_ids)) == 1, (
-            f"requestId changed between retries: {request_ids}"
-        )
-        assert request_ids[0] == str(appointment_id), (
-            f"Expected requestId={str(appointment_id)!r}, got {request_ids[0]!r}"
-        )
+        for i, c in enumerate(all_calls):
+            assert "requestId" not in c.kwargs, (
+                f"Call {i + 1} should not pass requestId, got kwargs={c.kwargs!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
-# Test: Blocking event push passes requestId
+# Test: Blocking event push does NOT pass requestId
 # ---------------------------------------------------------------------------
 
 
-class TestBlockingEventPushIdempotency:
-    """Verify that push_blocking_event_to_gcal passes the correct requestId."""
+class TestBlockingEventPushParams:
+    """Verify that push_blocking_event_to_gcal does not pass requestId to events().insert()."""
 
-    async def test_blocking_event_push_uses_blocking_event_id_as_request_id(self):
+    async def test_blocking_event_push_does_not_pass_request_id(self):
         """
-        Normal blocking event push: requestId must equal str(blocking_event_id).
+        Normal blocking event push: requestId must NOT be present in events().insert() kwargs.
 
         Scenario:
         - GCal service is available, returns a new event on first call
-        - events().insert() is called with requestId=str(blocking_event_id)
+        - events().insert() is called without requestId
+        - calendarId and body ARE passed (core parameters must remain)
         """
         blocking_event_id = uuid4()
         stylist_id = uuid4()
@@ -262,12 +260,15 @@ class TestBlockingEventPushIdempotency:
 
         assert result == "blocking-evt-xyz"
 
-        # Verify events().insert() was called with requestId=str(blocking_event_id)
         insert_call_kwargs = mock_service.events.return_value.insert.call_args
         assert insert_call_kwargs is not None, "events().insert() was never called"
-        assert insert_call_kwargs.kwargs.get("requestId") == str(blocking_event_id), (
-            f"Expected requestId={str(blocking_event_id)!r}, "
-            f"got {insert_call_kwargs.kwargs.get('requestId')!r}"
+
+        # requestId must NOT be present — it is not a valid GCal REST API parameter
+        assert "requestId" not in insert_call_kwargs.kwargs, (
+            f"requestId should not be passed to events().insert(), "
+            f"got kwargs={insert_call_kwargs.kwargs!r}"
         )
-        # Also check calendarId is correct
+
+        # Core parameters must still be present
         assert insert_call_kwargs.kwargs.get("calendarId") == calendar_id
+        assert "body" in insert_call_kwargs.kwargs

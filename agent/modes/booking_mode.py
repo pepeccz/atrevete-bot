@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import unicodedata
+from datetime import datetime
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -293,6 +294,19 @@ class BookingMode(BaseModeNode):
         # 1d. Pre-resolve: detect confirmation exchange (summary shown + user confirmed)
         if not ctx.confirmation_shown:
             _detect_confirmation_exchange(state, ctx)
+
+        # 1e. Pre-resolve: detect notes exchange (bot asked + user replied)
+        if ctx and not ctx.notes_asked:
+            messages = state.get("messages", [])
+            if ctx.notes_ask_attempts >= 2:
+                ctx.notes_asked = True
+                logger.info(
+                    "handle: notes_asked auto-set True (attempts=%d >= 2)",
+                    ctx.notes_ask_attempts,
+                )
+            elif _previous_assistant_asked_for_notes(messages):
+                ctx.notes_asked = True
+                logger.info("handle: notes_asked=True (bot asked, user replied)")
 
         # 2. Fast-path: cancel / escalate (before LLM call)
         user_message = self._get_last_user_message(state)
@@ -619,6 +633,19 @@ class BookingMode(BaseModeNode):
                 error_message="Llama a manage_customer primero para obtener el customer_id",
             )
 
+        # ── Hard gate: reject book() if notes haven't been asked ──────────
+        if ctx and not ctx.notes_asked:
+            logger.warning("_pre_tool_call: book() rejected — notes_asked is False")
+            return ToolCallRejection(
+                name="book",
+                error_code="NOTES_NOT_ASKED",
+                error_message=(
+                    "ANTES de llamar a book(), preguntá a la clienta si tiene alguna "
+                    "nota, preferencia o indicación especial para su cita. "
+                    "Preguntá ahora y NO llames a book() hasta tener la respuesta."
+                ),
+            )
+
         # ── Hard gate: reject book() if confirmation summary not shown ─────
         # The LLM MUST show a confirmation summary and the user MUST reply
         # with an affirmative before book() can execute. This prevents the
@@ -714,6 +741,8 @@ class BookingMode(BaseModeNode):
                     "_pre_tool_call: GAP-01 populated selected_slot=%s",
                     ctx.selected_slot,
                 )
+                ctx.stylist_id = tool_args["stylist_id"]
+                ctx.stylist_name = stylist_name
 
             return tool_args
 
@@ -739,26 +768,82 @@ class BookingMode(BaseModeNode):
                 ),
             )
 
-        # Gate: if offered_slots exist, verify the directly-passed stylist_id
-        # belongs to one of the offered slots. A UUID from the chat history that
-        # no longer matches any available slot is stale and must be rejected.
+        # Gate: if offered_slots exist, try to auto-recover by matching
+        # stylist_id + start_time against the offered slots. If a unique
+        # exact match is found, resolve identically to Path A. If the
+        # start_time is unparseable or no slot matches, hard-reject.
         if offered and current_stylist_id and current_stylist_id != "__RESOLVE_FROM_SLOT__":
-            offered_stylist_ids = {s.get("stylist_id") for s in offered if s.get("stylist_id")}
-            if offered_stylist_ids and current_stylist_id not in offered_stylist_ids:
+            # Try to parse the provided start_time for comparison
+            try:
+                try_dt = datetime.fromisoformat(tool_args.get("start_time", ""))
+            except (ValueError, TypeError):
                 logger.warning(
-                    "_pre_tool_call: book() rejected — stylist_id=%s is not in offered_slots "
-                    "(offered: %s). Use slot_index to select the correct slot.",
-                    current_stylist_id,
-                    offered_stylist_ids,
+                    "_pre_tool_call: book() rejected — start_time '%s' is not parseable",
+                    tool_args.get("start_time"),
                 )
                 return ToolCallRejection(
                     name="book",
-                    error_code="STALE_STYLIST_ID",
+                    error_code="SLOT_NOT_IN_OFFERED",
                     error_message=(
-                        f"El stylist_id '{current_stylist_id}' no coincide con ninguno "
-                        "de los horarios ofrecidos. "
+                        "El horario indicado no es válido. "
                         "Usá slot_index con el número del horario (1, 2, 3…) "
-                        "en lugar de pasar stylist_id directamente."
+                        "en lugar de pasar stylist_id y start_time directamente."
+                    ),
+                )
+
+            # Search offered_slots for exact match on stylist_id + start_time
+            matched_slot = None
+            matched_index = -1
+            for i, s in enumerate(offered):
+                if s.get("stylist_id") != current_stylist_id:
+                    continue
+                try:
+                    slot_dt = datetime.fromisoformat(s.get("full_datetime", ""))
+                except (ValueError, TypeError):
+                    continue
+                if slot_dt == try_dt:
+                    matched_slot = s
+                    matched_index = i
+                    break
+
+            if matched_slot is not None:
+                logger.warning(
+                    "_pre_tool_call: book() called without slot_index but stylist_id+start_time "
+                    "matched offered slot %d — auto-recovering. stylist_id=%s, start_time=%s",
+                    matched_index + 1,
+                    matched_slot.get("stylist_id"),
+                    tool_args["start_time"],
+                )
+                # Resolve exactly like Path A
+                tool_args["stylist_id"] = matched_slot.get("stylist_id", current_stylist_id)
+                tool_args["start_time"] = matched_slot.get("full_datetime", tool_args["start_time"])
+                tool_args.pop("slot_index", None)
+                if ctx:
+                    stylist_name = matched_slot.get(
+                        "stylist_name", matched_slot.get("stylist", "???")
+                    )
+                    ctx.selected_slot = {
+                        "date": matched_slot.get("date", matched_slot.get("day_name", "")),
+                        "time": matched_slot.get("time", ""),
+                        "full_datetime": matched_slot.get("full_datetime", ""),
+                        "stylist_id": tool_args["stylist_id"],
+                        "stylist_name": stylist_name,
+                    }
+                return tool_args
+            else:
+                logger.warning(
+                    "_pre_tool_call: book() rejected — stylist_id+start_time (%s, %s) "
+                    "do not match any offered slot",
+                    current_stylist_id,
+                    tool_args.get("start_time"),
+                )
+                return ToolCallRejection(
+                    name="book",
+                    error_code="SLOT_NOT_IN_OFFERED",
+                    error_message=(
+                        "El horario indicado no coincide con ninguno de los horarios ofrecidos. "
+                        "Usá slot_index con el número del horario (1, 2, 3…) "
+                        "en lugar de pasar stylist_id y start_time directamente."
                     ),
                 )
 
@@ -1366,7 +1451,7 @@ class BookingMode(BaseModeNode):
         # F-8: Code-rendered booking confirmation — replace LLM text for success path.
         # This eliminates LLM hallucination on the critical confirmation message.
         if ctx._booking_completed:
-            selected_slot = ctx.selected_slot or {}
+            selected_slot = ctx.selected_slot or ctx.last_booked_slot or {}
             date_str = selected_slot.get("date", "")
             time_str = selected_slot.get("time", "")
             stylist = ctx.stylist_name or ""
@@ -1425,6 +1510,24 @@ class BookingMode(BaseModeNode):
                 ctx.confirmation_summary_sent = True
                 logger.info(
                     "_build_response: confirmation_summary_sent=True (summary detected in response)"
+                )
+
+        # Detect notes-asking markers in outgoing response → increment attempts counter
+        if ctx and not ctx.notes_asked:
+            _NOTES_ASK_MARKERS = (
+                "nota",
+                "preferencia",
+                "indicacion",
+                "alergia",
+                "algo que debamos saber",
+                "algo que deba saber",
+            )
+            normalized_resp_notes = _normalize_text(response_text)
+            if any(marker in normalized_resp_notes for marker in _NOTES_ASK_MARKERS):
+                ctx.notes_ask_attempts += 1
+                logger.info(
+                    "_build_response: notes_ask_attempts incremented to %d",
+                    ctx.notes_ask_attempts,
                 )
 
         # T-03 fix: set recommendations_shown AFTER the LLM has generated its

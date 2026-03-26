@@ -62,6 +62,7 @@ class BookingContext:
 
     # ── Slot (populated after user confirms) ────────────────────────────
     selected_slot: dict[str, Any] | None = None
+    last_booked_slot: dict | None = None
 
     # ── Offered slots (ephemeral, for prompt rendering) ─────────────────
     offered_slots: list[dict[str, Any]] | None = None
@@ -99,6 +100,10 @@ class BookingContext:
     # ── Confirmation gate (prevents book() without user confirmation) ──
     confirmation_shown: bool = False
     confirmation_summary_sent: bool = False  # F-2: set by code when summary is rendered
+
+    # ── Notes gate ─────────────────────────────────────────────────────────
+    notes_asked: bool = False
+    notes_ask_attempts: int = 0
 
     # ── Tool-skip reminders (injected when LLM skips tools) ──────────────
     force_search_services_reminder: bool = False
@@ -148,6 +153,8 @@ class BookingContext:
         self.services_locked = False
         self.confirmation_shown = False
         self.confirmation_summary_sent = False
+        self.notes_asked = False
+        self.notes_ask_attempts = 0
         self.force_search_services_reminder = False
         self.force_list_stylists_reminder = False
         self.force_stylist_correction = False
@@ -222,6 +229,9 @@ class BookingContext:
         # This guides the LLM to call manage_customer before book().
         if self.customer_name and not self.customer_id:
             missing.append("customer_id (llamá manage_customer para obtenerlo)")
+        # Notes step: show pending only when all other required fields are complete
+        if not missing and not self.notes_asked:
+            missing.append("notas/preferencias (preguntá si tiene alguna indicación especial)")
         if not missing:
             return "✅ Todos los datos requeridos están completos"
         return "\n".join(f"❌ {label.capitalize()}: pendiente" for label in missing)

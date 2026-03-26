@@ -678,6 +678,7 @@ def extract_booking_result(result: dict, ctx: BookingContext) -> None:
         ctx._booking_completed = True
         ctx.book_failure_count = 0
         ctx.offered_slots = None  # Clear stale slots after successful booking
+        ctx.last_booked_slot = ctx.selected_slot  # Snapshot before clearing for F-8
         ctx.selected_slot = None  # Clear selected slot
         # Capture stylist_id from booking result if present
         booked_stylist = result.get("stylist_id")

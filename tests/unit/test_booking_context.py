@@ -45,6 +45,7 @@ def _full_context() -> BookingContext:
         customer_name="Pepe",
         customer_id="cust-001",
         notes="Sin alergia",
+        notes_asked=True,  # notes_asked=True for "fully complete" context
         candidate_services=[],
     )
 
@@ -991,3 +992,87 @@ class TestConfirmationSummarySent:
         ctx = BookingContext(confirmation_summary_sent=True)
         ctx.reset_transient()
         assert ctx.confirmation_summary_sent is False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TestNotesGateBookingContext
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestNotesGateBookingContext:
+    """T-08: Tests for notes_asked / notes_ask_attempts fields and their effect
+    on missing_summary() and reset_transient()."""
+
+    def test_notes_fields_default_false_zero(self):
+        """New BookingContext has notes_asked=False and notes_ask_attempts=0."""
+        ctx = BookingContext()
+        assert ctx.notes_asked is False
+        assert ctx.notes_ask_attempts == 0
+
+    def test_reset_transient_resets_notes_fields(self):
+        """reset_transient() sets notes_asked=False and notes_ask_attempts=0."""
+        ctx = BookingContext()
+        ctx.notes_asked = True
+        ctx.notes_ask_attempts = 3
+        ctx.reset_transient()
+        assert ctx.notes_asked is False
+        assert ctx.notes_ask_attempts == 0
+
+    def test_missing_summary_shows_notes_pending_when_all_fields_complete_but_notes_not_asked(
+        self,
+    ):
+        """When all required fields are complete but notes_asked=False,
+        missing_summary() should show 'notas/preferencias' as pending."""
+        ctx = BookingContext(
+            service_name="Corte de Dama",
+            service_id="svc-001",
+            stylist_id="sty-001",
+            offered_slots=[{"time": "10:00"}],
+            customer_name="María",
+            customer_id="cust-001",
+            notes_asked=False,
+        )
+        summary = ctx.missing_summary()
+        assert "notas" in summary.lower()
+        # Should NOT show as complete since notes haven't been asked
+        assert "✅ Todos los datos requeridos están completos" not in summary
+
+    def test_missing_summary_complete_when_notes_asked(self):
+        """When all required fields are complete and notes_asked=True,
+        missing_summary() should return the 'all complete' message."""
+        ctx = BookingContext(
+            service_name="Corte de Dama",
+            service_id="svc-001",
+            stylist_id="sty-001",
+            offered_slots=[{"time": "10:00"}],
+            customer_name="María",
+            customer_id="cust-001",
+            notes_asked=True,
+        )
+        summary = ctx.missing_summary()
+        assert "✅ Todos los datos requeridos están completos" in summary
+        assert "notas" not in summary.lower()
+
+    def test_missing_summary_no_notes_when_other_fields_missing(self):
+        """When other required fields are still missing, 'notas' must NOT appear.
+        Notes gate only activates when all other fields are complete."""
+        ctx = BookingContext(
+            service_id=None,
+            service_name=None,
+            stylist_id="sty-001",
+            offered_slots=[{"time": "10:00"}],
+            customer_name="María",
+            customer_id="cust-001",
+            notes_asked=False,
+        )
+        summary = ctx.missing_summary()
+        # Service is missing → notes should NOT appear yet
+        assert "servicio" in summary.lower()
+        assert "notas" not in summary.lower()
+
+    def test_notes_fields_round_trip_serialization(self):
+        """notes_asked and notes_ask_attempts survive to_mode_context → from_mode_context."""
+        ctx = BookingContext(notes_asked=True, notes_ask_attempts=2)
+        restored = BookingContext.from_mode_context(ctx.to_mode_context())
+        assert restored.notes_asked is True
+        assert restored.notes_ask_attempts == 2

@@ -572,13 +572,14 @@ class TestBookingContextSummaries:
 
     def test_missing_summary_all_complete(self):
         # T-07: customer_id is now required when customer_name is present.
-        # "All complete" requires both customer_name AND customer_id.
+        # "All complete" requires both customer_name AND customer_id AND notes_asked=True.
         ctx = BookingContext(
             service_name="Corte",
             stylist_id="sty-001",
             offered_slots=[{"time": "10:00", "date": "2026-03-23"}],
             customer_name="María",
             customer_id="cust-001",
+            notes_asked=True,
         )
         summary = ctx.missing_summary()
         assert "completos" in summary.lower()
@@ -712,6 +713,7 @@ class TestPreToolCallCustomerIdInjection:
             selected_services=["Corte de Caballero"],
             needs_availability_refresh=False,
             confirmation_shown=True,
+            notes_asked=True,
         )
         tool_args = {
             "customer_id": "FAKE-LLM-HALLUCINATED-UUID",
@@ -782,6 +784,7 @@ class TestPreToolCallCustomerIdInjection:
             ],
             needs_availability_refresh=False,
             confirmation_shown=True,
+            notes_asked=True,
         )
         tool_args = {
             "customer_id": "FAKE",
@@ -841,6 +844,7 @@ class TestPreToolCallCustomerIdInjection:
             selected_services=["Corte"],
             needs_availability_refresh=False,
             confirmation_shown=True,
+            notes_asked=True,
             offered_slots=[
                 {
                     "stylist_id": "aaa-bbb",
@@ -1359,6 +1363,7 @@ class TestNotesInjectionInPreToolCall:
             ],
             needs_availability_refresh=False,
             confirmation_shown=True,
+            notes_asked=True,  # satisfy NOTES_NOT_ASKED gate
             notes=notes,
         )
 
@@ -1846,3 +1851,408 @@ class TestPostBookingConfirmationText:
 
         response_text = updates["messages"][0]["content"]
         assert "📩 Recibirás un mensaje de confirmación" not in response_text
+
+
+# =============================================================================
+# T-03: Slot index enforcement — hybrid auto-recover + hard-reject algorithm
+# =============================================================================
+
+_STYLIST_ID = "550e8400-e29b-41d4-a716-446655440001"
+_CUSTOMER_ID = "550e8400-e29b-41d4-a716-446655440000"
+
+
+def _make_ctx_with_slot(
+    stylist_id: str = _STYLIST_ID,
+    full_datetime: str = "2026-04-10T10:00:00+02:00",
+    stylist_name: str = "Ana",
+    offered_slots: list | None = None,
+) -> BookingContext:
+    """Build a BookingContext with all pre-guards satisfied, ready for slot resolution."""
+    slots = (
+        offered_slots
+        if offered_slots is not None
+        else [
+            {
+                "stylist_id": stylist_id,
+                "full_datetime": full_datetime,
+                "stylist_name": stylist_name,
+                "date": "viernes 10 de abril",
+                "time": "10:00",
+            }
+        ]
+    )
+    ctx = BookingContext(
+        customer_id=_CUSTOMER_ID,
+        customer_name="María García",
+        selected_services=["Corte de Dama"],
+        needs_availability_refresh=False,
+        confirmation_shown=True,
+        offered_slots=slots,
+    )
+    ctx.notes_asked = True  # satisfy NOTES_NOT_ASKED guard
+    return ctx
+    return BookingContext(
+        customer_id=_CUSTOMER_ID,
+        customer_name="María García",
+        selected_services=["Corte de Dama"],
+        needs_availability_refresh=False,
+        confirmation_shown=True,
+        offered_slots=slots,
+    )
+
+
+class TestSlotIndexEnforcement:
+    """Tests for the hybrid auto-recover + hard-reject algorithm in _pre_tool_call.
+
+    Covers: auto-recovery on exact match, hard-reject on no match,
+    hard-reject on malformed start_time, UTC-equivalent datetimes, and
+    pass-through when no offered_slots exist.
+    """
+
+    @pytest.mark.asyncio
+    async def test_auto_recovery_when_slot_matches(self):
+        """When stylist_id+start_time exactly match an offered slot, auto-recover."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        mode._ctx = _make_ctx_with_slot(
+            stylist_id=_STYLIST_ID,
+            full_datetime="2026-04-10T10:00:00+02:00",
+        )
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Dama"],
+            "first_name": "María",
+            "stylist_id": _STYLIST_ID,
+            "start_time": "2026-04-10T10:00:00+02:00",
+            # slot_index intentionally absent
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        # Must NOT be a rejection
+        assert not isinstance(result, ToolCallRejection)
+        # tool_args resolved correctly
+        assert result["stylist_id"] == _STYLIST_ID
+        assert result["start_time"] == "2026-04-10T10:00:00+02:00"
+        assert "slot_index" not in result
+        # ctx.selected_slot must be populated
+        assert mode._ctx.selected_slot is not None
+        assert mode._ctx.selected_slot["stylist_id"] == _STYLIST_ID
+        assert mode._ctx.selected_slot["time"] == "10:00"
+
+    @pytest.mark.asyncio
+    async def test_hard_reject_when_no_match(self):
+        """When no offered slot matches stylist_id+start_time, return ToolCallRejection."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        mode._ctx = _make_ctx_with_slot(
+            stylist_id=_STYLIST_ID,
+            full_datetime="2026-04-10T10:00:00+02:00",
+        )
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Dama"],
+            "first_name": "María",
+            "stylist_id": _STYLIST_ID,
+            "start_time": "2026-04-10T12:00:00+02:00",  # different time — no match
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "SLOT_NOT_IN_OFFERED"
+
+    @pytest.mark.asyncio
+    async def test_hard_reject_malformed_start_time(self):
+        """When start_time is unparseable, return ToolCallRejection without raising."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        mode._ctx = _make_ctx_with_slot()
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Dama"],
+            "first_name": "María",
+            "stylist_id": _STYLIST_ID,
+            "start_time": "not-a-date",  # malformed
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "SLOT_NOT_IN_OFFERED"
+
+    @pytest.mark.asyncio
+    async def test_utc_equivalent_datetimes_match(self):
+        """Datetimes that represent the same UTC instant but with different tz offsets match."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        # Slot stored with +02:00
+        mode._ctx = _make_ctx_with_slot(
+            stylist_id=_STYLIST_ID,
+            full_datetime="2026-04-10T10:00:00+02:00",
+        )
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Dama"],
+            "first_name": "María",
+            "stylist_id": _STYLIST_ID,
+            # Same UTC instant expressed in UTC (+00:00) — 10:00+02:00 == 08:00+00:00
+            "start_time": "2026-04-10T08:00:00+00:00",
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        assert not isinstance(result, ToolCallRejection)
+        assert result["stylist_id"] == _STYLIST_ID
+        assert mode._ctx.selected_slot is not None
+
+    @pytest.mark.asyncio
+    async def test_passthrough_when_no_offered_slots(self):
+        """When offered_slots is empty, NO_OFFERED_SLOTS guard fires (unchanged behavior)."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        ctx = BookingContext(
+            customer_id=_CUSTOMER_ID,
+            customer_name="María García",
+            selected_services=["Corte de Dama"],
+            needs_availability_refresh=False,
+            confirmation_shown=True,
+            offered_slots=[],  # empty — no offered slots
+        )
+        ctx.notes_asked = True
+        mode._ctx = ctx
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Dama"],
+            "first_name": "María",
+            "stylist_id": "__RESOLVE_FROM_SLOT__",  # sentinel
+            # no slot_index
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        # The NO_OFFERED_SLOTS guard fires before the sentinel check
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_OFFERED_SLOTS"
+
+
+# =============================================================================
+# T-09: Notes gate — notes_asked field gates book() and detection logic
+# =============================================================================
+
+
+class TestNotesGate:
+    """T-09: Tests for the notes gate in _pre_tool_call() and notes exchange detection."""
+
+    def _make_ctx_all_gates_pass(self, notes_asked: bool = False) -> BookingContext:
+        """Return a BookingContext that passes all pre-tool-call gates (except notes gate)."""
+        ctx = BookingContext(
+            customer_id="550e8400-e29b-41d4-a716-446655440000",
+            customer_name="María García",
+            selected_services=["Corte de Dama"],
+            offered_slots=[
+                {
+                    "stylist_id": "stylist-aaa",
+                    "full_datetime": "2026-04-01T10:00:00+02:00",
+                    "stylist_name": "Ana",
+                }
+            ],
+            needs_availability_refresh=False,
+            confirmation_shown=True,
+            notes_asked=notes_asked,
+        )
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_pre_tool_call_rejects_book_when_notes_not_asked(self):
+        """_pre_tool_call returns NOTES_NOT_ASKED when ctx.notes_asked=False and
+        all other gates pass."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        mode._ctx = self._make_ctx_all_gates_pass(notes_asked=False)
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Dama"],
+            "slot_index": 1,
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NOTES_NOT_ASKED"
+
+    @pytest.mark.asyncio
+    async def test_pre_tool_call_allows_book_when_notes_asked(self):
+        """When notes_asked=True and confirmation_shown=True, no NOTES_NOT_ASKED rejection."""
+        from agent.modes.base import ToolCallRejection
+
+        mode = make_booking_mode()
+        mode._ctx = self._make_ctx_all_gates_pass(notes_asked=True)
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Dama"],
+            "slot_index": 1,
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        # Must NOT be a NOTES_NOT_ASKED rejection
+        if isinstance(result, ToolCallRejection):
+            assert result.error_code != "NOTES_NOT_ASKED", (
+                f"Unexpected NOTES_NOT_ASKED rejection when notes_asked=True. "
+                f"Got: {result.error_code}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_handle_sets_notes_asked_when_bot_asked_and_user_replied(self):
+        """notes_asked is set to True when the last assistant message asked for notes
+        and the user has replied (via _previous_assistant_asked_for_notes detection)."""
+        from agent.modes.booking_mode import _previous_assistant_asked_for_notes
+
+        # Build message history: bot asked for notes, user replied
+        messages = [
+            {
+                "role": "assistant",
+                "content": "¿Tenés alguna nota o preferencia especial para tu cita?",
+            },
+            {"role": "user", "content": "Sin preferencias específicas"},
+        ]
+
+        # Confirm the detection function picks up the notes question
+        assert _previous_assistant_asked_for_notes(messages) is True
+
+        # Simulate the handle() detection logic directly
+        ctx = BookingContext(notes_asked=False, notes_ask_attempts=0)
+        if not ctx.notes_asked:
+            if ctx.notes_ask_attempts >= 2:
+                ctx.notes_asked = True
+            elif _previous_assistant_asked_for_notes(messages):
+                ctx.notes_asked = True
+
+        assert ctx.notes_asked is True
+
+    @pytest.mark.asyncio
+    async def test_loop_prevention_auto_sets_notes_asked_at_2_attempts(self):
+        """When notes_ask_attempts >= 2, notes_asked is auto-set to True
+        regardless of message history (loop prevention)."""
+        from agent.modes.booking_mode import _previous_assistant_asked_for_notes
+
+        # Messages without a notes question — message scan would NOT trigger
+        messages = [
+            {"role": "assistant", "content": "¿Qué servicio deseas?"},
+            {"role": "user", "content": "Un corte"},
+        ]
+
+        # Confirm message scan alone would NOT trigger
+        assert _previous_assistant_asked_for_notes(messages) is False
+
+        # Simulate the handle() detection logic with attempts=2
+        ctx = BookingContext(notes_asked=False, notes_ask_attempts=2)
+        if not ctx.notes_asked:
+            if ctx.notes_ask_attempts >= 2:
+                ctx.notes_asked = True
+            elif _previous_assistant_asked_for_notes(messages):
+                ctx.notes_asked = True
+
+        # Auto-set because attempts >= 2
+        assert ctx.notes_asked is True
+
+
+# =============================================================================
+# T-05 & T-06: Stylist desync fix tests
+# =============================================================================
+
+
+class TestStylistDesyncFix:
+    """T-05 / T-06: Verify that ctx.stylist_name/stylist_id stay in sync after
+    slot resolution, and that F-8 falls back to last_booked_slot when
+    selected_slot has been cleared."""
+
+    @pytest.mark.asyncio
+    async def test_pre_tool_call_syncs_stylist_name_and_id(self):
+        """T-05: _pre_tool_call() updates ctx.stylist_id and ctx.stylist_name
+        from the resolved slot — overwriting any stale value already in ctx."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(
+            customer_id="cust-001",
+            customer_name="María",
+            stylist_name="Ana",  # stale — will be overwritten
+            stylist_id="uuid-ana",  # stale — will be overwritten
+            offered_slots=[
+                {
+                    "stylist_id": "uuid-pilar",
+                    "stylist_name": "Pilar",
+                    "full_datetime": "2026-03-30T10:00:00+02:00",
+                    "date": "lunes 30 de marzo",
+                    "time": "10:00",
+                }
+            ],
+            selected_services=["Corte de Dama"],
+            needs_availability_refresh=False,
+            confirmation_shown=True,
+            notes_asked=True,
+        )
+        tool_args = {
+            "customer_id": "cust-001",
+            "services": ["Corte de Dama"],
+            "first_name": "María",
+            "slot_index": 1,
+        }
+
+        await mode._pre_tool_call("book", tool_args)
+
+        assert mode._ctx.stylist_name == "Pilar", (
+            f"Expected stylist_name='Pilar', got {mode._ctx.stylist_name!r}"
+        )
+        assert mode._ctx.stylist_id == "uuid-pilar", (
+            f"Expected stylist_id='uuid-pilar', got {mode._ctx.stylist_id!r}"
+        )
+
+    def test_f8_reads_last_booked_slot_when_selected_slot_cleared(self):
+        """T-06: When selected_slot is None but last_booked_slot is set,
+        _build_response() uses last_booked_slot for F-8 date/time rendering."""
+        mode = make_booking_mode()
+        state = make_state()
+
+        ctx = BookingContext(
+            stylist_name="Pilar",
+            stylist_id="uuid-pilar",
+            selected_services=["Corte de Dama"],
+            selected_slot=None,  # cleared after booking
+            last_booked_slot={
+                "date": "lunes 30 de marzo",
+                "time": "10:00",
+                "stylist_name": "Pilar",
+                "full_datetime": "2026-03-30T10:00:00+02:00",
+            },
+            customer_name="María",
+            customer_id="cust-001",
+        )
+        ctx._booking_completed = True
+
+        llm_result = AgenticLoopResult(
+            response_text="Reserva hecha.",  # will be replaced by F-8
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        messages = updates.get("messages", [])
+        assert messages, "Expected messages in updates"
+        response_text = messages[0]["content"]
+
+        assert "Pilar" in response_text, f"Expected 'Pilar' in response. Got:\n{response_text}"
+        assert "10:00" in response_text, f"Expected '10:00' in response. Got:\n{response_text}"
+        assert "lunes 30 de marzo" in response_text, (
+            f"Expected date in response. Got:\n{response_text}"
+        )

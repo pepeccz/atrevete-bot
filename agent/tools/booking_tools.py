@@ -62,7 +62,8 @@ class BookSchema(BaseModel):
     slot_index: int | None = Field(
         default=None,
         description=(
-            "PREFERRED: 1-based index of the chosen slot from '## Horarios ofrecidos'. "
+            "REQUIRED when offered_slots are shown to the user. "
+            "1-based index of the chosen slot from '## Horarios ofrecidos'. "
             "When provided, stylist_id and start_time are auto-resolved — you can omit them. "
             "Example: user chose option 2 → slot_index=2"
         ),
