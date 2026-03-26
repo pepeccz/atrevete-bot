@@ -489,6 +489,16 @@ class BookingMode(BaseModeNode):
                 data_keys = set(data.keys()) if data else set()
                 is_name_only = bool(first_name) and data_keys <= name_only_keys
 
+                # CRITICAL: Do NOT intercept manage_customer(create) when customer_id
+                # is not yet set. This means the LLM correctly followed the flow:
+                #   manage_customer(get) → exists: false → manage_customer(create)
+                # Intercepting this would leave customer_id=None and break book().
+                # Only intercept name-only calls when customer_id is ALREADY known
+                # (i.e., the customer exists and the LLM only wants to update the name).
+                if is_name_only and action == "create" and not ctx_mc.customer_id:
+                    # Let the actual create call through — we need the UUID back
+                    is_name_only = False
+
                 if is_name_only:
                     # Build full name from parts
                     full_name = first_name.strip()

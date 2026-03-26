@@ -1048,12 +1048,18 @@ class TestPreToolCallNameBypass:
         assert mode._ctx.customer_name == "Ana"
 
     @pytest.mark.asyncio
-    async def test_name_with_last_name_bypassed(self):
-        """First + last name should be combined."""
+    async def test_name_with_last_name_bypassed_when_customer_exists(self):
+        """First + last name intercepted ONLY when customer_id already known.
+
+        When the customer already has an ID (exists in DB), a name-only create
+        call is correctly intercepted — the LLM is just trying to save the name.
+        When customer_id is None, the create call must pass through to get the UUID.
+        """
         from agent.modes.base import ToolCallRejection
 
         mode = make_booking_mode()
-        mode._ctx = BookingContext()
+        # Customer already exists in DB — create with name only should be intercepted
+        mode._ctx = BookingContext(customer_id="550e8400-e29b-41d4-a716-446655440000")
         tool_args = {
             "action": "create",
             "phone": "+34612345678",
@@ -1065,6 +1071,28 @@ class TestPreToolCallNameBypass:
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "NAME_STORED_DIRECTLY"
         assert mode._ctx.customer_name == "María García"
+
+    @pytest.mark.asyncio
+    async def test_name_only_create_passes_when_no_customer_id(self):
+        """manage_customer(create) with name MUST pass through when customer_id is None.
+
+        This is the critical case: LLM called get → exists:false → calling create.
+        Intercepting this would leave customer_id=None and break book().
+        """
+        mode = make_booking_mode()
+        # customer_id is None — this is a real create to get the UUID
+        mode._ctx = BookingContext()  # customer_id=None by default
+        tool_args = {
+            "action": "create",
+            "phone": "+34612345678",
+            "data": {"first_name": "María", "last_name": "García"},
+        }
+
+        result = await mode._pre_tool_call("manage_customer", tool_args)
+
+        # Should NOT be intercepted — must reach the actual tool
+        assert not isinstance(result, dict) or result.get("action") == "create"
+        assert mode._ctx.customer_id is None  # UUID will come from DB response
 
     @pytest.mark.asyncio
     async def test_non_name_data_passes_through(self):
