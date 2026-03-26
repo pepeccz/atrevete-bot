@@ -20,6 +20,7 @@ from agent.modes.booking_context import BookingContext
 from agent.modes.booking_mode import (
     BookingMode,
     _AUDIENCE_KEYWORDS,
+    _CONFIRMATION_QUESTION_PATTERNS,
     _build_disambiguation_section,
     _build_offered_slots_section,
     _build_recommendations_section,
@@ -30,6 +31,7 @@ from agent.modes.booking_mode import (
     _extract_notes_from_conversation,
     _normalize_text,
     _redact_name_tokens,
+    _resolve_user_slot_selection,
 )
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
@@ -2256,3 +2258,370 @@ class TestStylistDesyncFix:
         assert "lunes 30 de marzo" in response_text, (
             f"Expected date in response. Got:\n{response_text}"
         )
+
+
+# =============================================================================
+# T-15: _resolve_user_slot_selection — slot resolver (Bug 1 fix)
+# =============================================================================
+
+
+def _make_offered_slots_two() -> list[dict]:
+    """Two distinct offered slots for slot-resolver tests."""
+    return [
+        {
+            "stylist_id": "uuid-ana",
+            "stylist_name": "Ana",
+            "stylist": "Ana",
+            "time": "10:00",
+            "date": "lunes 30 de marzo",
+            "day_name": "lunes 30 de marzo",
+            "full_datetime": "2026-03-30T10:00:00+02:00",
+        },
+        {
+            "stylist_id": "uuid-pilar",
+            "stylist_name": "Pilar",
+            "stylist": "Pilar",
+            "time": "14:00",
+            "date": "lunes 30 de marzo",
+            "day_name": "lunes 30 de marzo",
+            "full_datetime": "2026-03-30T14:00:00+02:00",
+        },
+        {
+            "stylist_id": "uuid-lucia",
+            "stylist_name": "Lucía",
+            "stylist": "Lucía",
+            "time": "11:20",
+            "date": "martes 31 de marzo",
+            "day_name": "martes 31 de marzo",
+            "full_datetime": "2026-03-31T11:20:00+02:00",
+        },
+    ]
+
+
+class TestResolveUserSlotSelection:
+    """Tests for _resolve_user_slot_selection (Bug 1 fix — tool_skip gap)."""
+
+    def test_resolve_slot_by_index(self):
+        """User says '3' → slot 3 (1-based) is resolved, stylist persisted."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        result = _resolve_user_slot_selection("3", ctx)
+
+        assert result is True
+        assert ctx.selected_slot is not None
+        assert ctx.stylist_id == "uuid-lucia"
+        assert ctx.stylist_name == "Lucía"
+        assert ctx.selected_slot["time"] == "11:20"
+
+    def test_resolve_slot_by_index_with_filler_words(self):
+        """User says 'el 2' → slot 2 is resolved (digit extraction through filler)."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        result = _resolve_user_slot_selection("el 2", ctx)
+
+        assert result is True
+        assert ctx.stylist_id == "uuid-pilar"
+        assert ctx.stylist_name == "Pilar"
+
+    def test_resolve_slot_by_time(self):
+        """User says 'a las 14:00' → matching slot resolved."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        result = _resolve_user_slot_selection("a las 14:00", ctx)
+
+        assert result is True
+        assert ctx.selected_slot is not None
+        assert ctx.stylist_id == "uuid-pilar"
+        assert ctx.stylist_name == "Pilar"
+        assert ctx.selected_slot["time"] == "14:00"
+
+    def test_resolve_slot_by_exact_time_string(self):
+        """User says '11:20' (bare time) → slot with time '11:20' resolved."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        result = _resolve_user_slot_selection("11:20", ctx)
+
+        assert result is True
+        assert ctx.stylist_id == "uuid-lucia"
+        assert ctx.selected_slot["time"] == "11:20"
+
+    def test_resolve_slot_no_match_unmatched_time(self):
+        """User says 'a las 11:20' when no slot has that time → returns False, ctx unchanged."""
+        slots = [
+            {"stylist_id": "s1", "stylist_name": "Ana", "time": "10:00", "full_datetime": ""},
+            {"stylist_id": "s2", "stylist_name": "Pilar", "time": "14:00", "full_datetime": ""},
+        ]
+        ctx = BookingContext(offered_slots=slots)
+
+        result = _resolve_user_slot_selection("a las 11:20", ctx)
+
+        assert result is False
+        assert ctx.selected_slot is None
+        assert ctx.stylist_id is None
+
+    def test_resolve_slot_affirmative_only(self):
+        """User says 'sí' (bare affirmative, no number/time) → returns False."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        result = _resolve_user_slot_selection("sí", ctx)
+
+        assert result is False
+        assert ctx.selected_slot is None
+        assert ctx.stylist_id is None
+
+    def test_resolve_slot_affirmative_dale(self):
+        """User says 'dale' → returns False (no false positive)."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        result = _resolve_user_slot_selection("dale", ctx)
+
+        assert result is False
+        assert ctx.selected_slot is None
+
+    def test_resolve_slot_affirmative_single_slot(self):
+        """User says 'sí', ctx.offered_slots has exactly 1 slot → that slot is resolved."""
+        single_slot = [
+            {
+                "stylist_id": "uuid-ana",
+                "stylist_name": "Ana",
+                "stylist": "Ana",
+                "time": "10:00",
+                "date": "lunes 30 de marzo",
+                "day_name": "lunes 30 de marzo",
+                "full_datetime": "2026-03-30T10:00:00+02:00",
+            }
+        ]
+        ctx = BookingContext(offered_slots=single_slot)
+
+        result = _resolve_user_slot_selection("sí", ctx)
+
+        assert result is True
+        assert ctx.selected_slot is not None
+        assert ctx.stylist_id == "uuid-ana"
+        assert ctx.stylist_name == "Ana"
+        assert ctx.selected_slot["time"] == "10:00"
+        assert ctx.selected_slot["date"] == "lunes 30 de marzo"
+        assert ctx.selected_slot["stylist_id"] == "uuid-ana"
+
+    def test_resolve_slot_guard_already_set(self):
+        """ctx.stylist_id already set → resolver is a no-op (returns False, fields unchanged)."""
+        ctx = BookingContext(
+            offered_slots=_make_offered_slots_two(),
+            stylist_id="pre-existing-uuid",
+            stylist_name="ExistingStylelist",
+        )
+
+        result = _resolve_user_slot_selection("1", ctx)
+
+        assert result is False
+        assert ctx.stylist_id == "pre-existing-uuid"
+        assert ctx.stylist_name == "ExistingStylelist"
+
+    def test_resolve_slot_guard_no_offered_slots(self):
+        """offered_slots is empty → returns False immediately."""
+        ctx = BookingContext(offered_slots=[])
+
+        result = _resolve_user_slot_selection("1", ctx)
+
+        assert result is False
+
+    def test_resolve_slot_guard_offered_slots_none(self):
+        """offered_slots is None → returns False immediately."""
+        ctx = BookingContext(offered_slots=None)
+
+        result = _resolve_user_slot_selection("1", ctx)
+
+        assert result is False
+
+    def test_resolve_slot_index_out_of_range(self):
+        """User says '99' but only 3 slots exist → returns False."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        result = _resolve_user_slot_selection("99", ctx)
+
+        assert result is False
+        assert ctx.selected_slot is None
+
+    def test_resolve_slot_persists_full_slot_dict(self):
+        """selected_slot dict contains date, time, full_datetime, stylist_id, stylist_name."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        _resolve_user_slot_selection("1", ctx)
+
+        assert ctx.selected_slot is not None
+        assert ctx.selected_slot["date"] == "lunes 30 de marzo"
+        assert ctx.selected_slot["time"] == "10:00"
+        assert ctx.selected_slot["full_datetime"] == "2026-03-30T10:00:00+02:00"
+        assert ctx.selected_slot["stylist_id"] == "uuid-ana"
+        assert ctx.selected_slot["stylist_name"] == "Ana"
+
+    def test_resolve_slot_informal_a_las_hora(self):
+        """User says 'a las 10' → slot with time '10:00' is resolved (informal hour reference)."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        result = _resolve_user_slot_selection("a las 10", ctx)
+
+        assert result is True
+        assert ctx.selected_slot is not None
+        assert ctx.selected_slot["time"] == "10:00"
+        assert ctx.stylist_id == "uuid-ana"
+        assert ctx.stylist_name == "Ana"
+
+    def test_resolve_slot_informal_hora_hs(self):
+        """User says '14 hs' → slot with time '14:00' is resolved (informal hour + hs)."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+
+        result = _resolve_user_slot_selection("14 hs", ctx)
+
+        assert result is True
+        assert ctx.selected_slot is not None
+        assert ctx.selected_slot["time"] == "14:00"
+        assert ctx.stylist_id == "uuid-pilar"
+        assert ctx.stylist_name == "Pilar"
+
+    def test_resolve_slot_informal_bare_hour(self):
+        """User says '14' (bare number) with only 3 slots → 14 > 3 so treated as 14:00 hour."""
+        ctx = BookingContext(offered_slots=_make_offered_slots_two())
+        # _make_offered_slots_two returns 3 slots; 14 > 3, so it cannot be an index
+
+        result = _resolve_user_slot_selection("14", ctx)
+
+        assert result is True
+        assert ctx.selected_slot is not None
+        assert ctx.selected_slot["time"] == "14:00"
+        assert ctx.stylist_id == "uuid-pilar"
+        assert ctx.stylist_name == "Pilar"
+
+
+# =============================================================================
+# T-16: Confirmation question pattern detection (Bug 2 fix)
+# =============================================================================
+
+
+class TestConfirmationQuestionPatternDetection:
+    """Tests for the additive confirmation question pattern check in _build_response()."""
+
+    def _make_complete_ctx(self) -> BookingContext:
+        """Return a BookingContext with all booking data complete."""
+        return BookingContext(
+            service_id="svc-001",
+            service_name="Corte de Dama",
+            stylist_id="sty-001",
+            stylist_name="Ana",
+            offered_slots=[{"time": "10:00", "date": "lunes"}],
+            customer_name="María",
+            customer_id="cust-001",
+            confirmation_summary_sent=False,
+        )
+
+    def test_confirmation_question_pattern_sets_flag(self):
+        """Complete booking data + '¿Queres que lo reservo?' → confirmation_summary_sent=True."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = self._make_complete_ctx()
+
+        llm_result = AgenticLoopResult(
+            response_text="¿Queres que lo reservo?",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.confirmation_summary_sent is True
+
+    def test_confirmation_question_confirmamos_sets_flag(self):
+        """Complete booking data + '¿Confirmamos?' → flag set."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = self._make_complete_ctx()
+
+        llm_result = AgenticLoopResult(
+            response_text="Perfecto, ¿confirmamos la cita para el lunes?",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.confirmation_summary_sent is True
+
+    def test_confirmation_question_procedemos_sets_flag(self):
+        """Complete booking data + 'procedemos' → flag set."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = self._make_complete_ctx()
+
+        llm_result = AgenticLoopResult(
+            response_text="¿Procedemos con la reserva?",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.confirmation_summary_sent is True
+
+    def test_confirmation_pattern_incomplete_data_does_not_set_flag(self):
+        """Incomplete booking (stylist_id missing) + question → flag stays False."""
+        mode = make_booking_mode()
+        state = make_state()
+        # Incomplete: no stylist_id
+        ctx = BookingContext(
+            service_id="svc-001",
+            service_name="Corte de Dama",
+            stylist_id=None,  # ← missing
+            offered_slots=[{"time": "10:00", "date": "lunes"}],
+            customer_name="María",
+            customer_id="cust-001",
+            confirmation_summary_sent=False,
+        )
+
+        llm_result = AgenticLoopResult(
+            response_text="¿Confirmamos la cita?",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.confirmation_summary_sent is False
+
+    def test_confirmation_pattern_already_sent_not_overwritten(self):
+        """When confirmation_summary_sent is already True, it stays True (idempotent)."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = self._make_complete_ctx()
+        ctx.confirmation_summary_sent = True  # already set
+
+        llm_result = AgenticLoopResult(
+            response_text="¿Confirmamos?",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.confirmation_summary_sent is True  # still True
+
+    def test_confirmation_pattern_constant_contents(self):
+        """Verify _CONFIRMATION_QUESTION_PATTERNS contains key phrases."""
+        assert "confirmamos" in _CONFIRMATION_QUESTION_PATTERNS
+        assert "reservo" in _CONFIRMATION_QUESTION_PATTERNS
+        assert "procedemos" in _CONFIRMATION_QUESTION_PATTERNS
+        assert "te parece bien" in _CONFIRMATION_QUESTION_PATTERNS

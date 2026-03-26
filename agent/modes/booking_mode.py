@@ -144,6 +144,21 @@ _CONFIRMATION_SUMMARY_MARKERS: tuple[str, ...] = (
     "datos de la cita",
 )
 
+# Confirmation question patterns — the LLM asking for confirmation in question form.
+# These supplement _CONFIRMATION_SUMMARY_MARKERS for detection in _build_response().
+_CONFIRMATION_QUESTION_PATTERNS: tuple[str, ...] = (
+    "confirmo",
+    "confirmamos",
+    "te parece bien",
+    "te parece correcto",
+    "esta todo bien",
+    "esta todo correcto",
+    "procedemos",
+    "reservo",
+    "queres que reserve",
+    "quieres que reserve",
+)
+
 # User affirmative phrases that confirm a booking after summary is shown
 _USER_CONFIRMATION_PHRASES: tuple[str, ...] = (
     "si",
@@ -307,6 +322,15 @@ class BookingMode(BaseModeNode):
             elif _previous_assistant_asked_for_notes(messages):
                 ctx.notes_asked = True
                 logger.info("handle: notes_asked=True (bot asked, user replied)")
+
+        # 1f. Pre-resolve: deterministically persist slot/stylist from user message.
+        # This covers the tool_skip case where the LLM does not call book() on the
+        # slot-selection turn — the resolver inspects offered_slots and persists
+        # ctx.selected_slot / ctx.stylist_id / ctx.stylist_name so the next-turn
+        # dynamic context renders "✅ Estilista: Pilar" instead of "❌ pendiente".
+        user_message_for_slot = self._get_last_user_message(state)
+        if user_message_for_slot:
+            _resolve_user_slot_selection(user_message_for_slot, ctx)
 
         # 2. Fast-path: cancel / escalate (before LLM call)
         user_message = self._get_last_user_message(state)
@@ -1512,6 +1536,17 @@ class BookingMode(BaseModeNode):
                     "_build_response: confirmation_summary_sent=True (summary detected in response)"
                 )
 
+        # F-2 additive: also detect confirmation question pattern when booking data is complete.
+        # Catches cases where the LLM asks "¿Reservo?" instead of rendering a formal summary block.
+        if not ctx.confirmation_summary_sent and _is_booking_data_complete(ctx):
+            normalized_resp_q = _normalize_text(response_text)
+            if any(pattern in normalized_resp_q for pattern in _CONFIRMATION_QUESTION_PATTERNS):
+                ctx.confirmation_summary_sent = True
+                logger.info(
+                    "_build_response: confirmation_summary_sent=True "
+                    "(confirmation question pattern detected in response)"
+                )
+
         # Detect notes-asking markers in outgoing response → increment attempts counter
         if ctx and not ctx.notes_asked:
             _NOTES_ASK_MARKERS = (
@@ -1693,6 +1728,178 @@ def _try_resolve_stylist_from_message(user_message: str, ctx: BookingContext) ->
                 name,
             )
             return
+
+
+_AFFIRMATIVES: frozenset[str] = frozenset(
+    {
+        "sí",
+        "si",
+        "dale",
+        "ok",
+        "confirma",
+        "perfecto",
+        "bueno",
+        "adelante",
+        "venga",
+        "va",
+        "claro",
+    }
+)
+
+
+def _resolve_user_slot_selection(user_message: str, ctx: BookingContext) -> bool:
+    """Deterministically resolve a slot from user_message against ctx.offered_slots.
+
+    Persists ctx.selected_slot, ctx.stylist_id, ctx.stylist_name if a match is found.
+    Returns True if a slot was resolved, False otherwise.
+
+    Matching rules (strict only — no fuzzy):
+    0. Affirmative-only message (no time/number) + exactly 1 offered slot → resolve that slot.
+    1. Bare slot-index number: e.g. "3" or "el 3" → slot at index 3 (1-based) in offered_slots.
+    2. Exact HH:MM time: e.g. "11:20" or "a las 11:20" → slot where slot["time"] == "11:20".
+
+    Guard conditions (returns False immediately if):
+    - ctx.offered_slots is empty or None
+    - ctx.stylist_id is already set (already resolved — don't overwrite)
+    - user message is a bare affirmative AND there are multiple offered slots (ambiguous)
+    """
+    # Guard: no slots offered yet
+    if not ctx.offered_slots:
+        return False
+
+    # Guard: slot already resolved — don't overwrite
+    if ctx.stylist_id:
+        return False
+
+    offered = ctx.offered_slots
+    n = len(offered)
+
+    # Guard: affirmative-only message (no time/number tokens)
+    stripped_lower = user_message.strip().lower()
+    has_time_token = bool(re.search(r"\d{1,2}:\d{2}", user_message))
+    has_digit_token = bool(re.search(r"\b\d+\b", user_message))
+    if stripped_lower in _AFFIRMATIVES and not has_time_token and not has_digit_token:
+        if n == 1:
+            slot = offered[0]
+            ctx.selected_slot = {
+                "date": slot.get("date", slot.get("day_name", "")),
+                "time": slot.get("time", ""),
+                "full_datetime": slot.get("full_datetime", ""),
+                "stylist_id": slot.get("stylist_id", ""),
+                "stylist_name": slot.get("stylist_name", slot.get("stylist", "")),
+            }
+            ctx.stylist_id = slot.get("stylist_id", "")
+            ctx.stylist_name = slot.get("stylist_name", slot.get("stylist", ""))
+            logger.info(
+                "_resolve_user_slot_selection: resolved by affirmative (single slot) → "
+                "stylist_id=%s, stylist_name=%r, time=%s",
+                ctx.stylist_id,
+                ctx.stylist_name,
+                slot.get("time", ""),
+            )
+            return True
+        else:
+            # Multiple slots + bare affirmative → ambiguous, cannot resolve
+            return False
+
+    # --- Try 1: bare slot-index number (1-based) ---
+    # Normalize: strip accents/punctuation, check if it's a bare integer 1..N
+    normalized = _normalize_text(user_message)
+    # Remove common filler words ("el", "la", "numero", "opcion") and check residual
+    tokens = re.split(r"[\s,;.!?]+", normalized)
+    # Filter tokens that are purely digits
+    digit_tokens = [t for t in tokens if t.isdigit()]
+    for dt in digit_tokens:
+        idx = int(dt)
+        if 1 <= idx <= n:
+            slot = offered[idx - 1]
+            ctx.selected_slot = {
+                "date": slot.get("date", slot.get("day_name", "")),
+                "time": slot.get("time", ""),
+                "full_datetime": slot.get("full_datetime", ""),
+                "stylist_id": slot.get("stylist_id", ""),
+                "stylist_name": slot.get("stylist_name", slot.get("stylist", "")),
+            }
+            ctx.stylist_id = slot.get("stylist_id", "")
+            ctx.stylist_name = slot.get("stylist_name", slot.get("stylist", ""))
+            logger.info(
+                "_resolve_user_slot_selection: resolved by slot index %d → "
+                "stylist_id=%s, stylist_name=%r, time=%s",
+                idx,
+                ctx.stylist_id,
+                ctx.stylist_name,
+                slot.get("time", ""),
+            )
+            return True
+
+    # --- Try 2: exact HH:MM time string in user message ---
+    time_matches = re.findall(r"\b(\d{1,2}:\d{2})\b", user_message)
+    for time_str in time_matches:
+        for slot in offered:
+            if slot.get("time") == time_str:
+                ctx.selected_slot = {
+                    "date": slot.get("date", slot.get("day_name", "")),
+                    "time": slot.get("time", ""),
+                    "full_datetime": slot.get("full_datetime", ""),
+                    "stylist_id": slot.get("stylist_id", ""),
+                    "stylist_name": slot.get("stylist_name", slot.get("stylist", "")),
+                }
+                ctx.stylist_id = slot.get("stylist_id", "")
+                ctx.stylist_name = slot.get("stylist_name", slot.get("stylist", ""))
+                logger.info(
+                    "_resolve_user_slot_selection: resolved by time %r → "
+                    "stylist_id=%s, stylist_name=%r",
+                    time_str,
+                    ctx.stylist_id,
+                    ctx.stylist_name,
+                )
+                return True
+
+    # --- Try 3: informal bare-hour references (e.g. "a las 14", "14 hs", "11") ---
+    # Collect candidate hour integers from informal patterns (no minutes component).
+    # We only reach here if no HH:MM match fired, so these patterns are unambiguous.
+    candidate_hours: list[int] = []
+
+    # "a las 14" or "a la 14" (with optional :MM already handled above)
+    for m in re.finditer(r"\ba\s+las?\s+(\d{1,2})(?::\d{2})?\b", user_message):
+        candidate_hours.append(int(m.group(1)))
+
+    # "14 hs" or "14 h"
+    for m in re.finditer(r"\b(\d{1,2})\s+hs?\b", user_message, re.IGNORECASE):
+        candidate_hours.append(int(m.group(1)))
+
+    # bare integer (e.g. "11") — only when it cannot be a valid slot index
+    # (i.e. the number is > number of offered slots, so it can't be an index pick)
+    if not candidate_hours:
+        for dt in digit_tokens:
+            hour_candidate = int(dt)
+            if hour_candidate > n:
+                # Too large to be a 1-based index → treat as bare hour
+                candidate_hours.append(hour_candidate)
+
+    for hour in candidate_hours:
+        time_str = f"{hour:02d}:00"
+        for slot in offered:
+            if slot.get("time") == time_str:
+                ctx.selected_slot = {
+                    "date": slot.get("date", slot.get("day_name", "")),
+                    "time": slot.get("time", ""),
+                    "full_datetime": slot.get("full_datetime", ""),
+                    "stylist_id": slot.get("stylist_id", ""),
+                    "stylist_name": slot.get("stylist_name", slot.get("stylist", "")),
+                }
+                ctx.stylist_id = slot.get("stylist_id", "")
+                ctx.stylist_name = slot.get("stylist_name", slot.get("stylist", ""))
+                logger.info(
+                    "_resolve_user_slot_selection: resolved by informal hour %02d:00 → "
+                    "stylist_id=%s, stylist_name=%r",
+                    hour,
+                    ctx.stylist_id,
+                    ctx.stylist_name,
+                )
+                return True
+
+    return False
 
 
 def _extract_name_from_conversation(
