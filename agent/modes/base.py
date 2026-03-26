@@ -191,7 +191,7 @@ class BaseModeNode(ABC):
             list: List of LangChain message objects
         """
         step_info = {"step_name": step_name} if step_name else None
-        return await build_layered_messages(
+        messages, _ = await build_layered_messages(
             state,
             mode_context,
             step_info,
@@ -200,6 +200,7 @@ class BaseModeNode(ABC):
             mode_name=self.mode_name,
             substep=step_name,
         )
+        return messages
 
     def _use_optimized_prompts(self) -> bool:
         """
@@ -578,6 +579,19 @@ class BaseModeNode(ABC):
             content = response.content if hasattr(response, "content") else response
             response_text: str = content if isinstance(content, str) else str(content)
             response_text = self._sanitize_response(response_text)
+
+            # R3: Tool-skip telemetry — warn if loop exited without any tool calls
+            # but tools were available (indicates LLM skipped available tools)
+            if not tool_results and active_tools:
+                self.logger.warning(
+                    "tool_skip",
+                    extra={
+                        "event": "tool_skip",
+                        "mode": self.__class__.__name__,
+                        "tools_available": len(active_tools),
+                        "iterations": iterations,
+                    },
+                )
 
             if (
                 iterations >= MAX_TOOL_ROUNDS

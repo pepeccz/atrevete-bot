@@ -45,8 +45,10 @@ class TestBackwardCompatibilityFeatureFlag:
         for env_value, expected in test_cases:
             with patch.dict(os.environ, {"USE_OPTIMIZED_PROMPTS": env_value}, clear=True):
                 settings = Settings()
-                assert settings.USE_OPTIMIZED_PROMPTS == expected, \
+                assert settings.USE_OPTIMIZED_PROMPTS == expected, (
                     f"Failed for env_value='{env_value}'"
+                )
+
 
 class TestLegacyPromptLoading:
     """Test cases for legacy prompt loading when feature flag is disabled."""
@@ -285,8 +287,9 @@ class TestBookingFlowCompatibility:
         assert "Corte Caballero" in context
 
         # Build messages (should work)
-        messages = await build_layered_messages(state, mode_context)
+        messages, dyn_idx = await build_layered_messages(state, mode_context)
         assert len(messages) >= 2
+        assert dyn_idx == len(messages) - 1
 
     def test_booking_works_with_legacy_prompts(self):
         """Test that legacy prompts can still be loaded for booking."""
@@ -298,9 +301,9 @@ class TestBookingFlowCompatibility:
 
         # Should contain booking-related content
         lower_prompt = prompt.lower()
-        assert any(word in lower_prompt for word in [
-            "cita", "reserva", "booking", "servicio", "service"
-        ])
+        assert any(
+            word in lower_prompt for word in ["cita", "reserva", "booking", "servicio", "service"]
+        )
 
 
 class TestConfigurationDescription:
@@ -312,6 +315,7 @@ class TestConfigurationDescription:
 
         # Check the field definition
         import inspect
+
         source = inspect.getsource(Settings)
 
         # Should mention token reduction and backward compatibility

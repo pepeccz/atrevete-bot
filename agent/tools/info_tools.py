@@ -450,6 +450,10 @@ async def list_stylists(category: str | None = None) -> dict[str, Any]:
     """
     List active stylists, optionally filtered by service category.
 
+    THIS IS THE ONLY VALID SOURCE for stylist names. You MUST NOT use prior knowledge,
+    invent, or guess stylist names. ALWAYS call this tool when you need to reference
+    stylist names or when the customer asks to choose a stylist.
+
     Use this tool to get the list of available stylists when helping
     customers select who they want for their appointment.
 

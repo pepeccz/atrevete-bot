@@ -25,15 +25,15 @@ if "agent.state.schemas" not in sys.modules:
 
 if "langchain_core.messages" not in sys.modules:
     messages_stub = ModuleType("langchain_core.messages")
-    
+
     class MockSystemMessage:
         def __init__(self, content=""):
             self.content = content
-    
+
     class MockHumanMessage:
         def __init__(self, content=""):
             self.content = content
-    
+
     class MockAIMessage:
         def __init__(self, content=""):
             self.content = content
@@ -521,11 +521,11 @@ class TestBuildStepContext:
             "min_valid_date": "2026-03-22",
         }
 
-        messages = await build_layered_messages(state, mode_context, include_history=False)
+        messages, dyn_idx = await build_layered_messages(state, mode_context, include_history=False)
 
-        assert "Fecha solicitada ajustada" in messages[1].content
-        assert "2026-03-19" in messages[1].content
-        assert "2026-03-22" in messages[1].content
+        assert "Fecha solicitada ajustada" in messages[dyn_idx].content
+        assert "2026-03-19" in messages[dyn_idx].content
+        assert "2026-03-22" in messages[dyn_idx].content
 
     def test_build_step_context_does_not_duplicate_user_message(self):
         state = {"user_message": "Necesito una cita"}
@@ -544,11 +544,16 @@ class TestBuildStepContext:
         }
         mode_context = {"service_name": "Corte"}
 
-        messages = await build_layered_messages(state, mode_context, include_history=True)
+        messages, dyn_idx = await build_layered_messages(state, mode_context, include_history=True)
 
-        assert "Mensaje del cliente:" not in messages[1].content
-        assert "Necesito una cita" not in messages[1].content
-        assert messages[-1].content == "Necesito una cita"
+        # Dynamic context (last SystemMessage) must not contain the user message
+        assert "Mensaje del cliente:" not in messages[dyn_idx].content
+        assert "Necesito una cita" not in messages[dyn_idx].content
+        # With new order [system, history..., dynamic], the last history msg is before dynamic
+        # The user message appears in history (before the dynamic context)
+        assert any(
+            hasattr(msg, "content") and msg.content == "Necesito una cita" for msg in messages
+        )
 
 
 class TestBuildLayeredMessages:
@@ -560,18 +565,20 @@ class TestBuildLayeredMessages:
         state = {"user_message": "Hello"}
         mode_context = {}
 
-        messages = await build_layered_messages(state, mode_context)
+        messages, dyn_idx = await build_layered_messages(state, mode_context)
 
         # Should have at least 2 messages (System + System context)
         assert len(messages) >= 2
 
         # First should be SystemMessage (cached system prompt)
         from langchain_core.messages import SystemMessage
+
         assert isinstance(messages[0], SystemMessage)
 
-        # Second should be SystemMessage (dynamic context — NOT HumanMessage,
+        # Last should be SystemMessage (dynamic context — NOT HumanMessage,
         # to prevent the LLM from echoing internal context back to the user)
-        assert isinstance(messages[1], SystemMessage)
+        assert isinstance(messages[-1], SystemMessage)
+        assert dyn_idx == len(messages) - 1
 
     @pytest.mark.asyncio
     async def test_build_layered_messages_with_history(self):
@@ -585,10 +592,12 @@ class TestBuildLayeredMessages:
         }
         mode_context = {}
 
-        messages = await build_layered_messages(state, mode_context, history_limit=2)
+        messages, dyn_idx = await build_layered_messages(state, mode_context, history_limit=2)
 
-        # Should have system + context + 2 history messages
+        # Should have system + 2 history messages + dynamic context
         assert len(messages) == 4
+        # Dynamic context is the last message
+        assert dyn_idx == len(messages) - 1
 
     @pytest.mark.asyncio
     async def test_build_layered_messages_without_history(self):
@@ -601,10 +610,11 @@ class TestBuildLayeredMessages:
         }
         mode_context = {}
 
-        messages = await build_layered_messages(state, mode_context, include_history=False)
+        messages, dyn_idx = await build_layered_messages(state, mode_context, include_history=False)
 
-        # Should have only system + context
+        # Should have only system + dynamic context
         assert len(messages) == 2
+        assert dyn_idx == 1
 
     @pytest.mark.asyncio
     async def test_build_layered_messages_content(self):
@@ -612,13 +622,13 @@ class TestBuildLayeredMessages:
         state = {"user_message": "Book appointment"}
         mode_context = {"service_name": "Corte"}
 
-        messages = await build_layered_messages(state, mode_context)
+        messages, dyn_idx = await build_layered_messages(state, mode_context)
 
         # System message should have identity content
         assert "Maite" in messages[0].content or "#" in messages[0].content
 
-        # Human message should have dynamic context
-        assert "Corte" in messages[1].content
+        # Dynamic context (last SystemMessage) should have step context data
+        assert "Corte" in messages[dyn_idx].content
 
 
 class TestLoadModeOverlay:
@@ -642,6 +652,7 @@ class TestLoadModeOverlay:
 
         assert result == ""
         mock_logger.warning.assert_called_once()
+
 
 class TestPromptCacheIntegration:
     """Integration tests for prompt caching functionality."""
@@ -667,11 +678,12 @@ class TestPromptCacheIntegration:
         state = {"user_message": "Test message"}
         mode_context = {"service_name": "Corte"}
 
-        messages = await build_layered_messages(state, mode_context)
+        messages, dyn_idx = await build_layered_messages(state, mode_context)
 
         # Verify structure
         assert len(messages) >= 2
         assert system_prompt in messages[0].content or messages[0].content == system_prompt
+        assert dyn_idx == len(messages) - 1
 
     @pytest.mark.asyncio
     async def test_cache_performance_improvement(self):
@@ -694,7 +706,9 @@ class TestPromptCacheIntegration:
 
     @pytest.mark.asyncio
     async def test_cached_system_prompt_avoids_reloading_markdown_files(self):
-        with patch("agent.prompts.loader.load_markdown", side_effect=["id", "rules", "glossary"]) as mocked_load:
+        with patch(
+            "agent.prompts.loader.load_markdown", side_effect=["id", "rules", "glossary"]
+        ) as mocked_load:
             clear_prompt_cache()
             first = await get_system_prompt()
             second = await get_system_prompt()
@@ -825,7 +839,11 @@ class TestConfirmationMdNoNamePermission:
 
         confirmation_path = (
             Path(__file__).parent.parent.parent
-            / "agent" / "prompts" / "modes" / "booking" / "confirmation.md"
+            / "agent"
+            / "prompts"
+            / "modes"
+            / "booking"
+            / "confirmation.md"
         )
         content = confirmation_path.read_text(encoding="utf-8")
 
@@ -837,7 +855,11 @@ class TestConfirmationMdNoNamePermission:
 
         confirmation_path = (
             Path(__file__).parent.parent.parent
-            / "agent" / "prompts" / "modes" / "booking" / "confirmation.md"
+            / "agent"
+            / "prompts"
+            / "modes"
+            / "booking"
+            / "confirmation.md"
         )
         content = confirmation_path.read_text(encoding="utf-8")
 

@@ -98,9 +98,7 @@ class TestDynamicContextEfficiency:
         print(f"\nDynamic context: {context_tokens} tokens ({len(context)} chars)")
 
         # Dynamic context should be small - under 200 tokens
-        assert context_tokens < 200, (
-            f"Dynamic context too large: {context_tokens} tokens"
-        )
+        assert context_tokens < 200, f"Dynamic context too large: {context_tokens} tokens"
 
         # Should contain all expected information
         assert "María García" in context
@@ -141,14 +139,14 @@ class TestDynamicContextEfficiency:
         }
 
         # Build complete message list
-        messages = await build_layered_messages(state, mode_context, history_limit=3)
+        messages, dyn_idx = await build_layered_messages(state, mode_context, history_limit=3)
 
-        # Should have: System (cached) + Context (dynamic) + History
+        # Should have: System (cached) + History + Context (dynamic, last)
         assert len(messages) >= 2
 
         # Calculate sizes
         system_tokens = estimate_tokens(messages[0].content)
-        context_tokens = estimate_tokens(messages[1].content)
+        context_tokens = estimate_tokens(messages[dyn_idx].content)
 
         print(f"\nMessage structure:")
         print(f"  - System (cached): {system_tokens} tokens")
@@ -170,11 +168,11 @@ class TestTokenEfficiencyScenarios:
         state = {"user_message": "What are your hours?"}
         mode_context = {}
 
-        messages = await build_layered_messages(state, mode_context, include_history=False)
+        messages, dyn_idx = await build_layered_messages(state, mode_context, include_history=False)
 
         # Calculate sizes
         system_tokens = estimate_tokens(messages[0].content)
-        context_tokens = estimate_tokens(messages[1].content)
+        context_tokens = estimate_tokens(messages[dyn_idx].content)
         total_tokens = system_tokens + context_tokens
 
         print(f"\nSimple query: {total_tokens} tokens")
@@ -182,7 +180,7 @@ class TestTokenEfficiencyScenarios:
 
         # System is large but cached, context is tiny
         assert system_tokens > 5000  # Cached comprehensive content
-        assert context_tokens < 50   # Minimal per-request overhead
+        assert context_tokens < 50  # Minimal per-request overhead
 
     @pytest.mark.asyncio
     async def test_booking_flow_scenario(self):
@@ -204,11 +202,11 @@ class TestTokenEfficiencyScenarios:
             "slot_summary": "Lunes 18 de noviembre a las 14:00",
         }
 
-        messages = await build_layered_messages(state, mode_context, history_limit=4)
+        messages, dyn_idx = await build_layered_messages(state, mode_context, history_limit=4)
 
         # Calculate sizes
         system_tokens = estimate_tokens(messages[0].content)
-        context_tokens = estimate_tokens(messages[1].content)
+        context_tokens = estimate_tokens(messages[dyn_idx].content)
 
         print(f"\nBooking flow: {system_tokens + context_tokens} tokens")
 
@@ -236,11 +234,11 @@ class TestTokenEfficiencyScenarios:
             "notes": "Cliente preferido, alergia a acetona, prefiere productos orgánicos si disponibles",
         }
 
-        messages = await build_layered_messages(state, mode_context)
+        messages, dyn_idx = await build_layered_messages(state, mode_context)
 
         # Calculate sizes
         system_tokens = estimate_tokens(messages[0].content)
-        context_tokens = estimate_tokens(messages[1].content)
+        context_tokens = estimate_tokens(messages[dyn_idx].content)
 
         print(f"\nComplex scenario: {system_tokens + context_tokens} tokens")
 
@@ -343,20 +341,20 @@ class TestTokenBudgetCompliance:
             "slot_summary": "Viernes 15 nov 10:00",
         }
 
-        messages = await build_layered_messages(state, mode_context, history_limit=6)
+        messages, dyn_idx = await build_layered_messages(state, mode_context, history_limit=6)
 
-        # Structure should be: System + Context + History
+        # Structure should be: System + History + Context (dynamic, last)
         assert len(messages) >= 3
 
         # System message is large (cached)
         system_tokens = estimate_tokens(messages[0].content)
         assert system_tokens > 5000
 
-        # Context is small
-        context_tokens = estimate_tokens(messages[1].content)
+        # Context is small (now at end)
+        context_tokens = estimate_tokens(messages[dyn_idx].content)
         assert context_tokens < 200
 
         print(f"\nFull request structure:")
         print(f"  - System: {system_tokens} tokens (cached)")
-        print(f"  - Context: {context_tokens} tokens (dynamic)")
-        print(f"  - History: {len(messages)-2} messages")
+        print(f"  - History: {dyn_idx - 1} messages")
+        print(f"  - Context: {context_tokens} tokens (dynamic, last)")

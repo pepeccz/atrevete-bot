@@ -297,6 +297,10 @@ async def search_services(
     """
     Search salon services using fuzzy matching.
 
+    ONLY valid source for service names and IDs. You MUST NOT invent service names or
+    guess prices/durations. ALWAYS call this tool when you need to reference service
+    names or IDs, or help customers find services.
+
     This tool finds the most relevant services based on a search query,
     using RapidFuzz for fuzzy string matching. Returns only the top matches
     (max 5 by default) instead of all services.

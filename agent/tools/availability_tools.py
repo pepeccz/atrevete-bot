@@ -83,6 +83,10 @@ async def check_availability(
     """
     Check availability across stylist calendars with natural date parsing.
 
+    ONLY valid source for available appointment slots. You MUST NOT guess availability
+    or invent time slots. ALWAYS call this tool when checking if a customer can book
+    on a specific date.
+
     This tool checks calendar availability for the requested date and returns available slots.
     Accepts natural language Spanish dates like "mañana", "viernes", "8 de noviembre".
 
@@ -338,6 +342,10 @@ async def find_next_available(
 ) -> dict[str, Any]:
     """
     Automatically search for next available slots across multiple dates.
+
+    ONLY valid source for available appointment slots. You MUST NOT guess availability
+    or invent time slots. ALWAYS call this tool when a customer needs flexible date
+    options or when check_availability returned empty.
 
     This tool searches the next N days (default: 10) to find available appointment slots.
     Unlike check_availability which checks a single date, this tool iterates through

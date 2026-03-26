@@ -27,7 +27,7 @@ from agent.modes.tool_extractors import (
     extract_service_audience_hint,
     resolve_pending_clarification,
 )
-from agent.prompts.loader import get_system_prompt, load_markdown
+from agent.prompts.loader import build_layered_messages, get_system_prompt, load_markdown
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
 
@@ -311,25 +311,13 @@ class BookingMode(BaseModeNode):
         self._ctx = ctx
         result = await self._run_agentic_loop(messages, tools=self.get_tools())
 
-        # F-7: Soft guard — warn if service unresolved and search_services was not called.
-        # Sets force_search_services_reminder=True so _build_dynamic_context injects a
-        # ⚠️ Recordatorio into the next turn's system context, nudging the LLM.
-        if (
-            ctx.service_id is None
-            and not ctx.selected_services
-            and not ctx.pending_clarifications
-            and not result.tool_results.get("search_services")
-        ):
-            logger.warning(
-                "BookingMode: F-7 tool-skip detected — service unresolved after turn "
-                "but search_services was not called. "
-                "LLM may have skipped tool call. service_id=None, selected_services=[]"
-            )
-            ctx.force_search_services_reminder = True
-        else:
-            ctx.force_search_services_reminder = False
+        # 6. Detect tool skips (R4/R6 list_stylists, F-7 search_services)
+        self._detect_tool_skips(result, ctx)
 
-        # 6. Extract tool results → update context
+        # 7. Detect stylist hallucinations (R2)
+        self._detect_stylist_hallucination(result.response_text or "", ctx)
+
+        # 8. Extract tool results → update context
         apply_all_tool_results(result.tool_results, ctx)
 
         # 6b. GAP-04 fix: attempt to resolve stylist from user message when the
@@ -825,6 +813,26 @@ class BookingMode(BaseModeNode):
                 self._ctx.service_name,
                 self._ctx.selected_services,
             )
+            # Cambio 3: disparar prefetch mid-loop cuando search_services acaba de resolver
+            # el servicio en el mismo turno en que el LLM necesita mostrar estilistas.
+            # Esto cubre el caso donde _maybe_prefetch_stylists corrió antes del loop
+            # cuando service_id era todavía None.
+            if (
+                self._ctx.service_id
+                and not self._ctx.stylist_id
+                and not self._ctx.prefetched_stylists
+            ):
+                try:
+                    await self._maybe_prefetch_stylists(self._ctx)
+                    logger.info(
+                        "_post_tool_result: post-search_services prefetch → %d estilistas cargados",
+                        len(self._ctx.prefetched_stylists),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "_post_tool_result: post-search_services prefetch falló (non-fatal): %s",
+                        exc,
+                    )
 
         elif tool_name == "check_availability":
             extract_slot_fields(parsed, self._ctx)
@@ -854,6 +862,189 @@ class BookingMode(BaseModeNode):
             )
 
         return result
+
+    def _detect_tool_skips(self, result: AgenticLoopResult, ctx: BookingContext) -> None:
+        """Detect when LLM skipped required tools (R4/R6).
+
+        Checks two conditions:
+        - R4/R6: service_id set but list_stylists not called (skip reminder injection)
+        - F-7: service_id NOT set and search_services not called (skip reminder injection)
+
+        Sets appropriate flags in ctx for dynamic context injection next turn.
+
+        Args:
+            result: AgenticLoopResult from agentic loop
+            ctx: BookingContext to update with reminder flags
+        """
+        # R4/R6: stylist list not fetched even though service is resolved
+        # Condition: service_id set, stylist_id NOT set, prefetched_stylists is empty,
+        # but list_stylists was not called this turn
+        if (
+            ctx.service_id
+            and not ctx.stylist_id
+            and not ctx.prefetched_stylists
+            and not result.tool_results.get("list_stylists")
+        ):
+            logger.warning(
+                "BookingMode: R4/R6 tool-skip detected — service resolved "
+                "but list_stylists not called. service_id=%s, stylist_id=%s",
+                ctx.service_id,
+                ctx.stylist_id,
+            )
+            ctx.force_list_stylists_reminder = True
+        else:
+            ctx.force_list_stylists_reminder = False
+
+        # F-7: service not resolved and search_services not called
+        # Condition: service_id None, selected_services empty, no pending clarifications,
+        # and search_services was not called
+        if (
+            ctx.service_id is None
+            and not ctx.selected_services
+            and not ctx.pending_clarifications
+            and not result.tool_results.get("search_services")
+        ):
+            logger.warning(
+                "BookingMode: F-7 tool-skip detected — service unresolved after turn "
+                "but search_services was not called. service_id=None, selected_services=[]"
+            )
+            ctx.force_search_services_reminder = True
+        else:
+            ctx.force_search_services_reminder = False
+
+    def _detect_stylist_hallucination(self, response_text: str, ctx: BookingContext) -> None:
+        """Detect when LLM invents stylist names not in the database (R2).
+
+        Extracts capitalized proper nouns from response, filters against known stylists,
+        and warns if hallucinated names are detected. Sets force_stylist_correction=True
+        to inject a correction prompt next turn.
+
+        Args:
+            response_text: LLM response text to scan
+            ctx: BookingContext with prefetched_stylists list
+        """
+        if not ctx.prefetched_stylists or not response_text:
+            ctx.force_stylist_correction = False
+            return
+
+        # Build normalized stylist names set (lowercase, accent-normalized)
+        def _nfd_lower(text: str) -> str:
+            """Normalize text to NFD form (decomposed accents) and lowercase."""
+            normalized = unicodedata.normalize("NFD", text.lower())
+            return "".join(c for c in normalized if not unicodedata.combining(c))
+
+        known_stylists = {
+            _nfd_lower(s.get("name", "")) for s in ctx.prefetched_stylists if s.get("name")
+        }
+
+        # Common Spanish words to skip (blocklist for false positives).
+        # These are capitalized words that appear frequently in Spanish responses
+        # but are NOT stylist names. All in lowercase for comparison with _nfd_lower().
+        common_words = {
+            # Function words / articles
+            "la",
+            "del",
+            "los",
+            "el",
+            "es",
+            "un",
+            "una",
+            "unos",
+            "unas",
+            "te",
+            "nos",
+            "sos",
+            "por",
+            "con",
+            "para",
+            "que",
+            "del",
+            "hay",
+            # Greetings / affirmations / common responses
+            "hola",
+            "perfecto",
+            "genial",
+            "claro",
+            "bueno",
+            "vale",
+            "entendido",
+            "estupendo",
+            "gracias",
+            "listo",
+            "dale",
+            "venga",
+            "bien",
+            "correcto",
+            # Pronouns / subject words
+            "tenemos",
+            "puedo",
+            "tienes",
+            "quieres",
+            "estas",
+            "puede",
+            "podemos",
+            # Salon-specific common nouns (not proper names)
+            "estilista",
+            "profesional",
+            "especialista",
+            "peluqueria",
+            "estetica",
+            "salon",
+            "corte",
+            "tinte",
+            "reserva",
+            "cita",
+            "disponibilidad",
+            "horario",
+            "servicio",
+            "servicios",
+            # Days of week (Mon-Sun)
+            "lunes",
+            "martes",
+            "miercoles",
+            "jueves",
+            "viernes",
+            "sabado",
+            "domingo",
+            # Months
+            "enero",
+            "febrero",
+            "marzo",
+            "abril",
+            "mayo",
+            "junio",
+            "julio",
+            "agosto",
+            "septiembre",
+            "octubre",
+            "noviembre",
+            "diciembre",
+            # Bot identity / salon name tokens
+            "maite",
+            "atrevete",
+            "alcobendas",
+        }
+
+        # Extract capitalized words (likely proper nouns)
+        words = re.findall(r"\b[A-Z][a-záéíóúñ]*\b", response_text)
+
+        hallucinated = []
+        for word in words:
+            normalized_word = _nfd_lower(word)
+            # Check if word is NOT in known stylists and NOT in blocklist
+            if normalized_word not in known_stylists and normalized_word not in common_words:
+                hallucinated.append(word)
+
+        if hallucinated:
+            logger.warning(
+                "BookingMode: R2 stylist_hallucination detected — invented names: %s. "
+                "Known stylists: %s",
+                hallucinated,
+                list(known_stylists),
+            )
+            ctx.force_stylist_correction = True
+        else:
+            ctx.force_stylist_correction = False
 
     def _refresh_dynamic_context(self, working_messages: list) -> None:
         """Rebuild the dynamic context SystemMessage with fresh ctx data.
@@ -1003,39 +1194,32 @@ class BookingMode(BaseModeNode):
     # ──────────────────────────────────────────────────────────────────────
 
     async def _build_messages(self, state: ConversationState, ctx: BookingContext) -> list:
-        """Build the complete message list for the agentic loop.
+        """Build the complete message list for the agentic loop via layered assembly.
+
+        Delegates to build_layered_messages() with dynamic_context_override.
 
         Structure:
-        1. SystemMessage: Cached shared prompt (identity + rules + glossary)
-        2. SystemMessage: Unified booking prompt (booking.md — static instructions)
-        3. SystemMessage: Dynamic context (collected/missing data, temporal, stylists)
-        4. Conversation history (last N messages as HumanMessage/AIMessage)
+        1. SystemMessage: Cached shared prompt (identity + rules)
+        2. SystemMessage: Booking mode prompt (booking.md)
+        3. SystemMessage: Dynamic context (collected/missing data, stylists, slots)
+        4. Conversation history (last N messages)
         """
-        messages: list = []
-
-        # 1. Shared system prompt (cached, ~2,200 tokens)
-        system_prompt = await get_system_prompt()
-        messages.append(SystemMessage(content=system_prompt))
-
-        # 2. Booking mode prompt (static instructions + tool guidance)
-        booking_prompt = load_markdown("booking.md", "modes")
-        if booking_prompt:
-            messages.append(SystemMessage(content=booking_prompt))
-
-        # 3. Dynamic context (changes every turn)
+        # Build dynamic context using booking-specific logic
         dynamic_context = self._build_dynamic_context(state, ctx)
-        self._dynamic_context_index = len(messages)  # track for mid-loop refresh
-        self._dynamic_context_state = state  # keep ref for rebuild
-        messages.append(SystemMessage(content=dynamic_context))
 
-        # 4. Conversation history (last N messages for context window)
-        for msg in state.get("messages", [])[-_HISTORY_LIMIT:]:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "user":
-                messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                messages.append(AIMessage(content=content))
+        # Delegate to loader — pass dynamic_context_override to use custom build
+        messages, dynamic_context_index = await build_layered_messages(
+            state=state,
+            mode_context=dict(state.get("mode_context") or {}),
+            mode_name="BOOKING",
+            dynamic_context_override=dynamic_context,
+            include_history=True,
+            history_limit=_HISTORY_LIMIT,
+        )
+
+        # Store index for potential mid-loop refresh
+        self._dynamic_context_index = dynamic_context_index
+        self._dynamic_context_state = state
 
         return messages
 
@@ -1066,35 +1250,35 @@ class BookingMode(BaseModeNode):
             parts.append(f"\nContexto previo:\n{summary}")
 
         # Collected data
-        parts.append(f"\n## Datos recogidos\n{ctx.collected_summary()}")
+        parts.append(f"\n<collected_data>\n{ctx.collected_summary()}\n</collected_data>")
 
         # Missing data
-        parts.append(f"\n## Datos que faltan\n{ctx.missing_summary()}")
+        parts.append(f"\n<missing_data>\n{ctx.missing_summary()}\n</missing_data>")
 
         # Disambiguation (pending clarification or candidate services)
         disambiguation = _build_disambiguation_section(ctx)
         if disambiguation:
-            parts.append(f"\n## Clarificación\n{disambiguation}")
+            parts.append(f"\n<clarification>\n{disambiguation}\n</clarification>")
 
         # Combo recommendations
         recommendations = _build_recommendations_section(ctx)
         if recommendations:
-            parts.append(f"\n## Recomendaciones\n{recommendations}")
+            parts.append(f"\n<recommendations>\n{recommendations}\n</recommendations>")
 
         # Service details (transparency)
         details_section = _build_service_details_section(ctx)
         if details_section:
-            parts.append(f"\n## Detalle de servicios\n{details_section}")
+            parts.append(f"\n<service_details>\n{details_section}\n</service_details>")
 
         # Prefetched stylists
         stylists_section = _build_stylists_section(ctx)
         if stylists_section:
-            parts.append(f"\n## Estilistas disponibles\n{stylists_section}")
+            parts.append(f"\n<available_stylists>\n{stylists_section}\n</available_stylists>")
 
         # Offered slots
         slots_section = _build_offered_slots_section(ctx)
         if slots_section:
-            parts.append(f"\n## Horarios ofrecidos\n{slots_section}")
+            parts.append(f"\n<offered_slots>\n{slots_section}\n</offered_slots>")
 
         # F-7: Tool-skip reminder — injected when LLM skipped search_services last turn
         if ctx.force_search_services_reminder:
@@ -1102,6 +1286,22 @@ class BookingMode(BaseModeNode):
                 "\n⚠️ Recordatorio: el servicio sigue sin resolver. "
                 "DEBES llamar search_services antes de continuar. "
                 "No hagas preguntas al usuario sin haber llamado la tool primero."
+            )
+
+        # R4/R6: Tool-skip reminder — injected when LLM skipped list_stylists after service resolved
+        if ctx.force_list_stylists_reminder:
+            parts.append(
+                "\n⚠️ Recordatorio: el servicio está resuelto pero aún falta elegir estilista. "
+                "DEBES llamar list_stylists para mostrar los profesionales disponibles. "
+                "No preguntes la preferencia sin haber llamado list_stylists primero."
+            )
+
+        # R2: Stylist hallucination correction — injected when LLM invented stylist names
+        if ctx.force_stylist_correction:
+            parts.append(
+                "\n⚠️ CORRECCIÓN: algunos de los nombres mencionados no coinciden con nuestras estilistas. "
+                "DEBES usar SOLO los nombres que aparecen en la lista de estilistas disponibles. "
+                "Nunca inventes o asumas nombres que no están en la lista."
             )
 
         # Book failure circuit breaker
@@ -1761,18 +1961,21 @@ def _detect_recommendation_decline(message: str, ctx: BookingContext) -> bool:
 
 
 def _build_stylists_section(ctx: BookingContext) -> str:
-    """Build prompt section for available stylists."""
+    """Build prompt section for available stylists.
+
+    Muestra solo los nombres de los estilistas disponibles. No intenta mostrar
+    disponibilidad (next_slot_summary) porque list_stylists no devuelve ese campo
+    — hacerlo causaba que apareciera "Sin disponibilidad" para cada estilista.
+    """
     if not ctx.prefetched_stylists:
         return ""
 
     lines: list[str] = []
     for s in ctx.prefetched_stylists:
         name = s.get("name", "???")
-        slot_info = s.get("next_slot_summary", "Sin disponibilidad")
-        lines.append(f"- {name}: {slot_info}")
+        lines.append(f"- {name}")
 
-    if ctx.soonest_any_slot:
-        lines.append(f"Cualquier profesional disponible: {ctx.soonest_any_slot}")
+    lines.append("- La estilista con disponibilidad más temprana")
 
     if ctx.recurrent_stylist_hint:
         lines.append(f"Estilista habitual de la clienta: {ctx.recurrent_stylist_hint}")
