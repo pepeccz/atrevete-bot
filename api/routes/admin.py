@@ -75,8 +75,18 @@ MADRID_TZ = ZoneInfo("Europe/Madrid")
 # Spanish date formatting constants
 WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MONTHS_ES = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
 ]
 
 
@@ -137,9 +147,13 @@ async def _safe_send_admin_appointment_template(
         if success:
             logger.info(f"Admin appointment template sent for appointment {appointment_id}")
         else:
-            logger.warning(f"Failed to send admin appointment template for appointment {appointment_id}")
+            logger.warning(
+                f"Failed to send admin appointment template for appointment {appointment_id}"
+            )
     except Exception as e:
-        logger.warning(f"Error sending admin appointment template for appointment {appointment_id}: {e}")
+        logger.warning(
+            f"Error sending admin appointment template for appointment {appointment_id}: {e}"
+        )
 
 
 def parse_datetime_as_madrid(v: Any) -> datetime | None:
@@ -177,7 +191,11 @@ async def _get_latest_checkpoint_state(redis_client: Any, thread_id: str) -> dic
     best_checkpoint_suffix = ""
 
     for checkpoint_key in thread_keys:
-        key_str = checkpoint_key.decode("utf-8") if isinstance(checkpoint_key, bytes) else str(checkpoint_key)
+        key_str = (
+            checkpoint_key.decode("utf-8")
+            if isinstance(checkpoint_key, bytes)
+            else str(checkpoint_key)
+        )
         checkpoint_suffix = key_str.rsplit(":", 1)[-1]
 
         try:
@@ -195,15 +213,15 @@ async def _get_latest_checkpoint_state(redis_client: Any, thread_id: str) -> dic
         raw_messages = state.get("messages", [])
         message_count = len(raw_messages) if isinstance(raw_messages, list) else 0
 
-        if (
-            message_count > best_message_count
-            or (message_count == best_message_count and checkpoint_suffix > best_checkpoint_suffix)
+        if message_count > best_message_count or (
+            message_count == best_message_count and checkpoint_suffix > best_checkpoint_suffix
         ):
             best_state = state
             best_message_count = message_count
             best_checkpoint_suffix = checkpoint_suffix
 
     return best_state
+
 
 # =============================================================================
 # Security
@@ -253,9 +271,7 @@ def get_admin_credentials() -> tuple[str, str | None, str | None]:
     password_hash = getattr(settings, "ADMIN_PASSWORD_HASH", None) or None
 
     if not username:
-        raise RuntimeError(
-            "ADMIN_USERNAME must be set in environment variables."
-        )
+        raise RuntimeError("ADMIN_USERNAME must be set in environment variables.")
 
     if not password_hash and not password_plain:
         raise RuntimeError(
@@ -272,7 +288,9 @@ def get_admin_credentials() -> tuple[str, str | None, str | None]:
     return username, password_plain, password_hash
 
 
-def verify_admin_password(password_input: str, password_plain: str | None, password_hash: str | None) -> bool:
+def verify_admin_password(
+    password_input: str, password_plain: str | None, password_hash: str | None
+) -> bool:
     """
     Verify admin password using bcrypt hash or plain text fallback.
 
@@ -297,10 +315,8 @@ def verify_admin_password(password_input: str, password_plain: str | None, passw
         # Use constant-time comparison to prevent timing attacks
         # Encode to bytes to support non-ASCII characters
         import hmac
-        return hmac.compare_digest(
-            password_input.encode("utf-8"),
-            password_plain.encode("utf-8")
-        )
+
+        return hmac.compare_digest(password_input.encode("utf-8"), password_plain.encode("utf-8"))
 
     return False
 
@@ -588,6 +604,7 @@ class NotificationsListResponse(BaseModel):
 
 class NotificationsPaginatedResponse(BaseModel):
     """Paginated notifications response with full filter support."""
+
     items: list[NotificationResponse]
     total: int
     page: int
@@ -599,6 +616,7 @@ class NotificationsPaginatedResponse(BaseModel):
 
 class NotificationStatsResponse(BaseModel):
     """Statistics for notification charts."""
+
     by_type: dict[str, int]
     by_category: dict[str, int]
     trend: list[dict[str, Any]]
@@ -609,6 +627,7 @@ class NotificationStatsResponse(BaseModel):
 
 class NotificationBulkRequest(BaseModel):
     """Request for bulk operations on notifications."""
+
     ids: list[UUID]
 
 
@@ -644,6 +663,7 @@ NOTIFICATION_CATEGORIES = {
 
 class OverlapConflict(BaseModel):
     """Represents a single overlapping appointment conflict."""
+
     appointment_id: UUID
     customer_name: str
     service_names: str
@@ -654,6 +674,7 @@ class OverlapConflict(BaseModel):
 
 class OverlapCheckResponse(BaseModel):
     """Response model for overlap check endpoint."""
+
     has_overlaps: bool
     conflicts: list[OverlapConflict]
     checked_range: dict
@@ -809,9 +830,7 @@ async def get_dashboard_kpis(
         # Appointments this month
         appointments_query = select(func.count(Appointment.id)).where(
             Appointment.start_time >= month_start,
-            Appointment.status.in_(
-                [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]
-            ),
+            Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
         )
         appointments_result = await session.execute(appointments_query)
         appointments_this_month = appointments_result.scalar() or 0
@@ -831,9 +850,7 @@ async def get_dashboard_kpis(
         # Total hours booked this month
         hours_query = select(func.sum(Appointment.duration_minutes)).where(
             Appointment.start_time >= month_start,
-            Appointment.status.in_(
-                [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]
-            ),
+            Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
         )
         hours_result = await session.execute(hours_query)
         total_minutes = hours_result.scalar() or 0
@@ -867,7 +884,11 @@ async def get_appointments_trend(
                 Appointment.start_time >= start_date,
                 Appointment.start_time <= end_date,
                 Appointment.status.in_(
-                    [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED]
+                    [
+                        AppointmentStatus.PENDING,
+                        AppointmentStatus.CONFIRMED,
+                        AppointmentStatus.COMPLETED,
+                    ]
                 ),
             )
             .group_by(func.date(Appointment.start_time))
@@ -885,10 +906,12 @@ async def get_appointments_trend(
         current = start_date
         while current <= end_date:
             date_key = current.date()
-            data.append({
-                "date": date_key.strftime("%d/%m"),
-                "count": date_counts.get(date_key, 0),
-            })
+            data.append(
+                {
+                    "date": date_key.strftime("%d/%m"),
+                    "count": date_counts.get(date_key, 0),
+                }
+            )
             current += timedelta(days=1)
 
         return data
@@ -910,9 +933,7 @@ async def get_top_services(
         appointments_result = await session.execute(
             select(Appointment.service_ids).where(
                 Appointment.start_time >= start_date,
-                Appointment.status.in_(
-                    [AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED]
-                ),
+                Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED]),
             )
         )
 
@@ -925,9 +946,7 @@ async def get_top_services(
                     service_counts[sid_str] = service_counts.get(sid_str, 0) + 1
 
         # Sort and get top N
-        sorted_services = sorted(
-            service_counts.items(), key=lambda x: x[1], reverse=True
-        )[:limit]
+        sorted_services = sorted(service_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
 
         return [
             {"name": services.get(sid, "Desconocido"), "count": count}
@@ -955,9 +974,7 @@ async def get_hours_worked(
             .where(
                 Appointment.start_time >= start_date,
                 Appointment.start_time <= end_date,
-                Appointment.status.in_(
-                    [AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED]
-                ),
+                Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED]),
             )
             .group_by(month_col)
             .order_by(month_col)
@@ -968,8 +985,18 @@ async def get_hours_worked(
 
         # Format month names in Spanish
         month_names = [
-            "Ene", "Feb", "Mar", "Abr", "May", "Jun",
-            "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"
+            "Ene",
+            "Feb",
+            "Mar",
+            "Abr",
+            "May",
+            "Jun",
+            "Jul",
+            "Ago",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dic",
         ]
 
         return [
@@ -1010,8 +1037,18 @@ async def get_customer_growth(
         rows = result.all()
 
         month_names = [
-            "Ene", "Feb", "Mar", "Abr", "May", "Jun",
-            "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"
+            "Ene",
+            "Feb",
+            "Mar",
+            "Abr",
+            "May",
+            "Jun",
+            "Jul",
+            "Ago",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dic",
         ]
 
         return [
@@ -1033,9 +1070,7 @@ async def get_stylist_performance(
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         # Get all active stylists
-        stylists_result = await session.execute(
-            select(Stylist).where(Stylist.is_active == True)
-        )
+        stylists_result = await session.execute(select(Stylist).where(Stylist.is_active == True))
         stylists = {str(s.id): s.name for s in stylists_result.scalars().all()}
 
         # Query appointments per stylist for current month
@@ -1047,9 +1082,7 @@ async def get_stylist_performance(
             )
             .where(
                 Appointment.start_time >= month_start,
-                Appointment.status.in_(
-                    [AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED]
-                ),
+                Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED]),
             )
             .group_by(Appointment.stylist_id)
         )
@@ -1137,9 +1170,7 @@ async def get_stylist(
 ):
     """Get a single stylist by ID."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Stylist).where(Stylist.id == stylist_id)
-        )
+        result = await session.execute(select(Stylist).where(Stylist.id == stylist_id))
         stylist = result.scalar_one_or_none()
 
         if not stylist:
@@ -1172,7 +1203,7 @@ async def create_stylist(
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid category: {request.category}. Must be HAIRDRESSING, AESTHETICS, or BOTH"
+            detail=f"Invalid category: {request.category}. Must be HAIRDRESSING, AESTHETICS, or BOTH",
         )
 
     async with get_async_session() as session:
@@ -1240,9 +1271,7 @@ async def update_stylist(
     from sqlalchemy.exc import IntegrityError
 
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Stylist).where(Stylist.id == stylist_id)
-        )
+        result = await session.execute(select(Stylist).where(Stylist.id == stylist_id))
         stylist = result.scalar_one_or_none()
 
         if not stylist:
@@ -1264,10 +1293,7 @@ async def update_stylist(
             try:
                 stylist.category = ServiceCategory(request.category)
             except ValueError:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid category: {request.category}"
-                )
+                raise HTTPException(status_code=400, detail=f"Invalid category: {request.category}")
         if request.google_calendar_id is not None:
             stylist.google_calendar_id = request.google_calendar_id
         if request.is_active is not None:
@@ -1314,9 +1340,7 @@ async def delete_stylist(
 ):
     """Delete a stylist."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Stylist).where(Stylist.id == stylist_id)
-        )
+        result = await session.execute(select(Stylist).where(Stylist.id == stylist_id))
         stylist = result.scalar_one_or_none()
 
         if not stylist:
@@ -1331,7 +1355,9 @@ async def delete_stylist(
 class AssignCalendarRequest(BaseModel):
     """Request body for assigning a Google Calendar to a stylist."""
 
-    calendar_id: str = Field(..., min_length=1, description="Google Calendar ID to assign to this stylist")
+    calendar_id: str = Field(
+        ..., min_length=1, description="Google Calendar ID to assign to this stylist"
+    )
 
 
 # =============================================================================
@@ -1460,9 +1486,7 @@ async def assign_stylist_calendar(
     from sqlalchemy.exc import IntegrityError
 
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Stylist).where(Stylist.id == stylist_id)
-        )
+        result = await session.execute(select(Stylist).where(Stylist.id == stylist_id))
         stylist = result.scalar_one_or_none()
 
         if not stylist:
@@ -1583,9 +1607,7 @@ async def get_customer(
 ):
     """Get a single customer by ID."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Customer).where(Customer.id == customer_id)
-        )
+        result = await session.execute(select(Customer).where(Customer.id == customer_id))
         customer = result.scalar_one_or_none()
 
         if not customer:
@@ -1598,14 +1620,10 @@ async def get_customer(
             "last_name": customer.last_name,
             "total_spent": str(customer.total_spent),
             "last_service_date": (
-                customer.last_service_date.isoformat()
-                if customer.last_service_date
-                else None
+                customer.last_service_date.isoformat() if customer.last_service_date else None
             ),
             "preferred_stylist_id": (
-                str(customer.preferred_stylist_id)
-                if customer.preferred_stylist_id
-                else None
+                str(customer.preferred_stylist_id) if customer.preferred_stylist_id else None
             ),
             "notes": customer.notes,
             "created_at": customer.created_at.isoformat(),
@@ -1620,13 +1638,10 @@ async def create_customer(
     """Create a new customer."""
     async with get_async_session() as session:
         # Check if phone already exists
-        existing = await session.execute(
-            select(Customer).where(Customer.phone == request.phone)
-        )
+        existing = await session.execute(select(Customer).where(Customer.phone == request.phone))
         if existing.scalar_one_or_none():
             raise HTTPException(
-                status_code=409,
-                detail=f"Customer with phone {request.phone} already exists"
+                status_code=409, detail=f"Customer with phone {request.phone} already exists"
             )
 
         customer = Customer(
@@ -1648,9 +1663,7 @@ async def create_customer(
             "total_spent": str(customer.total_spent),
             "last_service_date": None,
             "preferred_stylist_id": (
-                str(customer.preferred_stylist_id)
-                if customer.preferred_stylist_id
-                else None
+                str(customer.preferred_stylist_id) if customer.preferred_stylist_id else None
             ),
             "notes": customer.notes,
             "created_at": customer.created_at.isoformat(),
@@ -1665,9 +1678,7 @@ async def update_customer(
 ):
     """Update an existing customer."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Customer).where(Customer.id == customer_id)
-        )
+        result = await session.execute(select(Customer).where(Customer.id == customer_id))
         customer = result.scalar_one_or_none()
 
         if not customer:
@@ -1677,16 +1688,10 @@ async def update_customer(
         if request.phone is not None:
             # Check if new phone already exists (for another customer)
             existing = await session.execute(
-                select(Customer).where(
-                    Customer.phone == request.phone,
-                    Customer.id != customer_id
-                )
+                select(Customer).where(Customer.phone == request.phone, Customer.id != customer_id)
             )
             if existing.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Phone {request.phone} already in use"
-                )
+                raise HTTPException(status_code=409, detail=f"Phone {request.phone} already in use")
             customer.phone = request.phone
         if request.first_name is not None:
             customer.first_name = request.first_name
@@ -1707,14 +1712,10 @@ async def update_customer(
             "last_name": customer.last_name,
             "total_spent": str(customer.total_spent),
             "last_service_date": (
-                customer.last_service_date.isoformat()
-                if customer.last_service_date
-                else None
+                customer.last_service_date.isoformat() if customer.last_service_date else None
             ),
             "preferred_stylist_id": (
-                str(customer.preferred_stylist_id)
-                if customer.preferred_stylist_id
-                else None
+                str(customer.preferred_stylist_id) if customer.preferred_stylist_id else None
             ),
             "notes": customer.notes,
             "created_at": customer.created_at.isoformat(),
@@ -1728,9 +1729,7 @@ async def delete_customer(
 ):
     """Delete a customer."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Customer).where(Customer.id == customer_id)
-        )
+        result = await session.execute(select(Customer).where(Customer.id == customer_id))
         customer = result.scalar_one_or_none()
 
         if not customer:
@@ -1813,9 +1812,7 @@ async def get_service(
 ):
     """Get a single service by ID."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Service).where(Service.id == service_id)
-        )
+        result = await session.execute(select(Service).where(Service.id == service_id))
         service = result.scalar_one_or_none()
 
         if not service:
@@ -1847,7 +1844,7 @@ async def create_service(
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid category: {request.category}. Must be HAIRDRESSING, AESTHETICS, or BOTH"
+            detail=f"Invalid category: {request.category}. Must be HAIRDRESSING, AESTHETICS, or BOTH",
         )
 
     async with get_async_session() as session:
@@ -1884,9 +1881,7 @@ async def update_service(
     from database.models import ServiceCategory
 
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Service).where(Service.id == service_id)
-        )
+        result = await session.execute(select(Service).where(Service.id == service_id))
         service = result.scalar_one_or_none()
 
         if not service:
@@ -1899,10 +1894,7 @@ async def update_service(
             try:
                 service.category = ServiceCategory(request.category)
             except ValueError:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid category: {request.category}"
-                )
+                raise HTTPException(status_code=400, detail=f"Invalid category: {request.category}")
         if request.duration_minutes is not None:
             service.duration_minutes = request.duration_minutes
         if request.description is not None:
@@ -1932,9 +1924,7 @@ async def delete_service(
 ):
     """Delete a service."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Service).where(Service.id == service_id)
-        )
+        result = await session.execute(select(Service).where(Service.id == service_id))
         service = result.scalar_one_or_none()
 
         if not service:
@@ -2031,24 +2021,16 @@ async def check_overlaps(
     """
     # Validate inputs
     if duration_minutes <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="duration_minutes must be greater than 0"
-        )
+        raise HTTPException(status_code=400, detail="duration_minutes must be greater than 0")
 
     # Parse and validate start_time
     parsed_start = parse_datetime_as_madrid(start_time)
     if parsed_start.tzinfo is None:
-        raise HTTPException(
-            status_code=400,
-            detail="start_time must have timezone information"
-        )
+        raise HTTPException(status_code=400, detail="start_time must have timezone information")
 
     async with get_async_session() as session:
         # Verify stylist exists
-        stylist_result = await session.execute(
-            select(Stylist).where(Stylist.id == stylist_id)
-        )
+        stylist_result = await session.execute(select(Stylist).where(Stylist.id == stylist_id))
         stylist = stylist_result.scalar_one_or_none()
         if not stylist:
             raise HTTPException(status_code=404, detail="Stylist not found")
@@ -2076,14 +2058,16 @@ async def check_overlaps(
 
             appt_end_time = appt.start_time + timedelta(minutes=appt.duration_minutes)
 
-            conflicts.append(OverlapConflict(
-                appointment_id=appt.id,
-                customer_name=f"{appt.first_name} {appt.last_name or ''}".strip(),
-                service_names=service_names,
-                start_time=appt.start_time,
-                end_time=appt_end_time,
-                status=appt.status.value,
-            ))
+            conflicts.append(
+                OverlapConflict(
+                    appointment_id=appt.id,
+                    customer_name=f"{appt.first_name} {appt.last_name or ''}".strip(),
+                    service_names=service_names,
+                    start_time=appt.start_time,
+                    end_time=appt_end_time,
+                    status=appt.status.value,
+                )
+            )
 
         return OverlapCheckResponse(
             has_overlaps=len(conflicts) > 0,
@@ -2092,7 +2076,7 @@ async def check_overlaps(
                 "start_time": parsed_start.isoformat(),
                 "end_time": (parsed_start + timedelta(minutes=duration_minutes)).isoformat(),
                 "duration_minutes": duration_minutes,
-            }
+            },
         )
 
 
@@ -2118,10 +2102,9 @@ async def get_pending_actions(
             .where(
                 and_(
                     Appointment.start_time < now,  # Already passed
-                    Appointment.status.in_([
-                        AppointmentStatus.PENDING,
-                        AppointmentStatus.CONFIRMED
-                    ]),
+                    Appointment.status.in_(
+                        [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]
+                    ),
                 )
             )
             .order_by(Appointment.start_time.desc())
@@ -2138,24 +2121,26 @@ async def get_pending_actions(
             )
             services = list(services_result.scalars().all())
 
-            items.append({
-                "id": str(appt.id),
-                "customer_id": str(appt.customer_id),
-                "stylist_id": str(appt.stylist_id),
-                "start_time": appt.start_time.astimezone(MADRID_TZ).isoformat(),
-                "duration_minutes": appt.duration_minutes,
-                "status": appt.status.value,
-                "first_name": appt.first_name or (appt.customer.first_name if appt.customer else "Cliente"),
-                "last_name": appt.last_name,
-                "stylist": {
-                    "id": str(appt.stylist.id),
-                    "name": appt.stylist.name,
-                } if appt.stylist else None,
-                "services": [
-                    {"id": str(s.id), "name": s.name}
-                    for s in services
-                ],
-            })
+            items.append(
+                {
+                    "id": str(appt.id),
+                    "customer_id": str(appt.customer_id),
+                    "stylist_id": str(appt.stylist_id),
+                    "start_time": appt.start_time.astimezone(MADRID_TZ).isoformat(),
+                    "duration_minutes": appt.duration_minutes,
+                    "status": appt.status.value,
+                    "first_name": appt.first_name
+                    or (appt.customer.first_name if appt.customer else "Cliente"),
+                    "last_name": appt.last_name,
+                    "stylist": {
+                        "id": str(appt.stylist.id),
+                        "name": appt.stylist.name,
+                    }
+                    if appt.stylist
+                    else None,
+                    "services": [{"id": str(s.id), "name": s.name} for s in services],
+                }
+            )
 
         return {
             "items": items,
@@ -2198,16 +2183,22 @@ async def find_overlapping_appointments(
     stmt = (
         select(Appointment)
         .where(Appointment.stylist_id == stylist_id)
-        .where(Appointment.status.in_([
-            AppointmentStatus.PENDING,
-            AppointmentStatus.CONFIRMED,
-        ]))
+        .where(
+            Appointment.status.in_(
+                [
+                    AppointmentStatus.PENDING,
+                    AppointmentStatus.CONFIRMED,
+                ]
+            )
+        )
         # Check for overlap: existing appointment overlaps with [start_time, end_time]
         .where(Appointment.start_time < end_time)
         # Appointment ends after our start_time (calculated dynamically)
-        .where(text(
-            "start_time + (duration_minutes || ' minutes')::interval > :start_time"
-        ).bindparams(start_time=start_time))
+        .where(
+            text(
+                "start_time + (duration_minutes || ' minutes')::interval > :start_time"
+            ).bindparams(start_time=start_time)
+        )
     )
 
     result = await session.execute(stmt)
@@ -2290,21 +2281,23 @@ async def create_appointment(
                         appt_service_names = "Unknown"
 
                     appt_end_time = appt.start_time + timedelta(minutes=appt.duration_minutes)
-                    conflicts.append({
-                        "appointment_id": str(appt.id),
-                        "customer_name": f"{appt.first_name} {appt.last_name or ''}".strip(),
-                        "service_names": appt_service_names,
-                        "start_time": appt.start_time.isoformat(),
-                        "end_time": appt_end_time.isoformat(),
-                        "status": appt.status.value,
-                    })
+                    conflicts.append(
+                        {
+                            "appointment_id": str(appt.id),
+                            "customer_name": f"{appt.first_name} {appt.last_name or ''}".strip(),
+                            "service_names": appt_service_names,
+                            "start_time": appt.start_time.isoformat(),
+                            "end_time": appt_end_time.isoformat(),
+                            "status": appt.status.value,
+                        }
+                    )
 
                 raise HTTPException(
                     status_code=409,
                     detail={
                         "message": "Appointment overlaps with existing bookings",
                         "overlaps": conflicts,
-                    }
+                    },
                 )
 
         # Create appointment in database
@@ -2332,7 +2325,7 @@ async def create_appointment(
             extra={
                 "appointment_id": str(new_appointment.id),
                 "stylist_id": str(request.stylist_id),
-            }
+            },
         )
 
         # Push to Google Calendar (fire-and-forget, non-blocking)
@@ -2374,10 +2367,14 @@ async def create_appointment(
 
         # Create notification for new appointment
         try:
-            await create_notification(session, NotificationType.APPOINTMENT_CREATED, new_appointment)
+            await create_notification(
+                session, NotificationType.APPOINTMENT_CREATED, new_appointment
+            )
             await session.commit()
         except Exception as e:
-            logger.warning(f"Failed to create notification for appointment {new_appointment.id}: {e}")
+            logger.warning(
+                f"Failed to create notification for appointment {new_appointment.id}: {e}"
+            )
 
         # Send WhatsApp notification to customer (fire-and-forget)
         if request.send_notification and customer.phone:
@@ -2516,9 +2513,7 @@ async def update_appointment(
 ):
     """Update an existing appointment."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Appointment).where(Appointment.id == appointment_id)
-        )
+        result = await session.execute(select(Appointment).where(Appointment.id == appointment_id))
         appointment = result.scalar_one_or_none()
 
         if not appointment:
@@ -2557,7 +2552,7 @@ async def update_appointment(
             except ValueError:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Invalid status: {request.status}. Must be pending, confirmed, completed, cancelled, or no_show"
+                    detail=f"Invalid status: {request.status}. Must be pending, confirmed, completed, cancelled, or no_show",
                 )
 
         if request.first_name is not None:
@@ -2573,7 +2568,10 @@ async def update_appointment(
         # Create notification for status change
         if request.status is not None and appointment.status != old_status:
             notification_type = None
-            if appointment.status == AppointmentStatus.CONFIRMED and old_status != AppointmentStatus.CONFIRMED:
+            if (
+                appointment.status == AppointmentStatus.CONFIRMED
+                and old_status != AppointmentStatus.CONFIRMED
+            ):
                 notification_type = NotificationType.APPOINTMENT_CONFIRMED
             elif appointment.status == AppointmentStatus.CANCELLED:
                 notification_type = NotificationType.APPOINTMENT_CANCELLED
@@ -2585,7 +2583,9 @@ async def update_appointment(
                     await create_notification(session, notification_type, appointment)
                     await session.commit()
                 except Exception as e:
-                    logger.warning(f"Failed to create notification for appointment {appointment.id}: {e}")
+                    logger.warning(
+                        f"Failed to create notification for appointment {appointment.id}: {e}"
+                    )
 
         # Sync with Google Calendar
         # Get customer name and service names for Google Calendar
@@ -2611,11 +2611,10 @@ async def update_appointment(
                     start_time=appointment.start_time,
                     duration_minutes=appointment.duration_minutes,
                     status=appointment.status.value,
+                    notes=appointment.notes,
                 )
             )
-            logger.info(
-                f"Triggered Google Calendar update for appointment {appointment.id}"
-            )
+            logger.info(f"Triggered Google Calendar update for appointment {appointment.id}")
         else:
             # Create new event if missing (immediate push)
             from agent.services.gcal_push_service import push_appointment_to_gcal
@@ -2633,17 +2632,11 @@ async def update_appointment(
                 if event_id:
                     appointment.google_calendar_event_id = event_id
                     await session.commit()
-                    logger.info(
-                        f"Created GCal event {event_id} for appointment {appointment.id}"
-                    )
+                    logger.info(f"Created GCal event {event_id} for appointment {appointment.id}")
                 else:
-                    logger.warning(
-                        f"GCal push returned None for appointment {appointment.id}"
-                    )
+                    logger.warning(f"GCal push returned None for appointment {appointment.id}")
             except Exception as e:
-                logger.error(
-                    f"Failed to create GCal event for appointment {appointment.id}: {e}"
-                )
+                logger.error(f"Failed to create GCal event for appointment {appointment.id}: {e}")
 
         return {
             "id": str(appointment.id),
@@ -2669,9 +2662,7 @@ async def delete_appointment(
 ):
     """Delete an appointment."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Appointment).where(Appointment.id == appointment_id)
-        )
+        result = await session.execute(select(Appointment).where(Appointment.id == appointment_id))
         appointment = result.scalar_one_or_none()
 
         if not appointment:
@@ -2681,8 +2672,7 @@ async def delete_appointment(
         if appointment.google_calendar_event_id:
             asyncio.create_task(
                 _safe_delete_gcal_event(
-                    appointment.stylist_id,
-                    appointment.google_calendar_event_id
+                    appointment.stylist_id, appointment.google_calendar_event_id
                 )
             )
 
@@ -2732,13 +2722,13 @@ async def get_calendar_appointments(
 
         logger.info(f"Found {len(appointments)} appointments in DB for range {start} to {end}")
         if appointments:
-            logger.info(f"First appointment: id={appointments[0].id}, start={appointments[0].start_time}, name={appointments[0].first_name}")
+            logger.info(
+                f"First appointment: id={appointments[0].id}, start={appointments[0].start_time}, name={appointments[0].first_name}"
+            )
 
         # Crear diccionario para identificar eventos ya en DB
         db_events_by_gcal_id = {
-            a.google_calendar_event_id: a
-            for a in appointments
-            if a.google_calendar_event_id
+            a.google_calendar_event_id: a for a in appointments if a.google_calendar_event_id
         }
 
         # Color mapping for appointment status
@@ -2752,7 +2742,7 @@ async def get_calendar_appointments(
 
         # 2. Formatear eventos de DB (mantener formato actual)
         # Convertir fechas a Europe/Madrid timezone
-        madrid_tz = pytz.timezone('Europe/Madrid')
+        madrid_tz = pytz.timezone("Europe/Madrid")
 
         events = []
         for a in appointments:
@@ -2762,22 +2752,24 @@ async def get_calendar_appointments(
             start_madrid = a.start_time.astimezone(madrid_tz)
             end_madrid = end_time.astimezone(madrid_tz)
 
-            events.append({
-                "id": str(a.id),
-                "title": f"{a.first_name} {a.last_name or ''}".strip(),
-                "start": start_madrid.isoformat(),
-                "end": end_madrid.isoformat(),
-                "backgroundColor": status_colors.get(a.status, "#6b7280"),
-                "borderColor": status_colors.get(a.status, "#6b7280"),
-                "extendedProps": {
-                    "appointment_id": str(a.id),
-                    "customer_id": str(a.customer_id),
-                    "stylist_id": str(a.stylist_id),
-                    "status": a.status.value,
-                    "duration_minutes": a.duration_minutes,
-                    "notes": a.notes,
-                },
-            })
+            events.append(
+                {
+                    "id": str(a.id),
+                    "title": f"{a.first_name} {a.last_name or ''}".strip(),
+                    "start": start_madrid.isoformat(),
+                    "end": end_madrid.isoformat(),
+                    "backgroundColor": status_colors.get(a.status, "#6b7280"),
+                    "borderColor": status_colors.get(a.status, "#6b7280"),
+                    "extendedProps": {
+                        "appointment_id": str(a.id),
+                        "customer_id": str(a.customer_id),
+                        "stylist_id": str(a.stylist_id),
+                        "status": a.status.value,
+                        "duration_minutes": a.duration_minutes,
+                        "notes": a.notes,
+                    },
+                }
+            )
 
         # 3. Si sync_google=True, consultar Google Calendar
         if sync_google:
@@ -2808,7 +2800,7 @@ async def get_calendar_appointments(
                         calendar_id=stylist.google_calendar_id,
                         time_min=start.isoformat(),
                         time_max=end.isoformat(),
-                        timeout=5.0
+                        timeout=5.0,
                     )
 
                     # Filtrar solo eventos NO en DB (creados externamente)
@@ -2835,23 +2827,25 @@ async def get_calendar_appointments(
                             continue
 
                         # Formatear evento externo
-                        events.append({
-                            "id": f"google-{event_id}",  # Prefijo para distinguir
-                            "title": event.get("summary", "Sin título"),
-                            "start": start_dt.isoformat(),
-                            "end": end_dt.isoformat(),
-                            "backgroundColor": "#9CA3AF",  # Gris para externos
-                            "borderColor": "#6B7280",      # Gris oscuro borde
-                            "extendedProps": {
-                                "appointment_id": None,
-                                "customer_id": None,
-                                "stylist_id": str(stylist.id),
-                                "status": "external",
-                                "duration_minutes": 0,
-                                "notes": "Evento creado externamente en Google Calendar",
-                                "google_event_id": event_id,
-                            },
-                        })
+                        events.append(
+                            {
+                                "id": f"google-{event_id}",  # Prefijo para distinguir
+                                "title": event.get("summary", "Sin título"),
+                                "start": start_dt.isoformat(),
+                                "end": end_dt.isoformat(),
+                                "backgroundColor": "#9CA3AF",  # Gris para externos
+                                "borderColor": "#6B7280",  # Gris oscuro borde
+                                "extendedProps": {
+                                    "appointment_id": None,
+                                    "customer_id": None,
+                                    "stylist_id": str(stylist.id),
+                                    "status": "external",
+                                    "duration_minutes": 0,
+                                    "notes": "Evento creado externamente en Google Calendar",
+                                    "google_event_id": event_id,
+                                },
+                            }
+                        )
 
                 except Exception as e:
                     logger.warning(
@@ -2894,60 +2888,54 @@ async def get_calendar_availability(
 
     async with get_async_session() as session:
         # Get stylist info
-        stylist_result = await session.execute(
-            select(Stylist).where(Stylist.id == stylist_id)
-        )
+        stylist_result = await session.execute(select(Stylist).where(Stylist.id == stylist_id))
         stylist = stylist_result.scalar_one_or_none()
 
         if not stylist:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Stylist not found: {stylist_id}"
-            )
+            raise HTTPException(status_code=404, detail=f"Stylist not found: {stylist_id}")
 
         # Call availability tool
         try:
-            result = await check_availability.ainvoke({
-                "service_category": stylist.category.value,
-                "date": date,
-                "time_range": time_range,
-                "stylist_id": str(stylist_id),
-            })
+            result = await check_availability.ainvoke(
+                {
+                    "service_category": stylist.category.value,
+                    "date": date,
+                    "time_range": time_range,
+                    "stylist_id": str(stylist_id),
+                }
+            )
 
             if not result.get("success"):
                 return {
                     "slots": [],
                     "error": result.get("error", "Unknown error checking availability"),
-                    "holiday_detected": result.get("holiday_detected", False)
+                    "holiday_detected": result.get("holiday_detected", False),
                 }
 
             # Format slots for frontend
             slots = []
             for slot_data in result.get("available_slots", []):
                 for slot in slot_data.get("slots", []):
-                    slots.append({
-                        "time": slot["time"],
-                        "end_time": slot["end_time"],
-                        "available": True,
-                        "stylist_id": slot_data["stylist_id"],
-                        "stylist_name": slot_data["stylist_name"],
-                    })
+                    slots.append(
+                        {
+                            "time": slot["time"],
+                            "end_time": slot["end_time"],
+                            "available": True,
+                            "stylist_id": slot_data["stylist_id"],
+                            "stylist_name": slot_data["stylist_name"],
+                        }
+                    )
 
-            return {
-                "slots": slots,
-                "holiday_detected": result.get("holiday_detected", False)
-            }
+            return {"slots": slots, "holiday_detected": result.get("holiday_detected", False)}
 
         except Exception as e:
             logger.exception(f"Error checking availability for stylist {stylist_id}: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to check availability: {str(e)}"
-            )
+            raise HTTPException(status_code=500, detail=f"Failed to check availability: {str(e)}")
 
 
 class AdminAvailabilityRequest(BaseModel):
     """Request schema for admin availability check with date range."""
+
     service_ids: list[UUID]
     start_date: str  # YYYY-MM-DD format
     end_date: str  # YYYY-MM-DD format
@@ -3015,24 +3003,15 @@ async def search_availability(
         start = date_type.fromisoformat(request.start_date)
         end = date_type.fromisoformat(request.end_date)
     except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid date format. Use YYYY-MM-DD"
-        )
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
     # Validate date range
     if end < start:
-        raise HTTPException(
-            status_code=400,
-            detail="end_date must be >= start_date"
-        )
+        raise HTTPException(status_code=400, detail="end_date must be >= start_date")
 
     days_diff = (end - start).days
     if days_diff > 14:
-        raise HTTPException(
-            status_code=400,
-            detail="Maximum date range is 14 days"
-        )
+        raise HTTPException(status_code=400, detail="Maximum date range is 14 days")
 
     async with get_async_session() as session:
         # Get services and calculate total duration + category
@@ -3042,10 +3021,7 @@ async def search_availability(
         services = services_result.scalars().all()
 
         if len(services) != len(request.service_ids):
-            raise HTTPException(
-                status_code=404,
-                detail="One or more services not found"
-            )
+            raise HTTPException(status_code=404, detail="One or more services not found")
 
         total_duration = sum(s.duration_minutes for s in services)
 
@@ -3069,9 +3045,7 @@ async def search_availability(
         else:
             # Filter by category compatibility
             if required_category == ServiceCategory.BOTH:
-                stylists_query = stylists_query.where(
-                    Stylist.category == ServiceCategory.BOTH
-                )
+                stylists_query = stylists_query.where(Stylist.category == ServiceCategory.BOTH)
             elif required_category == ServiceCategory.AESTHETICS:
                 stylists_query = stylists_query.where(
                     Stylist.category.in_([ServiceCategory.AESTHETICS, ServiceCategory.BOTH])
@@ -3115,20 +3089,24 @@ async def search_availability(
                         slot_interval_minutes=15,
                     )
 
-                    day_stylists.append({
-                        "id": str(stylist.id),
-                        "name": stylist.name,
-                        "category": stylist.category.value,
-                        "slots": slots,
-                    })
+                    day_stylists.append(
+                        {
+                            "id": str(stylist.id),
+                            "name": stylist.name,
+                            "category": stylist.category.value,
+                            "slots": slots,
+                        }
+                    )
 
-            days_result.append({
-                "date": current_date.isoformat(),
-                "day_name": DAY_NAMES_ES[current_date.weekday()],
-                "is_closed": is_closed,
-                "holiday": holiday_name,
-                "stylists": day_stylists,
-            })
+            days_result.append(
+                {
+                    "date": current_date.isoformat(),
+                    "day_name": DAY_NAMES_ES[current_date.weekday()],
+                    "is_closed": is_closed,
+                    "holiday": holiday_name,
+                    "stylists": day_stylists,
+                }
+            )
 
             current_date += timedelta(days=1)
 
@@ -3160,9 +3138,7 @@ async def list_business_hours(
 ):
     """Get business hours for all days of the week."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(BusinessHours).order_by(BusinessHours.day_of_week)
-        )
+        result = await session.execute(select(BusinessHours).order_by(BusinessHours.day_of_week))
         hours = result.scalars().all()
 
         return {
@@ -3189,9 +3165,7 @@ async def update_business_hours(
 ):
     """Update business hours for a specific day."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(BusinessHours).where(BusinessHours.id == hours_id)
-        )
+        result = await session.execute(select(BusinessHours).where(BusinessHours.id == hours_id))
         hours = result.scalar_one_or_none()
 
         if not hours:
@@ -3230,6 +3204,7 @@ async def update_business_hours(
 
 class CreateBlockingEventRequest(BaseModel):
     """Request schema for creating blocking events for one or more stylists."""
+
     stylist_ids: list[UUID] = Field(..., min_length=1)  # One or more stylists
     title: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
@@ -3245,6 +3220,7 @@ class CreateBlockingEventRequest(BaseModel):
 
 class UpdateBlockingEventRequest(BaseModel):
     """Request schema for updating a blocking event."""
+
     title: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
     start_time: datetime | None = None
@@ -3264,34 +3240,23 @@ class UpdateBlockingEventRequest(BaseModel):
 
 class RecurrencePattern(BaseModel):
     """Recurrence pattern definition (RFC 5545 compatible)."""
+
     frequency: Literal["WEEKLY", "MONTHLY"] = Field(
-        default="WEEKLY",
-        description="Recurrence frequency"
+        default="WEEKLY", description="Recurrence frequency"
     )
-    interval: int = Field(
-        default=1,
-        ge=1,
-        le=12,
-        description="Every N weeks/months"
-    )
+    interval: int = Field(default=1, ge=1, le=12, description="Every N weeks/months")
     days_of_week: list[int] | None = Field(
-        default=None,
-        description="List of weekdays (0=Monday, 6=Sunday) for WEEKLY frequency"
+        default=None, description="List of weekdays (0=Monday, 6=Sunday) for WEEKLY frequency"
     )
     days_of_month: list[int] | None = Field(
-        default=None,
-        description="List of month days (1-31) for MONTHLY frequency"
+        default=None, description="List of month days (1-31) for MONTHLY frequency"
     )
-    count: int = Field(
-        ...,
-        ge=1,
-        le=52,
-        description="Number of occurrences to create"
-    )
+    count: int = Field(..., ge=1, le=52, description="Number of occurrences to create")
 
 
 class CreateRecurringBlockingEventRequest(BaseModel):
     """Request schema for creating recurring blocking events."""
+
     stylist_ids: list[UUID] = Field(..., min_length=1)
     title: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
@@ -3304,6 +3269,7 @@ class CreateRecurringBlockingEventRequest(BaseModel):
 
 class ConflictInfo(BaseModel):
     """Information about a scheduling conflict."""
+
     date: str
     stylist_id: str
     stylist_name: str
@@ -3315,6 +3281,7 @@ class ConflictInfo(BaseModel):
 
 class RecurringEventPreview(BaseModel):
     """Preview of instances that will be created."""
+
     total_instances: int
     dates: list[str]
     conflicts: list[ConflictInfo]
@@ -3323,6 +3290,7 @@ class RecurringEventPreview(BaseModel):
 
 class SeriesEditScope(str, Enum):
     """Scope of edit/delete operation on a recurring series."""
+
     THIS_ONLY = "this_only"
     THIS_AND_FUTURE = "this_and_future"
     ALL = "all"
@@ -3330,6 +3298,7 @@ class SeriesEditScope(str, Enum):
 
 class SeriesInfo(BaseModel):
     """Information about a recurring series."""
+
     series_id: str
     total_instances: int
     instance_index: int
@@ -3414,15 +3383,12 @@ async def create_blocking_event(
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid event_type: {request.event_type}. Must be one of: vacation, meeting, break, general"
+            detail=f"Invalid event_type: {request.event_type}. Must be one of: vacation, meeting, break, general",
         )
 
     # Validate end_time > start_time
     if request.end_time <= request.start_time:
-        raise HTTPException(
-            status_code=400,
-            detail="end_time must be after start_time"
-        )
+        raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
     created_events = []
 
@@ -3437,8 +3403,7 @@ async def create_blocking_event(
         missing_ids = requested_ids - found_stylists
         if missing_ids:
             raise HTTPException(
-                status_code=404,
-                detail=f"Stylists not found: {', '.join(missing_ids)}"
+                status_code=404, detail=f"Stylists not found: {', '.join(missing_ids)}"
             )
 
         # Create blocking event for each stylist
@@ -3495,9 +3460,7 @@ async def update_blocking_event(
 ):
     """Update a blocking event."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(BlockingEvent).where(BlockingEvent.id == event_id)
-        )
+        result = await session.execute(select(BlockingEvent).where(BlockingEvent.id == event_id))
         event = result.scalar_one_or_none()
 
         if not event:
@@ -3517,16 +3480,12 @@ async def update_blocking_event(
                 event.event_type = BlockingEventType(request.event_type)
             except ValueError:
                 raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid event_type: {request.event_type}"
+                    status_code=400, detail=f"Invalid event_type: {request.event_type}"
                 )
 
         # Validate end_time > start_time
         if event.end_time <= event.start_time:
-            raise HTTPException(
-                status_code=400,
-                detail="end_time must be after start_time"
-            )
+            raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
         # Mark as exception if this event is part of a recurring series
         # (it's now different from the series template)
@@ -3553,9 +3512,7 @@ async def update_blocking_event(
                     event_type=event.event_type.value,
                 )
             )
-            logger.info(
-                f"Triggered Google Calendar update for blocking event {event.id}"
-            )
+            logger.info(f"Triggered Google Calendar update for blocking event {event.id}")
 
         return {
             "id": str(event.id),
@@ -3575,9 +3532,7 @@ async def delete_blocking_event(
 ):
     """Delete a blocking event."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(BlockingEvent).where(BlockingEvent.id == event_id)
-        )
+        result = await session.execute(select(BlockingEvent).where(BlockingEvent.id == event_id))
         event = result.scalar_one_or_none()
 
         if not event:
@@ -3669,8 +3624,7 @@ async def preview_recurring_blocking_event(
     valid_types = ["vacation", "meeting", "break", "general", "personal"]
     if request.event_type not in valid_types:
         raise HTTPException(
-            status_code=400,
-            detail=f"Invalid event_type. Must be one of: {valid_types}"
+            status_code=400, detail=f"Invalid event_type. Must be one of: {valid_types}"
         )
 
     # Expand recurrence to get all dates
@@ -3735,8 +3689,7 @@ async def create_recurring_blocking_event(
     valid_types = ["vacation", "meeting", "break", "general", "personal"]
     if request.event_type not in valid_types:
         raise HTTPException(
-            status_code=400,
-            detail=f"Invalid event_type. Must be one of: {valid_types}"
+            status_code=400, detail=f"Invalid event_type. Must be one of: {valid_types}"
         )
 
     # Expand recurrence to get all dates
@@ -3758,14 +3711,9 @@ async def create_recurring_blocking_event(
     async with get_async_session() as session:
         # Verify all stylists exist
         for stylist_id in request.stylist_ids:
-            result = await session.execute(
-                select(Stylist).where(Stylist.id == stylist_id)
-            )
+            result = await session.execute(select(Stylist).where(Stylist.id == stylist_id))
             if not result.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Stylist {stylist_id} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"Stylist {stylist_id} not found")
 
         # Create one series per stylist
         for stylist_id in request.stylist_ids:
@@ -3796,10 +3744,12 @@ async def create_recurring_blocking_event(
             session.add(series)
             await session.flush()  # Get series.id
 
-            created_series.append({
-                "series_id": str(series.id),
-                "stylist_id": str(stylist_id),
-            })
+            created_series.append(
+                {
+                    "series_id": str(series.id),
+                    "stylist_id": str(stylist_id),
+                }
+            )
 
             # Create individual blocking events
             for idx, event_date in enumerate(dates, start=1):
@@ -3820,16 +3770,18 @@ async def create_recurring_blocking_event(
                 session.add(event)
                 await session.flush()
 
-                created_events.append({
-                    "id": str(event.id),
-                    "stylist_id": str(stylist_id),
-                    "title": event.title,
-                    "start_time": start_dt.isoformat(),
-                    "end_time": end_dt.isoformat(),
-                    "event_type": event.event_type.value,
-                    "series_id": str(series.id),
-                    "occurrence_index": idx,
-                })
+                created_events.append(
+                    {
+                        "id": str(event.id),
+                        "stylist_id": str(stylist_id),
+                        "title": event.title,
+                        "start_time": start_dt.isoformat(),
+                        "end_time": end_dt.isoformat(),
+                        "event_type": event.event_type.value,
+                        "series_id": str(series.id),
+                        "occurrence_index": idx,
+                    }
+                )
 
         await session.commit()
 
@@ -3867,9 +3819,7 @@ async def get_blocking_event_series(
     """
     async with get_async_session() as session:
         # Get the event with its series
-        result = await session.execute(
-            select(BlockingEvent).where(BlockingEvent.id == event_id)
-        )
+        result = await session.execute(select(BlockingEvent).where(BlockingEvent.id == event_id))
         event = result.scalar_one_or_none()
 
         if not event:
@@ -3925,9 +3875,7 @@ async def check_series_exceptions(
     """
     async with get_async_session() as session:
         # Get the event
-        result = await session.execute(
-            select(BlockingEvent).where(BlockingEvent.id == event_id)
-        )
+        result = await session.execute(select(BlockingEvent).where(BlockingEvent.id == event_id))
         event = result.scalar_one_or_none()
 
         if not event:
@@ -3996,9 +3944,7 @@ async def update_blocking_event_with_scope(
     """
     async with get_async_session() as session:
         # Get the clicked event
-        result = await session.execute(
-            select(BlockingEvent).where(BlockingEvent.id == event_id)
-        )
+        result = await session.execute(select(BlockingEvent).where(BlockingEvent.id == event_id))
         event = result.scalar_one_or_none()
 
         if not event:
@@ -4020,16 +3966,12 @@ async def update_blocking_event_with_scope(
                     event.event_type = BlockingEventType(request.event_type)
                 except ValueError:
                     raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid event_type: {request.event_type}"
+                        status_code=400, detail=f"Invalid event_type: {request.event_type}"
                     )
 
             # Validate times
             if event.end_time <= event.start_time:
-                raise HTTPException(
-                    status_code=400,
-                    detail="end_time must be after start_time"
-                )
+                raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
             # Mark as exception since it differs from series
             if event.recurring_series_id:
@@ -4041,6 +3983,7 @@ async def update_blocking_event_with_scope(
             # Fire-and-forget GCal update
             if event.google_calendar_event_id:
                 from agent.services.gcal_push_service import update_blocking_event_in_gcal
+
                 asyncio.create_task(
                     update_blocking_event_in_gcal(
                         blocking_event_id=event.id,
@@ -4057,26 +4000,34 @@ async def update_blocking_event_with_scope(
             return {
                 "updated_count": 1,
                 "skipped_exceptions": 0,
-                "events": [{
-                    "id": str(event.id),
-                    "title": event.title,
-                    "start_time": event.start_time.astimezone(MADRID_TZ).isoformat(),
-                    "end_time": event.end_time.astimezone(MADRID_TZ).isoformat(),
-                }],
+                "events": [
+                    {
+                        "id": str(event.id),
+                        "title": event.title,
+                        "start_time": event.start_time.astimezone(MADRID_TZ).isoformat(),
+                        "end_time": event.end_time.astimezone(MADRID_TZ).isoformat(),
+                    }
+                ],
             }
 
         # For series-aware updates, get affected events
         if scope == SeriesEditScope.THIS_AND_FUTURE:
-            query = select(BlockingEvent).where(
-                and_(
-                    BlockingEvent.recurring_series_id == event.recurring_series_id,
-                    BlockingEvent.occurrence_index >= event.occurrence_index,
+            query = (
+                select(BlockingEvent)
+                .where(
+                    and_(
+                        BlockingEvent.recurring_series_id == event.recurring_series_id,
+                        BlockingEvent.occurrence_index >= event.occurrence_index,
+                    )
                 )
-            ).order_by(BlockingEvent.occurrence_index)
+                .order_by(BlockingEvent.occurrence_index)
+            )
         else:  # ALL
-            query = select(BlockingEvent).where(
-                BlockingEvent.recurring_series_id == event.recurring_series_id
-            ).order_by(BlockingEvent.occurrence_index)
+            query = (
+                select(BlockingEvent)
+                .where(BlockingEvent.recurring_series_id == event.recurring_series_id)
+                .order_by(BlockingEvent.occurrence_index)
+            )
 
         result = await session.execute(query)
         affected_events = list(result.scalars().all())
@@ -4114,8 +4065,7 @@ async def update_blocking_event_with_scope(
                     evt.event_type = BlockingEventType(request.event_type)
                 except ValueError:
                     raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid event_type: {request.event_type}"
+                        status_code=400, detail=f"Invalid event_type: {request.event_type}"
                     )
 
             # Apply time deltas (preserves each event's date but changes time)
@@ -4128,7 +4078,7 @@ async def update_blocking_event_with_scope(
             if evt.end_time <= evt.start_time:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"end_time must be after start_time for event on {evt.start_time.date()}"
+                    detail=f"end_time must be after start_time for event on {evt.start_time.date()}",
                 )
 
             # Reset exception flag since it now matches the update
@@ -4140,6 +4090,7 @@ async def update_blocking_event_with_scope(
 
         # Fire-and-forget GCal updates for all updated events
         from agent.services.gcal_push_service import update_blocking_event_in_gcal
+
         for evt in updated_events:
             if evt.google_calendar_event_id:
                 asyncio.create_task(
@@ -4208,9 +4159,7 @@ async def delete_blocking_event_with_scope(
 
     async with get_async_session() as session:
         # Get the event
-        result = await session.execute(
-            select(BlockingEvent).where(BlockingEvent.id == event_id)
-        )
+        result = await session.execute(select(BlockingEvent).where(BlockingEvent.id == event_id))
         event = result.scalar_one_or_none()
 
         if not event:
@@ -4326,10 +4275,7 @@ async def get_calendar_events(
         try:
             stylist_uuid_list = [UUID(sid.strip()) for sid in stylist_ids.split(",")]
         except ValueError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid stylist_ids format: {e}"
-            )
+            raise HTTPException(status_code=400, detail=f"Invalid stylist_ids format: {e}")
         # Load stylists with their colors
         async with get_async_session() as session:
             result = await session.execute(
@@ -4358,7 +4304,9 @@ async def get_calendar_events(
     for i, sid in enumerate(stylist_uuid_list):
         sid_str = str(sid)
         db_color = stylist_colors_db.get(sid_str)
-        stylist_color_map[sid_str] = db_color if db_color else STYLIST_COLORS[i % len(STYLIST_COLORS)]
+        stylist_color_map[sid_str] = (
+            db_color if db_color else STYLIST_COLORS[i % len(STYLIST_COLORS)]
+        )
 
     # Apply stylist colors to appointment events
     for event in events:
@@ -4391,6 +4339,7 @@ async def list_holidays(
 
         if year:
             from sqlalchemy import extract
+
             query = query.where(extract("year", Holiday.date) == year)
 
         result = await session.execute(query)
@@ -4412,6 +4361,7 @@ async def list_holidays(
 
 class CreateHolidayRequest(BaseModel):
     """Request schema for creating a holiday."""
+
     date: str  # YYYY-MM-DD format
     name: str = Field(..., min_length=1, max_length=200)
     is_all_day: bool = True
@@ -4428,20 +4378,14 @@ async def create_holiday(
     try:
         holiday_date = date_type.fromisoformat(request.date)
     except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid date format. Use YYYY-MM-DD"
-        )
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
     async with get_async_session() as session:
         # Check if holiday already exists for this date
-        existing = await session.execute(
-            select(Holiday).where(Holiday.date == holiday_date)
-        )
+        existing = await session.execute(select(Holiday).where(Holiday.date == holiday_date))
         if existing.scalar_one_or_none():
             raise HTTPException(
-                status_code=409,
-                detail=f"Holiday already exists for date {request.date}"
+                status_code=409, detail=f"Holiday already exists for date {request.date}"
             )
 
         holiday = Holiday(
@@ -4469,9 +4413,7 @@ async def delete_holiday(
 ):
     """Delete a holiday."""
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Holiday).where(Holiday.id == holiday_id)
-        )
+        result = await session.execute(select(Holiday).where(Holiday.id == holiday_id))
         holiday = result.scalar_one_or_none()
 
         if not holiday:
@@ -4505,8 +4447,10 @@ async def list_conversations(
     """
     import json
     import pickle
+
     try:
         from shared.redis_client import get_redis_client
+
         redis_client = get_redis_client()
     except Exception:
         redis_client = None
@@ -4569,7 +4513,9 @@ async def list_conversations(
 
                         messages = state.get("messages", [])
                         msg_count = len(messages)
-                        customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
+                        customer_name = state.get("customer_name") or state.get(
+                            "pending_whatsapp_name"
+                        )
                         customer_id = state.get("customer_id")
                         summary = state.get("conversation_summary")
 
@@ -4577,23 +4523,33 @@ async def list_conversations(
                         started_at = None
                         ended_at = None
                         if messages:
-                            first_ts = messages[0].get("timestamp") if isinstance(messages[0], dict) else None
-                            last_ts = messages[-1].get("timestamp") if isinstance(messages[-1], dict) else None
+                            first_ts = (
+                                messages[0].get("timestamp")
+                                if isinstance(messages[0], dict)
+                                else None
+                            )
+                            last_ts = (
+                                messages[-1].get("timestamp")
+                                if isinstance(messages[-1], dict)
+                                else None
+                            )
                             started_at = first_ts
                             ended_at = last_ts
 
-                        redis_items.append({
-                            "id": f"redis:{thread_id}",  # Synthetic ID — no DB row yet
-                            "conversation_id": thread_id,
-                            "customer_id": str(customer_id) if customer_id else None,
-                            "customer_name": customer_name,
-                            "started_at": started_at,
-                            "ended_at": ended_at,
-                            "message_count": msg_count,
-                            "summary": summary,
-                            "created_at": started_at,
-                            "source": "redis",
-                        })
+                        redis_items.append(
+                            {
+                                "id": f"redis:{thread_id}",  # Synthetic ID — no DB row yet
+                                "conversation_id": thread_id,
+                                "customer_id": str(customer_id) if customer_id else None,
+                                "customer_name": customer_name,
+                                "started_at": started_at,
+                                "ended_at": ended_at,
+                                "message_count": msg_count,
+                                "summary": summary,
+                                "created_at": started_at,
+                                "source": "redis",
+                            }
+                        )
                 except Exception as e:
                     logger.warning(f"Could not read active Redis conversations: {e}")
 
@@ -4613,10 +4569,7 @@ async def list_conversations(
             }
     except Exception as e:
         logger.error(f"Error listing conversations: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve conversations: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve conversations: {str(e)}")
 
 
 @router.get("/conversations/{conversation_id}")
@@ -4637,9 +4590,10 @@ async def get_conversation(
 
     # --- Redis-sourced active conversation ---
     if conversation_id.startswith("redis:"):
-        thread_id = conversation_id[len("redis:"):]
+        thread_id = conversation_id[len("redis:") :]
         try:
             from shared.redis_client import get_redis_client
+
             redis_client = get_redis_client()
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"Redis unavailable: {e}")
@@ -4652,12 +4606,14 @@ async def get_conversation(
         messages = []
         for m in raw_messages:
             if isinstance(m, dict):
-                messages.append({
-                    "role": m.get("role", "unknown"),
-                    "content": m.get("content", ""),
-                    "created_at": m.get("timestamp"),
-                    "chatwoot_message_id": None,
-                })
+                messages.append(
+                    {
+                        "role": m.get("role", "unknown"),
+                        "content": m.get("content", ""),
+                        "created_at": m.get("timestamp"),
+                        "chatwoot_message_id": None,
+                    }
+                )
 
         customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
         customer_id = state.get("customer_id")
@@ -4750,7 +4706,7 @@ async def delete_conversation_endpoint(
 
     # --- Redis-only delete (active conversation not yet archived) ---
     if conversation_uuid.startswith("redis:"):
-        thread_id = conversation_uuid[len("redis:"):]
+        thread_id = conversation_uuid[len("redis:") :]
         try:
             redis_client = get_redis_client()
         except Exception as exc:
@@ -4890,27 +4846,31 @@ async def global_search(
         )
 
     search_pattern = f"%{q}%"
-    results = GlobalSearchResponse(
-        customers=[], appointments=[], services=[], stylists=[], total=0
-    )
+    results = GlobalSearchResponse(customers=[], appointments=[], services=[], stylists=[], total=0)
 
     async with get_async_session() as session:
         # Search Customers
-        customers_query = select(Customer).where(
-            (Customer.phone.ilike(search_pattern))
-            | (Customer.first_name.ilike(search_pattern))
-            | (Customer.last_name.ilike(search_pattern))
-        ).limit(limit)
+        customers_query = (
+            select(Customer)
+            .where(
+                (Customer.phone.ilike(search_pattern))
+                | (Customer.first_name.ilike(search_pattern))
+                | (Customer.last_name.ilike(search_pattern))
+            )
+            .limit(limit)
+        )
 
         customers_result = await session.execute(customers_query)
         for c in customers_result.scalars().all():
-            results.customers.append(SearchResultItem(
-                id=str(c.id),
-                type="customer",
-                title=f"{c.first_name} {c.last_name or ''}".strip(),
-                subtitle=c.phone,
-                url=f"/customers?highlight={c.id}",
-            ))
+            results.customers.append(
+                SearchResultItem(
+                    id=str(c.id),
+                    type="customer",
+                    title=f"{c.first_name} {c.last_name or ''}".strip(),
+                    subtitle=c.phone,
+                    url=f"/customers?highlight={c.id}",
+                )
+            )
 
         # Search Appointments (recent 90 days)
         ninety_days_ago = datetime.utcnow() - timedelta(days=90)
@@ -4920,7 +4880,7 @@ async def global_search(
                 Appointment.start_time >= ninety_days_ago,
                 (Appointment.first_name.ilike(search_pattern))
                 | (Appointment.last_name.ilike(search_pattern))
-                | (Appointment.notes.ilike(search_pattern))
+                | (Appointment.notes.ilike(search_pattern)),
             )
             .order_by(Appointment.start_time.desc())
             .limit(limit)
@@ -4928,57 +4888,59 @@ async def global_search(
 
         appointments_result = await session.execute(appointments_query)
         for a in appointments_result.scalars().all():
-            results.appointments.append(SearchResultItem(
-                id=str(a.id),
-                type="appointment",
-                title=f"{a.first_name} {a.last_name or ''}".strip(),
-                subtitle=a.start_time.strftime("%d/%m/%Y %H:%M"),
-                url=f"/appointments?highlight={a.id}",
-            ))
+            results.appointments.append(
+                SearchResultItem(
+                    id=str(a.id),
+                    type="appointment",
+                    title=f"{a.first_name} {a.last_name or ''}".strip(),
+                    subtitle=a.start_time.strftime("%d/%m/%Y %H:%M"),
+                    url=f"/appointments?highlight={a.id}",
+                )
+            )
 
         # Search Services
         services_query = (
             select(Service)
-            .where(
-                Service.is_active == True,
-                Service.name.ilike(search_pattern)
-            )
+            .where(Service.is_active == True, Service.name.ilike(search_pattern))
             .limit(limit)
         )
 
         services_result = await session.execute(services_query)
         for s in services_result.scalars().all():
-            results.services.append(SearchResultItem(
-                id=str(s.id),
-                type="service",
-                title=s.name,
-                subtitle=f"{s.duration_minutes} min - {s.category.value}",
-                url=f"/services?highlight={s.id}",
-            ))
+            results.services.append(
+                SearchResultItem(
+                    id=str(s.id),
+                    type="service",
+                    title=s.name,
+                    subtitle=f"{s.duration_minutes} min - {s.category.value}",
+                    url=f"/services?highlight={s.id}",
+                )
+            )
 
         # Search Stylists
         stylists_query = (
             select(Stylist)
-            .where(
-                Stylist.is_active == True,
-                Stylist.name.ilike(search_pattern)
-            )
+            .where(Stylist.is_active == True, Stylist.name.ilike(search_pattern))
             .limit(limit)
         )
 
         stylists_result = await session.execute(stylists_query)
         for st in stylists_result.scalars().all():
-            results.stylists.append(SearchResultItem(
-                id=str(st.id),
-                type="stylist",
-                title=st.name,
-                subtitle=st.category.value,
-                url=f"/stylists?highlight={st.id}",
-            ))
+            results.stylists.append(
+                SearchResultItem(
+                    id=str(st.id),
+                    type="stylist",
+                    title=st.name,
+                    subtitle=st.category.value,
+                    url=f"/stylists?highlight={st.id}",
+                )
+            )
 
         results.total = (
-            len(results.customers) + len(results.appointments) +
-            len(results.services) + len(results.stylists)
+            len(results.customers)
+            + len(results.appointments)
+            + len(results.services)
+            + len(results.stylists)
         )
 
         return results
@@ -5038,7 +5000,7 @@ async def list_notifications(
         # Base query
         query = select(Notification).order_by(
             Notification.is_read.asc(),  # Unread first
-            Notification.created_at.desc()
+            Notification.created_at.desc(),
         )
 
         if not include_read:
@@ -5050,9 +5012,7 @@ async def list_notifications(
         notifications = result.scalars().all()
 
         # Get unread count
-        unread_query = select(func.count(Notification.id)).where(
-            Notification.is_read == False
-        )
+        unread_query = select(func.count(Notification.id)).where(Notification.is_read == False)
         unread_result = await session.execute(unread_query)
         unread_count = unread_result.scalar() or 0
 
@@ -5222,16 +5182,12 @@ async def list_notifications_paginated(
         notifications = result.scalars().all()
 
         # Get unread count (global)
-        unread_query = select(func.count(Notification.id)).where(
-            Notification.is_read == False
-        )
+        unread_query = select(func.count(Notification.id)).where(Notification.is_read == False)
         unread_result = await session.execute(unread_query)
         unread_count = unread_result.scalar() or 0
 
         # Get starred count (global)
-        starred_query = select(func.count(Notification.id)).where(
-            Notification.is_starred == True
-        )
+        starred_query = select(func.count(Notification.id)).where(Notification.is_starred == True)
         starred_result = await session.execute(starred_query)
         starred_count = starred_result.scalar() or 0
 
@@ -5277,10 +5233,9 @@ async def get_notification_stats(
 
     async with get_async_session() as session:
         # Count by type
-        type_query = select(
-            Notification.type,
-            func.count(Notification.id)
-        ).group_by(Notification.type)
+        type_query = select(Notification.type, func.count(Notification.id)).group_by(
+            Notification.type
+        )
         type_result = await session.execute(type_query)
         by_type = {row[0].value: row[1] for row in type_result.fetchall()}
 
@@ -5292,21 +5247,17 @@ async def get_notification_stats(
 
         # Trend data (last N days)
         start_date = datetime.utcnow() - timedelta(days=days)
-        trend_query = select(
-            cast(Notification.created_at, Date).label("date"),
-            func.count(Notification.id).label("count")
-        ).where(
-            Notification.created_at >= start_date
-        ).group_by(
-            cast(Notification.created_at, Date)
-        ).order_by(
-            cast(Notification.created_at, Date)
+        trend_query = (
+            select(
+                cast(Notification.created_at, Date).label("date"),
+                func.count(Notification.id).label("count"),
+            )
+            .where(Notification.created_at >= start_date)
+            .group_by(cast(Notification.created_at, Date))
+            .order_by(cast(Notification.created_at, Date))
         )
         trend_result = await session.execute(trend_query)
-        trend = [
-            {"date": str(row.date), "count": row.count}
-            for row in trend_result.fetchall()
-        ]
+        trend = [{"date": str(row.date), "count": row.count} for row in trend_result.fetchall()]
 
         # Total count
         total_query = select(func.count(Notification.id))
@@ -5314,16 +5265,12 @@ async def get_notification_stats(
         total = total_result.scalar() or 0
 
         # Unread count
-        unread_query = select(func.count(Notification.id)).where(
-            Notification.is_read == False
-        )
+        unread_query = select(func.count(Notification.id)).where(Notification.is_read == False)
         unread_result = await session.execute(unread_query)
         unread = unread_result.scalar() or 0
 
         # Starred count
-        starred_query = select(func.count(Notification.id)).where(
-            Notification.is_starred == True
-        )
+        starred_query = select(func.count(Notification.id)).where(Notification.is_starred == True)
         starred_result = await session.execute(starred_query)
         starred = starred_result.scalar() or 0
 
@@ -5419,9 +5366,7 @@ async def delete_notification(
         if not notification:
             raise HTTPException(status_code=404, detail="Notification not found")
 
-        await session.execute(
-            sql_delete(Notification).where(Notification.id == notification_id)
-        )
+        await session.execute(sql_delete(Notification).where(Notification.id == notification_id))
         await session.commit()
 
         return {"success": True}
@@ -5495,20 +5440,22 @@ async def export_notifications(
         writer = csv.writer(output)
 
         # Header
-        writer.writerow([
-            "ID",
-            "Tipo",
-            "Categoria",
-            "Titulo",
-            "Mensaje",
-            "Entidad",
-            "ID Entidad",
-            "Leida",
-            "Favorita",
-            "Fecha Creacion",
-            "Fecha Lectura",
-            "Fecha Favorita",
-        ])
+        writer.writerow(
+            [
+                "ID",
+                "Tipo",
+                "Categoria",
+                "Titulo",
+                "Mensaje",
+                "Entidad",
+                "ID Entidad",
+                "Leida",
+                "Favorita",
+                "Fecha Creacion",
+                "Fecha Lectura",
+                "Fecha Favorita",
+            ]
+        )
 
         # Get category for each type
         def get_category(notification_type: str) -> str:
@@ -5519,20 +5466,22 @@ async def export_notifications(
 
         # Data rows
         for n in notifications:
-            writer.writerow([
-                str(n.id),
-                n.type.value,
-                get_category(n.type.value),
-                n.title,
-                n.message,
-                n.entity_type,
-                str(n.entity_id) if n.entity_id else "",
-                "Si" if n.is_read else "No",
-                "Si" if n.is_starred else "No",
-                n.created_at.isoformat() if n.created_at else "",
-                n.read_at.isoformat() if n.read_at else "",
-                n.starred_at.isoformat() if n.starred_at else "",
-            ])
+            writer.writerow(
+                [
+                    str(n.id),
+                    n.type.value,
+                    get_category(n.type.value),
+                    n.title,
+                    n.message,
+                    n.entity_type,
+                    str(n.entity_id) if n.entity_id else "",
+                    "Si" if n.is_read else "No",
+                    "Si" if n.is_starred else "No",
+                    n.created_at.isoformat() if n.created_at else "",
+                    n.read_at.isoformat() if n.read_at else "",
+                    n.starred_at.isoformat() if n.starred_at else "",
+                ]
+            )
 
         output.seek(0)
 

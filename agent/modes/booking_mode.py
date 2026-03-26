@@ -652,6 +652,12 @@ class BookingMode(BaseModeNode):
         # ── Hard gate: always inject real customer_id ──────────────────────
         tool_args["customer_id"] = ctx.customer_id
 
+        # ── Inject appointment notes from context (never from LLM) ────────
+        if ctx.notes and ctx.notes.strip():
+            tool_args["notes"] = ctx.notes.strip()
+        else:
+            tool_args.setdefault("notes", None)
+
         # ── slot_index resolution ──────────────────────────────────────────
         offered = ctx.offered_slots if ctx else None
         slot_index = tool_args.get("slot_index")

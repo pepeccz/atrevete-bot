@@ -86,7 +86,7 @@ async def _retry_with_backoff(
                 raise
             last_exception = e
             if attempt < max_retries - 1:
-                delay = base_delay * (2 ** attempt)
+                delay = base_delay * (2**attempt)
                 logger.warning(
                     f"GCal {operation_name} failed (attempt {attempt + 1}/{max_retries}), "
                     f"retrying in {delay}s: {e}"
@@ -95,7 +95,7 @@ async def _retry_with_backoff(
         except Exception as e:
             last_exception = e
             if attempt < max_retries - 1:
-                delay = base_delay * (2 ** attempt)
+                delay = base_delay * (2**attempt)
                 logger.warning(
                     f"GCal {operation_name} failed (attempt {attempt + 1}/{max_retries}), "
                     f"retrying in {delay}s: {e}"
@@ -108,13 +108,13 @@ async def _retry_with_backoff(
 
 # Event color codes for Google Calendar
 EVENT_COLORS = {
-    "pending": "5",      # Yellow
-    "confirmed": "10",   # Green
-    "vacation": "11",    # Red
-    "meeting": "6",      # Orange
-    "break": "2",        # Green (lighter)
-    "general": "8",      # Gray
-    "personal": "14",    # Pink
+    "pending": "5",  # Yellow
+    "confirmed": "10",  # Green
+    "vacation": "11",  # Red
+    "meeting": "6",  # Orange
+    "break": "2",  # Green (lighter)
+    "general": "8",  # Gray
+    "personal": "14",  # Pink
 }
 
 
@@ -151,6 +151,7 @@ async def _get_stylist_calendar_id(stylist_id: UUID) -> Optional[str]:
     try:
         async with get_async_session() as session:
             from sqlalchemy import select
+
             result = await session.execute(
                 select(Stylist.google_calendar_id).where(Stylist.id == stylist_id)
             )
@@ -171,6 +172,7 @@ async def push_appointment_to_gcal(
     duration_minutes: int,
     status: str = "pending",
     customer_phone: str | None = None,
+    notes: str | None = None,
 ) -> Optional[str]:
     """
     Push an appointment to Google Calendar as a fire-and-forget operation.
@@ -186,6 +188,7 @@ async def push_appointment_to_gcal(
         start_time: Appointment start time (timezone-aware)
         duration_minutes: Duration of the appointment
         status: "pending" or "confirmed" (affects color and emoji)
+        notes: Optional appointment notes shown in GCal description
 
     Returns:
         Google Calendar event ID if successful, None if failed
@@ -224,12 +227,15 @@ async def push_appointment_to_gcal(
             summary = f"{customer_name} - {service_names}{phone_suffix}"
 
         # Build event description
-        description = (
-            f"Cliente: {customer_name}\n"
-            f"Servicios: {service_names}\n"
-            f"Estado: {status}\n"
-            f"ID de la cita: {appointment_id}"
-        )
+        description_parts = [
+            f"Cliente: {customer_name}",
+            f"Servicios: {service_names}",
+            f"Estado: {status}",
+            f"ID de la cita: {appointment_id}",
+        ]
+        if notes:
+            description_parts.insert(2, f"Notas: {notes[:500]}")
+        description = "\n".join(description_parts)
 
         # Determine color based on status
         color_id = EVENT_COLORS.get(status, "5")
@@ -258,11 +264,16 @@ async def push_appointment_to_gcal(
 
         async def create_event_with_retry():
             def create_event():
-                return service.events().insert(
-                    calendarId=calendar_id,
-                    body=event_body,
-                    requestId=request_id,
-                ).execute()
+                return (
+                    service.events()
+                    .insert(
+                        calendarId=calendar_id,
+                        body=event_body,
+                        requestId=request_id,
+                    )
+                    .execute()
+                )
+
             return await loop.run_in_executor(None, create_event)
 
         event = await _retry_with_backoff(
@@ -271,10 +282,7 @@ async def push_appointment_to_gcal(
         )
 
         event_id = event.get("id")
-        logger.info(
-            f"Pushed appointment {appointment_id} to Google Calendar: "
-            f"event_id={event_id}"
-        )
+        logger.info(f"Pushed appointment {appointment_id} to Google Calendar: event_id={event_id}")
 
         # Update appointment with Google Calendar event ID
         if event_id:
@@ -284,14 +292,12 @@ async def push_appointment_to_gcal(
 
     except HttpError as e:
         logger.error(
-            f"Google Calendar API error pushing appointment {appointment_id}: {e}",
-            exc_info=True
+            f"Google Calendar API error pushing appointment {appointment_id}: {e}", exc_info=True
         )
         return None
     except Exception as e:
         logger.error(
-            f"Error pushing appointment {appointment_id} to Google Calendar: {e}",
-            exc_info=True
+            f"Error pushing appointment {appointment_id} to Google Calendar: {e}", exc_info=True
         )
         return None
 
@@ -316,8 +322,7 @@ async def _update_appointment_gcal_id(appointment_id: UUID, event_id: str) -> No
 
     except Exception as e:
         logger.error(
-            f"Failed to update appointment {appointment_id} with gcal event ID: {e}",
-            exc_info=True
+            f"Failed to update appointment {appointment_id} with gcal event ID: {e}", exc_info=True
         )
 
 
@@ -391,19 +396,22 @@ async def push_blocking_event_to_gcal(
         blocking_request_id = str(blocking_event_id)
 
         def create_event():
-            return service.events().insert(
-                calendarId=calendar_id,
-                body=event_body,
-                requestId=blocking_request_id,
-            ).execute()
+            return (
+                service.events()
+                .insert(
+                    calendarId=calendar_id,
+                    body=event_body,
+                    requestId=blocking_request_id,
+                )
+                .execute()
+            )
 
         loop = asyncio.get_event_loop()
         event = await loop.run_in_executor(None, create_event)
 
         event_id = event.get("id")
         logger.info(
-            f"Pushed blocking event {blocking_event_id} to Google Calendar: "
-            f"event_id={event_id}"
+            f"Pushed blocking event {blocking_event_id} to Google Calendar: event_id={event_id}"
         )
 
         # Update blocking event with Google Calendar event ID
@@ -415,13 +423,13 @@ async def push_blocking_event_to_gcal(
     except HttpError as e:
         logger.error(
             f"Google Calendar API error pushing blocking event {blocking_event_id}: {e}",
-            exc_info=True
+            exc_info=True,
         )
         return None
     except Exception as e:
         logger.error(
             f"Error pushing blocking event {blocking_event_id} to Google Calendar: {e}",
-            exc_info=True
+            exc_info=True,
         )
         return None
 
@@ -449,7 +457,7 @@ async def _update_blocking_event_gcal_id(blocking_event_id: UUID, event_id: str)
     except Exception as e:
         logger.error(
             f"Failed to update blocking event {blocking_event_id} with gcal event ID: {e}",
-            exc_info=True
+            exc_info=True,
         )
 
 
@@ -463,6 +471,7 @@ async def update_appointment_in_gcal(
     duration_minutes: int,
     status: str = "confirmed",
     customer_phone: str | None = None,
+    notes: str | None = None,
 ) -> bool:
     """
     Update an existing appointment in Google Calendar (full update).
@@ -509,12 +518,15 @@ async def update_appointment_in_gcal(
             summary = f"{customer_name} - {service_names}{phone_suffix}"
 
         # Build event description
-        description = (
-            f"Customer: {customer_name}\n"
-            f"Services: {service_names}\n"
-            f"Status: {status}\n"
-            f"Appointment ID: {appointment_id}"
-        )
+        description_parts = [
+            f"Cliente: {customer_name}",
+            f"Servicios: {service_names}",
+            f"Estado: {status}",
+            f"ID de la cita: {appointment_id}",
+        ]
+        if notes:
+            description_parts.insert(2, f"Notas: {notes[:500]}")
+        description = "\n".join(description_parts)
 
         # Determine color based on status
         color_id = EVENT_COLORS.get(status, "5")
@@ -538,20 +550,21 @@ async def update_appointment_in_gcal(
         service = await _get_calendar_service()
 
         def update_event():
-            return service.events().patch(
-                calendarId=calendar_id,
-                eventId=event_id,
-                body=update_body,
-            ).execute()
+            return (
+                service.events()
+                .patch(
+                    calendarId=calendar_id,
+                    eventId=event_id,
+                    body=update_body,
+                )
+                .execute()
+            )
 
         # Run in thread pool to not block the event loop
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, update_event)
 
-        logger.info(
-            f"Updated appointment {appointment_id} in Google Calendar: "
-            f"event_id={event_id}"
-        )
+        logger.info(f"Updated appointment {appointment_id} in Google Calendar: event_id={event_id}")
         return True
 
     except HttpError as e:
@@ -562,14 +575,12 @@ async def update_appointment_in_gcal(
             )
             return False
         logger.error(
-            f"Google Calendar API error updating appointment {appointment_id}: {e}",
-            exc_info=True
+            f"Google Calendar API error updating appointment {appointment_id}: {e}", exc_info=True
         )
         return False
     except Exception as e:
         logger.error(
-            f"Error updating appointment {appointment_id} in Google Calendar: {e}",
-            exc_info=True
+            f"Error updating appointment {appointment_id} in Google Calendar: {e}", exc_info=True
         )
         return False
 
@@ -645,18 +656,21 @@ async def update_blocking_event_in_gcal(
         service = await _get_calendar_service()
 
         def update_event():
-            return service.events().patch(
-                calendarId=calendar_id,
-                eventId=event_id,
-                body=update_body,
-            ).execute()
+            return (
+                service.events()
+                .patch(
+                    calendarId=calendar_id,
+                    eventId=event_id,
+                    body=update_body,
+                )
+                .execute()
+            )
 
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, update_event)
 
         logger.info(
-            f"Updated blocking event {blocking_event_id} in Google Calendar: "
-            f"event_id={event_id}"
+            f"Updated blocking event {blocking_event_id} in Google Calendar: event_id={event_id}"
         )
         return True
 
@@ -669,13 +683,13 @@ async def update_blocking_event_in_gcal(
             return False
         logger.error(
             f"Google Calendar API error updating blocking event {blocking_event_id}: {e}",
-            exc_info=True
+            exc_info=True,
         )
         return False
     except Exception as e:
         logger.error(
             f"Error updating blocking event {blocking_event_id} in Google Calendar: {e}",
-            exc_info=True
+            exc_info=True,
         )
         return False
 
@@ -699,8 +713,7 @@ async def delete_gcal_event(
         calendar_id = await _get_stylist_calendar_id(stylist_id)
         if not calendar_id:
             logger.warning(
-                f"Cannot delete event {event_id}: "
-                f"No calendar ID found for stylist {stylist_id}"
+                f"Cannot delete event {event_id}: No calendar ID found for stylist {stylist_id}"
             )
             return False
 
@@ -758,8 +771,7 @@ async def update_gcal_event_status(
         calendar_id = await _get_stylist_calendar_id(stylist_id)
         if not calendar_id:
             logger.warning(
-                f"Cannot update event {event_id}: "
-                f"No calendar ID found for stylist {stylist_id}"
+                f"Cannot update event {event_id}: No calendar ID found for stylist {stylist_id}"
             )
             return False
 
@@ -781,14 +793,19 @@ async def update_gcal_event_status(
 
         async def update_event_with_retry():
             def update_event():
-                return service.events().patch(
-                    calendarId=calendar_id,
-                    eventId=event_id,
-                    body={
-                        "summary": summary,
-                        "colorId": color_id,
-                    },
-                ).execute()
+                return (
+                    service.events()
+                    .patch(
+                        calendarId=calendar_id,
+                        eventId=event_id,
+                        body={
+                            "summary": summary,
+                            "colorId": color_id,
+                        },
+                    )
+                    .execute()
+                )
+
             return await loop.run_in_executor(None, update_event)
 
         await _retry_with_backoff(
@@ -818,6 +835,7 @@ async def fire_and_forget_push_appointment(
     start_time: datetime,
     duration_minutes: int,
     status: str = "pending",
+    notes: str | None = None,
 ) -> None:
     """
     Schedule appointment push as a background task (truly fire-and-forget).
@@ -836,6 +854,7 @@ async def fire_and_forget_push_appointment(
             start_time=start_time,
             duration_minutes=duration_minutes,
             status=status,
+            notes=notes,
         )
     )
     logger.info(f"Scheduled fire-and-forget push for appointment {appointment_id}")

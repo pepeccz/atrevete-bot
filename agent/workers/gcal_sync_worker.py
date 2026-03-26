@@ -143,9 +143,7 @@ async def create_notification(
         logger.error(f"Failed to create notification: {e}")
 
 
-async def get_or_create_sync_state(
-    session, stylist_id: UUID
-) -> GCalSyncState:
+async def get_or_create_sync_state(session, stylist_id: UUID) -> GCalSyncState:
     """Get or create sync state for a stylist."""
     result = await session.execute(
         select(GCalSyncState).where(GCalSyncState.stylist_id == stylist_id)
@@ -362,6 +360,7 @@ async def recreate_appointment(
             duration_minutes=appointment.duration_minutes,
             status=appointment.status.value if appointment.status else "pending",
             customer_phone=appointment.customer.phone if appointment.customer else None,
+            notes=appointment.notes,
         )
 
         if new_event_id:
@@ -369,9 +368,7 @@ async def recreate_appointment(
             appointment.google_calendar_event_id = new_event_id
             await session.commit()
 
-            logger.info(
-                f"Recreated appointment {appointment.id} in GCal: {new_event_id}"
-            )
+            logger.info(f"Recreated appointment {appointment.id} in GCal: {new_event_id}")
             return "recreated", None
         else:
             return "error", "Failed to recreate in GCal"
@@ -509,9 +506,7 @@ async def create_blocking_event_from_gcal(
         session.add(blocking_event)
         await session.commit()
 
-        logger.info(
-            f"Created BlockingEvent {blocking_event.id} from GCal event {event_id}"
-        )
+        logger.info(f"Created BlockingEvent {blocking_event.id} from GCal event {event_id}")
         return "created", None
 
     except Exception as e:
@@ -544,9 +539,7 @@ def parse_gcal_datetime(dt_dict: dict) -> Optional[datetime]:
     return None
 
 
-async def sync_stylist_calendar(
-    session, stylist: Stylist
-) -> dict[str, int]:
+async def sync_stylist_calendar(session, stylist: Stylist) -> dict[str, int]:
     """
     Sync a single stylist's Google Calendar.
 
@@ -603,9 +596,7 @@ async def sync_stylist_calendar(
         return stats
 
     except Exception as e:
-        logger.error(
-            f"Error syncing calendar for stylist {stylist.name}: {e}", exc_info=True
-        )
+        logger.error(f"Error syncing calendar for stylist {stylist.name}: {e}", exc_info=True)
         # Update sync state with error
         try:
             sync_state = await get_or_create_sync_state(session, stylist.id)
@@ -673,9 +664,7 @@ async def recover_missing_gcal_pushes(session) -> dict[str, int]:
                 )
 
                 # Get customer phone
-                customer_phone = (
-                    appointment.customer.phone if appointment.customer else None
-                )
+                customer_phone = appointment.customer.phone if appointment.customer else None
 
                 # Push to Google Calendar
                 event_id = await push_appointment_to_gcal(
@@ -687,15 +676,14 @@ async def recover_missing_gcal_pushes(session) -> dict[str, int]:
                     duration_minutes=appointment.duration_minutes,
                     status=appointment.status.value,
                     customer_phone=customer_phone,
+                    notes=appointment.notes,
                 )
 
                 if event_id:
                     appointment.google_calendar_event_id = event_id
                     await session.commit()
                     stats["appointments_recovered"] += 1
-                    logger.info(
-                        f"Recovered appointment {appointment.id} → GCal event {event_id}"
-                    )
+                    logger.info(f"Recovered appointment {appointment.id} → GCal event {event_id}")
                 else:
                     stats["errors"] += 1
                     logger.warning(
@@ -704,9 +692,7 @@ async def recover_missing_gcal_pushes(session) -> dict[str, int]:
 
             except Exception as e:
                 stats["errors"] += 1
-                logger.error(
-                    f"Error recovering appointment {appointment.id}: {e}", exc_info=True
-                )
+                logger.error(f"Error recovering appointment {appointment.id}: {e}", exc_info=True)
 
     except Exception as e:
         stats["errors"] += 1
@@ -727,9 +713,7 @@ async def recover_missing_gcal_pushes(session) -> dict[str, int]:
         blocking_events = result.scalars().all()
 
         if blocking_events:
-            logger.info(
-                f"Found {len(blocking_events)} blocking events without GCal event ID"
-            )
+            logger.info(f"Found {len(blocking_events)} blocking events without GCal event ID")
 
         for event in blocking_events:
             try:
@@ -748,9 +732,7 @@ async def recover_missing_gcal_pushes(session) -> dict[str, int]:
                     event.google_calendar_event_id = event_id
                     await session.commit()
                     stats["blocking_events_recovered"] += 1
-                    logger.info(
-                        f"Recovered blocking event {event.id} → GCal event {event_id}"
-                    )
+                    logger.info(f"Recovered blocking event {event.id} → GCal event {event_id}")
                 else:
                     stats["errors"] += 1
                     logger.warning(
@@ -759,9 +741,7 @@ async def recover_missing_gcal_pushes(session) -> dict[str, int]:
 
             except Exception as e:
                 stats["errors"] += 1
-                logger.error(
-                    f"Error recovering blocking event {event.id}: {e}", exc_info=True
-                )
+                logger.error(f"Error recovering blocking event {event.id}: {e}", exc_info=True)
 
     except Exception as e:
         stats["errors"] += 1
@@ -802,10 +782,15 @@ async def run_gcal_sync() -> None:
             try:
                 recovery_stats = await recover_missing_gcal_pushes(session)
                 total_stats["appointments_recovered"] = recovery_stats["appointments_recovered"]
-                total_stats["blocking_events_recovered"] = recovery_stats["blocking_events_recovered"]
+                total_stats["blocking_events_recovered"] = recovery_stats[
+                    "blocking_events_recovered"
+                ]
                 total_stats["errors"] += recovery_stats["errors"]
 
-                if recovery_stats["appointments_recovered"] > 0 or recovery_stats["blocking_events_recovered"] > 0:
+                if (
+                    recovery_stats["appointments_recovered"] > 0
+                    or recovery_stats["blocking_events_recovered"] > 0
+                ):
                     logger.info(
                         f"Recovery complete: appointments={recovery_stats['appointments_recovered']}, "
                         f"blocking_events={recovery_stats['blocking_events_recovered']}"
@@ -815,9 +800,7 @@ async def run_gcal_sync() -> None:
                 total_stats["errors"] += 1
 
             # Step 2: Get all active stylists for bidirectional sync
-            result = await session.execute(
-                select(Stylist).where(Stylist.is_active == True)
-            )
+            result = await session.execute(select(Stylist).where(Stylist.is_active == True))
             stylists = list(result.scalars().all())
 
             if not stylists:
@@ -835,7 +818,9 @@ async def run_gcal_sync() -> None:
                     total_stats["stylists_synced"] += 1
 
                     # Log individual stylist stats if there were changes
-                    changes = stats["created"] + stats["updated"] + stats["deleted"] + stats["recreated"]
+                    changes = (
+                        stats["created"] + stats["updated"] + stats["deleted"] + stats["recreated"]
+                    )
                     if changes > 0:
                         logger.info(
                             f"Synced {stylist.name}: "
@@ -844,9 +829,7 @@ async def run_gcal_sync() -> None:
                         )
 
                 except Exception as e:
-                    logger.error(
-                        f"Error syncing stylist {stylist.name}: {e}", exc_info=True
-                    )
+                    logger.error(f"Error syncing stylist {stylist.name}: {e}", exc_info=True)
                     total_stats["errors"] += 1
 
     except Exception as e:

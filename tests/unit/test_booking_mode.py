@@ -1337,6 +1337,99 @@ class TestAudienceKeywordsRejectedAsName:
 
 
 # =============================================================================
+# T-09 + T-10: Notes injection in _pre_tool_call
+# =============================================================================
+
+
+class TestNotesInjectionInPreToolCall:
+    """REQ-1: ctx.notes is injected into book() args deterministically."""
+
+    def _make_ctx_with_all_gates(self, notes=None) -> BookingContext:
+        """Return a BookingContext that satisfies all book() precondition gates."""
+        return BookingContext(
+            customer_id="550e8400-e29b-41d4-a716-446655440000",
+            customer_name="María García",
+            selected_services=["Corte de Señora"],
+            offered_slots=[
+                {
+                    "stylist_id": "stylist-aaa",
+                    "full_datetime": "2026-04-01T10:00:00+02:00",
+                    "stylist_name": "Ana",
+                }
+            ],
+            needs_availability_refresh=False,
+            confirmation_shown=True,
+            notes=notes,
+        )
+
+    @pytest.mark.asyncio
+    async def test_notes_injected_when_present(self):
+        """ctx.notes is injected into tool_args['notes'] when set."""
+        mode = make_booking_mode()
+        mode._ctx = self._make_ctx_with_all_gates(notes="alergia al polvo")
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Señora"],
+            "slot_index": 1,
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        assert isinstance(result, dict)
+        assert result.get("notes") == "alergia al polvo"
+
+    @pytest.mark.asyncio
+    async def test_notes_not_injected_when_none(self):
+        """ctx.notes=None → tool_args['notes'] is None (not absent, but defaulted to None)."""
+        mode = make_booking_mode()
+        mode._ctx = self._make_ctx_with_all_gates(notes=None)
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Señora"],
+            "slot_index": 1,
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        assert isinstance(result, dict)
+        # setdefault sets it to None — key is present but value is None
+        assert result.get("notes") is None
+
+    @pytest.mark.asyncio
+    async def test_notes_not_injected_when_empty_string(self):
+        """ctx.notes='' (empty string) → treated as falsy, notes not injected as truthy value."""
+        mode = make_booking_mode()
+        mode._ctx = self._make_ctx_with_all_gates(notes="")
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Señora"],
+            "slot_index": 1,
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        assert isinstance(result, dict)
+        # Empty string is falsy — setdefault(notes, None) is called instead of injecting
+        assert result.get("notes") is None
+
+    @pytest.mark.asyncio
+    async def test_notes_stripped_before_injection(self):
+        """ctx.notes with leading/trailing whitespace → stripped before injection."""
+        mode = make_booking_mode()
+        mode._ctx = self._make_ctx_with_all_gates(notes="  alergia al polvo  ")
+        tool_args = {
+            "customer_id": "FAKE",
+            "services": ["Corte de Señora"],
+            "slot_index": 1,
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        assert isinstance(result, dict)
+        assert result.get("notes") == "alergia al polvo"
+
+
+# =============================================================================
 # T-11: Notes extraction tests
 # =============================================================================
 

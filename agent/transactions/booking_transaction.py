@@ -32,7 +32,15 @@ from agent.validators.transaction_validators import (
     validate_slot_availability,
 )
 from database.connection import get_async_session
-from database.models import Appointment, AppointmentStatus, Customer, Notification, NotificationType, Service, Stylist
+from database.models import (
+    Appointment,
+    AppointmentStatus,
+    Customer,
+    Notification,
+    NotificationType,
+    Service,
+    Stylist,
+)
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -64,7 +72,7 @@ class BookingTransaction:
         first_name: str,
         last_name: str | None,
         notes: str | None,
-        conversation_id: str | None = None
+        conversation_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute atomic booking transaction.
@@ -123,8 +131,8 @@ class BookingTransaction:
                 "customer_id": str(customer_id),
                 "service_count": len(service_ids),
                 "stylist_id": str(stylist_id),
-                "start_time": start_time.isoformat()
-            }
+                "start_time": start_time.isoformat(),
+            },
         )
 
         try:
@@ -133,7 +141,7 @@ class BookingTransaction:
             if not validation_3day["valid"]:
                 logger.warning(
                     f"[{trace_id}] 3-day rule validation failed",
-                    extra={"days_until": validation_3day["days_until_appointment"]}
+                    extra={"days_until": validation_3day["days_until_appointment"]},
                 )
                 return {
                     "success": False,
@@ -141,8 +149,8 @@ class BookingTransaction:
                     "error_message": validation_3day["error_message"],
                     "details": {
                         "days_until_appointment": validation_3day["days_until_appointment"],
-                        "minimum_required_days": validation_3day["minimum_required_days"]
-                    }
+                        "minimum_required_days": validation_3day["minimum_required_days"],
+                    },
                 }
 
             # Step 1b: Validate appointment limit per customer
@@ -152,8 +160,8 @@ class BookingTransaction:
                     f"[{trace_id}] Appointment limit validation failed",
                     extra={
                         "current_count": validation_limit["current_count"],
-                        "max_allowed": validation_limit["max_allowed"]
-                    }
+                        "max_allowed": validation_limit["max_allowed"],
+                    },
                 )
                 return {
                     "success": False,
@@ -161,8 +169,8 @@ class BookingTransaction:
                     "error_message": validation_limit["error_message"],
                     "details": {
                         "current_count": validation_limit["current_count"],
-                        "max_allowed": validation_limit["max_allowed"]
-                    }
+                        "max_allowed": validation_limit["max_allowed"],
+                    },
                 }
 
             # Step 2: Validate category consistency
@@ -170,15 +178,13 @@ class BookingTransaction:
             if not validation_category["valid"]:
                 logger.warning(
                     f"[{trace_id}] Category consistency validation failed",
-                    extra={"categories": validation_category["categories_found"]}
+                    extra={"categories": validation_category["categories_found"]},
                 )
                 return {
                     "success": False,
                     "error_code": validation_category["error_code"],
                     "error_message": validation_category["error_message"],
-                    "details": {
-                        "categories_found": validation_category["categories_found"]
-                    }
+                    "details": {"categories_found": validation_category["categories_found"]},
                 }
 
             # Step 3: Start database transaction with SERIALIZABLE isolation
@@ -195,14 +201,12 @@ class BookingTransaction:
                     if len(services) != len(service_ids):
                         found_ids = {s.id for s in services}
                         missing_ids = set(service_ids) - found_ids
-                        logger.error(
-                            f"[{trace_id}] Service IDs not found: {missing_ids}"
-                        )
+                        logger.error(f"[{trace_id}] Service IDs not found: {missing_ids}")
                         return {
                             "success": False,
                             "error_code": "INVALID_SERVICE_IDS",
                             "error_message": "Uno o más servicios no fueron encontrados",
-                            "details": {"missing_service_ids": [str(sid) for sid in missing_ids]}
+                            "details": {"missing_service_ids": [str(sid) for sid in missing_ids]},
                         }
 
                     total_duration = sum(s.duration_minutes for s in services)
@@ -219,7 +223,7 @@ class BookingTransaction:
                             "success": False,
                             "error_code": "STYLIST_NOT_FOUND",
                             "error_message": "Estilista no encontrado",
-                            "details": {"stylist_id": str(stylist_id)}
+                            "details": {"stylist_id": str(stylist_id)},
                         }
 
                     # Step 3c: Validate slot availability with row lock
@@ -227,13 +231,17 @@ class BookingTransaction:
                         stylist_id=stylist_id,
                         start_time=start_time,
                         duration_minutes=duration_with_buffer,
-                        session=session
+                        session=session,
                     )
 
                     if not validation_slot["available"]:
                         logger.warning(
                             f"[{trace_id}] Slot availability validation failed",
-                            extra={"conflict_id": str(validation_slot.get("conflicting_appointment_id"))}
+                            extra={
+                                "conflict_id": str(
+                                    validation_slot.get("conflicting_appointment_id")
+                                )
+                            },
                         )
                         await session.rollback()
                         return {
@@ -241,10 +249,12 @@ class BookingTransaction:
                             "error_code": validation_slot["error_code"],
                             "error_message": validation_slot["error_message"],
                             "details": {
-                                "conflicting_appointment_id": str(validation_slot["conflicting_appointment_id"])
+                                "conflicting_appointment_id": str(
+                                    validation_slot["conflicting_appointment_id"]
+                                )
                                 if validation_slot.get("conflicting_appointment_id")
                                 else None
-                            }
+                            },
                         }
 
                     # Step 4: Create database appointment record with PENDING status
@@ -260,7 +270,7 @@ class BookingTransaction:
                         status=AppointmentStatus.PENDING,  # Start as PENDING (awaiting 48h confirmation)
                         first_name=first_name,
                         last_name=last_name,
-                        notes=notes
+                        notes=notes,
                     )
 
                     session.add(new_appointment)
@@ -270,8 +280,8 @@ class BookingTransaction:
                         f"[{trace_id}] Appointment record created in DB (PENDING status)",
                         extra={
                             "appointment_id": str(new_appointment.id),
-                            "duration_minutes": total_duration
-                        }
+                            "duration_minutes": total_duration,
+                        },
                     )
 
                     # Update customer's chatwoot_conversation_id if provided
@@ -284,7 +294,7 @@ class BookingTransaction:
                             customer.chatwoot_conversation_id = conversation_id
                             logger.info(
                                 f"[{trace_id}] Updated customer chatwoot_conversation_id",
-                                extra={"conversation_id": conversation_id}
+                                extra={"conversation_id": conversation_id},
                             )
 
                     # Step 5: Commit transaction FIRST (DB is source of truth - DB-first architecture)
@@ -294,10 +304,7 @@ class BookingTransaction:
 
                     logger.info(
                         f"[{trace_id}] Appointment committed to database (DB-first)",
-                        extra={
-                            "appointment_id": str(new_appointment.id),
-                            "status": "PENDING"
-                        }
+                        extra={"appointment_id": str(new_appointment.id), "status": "PENDING"},
                     )
 
                     # Step 6: Push to Google Calendar (fire-and-forget, non-blocking)
@@ -315,8 +322,8 @@ class BookingTransaction:
                             "customer_name": first_name,
                             "services": service_names,
                             "duration": total_duration,
-                            "phone": customer_phone
-                        }
+                            "phone": customer_phone,
+                        },
                     )
 
                     # DB-first: Push is fire-and-forget, failures don't roll back booking
@@ -329,18 +336,19 @@ class BookingTransaction:
                         duration_minutes=total_duration,
                         status="pending",  # Yellow emoji 🟡
                         customer_phone=customer_phone,
+                        notes=notes,
                     )
 
                     if google_event_id:
                         logger.info(
                             f"[{trace_id}] Google Calendar event created successfully 🟡",
-                            extra={"google_event_id": google_event_id}
+                            extra={"google_event_id": google_event_id},
                         )
                     else:
                         # Log warning but don't fail - booking is already committed
                         logger.warning(
                             f"[{trace_id}] Google Calendar push failed (booking still valid)",
-                            extra={"appointment_id": str(new_appointment.id)}
+                            extra={"appointment_id": str(new_appointment.id)},
                         )
 
                     logger.info(
@@ -348,15 +356,35 @@ class BookingTransaction:
                         extra={
                             "appointment_id": str(new_appointment.id),
                             "google_event_id": google_event_id,
-                            "status": "PENDING"
-                        }
+                            "status": "PENDING",
+                        },
                     )
 
                     # Format friendly date and time for confirmation message
                     # Example: "viernes 22 de noviembre a las 10:00"
-                    day_names = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
-                    month_names = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
-                                   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+                    day_names = [
+                        "lunes",
+                        "martes",
+                        "miércoles",
+                        "jueves",
+                        "viernes",
+                        "sábado",
+                        "domingo",
+                    ]
+                    month_names = [
+                        "enero",
+                        "febrero",
+                        "marzo",
+                        "abril",
+                        "mayo",
+                        "junio",
+                        "julio",
+                        "agosto",
+                        "septiembre",
+                        "octubre",
+                        "noviembre",
+                        "diciembre",
+                    ]
 
                     weekday = day_names[start_time.weekday()]
                     day = start_time.day
@@ -396,12 +424,10 @@ class BookingTransaction:
                         await session.commit()
                         logger.info(
                             f"[{trace_id}] Notification created for admin panel",
-                            extra={"notification_type": "APPOINTMENT_CREATED"}
+                            extra={"notification_type": "APPOINTMENT_CREATED"},
                         )
                     except Exception as notif_error:
-                        logger.warning(
-                            f"[{trace_id}] Failed to create notification: {notif_error}"
-                        )
+                        logger.warning(f"[{trace_id}] Failed to create notification: {notif_error}")
 
                     # Return success
                     return {
@@ -428,62 +454,62 @@ class BookingTransaction:
                     logger.error(
                         f"[{trace_id}] Database integrity error",
                         extra={"error": str(e)},
-                        exc_info=True
+                        exc_info=True,
                     )
                     await session.rollback()
 
                     # Try to delete calendar event (cleanup on rollback)
-                    if 'google_event_id' in locals():
+                    if "google_event_id" in locals():
                         try:
                             from agent.tools.calendar_tools import delete_calendar_event
+
                             await delete_calendar_event(
                                 stylist_id=str(stylist_id),
                                 event_id=google_event_id,
-                                conversation_id=trace_id
+                                conversation_id=trace_id,
                             )
                             logger.info(f"[{trace_id}] Cleaned up calendar event on rollback")
                         except Exception as cleanup_error:
                             logger.warning(
                                 f"[{trace_id}] Failed to cleanup calendar event",
-                                extra={"error": str(cleanup_error)}
+                                extra={"error": str(cleanup_error)},
                             )
 
                     return {
                         "success": False,
                         "error_code": "DATABASE_INTEGRITY_ERROR",
                         "error_message": "Error de integridad en la base de datos",
-                        "details": {"error": str(e)}
+                        "details": {"error": str(e)},
                     }
 
                 except SQLAlchemyError as e:
                     logger.error(
-                        f"[{trace_id}] Database error",
-                        extra={"error": str(e)},
-                        exc_info=True
+                        f"[{trace_id}] Database error", extra={"error": str(e)}, exc_info=True
                     )
                     await session.rollback()
 
                     # Try to delete calendar event (cleanup on rollback)
-                    if 'google_event_id' in locals():
+                    if "google_event_id" in locals():
                         try:
                             from agent.tools.calendar_tools import delete_calendar_event
+
                             await delete_calendar_event(
                                 stylist_id=str(stylist_id),
                                 event_id=google_event_id,
-                                conversation_id=trace_id
+                                conversation_id=trace_id,
                             )
                             logger.info(f"[{trace_id}] Cleaned up calendar event on rollback")
                         except Exception as cleanup_error:
                             logger.warning(
                                 f"[{trace_id}] Failed to cleanup calendar event",
-                                extra={"error": str(cleanup_error)}
+                                extra={"error": str(cleanup_error)},
                             )
 
                     return {
                         "success": False,
                         "error_code": "DATABASE_ERROR",
                         "error_message": "Error al crear la reserva en la base de datos",
-                        "details": {"error": str(e)}
+                        "details": {"error": str(e)},
                     }
 
                 finally:
@@ -494,11 +520,11 @@ class BookingTransaction:
             logger.error(
                 f"[{trace_id}] Unexpected error in booking transaction",
                 extra={"error": str(e)},
-                exc_info=True
+                exc_info=True,
             )
             return {
                 "success": False,
                 "error_code": "BOOKING_TRANSACTION_ERROR",
                 "error_message": "Error inesperado al procesar la reserva",
-                "details": {"error": str(e)}
+                "details": {"error": str(e)},
             }
