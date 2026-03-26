@@ -464,15 +464,16 @@ async def build_layered_messages(
     history_limit: int = 6,
     mode_name: str | None = None,
     substep: str | None = None,
-) -> list:
+    dynamic_context_override: str | None = None,
+) -> tuple[list, int]:
     """
     Build a complete message list using the layered prompt approach.
 
-    Returns messages in the format:
-    1. SystemMessage: Cached system prompt (from shared/)
-    2. SystemMessage: Optional mode overlay
-    3. HumanMessage: Dynamic step context
-    4. Recent conversation history (optional)
+    Assembly order (AD1 — dynamic context last for recency attention):
+    1. SystemMessage: Cached system prompt (from shared/) — ~800 tokens
+    2. SystemMessage: Optional mode overlay — ~200-900 tokens
+    3. HumanMessage/AIMessage: Recent conversation history (optional)
+    4. SystemMessage: Dynamic context — LAST for model recency attention (~200-600 tokens)
 
     Args:
         state: Current conversation state
@@ -482,15 +483,18 @@ async def build_layered_messages(
         history_limit: Max number of history messages to include
         mode_name: Optional active mode name for overlay loading
         substep: Optional booking substep override
+        dynamic_context_override: If provided, replaces the default build_step_context()
+            output. Used by BookingMode to inject its richer dynamic context.
 
     Returns:
-        list: List of LangChain message objects
+        tuple[list, int]: (messages, dynamic_context_index) where dynamic_context_index
+            is the index of the dynamic context SystemMessage for mid-loop refresh.
     """
     from langchain_core.messages import AIMessage
 
     messages = []
 
-    # 1. System prompt (cached, ~2,200 tokens)
+    # 1. System prompt (cached, ~800 tokens)
     system_prompt = await get_system_prompt()
     messages.append(SystemMessage(content=system_prompt))
 
@@ -499,13 +503,7 @@ async def build_layered_messages(
     if mode_overlay:
         messages.append(SystemMessage(content=mode_overlay))
 
-    # 3. Dynamic context (~300 tokens)
-    # CRITICAL: Must be SystemMessage so the LLM treats it as internal context.
-    # Using HumanMessage causes the LLM to echo it back to the user (context leak).
-    dynamic_context = build_step_context(state, mode_context, step_info)
-    messages.append(SystemMessage(content=dynamic_context))
-
-    # 4. Recent conversation history (if enabled)
+    # 3. Recent conversation history (if enabled)
     if include_history:
         for msg in state.get("messages", [])[-history_limit:]:
             role = msg.get("role", "user")
@@ -515,7 +513,17 @@ async def build_layered_messages(
             elif role == "assistant":
                 messages.append(AIMessage(content=content))
 
-    return messages
+    # 4. Dynamic context — LAST SystemMessage (AD1: recency position for high attention)
+    # CRITICAL: Must be SystemMessage so the LLM treats it as internal context.
+    # Using HumanMessage causes the LLM to echo it back to the user (context leak).
+    if dynamic_context_override is not None:
+        dynamic_content = dynamic_context_override
+    else:
+        dynamic_content = build_step_context(state, mode_context, step_info)
+    dynamic_msg_index = len(messages)
+    messages.append(SystemMessage(content=dynamic_content))
+
+    return messages, dynamic_msg_index
 
 
 __all__ = [
