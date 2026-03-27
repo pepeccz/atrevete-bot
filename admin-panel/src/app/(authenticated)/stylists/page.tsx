@@ -244,7 +244,7 @@ function StylistModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md flex flex-col max-h-[90vh]">
         <DialogHeader>
           <DialogTitle>
             {stylist ? "Editar Estilista" : "Nuevo Estilista"}
@@ -255,201 +255,203 @@ function StylistModal({
               : "Crea un nuevo estilista"}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="name">Nombre *</Label>
-            <Input
-              id="name"
-              value={formData.name}
-              onChange={(e) =>
-                setFormData((prev) => ({ ...prev, name: e.target.value }))
-              }
-              placeholder="Maria Garcia"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="category">Categoria</Label>
-            <Select
-              value={formData.category}
-              onValueChange={(value) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  category: value as ServiceCategory,
-                }))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="HAIRDRESSING">Peluqueria</SelectItem>
-                <SelectItem value="AESTHETICS">Estetica</SelectItem>
-                <SelectItem value="BOTH">Ambos</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="google_calendar_id">Google Calendar</Label>
-            {availableCalendars.length > 0 ? (
-              <>
-                <Select
-                  value={formData.google_calendar_id ?? ""}
-                  onValueChange={(value) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      google_calendar_id: value,
-                    }));
-                    // Clear conflict error when user changes selection
-                    setConflictError(null);
-                  }}
-                  disabled={loadingCalendars}
-                >
-                  <SelectTrigger id="google_calendar_id">
-                    <SelectValue placeholder="Selecciona un calendario..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {calendarOptions.map((option) => {
-                      const isOccupied = option.status === CALENDAR_OPTION_STATUS.OCCUPIED;
-                      const isCurrent = option.status === CALENDAR_OPTION_STATUS.CURRENT;
-
-                      return (
-                        <SelectItem
-                          key={option.calendar.id}
-                          value={option.calendar.id}
-                          disabled={isOccupied}
-                          className={isOccupied ? "text-muted-foreground" : undefined}
-                        >
-                          <div className="flex items-center justify-between w-full gap-4">
-                            <span>{option.calendar.summary}</span>
-                            {isCurrent && (
-                              <Badge variant="outline" className="text-xs">
-                                Actual
-                              </Badge>
-                            )}
-                            {isOccupied && option.ownerStylistName && (
-                              <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 border-red-200">
-                                Ocupado: {option.ownerStylistName}
-                              </Badge>
-                            )}
-                          </div>
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-                {conflictError && (
-                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 border border-red-200">
-                    <p className="font-medium">Conflicto de calendario</p>
-                    <p>{conflictError.message}</p>
-                    {conflictError.stylistNames.length > 0 && (
-                      <p className="mt-1 text-red-600">
-                        Asignado a: {conflictError.stylistNames.join(", ")}
-                      </p>
-                    )}
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Selecciona el calendario de Google de este estilista.
-                  Los calendarios marcados como &quot;Ocupado&quot; ya están asignados a otro estilista.
-                </p>
-              </>
-            ) : (
-              <>
-                <Input
-                  id="google_calendar_id"
-                  value={formData.google_calendar_id ?? ""}
-                  onChange={(e) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      google_calendar_id: e.target.value,
-                    }));
-                    setConflictError(null);
-                  }}
-                  placeholder="calendario@group.calendar.google.com"
-                  disabled={loadingCalendars}
-                />
-                {conflictError && (
-                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 border border-red-200">
-                    <p className="font-medium">Conflicto de calendario</p>
-                    <p>{conflictError.message}</p>
-                    {conflictError.stylistNames.length > 0 && (
-                      <p className="mt-1 text-red-600">
-                        Asignado a: {conflictError.stylistNames.join(", ")}
-                      </p>
-                    )}
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  ID del calendario de Google asociado a este estilista.{" "}
-                  <a
-                    href="/settings/google-calendar"
-                    className="underline hover:text-foreground"
-                  >
-                    Conecta Google Calendar en Ajustes
-                  </a>{" "}
-                  para ver los calendarios disponibles.
-                </p>
-              </>
-            )}
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="is_active"
-              checked={formData.is_active}
-              onCheckedChange={(checked) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  is_active: checked === true,
-                }))
-              }
-            />
-            <Label htmlFor="is_active" className="cursor-pointer">
-              Estilista activo
-            </Label>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Color del calendario</Label>
-            <div className="flex flex-wrap gap-2">
-              {STYLIST_COLORS.map((color) => (
-                <button
-                  key={color.bg}
-                  type="button"
-                  onClick={() =>
-                    setFormData((prev) => ({ ...prev, color: color.bg }))
-                  }
-                  className={`w-8 h-8 rounded-full border-2 transition-all ${
-                    formData.color === color.bg
-                      ? "border-gray-900 scale-110"
-                      : "border-transparent hover:scale-105"
-                  }`}
-                  style={{ backgroundColor: color.bg }}
-                  title={color.name}
-                />
-              ))}
-              <button
-                type="button"
-                onClick={() => setFormData((prev) => ({ ...prev, color: null }))}
-                className={`w-8 h-8 rounded-full border-2 transition-all flex items-center justify-center text-xs ${
-                  formData.color === null
-                    ? "border-gray-900 scale-110 bg-gray-100"
-                    : "border-gray-300 hover:scale-105 bg-gray-50"
-                }`}
-                title="Automático (por orden)"
-              >
-                Auto
-              </button>
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 gap-4">
+          <div className="flex-1 min-h-0 overflow-y-auto px-1 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Nombre *</Label>
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, name: e.target.value }))
+                }
+                placeholder="Maria Garcia"
+                required
+              />
             </div>
-            <p className="text-xs text-muted-foreground">
-              Selecciona un color o deja en automático
-            </p>
+
+            <div className="space-y-2">
+              <Label htmlFor="category">Categoria</Label>
+              <Select
+                value={formData.category}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    category: value as ServiceCategory,
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HAIRDRESSING">Peluqueria</SelectItem>
+                  <SelectItem value="AESTHETICS">Estetica</SelectItem>
+                  <SelectItem value="BOTH">Ambos</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="google_calendar_id">Google Calendar</Label>
+              {availableCalendars.length > 0 ? (
+                <>
+                  <Select
+                    value={formData.google_calendar_id ?? ""}
+                    onValueChange={(value) => {
+                      setFormData((prev) => ({
+                        ...prev,
+                        google_calendar_id: value,
+                      }));
+                      // Clear conflict error when user changes selection
+                      setConflictError(null);
+                    }}
+                    disabled={loadingCalendars}
+                  >
+                    <SelectTrigger id="google_calendar_id">
+                      <SelectValue placeholder="Selecciona un calendario..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {calendarOptions.map((option) => {
+                        const isOccupied = option.status === CALENDAR_OPTION_STATUS.OCCUPIED;
+                        const isCurrent = option.status === CALENDAR_OPTION_STATUS.CURRENT;
+
+                        return (
+                          <SelectItem
+                            key={option.calendar.id}
+                            value={option.calendar.id}
+                            disabled={isOccupied}
+                            className={isOccupied ? "text-muted-foreground" : undefined}
+                          >
+                            <div className="flex items-center justify-between w-full gap-4">
+                              <span>{option.calendar.summary}</span>
+                              {isCurrent && (
+                                <Badge variant="outline" className="text-xs">
+                                  Actual
+                                </Badge>
+                              )}
+                              {isOccupied && option.ownerStylistName && (
+                                <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 border-red-200">
+                                  Ocupado: {option.ownerStylistName}
+                                </Badge>
+                              )}
+                            </div>
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  {conflictError && (
+                    <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 border border-red-200">
+                      <p className="font-medium">Conflicto de calendario</p>
+                      <p>{conflictError.message}</p>
+                      {conflictError.stylistNames.length > 0 && (
+                        <p className="mt-1 text-red-600">
+                          Asignado a: {conflictError.stylistNames.join(", ")}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Selecciona el calendario de Google de este estilista.
+                    Los calendarios marcados como &quot;Ocupado&quot; ya están asignados a otro estilista.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Input
+                    id="google_calendar_id"
+                    value={formData.google_calendar_id ?? ""}
+                    onChange={(e) => {
+                      setFormData((prev) => ({
+                        ...prev,
+                        google_calendar_id: e.target.value,
+                      }));
+                      setConflictError(null);
+                    }}
+                    placeholder="calendario@group.calendar.google.com"
+                    disabled={loadingCalendars}
+                  />
+                  {conflictError && (
+                    <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 border border-red-200">
+                      <p className="font-medium">Conflicto de calendario</p>
+                      <p>{conflictError.message}</p>
+                      {conflictError.stylistNames.length > 0 && (
+                        <p className="mt-1 text-red-600">
+                          Asignado a: {conflictError.stylistNames.join(", ")}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    ID del calendario de Google asociado a este estilista.{" "}
+                    <a
+                      href="/settings/google-calendar"
+                      className="underline hover:text-foreground"
+                    >
+                      Conecta Google Calendar en Ajustes
+                    </a>{" "}
+                    para ver los calendarios disponibles.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="is_active"
+                checked={formData.is_active}
+                onCheckedChange={(checked) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    is_active: checked === true,
+                  }))
+                }
+              />
+              <Label htmlFor="is_active" className="cursor-pointer">
+                Estilista activo
+              </Label>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Color del calendario</Label>
+              <div className="flex flex-wrap gap-2">
+                {STYLIST_COLORS.map((color) => (
+                  <button
+                    key={color.bg}
+                    type="button"
+                    onClick={() =>
+                      setFormData((prev) => ({ ...prev, color: color.bg }))
+                    }
+                    className={`w-8 h-8 rounded-full border-2 transition-all ${
+                      formData.color === color.bg
+                        ? "border-gray-900 scale-110"
+                        : "border-transparent hover:scale-105"
+                    }`}
+                    style={{ backgroundColor: color.bg }}
+                    title={color.name}
+                  />
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setFormData((prev) => ({ ...prev, color: null }))}
+                  className={`w-8 h-8 rounded-full border-2 transition-all flex items-center justify-center text-xs ${
+                    formData.color === null
+                      ? "border-gray-900 scale-110 bg-gray-100"
+                      : "border-gray-300 hover:scale-105 bg-gray-50"
+                  }`}
+                  title="Automático (por orden)"
+                >
+                  Auto
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Selecciona un color o deja en automático
+              </p>
+            </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4">
+          <div className="flex justify-end gap-2 pt-4 border-t">
             <Button
               type="button"
               variant="outline"
