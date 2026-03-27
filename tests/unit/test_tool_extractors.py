@@ -449,8 +449,8 @@ class TestExtractSlotFields:
 
         assert ctx.selected_slot is None
 
-    def test_skips_overwrite_when_slots_already_set(self):
-        """Guard: offered_slots is NOT overwritten if already populated."""
+    def test_overwrites_existing_slots(self):
+        """New behavior: offered_slots is always overwritten with new results."""
         ctx = BookingContext(
             offered_slots=[{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
         )
@@ -458,8 +458,8 @@ class TestExtractSlotFields:
         result = {"available_slots": new_slots, "error": None}
         extract_slot_fields(result, ctx)
 
-        # Guard prevents overwrite — original slots preserved
-        assert ctx.offered_slots == [{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
+        # Always overwrite — old slots replaced with new ones
+        assert ctx.offered_slots == new_slots
 
     def test_find_next_available_legacy_shape(self):
         """find_next_available with available_stylists (legacy format)."""
@@ -525,43 +525,30 @@ class TestExtractSlotFields:
         assert "Ana" in ctx.soonest_any_slot
         assert "10:00" in ctx.soonest_any_slot
 
-    def test_empty_slots_does_not_overwrite(self):
-        """If result has no slots at all, offered_slots stays unchanged."""
+    def test_empty_slots_clears_offered_slots(self):
+        """New behavior: empty slots list clears offered_slots."""
         ctx = BookingContext(offered_slots=[{"time": "09:00"}])
         result = {
             "available_slots": [],
             "error": None,
         }
         extract_slot_fields(result, ctx)
-        # Empty list is falsy, so no overwrite
-        assert ctx.offered_slots == [{"time": "09:00"}]
+        # Empty result clears offered_slots to prevent stale slots
+        assert ctx.offered_slots == []
 
-    def test_guard_blocks_overwrite_when_refresh_not_needed(self):
-        """REQ-BAF-3: Guard skips overwrite when offered_slots set AND needs_refresh=False."""
+    def test_always_overwrites_regardless_of_refresh_flag(self):
+        """No guard: offered_slots are always overwritten, regardless of needs_availability_refresh."""
         stale_slots = [{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
         ctx = BookingContext(
             offered_slots=stale_slots,
-            needs_availability_refresh=False,  # Normal turn — no refresh requested
+            needs_availability_refresh=False,  # Guard would have blocked this, but not anymore
         )
         new_slots = [{"time": "11:00", "stylist": "María", "date": "2026-03-27"}]
         extract_slot_fields({"available_slots": new_slots, "error": None}, ctx)
 
-        # Guard should have fired — original slots preserved
-        assert ctx.offered_slots == stale_slots
-
-    def test_guard_allows_overwrite_when_refresh_needed(self):
-        """REQ-BAF-3: Guard lets SLOT_TAKEN refresh through when needs_refresh=True."""
-        stale_slots = [{"time": "09:00", "stylist": "Ana", "date": "2026-03-26"}]
-        ctx = BookingContext(
-            offered_slots=stale_slots,
-            needs_availability_refresh=True,  # SLOT_TAKEN set this flag
-        )
-        fresh_slots = [{"time": "11:00", "stylist": "María", "date": "2026-03-27"}]
-        extract_slot_fields({"available_slots": fresh_slots, "error": None}, ctx)
-
-        # Guard should NOT have fired — fresh slots replace stale ones
-        assert ctx.offered_slots == fresh_slots
-        # Flag is cleared after successful refresh
+        # Always overwrite — no guard check
+        assert ctx.offered_slots == new_slots
+        # Flag is cleared after successful update
         assert ctx.needs_availability_refresh is False
 
     def test_guard_allows_overwrite_when_no_existing_slots(self):
@@ -575,6 +562,44 @@ class TestExtractSlotFields:
 
         # No slots before → always writes
         assert ctx.offered_slots == new_slots
+
+    def test_extract_slot_fields_overwrites_existing(self):
+        """Phase 2.1: New slots unconditionally replace old slots."""
+        ctx = BookingContext(offered_slots=[{"time": "09:00", "stylist": "Ana"}])
+        new_slots = [
+            {"time": "10:00", "stylist": "María"},
+            {"time": "10:30", "stylist": "Pilar"},
+        ]
+        extract_slot_fields({"available_slots": new_slots, "error": None}, ctx)
+        assert ctx.offered_slots == new_slots
+        assert len(ctx.offered_slots) == 2
+
+    def test_extract_slot_fields_empty_clears(self):
+        """Phase 2.2: Empty result clears offered_slots to prevent stale slots."""
+        ctx = BookingContext(
+            offered_slots=[
+                {"time": "09:00", "stylist": "Ana"},
+                {"time": "10:00", "stylist": "María"},
+            ]
+        )
+        extract_slot_fields({"available_slots": [], "error": None}, ctx)
+        assert ctx.offered_slots == []
+
+    def test_empty_result_produces_empty_offered_slots(self):
+        """When availability search returns 0 slots, offered_slots must be cleared."""
+        ctx = BookingContext(
+            offered_slots=[{"time": "10:00", "date": "2026-03-30", "stylist": "Pilar"}] * 5,
+        )
+
+        # Simulate tool result with no available slots
+        empty_result = {
+            "available_slots": [],
+            "total_slots_found": 0,
+            "soonest_any": None,
+        }
+        extract_slot_fields(empty_result, ctx)
+
+        assert ctx.offered_slots == []
 
 
 # ============================================================================

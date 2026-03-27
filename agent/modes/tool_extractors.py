@@ -561,21 +561,6 @@ def extract_slot_fields(result: dict, ctx: BookingContext) -> None:
         slots = selected_stylist_slots
 
     if slots:
-        # Guard: skip overwrite if the user already has slots displayed and hasn't
-        # asked for new availability. This prevents a spurious check_availability
-        # call (e.g. during name collection) from replacing the slots the user
-        # already chose from, which would make slot_index resolve to the wrong slot.
-        # Exception: needs_availability_refresh=True (set by SLOT_TAKEN) forces
-        # the overwrite so a fresh availability check replaces stale slots.
-        if ctx.offered_slots and not ctx.needs_availability_refresh:
-            logger.warning(
-                "extract_slot_fields: offered_slots already set (%d slots), "
-                "skipping overwrite with %d new slots. "
-                "Clear offered_slots first to refresh.",
-                len(ctx.offered_slots),
-                len(slots),
-            )
-            return
         ctx.offered_slots = slots
         ctx.book_failure_count = 0  # Reset failure counter on new availability
         ctx.needs_availability_refresh = False  # Fresh availability clears SLOT_TAKEN block
@@ -597,6 +582,10 @@ def extract_slot_fields(result: dict, ctx: BookingContext) -> None:
                 sid,
                 stylist_name,
             )
+    else:
+        # No slots returned — clear offered_slots to prevent stale slots from persisting
+        ctx.offered_slots = []
+        logger.info("extract_slot_fields: tool returned no slots, clearing offered_slots")
 
     # find_next_available v4.2: soonest_any
     soonest_any = result.get("soonest_any")

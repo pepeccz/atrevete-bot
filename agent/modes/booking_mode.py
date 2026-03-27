@@ -29,6 +29,8 @@ from agent.modes.tool_extractors import (
     apply_all_tool_results,
     extract_service_audience_hint,
     resolve_pending_clarification,
+    _clear_date_metadata,
+    _AUDIENCE_HINT_MAP,
 )
 from agent.prompts.loader import build_layered_messages, get_system_prompt, load_markdown
 from agent.state.helpers import add_message
@@ -214,6 +216,24 @@ def _get_all_booking_tools() -> list:
         manage_customer,
         book,
     ]
+
+
+def _clear_slot_state(ctx: BookingContext) -> None:
+    """Reset slot selection and confirmation state before a new availability search.
+
+    Clears: offered_slots, selected_slot, stylist_id, stylist_name,
+    confirmation_shown, confirmation_summary_sent.
+
+    Does NOT clear needs_availability_refresh — that flag is managed separately
+    by SLOT_TAKEN and extract_slot_fields().
+    """
+    ctx.offered_slots = []
+    ctx.selected_slot = None
+    ctx.stylist_id = None
+    ctx.stylist_name = None
+    ctx.confirmation_shown = False
+    ctx.confirmation_summary_sent = False
+    logger.info("_clear_slot_state: cleared slot and confirmation state")
 
 
 # ============================================================================
@@ -489,6 +509,27 @@ class BookingMode(BaseModeNode):
         Backwards compatible: if slot_index is absent but stylist_id is already
         a real UUID, the args pass through unchanged.
         """
+        # Clear slot state before availability searches
+        if tool_name in ("check_availability", "find_next_available"):
+            ctx_av: BookingContext | None = getattr(self, "_ctx", None)
+            if ctx_av:
+                _clear_slot_state(ctx_av)
+                _clear_date_metadata(ctx_av)
+
+                # Validate stylist_id against known stylists
+                if tool_args.get("stylist_id") and ctx_av.prefetched_stylists:
+                    known_ids = {s.get("id") for s in ctx_av.prefetched_stylists}
+                    provided_id = tool_args.get("stylist_id")
+                    if provided_id not in known_ids:
+                        logger.warning(
+                            "_pre_tool_call: rejecting invalid stylist_id=%r, "
+                            "not in known set: %s. Falling back to None.",
+                            provided_id,
+                            known_ids,
+                        )
+                        tool_args["stylist_id"] = None
+            return tool_args
+
         if tool_name == "search_services":
             ctx_ss: BookingContext | None = getattr(self, "_ctx", None)
             if ctx_ss and ctx_ss.service_audience_hint and not tool_args.get("audience"):
@@ -497,6 +538,21 @@ class BookingMode(BaseModeNode):
                     "_pre_tool_call: injected audience=%s into search_services",
                     ctx_ss.service_audience_hint,
                 )
+
+            # Canonicalize audience value if present
+            if tool_args.get("audience"):
+                original_audience = tool_args["audience"]
+                canonical = _AUDIENCE_HINT_MAP.get(
+                    tool_args["audience"].lower(), tool_args["audience"]
+                )
+                if canonical != original_audience:
+                    tool_args["audience"] = canonical
+                    logger.info(
+                        "_pre_tool_call: canonicalized audience %r → %r",
+                        original_audience,
+                        canonical,
+                    )
+
             return tool_args
 
         # Validate manage_customer calls: bypass name-only calls, reject stale customer_ids
@@ -2344,19 +2400,20 @@ def _detect_recommendation_decline(message: str, ctx: BookingContext) -> bool:
 def _build_stylists_section(ctx: BookingContext) -> str:
     """Build prompt section for available stylists.
 
-    Muestra solo los nombres de los estilistas disponibles. No intenta mostrar
-    disponibilidad (next_slot_summary) porque list_stylists no devuelve ese campo
-    — hacerlo causaba que apareciera "Sin disponibilidad" para cada estilista.
+    Muestra nombres y UUIDs de estilistas disponibles para que el LLM pueda
+    copiar el UUID exacto en las herramientas. No intenta mostrar disponibilidad
+    (next_slot_summary) porque list_stylists no devuelve ese campo.
     """
     if not ctx.prefetched_stylists:
         return ""
 
     lines: list[str] = []
-    for s in ctx.prefetched_stylists:
+    for idx, s in enumerate(ctx.prefetched_stylists, start=1):
         name = s.get("name", "???")
-        lines.append(f"- {name}")
+        stylist_id = s.get("id", "???")
+        lines.append(f"{idx}. {name} | id: {stylist_id}")
 
-    lines.append("- La estilista con disponibilidad más temprana")
+    lines.append(f"{len(ctx.prefetched_stylists) + 1}. La estilista con disponibilidad más temprana")
 
     if ctx.recurrent_stylist_hint:
         lines.append(f"Estilista habitual de la clienta: {ctx.recurrent_stylist_hint}")

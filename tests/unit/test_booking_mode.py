@@ -25,6 +25,7 @@ from agent.modes.booking_mode import (
     _build_offered_slots_section,
     _build_recommendations_section,
     _build_stylists_section,
+    _clear_slot_state,
     _combo_offer_in_response,
     _contains_name_token,
     _detect_recommendation_decline,
@@ -34,6 +35,7 @@ from agent.modes.booking_mode import (
     _redact_name_tokens,
     _resolve_user_slot_selection,
 )
+from agent.modes.tool_extractors import _AUDIENCE_HINT_MAP
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
 
@@ -352,36 +354,35 @@ class TestBuildStylistsSection:
     def test_with_prefetched_stylists(self):
         ctx = BookingContext(
             prefetched_stylists=[
-                {"name": "Ana", "next_slot_summary": "Lunes 10:00"},
-                {"name": "Bea", "next_slot_summary": "Martes 11:00"},
+                {"id": "uuid-ana", "name": "Ana"},
+                {"id": "uuid-bea", "name": "Bea"},
             ]
         )
 
         result = _build_stylists_section(ctx)
 
         assert "Ana" in result
-        assert "Lunes 10:00" in result
+        assert "uuid-ana" in result
         assert "Bea" in result
+        assert "uuid-bea" in result
 
     def test_empty_when_no_stylists(self):
         ctx = BookingContext()
         result = _build_stylists_section(ctx)
         assert result == ""
 
-    def test_soonest_slot_shown(self):
+    def test_any_stylist_option_shown(self):
         ctx = BookingContext(
-            prefetched_stylists=[{"name": "Ana", "next_slot_summary": "Hoy 15:00"}],
-            soonest_any_slot="Hoy 15:00",
+            prefetched_stylists=[{"id": "uuid-1", "name": "Ana"}],
         )
 
         result = _build_stylists_section(ctx)
 
-        assert "Cualquier profesional disponible" in result
-        assert "Hoy 15:00" in result
+        assert "La estilista con disponibilidad más temprana" in result
 
     def test_recurrent_stylist_hint_shown(self):
         ctx = BookingContext(
-            prefetched_stylists=[{"name": "Ana", "next_slot_summary": "Mañana 9:00"}],
+            prefetched_stylists=[{"id": "uuid-ana", "name": "Ana"}],
             recurrent_stylist_hint="Ana",
         )
 
@@ -2795,3 +2796,170 @@ class TestBuildResponseRecommendationsGate:
             mode._build_response(state, ctx, llm_result)
 
         assert ctx.recommendations_shown is False
+
+
+# =============================================================================
+# Tests for offered-slots-refresh-fix (Phase 8)
+# =============================================================================
+
+
+class TestClearSlotState:
+    """Tests for _clear_slot_state() helper (Phase 3)."""
+
+    def test_clear_slot_state_resets_all_fields(self):
+        """Phase 3.1: _clear_slot_state() resets all 6 fields."""
+        ctx = BookingContext(
+            offered_slots=[{"time": "10:00"}],
+            selected_slot=2,
+            stylist_id="s1",
+            stylist_name="Ana",
+            confirmation_shown=True,
+            confirmation_summary_sent=True,
+        )
+        _clear_slot_state(ctx)
+
+        assert ctx.offered_slots == []
+        assert ctx.selected_slot is None
+        assert ctx.stylist_id is None
+        assert ctx.stylist_name is None
+        assert ctx.confirmation_shown is False
+        assert ctx.confirmation_summary_sent is False
+
+    def test_clear_slot_state_preserves_needs_refresh(self):
+        """Phase 3.2: _clear_slot_state() does NOT clear needs_availability_refresh."""
+        ctx = BookingContext(
+            offered_slots=[{"time": "10:00"}],
+            needs_availability_refresh=True,
+        )
+        _clear_slot_state(ctx)
+
+        # needs_availability_refresh is NOT touched
+        assert ctx.needs_availability_refresh is True
+        assert ctx.offered_slots == []
+
+    def test_pre_tool_call_clears_stale_slots_before_availability(self):
+        """_pre_tool_call must clear stale slot state before check_availability runs."""
+        # Build a ctx with stale state from a prior search
+        ctx = BookingContext(
+            offered_slots=[{"time": "10:00", "date": "2026-03-30", "stylist": "Pilar"}] * 15,
+            selected_slot={"time": "10:00", "date": "2026-03-30"},
+            stylist_id="cc0ba5ba-06c8-42bc-aed6-e83a9674adc8",
+            confirmation_shown=True,
+            confirmation_summary_sent=True,
+        )
+
+        # Call _clear_slot_state directly (it's what _pre_tool_call invokes)
+        _clear_slot_state(ctx)
+
+        assert ctx.offered_slots == []
+        assert ctx.selected_slot is None
+        assert ctx.stylist_id is None
+        assert ctx.confirmation_shown is False
+        assert ctx.confirmation_summary_sent is False
+
+
+class TestStylistsSection:
+    """Tests for _build_stylists_section() with UUIDs (Phase 4)."""
+
+    def test_stylists_section_includes_uuid(self):
+        """Phase 4.1: Stylists section includes UUID for each stylist."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"id": "uuid-1", "name": "Ana", "category": "general"},
+                {"id": "uuid-2", "name": "María", "category": "general"},
+            ]
+        )
+        section = _build_stylists_section(ctx)
+
+        assert "1. Ana | id: uuid-1" in section
+        assert "2. María | id: uuid-2" in section
+        assert "3. La estilista con disponibilidad más temprana" in section
+
+    def test_stylists_section_numbered_format(self):
+        """Phase 4.2: Stylists section uses numbered format."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"id": "uuid-1", "name": "Pilar", "category": "general"},
+            ]
+        )
+        section = _build_stylists_section(ctx)
+
+        # Should start with "1.", not "-"
+        assert section.startswith("1.")
+        assert "| id: uuid-1" in section
+
+
+class TestPreToolCallValidation:
+    """Tests for UUID validation and audience canonicalization in _pre_tool_call()."""
+
+    @pytest.mark.asyncio
+    async def test_uuid_validation_strips_invented(self):
+        """Phase 5.1: Invalid stylist_id is replaced with None."""
+        mode = make_booking_mode()
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"id": "real-uuid-1", "name": "Ana"},
+                {"id": "real-uuid-2", "name": "María"},
+            ]
+        )
+        mode._ctx = ctx
+
+        # LLM invented a UUID that doesn't exist
+        tool_args = {"stylist_id": "invented-uuid-xyz"}
+        result = await mode._pre_tool_call("find_next_available", tool_args)
+
+        # Invalid UUID should be replaced with None
+        assert result["stylist_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_uuid_validation_preserves_valid(self):
+        """Phase 5.2: Valid stylist_id is preserved."""
+        mode = make_booking_mode()
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"id": "real-uuid-1", "name": "Ana"},
+            ]
+        )
+        mode._ctx = ctx
+
+        tool_args = {"stylist_id": "real-uuid-1"}
+        result = await mode._pre_tool_call("find_next_available", tool_args)
+
+        # Valid UUID should pass through
+        assert result["stylist_id"] == "real-uuid-1"
+
+    @pytest.mark.asyncio
+    async def test_audience_canonicalization_dama(self):
+        """Phase 6.1: Non-canonical audience 'dama' is converted to 'adult_female'."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
+
+        tool_args = {"audience": "dama"}
+        result = await mode._pre_tool_call("search_services", tool_args)
+
+        # 'dama' should be canonicalized to 'adult_female'
+        assert result["audience"] == "adult_female"
+
+    @pytest.mark.asyncio
+    async def test_audience_canonicalization_already_canonical(self):
+        """Phase 6.2: Already-canonical values pass through unchanged."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
+
+        tool_args = {"audience": "adult_female"}
+        result = await mode._pre_tool_call("search_services", tool_args)
+
+        # Already canonical — no change
+        assert result["audience"] == "adult_female"
+
+    @pytest.mark.asyncio
+    async def test_audience_canonicalization_senora(self):
+        """Phase 6.3: Another non-canonical value 'señora' → 'adult_female'."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
+
+        # 'senora' (without accent in the hint map) should map to 'adult_female'
+        tool_args = {"audience": "senora"}
+        result = await mode._pre_tool_call("search_services", tool_args)
+
+        assert result["audience"] == "adult_female"
