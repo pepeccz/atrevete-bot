@@ -91,6 +91,30 @@ export interface Customer {
   created_at: string;
 }
 
+// Service metadata types for AI-driven disambiguation
+export type MetadataFamily = "haircut" | "highlights" | "hairstyle" | "perm" | "color" | null;
+export type MetadataAudience =
+  | "adult_female"
+  | "adult_male"
+  | "baby"
+  | "child_male"
+  | "child_female"
+  | null;
+export type MetadataVariant = "standard" | "extra" | "long" | null;
+export type MetadataHairLength = "short_medium" | "long" | null;
+export type MetadataHairDensity = "normal" | "extra" | null;
+
+export interface ServiceMetadata {
+  family: MetadataFamily;
+  audience: MetadataAudience;
+  disambiguation_tags: string[];
+  ask_if_missing: ("hair_density" | "hair_length")[];
+  variant: MetadataVariant;
+  hair_length: MetadataHairLength;
+  hair_density: MetadataHairDensity;
+  combo_recommendations: string[];
+}
+
 export interface Service {
   id: string;
   name: string;
@@ -98,6 +122,7 @@ export interface Service {
   duration_minutes: number;
   description: string | null;
   is_active: boolean;
+  metadata: ServiceMetadata | null;
   created_at: string;
   updated_at: string;
 }

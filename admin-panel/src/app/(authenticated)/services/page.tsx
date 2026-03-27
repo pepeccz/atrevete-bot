@@ -51,8 +51,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import api from "@/lib/api";
-import type { Service, ServiceCategory } from "@/lib/types";
+import api, { ApiRequestError } from "@/lib/api";
+import type { Service, ServiceCategory, ServiceMetadata } from "@/lib/types";
+import { ServiceMetadataForm } from "@/components/services/ServiceMetadataForm";
 
 // Category badge
 function CategoryBadge({ category }: { category: ServiceCategory }) {
@@ -78,6 +79,7 @@ interface ServiceFormData {
   duration_minutes: number;
   description: string;
   is_active: boolean;
+  metadata: ServiceMetadata | null;
 }
 
 function ServiceModal({
@@ -92,15 +94,18 @@ function ServiceModal({
   service?: Service | null;
 }) {
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [formData, setFormData] = useState<ServiceFormData>({
     name: "",
     category: "HAIRDRESSING",
     duration_minutes: 30,
     description: "",
     is_active: true,
+    metadata: null,
   });
 
   useEffect(() => {
+    setFormError(null);
     if (service) {
       setFormData({
         name: service.name,
@@ -108,6 +113,7 @@ function ServiceModal({
         duration_minutes: service.duration_minutes,
         description: service.description || "",
         is_active: service.is_active,
+        metadata: service.metadata ?? null,
       });
     } else {
       setFormData({
@@ -116,6 +122,7 @@ function ServiceModal({
         duration_minutes: 30,
         description: "",
         is_active: true,
+        metadata: null,
       });
     }
   }, [service, open]);
@@ -128,6 +135,7 @@ function ServiceModal({
     }
 
     setLoading(true);
+    setFormError(null);
     try {
       if (service) {
         await api.update("services", service.id, {
@@ -136,6 +144,7 @@ function ServiceModal({
           duration_minutes: formData.duration_minutes,
           description: formData.description || null,
           is_active: formData.is_active,
+          metadata: formData.metadata,
         });
         toast.success("Servicio actualizado correctamente");
       } else {
@@ -145,15 +154,36 @@ function ServiceModal({
           duration_minutes: formData.duration_minutes,
           description: formData.description || null,
           is_active: formData.is_active,
+          metadata: formData.metadata,
         });
         toast.success("Servicio creado correctamente");
       }
       onOpenChange(false);
       onSuccess();
     } catch (error) {
-      toast.error(
-        `Error: ${error instanceof Error ? error.message : "Unknown error"}`
-      );
+      if (error instanceof ApiRequestError && error.status === 422) {
+        // Parse Pydantic v2 validation detail array
+        if (Array.isArray(error.detail)) {
+          const messages = (error.detail as Array<{ loc?: string[]; msg: string }>)
+            .map((d) => {
+              const field = d.loc?.slice(1).join(" → ") || "campo desconocido";
+              return `${field}: ${d.msg}`;
+            })
+            .join("\n");
+          setFormError(messages);
+        } else if (typeof error.detail === "string") {
+          setFormError(error.detail);
+        } else {
+          setFormError("Error de validación. Revisá los datos ingresados.");
+        }
+      } else {
+        setFormError(
+          `Error al guardar: ${error instanceof Error ? error.message : "Intentá de nuevo."}`
+        );
+        toast.error(
+          `Error: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -161,7 +191,7 @@ function ServiceModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {service ? "Editar Servicio" : "Nuevo Servicio"}
@@ -257,6 +287,23 @@ function ServiceModal({
               Servicio activo
             </Label>
           </div>
+
+          {/* Only show metadata form when editing an existing service */}
+          {service && (
+            <ServiceMetadataForm
+              value={formData.metadata}
+              onChange={(metadata) =>
+                setFormData((prev) => ({ ...prev, metadata }))
+              }
+              disabled={loading}
+            />
+          )}
+
+          {formError && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive whitespace-pre-line">
+              {formError}
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-4">
             <Button
