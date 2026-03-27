@@ -72,8 +72,8 @@ class ServiceCategory(str, PyEnum):
 class AppointmentStatus(PyEnum):
     """Appointment lifecycle status."""
 
-    PENDING = "pending"        # Cita agendada, esperando confirmación del cliente
-    CONFIRMED = "confirmed"    # Cliente confirmó asistencia
+    PENDING = "pending"  # Cita agendada, esperando confirmación del cliente
+    CONFIRMED = "confirmed"  # Cliente confirmó asistencia
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     NO_SHOW = "no_show"
@@ -114,17 +114,17 @@ class ConversationMode(str, PyEnum):
 class BlockingEventType(str, PyEnum):
     """Type of calendar blocking event."""
 
-    VACATION = "vacation"      # Vacaciones del estilista
-    MEETING = "meeting"        # Reuniones, formaciones
-    BREAK = "break"           # Descanso programado
-    GENERAL = "general"       # Bloqueo general
-    PERSONAL = "personal"     # Asunto propio
+    VACATION = "vacation"  # Vacaciones del estilista
+    MEETING = "meeting"  # Reuniones, formaciones
+    BREAK = "break"  # Descanso programado
+    GENERAL = "general"  # Bloqueo general
+    PERSONAL = "personal"  # Asunto propio
 
 
 class RecurrenceFrequency(str, PyEnum):
     """Frequency type for recurring events (RFC 5545 compatible)."""
 
-    WEEKLY = "WEEKLY"    # Repetir cada N semanas
+    WEEKLY = "WEEKLY"  # Repetir cada N semanas
     MONTHLY = "MONTHLY"  # Repetir cada N meses
 
 
@@ -138,20 +138,22 @@ class NotificationType(str, PyEnum):
     APPOINTMENT_COMPLETED = "appointment_completed"
 
     # Confirmation system
-    CONFIRMATION_SENT = "confirmation_sent"           # 48h confirmation request sent
-    CONFIRMATION_RECEIVED = "confirmation_received"   # Customer confirmed appointment
-    AUTO_CANCELLED = "auto_cancelled"                 # Auto-cancelled due to no response
-    CONFIRMATION_FAILED = "confirmation_failed"       # Failed to send confirmation template
-    CONFIRMATION_RETRY = "confirmation_retry"         # Retry attempt for failed confirmation
+    CONFIRMATION_SENT = "confirmation_sent"  # 48h confirmation request sent
+    CONFIRMATION_RECEIVED = "confirmation_received"  # Customer confirmed appointment
+    AUTO_CANCELLED = "auto_cancelled"  # Auto-cancelled due to no response
+    CONFIRMATION_FAILED = "confirmation_failed"  # Failed to send confirmation template
+    CONFIRMATION_RETRY = "confirmation_retry"  # Retry attempt for failed confirmation
     CONFIRMATION_PERMANENTLY_FAILED = "confirmation_permanently_failed"  # All retries exhausted
-    REMINDER_SENT = "reminder_sent"                   # 2h reminder sent
+    REMINDER_SENT = "reminder_sent"  # 2h reminder sent
+    REMINDER_FAILED = "reminder_failed"  # Failed to send reminder
+    REMINDER_PERMANENTLY_FAILED = "reminder_permanently_failed"  # All reminder retries exhausted
 
     # Escalation system (human handoff)
-    ESCALATION_MANUAL = "escalation_manual"           # User explicitly requested human
-    ESCALATION_TECHNICAL = "escalation_technical"     # Technical error triggered escalation
-    ESCALATION_AUTO = "escalation_auto"               # Auto-escalation (error_count >= 3)
-    ESCALATION_MEDICAL = "escalation_medical"         # Medical consultation requires human
-    ESCALATION_AMBIGUITY = "escalation_ambiguity"     # Ambiguous request after multiple attempts
+    ESCALATION_MANUAL = "escalation_manual"  # User explicitly requested human
+    ESCALATION_TECHNICAL = "escalation_technical"  # Technical error triggered escalation
+    ESCALATION_AUTO = "escalation_auto"  # Auto-escalation (error_count >= 3)
+    ESCALATION_MEDICAL = "escalation_medical"  # Medical consultation requires human
+    ESCALATION_AMBIGUITY = "escalation_ambiguity"  # Ambiguous request after multiple attempts
 
 
 # ============================================================================
@@ -170,9 +172,7 @@ class Stylist(Base):
     __tablename__ = "stylists"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Core fields
     name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -181,18 +181,14 @@ class Stylist(Base):
         SQLEnum(ServiceCategory, name="service_category", create_type=True),
         nullable=False,
     )
-    google_calendar_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )
+    google_calendar_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Calendar color (hex code like "#7C3AED")
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)
 
     # Metadata
-    metadata_: Mapped[dict] = mapped_column(
-        "metadata", JSONB, default=dict, nullable=False
-    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -207,7 +203,9 @@ class Stylist(Base):
 
     # Relationships
     preferred_customers: Mapped[list["Customer"]] = relationship(
-        "Customer", back_populates="preferred_stylist", foreign_keys="[Customer.preferred_stylist_id]"
+        "Customer",
+        back_populates="preferred_stylist",
+        foreign_keys="[Customer.preferred_stylist_id]",
     )
     appointments: Mapped[list["Appointment"]] = relationship(
         "Appointment", back_populates="stylist", foreign_keys="[Appointment.stylist_id]"
@@ -245,14 +243,10 @@ class Customer(Base):
     __tablename__ = "customers"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Contact information
-    phone: Mapped[str] = mapped_column(
-        String(20), unique=True, nullable=False, index=True
-    )
+    phone: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
@@ -276,14 +270,10 @@ class Customer(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # External integration IDs
-    chatwoot_conversation_id: Mapped[str | None] = mapped_column(
-        String(50), nullable=True
-    )
+    chatwoot_conversation_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # Metadata (JSONB for flexible data like whatsapp_name, referred_by, etc.)
-    metadata_: Mapped[dict] = mapped_column(
-        "metadata", JSONB, default=dict, nullable=False
-    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -327,9 +317,7 @@ class Service(Base):
     __tablename__ = "services"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Core fields
     name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -355,9 +343,7 @@ class Service(Base):
     #     "hair_density": str | null,     # e.g. "normal", "extra"
     #     "combo_recommendations": [str], # suggested add-on service names
     #   }
-    metadata_: Mapped[dict] = mapped_column(
-        "metadata", JSONB, default=dict, nullable=False
-    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -411,9 +397,7 @@ class Appointment(Base):
     __tablename__ = "appointments"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Foreign keys
     customer_id: Mapped[UUID] = mapped_column(
@@ -430,9 +414,7 @@ class Appointment(Base):
     )
 
     # Service tracking
-    service_ids: Mapped[list[UUID]] = mapped_column(
-        ARRAY(PGUUID(as_uuid=True)), nullable=False
-    )
+    service_ids: Mapped[list[UUID]] = mapped_column(ARRAY(PGUUID(as_uuid=True)), nullable=False)
 
     # Scheduling
     start_time: Mapped[datetime] = mapped_column(
@@ -456,9 +438,7 @@ class Appointment(Base):
     )
 
     # External integration IDs
-    google_calendar_event_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )
+    google_calendar_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Customer-specific appointment data
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -475,24 +455,27 @@ class Appointment(Base):
     reminder_sent_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    cancelled_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    cancelled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     notification_failed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
-    retry_count: Mapped[int] = mapped_column(
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    next_retry_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    # Reminder retry tracking
+    reminder_failed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    reminder_retry_count: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )
-    next_retry_at: Mapped[datetime | None] = mapped_column(
+    reminder_next_retry_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
 
     # Group booking support
-    group_booking_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), nullable=True
-    )
+    group_booking_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     booked_by_customer_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("customers.id", ondelete="SET NULL"),
@@ -546,6 +529,14 @@ class Appointment(Base):
             "next_retry_at",
             postgresql_where=text("notification_failed = true"),
         ),
+        # Partial index for reminder retry worker queries (only reminder_failed rows)
+        Index(
+            "idx_appointments_reminder_retry_eligible",
+            "reminder_failed",
+            "reminder_retry_count",
+            "reminder_next_retry_at",
+            postgresql_where=text("reminder_failed = true"),
+        ),
     )
 
     def __repr__(self) -> str:
@@ -563,9 +554,7 @@ class Policy(Base):
     __tablename__ = "policies"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Core fields
     key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
@@ -584,9 +573,7 @@ class Policy(Base):
     )
 
     # Indexes
-    __table_args__ = (
-        Index("idx_policies_key", "key", unique=True),
-    )
+    __table_args__ = (Index("idx_policies_key", "key", unique=True),)
 
     def __repr__(self) -> str:
         return f"<Policy(id={self.id}, key='{self.key}')>"
@@ -604,9 +591,7 @@ class ConversationHistory(Base):
     __tablename__ = "conversation_history"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Foreign key to customer (nullable — allows conversations before customer is identified)
     customer_id: Mapped[Optional[UUID]] = mapped_column(
@@ -623,25 +608,17 @@ class ConversationHistory(Base):
     )
 
     # Conversation-level timing
-    started_at: Mapped[Optional[datetime]] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    ended_at: Mapped[Optional[datetime]] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     # Denormalized counters (updated by archiver on each sync)
-    message_count: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
+    message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # AI-generated summary (populated by archiver / summarize_node)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Flexible metadata (node_name, escalation_reason, mode_history, etc.)
-    metadata_: Mapped[dict] = mapped_column(
-        "metadata", JSONB, default=dict, nullable=False
-    )
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
 
     # Row creation timestamp
     created_at: Mapped[datetime] = mapped_column(
@@ -688,9 +665,7 @@ class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Foreign key to parent conversation (CASCADE DELETE)
     conversation_history_id: Mapped[UUID] = mapped_column(
@@ -702,14 +677,13 @@ class ConversationMessage(Base):
 
     # Message content
     role: Mapped[str] = mapped_column(
-        String(20), nullable=False  # values: 'user', 'assistant', 'system'
+        String(20),
+        nullable=False,  # values: 'user', 'assistant', 'system'
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Optional Chatwoot correlation ID
-    chatwoot_message_id: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True, index=True
-    )
+    chatwoot_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
 
     # Timestamp (timezone-aware, server-set for consistency)
     created_at: Mapped[datetime] = mapped_column(
@@ -755,9 +729,7 @@ class BusinessHours(Base):
     __tablename__ = "business_hours"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
     day_of_week: Mapped[int] = mapped_column(
@@ -773,7 +745,9 @@ class BusinessHours(Base):
     # Opening time (null if closed)
     start_hour: Mapped[Optional[int]] = mapped_column(
         Integer,
-        CheckConstraint("start_hour IS NULL OR (start_hour >= 0 AND start_hour <= 23)", name="valid_start_hour"),
+        CheckConstraint(
+            "start_hour IS NULL OR (start_hour >= 0 AND start_hour <= 23)", name="valid_start_hour"
+        ),
         nullable=True,
     )
     start_minute: Mapped[int] = mapped_column(
@@ -786,7 +760,9 @@ class BusinessHours(Base):
     # Closing time (null if closed)
     end_hour: Mapped[Optional[int]] = mapped_column(
         Integer,
-        CheckConstraint("end_hour IS NULL OR (end_hour >= 0 AND end_hour <= 23)", name="valid_end_hour"),
+        CheckConstraint(
+            "end_hour IS NULL OR (end_hour >= 0 AND end_hour <= 23)", name="valid_end_hour"
+        ),
         nullable=True,
     )
     end_minute: Mapped[int] = mapped_column(
@@ -810,9 +786,7 @@ class BusinessHours(Base):
     )
 
     # Indexes
-    __table_args__ = (
-        Index("idx_business_hours_day", "day_of_week"),
-    )
+    __table_args__ = (Index("idx_business_hours_day", "day_of_week"),)
 
     def __repr__(self) -> str:
         if self.is_closed:
@@ -841,9 +815,7 @@ class RecurringBlockingSeries(Base):
     __tablename__ = "recurring_blocking_series"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Foreign key to stylist
     stylist_id: Mapped[UUID] = mapped_column(
@@ -898,9 +870,7 @@ class RecurringBlockingSeries(Base):
     )  # Number of occurrences (1-52)
 
     # Series metadata
-    original_start_date: Mapped[date] = mapped_column(
-        DATE, nullable=False
-    )  # First occurrence date
+    original_start_date: Mapped[date] = mapped_column(DATE, nullable=False)  # First occurrence date
     instances_created: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False
     )  # Track how many were created
@@ -927,19 +897,12 @@ class RecurringBlockingSeries(Base):
     # Constraints and indexes
     __table_args__ = (
         # End time must be after start time
-        CheckConstraint(
-            "end_time_of_day > start_time_of_day",
-            name="check_series_end_after_start"
-        ),
+        CheckConstraint("end_time_of_day > start_time_of_day", name="check_series_end_after_start"),
         # Count must be between 1 and 52
-        CheckConstraint(
-            "rrule_count > 0 AND rrule_count <= 52",
-            name="check_series_count_range"
-        ),
+        CheckConstraint("rrule_count > 0 AND rrule_count <= 52", name="check_series_count_range"),
         # Interval must be positive
         CheckConstraint(
-            "rrule_interval > 0 AND rrule_interval <= 12",
-            name="check_series_interval_range"
+            "rrule_interval > 0 AND rrule_interval <= 12", name="check_series_interval_range"
         ),
         # Index for querying by stylist
         Index("idx_recurring_series_stylist", "stylist_id"),
@@ -961,9 +924,7 @@ class BlockingEvent(Base):
     __tablename__ = "blocking_events"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Foreign key to stylist
     stylist_id: Mapped[UUID] = mapped_column(
@@ -978,12 +939,8 @@ class BlockingEvent(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Time range
-    start_time: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
-    end_time: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
+    start_time: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     # Event type
     event_type: Mapped[BlockingEventType] = mapped_column(
@@ -998,9 +955,7 @@ class BlockingEvent(Base):
     )
 
     # Google Calendar sync (optional - for push to stylist's mobile)
-    google_calendar_event_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )
+    google_calendar_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Recurrence fields (optional - for events belonging to a recurring series)
     recurring_series_id: Mapped[UUID | None] = mapped_column(
@@ -1067,14 +1022,10 @@ class Holiday(Base):
     __tablename__ = "holidays"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Holiday details
-    date: Mapped[date] = mapped_column(
-        DATE, unique=True, nullable=False, index=True
-    )
+    date: Mapped[date] = mapped_column(DATE, unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
 
     # All-day flag (always true for now, future support for partial closures)
@@ -1088,9 +1039,7 @@ class Holiday(Base):
     )
 
     # Indexes
-    __table_args__ = (
-        Index("idx_holidays_date", "date"),
-    )
+    __table_args__ = (Index("idx_holidays_date", "date"),)
 
     def __repr__(self) -> str:
         return f"<Holiday(id={self.id}, date={self.date}, name='{self.name}')>"
@@ -1112,9 +1061,7 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Notification type
     type: Mapped[NotificationType] = mapped_column(
@@ -1133,21 +1080,15 @@ class Notification(Base):
 
     # Entity reference (for navigation)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    entity_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), nullable=True
-    )
+    entity_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
 
     # Read status
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    read_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    read_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     # Starred/important status
     is_starred: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    starred_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    starred_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(
@@ -1159,7 +1100,9 @@ class Notification(Base):
     # Indexes
     __table_args__ = (
         Index("idx_notifications_is_read", "is_read"),
-        Index("idx_notifications_created_at_desc", "created_at", postgresql_ops={"created_at": "DESC"}),
+        Index(
+            "idx_notifications_created_at_desc", "created_at", postgresql_ops={"created_at": "DESC"}
+        ),
         Index("idx_notifications_entity", "entity_type", "entity_id"),
         Index("idx_notifications_is_starred", "is_starred"),
         Index("idx_notifications_type", "type"),
@@ -1214,9 +1157,7 @@ class SystemSetting(Base):
     __tablename__ = "system_settings"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Categorization
     category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
@@ -1237,9 +1178,7 @@ class SystemSetting(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Metadata
-    requires_restart: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    requires_restart: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Timestamps
@@ -1257,9 +1196,7 @@ class SystemSetting(Base):
     updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Indexes
-    __table_args__ = (
-        Index("idx_system_settings_category", "category"),
-    )
+    __table_args__ = (Index("idx_system_settings_category", "category"),)
 
     def __repr__(self) -> str:
         return f"<SystemSetting(key='{self.key}', value={self.value})>"
@@ -1279,9 +1216,7 @@ class SystemSettingsHistory(Base):
     __tablename__ = "system_settings_history"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Reference to setting
     setting_id: Mapped[UUID] = mapped_column(
@@ -1335,9 +1270,7 @@ class GCalSyncState(Base):
     __tablename__ = "gcal_sync_state"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Foreign key to stylist (one sync state per stylist)
     stylist_id: Mapped[UUID] = mapped_column(
@@ -1352,9 +1285,7 @@ class GCalSyncState(Base):
     sync_token: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Last successful sync timestamp
-    last_sync_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    last_sync_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     # Sync statistics
     events_synced: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -1411,22 +1342,16 @@ class GoogleOAuthCredential(Base):
     encrypted_refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Token expiry (UTC, nullable — some providers omit it)
-    token_expiry: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    token_expiry: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     # Google account info
     connected_email: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # OAuth2 scopes granted (e.g., ["https://www.googleapis.com/auth/calendar"])
-    calendar_scopes: Mapped[list[str] | None] = mapped_column(
-        ARRAY(String), nullable=True
-    )
+    calendar_scopes: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
 
     # Status — only one active credential allowed (enforced via partial unique index)
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("true")
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
 
     # Connection tracking
     connected_at: Mapped[datetime] = mapped_column(
@@ -1486,9 +1411,7 @@ class TokenUsage(Base):
     __tablename__ = "token_usage"
 
     # Primary key
-    id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Period
     year: Mapped[int] = mapped_column(Integer, nullable=False)

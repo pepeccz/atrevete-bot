@@ -58,7 +58,12 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
         get_redis_checkpointer=MagicMock(return_value="checkpoint"),
         initialize_redis_indexes=AsyncMock(),
     )
-    fake_monitoring_module = SimpleNamespace(get_langfuse_handler=MagicMock(return_value=None))
+    fake_langfuse_client = MagicMock()
+    fake_langfuse_client.flush = MagicMock()
+    fake_monitoring_module = SimpleNamespace(
+        get_langfuse_handler=MagicMock(return_value=None),
+        get_langfuse_client=MagicMock(return_value=fake_langfuse_client),
+    )
 
     with patch.dict(
         sys.modules,

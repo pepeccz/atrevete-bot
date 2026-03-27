@@ -8,6 +8,8 @@ Provides REST endpoints for:
 - Calendar and availability
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
@@ -502,6 +504,33 @@ class CustomerResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ServiceMetadata(BaseModel):
+    """Structured metadata for AI-driven service disambiguation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    family: Literal["haircut", "highlights", "hairstyle", "perm", "color"] | None = None
+    audience: Literal["adult_female", "adult_male", "baby", "child_male", "child_female"] | None = (
+        None
+    )
+    disambiguation_tags: list[str] = []
+    ask_if_missing: list[Literal["hair_density", "hair_length"]] = []
+    variant: Literal["standard", "extra", "long"] | None = None
+    hair_length: Literal["short_medium", "long"] | None = None
+    hair_density: Literal["normal", "extra"] | None = None
+    combo_recommendations: list[str] = []
+
+
+def _serialize_metadata(metadata_: dict | None) -> dict:
+    """Serialize service metadata_ JSONB field to validated dict with defaults, falling back to empty model on error."""
+    try:
+        if not metadata_:
+            return ServiceMetadata().model_dump()
+        return ServiceMetadata(**metadata_).model_dump()
+    except Exception:
+        return ServiceMetadata().model_dump()
 
 
 class ServiceResponse(BaseModel):
@@ -1743,35 +1772,6 @@ async def delete_customer(
 # =============================================================================
 # Services CRUD
 # =============================================================================
-
-
-class ServiceMetadata(BaseModel):
-    """Structured metadata for AI-driven service disambiguation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    family: Literal["haircut", "highlights", "hairstyle", "perm", "color"] | None = None
-    audience: Literal["adult_female", "adult_male", "baby", "child_male", "child_female"] | None = (
-        None
-    )
-    disambiguation_tags: list[str] = []
-    ask_if_missing: list[Literal["hair_density", "hair_length"]] = []
-    variant: Literal["standard", "extra", "long"] | None = None
-    hair_length: Literal["short_medium", "long"] | None = None
-    hair_density: Literal["normal", "extra"] | None = None
-    combo_recommendations: list[str] = []
-
-
-def _serialize_metadata(metadata_: dict | None) -> dict:
-    """Serialize service metadata_ JSONB field to validated dict with defaults, falling back to empty model on error."""
-    try:
-        # Always create ServiceMetadata to ensure all defaults are applied
-        if not metadata_:
-            return ServiceMetadata().model_dump()
-        return ServiceMetadata(**metadata_).model_dump()
-    except Exception:
-        # If validation fails, return empty model with defaults
-        return ServiceMetadata().model_dump()
 
 
 class CreateServiceRequest(BaseModel):

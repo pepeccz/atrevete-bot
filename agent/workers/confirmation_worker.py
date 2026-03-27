@@ -58,6 +58,11 @@ MAX_RETRIES: int = 3
 RETRY_BACKOFF_MINUTES: list[int] = [30, 120, 480]  # 30min, 2h, 8h
 TIME_GUARD_HOURS: int = 6
 
+# Reminder retry policy constants
+REMINDER_MAX_RETRIES: int = 2
+REMINDER_BACKOFF_MINUTES: list[int] = [15, 60]  # 15min, 1h
+REMINDER_TIME_GUARD_HOURS: int = 1
+
 
 async def get_dynamic_settings() -> dict[str, Any]:
     """
@@ -689,6 +694,203 @@ async def process_confirmation_retries() -> None:
 
 
 # =============================================================================
+# Job 1b: Process Reminder Retries (failed reminder sends)
+# =============================================================================
+
+
+async def process_reminder_retries() -> None:
+    """
+    Retry failed reminder sends using the configured backoff schedule.
+
+    Query: CONFIRMED appointments where reminder_failed=True,
+           reminder_retry_count < REMINDER_MAX_RETRIES,
+           and reminder_next_retry_at <= now (or IS NULL).
+
+    For each appointment:
+    1. Check time guard: if <1h to appointment → permanent failure
+    2. Increment retry count and attempt resend
+    3. On success: clear reminder_failed, set reminder_sent=True + reminder_sent_at
+    4. On failure + exhausted: create REMINDER_PERMANENTLY_FAILED notification
+    """
+    dynamic_settings = await get_dynamic_settings()
+    now = datetime.now(MADRID_TZ)
+
+    logger.info(f"Starting process_reminder_retries at {now.isoformat()}")
+
+    retries_attempted = 0
+    successes = 0
+    errors = 0
+
+    try:
+        async with get_async_session() as session:
+            result = await session.execute(
+                select(Appointment)
+                .options(
+                    selectinload(Appointment.customer),
+                    selectinload(Appointment.stylist),
+                )
+                .where(
+                    and_(
+                        Appointment.reminder_failed.is_(True),
+                        Appointment.reminder_retry_count < REMINDER_MAX_RETRIES,
+                        or_(
+                            Appointment.reminder_next_retry_at.is_(None),
+                            Appointment.reminder_next_retry_at <= now,
+                        ),
+                        Appointment.status == AppointmentStatus.CONFIRMED,
+                        Appointment.start_time > now,
+                    )
+                )
+            )
+            appointments = list(result.scalars().all())
+
+            if not appointments:
+                logger.info("No appointments need reminder retry")
+                return
+
+            logger.info(f"Found {len(appointments)} appointments for reminder retry")
+
+            chatwoot = ChatwootClient()
+
+            for appointment in appointments:
+                try:
+                    retries_attempted += 1
+
+                    # Time guard: if <1h to appointment, mark permanent failure immediately
+                    if appointment.start_time - now <= timedelta(hours=REMINDER_TIME_GUARD_HOURS):
+                        appointment.reminder_retry_count = REMINDER_MAX_RETRIES
+                        appointment.reminder_failed = True
+                        appointment.reminder_next_retry_at = None
+                        session.add(
+                            Notification(
+                                type=NotificationType.REMINDER_PERMANENTLY_FAILED,
+                                title="Recordatorio fallido permanentemente",
+                                message=(
+                                    "La cita quedó fuera de la ventana segura para reintentar "
+                                    "el recordatorio."
+                                ),
+                                entity_type="appointment",
+                                entity_id=appointment.id,
+                            )
+                        )
+                        await session.commit()
+                        errors += 1
+                        logger.warning(
+                            "Skipping reminder retry for imminent appointment %s due to time guard",
+                            appointment.id,
+                        )
+                        continue
+
+                    # Increment retry count and schedule next potential retry
+                    appointment.reminder_retry_count += 1
+                    backoff_index = min(
+                        appointment.reminder_retry_count,
+                        len(REMINDER_BACKOFF_MINUTES) - 1,
+                    )
+                    appointment.reminder_next_retry_at = now + timedelta(
+                        minutes=REMINDER_BACKOFF_MINUTES[backoff_index]
+                    )
+                    await session.commit()
+
+                    # Build and send the reminder template
+                    services = await get_services_by_ids(session, appointment.service_ids)
+                    service_names = ", ".join([service.name for service in services])
+
+                    appt_time = appointment.start_time.astimezone(MADRID_TZ)
+                    fecha = format_date_spanish(appt_time)
+                    hora = appt_time.strftime("%H:%M")
+
+                    customer_name = (
+                        appointment.customer.first_name or appointment.first_name or "Cliente"
+                    )
+
+                    body_params = {
+                        "1": customer_name,
+                        "2": fecha,
+                        "3": hora,
+                        "4": service_names,
+                    }
+
+                    template_name = dynamic_settings["reminder_template_name"]
+                    conv_id = None
+                    if appointment.customer.chatwoot_conversation_id:
+                        try:
+                            conv_id = int(appointment.customer.chatwoot_conversation_id)
+                        except (ValueError, TypeError):
+                            pass
+
+                    success = await chatwoot.send_template_message(
+                        customer_phone=appointment.customer.phone,
+                        template_name=template_name,
+                        body_params=body_params,
+                        customer_name=customer_name,
+                        conversation_id=conv_id,
+                        fallback_content=(
+                            f"Recordatorio: Tu cita es hoy a las {hora}. "
+                            f"Te esperamos en Peluquería Atrévete."
+                        ),
+                    )
+
+                    if success:
+                        appointment.reminder_sent = True
+                        appointment.reminder_sent_at = now
+                        appointment.reminder_failed = False
+                        appointment.reminder_next_retry_at = None
+                        session.add(
+                            Notification(
+                                type=NotificationType.REMINDER_SENT,
+                                title=f"Recordatorio enviado a {customer_name}",
+                                message=(f"Se reenvió el recordatorio para la cita de las {hora}."),
+                                entity_type="appointment",
+                                entity_id=appointment.id,
+                            )
+                        )
+                        await session.commit()
+                        successes += 1
+                        logger.info(
+                            f"Reminder retry {appointment.reminder_retry_count} succeeded "
+                            f"for appointment {appointment.id}"
+                        )
+                    else:
+                        if appointment.reminder_retry_count >= REMINDER_MAX_RETRIES:
+                            appointment.reminder_next_retry_at = None
+                            session.add(
+                                Notification(
+                                    type=NotificationType.REMINDER_PERMANENTLY_FAILED,
+                                    title=f"Recordatorio fallido permanentemente: {customer_name}",
+                                    message=(
+                                        f"No se pudo enviar recordatorio para la cita "
+                                        f"de las {hora} tras {REMINDER_MAX_RETRIES} intentos."
+                                    ),
+                                    entity_type="appointment",
+                                    entity_id=appointment.id,
+                                )
+                            )
+                        await session.commit()
+                        errors += 1
+                        logger.warning(
+                            f"Reminder retry {appointment.reminder_retry_count}/"
+                            f"{REMINDER_MAX_RETRIES} failed for appointment {appointment.id}"
+                        )
+
+                except Exception as e:
+                    errors += 1
+                    logger.error(
+                        f"Error during reminder retry for appointment {appointment.id}: {e}",
+                        exc_info=True,
+                    )
+                    await session.rollback()
+
+    except Exception as e:
+        logger.exception(f"Critical error in process_reminder_retries: {e}")
+
+    logger.info(
+        f"Completed process_reminder_retries: "
+        f"attempted={retries_attempted}, successes={successes}, errors={errors}"
+    )
+
+
+# =============================================================================
 # Job 2: Process Auto-Cancellations (24h before, no confirmation)
 # =============================================================================
 
@@ -912,6 +1114,13 @@ async def send_reminders() -> None:
 
             if not appointments:
                 logger.info("No appointments need reminders")
+                await update_health_check(
+                    job_name="send_reminders",
+                    last_run=datetime.now(MADRID_TZ),
+                    status="healthy",
+                    processed=0,
+                    errors=0,
+                )
                 return
 
             logger.info(f"Found {len(appointments)} appointments to send reminders")
@@ -965,7 +1174,8 @@ async def send_reminders() -> None:
                     )
 
                     if success:
-                        # Update appointment
+                        # Update appointment (BUG-2 fix: set both reminder_sent AND reminder_sent_at)
+                        appointment.reminder_sent = True
                         appointment.reminder_sent_at = now
                         await session.commit()
 
@@ -985,8 +1195,57 @@ async def send_reminders() -> None:
                             f"for appointment {appointment.id}"
                         )
                     else:
+                        # BUG-3 fix: persist failure state and schedule retry
+                        appointment.reminder_failed = True
                         errors += 1
-                        logger.error(f"Failed to send reminder to {appointment.customer.phone}")
+
+                        # Check time guard: if appointment is within 1h, mark permanent failure now
+                        time_to_appt = appointment.start_time - now
+                        if time_to_appt <= timedelta(hours=REMINDER_TIME_GUARD_HOURS):
+                            appointment.reminder_next_retry_at = None
+                            session.add(
+                                Notification(
+                                    type=NotificationType.REMINDER_PERMANENTLY_FAILED,
+                                    title=f"Recordatorio fallido permanentemente: {customer_name}",
+                                    message=(
+                                        f"No se pudo enviar recordatorio para la cita "
+                                        f"de las {hora} — cita demasiado próxima para reintentar."
+                                    ),
+                                    entity_type="appointment",
+                                    entity_id=appointment.id,
+                                )
+                            )
+                            await session.commit()
+                            logger.warning(
+                                f"Reminder permanently failed for imminent appointment "
+                                f"{appointment.id} (time guard)"
+                            )
+                        else:
+                            # Schedule retry with backoff
+                            backoff_index = min(
+                                appointment.reminder_retry_count,
+                                len(REMINDER_BACKOFF_MINUTES) - 1,
+                            )
+                            appointment.reminder_next_retry_at = now + timedelta(
+                                minutes=REMINDER_BACKOFF_MINUTES[backoff_index]
+                            )
+                            session.add(
+                                Notification(
+                                    type=NotificationType.REMINDER_FAILED,
+                                    title=f"Recordatorio fallido: {customer_name}",
+                                    message=(
+                                        f"No se pudo enviar recordatorio para la cita "
+                                        f"de las {hora}. Reintento programado."
+                                    ),
+                                    entity_type="appointment",
+                                    entity_id=appointment.id,
+                                )
+                            )
+                            await session.commit()
+                            logger.error(
+                                f"Failed to send reminder to {appointment.customer.phone}, "
+                                f"scheduled retry in {REMINDER_BACKOFF_MINUTES[backoff_index]}min"
+                            )
 
                 except Exception as e:
                     errors += 1
@@ -1081,6 +1340,28 @@ async def update_health_check(
 # =============================================================================
 
 
+async def _heartbeat_loop() -> None:
+    """
+    Background heartbeat task to keep health check fresh during idle periods.
+
+    Runs every 60 seconds while the worker is alive, ensuring the health check
+    file is updated even when no jobs are executing.
+    """
+    while not shutdown_requested:
+        try:
+            await update_health_check(
+                job_name="heartbeat",
+                last_run=datetime.now(MADRID_TZ),
+                status="healthy",
+                processed=0,
+                errors=0,
+            )
+        except Exception as e:
+            logger.warning(f"Error updating heartbeat: {e}")
+
+        await asyncio.sleep(60)
+
+
 async def async_main() -> None:
     """
     Main async entry point - runs confirmation jobs on schedule using a single event loop.
@@ -1120,6 +1401,10 @@ async def async_main() -> None:
         errors=0,
     )
     logger.info("Initial health check file written")
+
+    # Launch background heartbeat task to keep health check fresh during idle
+    heartbeat_task = asyncio.create_task(_heartbeat_loop())
+    logger.info("Background heartbeat task started")
 
     # Get job times from settings
     confirmation_time = dynamic_settings["confirmation_job_time"]  # "10:00"
@@ -1182,10 +1467,23 @@ async def async_main() -> None:
             except Exception as e:
                 logger.error(f"Error in process_confirmation_retries: {e}", exc_info=True)
 
+            try:
+                await process_reminder_retries()
+            except Exception as e:
+                logger.error(f"Error in process_reminder_retries: {e}", exc_info=True)
+
             last_reminder_run = now
 
         # Sleep for 1 minute before checking again
         await asyncio.sleep(60)
+
+    # Cancel heartbeat task on shutdown
+    logger.info("Shutting down background heartbeat task...")
+    heartbeat_task.cancel()
+    try:
+        await heartbeat_task
+    except asyncio.CancelledError:
+        pass
 
     logger.info("Confirmation worker shutting down gracefully...")
 

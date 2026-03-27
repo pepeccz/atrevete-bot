@@ -26,6 +26,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -244,7 +245,7 @@ function StylistModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md flex flex-col max-h-[90vh]">
+      <DialogContent className="sm:max-w-md flex flex-col max-h-[90vh]">
         <DialogHeader>
           <DialogTitle>
             {stylist ? "Editar Estilista" : "Nuevo Estilista"}
@@ -255,8 +256,10 @@ function StylistModal({
               : "Crea un nuevo estilista"}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 gap-4">
-          <div className="flex-1 min-h-0 overflow-y-auto px-1 space-y-4">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          {/* Scrollable body */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-1">
+            <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label htmlFor="name">Nombre *</Label>
               <Input
@@ -449,9 +452,11 @@ function StylistModal({
                 Selecciona un color o deja en automático
               </p>
             </div>
+            </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4 border-t">
+          {/* Fixed footer */}
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"
@@ -466,7 +471,7 @@ function StylistModal({
                   ? "Actualizar"
                   : "Crear Estilista"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

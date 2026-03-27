@@ -144,7 +144,6 @@ async def book(
                 "google_calendar_event_id": str,
                 "start_time": str,
                 "end_time": str,
-                "total_price": float,
                 "duration_minutes": int,
                 "customer_id": str,
                 "stylist_id": str,

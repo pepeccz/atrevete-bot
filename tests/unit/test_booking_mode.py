@@ -2963,3 +2963,239 @@ class TestPreToolCallValidation:
         result = await mode._pre_tool_call("search_services", tool_args)
 
         assert result["audience"] == "adult_female"
+
+
+# =============================================================================
+# T-07 & T-08: _create_customer_if_needed unit tests
+# =============================================================================
+
+
+class TestCreateCustomerIfNeeded:
+    """T-07 & T-08 — Unit tests for _create_customer_if_needed coroutine."""
+
+    @pytest.mark.asyncio
+    async def test_returns_existing_id_when_already_set(self):
+        """T-08: ctx.customer_id already set → returns it immediately, no DB calls."""
+        mode = make_booking_mode()
+        ctx = BookingContext(customer_id="existing-uuid-123")
+        state = make_state(customer_id="existing-uuid-123")
+        state["customer_phone"] = "+34600000001"
+
+        with (
+            patch("agent.tools.customer_tools._get_customer") as mock_get,
+            patch("agent.tools.customer_tools._create_customer") as mock_create,
+        ):
+            result = await mode._create_customer_if_needed(ctx, state)
+
+        assert result == "existing-uuid-123"
+        mock_get.assert_not_called()
+        mock_create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_phone(self):
+        """T-07d: customer_phone absent (None) → returns None without DB call."""
+        mode = make_booking_mode()
+        ctx = BookingContext(customer_id=None)
+        state = make_state(customer_id=None)
+        # Explicitly clear customer_phone so _create_customer_if_needed sees None
+        state["customer_phone"] = None
+
+        with (
+            patch("agent.tools.customer_tools._get_customer") as mock_get,
+            patch("agent.tools.customer_tools._create_customer") as mock_create,
+        ):
+            result = await mode._create_customer_if_needed(ctx, state)
+
+        assert result is None
+        mock_get.assert_not_called()
+        mock_create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_existing_customer_when_found_by_phone(self):
+        """T-07b: _get_customer returns a result → uses existing ID, no create call."""
+        mode = make_booking_mode()
+        ctx = BookingContext(customer_id=None, customer_name=None)
+        state = make_state(customer_id=None)
+        state["customer_phone"] = "+34600000001"
+        state["pending_whatsapp_name"] = "María"
+
+        with (
+            patch(
+                "agent.tools.customer_tools._get_customer",
+                new_callable=AsyncMock,
+                return_value={
+                    "id": "existing-db-uuid",
+                    "first_name": "María",
+                    "last_name": "",
+                },
+            ) as mock_get,
+            patch(
+                "agent.tools.customer_tools._create_customer",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            result = await mode._create_customer_if_needed(ctx, state)
+
+        assert result == "existing-db-uuid"
+        assert ctx.customer_id == "existing-db-uuid"
+        mock_get.assert_called_once()
+        mock_create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_creates_customer_when_not_found(self):
+        """T-07c: _get_customer returns no id → _create_customer called → UUID returned."""
+        mode = make_booking_mode()
+        ctx = BookingContext(customer_id=None, customer_name=None)
+        state = make_state(customer_id=None)
+        state["customer_phone"] = "+34600000001"
+        state["pending_whatsapp_name"] = "María"
+
+        with (
+            patch(
+                "agent.tools.customer_tools._get_customer",
+                new_callable=AsyncMock,
+                return_value={"exists": False, "phone": "+34600000001"},
+            ),
+            patch(
+                "agent.tools.customer_tools._create_customer",
+                new_callable=AsyncMock,
+                return_value={"id": "new-created-uuid", "first_name": "María"},
+            ),
+        ):
+            result = await mode._create_customer_if_needed(ctx, state)
+
+        assert result == "new-created-uuid"
+        assert ctx.customer_id == "new-created-uuid"
+        assert ctx.customer_name == "María"
+
+
+# =============================================================================
+# T-09: _build_response increments error_count on booking failure
+# =============================================================================
+
+
+class TestBuildResponseErrorCount:
+    """T-09 — _build_response increments error_count when booking fails."""
+
+    def _make_ctx_with_failure(self, prev_failures: int = 0) -> BookingContext:
+        """BookingContext that simulates a book failure (failure_count incremented)."""
+        ctx = BookingContext(
+            customer_name="María",
+            customer_id="cust-001",
+            selected_services=["Corte"],
+            book_failure_count=prev_failures + 1,  # apply_all_tool_results already ran
+        )
+        return ctx
+
+    def test_error_count_incremented_on_booking_failure(self):
+        """Scenario 3.1: booking failure → error_count increases by 1."""
+        mode = make_booking_mode()
+        state = make_state()
+        state["error_count"] = 1
+
+        ctx = self._make_ctx_with_failure(prev_failures=0)
+
+        result_obj = AgenticLoopResult(
+            response_text="Lo siento, hubo un error.",
+            tool_results={"book": [{"error": "SLOT_TAKEN"}]},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, result_obj, prev_book_failures=0)
+
+        assert updates.get("error_count") == 2
+
+    def test_error_count_not_added_on_success(self):
+        """Scenario 3.3: successful booking → error_count NOT in updates."""
+        mode = make_booking_mode()
+        state = make_state()
+        state["error_count"] = 1
+
+        ctx = BookingContext(
+            customer_name="María",
+            customer_id="cust-001",
+            selected_services=["Corte"],
+            stylist_name="Ana",
+            selected_slot={"date": "2026-04-01", "time": "10:00"},
+            book_failure_count=0,
+        )
+        ctx._booking_completed = True
+
+        result_obj = AgenticLoopResult(
+            response_text="¡Cita confirmada!",
+            tool_results={"book": [{"success": True}]},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, result_obj, prev_book_failures=0)
+
+        assert "error_count" not in updates
+
+    def test_error_count_accumulates_on_second_failure(self):
+        """Two consecutive failures → error_count increments each time."""
+        mode = make_booking_mode()
+        state = make_state()
+        state["error_count"] = 1
+
+        # Simulate second failure: prev=1, current=2
+        ctx = BookingContext(
+            customer_name="María",
+            customer_id="cust-001",
+            selected_services=["Corte"],
+            book_failure_count=2,
+        )
+
+        result_obj = AgenticLoopResult(
+            response_text="Lo siento, otra vez.",
+            tool_results={"book": [{"error": "SLOT_TAKEN"}]},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, result_obj, prev_book_failures=1)
+
+        assert updates.get("error_count") == 2
+
+
+# =============================================================================
+# T-10: BookingContext.last_error — serialization and reset
+# =============================================================================
+
+
+class TestBookingContextLastError:
+    """T-10 — last_error is serialized by to_mode_context() and cleared by reset_transient()."""
+
+    def test_last_error_included_in_mode_context_when_set(self):
+        """to_mode_context() includes last_error when it has a value."""
+        ctx = BookingContext(last_error="booking_failed: SLOT_TAKEN")
+        mode_ctx = ctx.to_mode_context()
+
+        assert mode_ctx.get("last_error") == "booking_failed: SLOT_TAKEN"
+
+    def test_last_error_absent_from_mode_context_when_none(self):
+        """to_mode_context() omits last_error when it is None (lean context)."""
+        ctx = BookingContext(last_error=None)
+        mode_ctx = ctx.to_mode_context()
+
+        # None values are omitted by to_mode_context() to keep mode_context lean
+        assert "last_error" not in mode_ctx
+
+    def test_reset_transient_clears_last_error(self):
+        """reset_transient() sets last_error back to None."""
+        ctx = BookingContext(last_error="some error")
+        ctx.reset_transient()
+
+        assert ctx.last_error is None
+
+    def test_default_last_error_is_none(self):
+        """BookingContext() default: last_error is None."""
+        ctx = BookingContext()
+        assert ctx.last_error is None

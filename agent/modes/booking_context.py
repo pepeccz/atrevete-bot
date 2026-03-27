@@ -101,6 +101,7 @@ class BookingContext:
     book_failure_count: int = 0
     manage_customer_failure_count: int = 0
     needs_availability_refresh: bool = False
+    last_error: str | None = None
 
     # ── Service lock (prevents overwrite during SLOT_TAKEN retry) ──────
     services_locked: bool = False
@@ -158,6 +159,7 @@ class BookingContext:
         self.book_failure_count = 0
         self.manage_customer_failure_count = 0
         self.needs_availability_refresh = False
+        self.last_error = None
         self.services_locked = False
         self.confirmation_shown = False
         self.confirmation_summary_sent = False

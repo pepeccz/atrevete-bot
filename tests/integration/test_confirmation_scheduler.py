@@ -39,26 +39,48 @@ async def _run_two_cycles(
             worker_module.shutdown_requested = True
 
     dynamic_settings = {
+        # Job schedule settings
         "confirmation_job_time": "23:59",  # Irrelevant time — won't trigger daily jobs
         "auto_cancel_job_time": "23:59",
         "reminder_job_interval": "hourly",
+        # Hours-before settings
+        "confirmation_hours_before": 48,
+        "auto_cancel_hours_before": 24,
+        "reminder_hours_before": 2,
+        # Template name settings
+        "confirmation_template_name": "appointment_confirmation_48h",
+        "auto_cancel_template_name": "appointment_auto_cancelled",
+        "reminder_template_name": "appointment_reminder_2h",
     }
 
-    # Fixed datetime: always returns the same time so daily jobs never fire
-    fixed_now = datetime(2026, 3, 26, 14, 0, 0, tzinfo=MADRID_TZ)
+    # Advancing datetimes: each call to datetime.now() returns 61 minutes later,
+    # so the reminder interval check (>= 60 min) triggers on every loop iteration.
+    base_now = datetime(2026, 3, 26, 14, 0, 0, tzinfo=MADRID_TZ)
+    call_count_dt = 0
+
+    def advancing_now(_tz=None):
+        nonlocal call_count_dt
+        result = base_now + timedelta(minutes=61 * call_count_dt)
+        call_count_dt += 1
+        return result
+
+    mock_reminder_retries = AsyncMock()
 
     with (
         patch.object(worker_module, "send_reminders", mock_reminders),
         patch.object(worker_module, "send_confirmations", mock_confirmations),
         patch.object(worker_module, "process_confirmation_retries", mock_retries),
+        patch.object(worker_module, "process_reminder_retries", mock_reminder_retries),
         patch.object(worker_module, "process_auto_cancellations", new_callable=AsyncMock),
         patch.object(worker_module.asyncio, "sleep", fake_sleep),
         patch(
-            "agent.workers.confirmation_worker.load_dynamic_settings", return_value=dynamic_settings
+            "agent.workers.confirmation_worker.get_dynamic_settings",
+            new_callable=AsyncMock,
+            return_value=dynamic_settings,
         ),
         patch("agent.workers.confirmation_worker.datetime") as mock_dt,
     ):
-        mock_dt.now.return_value = fixed_now
+        mock_dt.now.side_effect = advancing_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
         await worker_module.async_main()

@@ -686,6 +686,16 @@ def run_archival_worker() -> None:
 
     # Run scheduler loop
     while not shutdown_requested:
+        # Refresh heartbeat every iteration (every 60s) to keep health check fresh during idle
+        asyncio.run(
+            update_health_check(
+                last_run=datetime.now(TIMEZONE),
+                status="healthy",
+                checkpoints_archived=0,
+                messages_archived=0,
+                errors=0,
+            )
+        )
         schedule.run_pending()
         time.sleep(60)  # Check every minute
 

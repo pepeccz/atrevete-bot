@@ -202,7 +202,6 @@ class TestGetCustomerHistoryNewKeys:
         mock_apt.start_time = MagicMock()
         mock_apt.start_time.isoformat.return_value = "2026-04-01T10:00:00+02:00"
         mock_apt.duration_minutes = 60
-        mock_apt.total_price = 25.0
         mock_apt.status = MagicMock()
         mock_apt.status.value = "pending"
         mock_apt.stylist_id = uuid4()

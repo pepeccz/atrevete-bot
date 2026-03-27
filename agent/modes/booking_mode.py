@@ -367,8 +367,9 @@ class BookingMode(BaseModeNode):
         messages = await self._build_messages(state, ctx)
 
         # 5. Agentic loop (max 3 tool rounds, inherited from BaseModeNode)
-        # Store ctx as transient instance attribute so _pre_tool_call can access it
+        # Store ctx and state as transient instance attributes so _pre_tool_call can access them
         self._ctx = ctx
+        self._current_state = state
         result = await self._run_agentic_loop(messages, tools=self.get_tools())
 
         # 6. Detect tool skips (R4/R6 list_stylists, F-7 search_services)
@@ -388,6 +389,8 @@ class BookingMode(BaseModeNode):
             ctx.force_list_stylists_reminder = False
 
         # 8. Extract tool results → update context
+        # Snapshot book_failure_count BEFORE apply_all_tool_results increments it
+        prev_book_failures = ctx.book_failure_count
         apply_all_tool_results(result.tool_results, ctx)
 
         # 6b. GAP-04 fix: attempt to resolve stylist from user message when the
@@ -411,7 +414,7 @@ class BookingMode(BaseModeNode):
             _extract_notes_from_conversation(state, user_message, ctx)
 
         # 7. Build response with state updates
-        return self._build_response(state, ctx, result)
+        return self._build_response(state, ctx, result, prev_book_failures=prev_book_failures)
 
     # ──────────────────────────────────────────────────────────────────────
     # Pre-Resolvers (deterministic, before LLM)
@@ -488,6 +491,94 @@ class BookingMode(BaseModeNode):
                     "_resolve_audience_hint: extracted '%s' from user message",
                     extracted,
                 )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Customer auto-creation helper
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def _create_customer_if_needed(
+        self,
+        ctx: BookingContext,
+        state: ConversationState,
+    ) -> str | None:
+        """Try to silently create a customer from state data.
+
+        Called by _pre_tool_call when ctx.customer_id is None but phone is
+        available. Performs a get-first, then create if not found (idempotent).
+
+        Returns:
+            UUID string if customer was found or created, None if creation
+            failed (phone missing, invalid, or DB error).
+        """
+        if ctx.customer_id:
+            return ctx.customer_id  # Idempotent
+
+        phone = state.get("customer_phone")
+        if not phone:
+            return None
+
+        name = (
+            ctx.customer_name
+            or state.get("pending_whatsapp_name")
+            or state.get("customer_first_name")
+            or "Cliente"
+        )
+
+        try:
+            from agent.tools.customer_tools import _create_customer, _get_customer
+
+            # Try get-first (idempotent — customer may exist from a prior session)
+            result = await _get_customer(phone)
+            if result.get("id"):
+                customer_id = result["id"]
+                ctx.customer_id = customer_id
+                if ctx.customer_name is None:
+                    first = result.get("first_name", "")
+                    last = result.get("last_name", "")
+                    ctx.customer_name = f"{first} {last}".strip() or name
+                logger.info(
+                    "_create_customer_if_needed: found existing customer id=%s for phone=%s",
+                    customer_id,
+                    phone,
+                )
+                return customer_id
+
+            # Create new customer
+            parts = name.split(" ", 1)
+            create_result = await _create_customer(
+                phone,
+                {
+                    "first_name": parts[0],
+                    "last_name": parts[1] if len(parts) > 1 else "",
+                },
+            )
+            customer_id = create_result.get("id")
+            if customer_id:
+                ctx.customer_id = customer_id
+                if ctx.customer_name is None:
+                    ctx.customer_name = name
+                logger.info(
+                    "_create_customer_if_needed: created new customer id=%s for phone=%s",
+                    customer_id,
+                    phone,
+                )
+                return customer_id
+
+            logger.warning(
+                "_create_customer_if_needed: create returned no id for phone=%s, result=%s",
+                phone,
+                create_result,
+            )
+            return None
+
+        except Exception as exc:
+            logger.warning(
+                "_create_customer_if_needed: failed for phone=%s: %s",
+                phone,
+                exc,
+                exc_info=True,
+            )
+            return None
 
     # ──────────────────────────────────────────────────────────────────────
     # Pre-tool-call hook (slot_index → stylist_id + start_time resolution)
@@ -708,12 +799,32 @@ class BookingMode(BaseModeNode):
 
         # ── Hard gate: reject book() if no customer_id ─────────────────────
         if not (ctx and ctx.customer_id):
-            logger.warning("_pre_tool_call: book() rejected — no customer_id in context")
-            return ToolCallRejection(
-                name="book",
-                error_code="NO_CUSTOMER_ID",
-                error_message="Llama a manage_customer primero para obtener el customer_id",
-            )
+            # Try to silently create customer for new WhatsApp users who have
+            # a phone number available in state but no prior manage_customer call.
+            if ctx is not None:
+                state_for_creation: ConversationState = getattr(self, "_current_state", {})
+                created_id = await self._create_customer_if_needed(ctx, state_for_creation)
+                if created_id:
+                    ctx.customer_id = created_id  # Ensure ctx is updated (idempotent)
+                    logger.info(
+                        "_pre_tool_call: customer auto-created id=%s — proceeding with book()",
+                        created_id,
+                    )
+                    # Fall through to the next guards with ctx.customer_id now set
+                else:
+                    logger.warning("_pre_tool_call: book() rejected — no customer_id in context")
+                    return ToolCallRejection(
+                        name="book",
+                        error_code="NO_CUSTOMER_ID",
+                        error_message="Llama a manage_customer primero para obtener el customer_id",
+                    )
+            else:
+                logger.warning("_pre_tool_call: book() rejected — no customer_id in context")
+                return ToolCallRejection(
+                    name="book",
+                    error_code="NO_CUSTOMER_ID",
+                    error_message="Llama a manage_customer primero para obtener el customer_id",
+                )
 
         # ── Hard gate: reject book() if notes haven't been asked ──────────
         if ctx and not ctx.notes_asked:
@@ -1536,6 +1647,7 @@ class BookingMode(BaseModeNode):
         state: ConversationState,
         ctx: BookingContext,
         result: AgenticLoopResult,
+        prev_book_failures: int = 0,
     ) -> dict:
         """Build the final state update dict.
 
@@ -1544,6 +1656,7 @@ class BookingMode(BaseModeNode):
         - First-turn AI disclosure prepending (EU AI Act)
         - Mode transition to GENERAL after successful booking
         - Context serialization to mode_context
+        - error_count increment when a booking failure is detected
         """
         response_text = result.response_text or ""
 
@@ -1649,12 +1762,37 @@ class BookingMode(BaseModeNode):
             if _combo_offer_in_response(response_text, ctx.pending_recommendations):
                 ctx.recommendations_shown = True
 
+        # GAP 3: track booking failures for auto-escalation.
+        # book_failure_count is incremented by apply_all_tool_results (via extract_booking_result).
+        # Compare against the snapshot taken before apply_all_tool_results in handle().
+        if not ctx._booking_completed and ctx.book_failure_count > prev_book_failures:
+            # A new booking failure occurred this turn — set last_error and increment error_count
+            book_results = result.tool_results.get("book", [])
+            if book_results:
+                ctx.last_error = str(book_results[-1])
+            else:
+                ctx.last_error = "booking_failed"
+            logger.info(
+                "_build_response: booking failure detected (failures=%d > prev=%d), "
+                "error_count → %d, last_error=%r",
+                ctx.book_failure_count,
+                prev_book_failures,
+                state.get("error_count", 0) + 1,
+                ctx.last_error,
+            )
+        elif ctx._booking_completed:
+            ctx.last_error = None
+
         updates: dict[str, Any] = {
             **add_message(state, "assistant", response_text),
             "mode_context": ctx.to_mode_context(),
             "last_node": "booking",
             "user_message": None,
         }
+
+        # Increment error_count in state when a new booking failure occurred
+        if not ctx._booking_completed and ctx.book_failure_count > prev_book_failures:
+            updates["error_count"] = state.get("error_count", 0) + 1
 
         if disclosure_sent:
             updates["ai_disclosure_sent"] = True
@@ -2413,7 +2551,9 @@ def _build_stylists_section(ctx: BookingContext) -> str:
         stylist_id = s.get("id", "???")
         lines.append(f"{idx}. {name} | id: {stylist_id}")
 
-    lines.append(f"{len(ctx.prefetched_stylists) + 1}. La estilista con disponibilidad más temprana")
+    lines.append(
+        f"{len(ctx.prefetched_stylists) + 1}. La estilista con disponibilidad más temprana"
+    )
 
     if ctx.recurrent_stylist_hint:
         lines.append(f"Estilista habitual de la clienta: {ctx.recurrent_stylist_hint}")

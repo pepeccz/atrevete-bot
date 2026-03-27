@@ -18,11 +18,44 @@ import logging
 import os
 from typing import Optional
 
+from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def get_langfuse_client() -> Optional[Langfuse]:
+    """
+    Create a Langfuse client for direct API calls (flush, scoring, etc).
+
+    Returns:
+        Langfuse: Configured Langfuse client instance, or None if not configured.
+        The client uses the same environment variables as the callback handler.
+
+    Example:
+        >>> client = get_langfuse_client()
+        >>> if client:
+        ...     client.flush()  # Ensure traces are sent
+    """
+    settings = get_settings()
+
+    # Return None if Langfuse is not configured
+    if not settings.LANGFUSE_PUBLIC_KEY or not settings.LANGFUSE_SECRET_KEY:
+        return None
+
+    try:
+        client = Langfuse(
+            public_key=settings.LANGFUSE_PUBLIC_KEY,
+            secret_key=settings.LANGFUSE_SECRET_KEY,
+            host=settings.LANGFUSE_BASE_URL or None,
+        )
+        logger.debug("Langfuse client created successfully")
+        return client
+    except Exception as e:
+        logger.warning(f"Failed to create Langfuse client: {e}")
+        return None
 
 
 def get_langfuse_handler(

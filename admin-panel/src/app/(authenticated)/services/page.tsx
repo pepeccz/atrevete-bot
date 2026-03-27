@@ -192,7 +192,7 @@ function ServiceModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg flex flex-col max-h-[90vh]">
+      <DialogContent className="sm:max-w-lg flex flex-col max-h-[90vh]">
         <DialogHeader>
           <DialogTitle>
             {service ? "Editar Servicio" : "Nuevo Servicio"}
@@ -203,112 +203,116 @@ function ServiceModal({
               : "Crea un nuevo servicio"}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 gap-4">
-          <div className="flex-1 min-h-0 overflow-y-auto px-1 space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Nombre *</Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, name: e.target.value }))
-                }
-                placeholder="Corte de pelo"
-                required
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          {/* Scrollable body */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-1">
+            <div className="space-y-4 py-2">
               <div className="space-y-2">
-                <Label htmlFor="category">Categoria</Label>
-                <Select
-                  value={formData.category}
-                  onValueChange={(value) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      category: value as ServiceCategory,
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="HAIRDRESSING">Peluqueria</SelectItem>
-                    <SelectItem value="AESTHETICS">Estetica</SelectItem>
-                    <SelectItem value="BOTH">Ambos</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="duration">Duracion (min)</Label>
+                <Label htmlFor="name">Nombre *</Label>
                 <Input
-                  id="duration"
-                  type="number"
-                  min={5}
-                  max={480}
-                  step={5}
-                  value={formData.duration_minutes}
+                  id="name"
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, name: e.target.value }))
+                  }
+                  placeholder="Corte de pelo"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="category">Categoria</Label>
+                  <Select
+                    value={formData.category}
+                    onValueChange={(value) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        category: value as ServiceCategory,
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="HAIRDRESSING">Peluqueria</SelectItem>
+                      <SelectItem value="AESTHETICS">Estetica</SelectItem>
+                      <SelectItem value="BOTH">Ambos</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="duration">Duracion (min)</Label>
+                  <Input
+                    id="duration"
+                    type="number"
+                    min={5}
+                    max={480}
+                    step={5}
+                    value={formData.duration_minutes}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        duration_minutes: parseInt(e.target.value) || 30,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="description">Descripcion</Label>
+                <Textarea
+                  id="description"
+                  value={formData.description}
                   onChange={(e) =>
                     setFormData((prev) => ({
                       ...prev,
-                      duration_minutes: parseInt(e.target.value) || 30,
+                      description: e.target.value,
+                    }))
+                  }
+                  placeholder="Descripcion del servicio..."
+                />
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="is_active"
+                  checked={formData.is_active}
+                  onCheckedChange={(checked) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      is_active: checked === true,
                     }))
                   }
                 />
+                <Label htmlFor="is_active" className="cursor-pointer">
+                  Servicio activo
+                </Label>
               </div>
+
+              {/* Only show metadata form when editing an existing service */}
+              {service && (
+                <ServiceMetadataForm
+                  value={formData.metadata}
+                  onChange={(metadata) =>
+                    setFormData((prev) => ({ ...prev, metadata }))
+                  }
+                  disabled={loading}
+                />
+              )}
+
+              {formError && (
+                <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive whitespace-pre-line">
+                  {formError}
+                </div>
+              )}
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="description">Descripcion</Label>
-              <Textarea
-                id="description"
-                value={formData.description}
-                onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    description: e.target.value,
-                  }))
-                }
-                placeholder="Descripcion del servicio..."
-              />
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="is_active"
-                checked={formData.is_active}
-                onCheckedChange={(checked) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    is_active: checked === true,
-                  }))
-                }
-              />
-              <Label htmlFor="is_active" className="cursor-pointer">
-                Servicio activo
-              </Label>
-            </div>
-
-            {/* Only show metadata form when editing an existing service */}
-            {service && (
-              <ServiceMetadataForm
-                value={formData.metadata}
-                onChange={(metadata) =>
-                  setFormData((prev) => ({ ...prev, metadata }))
-                }
-                disabled={loading}
-              />
-            )}
-
-            {formError && (
-              <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive whitespace-pre-line">
-                {formError}
-              </div>
-            )}
           </div>
 
-          <div className="flex justify-end gap-2 pt-4 border-t">
+          {/* Fixed footer */}
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"
@@ -323,7 +327,7 @@ function ServiceModal({
                   ? "Actualizar"
                   : "Crear Servicio"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

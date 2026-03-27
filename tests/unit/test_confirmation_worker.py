@@ -808,3 +808,319 @@ class TestWebhookOnPermanentFailure:
         assert call_kwargs["event_type"] == "confirmation_permanently_failed"
         assert call_kwargs["failure_reason"] == "max_retries_exhausted"
         assert mock_session.commit.called
+
+
+# =============================================================================
+# T-12/T-13/T-14/T-15/T-16/T-17: Reminder retry + BUG-2/BUG-3 fixes
+# =============================================================================
+
+
+class TestSendRemindersFailurePath:
+    """Tests for BUG-3 reminder failure + retry logic, and BUG-2 reminder_sent sync."""
+
+    def _make_confirmed_appointment(
+        self,
+        *,
+        start_time_delta_hours: float = 3.0,
+        reminder_retry_count: int = 0,
+    ):
+        """Create a mock CONFIRMED appointment for reminder tests."""
+        appt = MagicMock()
+        appt.id = uuid4()
+        appt.customer_id = uuid4()
+        appt.stylist_id = uuid4()
+        appt.status = AppointmentStatus.CONFIRMED
+        appt.start_time = datetime.now(MADRID_TZ) + timedelta(hours=start_time_delta_hours)
+        appt.reminder_sent_at = None
+        appt.reminder_sent = False
+        appt.reminder_failed = False
+        appt.reminder_retry_count = reminder_retry_count
+        appt.reminder_next_retry_at = None
+        appt.service_ids = [uuid4()]
+        appt.first_name = "Elena"
+        appt.notification_failed = False
+        appt.retry_count = 0
+
+        mock_customer = MagicMock()
+        mock_customer.phone = "+34677889900"
+        mock_customer.first_name = "Elena García"
+        mock_customer.chatwoot_conversation_id = None
+        appt.customer = mock_customer
+
+        mock_stylist = MagicMock()
+        mock_stylist.name = "Marta"
+        appt.stylist = mock_stylist
+
+        return appt
+
+    @pytest.mark.asyncio
+    async def test_failure_sets_reminder_failed_and_schedules_retry(self):
+        """T-12: send_reminders() failure path sets reminder_failed=True and schedules retry."""
+        mock_service = MagicMock()
+        mock_service.name = "Manicura"
+
+        appt = self._make_confirmed_appointment(start_time_delta_hours=3.0)
+
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            mock_appts_result = MagicMock()
+            mock_appts_result.scalars.return_value.all.return_value = [appt]
+
+            mock_services_result = MagicMock()
+            mock_services_result.scalars.return_value.all.return_value = [mock_service]
+
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = MagicMock()
+                mock_chatwoot.send_template_message = AsyncMock(return_value=False)
+                mock_chatwoot_class.return_value = mock_chatwoot
+
+                with patch(
+                    "agent.workers.confirmation_worker.update_health_check",
+                    new_callable=AsyncMock,
+                ):
+                    from agent.workers.confirmation_worker import send_reminders
+
+                    await send_reminders()
+
+        # reminder_failed must be set
+        assert appt.reminder_failed is True
+        # reminder_next_retry_at must be scheduled (not None) — time guard not triggered
+        assert appt.reminder_next_retry_at is not None
+        # A REMINDER_FAILED notification must have been added
+        added_notifications = [call.args[0] for call in mock_session.add.call_args_list]
+        notification_types = [n.type for n in added_notifications]
+        assert NotificationType.REMINDER_FAILED in notification_types
+        # REMINDER_PERMANENTLY_FAILED must NOT be created on first failure
+        assert NotificationType.REMINDER_PERMANENTLY_FAILED not in notification_types
+
+    @pytest.mark.asyncio
+    async def test_failure_with_time_guard_creates_permanent_failure(self):
+        """T-13: send_reminders() failure with <1h to appointment creates REMINDER_PERMANENTLY_FAILED."""
+        mock_service = MagicMock()
+        mock_service.name = "Pedicura"
+
+        # Appointment is only 30 minutes away — time guard must trigger
+        appt = self._make_confirmed_appointment(start_time_delta_hours=0.5)
+
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            mock_appts_result = MagicMock()
+            mock_appts_result.scalars.return_value.all.return_value = [appt]
+
+            mock_services_result = MagicMock()
+            mock_services_result.scalars.return_value.all.return_value = [mock_service]
+
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = MagicMock()
+                mock_chatwoot.send_template_message = AsyncMock(return_value=False)
+                mock_chatwoot_class.return_value = mock_chatwoot
+
+                with patch(
+                    "agent.workers.confirmation_worker.update_health_check",
+                    new_callable=AsyncMock,
+                ):
+                    from agent.workers.confirmation_worker import send_reminders
+
+                    await send_reminders()
+
+        assert appt.reminder_failed is True
+        # Time guard: no retry scheduled
+        assert appt.reminder_next_retry_at is None
+        # REMINDER_PERMANENTLY_FAILED notification must be created
+        added_notifications = [call.args[0] for call in mock_session.add.call_args_list]
+        notification_types = [n.type for n in added_notifications]
+        assert NotificationType.REMINDER_PERMANENTLY_FAILED in notification_types
+
+    @pytest.mark.asyncio
+    async def test_success_sets_both_reminder_sent_and_reminder_sent_at(self):
+        """T-14: send_reminders() success sets reminder_sent=True AND reminder_sent_at=now (BUG-2)."""
+        mock_service = MagicMock()
+        mock_service.name = "Corte"
+
+        appt = self._make_confirmed_appointment(start_time_delta_hours=2.0)
+
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            mock_appts_result = MagicMock()
+            mock_appts_result.scalars.return_value.all.return_value = [appt]
+
+            mock_services_result = MagicMock()
+            mock_services_result.scalars.return_value.all.return_value = [mock_service]
+
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = MagicMock()
+                mock_chatwoot.send_template_message = AsyncMock(return_value=True)
+                mock_chatwoot_class.return_value = mock_chatwoot
+
+                with patch(
+                    "agent.workers.confirmation_worker.update_health_check",
+                    new_callable=AsyncMock,
+                ):
+                    from agent.workers.confirmation_worker import send_reminders
+
+                    await send_reminders()
+
+        # BUG-2: both fields must be set atomically
+        assert appt.reminder_sent is True
+        assert appt.reminder_sent_at is not None
+
+    @pytest.mark.asyncio
+    async def test_no_op_early_return_calls_update_health_check(self):
+        """T-17: send_reminders() no-op path calls update_health_check() (BUG-3/REQ-BUG3-5)."""
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = []  # No appointments
+            mock_session.execute = AsyncMock(return_value=mock_result)
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch(
+                "agent.workers.confirmation_worker.update_health_check",
+                new_callable=AsyncMock,
+            ) as mock_health:
+                from agent.workers.confirmation_worker import send_reminders
+
+                await send_reminders()
+
+        # Health check must be called even on no-op early-return path
+        mock_health.assert_called()
+        call_kwargs = mock_health.call_args.kwargs
+        assert call_kwargs["job_name"] == "send_reminders"
+        assert call_kwargs["processed"] == 0
+        assert call_kwargs["errors"] == 0
+
+
+class TestProcessReminderRetries:
+    """Tests for process_reminder_retries() — BUG-3 retry worker."""
+
+    def _make_failed_reminder_appointment(
+        self,
+        *,
+        start_time_delta_hours: float = 3.0,
+        reminder_retry_count: int = 0,
+    ):
+        """Create a mock appointment with reminder_failed=True for retry tests."""
+        appt = MagicMock()
+        appt.id = uuid4()
+        appt.customer_id = uuid4()
+        appt.stylist_id = uuid4()
+        appt.status = AppointmentStatus.CONFIRMED
+        appt.start_time = datetime.now(MADRID_TZ) + timedelta(hours=start_time_delta_hours)
+        appt.reminder_sent_at = None
+        appt.reminder_sent = False
+        appt.reminder_failed = True
+        appt.reminder_retry_count = reminder_retry_count
+        appt.reminder_next_retry_at = datetime.now(MADRID_TZ) - timedelta(minutes=5)
+        appt.service_ids = [uuid4()]
+        appt.first_name = "Sofía"
+        appt.notification_failed = False
+        appt.retry_count = 0
+
+        mock_customer = MagicMock()
+        mock_customer.phone = "+34666777888"
+        mock_customer.first_name = "Sofía Torres"
+        mock_customer.chatwoot_conversation_id = None
+        appt.customer = mock_customer
+
+        mock_stylist = MagicMock()
+        mock_stylist.name = "Carmen"
+        appt.stylist = mock_stylist
+
+        return appt
+
+    @pytest.mark.asyncio
+    async def test_success_clears_reminder_failed_and_sets_sent_fields(self):
+        """T-15: process_reminder_retries() success clears reminder_failed, sets reminder_sent=True + reminder_sent_at."""
+        mock_service = MagicMock()
+        mock_service.name = "Coloración"
+
+        appt = self._make_failed_reminder_appointment(
+            start_time_delta_hours=3.0, reminder_retry_count=0
+        )
+
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            mock_appts_result = MagicMock()
+            mock_appts_result.scalars.return_value.all.return_value = [appt]
+
+            mock_services_result = MagicMock()
+            mock_services_result.scalars.return_value.all.return_value = [mock_service]
+
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = MagicMock()
+                mock_chatwoot.send_template_message = AsyncMock(return_value=True)
+                mock_chatwoot_class.return_value = mock_chatwoot
+
+                from agent.workers.confirmation_worker import process_reminder_retries
+
+                await process_reminder_retries()
+
+        # Success: clear failure state, set sent fields
+        assert appt.reminder_failed is False
+        assert appt.reminder_sent is True
+        assert appt.reminder_sent_at is not None
+        assert appt.reminder_next_retry_at is None
+
+    @pytest.mark.asyncio
+    async def test_max_retries_creates_permanently_failed_notification(self):
+        """T-16: process_reminder_retries() at max retries creates REMINDER_PERMANENTLY_FAILED."""
+        mock_service = MagicMock()
+        mock_service.name = "Alisado"
+
+        # retry_count=1 → will be incremented to 2 = REMINDER_MAX_RETRIES
+        appt = self._make_failed_reminder_appointment(
+            start_time_delta_hours=3.0, reminder_retry_count=1
+        )
+
+        with patch("agent.workers.confirmation_worker.get_async_session") as mock_get_session:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            mock_appts_result = MagicMock()
+            mock_appts_result.scalars.return_value.all.return_value = [appt]
+
+            mock_services_result = MagicMock()
+            mock_services_result.scalars.return_value.all.return_value = [mock_service]
+
+            mock_session.execute = AsyncMock(side_effect=[mock_appts_result, mock_services_result])
+            mock_get_session.return_value.__aenter__.return_value = mock_session
+
+            with patch("agent.workers.confirmation_worker.ChatwootClient") as mock_chatwoot_class:
+                mock_chatwoot = MagicMock()
+                mock_chatwoot.send_template_message = AsyncMock(return_value=False)
+                mock_chatwoot_class.return_value = mock_chatwoot
+
+                from agent.workers.confirmation_worker import process_reminder_retries
+
+                await process_reminder_retries()
+
+        # Max retries exhausted: REMINDER_PERMANENTLY_FAILED notification added
+        added_notifications = [call.args[0] for call in mock_session.add.call_args_list]
+        notification_types = [n.type for n in added_notifications]
+        assert NotificationType.REMINDER_PERMANENTLY_FAILED in notification_types
+        assert mock_session.commit.called

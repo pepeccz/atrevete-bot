@@ -17,6 +17,9 @@ DB_PORT="${POSTGRES_PORT:-5432}"
 DB_NAME="${POSTGRES_DB:-atrevete_db}"
 DB_USER="${POSTGRES_USER:-atrevete}"
 
+# Password for psql commands
+export PGPASSWORD="${POSTGRES_PASSWORD}"
+
 echo "Database Configuration:"
 echo "  Host: $DB_HOST"
 echo "  Port: $DB_PORT"
@@ -88,6 +91,7 @@ run_seeds() {
         "database.seeds.stylists"
         "database.seeds.business_hours"
         "database.seeds.policies"
+        "database.seeds.system_settings_seed"
     )
 
     for seed_script in "${SEED_SCRIPTS[@]}"; do

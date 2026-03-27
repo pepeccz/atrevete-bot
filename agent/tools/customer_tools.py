@@ -471,7 +471,6 @@ async def get_customer_history(customer_id: str, limit: int = 5) -> dict[str, An
                         "id": str,
                         "start_time": str,
                         "duration_minutes": int,
-                        "total_price": float,
                         "status": str,
                         "stylist_id": str,
                         "service_ids": list[str]
@@ -519,7 +518,6 @@ async def get_customer_history(customer_id: str, limit: int = 5) -> dict[str, An
                         "id": str(apt.id),
                         "start_time": apt.start_time.isoformat(),
                         "duration_minutes": apt.duration_minutes,
-                        "total_price": float(apt.total_price),
                         "status": apt.status.value,
                         "stylist_id": str(apt.stylist_id),
                         "service_ids": [str(sid) for sid in apt.service_ids],

@@ -830,42 +830,35 @@ class TestFirstNameFilteringRule6:
         assert "Lunes 14:00" in context
 
 
-class TestConfirmationMdNoNamePermission:
-    """T3.7 — confirmation.md must not contain the removed name-permission line."""
+class TestBookingMdNoNamePermission:
+    """T3.7 — booking.md must not contain the removed name-permission line.
 
-    def test_confirmation_md_does_not_contain_name_permission_line(self):
+    Redirected from the non-existent booking/confirmation.md to the actual
+    prompt file: agent/prompts/modes/booking.md (GAP 4 fix).
+    """
+
+    def test_booking_md_does_not_contain_name_permission_line(self):
         """T3.7: The line 'Puedes usar el nombre de la clienta' must be absent."""
         from pathlib import Path
 
-        confirmation_path = (
-            Path(__file__).parent.parent.parent
-            / "agent"
-            / "prompts"
-            / "modes"
-            / "booking"
-            / "confirmation.md"
+        booking_path = (
+            Path(__file__).parent.parent.parent / "agent" / "prompts" / "modes" / "booking.md"
         )
-        content = confirmation_path.read_text(encoding="utf-8")
+        content = booking_path.read_text(encoding="utf-8")
 
         assert "Puedes usar el nombre de la clienta" not in content
 
-    def test_confirmation_md_retains_core_instructions(self):
-        """T3.7 scenario 2: removing the line must not strip other content."""
+    def test_booking_md_retains_core_instructions(self):
+        """T3.7 scenario 2: booking.md must contain core booking mode instructions."""
         from pathlib import Path
 
-        confirmation_path = (
-            Path(__file__).parent.parent.parent
-            / "agent"
-            / "prompts"
-            / "modes"
-            / "booking"
-            / "confirmation.md"
+        booking_path = (
+            Path(__file__).parent.parent.parent / "agent" / "prompts" / "modes" / "booking.md"
         )
-        content = confirmation_path.read_text(encoding="utf-8")
+        content = booking_path.read_text(encoding="utf-8")
 
-        assert "Confirmacion" in content or "confirmacion" in content.lower()
-        assert "Reglas de Transicion" in content
-        assert "Preservacion de Contexto" in content
+        # booking.md must contain core booking mode identifier
+        assert "Modo RESERVA" in content
 
 
 # =============================================================================

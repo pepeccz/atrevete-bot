@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from agent.batching.message_batcher import MessageBatcher
 from agent.graphs.conversation_flow import create_graph
 from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
-from agent.utils.monitoring import get_langfuse_handler
+from agent.utils.monitoring import get_langfuse_handler, get_langfuse_client
 from shared.config import get_settings
 from shared.logging_config import configure_logging
 from shared.startup_validator import StartupValidationError, validate_startup_config
@@ -164,12 +164,14 @@ async def subscribe_to_incoming_messages():
 
         # Create Langfuse handler for tracing and token monitoring
         langfuse_handler = None
+        langfuse_client = None
         try:
             langfuse_handler = get_langfuse_handler(
                 conversation_id=conversation_id,
                 customer_phone=customer_phone,
                 customer_name=sender_name,
             )
+            langfuse_client = get_langfuse_client()
         except Exception as langfuse_error:
             logger.warning(
                 f"Failed to create Langfuse handler (continuing without tracing): {langfuse_error}",
@@ -204,9 +206,9 @@ async def subscribe_to_incoming_messages():
             )
 
             # Flush Langfuse traces to ensure they're sent
-            if langfuse_handler:
+            if langfuse_client:
                 try:
-                    langfuse_handler.flush()
+                    langfuse_client.flush()
                     logger.debug(
                         f"Langfuse traces flushed for conversation_id={conversation_id}"
                     )
@@ -228,9 +230,9 @@ async def subscribe_to_incoming_messages():
             )
 
             # Flush Langfuse traces even on error
-            if langfuse_handler:
+            if langfuse_client:
                 try:
-                    langfuse_handler.flush()
+                    langfuse_client.flush()
                 except Exception as flush_error:
                     logger.warning(f"Failed to flush Langfuse traces on error: {flush_error}")
 
