@@ -25,6 +25,7 @@ from agent.modes.booking_mode import (
     _build_offered_slots_section,
     _build_recommendations_section,
     _build_stylists_section,
+    _combo_offer_in_response,
     _contains_name_token,
     _detect_recommendation_decline,
     _extract_name_from_conversation,
@@ -2625,3 +2626,172 @@ class TestConfirmationQuestionPatternDetection:
         assert "reservo" in _CONFIRMATION_QUESTION_PATTERNS
         assert "procedemos" in _CONFIRMATION_QUESTION_PATTERNS
         assert "te parece bien" in _CONFIRMATION_QUESTION_PATTERNS
+
+
+# =============================================================================
+# _combo_offer_in_response (combo-recommendations-fix REQ-2)
+# =============================================================================
+
+
+class TestComboOfferInResponse:
+    """Unit tests for _combo_offer_in_response() detection helper."""
+
+    def test_named_recommendation_detected(self):
+        """Response mentions pending service by name → True."""
+        response = "¿Te gustaría añadir un Tratamiento a tu cita?"
+        pending = ["Tratamiento"]
+        assert _combo_offer_in_response(response, pending) is True
+
+    def test_offer_phrase_detected(self):
+        """Response contains recognized offer phrase → True."""
+        response = "También te ofrezco un peinado para completar el look."
+        pending = ["Peinado"]
+        assert _combo_offer_in_response(response, pending) is True
+
+    def test_no_offer_returns_false(self):
+        """Response unrelated to combo offer → False."""
+        response = "Perfecto, ¿con qué estilista te gustaría?"
+        pending = ["Tratamiento"]
+        assert _combo_offer_in_response(response, pending) is False
+
+    def test_empty_pending_returns_false(self):
+        """Empty pending list → False even if phrase present."""
+        response = "te gustaría añadir algo"
+        pending: list[str] = []
+        assert _combo_offer_in_response(response, pending) is False
+
+    def test_case_insensitive(self):
+        """Name matching is case-insensitive."""
+        response = "TRATAMIENTO incluido en tu reserva"
+        pending = ["tratamiento"]
+        assert _combo_offer_in_response(response, pending) is True
+
+    def test_partial_phrase_match(self):
+        """'¿añadimos' phrase → True."""
+        response = "¿Añadimos también un secado?"
+        pending = ["Secado"]
+        assert _combo_offer_in_response(response, pending) is True
+
+    def test_puedo_anadir_phrase(self):
+        """'puedo añadir' → True."""
+        response = "Puedo añadir un tratamiento de hidratación si lo deseas."
+        pending = ["Hidratación"]
+        assert _combo_offer_in_response(response, pending) is True
+
+    def test_multiple_pending_any_match(self):
+        """Any one of the pending services appearing → True."""
+        response = "Tu cita incluirá el peinado."
+        pending = ["Tratamiento", "Peinado", "Tinte"]
+        assert _combo_offer_in_response(response, pending) is True
+
+    def test_no_name_no_phrase_returns_false(self):
+        """Neither name nor phrase → False."""
+        response = "¿Qué fecha prefieres para tu cita?"
+        pending = ["Tratamiento"]
+        assert _combo_offer_in_response(response, pending) is False
+
+
+# =============================================================================
+# _build_response — recommendations_shown gate (combo-recommendations-fix REQ-2)
+# =============================================================================
+
+
+class TestBuildResponseRecommendationsGate:
+    """REQ-2: recommendations_shown set only when _combo_offer_in_response returns True."""
+
+    def _make_complete_ctx(
+        self, pending_recommendations: list[str] | None = None
+    ) -> BookingContext:
+        return BookingContext(
+            service_id="svc-001",
+            service_name="Corte de Dama",
+            stylist_id="sty-001",
+            stylist_name="María",
+            offered_slots=[
+                {"time": "10:00", "date": "lunes", "full_datetime": "2026-03-30T10:00:00"}
+            ],
+            customer_name="Ana",
+            customer_id="cust-001",
+            pending_recommendations=pending_recommendations
+            if pending_recommendations is not None
+            else ["Tratamiento"],
+            recommendations_shown=False,
+        )
+
+    def test_flag_not_set_without_offer_in_response(self):
+        """Response without combo mention → recommendations_shown stays False."""
+        mode = make_booking_mode("Perfecto, ¿con qué estilista?")
+        state = make_state()
+        ctx = self._make_complete_ctx(pending_recommendations=["Tratamiento"])
+
+        llm_result = AgenticLoopResult(
+            response_text="Perfecto, ¿con qué estilista?",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.recommendations_shown is False
+
+    def test_flag_set_with_offer_in_response(self):
+        """Response mentioning the pending service → recommendations_shown becomes True."""
+        mode = make_booking_mode("¿Te gustaría añadir un Tratamiento a tu cita?")
+        state = make_state()
+        ctx = self._make_complete_ctx(pending_recommendations=["Tratamiento"])
+
+        llm_result = AgenticLoopResult(
+            response_text="¿Te gustaría añadir un Tratamiento a tu cita?",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.recommendations_shown is True
+
+    def test_flag_already_true_stays_true(self):
+        """When recommendations_shown already True, it stays True."""
+        mode = make_booking_mode("Perfecto.")
+        state = make_state()
+        ctx = self._make_complete_ctx(pending_recommendations=["Tratamiento"])
+        ctx.recommendations_shown = True  # already set
+
+        llm_result = AgenticLoopResult(
+            response_text="Perfecto.",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.recommendations_shown is True
+
+    def test_no_pending_recommendations_no_crash(self):
+        """Empty pending_recommendations → gate skipped, no crash."""
+        mode = make_booking_mode("¿Te gustaría añadir un Tratamiento?")
+        state = make_state()
+        ctx = self._make_complete_ctx(pending_recommendations=[])
+        ctx.recommendations_shown = False
+
+        llm_result = AgenticLoopResult(
+            response_text="¿Te gustaría añadir un Tratamiento?",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.recommendations_shown is False

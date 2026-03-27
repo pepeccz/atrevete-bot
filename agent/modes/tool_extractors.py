@@ -299,6 +299,21 @@ def _apply_resolved_option(ctx: BookingContext, opt: dict, axis: str, resolved_v
             s for s in ctx.selected_services if s != opt["service_name"]
         ]
     ctx.candidate_services = []
+    # Copy rich metadata (combo_recommendations + description) — same pattern as Shape 1 (REQ-1)
+    recommendations = opt.get("combo_recommendations") or []
+    if recommendations and not ctx.pending_recommendations:
+        ctx.pending_recommendations = list(recommendations)
+        ctx.recommendations_shown = False
+    description = opt.get("description")
+    if description:
+        _upsert_service_detail(
+            ctx,
+            {
+                "name": opt.get("service_name", ""),
+                "description": description,
+                "duration_minutes": opt.get("duration_minutes"),
+            },
+        )
     logger.info(
         "resolve_pending_clarification: auto-resolved '%s' "
         "via axis '%s'='%s' (remaining_pending=%d)",
@@ -395,6 +410,7 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
         # Infer audience hint if not already set
         if not ctx.service_audience_hint:
             ctx.service_audience_hint = extract_service_audience_hint(svc.get("name"))
+        # Path C: metadata propagated here (see REQ-3)
         # Extract combo recommendations if present and not yet loaded
         combo_recs = svc.get("combo_recommendations", [])
         if combo_recs and not ctx.pending_recommendations:
@@ -430,6 +446,21 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
                         ctx.selected_services = [svc_name] + [
                             s for s in ctx.selected_services if s != svc_name
                         ]
+                    # Copy rich metadata — same pattern as Path A and Shape 1 (REQ-1)
+                    recommendations = opt.get("combo_recommendations") or []
+                    if recommendations and not ctx.pending_recommendations:
+                        ctx.pending_recommendations = list(recommendations)
+                        ctx.recommendations_shown = False
+                    description = opt.get("description")
+                    if description:
+                        _upsert_service_detail(
+                            ctx,
+                            {
+                                "name": svc_name,
+                                "description": description,
+                                "duration_minutes": opt.get("duration_minutes"),
+                            },
+                        )
                     logger.info(
                         "extract_service_fields: auto-resolved clarification "
                         "for '%s' (audience hint '%s' matched)",

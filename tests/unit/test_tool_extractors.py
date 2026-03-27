@@ -11,6 +11,7 @@ import pytest
 from agent.modes.booking_context import BookingContext
 from agent.modes.tool_extractors import (
     TOOL_EXTRACTORS,
+    _apply_resolved_option,
     _safe_parse,
     apply_all_tool_results,
     extract_booking_result,
@@ -837,6 +838,7 @@ class TestApplyAllToolResults:
             "list_stylists",
             "manage_customer",
             "book",
+            "query_info",  # GAP-03: no-op extractor prevents log noise for informational tool
         }
         assert expected == set(TOOL_EXTRACTORS.keys())
 
@@ -2449,3 +2451,145 @@ class TestAudienceHintMapExpansion:
 
     def test_existing_nina_still_works(self):
         assert extract_service_audience_hint("peinado niña") == "child_female"
+
+
+# ============================================================================
+# _apply_resolved_option — metadata propagation (combo-recommendations-fix REQ-1)
+# ============================================================================
+
+
+class TestApplyResolvedOptionMetadata:
+    """Path A: _apply_resolved_option copies combo_recommendations + description."""
+
+    def _make_opt(
+        self,
+        service_name: str = "Cortar",
+        service_id: str = "uuid-cortar",
+        combo_recommendations: list | None = None,
+        description: str | None = None,
+        duration_minutes: int | None = 40,
+    ) -> dict:
+        opt = {
+            "service_id": service_id,
+            "service_name": service_name,
+            "duration_minutes": duration_minutes,
+            "category": "HAIRDRESSING",
+        }
+        if combo_recommendations is not None:
+            opt["combo_recommendations"] = combo_recommendations
+        if description is not None:
+            opt["description"] = description
+        return opt
+
+    def test_copies_combo_recommendations(self):
+        """Option with combo_recommendations → ctx.pending_recommendations set."""
+        ctx = BookingContext()
+        opt = self._make_opt(combo_recommendations=["Tratamiento", "Peinado"])
+        _apply_resolved_option(ctx, opt, axis="audience", resolved_value="adult_female")
+        assert ctx.pending_recommendations == ["Tratamiento", "Peinado"]
+        assert ctx.recommendations_shown is False
+
+    def test_copies_description(self):
+        """Option with description → stored in ctx.selected_services_details."""
+        ctx = BookingContext()
+        opt = self._make_opt(description="Incluye lavado y secado")
+        _apply_resolved_option(ctx, opt, axis="audience", resolved_value="adult_female")
+        # _upsert_service_detail stores entries in selected_services_details
+        assert len(ctx.selected_services_details) == 1
+        assert ctx.selected_services_details[0]["description"] == "Incluye lavado y secado"
+        assert ctx.selected_services_details[0]["name"] == "Cortar"
+
+    def test_empty_recommendations_no_overwrite(self):
+        """Option with combo_recommendations=[] → ctx.pending_recommendations stays empty, no crash."""
+        ctx = BookingContext()
+        opt = self._make_opt(combo_recommendations=[])
+        _apply_resolved_option(ctx, opt, axis="audience", resolved_value="adult_female")
+        assert ctx.pending_recommendations == []
+
+    def test_none_description_no_crash(self):
+        """Option with description=None → no KeyError, no crash."""
+        ctx = BookingContext()
+        opt = self._make_opt(description=None)
+        _apply_resolved_option(ctx, opt, axis="audience", resolved_value="adult_female")
+        assert ctx.selected_services_details == []
+
+    def test_does_not_overwrite_existing_recommendations(self):
+        """If ctx already has recommendations, don't overwrite with new ones."""
+        ctx = BookingContext(pending_recommendations=["Existente"])
+        opt = self._make_opt(combo_recommendations=["Nuevo"])
+        _apply_resolved_option(ctx, opt, axis="audience", resolved_value="adult_female")
+        assert ctx.pending_recommendations == ["Existente"]
+
+    def test_scalar_fields_still_set(self):
+        """Existing behavior: scalar fields still set after our addition."""
+        ctx = BookingContext()
+        opt = self._make_opt(
+            service_name="Cortar",
+            service_id="uuid-cortar",
+            combo_recommendations=["Peinado"],
+            description="Incluye lavado",
+            duration_minutes=40,
+        )
+        _apply_resolved_option(ctx, opt, axis="audience", resolved_value="adult_female")
+        assert ctx.service_id == "uuid-cortar"
+        assert ctx.service_name == "Cortar"
+        assert ctx.service_duration_minutes == 40
+        assert ctx.selected_services == ["Cortar"]
+
+
+class TestInlineAutoResolveMetadata:
+    """Path B: extract_service_fields auto-resolve inline (audience hint match) copies metadata."""
+
+    def test_inline_auto_resolve_copies_recommendations(self):
+        """Shape 2 audience inline auto-resolve propagates combo_recommendations."""
+        ctx = BookingContext()
+        ctx.service_audience_hint = "dama"
+        result = {
+            "clarification_needed": {
+                "axis": "audience",
+                "question_hint": "¿Para quién?",
+                "options": [
+                    {
+                        "label": "Dama",
+                        "value": "dama",
+                        "service_name": "Cortar",
+                        "service_id": "uuid-cortar",
+                        "duration_minutes": 40,
+                        "combo_recommendations": ["Tratamiento", "Peinado"],
+                        "description": "Incluye lavado y secado",
+                    },
+                    {
+                        "label": "Caballero",
+                        "value": "caballero",
+                        "service_name": "Corte Caballero",
+                        "service_id": "uuid-cc",
+                        "duration_minutes": 30,
+                    },
+                ],
+            }
+        }
+        extract_service_fields(result, ctx)
+        assert ctx.pending_recommendations == ["Tratamiento", "Peinado"]
+
+    def test_inline_auto_resolve_copies_description(self):
+        """Shape 2 audience inline auto-resolve propagates description to service_details."""
+        ctx = BookingContext()
+        ctx.service_audience_hint = "dama"
+        result = {
+            "clarification_needed": {
+                "axis": "audience",
+                "options": [
+                    {
+                        "label": "Dama",
+                        "value": "dama",
+                        "service_name": "Cortar",
+                        "service_id": "uuid-cortar",
+                        "duration_minutes": 40,
+                        "description": "Incluye lavado y secado",
+                    },
+                ],
+            }
+        }
+        extract_service_fields(result, ctx)
+        assert len(ctx.selected_services_details) == 1
+        assert ctx.selected_services_details[0]["description"] == "Incluye lavado y secado"

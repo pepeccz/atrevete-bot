@@ -1588,8 +1588,10 @@ class BookingMode(BaseModeNode):
         # response — not during _build_dynamic_context() (before LLM sees the
         # context). This ensures the flag is only set when the LLM had the
         # recommendations section in its context this turn.
+        # REQ-2: only set the flag when the LLM actually offered the combo in the response.
         if ctx.pending_recommendations and not ctx.recommendations_shown:
-            ctx.recommendations_shown = True
+            if _combo_offer_in_response(response_text, ctx.pending_recommendations):
+                ctx.recommendations_shown = True
 
         updates: dict[str, Any] = {
             **add_message(state, "assistant", response_text),
@@ -2285,6 +2287,38 @@ def _build_service_details_section(ctx: BookingContext) -> str:
         dur_str = f" ({dur}min)" if dur else ""
         lines.append(f"- **{name}**{dur_str}: {desc}")
     return "\n".join(lines)
+
+
+def _combo_offer_in_response(response_text: str, pending: list[str]) -> bool:
+    """Return True if the LLM response actually offered a combo recommendation.
+
+    Uses two signals:
+    1. Response mentions at least one pending service by name (case-insensitive)
+    2. Response contains a recognized combo-offer phrase in Spanish
+
+    Returns False immediately when pending is empty — nothing to offer.
+
+    Note: Spanish-only detection is intentional — bot operates in Spanish only.
+    """
+    if not pending:
+        return False
+    lower = response_text.lower()
+    # Signal 1: named recommendation
+    if any(rec.lower() in lower for rec in pending):
+        return True
+    # Signal 2: offer phrasing
+    _COMBO_OFFER_PHRASES = [
+        "te gustaría añadir",
+        "también te ofrezco",
+        "complementar con",
+        "puedo añadir",
+        "te recomiendo añadir",
+        "añadir también",
+        "¿añadimos",
+        "¿quieres que añada",
+        "te apetece añadir",
+    ]
+    return any(p in lower for p in _COMBO_OFFER_PHRASES)
 
 
 def _detect_recommendation_decline(message: str, ctx: BookingContext) -> bool:
