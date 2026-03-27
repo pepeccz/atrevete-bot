@@ -22,6 +22,8 @@ from agent.utils.date_parser import (
     parse_natural_date,
     get_weekday_name,
     format_date_spanish,
+    format_date_es,
+    DateParseError,
     MADRID_TZ,
 )
 
@@ -143,8 +145,8 @@ class TestWeekdayNames:
         result_dom = parse_natural_date("dom", reference_date=reference_date)
 
         assert result_lun.day == 10  # Next Monday
-        assert result_vie.day == 7   # This Friday
-        assert result_dom.day == 9   # This Sunday
+        assert result_vie.day == 7  # This Friday
+        assert result_dom.day == 9  # This Sunday
 
     def test_weekday_abbreviations_with_accent(self, reference_date):
         """Test parsing weekday abbreviations with accents."""
@@ -217,9 +219,18 @@ class TestWrittenSpanishDates:
     def test_parse_all_spanish_months(self, reference_date):
         """Test parsing all Spanish month names."""
         months = [
-            ("enero", 1), ("febrero", 2), ("marzo", 3), ("abril", 4),
-            ("mayo", 5), ("junio", 6), ("julio", 7), ("agosto", 8),
-            ("septiembre", 9), ("octubre", 10), ("noviembre", 11), ("diciembre", 12)
+            ("enero", 1),
+            ("febrero", 2),
+            ("marzo", 3),
+            ("abril", 4),
+            ("mayo", 5),
+            ("junio", 6),
+            ("julio", 7),
+            ("agosto", 8),
+            ("septiembre", 9),
+            ("octubre", 10),
+            ("noviembre", 11),
+            ("diciembre", 12),
         ]
 
         for month_name, month_num in months:
@@ -362,9 +373,18 @@ class TestFormatDateSpanish:
     def test_format_date_spanish_all_months(self):
         """Test formatting dates for all months."""
         months = [
-            (1, "enero"), (2, "febrero"), (3, "marzo"), (4, "abril"),
-            (5, "mayo"), (6, "junio"), (7, "julio"), (8, "agosto"),
-            (9, "septiembre"), (10, "octubre"), (11, "noviembre"), (12, "diciembre")
+            (1, "enero"),
+            (2, "febrero"),
+            (3, "marzo"),
+            (4, "abril"),
+            (5, "mayo"),
+            (6, "junio"),
+            (7, "julio"),
+            (8, "agosto"),
+            (9, "septiembre"),
+            (10, "octubre"),
+            (11, "noviembre"),
+            (12, "diciembre"),
         ]
 
         for month_num, month_name in months:
@@ -414,3 +434,108 @@ class TestEdgeCases:
         now = datetime.now(MADRID_TZ)
         tomorrow = now + timedelta(days=1)
         assert result.day == tomorrow.day or result.day == tomorrow.day - 1  # Account for timing
+
+
+# ============================================================================
+# Test Multilingual / Layer 3 (dateparser fallback)
+# ============================================================================
+
+
+class TestParseNaturalDateMultilingual:
+    """Test Layer 3 dateparser fallback for multilingual expressions.
+
+    All tests use a fixed reference of Thursday 2026-03-26.
+    """
+
+    @pytest.fixture
+    def ref_thu(self) -> datetime:
+        """Thursday 2026-03-26 as reference date."""
+        return datetime(2026, 3, 26, 10, 0, 0, tzinfo=MADRID_TZ)
+
+    def test_iso_fast_path(self, ref_thu):
+        """ISO 8601 passes through L1 without invoking dateparser."""
+        result = parse_natural_date("2026-04-02", reference_date=ref_thu)
+        assert result.year == 2026
+        assert result.month == 4
+        assert result.day == 2
+
+    def test_manana_es(self, ref_thu):
+        """'mañana' handled by L2 (relative dates) — no dateparser needed."""
+        ref = datetime(2026, 3, 27, 10, 0, 0, tzinfo=MADRID_TZ)
+        result = parse_natural_date("mañana", reference_date=ref)
+        assert result.year == 2026
+        assert result.month == 3
+        assert result.day == 28
+
+    def test_proximo_jueves_es(self, ref_thu):
+        """'próximo jueves' on a Thursday → next Thursday (via L3 dateparser)."""
+        result = parse_natural_date("próximo jueves", reference_date=ref_thu)
+        assert result.year == 2026
+        assert result.month == 4
+        assert result.day == 2
+
+    def test_next_thursday_en(self, ref_thu):
+        """'next thursday' (English) on a Thursday → next Thursday (via L3)."""
+        result = parse_natural_date("next thursday", reference_date=ref_thu)
+        assert result.year == 2026
+        assert result.month == 4
+        assert result.day == 2
+
+    def test_jueves_semana_que_viene(self, ref_thu):
+        """Complex Spanish relative: 'el jueves de la semana que viene'."""
+        result = parse_natural_date("el jueves de la semana que viene", reference_date=ref_thu)
+        assert result.year == 2026
+        assert result.month == 4
+        assert result.day == 2
+
+    def test_la_semana_que_viene_el_jueves(self, ref_thu):
+        """Complex Spanish relative: 'la semana que viene el jueves'."""
+        result = parse_natural_date("la semana que viene el jueves", reference_date=ref_thu)
+        assert result.year == 2026
+        assert result.month == 4
+        assert result.day == 2
+
+    def test_tomorrow_en(self):
+        """'tomorrow' in English → date(2026, 3, 27)."""
+        ref = datetime(2026, 3, 26, 10, 0, 0, tzinfo=MADRID_TZ)
+        result = parse_natural_date("tomorrow", reference_date=ref)
+        assert result.year == 2026
+        assert result.month == 3
+        assert result.day == 27
+
+    def test_garbage_raises_DateParseError(self, ref_thu):
+        """Completely unparseable string raises DateParseError."""
+        with pytest.raises(DateParseError) as exc_info:
+            parse_natural_date("garble xyz 123", reference_date=ref_thu)
+        assert "garble xyz 123" in str(exc_info.value)
+
+    def test_empty_string_raises_DateParseError(self, ref_thu):
+        """Empty string raises DateParseError."""
+        with pytest.raises(DateParseError):
+            parse_natural_date("", reference_date=ref_thu)
+
+    def test_DateParseError_is_ValueError_subclass(self, ref_thu):
+        """DateParseError is a subclass of ValueError for backwards compatibility."""
+        with pytest.raises(ValueError):
+            parse_natural_date("garble xyz 123", reference_date=ref_thu)
+
+    def test_DateParseError_has_original_input_attr(self, ref_thu):
+        """DateParseError exposes original_input attribute."""
+        try:
+            parse_natural_date("xyz_invalid", reference_date=ref_thu)
+        except DateParseError as e:
+            assert e.original_input == "xyz_invalid"
+
+    def test_format_date_es_locale_independent(self):
+        """format_date_es always returns Spanish regardless of process locale."""
+        dt = datetime(2026, 3, 26, 19, 21)  # Thursday March 26
+        result = format_date_es(dt)
+        # Must contain Spanish day and month names — never English
+        assert "jueves" in result
+        assert "marzo" in result
+        assert "Thursday" not in result
+        assert "March" not in result
+        # Must include year
+        assert "2026" in result
+        # Must include time
+        assert "19:21" in result

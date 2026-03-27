@@ -11,6 +11,8 @@ from agent.utils.date_parser import (
     parse_natural_date,
     get_weekday_name,
     format_date_spanish,
+    format_date_es,
+    DateParseError,
     MADRID_TZ,
 )
 from agent.utils.service_resolver import (
@@ -28,6 +30,8 @@ __all__ = [
     "parse_natural_date",
     "get_weekday_name",
     "format_date_spanish",
+    "format_date_es",
+    "DateParseError",
     "MADRID_TZ",
     # Service resolution
     "resolve_service_names",

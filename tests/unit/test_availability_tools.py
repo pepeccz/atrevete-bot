@@ -9,6 +9,7 @@ import pytest
 
 from agent.modes.booking_context import InterpretationReason
 from agent.tools import availability_tools as availability_tools_module
+from agent.utils.date_parser import DateParseError
 
 
 def _make_stylist(name: str = "Ana") -> SimpleNamespace:
@@ -247,3 +248,33 @@ async def test_check_availability_omits_semantic_fields_for_valid_date():
     assert result["available_slots"]
     assert "date_requested" not in result
     assert "min_valid_date" not in result
+
+
+@pytest.mark.asyncio
+async def test_find_next_available_date_parse_error():
+    """When start_date is unparseable, returns structured date_parse_error envelope."""
+    with (
+        patch.object(
+            availability_tools_module,
+            "parse_natural_date",
+            side_effect=DateParseError("garble xyz"),
+        ),
+        patch.object(
+            availability_tools_module,
+            "get_stylists_by_category",
+            new=AsyncMock(return_value=[_make_stylist()]),
+        ),
+    ):
+        result = await availability_tools_module.find_next_available.ainvoke(
+            {
+                "service_category": "Peluquería",
+                "start_date": "garble xyz",
+                "max_days_to_search": 1,
+            }
+        )
+
+    assert result["date_parse_error"] is True
+    assert "hint" in result
+    assert "garble xyz" in result.get("error", "")
+    assert result.get("available_stylists", []) == []
+    assert result.get("total_slots_found", 0) == 0

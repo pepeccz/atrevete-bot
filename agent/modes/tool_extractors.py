@@ -491,6 +491,16 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
             )
 
 
+def _clear_date_metadata(ctx: BookingContext) -> None:
+    """Reset date substitution metadata before a new availability search."""
+    ctx.date_parse_error = False
+    ctx.substitution_made = False
+    ctx.substitution_reason = None
+    ctx.date_requested = None
+    ctx.date_substituted = None
+    ctx.min_valid_date = None
+
+
 def extract_slot_fields(result: dict, ctx: BookingContext) -> None:
     """Extract slot data from check_availability or find_next_available result.
 
@@ -500,6 +510,8 @@ def extract_slot_fields(result: dict, ctx: BookingContext) -> None:
     For find_next_available, extracts from both legacy (available_stylists)
     and v4.2 (selected_stylist_slots, soonest_any) shapes.
     """
+    # Clear stale date metadata at the start of each new availability extraction
+    _clear_date_metadata(ctx)
     # check_availability shape: {"available_slots": [...]}
     slots = result.get("available_slots")
 
@@ -563,6 +575,23 @@ def extract_slot_fields(result: dict, ctx: BookingContext) -> None:
         time_str = soonest_any.get("time", "")
         ctx.soonest_any_slot = f"{date_str} a las {time_str} con {stylist_name}"
         logger.info("extract_slot_fields: soonest_any = %s", ctx.soonest_any_slot)
+
+    # Propagate date substitution / parse-error metadata from tool result to context
+    ctx.substitution_made = result.get("substitution_made", False)
+    ctx.substitution_reason = result.get("substitution_reason")
+    ctx.date_requested = result.get("date_requested")
+    ctx.date_substituted = result.get("date_substituted")
+    ctx.min_valid_date = result.get("min_valid_date")
+    ctx.date_parse_error = result.get("date_parse_error", False)
+    if ctx.substitution_made or ctx.date_parse_error:
+        logger.info(
+            "extract_slot_fields: date metadata — substitution_made=%s, date_parse_error=%s, "
+            "date_requested=%s, date_substituted=%s",
+            ctx.substitution_made,
+            ctx.date_parse_error,
+            ctx.date_requested,
+            ctx.date_substituted,
+        )
 
 
 def extract_stylist_fields(result: dict, ctx: BookingContext) -> None:

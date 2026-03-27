@@ -89,6 +89,14 @@ class BookingContext:
     recommendations_shown: bool = False
     recommendations_declined: bool = False
 
+    # ── Date substitution metadata (from find_next_available / check_availability) ──
+    date_parse_error: bool = False
+    substitution_made: bool = False
+    substitution_reason: str | None = None
+    date_requested: str | None = None
+    date_substituted: str | None = None
+    min_valid_date: str | None = None
+
     # ── Failure tracking ────────────────────────────────────────────────
     book_failure_count: int = 0
     manage_customer_failure_count: int = 0
@@ -158,6 +166,12 @@ class BookingContext:
         self.force_search_services_reminder = False
         self.force_list_stylists_reminder = False
         self.force_stylist_correction = False
+        self.date_parse_error = False
+        self.substitution_made = False
+        self.substitution_reason = None
+        self.date_requested = None
+        self.date_substituted = None
+        self.min_valid_date = None
 
     def is_ready_to_book(self) -> bool:
         """Check if all REQUIRED fields for book() are present."""

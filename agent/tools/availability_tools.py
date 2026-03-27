@@ -37,6 +37,7 @@ from agent.tools.calendar_tools import (
     get_stylists_by_category,
 )
 from agent.utils import parse_natural_date, MADRID_TZ
+from agent.utils.date_parser import DateParseError
 from agent.validators import validate_3_day_rule
 from agent.validators.transaction_validators import MINIMUM_DAYS
 from database.models import ServiceCategory
@@ -64,7 +65,9 @@ class CheckAvailabilitySchema(BaseModel):
             "Date in natural language or ISO format. Accepts:\n"
             "- Natural Spanish: 'mañana', 'viernes', '8 de noviembre'\n"
             "- ISO 8601: '2025-11-08'\n"
-            "- Day/month: '08/11', '8-11'"
+            "- Day/month: '08/11', '8-11'\n"
+            "Preferí ISO (YYYY-MM-DD) calculado desde la fecha actual del sistema prompt. "
+            "Si no estás seguro del cálculo, pasá la frase original en español sin traducir al inglés."
         )
     )
     time_range: str | None = Field(
@@ -158,9 +161,11 @@ async def check_availability(
         try:
             requested_date = parse_natural_date(date, timezone=MADRID_TZ)
             logger.info(f"Parsed date '{date}' → {requested_date.date()}")
-        except ValueError as e:
+        except DateParseError as e:
             logger.error(f"Failed to parse date '{date}': {e}")
             return {
+                "date_parse_error": True,
+                "hint": "Usá formato YYYY-MM-DD (ej: '2026-04-02') o una frase como 'próximo jueves'",
                 "error": str(e),
                 "available_slots": [],
                 "is_same_day": False,
@@ -318,7 +323,9 @@ class FindNextAvailableSchema(BaseModel):
         description=(
             "Optional preferred start date in natural language or ISO format. "
             "If specified, search starts from this date (respecting 3-day rule). "
-            "Accepts: 'mañana', 'viernes', '15 de diciembre', '2025-12-15'"
+            "Accepts: 'mañana', 'viernes', '15 de diciembre', '2025-12-15'. "
+            "Preferí ISO (YYYY-MM-DD) calculado desde la fecha actual del sistema prompt. "
+            "Si no estás seguro del cálculo, pasá la frase original en español sin traducir al inglés."
         ),
     )
     service_duration_minutes: int | None = Field(
@@ -507,10 +514,20 @@ async def find_next_available(
                     )
                     earliest_valid = min_valid_date
                     substitution_requested = True
-            except ValueError as e:
-                logger.warning(f"Could not parse start_date '{start_date}': {e}, using default")
-                earliest_valid = min_valid_date
-                substitution_requested = False
+            except DateParseError as e:
+                logger.warning(f"Could not parse start_date '{start_date}': {e}")
+                return {
+                    "date_parse_error": True,
+                    "hint": "Usá formato YYYY-MM-DD (ej: '2026-04-02') o una frase como 'próximo jueves'",
+                    "error": str(e),
+                    "available_slots": [],
+                    "available_stylists": [],
+                    "soonest_any": None,
+                    "selected_stylist_slots": [],
+                    "total_slots_found": 0,
+                    "dates_searched": 0,
+                    "substitution_made": False,
+                }
         else:
             earliest_valid = min_valid_date
             substitution_requested = False

@@ -1076,3 +1076,57 @@ class TestNotesGateBookingContext:
         restored = BookingContext.from_mode_context(ctx.to_mode_context())
         assert restored.notes_asked is True
         assert restored.notes_ask_attempts == 2
+
+    def test_new_date_fields_serialize_deserialize(self):
+        """6 new date-substitution fields survive to_mode_context → from_mode_context round-trip."""
+        ctx = BookingContext(
+            substitution_made=True,
+            substitution_reason="minimum_days_rule",
+            date_requested="2026-03-28",
+            date_substituted="2026-03-30",
+            min_valid_date="2026-03-30",
+            date_parse_error=False,
+        )
+        serialized = ctx.to_mode_context()
+        # substitution_made=True must be present (True is not None/[]/{}))
+        assert "substitution_made" in serialized
+        assert serialized["substitution_made"] is True
+        assert serialized["date_requested"] == "2026-03-28"
+        assert serialized["date_substituted"] == "2026-03-30"
+        assert serialized["min_valid_date"] == "2026-03-30"
+
+        restored = BookingContext.from_mode_context(serialized)
+        assert restored.substitution_made is True
+        assert restored.substitution_reason == "minimum_days_rule"
+        assert restored.date_requested == "2026-03-28"
+        assert restored.date_substituted == "2026-03-30"
+        assert restored.min_valid_date == "2026-03-30"
+        assert restored.date_parse_error is False
+
+    def test_new_date_fields_default_values(self):
+        """6 new date-substitution fields default to False/None on fresh context."""
+        ctx = BookingContext()
+        assert ctx.date_parse_error is False
+        assert ctx.substitution_made is False
+        assert ctx.substitution_reason is None
+        assert ctx.date_requested is None
+        assert ctx.date_substituted is None
+        assert ctx.min_valid_date is None
+
+    def test_reset_transient_clears_date_fields(self):
+        """reset_transient() clears all 6 date-substitution fields."""
+        ctx = BookingContext(
+            substitution_made=True,
+            substitution_reason="minimum_days_rule",
+            date_requested="2026-03-28",
+            date_substituted="2026-03-30",
+            min_valid_date="2026-03-30",
+            date_parse_error=True,
+        )
+        ctx.reset_transient()
+        assert ctx.substitution_made is False
+        assert ctx.substitution_reason is None
+        assert ctx.date_requested is None
+        assert ctx.date_substituted is None
+        assert ctx.min_valid_date is None
+        assert ctx.date_parse_error is False

@@ -64,3 +64,4 @@ rapidfuzz>=3.0.0
 pybreaker>=1.0.0  # Circuit breaker pattern for resilience
 pytz>=2024.1  # Timezone conversion for Europe/Madrid
 python-dateutil>=2.8.0  # ISO 8601 date parsing
+dateparser>=1.2.0  # Multilingual natural language date parsing (es + en fallback)

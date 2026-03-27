@@ -19,6 +19,8 @@ import unicodedata
 from datetime import datetime
 from typing import Any
 
+from agent.utils.date_parser import format_date_es
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
@@ -1358,8 +1360,8 @@ class BookingMode(BaseModeNode):
         now = datetime.now(ZoneInfo("Europe/Madrid"))
         parts: list[str] = []
 
-        # Temporal context
-        parts.append(f"Fecha y hora actual: {now.strftime('%A %d de %B de %Y, %H:%M')}")
+        # Temporal context (locale-independent Spanish format)
+        parts.append(f"Fecha y hora actual: {format_date_es(now)}")
 
         # Phone (for manage_customer calls)
         phone = state.get("customer_phone")
@@ -1401,6 +1403,23 @@ class BookingMode(BaseModeNode):
         slots_section = _build_offered_slots_section(ctx)
         if slots_section:
             parts.append(f"\n<offered_slots>\n{slots_section}\n</offered_slots>")
+
+        # Date substitution / parse error metadata block
+        if ctx.substitution_made:
+            parts.append(
+                f"\n<date_substitution>\n"
+                f"⚠️ Fecha solicitada: {ctx.date_requested} — no disponible "
+                f"({ctx.substitution_reason})\n"
+                f"✅ Primera disponibilidad desde: {ctx.date_substituted}\n"
+                f"</date_substitution>"
+            )
+        elif ctx.date_parse_error:
+            parts.append(
+                "\n<date_substitution>\n"
+                "⚠️ No pude interpretar la fecha pedida. Pedí al usuario que especifique "
+                "la fecha con formato YYYY-MM-DD o una frase clara en español.\n"
+                "</date_substitution>"
+            )
 
         # F-7: Tool-skip reminder — injected when LLM skipped search_services last turn
         if ctx.force_search_services_reminder:
