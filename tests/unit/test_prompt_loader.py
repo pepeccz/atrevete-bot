@@ -634,21 +634,23 @@ class TestBuildLayeredMessages:
 class TestLoadModeOverlay:
     """Coverage for mode overlay dispatch across all v6 modes."""
 
-    def test_load_mode_overlay_loads_all_non_booking_modes(self):
+    @pytest.mark.asyncio
+    async def test_load_mode_overlay_loads_all_non_booking_modes(self):
         with patch("agent.prompts.loader.load_markdown") as mock_load_markdown:
             mock_load_markdown.side_effect = lambda file_name, subdir: f"{subdir}/{file_name}"
 
-            greeting = load_mode_overlay("greeting", {})
-            general = load_mode_overlay("GENERAL", {})
-            escalation = load_mode_overlay("Escalation", {})
+            greeting = await load_mode_overlay("greeting", {})
+            general = await load_mode_overlay("GENERAL", {})
+            escalation = await load_mode_overlay("Escalation", {})
 
         assert greeting == "modes/greeting.md"
         assert general == "modes/general.md"
         assert escalation == "modes/escalation.md"
 
-    def test_load_mode_overlay_unknown_mode_logs_warning(self):
+    @pytest.mark.asyncio
+    async def test_load_mode_overlay_unknown_mode_logs_warning(self):
         with patch("agent.prompts.loader.logger") as mock_logger:
-            result = load_mode_overlay("unknown", {})
+            result = await load_mode_overlay("unknown", {})
 
         assert result == ""
         mock_logger.warning.assert_called_once()

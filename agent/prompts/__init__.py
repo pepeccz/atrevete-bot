@@ -41,7 +41,7 @@ def load_maite_system_prompt() -> str:
     Raises:
         No exceptions raised - returns fallback prompt on errors.
     """
-    prompt_path = Path(__file__).parent / "maite_system_prompt.md"
+    prompt_path = Path(__file__).parent / "legacy" / "maite_system_prompt.md"
     fallback_prompt = (
         "Eres Maite, asistente virtual de Atrevete Peluqueria. "
         "Se amable, usa herramientas, y escala cuando sea necesario."

@@ -158,7 +158,7 @@ class TestModePromptsLoading:
         identity = load_markdown("identity.md", "shared")
         critical_rules = load_markdown("critical_rules.md", "shared")
         glossary = load_markdown("glossary.md", "shared")
-        recovery = load_markdown("recovery.md", "shared")
+        recovery = load_markdown("recovery.md", "legacy")
 
         assert len(identity) > 100
         assert len(critical_rules) > 100
@@ -188,13 +188,13 @@ class TestSharedContentReferences:
         assert "shared/critical_rules.md" in content or "critical_rules.md" in content
 
     def test_booking_prompt_references_shared_recovery(self):
-        """Test that booking.md references shared/recovery.md."""
+        """Test that booking.md references legacy/recovery.md."""
         from agent.prompts.loader import load_markdown
 
         content = load_markdown("booking.md", "modes")
 
-        # Should reference recovery
-        assert "shared/recovery.md" in content or "recovery.md" in content
+        # Should reference recovery (moved to legacy/)
+        assert "legacy/recovery.md" in content or "recovery.md" in content
 
     def test_escalation_prompt_references_shared_identity(self):
         """Test that escalation.md references shared/identity.md."""

@@ -18,17 +18,64 @@ from agent.state.schemas import ConversationState
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# Module-level cache for system prompts (10 minute TTL)
+# Generic TTL cache helper (AD1: DRY — same pattern for base + overlay caches)
 # ============================================================================
 
-_prompt_cache: dict[str, Any] = {
-    "data": None,
-    "expires_at": None,
-    "lock": asyncio.Lock(),
-}
 
-CACHE_KEY = "system_prompt_v1"
-CACHE_TTL_MINUTES = 10
+class _TtlCache:
+    """Thread-safe async TTL cache for a single value.
+
+    Provides `get_or_load(loader_fn)` to return a cached value or call the
+    loader on a cache miss.  An `asyncio.Lock` prevents concurrent loads
+    (thundering-herd protection).
+    """
+
+    def __init__(self, ttl_minutes: int = 10) -> None:
+        self._data: Any = None
+        self._expires_at: datetime | None = None
+        self._lock = asyncio.Lock()
+        self._ttl = timedelta(minutes=ttl_minutes)
+
+    def is_valid(self) -> bool:
+        """Return True when the cached value exists and has not expired."""
+        return self._data is not None and datetime.now() < self._expires_at  # type: ignore[operator]
+
+    async def get_or_load(self, loader_fn) -> Any:
+        """Return the cached value, or invoke *loader_fn* on a miss.
+
+        *loader_fn* may be a regular callable or a coroutine function —
+        both are handled transparently.
+        """
+        async with self._lock:
+            if self.is_valid():
+                return self._data
+            if asyncio.iscoroutinefunction(loader_fn):
+                self._data = await loader_fn()
+            else:
+                self._data = loader_fn()
+            self._expires_at = datetime.now() + self._ttl
+            return self._data
+
+    def invalidate(self) -> None:
+        """Immediately expire the cached value (forces re-load on next access)."""
+        self._data = None
+        self._expires_at = None
+
+
+# ============================================================================
+# Module-level caches (10-minute TTL each)
+# ============================================================================
+
+_base_prompt_cache = _TtlCache(ttl_minutes=10)
+_overlay_caches: dict[str, _TtlCache] = {}  # keyed by normalised mode name
+
+
+def _get_overlay_cache(mode_name: str) -> _TtlCache:
+    """Return (or lazily create) the per-mode overlay TTL cache."""
+    if mode_name not in _overlay_caches:
+        _overlay_caches[mode_name] = _TtlCache(ttl_minutes=10)
+    return _overlay_caches[mode_name]
+
 
 _STEP_VISIBLE_FIELDS: dict[str, set[str]] = {
     "service_selection": {
@@ -185,66 +232,50 @@ async def get_system_prompt() -> str:
     Returns:
         str: Concatenated system prompt (~1,400 tokens)
     """
-    now = datetime.now()
 
-    async with _prompt_cache["lock"]:
-        if (
-            _prompt_cache["data"] is not None
-            and _prompt_cache["expires_at"] is not None
-            and _prompt_cache["expires_at"] > now
-        ):
-            logger.debug("Using cached system prompt (cache hit)")
-            return _prompt_cache["data"]
-
-        # Cache miss - load from disk
+    def _load() -> str:
         logger.info("Cache miss - loading system prompt from disk")
-
         identity = load_markdown("identity.md", "shared")
         critical_rules = load_markdown("critical_rules.md", "shared")
-
-        # Concatenate with separators
         # NOTE: glossary.md intentionally excluded — tools serve the service catalog
-        parts = [
-            identity,
-            "\n\n---\n\n",
-            critical_rules,
-        ]
-
-        system_prompt = "".join(parts)
-
-        # Update cache with 10-minute TTL
-        _prompt_cache["data"] = system_prompt
-        _prompt_cache["expires_at"] = now + timedelta(minutes=CACHE_TTL_MINUTES)
-
+        prompt = "".join([identity, "\n\n---\n\n", critical_rules])
         logger.info(
-            f"System prompt cached (TTL: {CACHE_TTL_MINUTES} min, "
-            f"{len(system_prompt)} chars, ~{len(system_prompt) // 4} tokens)"
+            "System prompt cached (TTL: 10 min, %d chars, ~%d tokens)",
+            len(prompt),
+            len(prompt) // 4,
         )
-        return system_prompt
+        return prompt
+
+    return await _base_prompt_cache.get_or_load(_load)
 
 
 def clear_prompt_cache() -> None:
     """
-    Clear the system prompt cache.
+    Clear both the system prompt cache and all mode overlay caches.
 
-    Forces the next call to get_system_prompt() to reload from disk.
-    Useful for:
+    Forces the next call to get_system_prompt() / load_mode_overlay() to reload
+    from disk.  Useful for:
     - Prompt updates that need immediate reflection
     - Testing and debugging
     - Manual cache invalidation
     """
-    _prompt_cache["data"] = None
-    _prompt_cache["expires_at"] = None
-    logger.info("System prompt cache cleared")
+    _base_prompt_cache.invalidate()
+    for cache in _overlay_caches.values():
+        cache.invalidate()
+    logger.info("System prompt cache cleared (base + all overlays)")
 
 
-def load_mode_overlay(
+async def load_mode_overlay(
     mode_name: str | None,
     mode_context: dict,
     step_info: dict | None = None,
     substep: str | None = None,
 ) -> str:
-    """Load the appropriate mode overlay for the current prompt context."""
+    """Load (and cache) the mode overlay for the current prompt context.
+
+    Each mode's overlay file is cached independently via a per-mode
+    `_TtlCache` instance (10-minute TTL, asyncio.Lock for safety).
+    """
     if not mode_name:
         return ""
     normalized_mode = mode_name.strip().upper()
@@ -253,7 +284,9 @@ def load_mode_overlay(
         logger.warning("load_mode_overlay: unknown mode '%s'", mode_name)
         return ""
     subdir, file_name = overlay_path.rsplit("/", 1)
-    return load_markdown(file_name, subdir)
+
+    cache = _get_overlay_cache(normalized_mode)
+    return await cache.get_or_load(lambda: load_markdown(file_name, subdir))
 
 
 # ============================================================================
@@ -265,6 +298,8 @@ def build_step_context(
     state: ConversationState,
     mode_context: dict,
     step_info: dict | None = None,
+    *,
+    policy_values: dict | None = None,
 ) -> str:
     """
     Build dynamic context for a specific booking step.
@@ -272,12 +307,17 @@ def build_step_context(
     Creates context string with:
     - Current step information
     - Collected data so far
+    - Booking policy values (if provided and step is booking-related)
     - Conversation summary (if available)
 
     Args:
         state: Current conversation state
         mode_context: Mode-specific context data
         step_info: Optional step-specific info (step name, etc.)
+        policy_values: Optional dict with DB-loaded booking policy config.
+            When provided, booking policy lines are appended for BOOKING steps.
+            Supported keys: ``minimum_booking_days_advance``,
+            ``cancellation_window_hours``.
 
     Returns:
         str: Dynamic context string (~300 tokens)
@@ -448,6 +488,25 @@ def build_step_context(
         for item in collected_data:
             parts.append(f"- {item}")
 
+    # Inject booking policy values for booking-related steps (AD2)
+    if policy_values:
+        _booking_steps = {
+            "service_selection",
+            "add_ons",
+            "stylist_selection",
+            "slot_selection",
+            "confirmation",
+            "notes",
+        }
+        current_step = (step_info or {}).get("step") or mode_context.get("booking_step", "")
+        if current_step in _booking_steps:
+            min_days = policy_values.get("minimum_booking_days_advance")
+            cancel_window = policy_values.get("cancellation_window_hours")
+            if min_days is not None:
+                parts.append(f"Política: reservas con mínimo {min_days} días de anticipación.")
+            if cancel_window is not None:
+                parts.append(f"Política: cancelaciones hasta {cancel_window}h antes de la cita.")
+
     # Add conversation summary if available
     summary = state.get("conversation_summary")
     if summary:
@@ -498,8 +557,8 @@ async def build_layered_messages(
     system_prompt = await get_system_prompt()
     messages.append(SystemMessage(content=system_prompt))
 
-    # 2. Optional mode overlay
-    mode_overlay = load_mode_overlay(mode_name, mode_context, step_info, substep)
+    # 2. Optional mode overlay (now async — uses per-mode TTL cache)
+    mode_overlay = await load_mode_overlay(mode_name, mode_context, step_info, substep)
     if mode_overlay:
         messages.append(SystemMessage(content=mode_overlay))
 
@@ -519,7 +578,18 @@ async def build_layered_messages(
     if dynamic_context_override is not None:
         dynamic_content = dynamic_context_override
     else:
-        dynamic_content = build_step_context(state, mode_context, step_info)
+        # Load policy values for booking context injection (T7 — graceful degradation)
+        policy_values = None
+        try:
+            from agent.prompts.dynamic_context import get_policy_values
+
+            policy_values = await get_policy_values()
+        except Exception as exc:
+            logger.debug("Policy values load failed (non-critical, continuing without): %s", exc)
+
+        dynamic_content = build_step_context(
+            state, mode_context, step_info, policy_values=policy_values
+        )
     dynamic_msg_index = len(messages)
     messages.append(SystemMessage(content=dynamic_content))
 

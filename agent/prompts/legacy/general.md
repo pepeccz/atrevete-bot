@@ -1,3 +1,4 @@
+<!-- DEPRECATED: Not used in production with USE_OPTIMIZED_PROMPTS=true. Do not edit. -->
 # Conversación General y Flujo de Agendamiento (PASOS 1-3)
 
 ## 📋 FLUJO DE AGENDAMIENTO (Cuando el cliente quiere agendar cita)

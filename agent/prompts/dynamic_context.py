@@ -132,9 +132,7 @@ async def _load_context_from_db() -> dict[str, Any]:
 
     async with get_async_session() as session:
         # 1. Load minimum_booking_days_advance from system_settings
-        stmt = select(SystemSetting).where(
-            SystemSetting.key == "minimum_booking_days_advance"
-        )
+        stmt = select(SystemSetting).where(SystemSetting.key == "minimum_booking_days_advance")
         result = await session.execute(stmt)
         setting = result.scalar_one_or_none()
 
@@ -146,9 +144,7 @@ async def _load_context_from_db() -> dict[str, Any]:
                 context["minimum_booking_days_advance"] = setting.value
 
         # 2. Load cancellation_window_hours from system_settings
-        stmt = select(SystemSetting).where(
-            SystemSetting.key == "cancellation_window_hours"
-        )
+        stmt = select(SystemSetting).where(SystemSetting.key == "cancellation_window_hours")
         result = await session.execute(stmt)
         setting = result.scalar_one_or_none()
 
@@ -198,10 +194,12 @@ async def _load_context_from_db() -> dict[str, Any]:
         holidays = result.scalars().all()
 
         for holiday in holidays:
-            context["upcoming_holidays"].append({
-                "date": _format_date_spanish(holiday.date),
-                "name": holiday.name,
-            })
+            context["upcoming_holidays"].append(
+                {
+                    "date": _format_date_spanish(holiday.date),
+                    "name": holiday.name,
+                }
+            )
 
     return context
 
@@ -213,13 +211,27 @@ def _format_current_datetime() -> str:
 
     # Format: "lunes 15 de diciembre de 2025, 10:30"
     day_names = {
-        0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves",
-        4: "viernes", 5: "sábado", 6: "domingo"
+        0: "lunes",
+        1: "martes",
+        2: "miércoles",
+        3: "jueves",
+        4: "viernes",
+        5: "sábado",
+        6: "domingo",
     }
     month_names = {
-        1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
-        5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
-        9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
+        1: "enero",
+        2: "febrero",
+        3: "marzo",
+        4: "abril",
+        5: "mayo",
+        6: "junio",
+        7: "julio",
+        8: "agosto",
+        9: "septiembre",
+        10: "octubre",
+        11: "noviembre",
+        12: "diciembre",
     }
 
     day_name = day_names[now.weekday()]
@@ -231,9 +243,18 @@ def _format_current_datetime() -> str:
 def _format_date_spanish(d: date) -> str:
     """Format a date in Spanish (e.g., '25 de diciembre')."""
     month_names = {
-        1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
-        5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
-        9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
+        1: "enero",
+        2: "febrero",
+        3: "marzo",
+        4: "abril",
+        5: "mayo",
+        6: "junio",
+        7: "julio",
+        8: "agosto",
+        9: "septiembre",
+        10: "octubre",
+        11: "noviembre",
+        12: "diciembre",
     }
     return f"{d.day} de {month_names[d.month]}"
 
@@ -252,6 +273,24 @@ def _get_fallback_context() -> dict[str, Any]:
     }
 
 
+async def get_policy_values() -> dict[str, Any]:
+    """Return booking policy values from DB/cache for prompt injection.
+
+    Extracts only the policy-relevant subset of :func:`load_dynamic_context`
+    so callers don't need to know the full context schema.
+
+    Returns:
+        dict with keys:
+        - ``minimum_booking_days_advance``: int
+        - ``cancellation_window_hours``: int
+    """
+    ctx = await load_dynamic_context()
+    return {
+        "minimum_booking_days_advance": ctx.get("minimum_booking_days_advance"),
+        "cancellation_window_hours": ctx.get("cancellation_window_hours"),
+    }
+
+
 def clear_dynamic_context_cache() -> None:
     """Clear the dynamic context cache. Useful for testing or after admin updates."""
     _DYNAMIC_CONTEXT_CACHE["data"] = None
@@ -259,4 +298,4 @@ def clear_dynamic_context_cache() -> None:
     logger.info("Dynamic context cache cleared")
 
 
-__all__ = ["load_dynamic_context", "clear_dynamic_context_cache"]
+__all__ = ["load_dynamic_context", "get_policy_values", "clear_dynamic_context_cache"]

@@ -233,18 +233,22 @@ class BaseModeNode(ABC):
             return None
         try:
             response = await self.llm.ainvoke(messages)
-            await self._track_token_usage(response)
+            await self._track_token_usage(response, message_count=len(messages))
             return response
         except Exception as exc:
             self.logger.error("LLM call failed: %s", exc)
             return None
 
-    async def _track_token_usage(self, response: Any) -> None:
+    async def _track_token_usage(self, response: Any, message_count: int = 0) -> None:
         """
         Extract token usage from LLM response and record it.
 
         Fire-and-forget: errors are logged at DEBUG, never raised.
         Supports both usage_metadata (LangChain) and response_metadata.token_usage formats.
+
+        Args:
+            response: LLM response object
+            message_count: Number of messages in the prompt (used as turn_count proxy)
         """
         try:
             # Primary: LangChain usage_metadata (dict with input_tokens, output_tokens)
@@ -268,7 +272,15 @@ class BaseModeNode(ABC):
             if input_tokens > 0 or output_tokens > 0:
                 from agent.services.token_tracking import record_token_usage
 
-                await record_token_usage(input_tokens=input_tokens, output_tokens=output_tokens)
+                # Derive approximate turn count from message count (message pairs ≈ turns)
+                turn_count = message_count // 2 if message_count > 0 else 0
+
+                await record_token_usage(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    mode_name=self.mode_name,
+                    turn_count=turn_count,
+                )
         except Exception as e:
             self.logger.debug("Token tracking failed: %s", e)
 
@@ -472,7 +484,7 @@ class BaseModeNode(ABC):
             while iterations < MAX_TOOL_ROUNDS:
                 llm_with_tools = self.llm.bind_tools(active_tools) if active_tools else self.llm
                 response = await llm_with_tools.ainvoke(working_messages)
-                await self._track_token_usage(response)
+                await self._track_token_usage(response, message_count=len(working_messages))
 
                 if not (hasattr(response, "tool_calls") and response.tool_calls):
                     break

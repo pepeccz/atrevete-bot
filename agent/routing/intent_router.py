@@ -86,10 +86,19 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # Valid intents for the v6.0 classifier
-_VALID_INTENTS: frozenset[str] = frozenset({
-    "greet", "book", "ask_info", "confirm", "reject",
-    "cancel", "escalate", "retry", "ambiguous",
-})
+_VALID_INTENTS: frozenset[str] = frozenset(
+    {
+        "greet",
+        "book",
+        "ask_info",
+        "confirm",
+        "reject",
+        "cancel",
+        "escalate",
+        "retry",
+        "ambiguous",
+    }
+)
 
 # Confidence threshold above which the keyword fast-path skips the LLM
 _KEYWORD_MATCH_THRESHOLD: float = 0.80
@@ -208,15 +217,17 @@ KEYWORD_MAP: dict[str, list[str]] = {
 # Explicit handoff phrases — used by router override (T2.1 / T2.2)
 # ============================================================================
 
-EXPLICIT_HANDOFF_PHRASES: frozenset[str] = frozenset({
-    "hablar con alguien",
-    "hablar con una persona",
-    "hablar con un humano",
-    "persona real",
-    "quiero hablar con",
-    "no quiero hablar con un bot",
-    "necesito hablar con alguien",
-})
+EXPLICIT_HANDOFF_PHRASES: frozenset[str] = frozenset(
+    {
+        "hablar con alguien",
+        "hablar con una persona",
+        "hablar con un humano",
+        "persona real",
+        "quiero hablar con",
+        "no quiero hablar con un bot",
+        "necesito hablar con alguien",
+    }
+)
 
 
 def _is_explicit_handoff(text: str) -> bool:
@@ -281,7 +292,7 @@ def _keyword_matches(text_lower: str, kw_lower: str) -> float:
 
     if text_lower.startswith(kw_lower):
         # Ensure it's a word boundary: keyword followed by end-of-string or non-word char
-        suffix = text_lower[len(kw_lower):]
+        suffix = text_lower[len(kw_lower) :]
         if not suffix or not suffix[0].isalnum():
             return 0.90
 
@@ -410,22 +421,16 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
     # When a greeting co-occurs with an actionable intent (book, ask_info,
     # cancel, escalate), defer to LLM for accurate classification.
     _ACTIONABLE_INTENTS = {"book", "ask_info", "cancel", "escalate"}
-    if best_intent == "greet" and any(
-        i in matched_intents for i in _ACTIONABLE_INTENTS
-    ):
+    if best_intent == "greet" and any(i in matched_intents for i in _ACTIONABLE_INTENTS):
         logger.debug(
-            "classify_by_keywords: multi-intent conflict detected "
-            "(greet + %s) — deferring to LLM",
+            "classify_by_keywords: multi-intent conflict detected (greet + %s) — deferring to LLM",
             [i for i in _ACTIONABLE_INTENTS if i in matched_intents],
         )
         return None
 
     # Booking-context narrowing: downgrade `reject` for no-preference / qualifier
     # phrases so they fall through to the LLM rather than triggering an early exit.
-    if (
-        best_intent == "reject"
-        and (context or {}).get("current_mode") == "BOOKING"
-    ):
+    if best_intent == "reject" and (context or {}).get("current_mode") == "BOOKING":
         # Explicit cancel phrases must keep full confidence regardless
         is_explicit_cancel = any(phrase in text_normalized for phrase in _EXPLICIT_CANCEL_PHRASES)
         if not is_explicit_cancel:
@@ -609,10 +614,12 @@ class IntentRouter:
         human_content = f"Mensaje: {text}{mode_context}"
 
         try:
-            response = await self._llm.ainvoke([
-                SystemMessage(content=_LLM_SYSTEM_PROMPT),
-                HumanMessage(content=human_content),
-            ])
+            response = await self._llm.ainvoke(
+                [
+                    SystemMessage(content=_LLM_SYSTEM_PROMPT),
+                    HumanMessage(content=human_content),
+                ]
+            )
             # Fire-and-forget token tracking
             try:
                 usage = getattr(response, "usage_metadata", None)
@@ -622,7 +629,11 @@ class IntentRouter:
                     if _in > 0 or _out > 0:
                         from agent.services.token_tracking import record_token_usage
 
-                        await record_token_usage(input_tokens=_in, output_tokens=_out)
+                        await record_token_usage(
+                            input_tokens=_in,
+                            output_tokens=_out,
+                            mode_name="intent_router",
+                        )
             except Exception:
                 pass  # Token tracking must never affect intent routing
             raw_content: str = response.content

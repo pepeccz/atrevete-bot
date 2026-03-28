@@ -80,7 +80,9 @@ class TestBookingModePrompt:
         """Test that booking prompt offers free consultation."""
         content = load_markdown("booking.md", "modes")
 
-        assert "consultoría gratuita" in content.lower() or "consultoria gratuita" in content.lower()
+        assert (
+            "consultoría gratuita" in content.lower() or "consultoria gratuita" in content.lower()
+        )
 
     def test_booking_prompt_has_recovery_section(self):
         """Test that booking prompt has abandonment recovery section."""
@@ -118,7 +120,11 @@ class TestGeneralModePrompt:
         content = load_markdown("general.md", "modes")
 
         # Should mention read-only or restricted tools
-        assert "Solo Lectura" in content or "solo lectura" in content.lower() or "lectura" in content.lower()
+        assert (
+            "Solo Lectura" in content
+            or "solo lectura" in content.lower()
+            or "lectura" in content.lower()
+        )
 
     def test_general_prompt_has_objection_handling(self):
         """Test that general prompt has objection handling section."""
@@ -142,7 +148,11 @@ class TestGeneralModePrompt:
         """Test that general prompt handles 'not sure what I need' objection."""
         content = load_markdown("general.md", "modes")
 
-        assert "no sé" in content.lower() or "no se" in content.lower() or "indeciso" in content.lower()
+        assert (
+            "no sé" in content.lower()
+            or "no se" in content.lower()
+            or "indeciso" in content.lower()
+        )
 
     def test_general_prompt_has_service_advice(self):
         """Test that general prompt has service advice section."""
@@ -197,8 +207,8 @@ class TestSharedContentReferences:
         assert len(content) > 100
 
     def test_shared_recovery_exists(self):
-        """Test that shared/recovery.md exists and has content."""
-        content = load_markdown("recovery.md", "shared")
+        """Test that legacy/recovery.md exists and has content."""
+        content = load_markdown("recovery.md", "legacy")
 
         assert isinstance(content, str)
         assert len(content) > 100
@@ -210,7 +220,7 @@ class TestSharedContentReferences:
         # Check for various shared references
         assert "shared/glossary.md" in content
         assert "shared/critical_rules.md" in content
-        assert "shared/recovery.md" in content
+        assert "legacy/recovery.md" in content
 
     def test_shared_content_referenced_in_escalation(self):
         """Test that escalation.md references shared content correctly."""
@@ -218,7 +228,7 @@ class TestSharedContentReferences:
 
         assert "shared/identity.md" in content
         assert "shared/critical_rules.md" in content
-        assert "shared/recovery.md" in content
+        assert "legacy/recovery.md" in content
 
     def test_shared_content_referenced_in_general(self):
         """Test that general.md references shared content correctly."""
@@ -226,7 +236,7 @@ class TestSharedContentReferences:
 
         assert "shared/glossary.md" in content
         assert "shared/critical_rules.md" in content
-        assert "shared/recovery.md" in content
+        assert "legacy/recovery.md" in content
 
 
 class TestPromptFileStructure:
@@ -247,12 +257,18 @@ class TestPromptFileStructure:
         """Test that all expected shared prompts exist."""
         prompt_dir = Path(__file__).parent.parent.parent / "agent" / "prompts"
         shared_dir = prompt_dir / "shared"
+        legacy_dir = prompt_dir / "legacy"
 
-        expected_files = ["identity.md", "critical_rules.md", "glossary.md", "recovery.md"]
+        shared_files = ["identity.md", "critical_rules.md", "glossary.md"]
+        legacy_files = ["recovery.md"]
 
-        for filename in expected_files:
+        for filename in shared_files:
             file_path = shared_dir / filename
             assert file_path.exists(), f"Shared prompt missing: {filename}"
+
+        for filename in legacy_files:
+            file_path = legacy_dir / filename
+            assert file_path.exists(), f"Legacy prompt missing: {filename}"
 
     def test_mode_prompts_use_markdown(self):
         """Test that all mode prompts use markdown format."""
@@ -265,12 +281,18 @@ class TestPromptFileStructure:
 
     def test_shared_prompts_use_markdown(self):
         """Test that all shared prompts use markdown format."""
-        shared_files = ["identity.md", "critical_rules.md", "glossary.md", "recovery.md"]
+        shared_files = ["identity.md", "critical_rules.md", "glossary.md"]
+        legacy_files = ["recovery.md"]
 
         for shared_file in shared_files:
             content = load_markdown(shared_file, "shared")
             # Should have markdown elements
             assert "#" in content, f"{shared_file} missing markdown headers"
+
+        for legacy_file in legacy_files:
+            content = load_markdown(legacy_file, "legacy")
+            # Should have markdown elements
+            assert "#" in content, f"{legacy_file} missing markdown headers"
 
 
 class TestPromptContentQuality:
@@ -304,7 +326,11 @@ class TestPromptContentQuality:
         """Test that all mode prompts have references section."""
         for mode_file in ["booking.md", "general.md", "escalation.md"]:
             content = load_markdown(mode_file, "modes")
-            assert "## Referencias" in content or "## References" in content or "Referencias" in content
+            assert (
+                "## Referencias" in content
+                or "## References" in content
+                or "Referencias" in content
+            )
 
 
 class TestPromptToolReferences:

@@ -18,35 +18,30 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = Field(
         default="postgresql+asyncpg://atrevete:changeme@postgres:5432/atrevete_db",
-        description="PostgreSQL connection string with asyncpg driver"
+        description="PostgreSQL connection string with asyncpg driver",
     )
     POSTGRES_DB: str = Field(default="atrevete_db")
     POSTGRES_USER: str = Field(default="atrevete")
     POSTGRES_PASSWORD: str = Field(default="changeme")
 
     # Redis
-    REDIS_URL: str = Field(
-        default="redis://redis:6379/0",
-        description="Redis connection string"
-    )
+    REDIS_URL: str = Field(default="redis://redis:6379/0", description="Redis connection string")
     REDIS_PASSWORD: str = Field(
-        default="",
-        description="Redis password for authentication (required in production)"
+        default="", description="Redis password for authentication (required in production)"
     )
     USE_REDIS_STREAMS: bool = Field(
         default=True,
         description="Use Redis Streams instead of Pub/Sub for message delivery. "
-                    "Streams provide persistence and acknowledgment. Set to False to use legacy Pub/Sub."
+        "Streams provide persistence and acknowledgment. Set to False to use legacy Pub/Sub.",
     )
 
     # Google Calendar API
     GOOGLE_SERVICE_ACCOUNT_JSON: str = Field(
         default="/path/to/service-account-key.json",
-        description="Path to Google service account JSON key file"
+        description="Path to Google service account JSON key file",
     )
     GOOGLE_CALENDAR_IDS: str = Field(
-        default="",
-        description="Comma-separated Google Calendar IDs for stylists"
+        default="", description="Comma-separated Google Calendar IDs for stylists"
     )
 
     # Chatwoot
@@ -57,7 +52,7 @@ class Settings(BaseSettings):
     CHATWOOT_TEAM_GROUP_ID: str = Field(default="group_id")
     CHATWOOT_WEBHOOK_TOKEN: str = Field(
         default="chatwoot_webhook_token_placeholder",
-        description="Secret token for Chatwoot webhook URL authentication (min 24 chars recommended)"
+        description="Secret token for Chatwoot webhook URL authentication (min 24 chars recommended)",
     )
     CHATWOOT_RATE_LIMIT_PER_MINUTE: int = Field(
         default=60,
@@ -69,15 +64,14 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = Field(default="sk-or-placeholder")
     LLM_MODEL: str = Field(
         default="openai/gpt-4o-mini",
-        description="AI model for conversations (OpenRouter format). Options: openai/gpt-4o-mini, anthropic/claude-sonnet-3.5, anthropic/claude-haiku-4.5"
+        description="AI model for conversations (OpenRouter format). Options: openai/gpt-4o-mini, anthropic/claude-sonnet-3.5, anthropic/claude-haiku-4.5",
     )
     SITE_URL: str = Field(
         default="https://atrevetepeluqueria.com",
-        description="Site URL for OpenRouter rankings (optional)"
+        description="Site URL for OpenRouter rankings (optional)",
     )
     SITE_NAME: str = Field(
-        default="Atrévete Bot",
-        description="Site name for OpenRouter rankings (optional)"
+        default="Atrévete Bot", description="Site name for OpenRouter rankings (optional)"
     )
 
     # Token Cost Tracking (EUR per 1M tokens)
@@ -88,6 +82,16 @@ class Settings(BaseSettings):
     TOKEN_PRICE_OUTPUT: Decimal = Field(
         default=Decimal("0.60"),
         description="Price per 1M output tokens in EUR (gpt-4.1-mini default)",
+    )
+
+    # Token Budget Alerting (fire-and-forget, no hard limits)
+    TOKEN_BUDGET_MONTHLY_USD: float | None = Field(
+        default=None,
+        description="Monthly cost alert threshold in USD. None = disabled.",
+    )
+    TOKEN_BUDGET_PER_TURN_TOKENS: int | None = Field(
+        default=None,
+        description="Per-turn input token alert threshold. None = disabled.",
     )
 
     # Resilience Layer (Multi-Provider Fallback + Retry)
@@ -132,22 +136,20 @@ class Settings(BaseSettings):
 
     # Langfuse (Observability & Monitoring)
     LANGFUSE_PUBLIC_KEY: str = Field(
-        default="pk-lf-placeholder",
-        description="Langfuse public key for tracing and monitoring"
+        default="pk-lf-placeholder", description="Langfuse public key for tracing and monitoring"
     )
     LANGFUSE_SECRET_KEY: str = Field(
-        default="sk-lf-placeholder",
-        description="Langfuse secret key for authentication"
+        default="sk-lf-placeholder", description="Langfuse secret key for authentication"
     )
     LANGFUSE_BASE_URL: str = Field(
         default="https://cloud.langfuse.com",
-        description="Langfuse API base URL (EU: cloud.langfuse.com, US: us.cloud.langfuse.com)"
+        description="Langfuse API base URL (EU: cloud.langfuse.com, US: us.cloud.langfuse.com)",
     )
 
     # Groq API (Audio Transcription)
     GROQ_API_KEY: str = Field(
         default="gsk-placeholder",
-        description="Groq API key for Whisper audio transcription (console.groq.com)"
+        description="Groq API key for Whisper audio transcription (console.groq.com)",
     )
 
     # Prompt System Optimization
@@ -164,72 +166,67 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO")
     SALON_ADDRESS: str = Field(
         default="Calle de la Constitución, 5, 28100 Alcobendas, Madrid",
-        description="Physical address of the beauty salon"
+        description="Physical address of the beauty salon",
     )
     MESSAGE_BATCH_WINDOW_SECONDS: int = Field(
         default=30,
         ge=0,
         le=120,
-        description="Message batching window in seconds. Collects messages within this window and processes them as one. Set to 0 to disable batching."
+        description="Message batching window in seconds. Collects messages within this window and processes them as one. Set to 0 to disable batching.",
     )
 
     # Appointment Confirmation System
     CONFIRMATION_TEMPLATE_NAME: str = Field(
         default="appointment_confirmation_48h",
-        description="WhatsApp template name for 48h confirmation request"
+        description="WhatsApp template name for 48h confirmation request",
     )
     AUTO_CANCEL_TEMPLATE_NAME: str = Field(
         default="appointment_auto_cancelled",
-        description="WhatsApp template name for auto-cancellation notification"
+        description="WhatsApp template name for auto-cancellation notification",
     )
     CUSTOMER_CANCEL_TEMPLATE_NAME: str = Field(
         default="appointment_cancelled_by_customer",
-        description="WhatsApp template name when customer declines appointment"
+        description="WhatsApp template name when customer declines appointment",
     )
     REMINDER_TEMPLATE_NAME: str = Field(
-        default="appointment_reminder_2h",
-        description="WhatsApp template name for 2h reminder"
+        default="appointment_reminder_2h", description="WhatsApp template name for 2h reminder"
     )
     ADMIN_APPOINTMENT_TEMPLATE_NAME: str = Field(
         default="appointment_booked_by_admin",
-        description="WhatsApp template name for admin-created appointment notification"
+        description="WhatsApp template name for admin-created appointment notification",
     )
     CONFIRMATION_HOURS_BEFORE: int = Field(
         default=48,
         ge=24,
         le=72,
-        description="Hours before appointment to send confirmation request"
+        description="Hours before appointment to send confirmation request",
     )
     AUTO_CANCEL_HOURS_BEFORE: int = Field(
         default=24,
         ge=12,
         le=48,
-        description="Hours before appointment to auto-cancel if no confirmation received"
+        description="Hours before appointment to auto-cancel if no confirmation received",
     )
     REMINDER_HOURS_BEFORE: int = Field(
         default=2,
         ge=1,
         le=24,
-        description="Hours before appointment to send reminder for confirmed appointments"
+        description="Hours before appointment to send reminder for confirmed appointments",
     )
 
     # Admin Panel Authentication
-    ADMIN_USERNAME: str = Field(
-        default="admin",
-        description="Admin panel username"
-    )
+    ADMIN_USERNAME: str = Field(default="admin", description="Admin panel username")
     ADMIN_PASSWORD: str = Field(
         default="",
-        description="Admin panel password in plain text (DEPRECATED: use ADMIN_PASSWORD_HASH instead)"
+        description="Admin panel password in plain text (DEPRECATED: use ADMIN_PASSWORD_HASH instead)",
     )
     ADMIN_PASSWORD_HASH: str = Field(
         default="",
         description="Bcrypt hash of admin password. Generate with: "
-                    "python -c \"from passlib.hash import bcrypt; print(bcrypt.hash('your_password'))\""
+        "python -c \"from passlib.hash import bcrypt; print(bcrypt.hash('your_password'))\"",
     )
     ADMIN_JWT_SECRET: str = Field(
-        default="",
-        description="JWT secret key for admin panel authentication (min 32 chars)"
+        default="", description="JWT secret key for admin panel authentication (min 32 chars)"
     )
 
     # Google OAuth2 (optional — system uses service account if not set)
@@ -270,7 +267,7 @@ class Settings(BaseSettings):
     # CORS Origins for API
     CORS_ORIGINS: str = Field(
         default="http://localhost:3000,http://localhost:8000,http://localhost:8001,http://api:8000",
-        description="Comma-separated list of allowed origins for CORS (e.g., 'http://localhost:3000,https://admin.domain.com')"
+        description="Comma-separated list of allowed origins for CORS (e.g., 'http://localhost:3000,https://admin.domain.com')",
     )
 
     @property

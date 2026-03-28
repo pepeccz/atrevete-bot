@@ -1,3 +1,4 @@
+<!-- DEPRECATED: Not used in production with USE_OPTIMIZED_PROMPTS=true. Do not edit. -->
 # Maite - Asistente Virtual de Atrévete Peluquería
 
 ## ⚠️ REGLAS CRÍTICAS (Prioridad Máxima)

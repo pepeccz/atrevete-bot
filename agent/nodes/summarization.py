@@ -69,21 +69,16 @@ async def summarize_conversation(state: ConversationState) -> dict:
         existing_summary = state.get("conversation_summary")
 
         # Format messages as "role: content" strings
-        formatted_messages = "\n".join(
-            f"{msg['role']}: {msg['content']}"
-            for msg in messages
-        )
+        formatted_messages = "\n".join(f"{msg['role']}: {msg['content']}" for msg in messages)
 
         # Step 4: Replace placeholder in prompt template
-        prompt_text = prompt_template.replace(
-            "{messages_to_summarize}",
-            formatted_messages
-        )
+        prompt_text = prompt_template.replace("{messages_to_summarize}", formatted_messages)
 
         # Step 5: Call LLM via OpenRouter to generate summary
         # Note: Langfuse callbacks passed in graph config are automatically
         # inherited by this LLM invocation (LangChain callback propagation)
         from shared.config import get_settings
+
         settings = get_settings()
 
         llm = ChatOpenAI(
@@ -97,7 +92,7 @@ async def summarize_conversation(state: ConversationState) -> dict:
             default_headers={
                 "HTTP-Referer": settings.SITE_URL,
                 "X-Title": settings.SITE_NAME,
-            }
+            },
         )
 
         response = await llm.ainvoke([{"role": "user", "content": prompt_text}])
@@ -110,7 +105,11 @@ async def summarize_conversation(state: ConversationState) -> dict:
                 if _in > 0 or _out > 0:
                     from agent.services.token_tracking import record_token_usage
 
-                    await record_token_usage(input_tokens=_in, output_tokens=_out)
+                    await record_token_usage(
+                        input_tokens=_in,
+                        output_tokens=_out,
+                        mode_name="summarization",
+                    )
         except Exception:
             pass  # Token tracking must never affect summarization
         new_summary_text = str(response.content).strip()
@@ -122,10 +121,7 @@ async def summarize_conversation(state: ConversationState) -> dict:
             combined_summary = new_summary_text
 
         # Step 7: Check for token overflow
-        overflow_check = check_token_overflow({
-            **state,
-            "conversation_summary": combined_summary
-        })
+        overflow_check = check_token_overflow({**state, "conversation_summary": combined_summary})
 
         reduced_messages: list[dict] | None = None
 
@@ -176,8 +172,5 @@ async def summarize_conversation(state: ConversationState) -> dict:
     except Exception as e:
         # Graceful degradation: log error and clear transient field
         conversation_id = state.get("conversation_id", "unknown")
-        logger.error(
-            f"Summarization failed for conversation {conversation_id}: {e}",
-            exc_info=True
-        )
+        logger.error(f"Summarization failed for conversation {conversation_id}: {e}", exc_info=True)
         return {"user_message": None}

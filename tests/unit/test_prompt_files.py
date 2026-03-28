@@ -78,7 +78,7 @@ class TestPhantomReferences:
         assert "glossary.md" not in content, "general.md still references glossary.md"
 
     def test_no_recovery_reference_in_escalation(self, prompt_dir):
-        """escalation.md must not reference shared/recovery.md."""
+        """escalation.md must not reference legacy/recovery.md."""
         content = (prompt_dir / "modes" / "escalation.md").read_text()
         assert "recovery.md" not in content, "escalation.md still references recovery.md"
 

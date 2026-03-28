@@ -19,16 +19,28 @@ from database.models import TokenUsage
 logger = logging.getLogger(__name__)
 
 
-async def record_token_usage(input_tokens: int, output_tokens: int) -> None:
+async def record_token_usage(
+    input_tokens: int,
+    output_tokens: int,
+    mode_name: str = "",
+    turn_count: int = 0,
+) -> None:
     """
     Record token usage for the current month.
 
     Uses atomic UPSERT to increment counters. If a record for the current
     year/month exists, it increments the values. Otherwise, creates a new record.
 
+    After the DB write succeeds, fire-and-forget budget alerting is performed:
+    - Per-turn: WARNING if `input_tokens` exceeds `TOKEN_BUDGET_PER_TURN_TOKENS`.
+    - Monthly: WARNING if cumulative monthly cost exceeds `TOKEN_BUDGET_MONTHLY_USD`
+      (skipped when the env var is unset).
+
     Args:
         input_tokens: Number of input/prompt tokens used
         output_tokens: Number of output/completion tokens used
+        mode_name: Active mode name (e.g. "BOOKING") — used in alert log messages
+        turn_count: Current conversation turn count — used in alert log messages
     """
     if input_tokens <= 0 and output_tokens <= 0:
         return
@@ -76,6 +88,54 @@ async def record_token_usage(input_tokens: int, output_tokens: int) -> None:
     except Exception as e:
         # Fire-and-forget: log but never raise — token tracking must not break the agent
         logger.warning("Failed to record token usage: %s", e)
+        return
+
+    # --- Budget alerting (fire-and-forget) ---
+    try:
+        from shared.config import get_settings
+
+        settings = get_settings()
+
+        # Per-turn token check (cheap — uses data already in hand)
+        per_turn_limit = settings.TOKEN_BUDGET_PER_TURN_TOKENS
+        if per_turn_limit and input_tokens > per_turn_limit:
+            logger.warning(
+                "TOKEN_BUDGET_PER_TURN exceeded | input_tokens=%d threshold=%d mode=%s turn=%d",
+                input_tokens,
+                per_turn_limit,
+                mode_name or "unknown",
+                turn_count,
+            )
+
+        # Monthly USD budget check — only if threshold is configured
+        monthly_budget = settings.TOKEN_BUDGET_MONTHLY_USD
+        if monthly_budget is not None:
+            # Re-use get_current_month_usage() to avoid an extra DB session:
+            # it already queries the updated row (committed above).
+            monthly = await get_current_month_usage()
+            if monthly is not None:
+                from decimal import Decimal
+
+                total_in = monthly["input_tokens"]
+                total_out = monthly["output_tokens"]
+                estimated_cost = float(
+                    (Decimal(str(total_in)) * settings.TOKEN_PRICE_INPUT / Decimal("1000000"))
+                    + (Decimal(str(total_out)) * settings.TOKEN_PRICE_OUTPUT / Decimal("1000000"))
+                )
+                if estimated_cost > monthly_budget:
+                    logger.warning(
+                        "TOKEN_BUDGET_MONTHLY_USD exceeded | estimated=%.4f USD budget=%.2f USD "
+                        "month=%d/%d",
+                        estimated_cost,
+                        monthly_budget,
+                        month,
+                        year,
+                    )
+            else:
+                logger.debug("Monthly budget check skipped: no usage row found after write")
+
+    except Exception as exc:
+        logger.debug("Budget alert check failed (non-critical): %s", exc)
 
 
 async def get_current_month_usage() -> dict | None:

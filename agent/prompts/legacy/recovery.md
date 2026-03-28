@@ -1,3 +1,4 @@
+<!-- DEPRECATED: Not used in production with USE_OPTIMIZED_PROMPTS=true. Do not edit. -->
 # Mensajes de Recuperación y Casos de Borde
 
 ## Propósito

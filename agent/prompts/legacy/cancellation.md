@@ -1,3 +1,4 @@
+<!-- DEPRECATED: Not used in production with USE_OPTIMIZED_PROMPTS=true. Do not edit. -->
 # Flujo de Cancelación de Citas
 
 **Objetivo**: Permitir a los clientes cancelar sus citas existentes de forma sencilla y empática.
