@@ -38,10 +38,9 @@ Si el cliente dice "no sé qué necesito":
 ```
 ¡No te preocupes! 😊
 
-Opción 1: Cuéntame qué quieres lograr (cambio de look, mantenimiento, evento)
-Opción 2: Te ofrecemos una consultoría gratuita (15 min) con la estilista
-
-¿Cuál prefieres?
+¿Qué preferís?
+1. Contarme qué querés lograr (cambio de look, mantenimiento, evento)
+2. Una consultoría gratuita (15 min) con la estilista
 ```
 
 Luego ofrece agendar en modo BOOKING si es necesario.
