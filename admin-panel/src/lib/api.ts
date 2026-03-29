@@ -24,6 +24,9 @@ import type {
   TokenUsageList,
   CurrentMonthUsage,
   TokenPricing,
+  Escalation,
+  EscalationQueryParams,
+  EscalationStats,
 } from "./types";
 
 const API_BASE_URL =
@@ -1009,6 +1012,42 @@ class ApiClient {
 
   async getTokenPricing(): Promise<TokenPricing> {
     return this.request<TokenPricing>("/api/token-usage/pricing");
+  }
+
+  // Escalations
+  async getEscalations(params?: EscalationQueryParams): Promise<{
+    items: Escalation[];
+    total: number;
+    page: number;
+    page_size: number;
+    has_more: boolean;
+  }> {
+    const searchParams = new URLSearchParams();
+    if (params?.page) searchParams.set("page", String(params.page));
+    if (params?.page_size) searchParams.set("page_size", String(params.page_size));
+    if (params?.status) searchParams.set("status", params.status);
+    if (params?.source) searchParams.set("source", params.source);
+    if (params?.is_technical_error !== undefined)
+      searchParams.set("is_technical_error", String(params.is_technical_error));
+    if (params?.date_from) searchParams.set("date_from", params.date_from);
+    if (params?.date_to) searchParams.set("date_to", params.date_to);
+    if (params?.search) searchParams.set("search", params.search);
+    if (params?.sort_by) searchParams.set("sort_by", params.sort_by);
+    if (params?.sort_order) searchParams.set("sort_order", params.sort_order);
+    const qs = searchParams.toString();
+    return this.request(`/api/admin/escalations${qs ? `?${qs}` : ""}`);
+  }
+
+  async getEscalation(id: string): Promise<Escalation> {
+    return this.request(`/api/admin/escalations/${id}`);
+  }
+
+  async resolveEscalation(id: string): Promise<Escalation> {
+    return this.request(`/api/admin/escalations/${id}/resolve`, { method: "PATCH" });
+  }
+
+  async getEscalationStats(): Promise<EscalationStats> {
+    return this.request("/api/admin/escalations/stats");
   }
 }
 

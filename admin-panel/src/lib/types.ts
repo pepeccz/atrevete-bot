@@ -546,3 +546,63 @@ export interface TokenPricing {
   input_price_per_million: number;
   output_price_per_million: number;
 }
+
+// ─── Escalations ────────────────────────────────────────────────────────────
+
+export type EscalationSource = "manual" | "auto_error" | "fallback";
+export type EscalationStatus = "triggered" | "resolved";
+
+export interface Escalation {
+  id: string;
+  conversation_id: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  customer_phone: string;
+  reason: string;
+  source: EscalationSource;
+  status: EscalationStatus;
+  is_technical_error: boolean;
+  issue_summary: string | null;
+  contact_preference: string | null;
+  triggered_at: string;
+  resolved_at: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface EscalationQueryParams {
+  page?: number;
+  page_size?: number;
+  status?: EscalationStatus | "";
+  source?: EscalationSource | "";
+  is_technical_error?: boolean;
+  date_from?: string;
+  date_to?: string;
+  search?: string;
+  sort_by?: "triggered_at" | "status" | "source";
+  sort_order?: "asc" | "desc";
+}
+
+export interface EscalationStats {
+  total: number;
+  pending: number;
+  resolved: number;
+  by_source: Record<EscalationSource, number>;
+  technical_errors: number;
+}
+
+export const ESCALATION_SOURCE_LABELS: Record<EscalationSource, string> = {
+  manual: "Manual",
+  auto_error: "Error automático",
+  fallback: "Fallback",
+};
+
+export const ESCALATION_STATUS_LABELS: Record<EscalationStatus, string> = {
+  triggered: "Pendiente",
+  resolved: "Resuelta",
+};
+
+export const ESCALATION_SOURCE_COLORS: Record<EscalationSource, string> = {
+  manual: "text-orange-500",
+  auto_error: "text-red-600",
+  fallback: "text-purple-500",
+};

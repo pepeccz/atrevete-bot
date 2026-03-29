@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  AlertTriangle,
   Calendar,
   Users,
   Scissors,
@@ -87,6 +88,11 @@ const configNav: NavItem[] = [
     title: "Conversaciones",
     href: "/conversations",
     icon: MessageSquare,
+  },
+  {
+    title: "Escalaciones",
+    href: "/escalations",
+    icon: AlertTriangle,
   },
 ];
 

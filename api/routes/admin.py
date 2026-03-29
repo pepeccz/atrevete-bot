@@ -15,7 +15,7 @@ import logging
 import re
 import time
 import unicodedata
-from datetime import date, datetime, time as dt_time, timedelta
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from enum import Enum
 from zoneinfo import ZoneInfo
 from typing import Annotated, Any, Literal
@@ -29,7 +29,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -43,6 +43,9 @@ from database.models import (
     BusinessHours,
     ConversationHistory,
     Customer,
+    Escalation,
+    EscalationSource,
+    EscalationStatus,
     Holiday,
     Notification,
     NotificationType,
@@ -659,6 +662,57 @@ class NotificationBulkRequest(BaseModel):
     """Request for bulk operations on notifications."""
 
     ids: list[UUID]
+
+
+# =============================================================================
+# Escalation Models
+# =============================================================================
+
+
+class EscalationResponse(BaseModel):
+    id: str
+    conversation_id: str
+    customer_id: str | None
+    customer_name: str | None
+    customer_phone: str
+    reason: str
+    source: str
+    status: str
+    is_technical_error: bool
+    issue_summary: str | None
+    contact_preference: str | None
+    triggered_at: datetime
+    resolved_at: datetime | None
+    metadata: dict | None  # serializado desde metadata_ del modelo
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+def _escalation_to_response(e: Escalation, customer_name: str | None = None) -> dict:
+    return {
+        "id": str(e.id),
+        "conversation_id": e.conversation_id,
+        "customer_id": str(e.customer_id) if e.customer_id else None,
+        "customer_name": customer_name,
+        "customer_phone": e.customer_phone,
+        "reason": e.reason,
+        "source": e.source.value if hasattr(e.source, "value") else e.source,
+        "status": e.status.value if hasattr(e.status, "value") else e.status,
+        "is_technical_error": e.is_technical_error,
+        "issue_summary": e.issue_summary,
+        "contact_preference": e.contact_preference,
+        "triggered_at": e.triggered_at,
+        "resolved_at": e.resolved_at,
+        "metadata": e.metadata_ if e.metadata_ else None,
+    }
+
+
+class EscalationStatsResponse(BaseModel):
+    total: int
+    pending: int
+    resolved: int
+    by_source: dict[str, int]
+    technical_errors: int
 
 
 # Notification categories mapping
@@ -5538,3 +5592,219 @@ async def export_notifications(
                 "Content-Disposition": f"attachment; filename=notificaciones_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
             },
         )
+
+
+# =============================================================================
+# Escalations Endpoints
+# =============================================================================
+
+
+@router.get("/escalations/stats", response_model=EscalationStatsResponse)
+async def get_escalation_stats(
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    async with get_async_session() as session:
+        total = (await session.execute(select(func.count()).select_from(Escalation))).scalar() or 0
+        pending = (
+            await session.execute(
+                select(func.count())
+                .select_from(Escalation)
+                .where(Escalation.status == EscalationStatus.TRIGGERED)
+            )
+        ).scalar() or 0
+        resolved = (
+            await session.execute(
+                select(func.count())
+                .select_from(Escalation)
+                .where(Escalation.status == EscalationStatus.RESOLVED)
+            )
+        ).scalar() or 0
+        technical = (
+            await session.execute(
+                select(func.count())
+                .select_from(Escalation)
+                .where(Escalation.is_technical_error == True)
+            )
+        ).scalar() or 0
+
+        by_source = {}
+        for source in EscalationSource:
+            count = (
+                await session.execute(
+                    select(func.count()).select_from(Escalation).where(Escalation.source == source)
+                )
+            ).scalar() or 0
+            by_source[source.value] = count
+
+        return EscalationStatsResponse(
+            total=total,
+            pending=pending,
+            resolved=resolved,
+            by_source=by_source,
+            technical_errors=technical,
+        )
+
+
+@router.get("/escalations", response_model=dict)
+async def list_escalations(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    page: int = 1,
+    page_size: int = 20,
+    status: str | None = None,
+    source: str | None = None,
+    is_technical_error: bool | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    search: str | None = None,
+    sort_by: str = "triggered_at",
+    sort_order: str = "desc",
+):
+    async with get_async_session() as session:
+        page_size = min(page_size, 100)
+        offset = (page - 1) * page_size
+
+        query = select(Escalation)
+        conditions = []
+
+        if status:
+            try:
+                conditions.append(Escalation.status == EscalationStatus(status))
+            except ValueError:
+                pass
+        if source:
+            try:
+                conditions.append(Escalation.source == EscalationSource(source))
+            except ValueError:
+                pass
+        if is_technical_error is not None:
+            conditions.append(Escalation.is_technical_error == is_technical_error)
+        if date_from:
+            try:
+                from datetime import date as date_type
+
+                d = date_type.fromisoformat(date_from)
+                conditions.append(
+                    Escalation.triggered_at >= datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+                )
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                from datetime import date as date_type
+
+                d = date_type.fromisoformat(date_to)
+                conditions.append(
+                    Escalation.triggered_at
+                    <= datetime(d.year, d.month, d.day, 23, 59, 59, tzinfo=timezone.utc)
+                )
+            except ValueError:
+                pass
+        if search:
+            conditions.append(
+                or_(
+                    Escalation.reason.ilike(f"%{search}%"),
+                    Escalation.customer_phone.ilike(f"%{search}%"),
+                )
+            )
+
+        if conditions:
+            query = query.where(and_(*conditions))
+
+        # Count
+        count_query = select(func.count()).select_from(query.subquery())
+        total = (await session.execute(count_query)).scalar() or 0
+
+        # Sort (whitelist)
+        sort_whitelist = {"triggered_at", "status", "source"}
+        sort_field = sort_by if sort_by in sort_whitelist else "triggered_at"
+        sort_col = getattr(Escalation, sort_field)
+        query = query.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
+        query = query.offset(offset).limit(page_size)
+
+        escalations = (await session.execute(query)).scalars().all()
+
+        # Batch customer name lookup
+        customer_ids = [e.customer_id for e in escalations if e.customer_id]
+        customer_map: dict = {}
+        if customer_ids:
+            customers = (
+                (await session.execute(select(Customer).where(Customer.id.in_(customer_ids))))
+                .scalars()
+                .all()
+            )
+            customer_map = {
+                str(c.id): f"{c.first_name} {c.last_name or ''}".strip() for c in customers
+            }
+
+        items = [
+            _escalation_to_response(e, customer_map.get(str(e.customer_id))) for e in escalations
+        ]
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_more": (offset + len(items)) < total,
+        }
+
+
+@router.get("/escalations/{escalation_id}", response_model=EscalationResponse)
+async def get_escalation(
+    escalation_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    async with get_async_session() as session:
+        try:
+            import uuid
+
+            eid = uuid.UUID(escalation_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid escalation ID")
+
+        escalation = await session.get(Escalation, eid)
+        if not escalation:
+            raise HTTPException(status_code=404, detail="Escalation not found")
+
+        customer_name = None
+        if escalation.customer_id:
+            customer = await session.get(Customer, escalation.customer_id)
+            customer_name = (
+                f"{customer.first_name} {customer.last_name or ''}".strip() if customer else None
+            )
+
+        return EscalationResponse(**_escalation_to_response(escalation, customer_name))
+
+
+@router.patch("/escalations/{escalation_id}/resolve", response_model=EscalationResponse)
+async def resolve_escalation(
+    escalation_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    async with get_async_session() as session:
+        try:
+            import uuid
+
+            eid = uuid.UUID(escalation_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid escalation ID")
+
+        escalation = await session.get(Escalation, eid)
+        if not escalation:
+            raise HTTPException(status_code=404, detail="Escalation not found")
+
+        # Idempotente: si ya está resuelta, retornar sin modificar
+        if escalation.status != EscalationStatus.RESOLVED:
+            escalation.status = EscalationStatus.RESOLVED
+            escalation.resolved_at = datetime.now(tz=timezone.utc)
+            await session.commit()
+            await session.refresh(escalation)
+
+        customer_name = None
+        if escalation.customer_id:
+            customer = await session.get(Customer, escalation.customer_id)
+            customer_name = (
+                f"{customer.first_name} {customer.last_name or ''}".strip() if customer else None
+            )
+
+        return EscalationResponse(**_escalation_to_response(escalation, customer_name))
