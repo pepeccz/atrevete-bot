@@ -106,8 +106,42 @@ class EscalationMode(BaseModeNode):
         Returns:
             Partial state update dict
         """
+        from agent.services.escalation_service import perform_escalation
+
         conversation_id = state.get("conversation_id", "unknown")
         ctx = dict(state.get("mode_context") or {})
+
+        # T9 — Fast path for technical auto-escalation (error_count >= 3)
+        is_technical = (
+            state.get("error_count", 0) >= 3 or state.get("escalation_reason") == "technical_error"
+        )
+        if is_technical and not ctx.get("escalation_step"):
+            self.logger.info(
+                "EscalationMode: fast-path technical escalation | conversation=%s | error_count=%s",
+                conversation_id,
+                state.get("error_count", 0),
+            )
+            result = await perform_escalation(
+                conversation_id=str(state.get("conversation_id", "")),
+                customer_phone=state.get("customer_phone") or "",
+                reason="technical_error",
+                source="auto_error",
+                is_technical_error=True,
+            )
+            ctx["escalation_step"] = _STEP_DONE
+            final_response, disclosure_sent = self._maybe_prepend_intro(
+                result.user_message or _ESCALATION_FALLBACK, state
+            )
+            updates = {
+                **add_message(state, "assistant", final_response),
+                "escalation_triggered": True,
+                "mode_context": ctx,
+                "last_node": "escalation",
+                "user_message": None,
+            }
+            if disclosure_sent:
+                updates["ai_disclosure_sent"] = True
+            return updates
 
         # ── Guard: fresh ESCALATION entry — reset FSM step to ACKNOWLEDGE ──────
         # If we just transitioned INTO ESCALATION from another mode, stale
@@ -211,28 +245,32 @@ class EscalationMode(BaseModeNode):
             response_text = _ESCALATION_FALLBACK
 
             try:
-                from agent.tools.escalation_tools import escalate_to_human
-
-                await escalate_to_human.ainvoke(
-                    {
-                        "reason": "manual_request",
-                        "customer_name": state.get("customer_name") or "Cliente",
-                        "customer_phone": customer_phone,
-                        "conversation_id": conversation_id,
-                    }
+                esc_result = await perform_escalation(
+                    conversation_id=str(state.get("conversation_id", "")),
+                    customer_phone=customer_phone,
+                    reason="manual_request",
+                    source="manual",
+                    is_technical_error=False,
+                    issue_summary=issue_summary,
+                    contact_preference=contact_preference,
+                    conversation_context=state.get("messages", [])[-5:],
+                    customer_id=str(state.get("customer_id", ""))
+                    if state.get("customer_id")
+                    else None,
                 )
                 response_text = _ESCALATION_SUCCESS
                 self.logger.info(
-                    "EscalationMode: escalation tool called | conversation=%s | "
-                    "issue=%r | contact=%s",
+                    "EscalationMode: escalation completed | conversation=%s | "
+                    "issue=%r | contact=%s | steps_completed=%s",
                     conversation_id,
                     issue_summary[:60],
                     contact_preference,
+                    esc_result.steps_completed,
                 )
 
             except Exception as exc:
                 self.logger.error(
-                    "EscalationMode: escalate_to_human failed | conversation=%s | error=%s",
+                    "EscalationMode: perform_escalation failed | conversation=%s | error=%s",
                     conversation_id,
                     exc,
                 )

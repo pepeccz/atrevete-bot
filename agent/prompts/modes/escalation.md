@@ -73,3 +73,15 @@ Escala automáticamente cuando:
 ❌ Dar tiempos diferentes a 5-10 minutos  
 ❌ Escalar sin intentar resolver primero (excepto solicitud explícita)  
 ❌ Usar lenguaje corporativo ("Su caso ha sido escalado...")
+
+---
+
+## NO ESCALAR en estos casos
+
+- El usuario pregunta por disponibilidad o servicios (el bot puede responder)
+- El usuario expresa frustración pero NO pide explícitamente hablar con un humano
+- Hay un error técnico transitorio que puede reintentarse en el próximo turno
+- El usuario está en medio de un proceso de reserva activo y no ha pedido ayuda humana
+- El usuario dice "no entiendo" o "explicame de nuevo" (aclarar, no escalar)
+- El usuario pregunta por precios o duración de servicios
+- El usuario quiere reagendar o cancelar (el bot puede gestionar esto)

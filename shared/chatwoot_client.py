@@ -418,7 +418,7 @@ class ChatwootClient:
                     "customer_phone": customer_phone,
                     "message_length": len(message) if message else 0,
                     "conversation_id": conversation_id,
-                }
+                },
             )
 
             # If conversation_id provided, use it directly
@@ -456,7 +456,7 @@ class ChatwootClient:
                     extra={
                         "conversation_id": conversation_id,
                         "customer_phone": customer_phone,
-                    }
+                    },
                 )
 
                 response = await client.post(
@@ -484,7 +484,7 @@ class ChatwootClient:
                     extra={
                         "conversation_id": conversation_id,
                         "customer_phone": customer_phone,
-                    }
+                    },
                 )
 
                 logger.info(
@@ -558,9 +558,7 @@ class ChatwootClient:
             ... )
         """
         try:
-            logger.info(
-                f"Sending template message to {customer_phone}, template={template_name}"
-            )
+            logger.info(f"Sending template message to {customer_phone}, template={template_name}")
 
             # If conversation_id provided, send template to existing conversation
             if conversation_id is not None:
@@ -669,7 +667,7 @@ class ChatwootClient:
                 "conversation_id": conversation_id,
                 "customer_phone": customer_phone,
                 "template_name": template_name,
-            }
+            },
         )
 
         # Enforce rate limit before the outbound POST
@@ -700,3 +698,71 @@ class ChatwootClient:
                 f"conversation_id={conversation_id}, template={template_name}"
             )
             return True
+
+    async def get_conversation_labels(self, conversation_id: int) -> list[str]:
+        """Get current labels for a conversation."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}/labels",
+                headers=self.headers,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            return response.json().get("payload", [])
+
+    async def add_conversation_labels(self, conversation_id: int, labels: list[str]) -> bool:
+        """Add labels to a conversation (merges with existing labels)."""
+        try:
+            existing = await self.get_conversation_labels(conversation_id)
+            merged = list(set(existing) | set(labels))
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}/labels",
+                    headers=self.headers,
+                    json={"labels": merged},
+                    timeout=10.0,
+                )
+                response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to add labels to conversation {conversation_id}: {e}")
+            return False
+
+    async def add_private_note(self, conversation_id: int, content: str) -> bool:
+        """Add a private note to a conversation (not visible to customer)."""
+        try:
+            async with httpx.AsyncClient() as client:
+                payload = {
+                    "content": content,
+                    "message_type": "outgoing",
+                    "private": True,
+                }
+                response = await client.post(
+                    f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}/messages",
+                    headers=self.headers,
+                    json=payload,
+                    timeout=10.0,
+                )
+                response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to add private note to conversation {conversation_id}: {e}")
+            return False
+
+    async def assign_to_team(self, conversation_id: int, team_id: int) -> bool:
+        """Assign a conversation to a team."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.api_url}/api/v1/accounts/{self.account_id}/conversations/{conversation_id}/assignments",
+                    headers=self.headers,
+                    json={"team_id": team_id},
+                    timeout=10.0,
+                )
+                response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.warning(
+                f"Failed to assign conversation {conversation_id} to team {team_id}: {e}"
+            )
+            return False

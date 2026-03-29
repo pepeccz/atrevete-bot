@@ -353,6 +353,64 @@ def _build_general_booking_handoff(state: ConversationState, user_message: str) 
     return {}
 
 
+async def _maybe_escalate(node_result: dict, state: ConversationState) -> dict:
+    """
+    Inline escalation hook. Called after mode.handle() in general and booking nodes.
+    If escalation_triggered=True in the result, calls perform_escalation() in the same turn.
+    Does NOT route to ESCALATION mode — that's handled by the router separately.
+
+    NOTE: This is intentionally NOT called in escalation_node_fn to avoid loops.
+    """
+    from agent.services.escalation_service import perform_escalation
+
+    error_count = node_result.get("error_count", state.get("error_count", 0))
+    triggered = (
+        node_result.get("escalation_triggered")
+        or state.get("escalation_triggered")
+        or error_count >= 3
+    )
+    already_performed = node_result.get("_escalation_performed") or state.get(
+        "_escalation_performed"
+    )
+
+    if not triggered or already_performed:
+        return node_result
+
+    is_technical = (
+        error_count >= 3
+        or state.get("escalation_reason") == "technical_error"
+        or node_result.get("escalation_reason") == "technical_error"
+    )
+
+    esc_result = None
+    try:
+        esc_result = await perform_escalation(
+            conversation_id=str(state.get("conversation_id", "")),
+            customer_phone=state.get("customer_phone") or "",
+            reason=state.get("escalation_reason") or "manual_request",
+            source="auto_error" if is_technical else "manual",
+            is_technical_error=is_technical,
+        )
+    except Exception as exc:
+        logger.warning(f"_maybe_escalate: perform_escalation failed: {exc}")
+
+    node_result["_escalation_performed"] = True
+
+    # Propagate user_message from escalation result if not already set by the mode node
+    if (
+        esc_result is not None
+        and esc_result.user_message
+        and not node_result.get("_escalation_message_set")
+    ):
+        node_result = {
+            **node_result,
+            **add_message(state, "assistant", esc_result.user_message),
+            "_escalation_message_set": True,
+        }
+
+    return node_result
+
+
 async def router_node(state: ConversationState) -> dict[str, Any]:
     """
     v6.0 router_node: Classify intent and determine which mode to activate.
@@ -754,6 +812,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
         )
         mode = GeneralMode(tools=[], llm_client=_get_llm())
         result = await mode.handle(state=state, intent=intent)
+        result = await _maybe_escalate(result, state)
         return {**result, "last_node": "general"}
 
     async def booking_node_fn(state: ConversationState) -> dict[str, Any]:
@@ -766,6 +825,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
         )
         mode = BookingMode(tools=[], llm_client=_get_llm())
         result = await mode.handle(state=state, intent=intent)
+        result = await _maybe_escalate(result, state)
         return {**result, "last_node": "booking"}
 
     async def escalation_node_fn(state: ConversationState) -> dict[str, Any]:

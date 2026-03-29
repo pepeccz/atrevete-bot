@@ -2,16 +2,17 @@
 Tests for escalation_service.py - Human escalation workflow.
 
 This module tests the escalation service that handles human handoff:
+- perform_escalation: Central 5-step pipeline with graceful degradation
 - disable_bot_in_chatwoot: Disable bot via atencion_automatica attribute
 - create_escalation_notification: Create admin panel notification
-- trigger_escalation: Full escalation workflow orchestration
+- trigger_escalation: Backward-compatible wrapper (delegates to perform_escalation)
 
 Coverage:
+- perform_escalation: all steps, duplicate prevention, partial failures
 - Chatwoot bot disable success/failure
 - Notification creation with customer lookup
 - Notification creation with conversation context
 - Reason-to-notification-type mapping
-- Timeout handling
 - Error handling and graceful degradation
 """
 
@@ -27,8 +28,10 @@ from agent.services.escalation_service import (
     ESCALATION_TITLES,
     REASON_DESCRIPTIONS,
     REASON_TO_NOTIFICATION_TYPE,
+    EscalationResult,
     create_escalation_notification,
     disable_bot_in_chatwoot,
+    perform_escalation,
     trigger_escalation,
 )
 from database.models import NotificationType
@@ -60,10 +63,15 @@ class TestReasonMappings:
 
     def test_reason_mapping_to_correct_types(self):
         """Verify reasons map to correct notification types."""
-        assert REASON_TO_NOTIFICATION_TYPE["medical_consultation"] == NotificationType.ESCALATION_MEDICAL
+        assert (
+            REASON_TO_NOTIFICATION_TYPE["medical_consultation"]
+            == NotificationType.ESCALATION_MEDICAL
+        )
         assert REASON_TO_NOTIFICATION_TYPE["ambiguity"] == NotificationType.ESCALATION_AMBIGUITY
         assert REASON_TO_NOTIFICATION_TYPE["manual_request"] == NotificationType.ESCALATION_MANUAL
-        assert REASON_TO_NOTIFICATION_TYPE["technical_error"] == NotificationType.ESCALATION_TECHNICAL
+        assert (
+            REASON_TO_NOTIFICATION_TYPE["technical_error"] == NotificationType.ESCALATION_TECHNICAL
+        )
         assert REASON_TO_NOTIFICATION_TYPE["auto_escalation"] == NotificationType.ESCALATION_AUTO
 
     def test_default_mapping_exists(self):
@@ -103,9 +111,7 @@ class TestDisableBotInChatwoot:
     @pytest.mark.asyncio
     async def test_disable_bot_success(self):
         """Verify bot is disabled successfully."""
-        with patch(
-            "agent.services.escalation_service.ChatwootClient"
-        ) as mock_client_class:
+        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -120,9 +126,7 @@ class TestDisableBotInChatwoot:
     @pytest.mark.asyncio
     async def test_disable_bot_converts_string_to_int(self):
         """Verify conversation_id is converted from string to int."""
-        with patch(
-            "agent.services.escalation_service.ChatwootClient"
-        ) as mock_client_class:
+        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -134,9 +138,7 @@ class TestDisableBotInChatwoot:
     @pytest.mark.asyncio
     async def test_disable_bot_failure_returns_false(self):
         """Verify returns False when Chatwoot call fails."""
-        with patch(
-            "agent.services.escalation_service.ChatwootClient"
-        ) as mock_client_class:
+        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.update_conversation_attributes.side_effect = Exception("API Error")
             mock_client_class.return_value = mock_client
@@ -148,9 +150,7 @@ class TestDisableBotInChatwoot:
     @pytest.mark.asyncio
     async def test_disable_bot_logs_success(self):
         """Verify successful disable is logged."""
-        with patch(
-            "agent.services.escalation_service.ChatwootClient"
-        ) as mock_client_class:
+        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -165,9 +165,7 @@ class TestDisableBotInChatwoot:
     @pytest.mark.asyncio
     async def test_disable_bot_logs_error(self):
         """Verify errors are logged."""
-        with patch(
-            "agent.services.escalation_service.ChatwootClient"
-        ) as mock_client_class:
+        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.update_conversation_attributes.side_effect = Exception("Network timeout")
             mock_client_class.return_value = mock_client
@@ -213,13 +211,9 @@ class TestCreateEscalationNotification:
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.add = MagicMock()
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             result = await create_escalation_notification(
@@ -244,13 +238,9 @@ class TestCreateEscalationNotification:
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.add = MagicMock()
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             result = await create_escalation_notification(
@@ -274,9 +264,7 @@ class TestCreateEscalationNotification:
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.add = MagicMock()
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
         captured_notification = None
 
@@ -286,9 +274,7 @@ class TestCreateEscalationNotification:
 
         mock_session.add = capture_notification
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             context = [
@@ -319,9 +305,7 @@ class TestCreateEscalationNotification:
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
         captured_notification = None
 
@@ -331,9 +315,7 @@ class TestCreateEscalationNotification:
 
         mock_session.add = capture_notification
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             long_message = "x" * 200  # Very long message
@@ -362,9 +344,7 @@ class TestCreateEscalationNotification:
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
         captured_notification = None
 
@@ -374,9 +354,7 @@ class TestCreateEscalationNotification:
 
         mock_session.add = capture_notification
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             # Test medical reason
@@ -399,9 +377,7 @@ class TestCreateEscalationNotification:
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
         captured_notification = None
 
@@ -411,9 +387,7 @@ class TestCreateEscalationNotification:
 
         mock_session.add = capture_notification
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             await create_escalation_notification(
@@ -428,9 +402,7 @@ class TestCreateEscalationNotification:
     @pytest.mark.asyncio
     async def test_notification_returns_none_on_error(self):
         """Verify returns None when database error occurs."""
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.side_effect = Exception("DB error")
 
             result = await create_escalation_notification(
@@ -452,9 +424,7 @@ class TestCreateEscalationNotification:
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
         captured_notification = None
 
@@ -464,9 +434,7 @@ class TestCreateEscalationNotification:
 
         mock_session.add = capture_notification
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             await create_escalation_notification(
@@ -479,332 +447,205 @@ class TestCreateEscalationNotification:
 
 
 # ============================================================================
-# Test trigger_escalation
+# Test trigger_escalation (backward-compat wrapper)
 # ============================================================================
 
 
 class TestTriggerEscalation:
-    """Test full escalation workflow orchestration."""
+    """Test trigger_escalation — backward-compatible wrapper around perform_escalation."""
 
     @pytest.mark.asyncio
     async def test_trigger_escalation_success(self):
-        """Verify full escalation workflow succeeds."""
-        notification_id = uuid4()
-
+        """trigger_escalation returns expected legacy keys on success."""
+        escalation_id = uuid4()
+        mock_result = EscalationResult(
+            success=True,
+            escalation_id=escalation_id,
+            steps_completed=["disable_bot", "labels", "private_note", "db_record"],
+        )
         with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
+            "agent.services.escalation_service.perform_escalation",
             new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = True
+            return_value=mock_result,
+        ):
+            result = await trigger_escalation(
+                reason="manual_request",
+                conversation_id="12345",
+                customer_phone="+34612345678",
+            )
 
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = notification_id
-
-                result = await trigger_escalation(
-                    reason="manual_request",
-                    conversation_id="12345",
-                    customer_phone="+34612345678",
-                )
-
-                assert result["chatwoot_disabled"] is True
-                assert result["notification_id"] == notification_id
-                assert result["webhooks_triggered"] == []
-
-                mock_disable.assert_called_once_with("12345")
-                mock_notification.assert_called_once()
+        assert result["chatwoot_disabled"] is True
+        assert result["notification_id"] == escalation_id
+        assert result["webhooks_triggered"] == []
 
     @pytest.mark.asyncio
-    async def test_trigger_escalation_chatwoot_fails(self):
-        """Verify escalation continues when Chatwoot fails."""
-        notification_id = uuid4()
-
+    async def test_trigger_escalation_disable_bot_failed(self):
+        """chatwoot_disabled is False when disable_bot step failed."""
+        mock_result = EscalationResult(
+            success=False,
+            steps_completed=["labels"],
+            steps_failed=["disable_bot"],
+        )
         with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
+            "agent.services.escalation_service.perform_escalation",
             new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = False
+            return_value=mock_result,
+        ):
+            result = await trigger_escalation(
+                reason="manual_request",
+                conversation_id="12345",
+                customer_phone="+34612345678",
+            )
 
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = notification_id
-
-                result = await trigger_escalation(
-                    reason="manual_request",
-                    conversation_id="12345",
-                    customer_phone="+34612345678",
-                )
-
-                # Chatwoot failed but notification succeeded
-                assert result["chatwoot_disabled"] is False
-                assert result["notification_id"] == notification_id
+        assert result["chatwoot_disabled"] is False
 
     @pytest.mark.asyncio
     async def test_trigger_escalation_notification_fails(self):
-        """Verify escalation continues when notification fails."""
+        """notification_id is None when db_record step did not complete."""
+        mock_result = EscalationResult(
+            success=True,
+            escalation_id=None,
+            steps_completed=["disable_bot"],
+            steps_failed=["db_record"],
+        )
         with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
+            "agent.services.escalation_service.perform_escalation",
             new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = True
+            return_value=mock_result,
+        ):
+            result = await trigger_escalation(
+                reason="manual_request",
+                conversation_id="12345",
+                customer_phone="+34612345678",
+            )
 
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = None  # Failed
-
-                result = await trigger_escalation(
-                    reason="manual_request",
-                    conversation_id="12345",
-                    customer_phone="+34612345678",
-                )
-
-                # Chatwoot succeeded but notification failed
-                assert result["chatwoot_disabled"] is True
-                assert result["notification_id"] is None
+        assert result["chatwoot_disabled"] is True
+        assert result["notification_id"] is None
 
     @pytest.mark.asyncio
     async def test_trigger_escalation_both_fail(self):
-        """Verify escalation handles both operations failing."""
+        """All keys present even when all steps fail."""
+        mock_result = EscalationResult(
+            success=False,
+            escalation_id=None,
+            steps_completed=[],
+            steps_failed=["disable_bot", "db_record"],
+        )
         with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
+            "agent.services.escalation_service.perform_escalation",
             new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = False
+            return_value=mock_result,
+        ):
+            result = await trigger_escalation(
+                reason="manual_request",
+                conversation_id="12345",
+                customer_phone="+34612345678",
+            )
 
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = None
-
-                result = await trigger_escalation(
-                    reason="manual_request",
-                    conversation_id="12345",
-                    customer_phone="+34612345678",
-                )
-
-                assert result["chatwoot_disabled"] is False
-                assert result["notification_id"] is None
-                assert result["webhooks_triggered"] == []
-
-    @pytest.mark.asyncio
-    async def test_trigger_escalation_logs_warning(self):
-        """Verify escalation trigger is logged."""
-        with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
-            new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = True
-
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = uuid4()
-
-                with patch("agent.services.escalation_service.logger") as mock_logger:
-                    await trigger_escalation(
-                        reason="manual_request",
-                        conversation_id="12345",
-                        customer_phone="+34612345678",
-                    )
-
-                    mock_logger.warning.assert_called_once()
-                    call_args = mock_logger.warning.call_args[0][0]
-                    assert "Triggering escalation" in call_args
-                    assert "manual_request" in call_args
-                    assert "12345" in call_args
+        assert result["chatwoot_disabled"] is False
+        assert result["notification_id"] is None
+        assert result["webhooks_triggered"] == []
 
     @pytest.mark.asyncio
     async def test_trigger_escalation_passes_context(self):
-        """Verify conversation context is passed to notification."""
-        notification_id = uuid4()
+        """Verify conversation context is passed through to perform_escalation."""
         context = [
             {"role": "user", "content": "Necesito ayuda"},
             {"role": "assistant", "content": "Te ayudo"},
         ]
+        mock_perform = AsyncMock(
+            return_value=EscalationResult(success=True, steps_completed=["disable_bot"])
+        )
+        with patch("agent.services.escalation_service.perform_escalation", mock_perform):
+            await trigger_escalation(
+                reason="manual_request",
+                conversation_id="12345",
+                customer_phone="+34612345678",
+                conversation_context=context,
+            )
 
-        with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
-            new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = True
-
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = notification_id
-
-                await trigger_escalation(
-                    reason="manual_request",
-                    conversation_id="12345",
-                    customer_phone="+34612345678",
-                    conversation_context=context,
-                )
-
-                mock_notification.assert_called_once()
-                call_kwargs = mock_notification.call_args[1]
-                assert call_kwargs["conversation_context"] == context
+        call_kwargs = mock_perform.call_args.kwargs
+        assert call_kwargs["conversation_context"] == context
 
     @pytest.mark.asyncio
-    async def test_trigger_escalation_chatwoot_timeout(self):
-        """Verify Chatwoot timeout is handled gracefully."""
-        notification_id = uuid4()
-
-        async def slow_disable(conv_id):
-            await asyncio.sleep(10)  # Longer than timeout
-            return True
-
+    async def test_trigger_escalation_returns_legacy_shape(self):
+        """trigger_escalation always returns dict with chatwoot_disabled, notification_id, webhooks_triggered."""
+        mock_result = EscalationResult(
+            success=True,
+            escalation_id=None,
+            steps_completed=["disable_bot"],
+        )
         with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
-            side_effect=slow_disable,
+            "agent.services.escalation_service.perform_escalation",
+            new_callable=AsyncMock,
+            return_value=mock_result,
         ):
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = notification_id
+            result = await trigger_escalation(
+                reason="manual_request",
+                conversation_id="12345",
+                customer_phone="+34612345678",
+            )
 
-                with patch("agent.services.escalation_service.logger") as mock_logger:
-                    result = await trigger_escalation(
-                        reason="manual_request",
-                        conversation_id="12345",
-                        customer_phone="+34612345678",
-                    )
-
-                    # Chatwoot timed out, notification still created
-                    assert result["chatwoot_disabled"] is False
-                    assert result["notification_id"] == notification_id
-
-                    # Check timeout was logged
-                    warning_calls = mock_logger.warning.call_args_list
-                    timeout_logged = any(
-                        "timed out" in str(call) for call in warning_calls
-                    )
-                    assert timeout_logged
-
-    @pytest.mark.asyncio
-    async def test_trigger_escalation_notification_timeout(self):
-        """Verify notification timeout is handled gracefully."""
-        async def slow_notification(*args, **kwargs):
-            await asyncio.sleep(10)  # Longer than timeout
-            return uuid4()
-
-        with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
-            new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = True
-
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                side_effect=slow_notification,
-            ):
-                with patch("agent.services.escalation_service.logger") as mock_logger:
-                    result = await trigger_escalation(
-                        reason="manual_request",
-                        conversation_id="12345",
-                        customer_phone="+34612345678",
-                    )
-
-                    # Chatwoot succeeded, notification timed out
-                    assert result["chatwoot_disabled"] is True
-                    assert result["notification_id"] is None
-
-                    # Check timeout was logged
-                    warning_calls = mock_logger.warning.call_args_list
-                    timeout_logged = any(
-                        "timed out" in str(call) for call in warning_calls
-                    )
-                    assert timeout_logged
+        assert "chatwoot_disabled" in result
+        assert "notification_id" in result
+        assert "webhooks_triggered" in result
 
 
 # ============================================================================
-# Test Different Escalation Reasons
+# Test Different Escalation Reasons (via trigger_escalation wrapper)
 # ============================================================================
 
 
 class TestEscalationReasons:
-    """Test escalation with different predefined reasons."""
+    """Test escalation with different predefined reasons forwarded through wrapper."""
 
     @pytest.mark.asyncio
     async def test_medical_consultation_escalation(self):
-        """Test escalation for medical consultation."""
-        with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
-            new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = True
+        """Test escalation for medical consultation passes reason to perform_escalation."""
+        mock_perform = AsyncMock(
+            return_value=EscalationResult(success=True, steps_completed=["disable_bot"])
+        )
+        with patch("agent.services.escalation_service.perform_escalation", mock_perform):
+            await trigger_escalation(
+                reason="medical_consultation",
+                conversation_id="12345",
+                customer_phone="+34612345678",
+            )
 
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = uuid4()
-
-                await trigger_escalation(
-                    reason="medical_consultation",
-                    conversation_id="12345",
-                    customer_phone="+34612345678",
-                )
-
-                call_kwargs = mock_notification.call_args[1]
-                assert call_kwargs["reason"] == "medical_consultation"
+        call_kwargs = mock_perform.call_args.kwargs
+        assert call_kwargs["reason"] == "medical_consultation"
 
     @pytest.mark.asyncio
     async def test_auto_escalation_reason(self):
-        """Test auto-escalation (consecutive errors)."""
-        with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
-            new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = True
+        """Test auto-escalation reason is forwarded."""
+        mock_perform = AsyncMock(
+            return_value=EscalationResult(success=True, steps_completed=["disable_bot"])
+        )
+        with patch("agent.services.escalation_service.perform_escalation", mock_perform):
+            await trigger_escalation(
+                reason="auto_escalation",
+                conversation_id="12345",
+                customer_phone="+34612345678",
+            )
 
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = uuid4()
-
-                await trigger_escalation(
-                    reason="auto_escalation",
-                    conversation_id="12345",
-                    customer_phone="+34612345678",
-                )
-
-                call_kwargs = mock_notification.call_args[1]
-                assert call_kwargs["reason"] == "auto_escalation"
+        call_kwargs = mock_perform.call_args.kwargs
+        assert call_kwargs["reason"] == "auto_escalation"
 
     @pytest.mark.asyncio
     async def test_technical_error_escalation(self):
-        """Test escalation for technical error."""
-        with patch(
-            "agent.services.escalation_service.disable_bot_in_chatwoot",
-            new_callable=AsyncMock,
-        ) as mock_disable:
-            mock_disable.return_value = True
+        """Test technical error reason is forwarded."""
+        mock_perform = AsyncMock(
+            return_value=EscalationResult(success=True, steps_completed=["disable_bot"])
+        )
+        with patch("agent.services.escalation_service.perform_escalation", mock_perform):
+            await trigger_escalation(
+                reason="technical_error",
+                conversation_id="12345",
+                customer_phone="+34612345678",
+            )
 
-            with patch(
-                "agent.services.escalation_service.create_escalation_notification",
-                new_callable=AsyncMock,
-            ) as mock_notification:
-                mock_notification.return_value = uuid4()
-
-                await trigger_escalation(
-                    reason="technical_error",
-                    conversation_id="12345",
-                    customer_phone="+34612345678",
-                )
-
-                call_kwargs = mock_notification.call_args[1]
-                assert call_kwargs["reason"] == "technical_error"
+        call_kwargs = mock_perform.call_args.kwargs
+        assert call_kwargs["reason"] == "technical_error"
 
 
 # ============================================================================
@@ -818,13 +659,9 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_conversation_id(self):
         """Test escalation with empty conversation ID."""
-        with patch(
-            "agent.services.escalation_service.ChatwootClient"
-        ) as mock_client_class:
+        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
             mock_client = AsyncMock()
-            mock_client.update_conversation_attributes.side_effect = ValueError(
-                "invalid literal"
-            )
+            mock_client.update_conversation_attributes.side_effect = ValueError("invalid literal")
             mock_client_class.return_value = mock_client
 
             result = await disable_bot_in_chatwoot("")
@@ -844,13 +681,9 @@ class TestEdgeCases:
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.add = MagicMock()
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             result = await create_escalation_notification(
@@ -873,9 +706,7 @@ class TestEdgeCases:
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
         captured_notification = None
 
@@ -885,9 +716,7 @@ class TestEdgeCases:
 
         mock_session.add = capture_notification
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             await create_escalation_notification(
@@ -911,13 +740,9 @@ class TestEdgeCases:
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_customer_result)
         mock_session.commit = AsyncMock()
-        mock_session.refresh = AsyncMock(
-            side_effect=lambda n: setattr(n, "id", notification_id)
-        )
+        mock_session.refresh = AsyncMock(side_effect=lambda n: setattr(n, "id", notification_id))
 
-        with patch(
-            "agent.services.escalation_service.get_async_session"
-        ) as mock_get_session:
+        with patch("agent.services.escalation_service.get_async_session") as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = mock_session
 
             context = [
@@ -934,3 +759,200 @@ class TestEdgeCases:
 
             # Should handle emojis and special chars
             assert result is not None
+
+
+# ============================================================================
+# Test perform_escalation — 5-step pipeline
+# ============================================================================
+
+
+class TestPerformEscalation:
+    """Tests for perform_escalation() — the central 5-step escalation pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_perform_escalation_all_steps(self):
+        """All 5 steps execute successfully when everything works."""
+        mock_client = AsyncMock()
+        mock_client.update_conversation_attributes = AsyncMock(return_value={"success": True})
+        mock_client.add_conversation_labels = AsyncMock(return_value=True)
+        mock_client.add_private_note = AsyncMock(return_value=True)
+        mock_client.assign_to_team = AsyncMock(return_value=True)
+
+        mock_db_session = AsyncMock()
+        mock_db_session.__aenter__ = AsyncMock(return_value=mock_db_session)
+        mock_db_session.__aexit__ = AsyncMock(return_value=None)
+        mock_db_session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        )
+        mock_db_session.add = MagicMock()
+        mock_db_session.commit = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session", return_value=mock_db_session
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+5491100000000",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert result.success is True
+        assert "disable_bot" in result.steps_completed
+        mock_client.update_conversation_attributes.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_perform_escalation_duplicate_prevented(self):
+        """Returns duplicate_prevented=True when a recent escalation exists in the DB."""
+        mock_client = AsyncMock()
+        mock_client.update_conversation_attributes = AsyncMock(return_value={"success": True})
+
+        existing_escalation = MagicMock()
+        mock_db_session = AsyncMock()
+        mock_db_session.__aenter__ = AsyncMock(return_value=mock_db_session)
+        mock_db_session.__aexit__ = AsyncMock(return_value=None)
+        mock_db_session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing_escalation))
+        )
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session", return_value=mock_db_session
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+5491100000000",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert result.duplicate_prevented is True
+
+    @pytest.mark.asyncio
+    async def test_perform_escalation_s1_failure_sets_success_false(self):
+        """S1 (disable_bot) failure marks success=False but S2-S5 still attempted."""
+        mock_client = AsyncMock()
+        mock_client.update_conversation_attributes = AsyncMock(
+            side_effect=Exception("Chatwoot down")
+        )
+        mock_client.add_conversation_labels = AsyncMock(return_value=True)
+        mock_client.add_private_note = AsyncMock(return_value=True)
+        mock_client.assign_to_team = AsyncMock(return_value=True)
+
+        mock_db_session = AsyncMock()
+        mock_db_session.__aenter__ = AsyncMock(return_value=mock_db_session)
+        mock_db_session.__aexit__ = AsyncMock(return_value=None)
+        mock_db_session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        )
+        mock_db_session.add = MagicMock()
+        mock_db_session.commit = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session", return_value=mock_db_session
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+5491100000000",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert result.success is False
+        assert "disable_bot" in result.steps_failed
+
+    @pytest.mark.asyncio
+    async def test_perform_escalation_noncritical_failure_keeps_success_true(self):
+        """Non-critical step (private_note) failure keeps success=True."""
+        mock_client = AsyncMock()
+        mock_client.update_conversation_attributes = AsyncMock(return_value={"success": True})
+        mock_client.add_conversation_labels = AsyncMock(return_value=True)
+        mock_client.add_private_note = AsyncMock(side_effect=Exception("note failed"))
+        mock_client.assign_to_team = AsyncMock(return_value=True)
+
+        mock_db_session = AsyncMock()
+        mock_db_session.__aenter__ = AsyncMock(return_value=mock_db_session)
+        mock_db_session.__aexit__ = AsyncMock(return_value=None)
+        mock_db_session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        )
+        mock_db_session.add = MagicMock()
+        mock_db_session.commit = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session", return_value=mock_db_session
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+5491100000000",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert result.success is True
+        assert "private_note" in result.steps_failed
+
+    @pytest.mark.asyncio
+    async def test_perform_escalation_dedupe_failopen(self):
+        """DB error during dedupe check is fail-open — escalation proceeds."""
+        mock_client = AsyncMock()
+        mock_client.update_conversation_attributes = AsyncMock(return_value={"success": True})
+        mock_client.add_conversation_labels = AsyncMock(return_value=True)
+        mock_client.add_private_note = AsyncMock(return_value=True)
+        mock_client.assign_to_team = AsyncMock(return_value=True)
+
+        # First call raises (dedupe check), subsequent calls succeed (S5 db_record)
+        call_count = 0
+
+        async def mock_session_cm():
+            nonlocal call_count
+            call_count += 1
+            session = AsyncMock()
+            session.__aenter__ = AsyncMock(return_value=session)
+            session.__aexit__ = AsyncMock(return_value=None)
+            if call_count == 1:
+                # First context manager: dedupe check fails
+                session.execute = AsyncMock(side_effect=Exception("DB unreachable"))
+            else:
+                # Second context manager: S5 DB record succeeds
+                session.execute = AsyncMock(
+                    return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+                )
+                session.add = MagicMock()
+                session.commit = AsyncMock()
+            return session
+
+        class FakeSessionCtx:
+            async def __aenter__(self):
+                return await mock_session_cm()
+
+            async def __aexit__(self, *args):
+                return None
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session",
+                side_effect=lambda: FakeSessionCtx(),
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+5491100000000",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert result.duplicate_prevented is False
+        assert result.success is True

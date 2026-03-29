@@ -1445,3 +1445,81 @@ class TokenUsage(Base):
             f"year={self.year}, month={self.month}, "
             f"input={self.input_tokens}, output={self.output_tokens})>"
         )
+
+
+# ============================================================================
+# Escalation Models
+# ============================================================================
+
+
+class EscalationSource(str, PyEnum):
+    """Source / trigger of the escalation event."""
+
+    MANUAL = "manual"
+    AUTO_ERROR = "auto_error"
+    FALLBACK = "fallback"
+
+
+class EscalationStatus(str, PyEnum):
+    """Lifecycle status of an escalation record."""
+
+    TRIGGERED = "triggered"
+    RESOLVED = "resolved"
+
+
+class Escalation(Base):
+    """
+    Escalation model — records every human-handoff event.
+
+    Tracks who was escalated, why, how (source), and the steps performed.
+    Deduplication is handled at service level (5-minute window per conversation).
+    """
+
+    __tablename__ = "escalations"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    customer_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    customer_phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str] = mapped_column(String(100), nullable=False)
+    source: Mapped[EscalationSource] = mapped_column(
+        SQLEnum(
+            EscalationSource,
+            name="escalation_source",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+    )
+    status: Mapped[EscalationStatus] = mapped_column(
+        SQLEnum(
+            EscalationStatus,
+            name="escalation_status",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        default=EscalationStatus.TRIGGERED,
+    )
+    is_technical_error: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    issue_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    contact_preference: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    triggered_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), index=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    metadata_: Mapped[dict | None] = mapped_column("metadata_escalation", JSONB, nullable=True)
+
+    __table_args__ = (Index("idx_escalations_conv_triggered", "conversation_id", "triggered_at"),)
+
+    def __repr__(self) -> str:
+        return (
+            f"<Escalation(id={self.id}, "
+            f"conversation_id='{self.conversation_id}', "
+            f"source='{self.source.value}', "
+            f"status='{self.status.value}')>"
+        )

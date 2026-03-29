@@ -2,17 +2,18 @@
 Unit tests for escalation_tools.py - Human escalation functionality.
 
 Tests coverage:
-- escalate_to_human() function with different reasons
-- Predefined escalation reasons (medical, ambiguity, delay, manual, technical)
-- Default escalation message fallback
-- Return value structure validation
+- escalate_to_human() tool with different call patterns
+- New contract: {"escalated": bool, "duplicate_prevented": bool, "steps_completed": list}
+- Missing context path: {"escalated": True, "error": "missing_context"}
+- Schema validation
 - Logging behavior
 """
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent.tools.escalation_tools import escalate_to_human, EscalateToHumanSchema
+from agent.services.escalation_service import EscalationResult
 
 
 # ============================================================================
@@ -36,140 +37,206 @@ class TestEscalateToHumanSchema:
 
 
 # ============================================================================
-# Test Escalation with Predefined Reasons
+# Helpers — build mocked EscalationResult
 # ============================================================================
 
 
-class TestEscalationPredefinedReasons:
-    """Test escalation with predefined reason messages."""
-
-    @pytest.mark.asyncio
-    async def test_escalate_medical_consultation(self):
-        """Test escalation for medical consultation reason."""
-        result = await escalate_to_human(reason="medical_consultation")
-
-        assert result["escalated"] is True
-        assert result["reason"] == "medical_consultation"
-        assert "salud" in result["message"].lower()
-        assert "💕" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_escalate_ambiguity(self):
-        """Test escalation for ambiguity reason."""
-        result = await escalate_to_human(reason="ambiguity")
-
-        assert result["escalated"] is True
-        assert result["reason"] == "ambiguity"
-        assert "asegurarme" in result["message"].lower()
-        assert "🌸" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_escalate_delay_notice(self):
-        """Test escalation for delay notice reason."""
-        result = await escalate_to_human(reason="delay_notice")
-
-        assert result["escalated"] is True
-        assert result["reason"] == "delay_notice"
-        assert "notificaré" in result["message"].lower()
-        assert "😊" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_escalate_manual_request(self):
-        """Test escalation for manual user request."""
-        result = await escalate_to_human(reason="manual_request")
-
-        assert result["escalated"] is True
-        assert result["reason"] == "manual_request"
-        assert "claro" in result["message"].lower()
-        assert "💕" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_escalate_technical_error(self):
-        """Test escalation for technical error."""
-        result = await escalate_to_human(reason="technical_error")
-
-        assert result["escalated"] is True
-        assert result["reason"] == "technical_error"
-        assert "disculpa" in result["message"].lower()
-        assert "problema" in result["message"].lower()
-        assert "🌸" in result["message"]
+def _make_esc_result(
+    success=True,
+    duplicate_prevented=False,
+    steps_completed=None,
+    steps_failed=None,
+    user_message="Con mucho gusto te paso con alguien del equipo. 🙏",
+):
+    return EscalationResult(
+        success=success,
+        duplicate_prevented=duplicate_prevented,
+        steps_completed=steps_completed or ["disable_bot", "labels", "private_note", "db_record"],
+        steps_failed=steps_failed or [],
+        user_message=user_message,
+    )
 
 
 # ============================================================================
-# Test Default Escalation Message
+# Test new contract — ainvoke with context
 # ============================================================================
 
 
-class TestDefaultEscalationMessage:
-    """Test escalation with unknown/custom reasons."""
+class TestEscalationNewContract:
+    """Validate the new return shape: {escalated, duplicate_prevented, steps_completed}.
+
+    Note: The tool's injected params (_conversation_id, _customer_phone) are filtered
+    by LangChain's args_schema. To test the full path including those params, we call
+    escalate_to_human.coroutine() directly (the underlying async function).
+    """
 
     @pytest.mark.asyncio
-    async def test_escalate_unknown_reason(self):
-        """Test that unknown reason uses default message."""
-        result = await escalate_to_human(reason="unknown_reason")
-
+    async def test_result_has_escalated_key(self):
+        """escalated key present and True on success."""
+        with patch(
+            "agent.services.escalation_service.perform_escalation",
+            new_callable=AsyncMock,
+            return_value=_make_esc_result(),
+        ):
+            result = await escalate_to_human.coroutine(
+                reason="manual_request",
+                _conversation_id="123",
+                _customer_phone="+5491100000000",
+            )
         assert result["escalated"] is True
-        assert result["reason"] == "unknown_reason"
-        assert result["message"] == "Te conecto con el equipo ahora mismo 💕"
 
     @pytest.mark.asyncio
-    async def test_escalate_custom_reason(self):
-        """Test escalation with custom reason."""
-        result = await escalate_to_human(reason="custom_situation")
+    async def test_result_has_duplicate_prevented(self):
+        """duplicate_prevented forwarded from EscalationResult."""
+        with patch(
+            "agent.services.escalation_service.perform_escalation",
+            new_callable=AsyncMock,
+            return_value=_make_esc_result(duplicate_prevented=True),
+        ):
+            result = await escalate_to_human.coroutine(
+                reason="manual_request",
+                _conversation_id="123",
+                _customer_phone="+5491100000000",
+            )
+        assert result["duplicate_prevented"] is True
 
+    @pytest.mark.asyncio
+    async def test_result_has_steps_completed(self):
+        """steps_completed forwarded from EscalationResult."""
+        expected_steps = ["disable_bot", "labels"]
+        with patch(
+            "agent.services.escalation_service.perform_escalation",
+            new_callable=AsyncMock,
+            return_value=_make_esc_result(steps_completed=expected_steps),
+        ):
+            result = await escalate_to_human.coroutine(
+                reason="manual_request",
+                _conversation_id="123",
+                _customer_phone="+5491100000000",
+            )
+        assert result["steps_completed"] == expected_steps
+
+    @pytest.mark.asyncio
+    async def test_no_reason_or_message_key(self):
+        """Old contract keys 'reason' and 'message' should NOT be in result."""
+        with patch(
+            "agent.services.escalation_service.perform_escalation",
+            new_callable=AsyncMock,
+            return_value=_make_esc_result(),
+        ):
+            result = await escalate_to_human.coroutine(
+                reason="ambiguity",
+                _conversation_id="123",
+                _customer_phone="+5491100000000",
+            )
+        assert "reason" not in result
+        assert "message" not in result
+
+    @pytest.mark.asyncio
+    async def test_missing_context_returns_error_key(self):
+        """When both context params are absent, returns {escalated: True, error: missing_context}."""
+        result = await escalate_to_human.coroutine(reason="manual_request")
         assert result["escalated"] is True
-        assert result["reason"] == "custom_situation"
-        assert "equipo" in result["message"].lower()
+        assert result["error"] == "missing_context"
+
+    @pytest.mark.asyncio
+    async def test_missing_phone_returns_error_key(self):
+        """Missing phone returns missing_context error."""
+        result = await escalate_to_human.coroutine(reason="manual_request", _conversation_id="123")
+        assert result["escalated"] is True
+        assert result["error"] == "missing_context"
+
+    @pytest.mark.asyncio
+    async def test_missing_conversation_id_returns_error_key(self):
+        """Missing conversation_id returns missing_context error."""
+        result = await escalate_to_human.coroutine(
+            reason="manual_request", _customer_phone="+5491100000000"
+        )
+        assert result["escalated"] is True
+        assert result["error"] == "missing_context"
 
 
 # ============================================================================
-# Test Return Value Structure
+# Test escalated reflects success field
 # ============================================================================
 
 
-class TestReturnValueStructure:
-    """Test that return value has correct structure."""
+class TestEscalatedReflectsSuccess:
+    """escalated in result maps directly to result.success from EscalationResult."""
 
     @pytest.mark.asyncio
-    async def test_return_value_has_required_keys(self):
-        """Test that return dict has all required keys."""
-        result = await escalate_to_human(reason="test")
-
-        assert "escalated" in result
-        assert "reason" in result
-        assert "message" in result
+    async def test_success_true_maps_to_escalated_true(self):
+        with patch(
+            "agent.services.escalation_service.perform_escalation",
+            new_callable=AsyncMock,
+            return_value=_make_esc_result(success=True),
+        ):
+            result = await escalate_to_human.coroutine(
+                reason="manual_request",
+                _conversation_id="123",
+                _customer_phone="+5491100000000",
+            )
+        assert result["escalated"] is True
 
     @pytest.mark.asyncio
-    async def test_escalated_always_true(self):
-        """Test that escalated flag is always True."""
+    async def test_success_false_maps_to_escalated_false(self):
+        with patch(
+            "agent.services.escalation_service.perform_escalation",
+            new_callable=AsyncMock,
+            return_value=_make_esc_result(success=False),
+        ):
+            result = await escalate_to_human.coroutine(
+                reason="technical_error",
+                _conversation_id="123",
+                _customer_phone="+5491100000000",
+            )
+        assert result["escalated"] is False
+
+
+# ============================================================================
+# Test all escalation reasons are forwarded correctly
+# ============================================================================
+
+
+class TestEscalationReasonRouting:
+    """Verify all reasons are forwarded to perform_escalation."""
+
+    @pytest.mark.asyncio
+    async def test_reason_forwarded_to_service(self):
+        """perform_escalation is called with the correct reason."""
+        mock_perform = AsyncMock(return_value=_make_esc_result())
+        with patch("agent.services.escalation_service.perform_escalation", mock_perform):
+            await escalate_to_human.coroutine(
+                reason="medical_consultation",
+                _conversation_id="123",
+                _customer_phone="+5491100000000",
+            )
+        call_kwargs = mock_perform.call_args.kwargs
+        assert call_kwargs["reason"] == "medical_consultation"
+
+    @pytest.mark.asyncio
+    async def test_multiple_reasons_all_succeed(self):
+        """All predefined reasons produce a valid result dict."""
         reasons = [
             "medical_consultation",
             "ambiguity",
-            "delay_notice",
             "manual_request",
             "technical_error",
-            "unknown_reason",
+            "auto_escalation",
         ]
-
-        for reason in reasons:
-            result = await escalate_to_human(reason=reason)
-            assert result["escalated"] is True, f"Failed for reason: {reason}"
-
-    @pytest.mark.asyncio
-    async def test_reason_preserved_in_return(self):
-        """Test that reason is preserved in return value."""
-        test_reason = "test_preservation"
-        result = await escalate_to_human(reason=test_reason)
-
-        assert result["reason"] == test_reason
-
-    @pytest.mark.asyncio
-    async def test_message_is_string(self):
-        """Test that message is always a string."""
-        result = await escalate_to_human(reason="test")
-
-        assert isinstance(result["message"], str)
-        assert len(result["message"]) > 0
+        mock_perform = AsyncMock(return_value=_make_esc_result())
+        with patch("agent.services.escalation_service.perform_escalation", mock_perform):
+            for reason in reasons:
+                result = await escalate_to_human.coroutine(
+                    reason=reason,
+                    _conversation_id="123",
+                    _customer_phone="+5491100000000",
+                )
+                assert "escalated" in result, f"Missing 'escalated' for reason={reason}"
+                assert "duplicate_prevented" in result, (
+                    f"Missing 'duplicate_prevented' for reason={reason}"
+                )
+                assert "steps_completed" in result, f"Missing 'steps_completed' for reason={reason}"
 
 
 # ============================================================================
@@ -181,90 +248,14 @@ class TestLoggingBehavior:
     """Test that escalations are logged correctly."""
 
     @pytest.mark.asyncio
-    async def test_escalation_logs_warning(self):
-        """Test that escalation logs a warning message."""
+    async def test_missing_context_logs_warning(self):
+        """Missing context logs a warning."""
         with patch("agent.tools.escalation_tools.logger") as mock_logger:
-            await escalate_to_human(reason="medical_consultation")
+            await escalate_to_human.ainvoke({"reason": "medical_consultation"})
 
             mock_logger.warning.assert_called_once()
             call_args = mock_logger.warning.call_args[0][0]
-            assert "Escalating" in call_args
-            assert "medical_consultation" in call_args
-
-    @pytest.mark.asyncio
-    async def test_logging_includes_reason(self):
-        """Test that log message includes the reason."""
-        with patch("agent.tools.escalation_tools.logger") as mock_logger:
-            test_reason = "custom_test_reason"
-            await escalate_to_human(reason=test_reason)
-
-            call_args = mock_logger.warning.call_args[0][0]
-            assert test_reason in call_args
-
-
-# ============================================================================
-# Test All Predefined Messages
-# ============================================================================
-
-
-class TestAllPredefinedMessages:
-    """Test that all predefined messages are appropriate."""
-
-    @pytest.mark.asyncio
-    async def test_all_messages_have_emojis(self):
-        """Test that all predefined messages include emojis."""
-        reasons = [
-            "medical_consultation",
-            "ambiguity",
-            "delay_notice",
-            "manual_request",
-            "technical_error",
-        ]
-
-        for reason in reasons:
-            result = await escalate_to_human(reason=reason)
-            message = result["message"]
-
-            # Check for common emojis
-            has_emoji = any(emoji in message for emoji in ["💕", "🌸", "😊"])
-            assert has_emoji, f"Message for {reason} lacks emoji: {message}"
-
-    @pytest.mark.asyncio
-    async def test_all_messages_are_friendly(self):
-        """Test that all messages are customer-friendly."""
-        reasons = [
-            "medical_consultation",
-            "ambiguity",
-            "delay_notice",
-            "manual_request",
-            "technical_error",
-        ]
-
-        # Messages should not contain technical jargon
-        forbidden_words = ["error", "exception", "failed", "crash"]
-
-        for reason in reasons:
-            result = await escalate_to_human(reason=reason)
-            message = result["message"].lower()
-
-            # Check message length (should be reasonable)
-            assert len(message) > 10, f"Message too short for {reason}"
-            assert len(message) < 200, f"Message too long for {reason}"
-
-    @pytest.mark.asyncio
-    async def test_medical_consultation_message_mentions_health(self):
-        """Test that medical consultation message mentions health/salud."""
-        result = await escalate_to_human(reason="medical_consultation")
-
-        assert "salud" in result["message"].lower()
-
-    @pytest.mark.asyncio
-    async def test_technical_error_message_is_apologetic(self):
-        """Test that technical error message is apologetic."""
-        result = await escalate_to_human(reason="technical_error")
-
-        message_lower = result["message"].lower()
-        assert "disculpa" in message_lower or "perdón" in message_lower
+            assert "Missing" in call_args
 
 
 # ============================================================================
@@ -276,39 +267,45 @@ class TestEdgeCases:
     """Test edge cases and unusual inputs."""
 
     @pytest.mark.asyncio
-    async def test_empty_string_reason(self):
-        """Test escalation with empty string reason."""
-        result = await escalate_to_human(reason="")
-
+    async def test_empty_string_reason_missing_context(self):
+        """Empty reason with no context returns missing_context."""
+        result = await escalate_to_human.ainvoke({"reason": ""})
         assert result["escalated"] is True
-        assert result["reason"] == ""
-        assert result["message"] == "Te conecto con el equipo ahora mismo 💕"
+        assert result["error"] == "missing_context"
 
     @pytest.mark.asyncio
-    async def test_very_long_reason(self):
-        """Test escalation with very long reason."""
+    async def test_very_long_reason_forwarded(self):
+        """Very long reason string is forwarded without error."""
         long_reason = "a" * 1000
-        result = await escalate_to_human(reason=long_reason)
-
+        mock_perform = AsyncMock(return_value=_make_esc_result())
+        with patch("agent.services.escalation_service.perform_escalation", mock_perform):
+            result = await escalate_to_human.coroutine(
+                reason=long_reason,
+                _conversation_id="123",
+                _customer_phone="+5491100000000",
+            )
         assert result["escalated"] is True
-        assert result["reason"] == long_reason
+        call_kwargs = mock_perform.call_args.kwargs
+        assert call_kwargs["reason"] == long_reason
 
     @pytest.mark.asyncio
-    async def test_reason_with_special_characters(self):
-        """Test escalation with special characters in reason."""
-        special_reason = "test!@#$%^&*()"
-        result = await escalate_to_human(reason=special_reason)
-
-        assert result["escalated"] is True
-        assert result["reason"] == special_reason
-
-    @pytest.mark.asyncio
-    async def test_multiple_escalations_independent(self):
-        """Test that multiple escalations don't interfere."""
-        result1 = await escalate_to_human(reason="medical_consultation")
-        result2 = await escalate_to_human(reason="ambiguity")
-
-        # Each should have its own message
-        assert result1["message"] != result2["message"]
-        assert "salud" in result1["message"].lower()
-        assert "asegurarme" in result2["message"].lower()
+    async def test_multiple_calls_independent(self):
+        """Multiple calls to the tool are independent."""
+        mock_perform = AsyncMock(
+            side_effect=[
+                _make_esc_result(steps_completed=["disable_bot"]),
+                _make_esc_result(steps_completed=["disable_bot", "labels"]),
+            ]
+        )
+        with patch("agent.services.escalation_service.perform_escalation", mock_perform):
+            result1 = await escalate_to_human.coroutine(
+                reason="medical_consultation",
+                _conversation_id="123",
+                _customer_phone="+5491100000000",
+            )
+            result2 = await escalate_to_human.coroutine(
+                reason="ambiguity",
+                _conversation_id="456",
+                _customer_phone="+5491100000001",
+            )
+        assert result1["steps_completed"] != result2["steps_completed"]

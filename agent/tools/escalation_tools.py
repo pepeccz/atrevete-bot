@@ -11,7 +11,6 @@ The tool receives context injection from NonBookingHandler which provides
 conversation_id, customer_phone, and recent messages for full context.
 """
 
-import asyncio
 import logging
 from typing import Any
 
@@ -43,7 +42,7 @@ ESCALATION_MESSAGES: dict[str, str] = {
 @tool(args_schema=EscalateToHumanSchema)
 async def escalate_to_human(
     reason: str,
-    # These parameters are injected by NonBookingHandler, not passed by LLM
+    # These parameters are injected by the mode node, not passed by LLM
     _conversation_id: str | None = None,
     _customer_phone: str | None = None,
     _conversation_context: list[dict[str, Any]] | None = None,
@@ -51,63 +50,44 @@ async def escalate_to_human(
     """
     Escalate conversation to human support.
 
-    Triggers escalation workflow which:
-    1. Disables bot in Chatwoot (atencion_automatica = false)
-    2. Creates notification in admin panel
-    3. (Future) Sends webhooks to Slack/Teams
+    Delegates to perform_escalation() which handles:
+    1. Disabling bot in Chatwoot (atencion_automatica = false)
+    2. Adding conversation labels
+    3. Adding a private note with context
+    4. Assigning to team (if configured)
+    5. Recording in database
 
     Args:
         reason: Escalation reason for logging and routing
-        _conversation_id: Injected by handler (Chatwoot conversation ID)
-        _customer_phone: Injected by handler
-        _conversation_context: Injected by handler (recent messages)
+        _conversation_id: Injected by mode node (Chatwoot conversation ID)
+        _customer_phone: Injected by mode node
+        _conversation_context: Injected by mode node (recent messages)
 
     Returns:
-        Dict with:
-        - escalated: Boolean (always True)
-        - reason: The escalation reason
-        - message: Message to show customer
+        Dict with escalation result fields.
 
     Example:
         >>> result = await escalate_to_human("medical_consultation")
         >>> result["escalated"]
         True
     """
-    logger.warning(
-        f"Escalating conversation to human | reason={reason} | "
-        f"conversation_id={_conversation_id} | customer_phone={_customer_phone}"
-    )
+    from agent.services.escalation_service import perform_escalation
 
-    # Trigger full escalation workflow if context is available
-    if _conversation_id and _customer_phone:
-        # Import here to avoid circular imports
-        from agent.services.escalation_service import trigger_escalation
-
-        # Fire-and-forget: create task but don't await (non-blocking)
-        asyncio.create_task(
-            trigger_escalation(
-                reason=reason,
-                conversation_id=_conversation_id,
-                customer_phone=_customer_phone,
-                conversation_context=_conversation_context,
-            )
-        )
-        logger.info(
-            f"Escalation triggered (fire-and-forget) | conversation_id={_conversation_id}"
-        )
-    else:
+    if not _conversation_id or not _customer_phone:
         logger.warning(
-            f"Escalation triggered without context | "
-            f"conversation_id={_conversation_id} | customer_phone={_customer_phone} | "
-            "Bot will NOT be disabled in Chatwoot (missing conversation_id)"
+            "[escalate_to_human] Missing conversation_id or customer_phone — escalation incomplete"
         )
+        return {"escalated": True, "error": "missing_context"}
 
-    customer_message = ESCALATION_MESSAGES.get(
-        reason, "Te conecto con el equipo ahora mismo."
+    result = await perform_escalation(
+        conversation_id=_conversation_id,
+        customer_phone=_customer_phone,
+        reason=reason,
+        source="fallback",
+        conversation_context=_conversation_context,
     )
-
     return {
-        "escalated": True,
-        "reason": reason,
-        "message": customer_message,
+        "escalated": result.success,
+        "duplicate_prevented": result.duplicate_prevented,
+        "steps_completed": result.steps_completed,
     }
