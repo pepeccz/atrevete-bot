@@ -682,7 +682,7 @@ class AppointmentManagementMode(BaseModeNode):
             f"\n  citas cargadas: {appts_str} ({appt_ids})"
             f"\n  cita seleccionada: {ctx.selected_appointment_id or 'ninguna'}"
             f"\n  confirmación pendiente: {ctx.pending_confirmation} ({ctx.pending_confirmation_type or '-'})"
-            f"\n  slots ofrecidos: {len(ctx.offered_slots)}"
+            f"\n  slots ofrecidos: {len(ctx.offered_slots) if ctx.offered_slots is not None else 0}"
             f"\n</appointment_context>"
         )
 
