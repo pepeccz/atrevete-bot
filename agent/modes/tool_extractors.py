@@ -177,6 +177,16 @@ def resolve_pending_clarification(ctx: BookingContext, user_message: str = "") -
 
         # ── audience axis: use service_audience_hint OR derive from user_message ──
         if axis == "audience":
+            options = clarification.get("options", [])
+            # ── Numeric index resolution (user typed "4" or "4.") ──
+            _numeric = re.match(r"^\s*(\d+)\.?\s*$", user_message.strip())
+            if _numeric:
+                _idx = int(_numeric.group(1)) - 1
+                if 0 <= _idx < len(options):
+                    _apply_resolved_option(ctx, options[_idx], axis, f"numeric_index_{_idx + 1}")
+                    resolved_any = True
+                    continue
+            # ── Existing hint map logic (unchanged) ──
             # Derive hint from user_message if not already in context.
             # This handles the common case where the user answers the clarification
             # question with a natural phrase like "dama", "para señora", "soy mujer",
@@ -213,6 +223,16 @@ def resolve_pending_clarification(ctx: BookingContext, user_message: str = "") -
 
         # ── hair_density axis: scan user_text against hint map ──
         if axis == "hair_density":
+            options = clarification.get("options", [])
+            # ── Numeric index resolution ──
+            _numeric = re.match(r"^\s*(\d+)\.?\s*$", user_message.strip())
+            if _numeric:
+                _idx = int(_numeric.group(1)) - 1
+                if 0 <= _idx < len(options):
+                    _apply_resolved_option(ctx, options[_idx], axis, f"numeric_index_{_idx + 1}")
+                    resolved_any = True
+                    continue
+            # ── Existing hint map logic (unchanged) ──
             resolved_value = _match_hint_map(user_text, _HAIR_DENSITY_HINT_MAP)
             if resolved_value:
                 options = clarification.get("options", [])
@@ -231,6 +251,16 @@ def resolve_pending_clarification(ctx: BookingContext, user_message: str = "") -
 
         # ── hair_length axis: scan user_text against hint map ──
         if axis == "hair_length":
+            options = clarification.get("options", [])
+            # ── Numeric index resolution ──
+            _numeric = re.match(r"^\s*(\d+)\.?\s*$", user_message.strip())
+            if _numeric:
+                _idx = int(_numeric.group(1)) - 1
+                if 0 <= _idx < len(options):
+                    _apply_resolved_option(ctx, options[_idx], axis, f"numeric_index_{_idx + 1}")
+                    resolved_any = True
+                    continue
+            # ── Existing hint map logic (unchanged) ──
             resolved_value = _match_hint_map(user_text, _HAIR_LENGTH_HINT_MAP)
             if resolved_value:
                 options = clarification.get("options", [])

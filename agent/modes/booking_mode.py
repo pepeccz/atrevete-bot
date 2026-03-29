@@ -755,7 +755,7 @@ class BookingMode(BaseModeNode):
             return ToolCallRejection(
                 name="book",
                 error_code="NO_SELECTED_SERVICES",
-                error_message="Confirma los servicios primero",
+                error_message="Servicio no confirmado aún. Llama search_services() con el servicio mencionado en la conversación antes de llamar book().",
             )
 
         # ── Hard gate: reject book() if customer has no real name ──────────
@@ -1600,8 +1600,9 @@ class BookingMode(BaseModeNode):
         if ctx.force_list_stylists_reminder:
             parts.append(
                 "\n⚠️ Recordatorio: el servicio está resuelto pero aún falta elegir estilista. "
-                "DEBES llamar list_stylists para mostrar los profesionales disponibles. "
-                "No preguntes la preferencia sin haber llamado list_stylists primero."
+                "DEBES mostrar la lista de estilistas DIRECTAMENTE (sin preguntar si tienen preferencia). "
+                "Usa los nombres exactos de <available_stylists>. "
+                "Formato obligatorio: lista numerada terminando con 'N. La estilista con disponibilidad más próxima'."
             )
 
         # R2: Stylist hallucination correction — injected when LLM invented stylist names

@@ -2618,3 +2618,119 @@ class TestInlineAutoResolveMetadata:
         extract_service_fields(result, ctx)
         assert len(ctx.selected_services_details) == 1
         assert ctx.selected_services_details[0]["description"] == "Incluye lavado y secado"
+
+
+# ============================================================================
+# Numeric clarification resolution (booking-service-persistence)
+# ============================================================================
+
+
+def _make_ctx_with_audience_clarification() -> BookingContext:
+    ctx = BookingContext()
+    ctx.pending_clarifications = [
+        {
+            "axis": "audience",
+            "question": "¿El corte es para...?",
+            "options": [
+                {
+                    "label": "Niña",
+                    "value": "child_female",
+                    "service_name": "Corte Niña",
+                    "service_id": "id-1",
+                    "duration_minutes": 30,
+                },
+                {
+                    "label": "Caballero",
+                    "value": "adult_male",
+                    "service_name": "Corte Caballero",
+                    "service_id": "id-2",
+                    "duration_minutes": 30,
+                },
+                {
+                    "label": "Niño",
+                    "value": "child_male",
+                    "service_name": "Corte Niño",
+                    "service_id": "id-3",
+                    "duration_minutes": 30,
+                },
+                {
+                    "label": "Dama / Señora",
+                    "value": "adult_female",
+                    "service_name": "Corte Dama",
+                    "service_id": "id-4",
+                    "duration_minutes": 40,
+                },
+                {
+                    "label": "Bebé",
+                    "value": "baby",
+                    "service_name": "Corte Bebé",
+                    "service_id": "id-5",
+                    "duration_minutes": 20,
+                },
+            ],
+        }
+    ]
+    return ctx
+
+
+class TestNumericClarificationResolution:
+    """Test that numeric index answers resolve audience/hair axis clarifications."""
+
+    def test_numeric_dot_resolves_audience(self):
+        """'4.' should resolve to option at index 3 (Dama/Señora)."""
+        ctx = _make_ctx_with_audience_clarification()
+        result = resolve_pending_clarification(ctx, user_message="4.")
+        assert result is True
+        assert ctx.service_id == "id-4"
+        assert "Corte Dama" in ctx.selected_services
+        assert len(ctx.pending_clarifications) == 0
+
+    def test_numeric_no_dot_resolves_audience(self):
+        """'4' (no dot) should also resolve to option at index 3."""
+        ctx = _make_ctx_with_audience_clarification()
+        result = resolve_pending_clarification(ctx, user_message="4")
+        assert result is True
+        assert ctx.service_id == "id-4"
+        assert "Corte Dama" in ctx.selected_services
+
+    def test_date_string_does_not_trigger_numeric(self):
+        """'4 de abril' must NOT trigger numeric resolution (has extra text after digit)."""
+        ctx = _make_ctx_with_audience_clarification()
+        # '4 de abril' does not match r'^\s*(\d+)\.?\s*$' — should not resolve via numeric path
+        result = resolve_pending_clarification(ctx, user_message="4 de abril")
+        # Key assertion: service_id must NOT be "id-4" via numeric path
+        # (The hint-map fallback may or may not resolve, but not via numeric index)
+        assert ctx.service_id != "id-4" or result is False
+
+    def test_numeric_first_option_resolves(self):
+        """'1' resolves to the first option (Niña)."""
+        ctx = _make_ctx_with_audience_clarification()
+        result = resolve_pending_clarification(ctx, user_message="1")
+        assert result is True
+        assert ctx.service_id == "id-1"
+        assert "Corte Niña" in ctx.selected_services
+
+    def test_numeric_last_option_resolves(self):
+        """'5' resolves to the last option (Bebé)."""
+        ctx = _make_ctx_with_audience_clarification()
+        result = resolve_pending_clarification(ctx, user_message="5")
+        assert result is True
+        assert ctx.service_id == "id-5"
+        assert "Corte Bebé" in ctx.selected_services
+
+    def test_numeric_out_of_range_falls_through_to_hint_map(self):
+        """'9' with only 5 options — no numeric match, falls through to hint map."""
+        ctx = _make_ctx_with_audience_clarification()
+        # Index 9 is out of range (only 5 options) — should NOT resolve via numeric path
+        result = resolve_pending_clarification(ctx, user_message="9")
+        # Hint map won't match "9" either → stays pending
+        assert result is False
+        assert len(ctx.pending_clarifications) == 1
+
+    def test_numeric_with_leading_spaces_resolves(self):
+        """'  2  ' (whitespace padded) resolves to option at index 1."""
+        ctx = _make_ctx_with_audience_clarification()
+        result = resolve_pending_clarification(ctx, user_message="  2  ")
+        assert result is True
+        assert ctx.service_id == "id-2"
+        assert "Corte Caballero" in ctx.selected_services
