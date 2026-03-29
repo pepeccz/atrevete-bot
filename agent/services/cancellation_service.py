@@ -46,17 +46,52 @@ MADRID_TZ = ZoneInfo("Europe/Madrid")
 # Spanish weekday and month names for date formatting
 WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MONTHS_ES = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
 ]
 
 # Keywords for number selection (to select which appointment to cancel)
 NUMBER_SELECTION_PATTERNS = {
-    "1": 1, "la 1": 1, "la primera": 1, "primera": 1, "uno": 1, "la uno": 1,
-    "2": 2, "la 2": 2, "la segunda": 2, "segunda": 2, "dos": 2, "la dos": 2,
-    "3": 3, "la 3": 3, "la tercera": 3, "tercera": 3, "tres": 3, "la tres": 3,
-    "4": 4, "la 4": 4, "la cuarta": 4, "cuarta": 4, "cuatro": 4, "la cuatro": 4,
-    "5": 5, "la 5": 5, "la quinta": 5, "quinta": 5, "cinco": 5, "la cinco": 5,
+    "1": 1,
+    "la 1": 1,
+    "la primera": 1,
+    "primera": 1,
+    "uno": 1,
+    "la uno": 1,
+    "2": 2,
+    "la 2": 2,
+    "la segunda": 2,
+    "segunda": 2,
+    "dos": 2,
+    "la dos": 2,
+    "3": 3,
+    "la 3": 3,
+    "la tercera": 3,
+    "tercera": 3,
+    "tres": 3,
+    "la tres": 3,
+    "4": 4,
+    "la 4": 4,
+    "la cuarta": 4,
+    "cuarta": 4,
+    "cuatro": 4,
+    "la cuatro": 4,
+    "5": 5,
+    "la 5": 5,
+    "la quinta": 5,
+    "quinta": 5,
+    "cinco": 5,
+    "la cinco": 5,
 }
 
 
@@ -98,6 +133,7 @@ class CancellationResult:
         appointment_list: Formatted list of appointments for selection
         hours_until_appointment: Hours remaining until appointment (for window messages)
     """
+
     success: bool
     appointment_id: Optional[UUID] = None
     response_type: str = "template"
@@ -137,9 +173,7 @@ async def get_customer_by_phone(phone_number: str) -> Optional[Customer]:
     """
     try:
         async with get_async_session() as session:
-            result = await session.execute(
-                select(Customer).where(Customer.phone == phone_number)
-            )
+            result = await session.execute(select(Customer).where(Customer.phone == phone_number))
             return result.scalars().first()
     except Exception as e:
         logger.error(f"Error fetching customer by phone {phone_number}: {e}")
@@ -172,10 +206,12 @@ async def get_cancellable_appointments(customer_id: UUID) -> list[Appointment]:
                 .where(
                     and_(
                         Appointment.customer_id == customer_id,
-                        Appointment.status.in_([
-                            AppointmentStatus.PENDING,
-                            AppointmentStatus.CONFIRMED,
-                        ]),
+                        Appointment.status.in_(
+                            [
+                                AppointmentStatus.PENDING,
+                                AppointmentStatus.CONFIRMED,
+                            ]
+                        ),
                         Appointment.start_time > now,
                     )
                 )
@@ -203,7 +239,7 @@ async def check_cancellation_allowed(appointment: Appointment) -> tuple[bool, in
 
     hours_until = (appt_time - now).total_seconds() / 3600
 
-    return (hours_until >= window_hours, int(hours_until))
+    return (hours_until > window_hours, int(hours_until))
 
 
 async def _get_service_names(service_ids: list[UUID]) -> str:
@@ -512,8 +548,7 @@ async def execute_cancellation(
                 title=f"{customer_name} canceló su cita",
                 message=(
                     f"Cita del {fecha} a las {hora} con {stylist_name} ({service_names}) "
-                    f"cancelada por el cliente"
-                    + (f". Motivo: {reason}" if reason else "")
+                    f"cancelada por el cliente" + (f". Motivo: {reason}" if reason else "")
                 ),
                 entity_type="appointment",
                 entity_id=appointment.id,

@@ -181,6 +181,7 @@ _MODE_OVERLAY_FILES: dict[str, str] = {
     "BOOKING": "modes/booking.md",
     "GENERAL": "modes/general.md",
     "ESCALATION": "modes/escalation.md",
+    "APPOINTMENT_MANAGEMENT": "modes/appointment_management.md",
 }
 
 

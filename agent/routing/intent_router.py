@@ -96,6 +96,8 @@ _VALID_INTENTS: frozenset[str] = frozenset(
         "cancel",
         "escalate",
         "retry",
+        "reschedule",
+        "check_appointments",
         "ambiguous",
     }
 )
@@ -210,6 +212,53 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "una vez mas",
         "repetir",
     ],
+    "reschedule": [
+        "reagendar",
+        "reagendá",
+        "reagendarme",
+        "reagendame",
+        "cambiar cita",
+        "cambiar mi cita",
+        "cambiar turno",
+        "cambiar mi turno",
+        "mover cita",
+        "mover mi cita",
+        "mover turno",
+        "mover mi turno",
+        "reprogramar",
+        "reprogramá",
+        "reprogramarme",
+        "cambiar la fecha",
+        "cambiar el día",
+        "cambiar el horario",
+        "otro día",
+        "otro horario",
+        "otra fecha",
+        "postergar",
+        "adelantar la cita",
+    ],
+    "check_appointments": [
+        "mi cita",
+        "mis citas",
+        "mi turno",
+        "mis turnos",
+        "cuándo tengo",
+        "cuando tengo",
+        "cuándo es mi cita",
+        "cuando es mi cita",
+        "próxima cita",
+        "proxima cita",
+        "próximo turno",
+        "proximo turno",
+        "ver mis citas",
+        "ver mis turnos",
+        "tengo turno",
+        "tengo cita",
+        "qué citas tengo",
+        "que citas tengo",
+        "recordarme",
+        "recordatorio",
+    ],
 }
 
 
@@ -264,6 +313,8 @@ def _intent_to_mode_hint(intent: str) -> str | None:
         "book": "BOOKING",
         "ask_info": "GENERAL",
         "escalate": "ESCALATION",
+        "reschedule": "APPOINTMENT_MANAGEMENT",
+        "check_appointments": "APPOINTMENT_MANAGEMENT",
         # context-dependent — router_node uses current_mode to resolve these
         "confirm": None,
         "reject": None,
@@ -459,7 +510,7 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
 _LLM_SYSTEM_PROMPT = """\
 Eres un clasificador de intenciones para un asistente de reservas de peluquería.
 Clasifica el mensaje del usuario en UNA de estas intenciones:
-greet, book, ask_info, confirm, reject, cancel, escalate, retry, ambiguous
+greet, book, ask_info, confirm, reject, cancel, escalate, retry, reschedule, check_appointments, ambiguous
 
 Responde ÚNICAMENTE con JSON válido, sin comentarios ni texto extra:
 {"intent": "<intención>", "confidence": <0.0-1.0>}
@@ -473,7 +524,17 @@ Intenciones:
 - cancel: quiere cancelar una cita existente
 - escalate: quiere hablar con una persona real
 - retry: quiere volver a intentar algo que falló (ej: "intentalo de nuevo", "otra vez", "probemos de nuevo")
+- reschedule: el usuario quiere cambiar, mover o reprogramar una cita EXISTENTE (no crear una nueva)
+- check_appointments: el usuario quiere consultar, ver o recordar sus citas próximas
 - ambiguous: no queda claro
+
+Ejemplos de clasificación:
+- "quiero cambiar mi cita" → reschedule
+- "puedo mover el turno al jueves" → reschedule
+- "reagendame para la semana que viene" → reschedule
+- "cuándo tengo turno" → check_appointments
+- "qué citas tengo esta semana" → check_appointments
+- "tengo cita mañana?" → check_appointments
 
 REGLA IMPORTANTE: Si el mensaje contiene un saludo ("hola", "buenas") JUNTO \
 con una intención de acción (reservar, preguntar, cancelar), clasifica según \

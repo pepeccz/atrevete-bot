@@ -610,6 +610,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     if current_mode == "ESCALATION" and intent_result.intent not in ("book",):
         return {"mode_context": {**intent_data}, "last_node": "router"}
 
+    # Rule 2.7: reschedule/check_appointments → APPOINTMENT_MANAGEMENT
+    if intent_result.intent in ("reschedule", "check_appointments"):
+        return {
+            "current_mode": "APPOINTMENT_MANAGEMENT",
+            "mode_context": {**intent_data},
+            "last_node": "router",
+        }
+
     # Rule 8: Book intent → BOOKING
     if intent_result.intent == "book":
         # BUG-1C FIX: if already in BOOKING, skip transition_mode (which sends __reset__)
@@ -626,6 +634,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         booking_context = {**general_booking_handoff, **restored_booking_draft, **intent_data}
         return {
             **transition_mode(state, "BOOKING", context_update=booking_context),
+            "last_node": "router",
+        }
+
+    # Rule 2.8: cancel outside BOOKING/CONFIRMATION_REPLY → APPOINTMENT_MANAGEMENT
+    if intent_result.intent == "cancel" and current_mode not in ("BOOKING", "CONFIRMATION_REPLY"):
+        return {
+            "current_mode": "APPOINTMENT_MANAGEMENT",
+            "mode_context": {**intent_data},
             "last_node": "router",
         }
 
@@ -773,6 +789,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
     from agent.modes.general_mode import GeneralMode
     from agent.modes.booking_mode import BookingMode
     from agent.modes.escalation_mode import EscalationMode
+    from agent.modes.appointment_management_mode import AppointmentManagementMode
     from agent.modes.confirmation_reply_node import confirmation_reply_node
     from agent.routing.intent_router import IntentResult
 
@@ -787,6 +804,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
             "BOOKING": "booking",
             "ESCALATION": "escalation",
             "CONFIRMATION_REPLY": "confirmation_reply",
+            "APPOINTMENT_MANAGEMENT": "appointment_management",
         }
         return mode_to_node.get(state.get("current_mode") or "GENERAL", "general")
 
@@ -840,6 +858,18 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
         result = await mode.handle(state=state, intent=intent)
         return {**result, "last_node": "escalation"}
 
+    async def appointment_management_node_fn(state: ConversationState) -> dict[str, Any]:
+        mode_context = state.get("mode_context") or {}
+        intent = IntentResult(
+            intent=mode_context.get("last_intent", "manage_appointment"),
+            confidence=mode_context.get("last_intent_confidence", 0.9),
+            raw_input="",
+            mode_hint="APPOINTMENT_MANAGEMENT",
+        )
+        mode = AppointmentManagementMode(tools=[], llm_client=_get_llm())
+        result = await mode.handle(state=state, intent=intent)
+        return {**result, "last_node": "appointment_management"}
+
     # Build graph
     graph = StateGraph(ConversationState)
 
@@ -849,6 +879,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
     graph.add_node("general", general_node_fn)
     graph.add_node("booking", booking_node_fn)
     graph.add_node("escalation", escalation_node_fn)
+    graph.add_node("appointment_management", appointment_management_node_fn)
     graph.add_node("confirmation_reply", confirmation_reply_node)
     graph.add_node("summarize", summarize_conversation)
 
@@ -863,12 +894,14 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
             "booking": "booking",
             "escalation": "escalation",
             "confirmation_reply": "confirmation_reply",
+            "appointment_management": "appointment_management",
         },
     )
     graph.add_edge("greeting", "summarize")
     graph.add_edge("general", "summarize")
     graph.add_edge("booking", "summarize")
     graph.add_edge("escalation", "summarize")
+    graph.add_edge("appointment_management", "summarize")
     graph.add_edge("confirmation_reply", "summarize")
     graph.add_edge("summarize", END)
 
