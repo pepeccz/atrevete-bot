@@ -130,19 +130,19 @@ HAIRDRESSING_SERVICES = [
         "description": "Servicio de coloración específico para cabellos masculinos",
     },
     {
-        "name": "Moldeado",
+        "name": "Cultura de Color",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 50,
-        "description": "Moldeado capilar con productos profesionales para dar forma y textura al cabello",
+        "duration_minutes": 40,
+        "description": "Servicio de coloración profesional con productos de alta calidad",
         "metadata_": {
-            "family": "perm",
+            "family": "color",
             "audience": None,
-            "disambiguation_tags": ["moldeado", "permanente", "rizo", "ondas"],
+            "disambiguation_tags": ["cultura de color", "color", "coloración", "tinte"],
             "ask_if_missing": ["hair_density"],
             "variant": "standard",
             "hair_length": None,
             "hair_density": "normal",
-            "combo_recommendations": [],
+            "combo_recommendations": ["Peinado", "Óleo Pigmento"],
         },
     },
     {
@@ -171,7 +171,14 @@ HAIRDRESSING_SERVICES = [
         "metadata_": {
             "family": "haircut",
             "audience": "baby",
-            "disambiguation_tags": ["bebé", "bebe", "bebito", "bebita", "muy pequeño", "muy pequeña"],
+            "disambiguation_tags": [
+                "bebé",
+                "bebe",
+                "bebito",
+                "bebita",
+                "muy pequeño",
+                "muy pequeña",
+            ],
             "ask_if_missing": [],
             "variant": None,
             "hair_length": None,
@@ -192,7 +199,7 @@ HAIRDRESSING_SERVICES = [
             "variant": "standard",
             "hair_length": None,
             "hair_density": "normal",
-            "combo_recommendations": [],
+            "combo_recommendations": ["Peinado", "Barro"],
         },
     },
     {
@@ -203,12 +210,18 @@ HAIRDRESSING_SERVICES = [
         "metadata_": {
             "family": "highlights",
             "audience": None,
-            "disambiguation_tags": ["mechas extras", "mechas extra", "mechas largo", "mechas larga", "mucho pelo"],
+            "disambiguation_tags": [
+                "mechas extras",
+                "mechas extra",
+                "mechas largo",
+                "mechas larga",
+                "mucho pelo",
+            ],
             "ask_if_missing": [],
             "variant": "extra",
             "hair_length": None,
             "hair_density": "extra",
-            "combo_recommendations": [],
+            "combo_recommendations": ["Peinado Largo", "Barro"],
         },
     },
     {
@@ -254,7 +267,7 @@ HAIRDRESSING_SERVICES = [
             "variant": "extra",
             "hair_length": None,
             "hair_density": "extra",
-            "combo_recommendations": [],
+            "combo_recommendations": ["Peinado Largo", "Barro"],
         },
     },
     {
@@ -271,7 +284,12 @@ HAIRDRESSING_SERVICES = [
         "metadata_": {
             "family": "color",
             "audience": None,
-            "disambiguation_tags": ["cultura de color extra", "color extra", "coloración extra", "cambio drástico"],
+            "disambiguation_tags": [
+                "cultura de color extra",
+                "color extra",
+                "coloración extra",
+                "cambio drástico",
+            ],
             "ask_if_missing": [],
             "variant": "extra",
             "hair_length": None,
@@ -308,7 +326,7 @@ HAIRDRESSING_SERVICES = [
             "variant": None,
             "hair_length": None,
             "hair_density": None,
-            "combo_recommendations": [],
+            "combo_recommendations": ["Peinado", "Barro"],
         },
     },
     {
@@ -341,7 +359,12 @@ HAIRDRESSING_SERVICES = [
         "metadata_": {
             "family": "hairstyle",
             "audience": None,
-            "disambiguation_tags": ["peinado extra", "peinado muy largo", "peinado elaborado", "peinado mucho pelo"],
+            "disambiguation_tags": [
+                "peinado extra",
+                "peinado muy largo",
+                "peinado elaborado",
+                "peinado mucho pelo",
+            ],
             "ask_if_missing": [],
             "variant": "extra",
             "hair_length": "long",
@@ -362,23 +385,28 @@ HAIRDRESSING_SERVICES = [
             "variant": None,
             "hair_length": None,
             "hair_density": None,
-            "combo_recommendations": [],
+            "combo_recommendations": ["Peinado"],
         },
     },
     {
-        "name": "Cultura de Color",
+        "name": "Cultura de Color Extra",
         "category": ServiceCategory.HAIRDRESSING,
-        "duration_minutes": 40,
-        "description": "Servicio de coloración profesional con productos de alta calidad",
+        "duration_minutes": 50,
+        "description": "Servicio de coloración extendido para cambios drásticos o correcciones",
         "metadata_": {
             "family": "color",
             "audience": None,
-            "disambiguation_tags": ["cultura de color", "color", "coloración", "tinte"],
-            "ask_if_missing": ["hair_density"],
-            "variant": "standard",
+            "disambiguation_tags": [
+                "cultura de color extra",
+                "color extra",
+                "coloración extra",
+                "cambio drástico",
+            ],
+            "ask_if_missing": [],
+            "variant": "extra",
             "hair_length": None,
-            "hair_density": "normal",
-            "combo_recommendations": [],
+            "hair_density": "extra",
+            "combo_recommendations": ["Peinado", "Óleo Pigmento"],
         },
     },
     {
@@ -422,7 +450,7 @@ HAIRDRESSING_SERVICES = [
             "variant": None,
             "hair_length": None,
             "hair_density": None,
-            "combo_recommendations": [],
+            "combo_recommendations": ["Peinado"],
         },
     },
     {
@@ -721,9 +749,7 @@ async def seed_services() -> None:
             service_uuid = generate_service_uuid(service_data["name"])
 
             # Buscar servicio existente por UUID determinístico
-            existing = await session.execute(
-                select(Service).where(Service.id == service_uuid)
-            )
+            existing = await session.execute(select(Service).where(Service.id == service_uuid))
             service = existing.scalar_one_or_none()
 
             if service:

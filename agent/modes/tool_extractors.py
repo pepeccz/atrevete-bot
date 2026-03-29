@@ -691,16 +691,16 @@ def extract_customer_fields(result: dict, ctx: BookingContext) -> None:
         )
         return
 
-    # Detect "customer not found" responses from action='get' — no "id" or "first_name"
-    # will be extracted, so treat this as a failed attempt for circuit-breaker purposes.
-    # Without this check the counter never increments and the agent can loop indefinitely
-    # re-issuing action='get' instead of switching to action='create'.
+    # Detect "customer not found" responses from action='get'.
+    # This is a VALID response (new customer), NOT a failure.
+    # The LLM sees "exists: False" in the tool output and knows to call action='create'.
+    # Do NOT increment the failure counter here — doing so causes the circuit breaker to
+    # trip on the normal get→create sequence for new customers (get returns exists=False,
+    # then create increments the count to 2, threshold fires and excludes manage_customer).
     if result.get("exists") is False:
-        ctx.manage_customer_failure_count += 1
-        logger.warning(
-            "extract_customer_fields: customer not found (exists=False, count=%d): %s",
-            ctx.manage_customer_failure_count,
-            result.get("message", "no message"),
+        logger.info(
+            "extract_customer_fields: customer not found (exists=False) — valid response, "
+            "LLM should call action='create' next"
         )
         return
 
@@ -759,6 +759,37 @@ def extract_booking_result(result: dict, ctx: BookingContext) -> None:
         ctx.offered_slots = None  # Clear stale slots after successful booking
         ctx.last_booked_slot = ctx.selected_slot  # Snapshot before clearing for F-8
         ctx.selected_slot = None  # Clear selected slot
+        # Capture all confirmed service names BEFORE reset_transient() clears draft fields.
+        # confirmed_services is excluded from reset_transient() so it survives the reset.
+        # REQ-4: priority chain for confirmed_services
+        # 1. Structured list of strings (most reliable)
+        services_list = result.get("services", [])
+        if (
+            services_list
+            and isinstance(services_list, list)
+            and all(isinstance(s, str) for s in services_list)
+        ):
+            ctx.confirmed_services = [s.strip() for s in services_list if s.strip()]
+        # 2. service_names: list or comma-separated string fallback
+        elif result.get("service_names"):
+            svc_names = result["service_names"]
+            if isinstance(svc_names, list) and all(isinstance(s, str) for s in svc_names):
+                ctx.confirmed_services = [s.strip() for s in svc_names if s.strip()]
+            else:
+                try:
+                    ctx.confirmed_services = [
+                        s.strip() for s in str(svc_names).split(",") if s.strip()
+                    ]
+                except Exception:
+                    ctx.confirmed_services = []
+        # 3. Single service_name from result
+        elif result.get("service_name"):
+            ctx.confirmed_services = [result["service_name"]]
+        # 4. Last resort: service_name from context (set before book() was called)
+        elif ctx.service_name:
+            ctx.confirmed_services = [ctx.service_name]
+        else:
+            ctx.confirmed_services = []
         # Capture stylist_id from booking result if present
         booked_stylist = result.get("stylist_id")
         if booked_stylist:

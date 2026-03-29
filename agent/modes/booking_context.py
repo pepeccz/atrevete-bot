@@ -64,6 +64,9 @@ class BookingContext:
     selected_slot: dict[str, Any] | None = None
     last_booked_slot: dict | None = None
 
+    # ── Post-booking metadata (persists through reset_transient) ────────
+    confirmed_services: list[str] = field(default_factory=list)
+
     # ── Offered slots (ephemeral, for prompt rendering) ─────────────────
     offered_slots: list[dict[str, Any]] | None = None
 
@@ -273,6 +276,22 @@ class BookingContext:
         field_names = {f.name for f in dataclasses.fields(cls) if not f.name.startswith("_")}
         filtered = {k: v for k, v in mode_context.items() if k in field_names}
         return cls(**filtered)
+
+
+def format_service_list(services: list[str]) -> str:
+    """Format service names as a human-readable Spanish list.
+
+    Examples:
+        [] → ""
+        ["Corte Caballero"] → "Corte Caballero"
+        ["Corte Caballero", "Corte Niño"] → "Corte Caballero y Corte Niño"
+        ["A", "B", "C"] → "A, B y C"
+    """
+    if not services:
+        return ""
+    if len(services) == 1:
+        return services[0]
+    return f"{', '.join(services[:-1])} y {services[-1]}"
 
 
 def preserve_booking_context(

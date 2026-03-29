@@ -24,7 +24,7 @@ from agent.utils.date_parser import format_date_es
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
-from agent.modes.booking_context import BookingContext
+from agent.modes.booking_context import BookingContext, format_service_list
 from agent.modes.tool_extractors import (
     apply_all_tool_results,
     extract_service_audience_hint,
@@ -277,7 +277,7 @@ class BookingMode(BaseModeNode):
                     book_failures,
                 )
                 tools = [t for t in tools if t.name != "book"]
-            if manage_failures >= 2:
+            if manage_failures >= 3:
                 logger.warning(
                     "get_tools: manage_customer excluded — failure_count=%d",
                     manage_failures,
@@ -827,7 +827,9 @@ class BookingMode(BaseModeNode):
                 )
 
         # ── Hard gate: reject book() if notes haven't been asked ──────────
-        if ctx and not ctx.notes_asked:
+        # Skip the gate if the user already provided notes earlier in the conversation
+        # (ctx.notes is not None means notes were captured proactively — no need to ask again).
+        if ctx and not ctx.notes_asked and ctx.notes is None:
             logger.warning("_pre_tool_call: book() rejected — notes_asked is False")
             return ToolCallRejection(
                 name="book",
@@ -1669,10 +1671,13 @@ class BookingMode(BaseModeNode):
             time_str = selected_slot.get("time", "")
             stylist = ctx.stylist_name or ""
             services_display = (
-                ", ".join(ctx.selected_services)
-                if ctx.selected_services
-                else (ctx.service_name or "")
+                format_service_list(ctx.confirmed_services)
+                if ctx.confirmed_services
+                else (ctx.service_name or ", ".join(ctx.selected_services))
             )
+            # Append duration when available (e.g. "Cortar (40 min)")
+            if ctx.service_duration_minutes and services_display:
+                services_display = f"{services_display} ({ctx.service_duration_minutes} min)"
             # Build price line only if available in service details
             price_parts = [
                 d.get("price") for d in (ctx.selected_services_details or []) if d.get("price")

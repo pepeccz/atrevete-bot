@@ -46,7 +46,10 @@ from shared.business_hours_validator import get_next_open_date, is_date_closed
 logger = logging.getLogger(__name__)
 
 SAME_DAY_BUFFER_HOURS = 1
-MAX_SLOTS_TO_PRESENT = 3
+MAX_SLOTS_TO_PRESENT = 5
+
+# Spanish day names indexed by weekday() (Monday=0 … Sunday=6)
+_DAY_NAMES_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
 # Conservative service duration for informational availability checks
 # Used when exact service duration is unknown (conversational queries)
@@ -268,6 +271,7 @@ async def check_availability(
                         "stylist": stylist.name,
                         "stylist_id": str(stylist.id),
                         "date": requested_date.strftime("%Y-%m-%d"),
+                        "day_name": _DAY_NAMES_ES[requested_date.weekday()],
                         "full_datetime": slot["full_datetime"],  # Already ISO string
                     }
                 )
@@ -490,7 +494,7 @@ async def find_next_available(
         stylists = [selected_stylist] if selected_stylist else all_stylists
 
         # Spanish day names for formatting
-        day_names_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        day_names_es = _DAY_NAMES_ES
 
         # Start searching from the earliest valid date
         now = datetime.now(MADRID_TZ)
@@ -583,7 +587,7 @@ async def find_next_available(
         # Collect ALL slots from selected stylist(s) across multiple dates (DB-first)
         all_slots_by_stylist = {stylist.id: [] for stylist in stylists}
         dates_searched = 0
-        MAX_SLOTS_PER_STYLIST = 3  # v4.2: Return 3 slots per stylist for options 2-4
+        MAX_SLOTS_PER_STYLIST = 5  # v4.2: Return up to 5 slots per stylist for options 2-4
 
         # Iterate through days
         for day_offset in range(max_days_to_search):

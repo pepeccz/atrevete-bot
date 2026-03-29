@@ -695,7 +695,13 @@ class TestExtractCustomerFields:
         assert ctx.customer_name == "Pepe"
 
     def test_customer_not_found(self):
-        """get with non-existent phone — no fields set, failure counter incremented."""
+        """get with non-existent phone — no fields set, failure counter NOT incremented.
+
+        exists=False is a valid "customer not found" response, not a failure.
+        The LLM sees it and calls action='create' next. Incrementing the counter
+        here would trip the circuit breaker on the normal get→create sequence for
+        new customers.
+        """
         ctx = BookingContext()
         result = {
             "exists": False,
@@ -706,7 +712,7 @@ class TestExtractCustomerFields:
 
         assert ctx.customer_id is None
         assert ctx.customer_name is None
-        assert ctx.manage_customer_failure_count == 1
+        assert ctx.manage_customer_failure_count == 0
 
     def test_only_id_set_when_no_name(self):
         ctx = BookingContext()

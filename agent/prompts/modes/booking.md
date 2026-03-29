@@ -99,7 +99,7 @@ Si ya hay slots en `<offered_slots>`, no vuelvas a llamar a herramientas salvo q
 
 ## Manejo de errores
 
-- `manage_customer` falla: reintenta UNA vez; si persiste, continúa. No expongas errores técnicos.
+- `manage_customer` falla: reintenta UNA vez; si persiste, continuá la reserva sin volver a pedir el nombre al usuario — ya lo tenés del mensaje anterior. No expongas errores técnicos al cliente.
 - `book()` SLOT_TAKEN: busca disponibilidad nueva, ofrece alternativas.
 - `book()` error `NO_SELECTED_SERVICES`: llama `search_services()` con el nombre del servicio mencionado en el historial de conversación. NUNCA preguntes al usuario qué servicio quiere si ya lo indicó antes.
 - `book()` otro error: informa y ofrece reintentar, otro horario o contactar al salón.
