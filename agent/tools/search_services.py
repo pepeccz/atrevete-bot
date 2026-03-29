@@ -445,6 +445,18 @@ async def search_services(
                     db_query = db_query.where(Service.category == ServiceCategory.HAIRDRESSING)
                 elif category in ["Estética", "ESTETICA", "AESTHETICS"]:
                     db_query = db_query.where(Service.category == ServiceCategory.AESTHETICS)
+                else:
+                    logger.warning(
+                        "search_services: unknown category %r — returning empty", category
+                    )
+                    return {
+                        "services": [],
+                        "count": 0,
+                        "query": query,
+                        "error": (
+                            f"Categoría desconocida: {category}. Usa 'HAIRDRESSING' o 'AESTHETICS'."
+                        ),
+                    }
 
             result = await session.execute(db_query)
             services = list(result.scalars().all())

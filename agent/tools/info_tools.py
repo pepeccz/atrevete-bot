@@ -53,7 +53,7 @@ class QueryInfoSchema(BaseModel):
             "Optional filters for the query:\n"
             "For 'services': {'category': 'Peluquería' | 'Estética'}\n"
             "For 'faqs': {'keywords': ['hours', 'parking', 'address']}"
-        )
+        ),
     )
 
     max_results: int = Field(
@@ -64,10 +64,10 @@ class QueryInfoSchema(BaseModel):
             "Maximum number of results to return (1-50). Default: 10.\n"
             "Use lower values (5-10) when user asks general questions.\n"
             "Use higher values (20-50) only if user specifically needs complete catalog."
-        )
+        ),
     )
 
-    @field_validator('filters', mode='before')
+    @field_validator("filters", mode="before")
     @classmethod
     def parse_filters(cls, v):
         """
@@ -83,7 +83,9 @@ class QueryInfoSchema(BaseModel):
             try:
                 return json.loads(v)
             except json.JSONDecodeError as e:
-                raise ValueError(f"filters must be a valid JSON string or dict, got invalid JSON: {e}")
+                raise ValueError(
+                    f"filters must be a valid JSON string or dict, got invalid JSON: {e}"
+                )
 
         if isinstance(v, dict):
             return v
@@ -95,7 +97,7 @@ class QueryInfoSchema(BaseModel):
 async def query_info(
     type: Literal["services", "faqs", "hours", "location"],
     filters: dict[str, Any] | None = None,
-    max_results: int = 10
+    max_results: int = 10,
 ) -> dict[str, Any]:
     """
     Query salon information (services, FAQs, hours, location) with truncation.
@@ -206,6 +208,17 @@ async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -
                 query = query.where(Service.category == ServiceCategory.HAIRDRESSING)
             elif category_value in ["Estética", "ESTETICA", "AESTHETICS"]:
                 query = query.where(Service.category == ServiceCategory.AESTHETICS)
+            elif category_value:  # truthy but unknown
+                logger.warning("query_info: unknown category %r — returning empty", category_value)
+                return {
+                    "services": [],
+                    "count_shown": 0,
+                    "count_total": 0,
+                    "error": (
+                        f"Categoría desconocida: {category_value}. "
+                        "Usa 'HAIRDRESSING' o 'AESTHETICS'."
+                    ),
+                }
 
         query = query.order_by(Service.category, Service.name)
 
@@ -217,9 +230,9 @@ async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -
         truncated_services = services[:max_results]
 
         logger.info(
-            f"Retrieved {len(truncated_services)}/{total_count} services" +
-            (f" for category {filters.get('category')}" if filters else "") +
-            (f" (truncated to {max_results})" if total_count > max_results else "")
+            f"Retrieved {len(truncated_services)}/{total_count} services"
+            + (f" for category {filters.get('category')}" if filters else "")
+            + (f" (truncated to {max_results})" if total_count > max_results else "")
         )
 
         return {
@@ -237,8 +250,9 @@ async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -
             "note": (
                 f"Showing {len(truncated_services)} of {total_count} services. "
                 "Ask user to be more specific if needed."
-                if total_count > max_results else None
-            )
+                if total_count > max_results
+                else None
+            ),
         }
 
 
@@ -254,7 +268,7 @@ async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> di
     """
     async with get_async_session() as session:
         # Filter only FAQ policies (keys starting with 'faq_')
-        query = select(Policy).where(Policy.key.like('faq_%'))
+        query = select(Policy).where(Policy.key.like("faq_%"))
 
         result = await session.execute(query)
         policies = list(result.scalars().all())
@@ -272,20 +286,22 @@ async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> di
                 if not any(kw in faq_keywords for kw in requested_keywords):
                     continue
 
-            faqs.append({
-                "category": policy.key.replace("faq_", ""),
-                "question": faq_data.get("question", ""),
-                "answer": faq_data.get("answer", ""),
-            })
+            faqs.append(
+                {
+                    "category": policy.key.replace("faq_", ""),
+                    "question": faq_data.get("question", ""),
+                    "answer": faq_data.get("answer", ""),
+                }
+            )
 
         # Truncate to max_results
         total_count = len(faqs)
         truncated_faqs = faqs[:max_results]
 
         logger.info(
-            f"Retrieved {len(truncated_faqs)}/{total_count} FAQs" +
-            (f" for keywords: {filters.get('keywords')}" if filters else "") +
-            (f" (truncated to {max_results})" if total_count > max_results else "")
+            f"Retrieved {len(truncated_faqs)}/{total_count} FAQs"
+            + (f" for keywords: {filters.get('keywords')}" if filters else "")
+            + (f" (truncated to {max_results})" if total_count > max_results else "")
         )
 
         return {
@@ -295,8 +311,9 @@ async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> di
             "note": (
                 f"Showing {len(truncated_faqs)} of {total_count} FAQs. "
                 "Refine keywords for more specific results."
-                if total_count > max_results else None
-            )
+                if total_count > max_results
+                else None
+            ),
         }
 
 
@@ -326,25 +343,29 @@ async def _get_business_hours() -> dict[str, Any]:
             day_name = DAY_NAMES.get(day_hours.day_of_week, f"Day {day_hours.day_of_week}")
 
             if day_hours.is_closed:
-                schedule.append({
-                    "day": day_name,
-                    "day_of_week": day_hours.day_of_week,
-                    "is_closed": True,
-                    "hours": "Cerrado",
-                })
+                schedule.append(
+                    {
+                        "day": day_name,
+                        "day_of_week": day_hours.day_of_week,
+                        "is_closed": True,
+                        "hours": "Cerrado",
+                    }
+                )
             else:
                 start_time = f"{day_hours.start_hour:02d}:{day_hours.start_minute:02d}"
                 end_time = f"{day_hours.end_hour:02d}:{day_hours.end_minute:02d}"
-                schedule.append({
-                    "day": day_name,
-                    "day_of_week": day_hours.day_of_week,
-                    "is_closed": False,
-                    "hours": f"{start_time}-{end_time}",
-                    "start_hour": day_hours.start_hour,
-                    "start_minute": day_hours.start_minute,
-                    "end_hour": day_hours.end_hour,
-                    "end_minute": day_hours.end_minute,
-                })
+                schedule.append(
+                    {
+                        "day": day_name,
+                        "day_of_week": day_hours.day_of_week,
+                        "is_closed": False,
+                        "hours": f"{start_time}-{end_time}",
+                        "start_hour": day_hours.start_hour,
+                        "start_minute": day_hours.start_minute,
+                        "end_hour": day_hours.end_hour,
+                        "end_minute": day_hours.end_minute,
+                    }
+                )
 
         # Format human-readable summary
         formatted = _format_schedule_summary(schedule)
@@ -372,7 +393,7 @@ def _format_schedule_summary(schedule: list[dict]) -> str:
             current_group = {
                 "days": [day_data["day"]],
                 "hours": day_data["hours"],
-                "is_closed": day_data["is_closed"]
+                "is_closed": day_data["is_closed"],
             }
         elif day_data["hours"] == current_group["hours"]:
             # Same hours, add to current group
@@ -383,7 +404,7 @@ def _format_schedule_summary(schedule: list[dict]) -> str:
             current_group = {
                 "days": [day_data["day"]],
                 "hours": day_data["hours"],
-                "is_closed": day_data["is_closed"]
+                "is_closed": day_data["is_closed"],
             }
 
     # Add last group
@@ -487,6 +508,13 @@ async def list_stylists(category: str | None = None) -> dict[str, Any]:
                     query = query.where(Stylist.category == ServiceCategory.HAIRDRESSING)
                 elif category in ["Estética", "ESTETICA", "AESTHETICS"]:
                     query = query.where(Stylist.category == ServiceCategory.AESTHETICS)
+                else:
+                    logger.warning("list_stylists: unknown category %r — returning empty", category)
+                    return {
+                        "stylists": [],
+                        "count": 0,
+                        "error": f"Categoría desconocida: {category}. Usa 'HAIRDRESSING' o 'AESTHETICS'.",
+                    }
 
             query = query.order_by(Stylist.name)
 
@@ -494,8 +522,8 @@ async def list_stylists(category: str | None = None) -> dict[str, Any]:
             stylists = list(result.scalars().all())
 
             logger.info(
-                f"Retrieved {len(stylists)} stylists" +
-                (f" for category {category}" if category else "")
+                f"Retrieved {len(stylists)} stylists"
+                + (f" for category {category}" if category else "")
             )
 
             return {

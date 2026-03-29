@@ -256,7 +256,7 @@ def _service_to_booking_context(service: dict[str, Any]) -> dict[str, Any]:
     booking_context = {
         "service_id": service.get("id"),
         "service_name": service.get("name", ""),
-        "service_category": service.get("category", ""),
+        "service_category": service.get("category") or None,
         "service_duration_minutes": service.get("duration_minutes"),
         "service_family": service.get("family"),
     }

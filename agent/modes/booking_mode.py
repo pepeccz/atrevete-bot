@@ -646,6 +646,23 @@ class BookingMode(BaseModeNode):
 
             return tool_args
 
+        elif tool_name == "list_stylists":
+            # Inject service_category if not already provided by the LLM
+            ctx_ls: BookingContext | None = getattr(self, "_ctx", None)
+            if ctx_ls and ctx_ls.service_category and "category" not in tool_args:
+                tool_args["category"] = ctx_ls.service_category
+                logger.debug(
+                    "_pre_tool_call: injected category=%r into list_stylists args",
+                    ctx_ls.service_category,
+                )
+            elif ctx_ls and ctx_ls.service_id and not ctx_ls.service_category:
+                logger.warning(
+                    "_pre_tool_call: list_stylists called with service_id=%s but service_category=None"
+                    " — inconsistent state, allowing call without category filter",
+                    ctx_ls.service_id,
+                )
+            return tool_args
+
         # Validate manage_customer calls: bypass name-only calls, reject stale customer_ids
         if tool_name == "manage_customer":
             action = tool_args.get("action")
@@ -1185,6 +1202,24 @@ class BookingMode(BaseModeNode):
         else:
             ctx.force_list_stylists_reminder = False
 
+        # Condition B: LLM had prefetched stylists but none appeared in the response
+        # This detects Gemini/LLM non-compliance with the <available_stylists> context block
+        if (
+            ctx.prefetched_stylists
+            and not ctx.stylist_id
+            and result.response_text
+            and not any(
+                s.get("name", "").lower() in result.response_text.lower()
+                for s in ctx.prefetched_stylists
+            )
+        ):
+            logger.warning(
+                "BookingMode: LLM ignored prefetched stylists — none of %s found in response. "
+                "Setting force_list_stylists_reminder.",
+                [s.get("name") for s in ctx.prefetched_stylists],
+            )
+            ctx.force_list_stylists_reminder = True
+
         # F-7: service not resolved and search_services not called
         # Condition: service_id None, selected_services empty, no pending clarifications,
         # and search_services was not called
@@ -1370,11 +1405,18 @@ class BookingMode(BaseModeNode):
             return  # Stylist already selected
         if ctx.prefetched_stylists:
             return  # Already prefetched from a previous turn
+        if not ctx.service_category:
+            logger.warning(
+                "_maybe_prefetch_stylists: service_id=%s set but service_category is None — "
+                "skipping prefetch to avoid cross-category leakage",
+                ctx.service_id,
+            )
+            return
 
         try:
             from agent.tools.info_tools import list_stylists
 
-            result = await list_stylists.ainvoke({"category": ctx.service_category or ""})
+            result = await list_stylists.ainvoke({"category": ctx.service_category})
             parsed = json.loads(result) if isinstance(result, str) else result
             if isinstance(parsed, dict):
                 stylists = parsed.get("stylists", [])

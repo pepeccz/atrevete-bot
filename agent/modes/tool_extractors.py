@@ -470,31 +470,14 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
             for opt in options:
                 val = _normalize_text(opt.get("value"))
                 if hint_lower in val or val in hint_lower:
-                    # Auto-resolve inline instead of deferring
-                    svc_name = opt["service_name"]
-                    if svc_name not in ctx.selected_services:
-                        ctx.selected_services = [svc_name] + [
-                            s for s in ctx.selected_services if s != svc_name
-                        ]
-                    # Copy rich metadata — same pattern as Path A and Shape 1 (REQ-1)
-                    recommendations = opt.get("combo_recommendations") or []
-                    if recommendations and not ctx.pending_recommendations:
-                        ctx.pending_recommendations = list(recommendations)
-                        ctx.recommendations_shown = False
-                    description = opt.get("description")
-                    if description:
-                        _upsert_service_detail(
-                            ctx,
-                            {
-                                "name": svc_name,
-                                "description": description,
-                                "duration_minutes": opt.get("duration_minutes"),
-                            },
-                        )
+                    # Delegate to _apply_resolved_option — sets ALL 5 canonical fields
+                    # (service_id, service_name, service_category, service_duration_minutes,
+                    # service_family) plus selected_services, recommendations, description.
+                    _apply_resolved_option(ctx, opt, "audience", ctx.service_audience_hint)
                     logger.info(
                         "extract_service_fields: auto-resolved clarification "
                         "for '%s' (audience hint '%s' matched)",
-                        svc_name,
+                        opt["service_name"],
                         ctx.service_audience_hint,
                     )
                     return
