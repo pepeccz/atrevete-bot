@@ -19,22 +19,25 @@ import unicodedata
 from datetime import datetime
 from typing import Any
 
-from agent.utils.date_parser import format_date_es
-
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.modes.booking_context import BookingContext, format_service_list
 from agent.modes.tool_extractors import (
+    _clear_date_metadata,
     apply_all_tool_results,
     extract_service_audience_hint,
     resolve_pending_clarification,
-    _clear_date_metadata,
-    _AUDIENCE_HINT_MAP,
 )
-from agent.prompts.loader import build_layered_messages, get_system_prompt, load_markdown
+from agent.prompts.loader import (  # noqa: F401
+    build_layered_messages,
+    get_system_prompt,
+    load_markdown,
+)
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
+from agent.utils.date_parser import format_date_es
+from shared.audience_maps import canonicalize_audience
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +193,180 @@ _USER_CONFIRMATION_PHRASES: tuple[str, ...] = (
     "exacto",
     "tal cual",
 )
+
+# Common Spanish words to skip when detecting stylist name hallucinations.
+# Shared between _detect_stylist_hallucination and _redact_hallucinated_stylists.
+# All in lowercase (compared via NFD-lowered text).
+_STYLIST_BLOCKLIST_WORDS: frozenset[str] = frozenset(
+    {
+        # Function words / articles
+        "la",
+        "del",
+        "los",
+        "el",
+        "es",
+        "un",
+        "una",
+        "unos",
+        "unas",
+        "te",
+        "nos",
+        "sos",
+        "por",
+        "con",
+        "para",
+        "que",
+        "hay",
+        # Greetings / affirmations / common responses
+        "hola",
+        "perfecto",
+        "genial",
+        "claro",
+        "bueno",
+        "vale",
+        "entendido",
+        "estupendo",
+        "gracias",
+        "listo",
+        "dale",
+        "venga",
+        "bien",
+        "correcto",
+        # Pronouns / subject words
+        "tenemos",
+        "puedo",
+        "tienes",
+        "quieres",
+        "estas",
+        "puede",
+        "podemos",
+        # Salon-specific common nouns (not proper names)
+        "estilista",
+        "profesional",
+        "especialista",
+        "peluqueria",
+        "estetica",
+        "salon",
+        "corte",
+        "tinte",
+        "reserva",
+        "cita",
+        "disponibilidad",
+        "horario",
+        "servicio",
+        "servicios",
+        # Days of week
+        "lunes",
+        "martes",
+        "miercoles",
+        "jueves",
+        "viernes",
+        "sabado",
+        "domingo",
+        # Months
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+        # Bot identity / salon name tokens
+        "maite",
+        "atrevete",
+        "alcobendas",
+    }
+)
+
+
+# Clarification-response patterns — messages that look like slot/option selections,
+# not real appointment notes. Used by _looks_like_clarification().
+_CLARIFICATION_RE = re.compile(
+    r"^\d+\.?$"  # Pure integer: "4", "4."
+    r"|^\d+\s*(y\s*(el\s*)?)?\d+$"  # Slot selection: "4 y el 4", "3 y 4"
+    r"|^\d+\s*[,;]\s*\d+$"  # Comma-separated: "3, 4"
+    r"|^(si|sí|no|ok|dale|listo|bueno|perfecto|genial|claro)$",  # Single-word
+    re.IGNORECASE,
+)
+
+
+def _looks_like_clarification(msg: str) -> bool:
+    """Return True if msg looks like a slot/option selection, not appointment notes.
+
+    Matches pure numbers, compound slot patterns (e.g., "4 y el 4"), and
+    single-word affirmatives/negatives. Also returns True for ultra-short
+    messages (< 3 chars after stripping).
+
+    Args:
+        msg: User message to check.
+
+    Returns:
+        True if the message is likely a clarification response.
+    """
+    stripped = msg.strip()
+    if len(stripped) < 3:
+        return True
+    return bool(_CLARIFICATION_RE.match(stripped))
+
+
+def _build_auto_confirmation_summary(ctx: "BookingContext") -> str:
+    """Build a structured confirmation summary from BookingContext fields.
+
+    All output is in Spanish (user-facing). No UUIDs or internal IDs exposed.
+    Used when the LLM skips the confirmation step and tries to call book() directly.
+
+    Args:
+        ctx: BookingContext with collected booking data.
+
+    Returns:
+        Formatted confirmation summary string.
+    """
+    services = (
+        ", ".join(ctx.selected_services) if ctx.selected_services else ctx.service_name or "?"
+    )
+    stylist = ctx.stylist_name or "tu estilista"
+
+    # Extract date/time from selected_slot or first offered slot
+    slot = ctx.selected_slot or (ctx.offered_slots[0] if ctx.offered_slots else None)
+    if slot:
+        raw_date = slot.get("date", "")
+        raw_time = slot.get("time", slot.get("start_time", "?"))
+        # Try format_date_es for a friendly date; fall back to raw
+        try:
+            datetime_str = f"{format_date_es(raw_date)} a las {raw_time}"
+        except Exception:
+            datetime_str = f"{raw_date} a las {raw_time}" if raw_date else str(raw_time)
+    else:
+        datetime_str = "?"
+
+    customer = ctx.customer_name or "?"
+    notes = ctx.notes.strip() if ctx.notes and ctx.notes.strip() else "ninguna"
+
+    logger.info(
+        "_build_auto_confirmation_summary: services=%r, stylist=%r, "
+        "datetime=%r, customer=%r, notes=%r",
+        services,
+        stylist,
+        datetime_str,
+        customer,
+        notes,
+    )
+
+    return (
+        f"📋 *Resumen de tu cita:*\n"
+        f"✂️ Servicio: {services}\n"
+        f"💇 Estilista: {stylist}\n"
+        f"📅 Fecha y hora: {datetime_str}\n"
+        f"👤 Nombre: {customer}\n"
+        f"📝 Notas: {notes}\n\n"
+        f"¿Confirmas la reserva? 😊"
+    )
+
 
 # ============================================================================
 # Tool registry — all booking tools, available every turn
@@ -367,13 +544,15 @@ class BookingMode(BaseModeNode):
         messages = await self._build_messages(state, ctx)
 
         # 5. Agentic loop (max 3 tool rounds, inherited from BaseModeNode)
-        # Store ctx and state as transient instance attributes so _pre_tool_call can access them
+        # Store ctx, state, and user_message as transient instance attributes
+        # so _pre_tool_call and _detect_tool_skips can access them
         self._ctx = ctx
         self._current_state = state
+        self._last_user_message = user_message or ""
         result = await self._run_agentic_loop(messages, tools=self.get_tools())
 
         # 6. Detect tool skips (R4/R6 list_stylists, F-7 search_services)
-        self._detect_tool_skips(result, ctx)
+        await self._detect_tool_skips(result, ctx)
 
         # 7. Detect stylist hallucinations (R2)
         self._detect_stylist_hallucination(result.response_text or "", ctx)
@@ -630,12 +809,11 @@ class BookingMode(BaseModeNode):
                     ctx_ss.service_audience_hint,
                 )
 
-            # Canonicalize audience value if present
+            # Canonicalize audience value if present (tokenizes compound values
+            # like "Dama / Señora" → "adult_female")
             if tool_args.get("audience"):
                 original_audience = tool_args["audience"]
-                canonical = _AUDIENCE_HINT_MAP.get(
-                    tool_args["audience"].lower(), tool_args["audience"]
-                )
+                canonical = canonicalize_audience(original_audience)
                 if canonical != original_audience:
                     tool_args["audience"] = canonical
                     logger.info(
@@ -741,6 +919,15 @@ class BookingMode(BaseModeNode):
                     )
 
             return tool_args
+
+        if tool_name == "book":
+            ctx_bk: BookingContext | None = getattr(self, "_ctx", None)
+            if ctx_bk and ctx_bk.service_audience_hint and not tool_args.get("audience"):
+                tool_args["audience"] = ctx_bk.service_audience_hint
+                logger.info(
+                    "_pre_tool_call: injected audience=%s into book",
+                    ctx_bk.service_audience_hint,
+                )
 
         if tool_name != "book":
             return tool_args
@@ -863,20 +1050,56 @@ class BookingMode(BaseModeNode):
         # with an affirmative before book() can execute. This prevents the
         # LLM from skipping the mandatory confirmation step.
         if ctx and not ctx.confirmation_shown:
-            logger.warning(
-                "_pre_tool_call: book() rejected — confirmation_shown is False. "
-                "LLM must present summary and wait for user confirmation first."
-            )
-            return ToolCallRejection(
-                name="book",
-                error_code="CONFIRMATION_NOT_SHOWN",
-                error_message=(
-                    "ANTES de llamar a book(), debés mostrar el resumen de confirmación "
-                    "con todos los datos (nombre, servicio, estilista, fecha, hora) "
-                    "y ESPERAR a que la clienta confirme con 'sí', 'dale', 'ok', etc. "
-                    "Mostrá el resumen ahora y NO llames a book() hasta recibir confirmación."
-                ),
-            )
+            # Auto-generate summary if booking data is complete
+            if _is_booking_data_complete(ctx) and not ctx.confirmation_summary_sent:
+                summary = _build_auto_confirmation_summary(ctx)
+                ctx.confirmation_summary_sent = True
+                logger.info(
+                    "_pre_tool_call: book() intercepted — auto-generated confirmation "
+                    "summary (confirmation_summary_sent=True). Waiting for user confirmation."
+                )
+                return ToolCallRejection(
+                    name="book",
+                    error_code="CONFIRMATION_NOT_SHOWN",
+                    error_message=(
+                        "He generado el resumen de confirmación automáticamente. "
+                        "MOSTRÁ EXACTAMENTE este texto al usuario y ESPERÁ su confirmación:\n\n"
+                        f"{summary}\n\n"
+                        "NO llames a book() — esperá a que la clienta confirme."
+                    ),
+                )
+            elif ctx.confirmation_summary_sent:
+                # Summary already sent — just wait for user reply
+                logger.warning(
+                    "_pre_tool_call: book() rejected — confirmation_shown is False "
+                    "but confirmation_summary_sent is True. Waiting for user reply."
+                )
+                return ToolCallRejection(
+                    name="book",
+                    error_code="CONFIRMATION_NOT_SHOWN",
+                    error_message=(
+                        "Ya se mostró el resumen de confirmación. "
+                        "ESPERÁ a que la clienta responda con 'sí', 'dale', 'ok', etc. "
+                        "NO llames a book() hasta recibir su confirmación."
+                    ),
+                )
+            else:
+                # Data incomplete — use original rejection
+                logger.warning(
+                    "_pre_tool_call: book() rejected — confirmation_shown is False. "
+                    "LLM must present summary and wait for user confirmation first."
+                )
+                return ToolCallRejection(
+                    name="book",
+                    error_code="CONFIRMATION_NOT_SHOWN",
+                    error_message=(
+                        "ANTES de llamar a book(), debés mostrar el resumen de confirmación "
+                        "con todos los datos (nombre, servicio, estilista, fecha, hora) "
+                        "y ESPERAR a que la clienta confirme con 'sí', 'dale', 'ok', etc. "
+                        "Mostrá el resumen ahora y NO llames a book() hasta recibir "
+                        "confirmación."
+                    ),
+                )
 
         # ── Hard gate: always inject selected_services ─────────────────────
         if ctx and ctx.selected_services:
@@ -1170,7 +1393,7 @@ class BookingMode(BaseModeNode):
 
         return result
 
-    def _detect_tool_skips(self, result: AgenticLoopResult, ctx: BookingContext) -> None:
+    async def _detect_tool_skips(self, result: AgenticLoopResult, ctx: BookingContext) -> None:
         """Detect when LLM skipped required tools (R4/R6).
 
         Checks two conditions:
@@ -1234,8 +1457,108 @@ class BookingMode(BaseModeNode):
                 "but search_services was not called. service_id=None, selected_services=[]"
             )
             ctx.force_search_services_reminder = True
+
+            # Auto-recover: call search_services programmatically
+            recovery_result = await self._f7_auto_recover(
+                getattr(self, "_last_user_message", ""), ctx
+            )
+            if recovery_result:
+                from agent.modes.tool_extractors import extract_service_fields
+
+                extract_service_fields(recovery_result, ctx)
+                ctx.force_search_services_reminder = False
+                logger.info(
+                    "F-7 auto-recovery succeeded: service_id=%s, selected_services=%s",
+                    ctx.service_id,
+                    ctx.selected_services,
+                )
         else:
             ctx.force_search_services_reminder = False
+
+    async def _f7_auto_recover(self, user_message: str, ctx: BookingContext) -> dict | None:
+        """Auto-invoke search_services when F-7 detects the LLM skipped it.
+
+        Extracts a search query from the user message by stripping greeting prefixes,
+        calls search_services programmatically, and returns the raw result dict.
+
+        Args:
+            user_message: The user's message text.
+            ctx: BookingContext with current booking state.
+
+        Returns:
+            The search_services result dict on success, None if recovery not possible.
+        """
+        if getattr(ctx, "_f7_recovered", False):
+            return None
+
+        if not user_message or len(user_message.strip()) < 3:
+            return None
+
+        # Strip greeting prefixes to extract service keyword
+        query = user_message.strip()
+        greeting_prefixes = (
+            "hola",
+            "buenas",
+            "buenos dias",
+            "buenos días",
+            "buenas tardes",
+            "buenas noches",
+            "buen dia",
+            "buen día",
+        )
+        query_lower = query.lower()
+        for prefix in greeting_prefixes:
+            if query_lower.startswith(prefix):
+                query = query[len(prefix) :].strip(" ,!¡.").strip()
+                break
+
+        # Strip common filler words
+        stopwords = {
+            "quiero",
+            "queria",
+            "querria",
+            "me",
+            "gustaria",
+            "hacerme",
+            "un",
+            "una",
+            "el",
+            "la",
+            "para",
+            "pedir",
+            "reservar",
+            "agendar",
+        }
+        tokens = query.split()
+        filtered = [t for t in tokens if t.lower() not in stopwords]
+        query = " ".join(filtered).strip() if filtered else query
+
+        if len(query.strip()) < 2:
+            logger.debug("F-7 auto-recovery: query too short after stripping: %r", query)
+            return None
+
+        # Truncate to avoid search noise
+        query = query[:50]
+
+        try:
+            from agent.tools.search_services import search_services
+
+            result = await search_services.ainvoke(
+                {
+                    "query": query,
+                    "audience": ctx.service_audience_hint,
+                }
+            )
+            ctx._f7_recovered = True
+            logger.info(
+                "F-7 auto-recovery: search_services called with query=%r, audience=%r",
+                query,
+                ctx.service_audience_hint,
+            )
+            return result
+        except Exception:
+            logger.exception("F-7 auto-recovery: search_services call failed")
+            return None
 
     def _detect_stylist_hallucination(self, response_text: str, ctx: BookingContext) -> None:
         """Detect when LLM invents stylist names not in the database (R2).
@@ -1262,94 +1585,6 @@ class BookingMode(BaseModeNode):
             _nfd_lower(s.get("name", "")) for s in ctx.prefetched_stylists if s.get("name")
         }
 
-        # Common Spanish words to skip (blocklist for false positives).
-        # These are capitalized words that appear frequently in Spanish responses
-        # but are NOT stylist names. All in lowercase for comparison with _nfd_lower().
-        common_words = {
-            # Function words / articles
-            "la",
-            "del",
-            "los",
-            "el",
-            "es",
-            "un",
-            "una",
-            "unos",
-            "unas",
-            "te",
-            "nos",
-            "sos",
-            "por",
-            "con",
-            "para",
-            "que",
-            "del",
-            "hay",
-            # Greetings / affirmations / common responses
-            "hola",
-            "perfecto",
-            "genial",
-            "claro",
-            "bueno",
-            "vale",
-            "entendido",
-            "estupendo",
-            "gracias",
-            "listo",
-            "dale",
-            "venga",
-            "bien",
-            "correcto",
-            # Pronouns / subject words
-            "tenemos",
-            "puedo",
-            "tienes",
-            "quieres",
-            "estas",
-            "puede",
-            "podemos",
-            # Salon-specific common nouns (not proper names)
-            "estilista",
-            "profesional",
-            "especialista",
-            "peluqueria",
-            "estetica",
-            "salon",
-            "corte",
-            "tinte",
-            "reserva",
-            "cita",
-            "disponibilidad",
-            "horario",
-            "servicio",
-            "servicios",
-            # Days of week (Mon-Sun)
-            "lunes",
-            "martes",
-            "miercoles",
-            "jueves",
-            "viernes",
-            "sabado",
-            "domingo",
-            # Months
-            "enero",
-            "febrero",
-            "marzo",
-            "abril",
-            "mayo",
-            "junio",
-            "julio",
-            "agosto",
-            "septiembre",
-            "octubre",
-            "noviembre",
-            "diciembre",
-            # Bot identity / salon name tokens
-            "maite",
-            "atrevete",
-            "alcobendas",
-        }
-
         # Extract capitalized words (likely proper nouns)
         words = re.findall(r"\b[A-Z][a-záéíóúñ]*\b", response_text)
 
@@ -1357,7 +1592,10 @@ class BookingMode(BaseModeNode):
         for word in words:
             normalized_word = _nfd_lower(word)
             # Check if word is NOT in known stylists and NOT in blocklist
-            if normalized_word not in known_stylists and normalized_word not in common_words:
+            if (
+                normalized_word not in known_stylists
+                and normalized_word not in _STYLIST_BLOCKLIST_WORDS
+            ):
                 hallucinated.append(word)
 
         if hallucinated:
@@ -1371,8 +1609,41 @@ class BookingMode(BaseModeNode):
                 log_extra["conversation_id"] = conversation_id
             logger.warning("Stylist hallucination detected", extra=log_extra)
             ctx.force_stylist_correction = True
+            ctx._last_hallucinated_names = set(hallucinated)
         else:
             ctx.force_stylist_correction = False
+            ctx._last_hallucinated_names = set()
+
+    def _redact_hallucinated_stylists(self, response_text: str, ctx: BookingContext) -> str:
+        """Replace hallucinated stylist names in outgoing response with placeholder.
+
+        Uses word-boundary regex to avoid mangling substrings. Only runs when
+        hallucination was detected (ctx._last_hallucinated_names is non-empty).
+
+        Args:
+            response_text: The LLM's response text.
+            ctx: BookingContext with hallucination detection results.
+
+        Returns:
+            Response text with hallucinated names replaced by "tu estilista".
+        """
+        if not response_text or not ctx.prefetched_stylists:
+            return response_text
+
+        hallucinated_names = getattr(ctx, "_last_hallucinated_names", set())
+        if not hallucinated_names:
+            return response_text
+
+        for name in hallucinated_names:
+            response_text = re.sub(
+                rf"\b{re.escape(name)}\b",
+                "tu estilista",
+                response_text,
+                flags=re.IGNORECASE,
+            )
+            logger.info("Redacted hallucinated stylist name %r → 'tu estilista'", name)
+
+        return response_text
 
     def _refresh_dynamic_context(self, working_messages: list) -> None:
         """Rebuild the dynamic context SystemMessage with fresh ctx data.
@@ -1649,13 +1920,23 @@ class BookingMode(BaseModeNode):
                 "Formato obligatorio: lista numerada terminando con 'N. La estilista con disponibilidad más próxima'."
             )
 
-        # R2: Stylist hallucination correction — injected when LLM invented stylist names
+        # R2: Stylist hallucination correction — structured numbered list
         if ctx.force_stylist_correction:
-            parts.append(
-                "\n⚠️ CORRECCIÓN: algunos de los nombres mencionados no coinciden con nuestras estilistas. "
-                "DEBES usar SOLO los nombres que aparecen en la lista de estilistas disponibles. "
-                "Nunca inventes o asumas nombres que no están en la lista."
-            )
+            if ctx.prefetched_stylists:
+                stylist_names = [s.get("name", "?") for s in ctx.prefetched_stylists]
+                numbered = "\n".join(f"  {i + 1}. {name}" for i, name in enumerate(stylist_names))
+                parts.append(
+                    f"\n⚠️ CORRECCIÓN CRÍTICA: Mencionaste nombres de estilistas que NO existen. "
+                    f"SOLO podés usar estos nombres (copiá EXACTAMENTE):\n{numbered}\n"
+                    f"NO inventes ni modifiques ningún nombre. Usá la lista tal cual."
+                )
+            else:
+                parts.append(
+                    "\n⚠️ CORRECCIÓN: algunos de los nombres mencionados no coinciden "
+                    "con nuestras estilistas. "
+                    "DEBES usar SOLO los nombres que aparecen en la lista de estilistas "
+                    "disponibles. Nunca inventes o asumas nombres que no están en la lista."
+                )
 
         # Book failure circuit breaker
         if ctx.book_failure_count >= 2:
@@ -1752,6 +2033,10 @@ class BookingMode(BaseModeNode):
                 stylist,
                 services_display,
             )
+
+        # Stylist hallucination redaction (replace invented names with placeholder)
+        if ctx.force_stylist_correction:
+            response_text = self._redact_hallucinated_stylists(response_text, ctx)
 
         # Name redaction (privacy guard — LLM must not expose customer names)
         response_text = self._redact_names(state, response_text)
@@ -1905,8 +2190,7 @@ _NAME_INTRO_PATTERN = re.compile(
 # Bare name: 1-2 capitalized words that look like a name (for messages that
 # are ONLY a name, e.g. user replied "María" or "Ana Torres" to "¿Tu nombre?")
 _BARE_NAME_PATTERN = re.compile(
-    r"^([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+"
-    r"(?:\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+)?)\s*[.!]?\s*$"
+    r"^([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+" r"(?:\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+)?)\s*[.!]?\s*$"
 )
 
 # Words that look like names but are NOT (common false positives in Spanish)
@@ -1929,7 +2213,9 @@ _NAME_STOPWORDS: frozenset[str] = frozenset(
 # Audience/demographic words that sound like names but describe the service target.
 # BUG-2 fix: "soy caballero" / "para dama" must NOT be captured as customer_name.
 # Normalized (accent-stripped, lowercase) for comparison via _normalize_text().
-_AUDIENCE_KEYWORDS: frozenset[str] = frozenset(
+# Note: named _AUDIENCE_NAME_FILTER to avoid confusion with shared.audience_maps.AUDIENCE_KEYWORDS
+# (which is a dict mapping audience axis → keyword lists used for service search).
+_AUDIENCE_NAME_FILTER: frozenset[str] = frozenset(
     {
         "caballero",
         "dama",
@@ -2195,7 +2481,7 @@ def _extract_name_from_conversation(
         name = match.group(1).strip()
         name_normalized = _normalize_text(name)
         # BUG-2 fix: reject audience/demographic words (e.g. "soy caballero")
-        if name.lower() not in _NAME_STOPWORDS and name_normalized not in _AUDIENCE_KEYWORDS:
+        if name.lower() not in _NAME_STOPWORDS and name_normalized not in _AUDIENCE_NAME_FILTER:
             ctx.customer_name = name
             logger.info(
                 "_extract_name_from_conversation: extracted name=%r from intro pattern "
@@ -2306,6 +2592,14 @@ def _extract_notes_from_conversation(
         "sin preferencias",
     }
     if msg_normalized.strip() in decline_phrases:
+        return
+
+    # Skip messages that look like clarification responses (slot numbers, affirmatives)
+    if _looks_like_clarification(user_message):
+        logger.debug(
+            "_extract_notes_from_conversation: skipped clarification-like message %r",
+            user_message,
+        )
         return
 
     # Capture the full message as notes

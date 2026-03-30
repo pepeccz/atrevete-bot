@@ -34,6 +34,7 @@ from agent.utils.service_disambiguation import (
 )
 from database.connection import get_async_session
 from database.models import Service, ServiceCategory
+from shared.audience_maps import AUDIENCE_KEYWORDS
 
 logger = logging.getLogger(__name__)
 
@@ -260,29 +261,46 @@ class SearchServicesSchema(BaseModel):
     )
 
 
-# Audience keyword maps for post-filter matching
-_AUDIENCE_KEYWORDS: dict[str, list[str]] = {
-    "adult_female": ["dama", "mujer", "senora", "adulta", "femenino", "femenina"],
-    "adult_male": ["caballero", "hombre", "senor", "adulto", "masculino"],
-    "child_female": ["nina", "nena", "infantil femenino"],
-    "child_male": ["nino", "nene", "infantil masculino"],
-}
+def _matches_audience(svc: "Service", audience: str) -> bool:
+    """Check if a service matches the requested audience.
 
+    Three-state logic:
+    1. metadata_.audience is set → use exclusively (exact match)
+    2. metadata has 'family' but audience is None → unisex service, always match
+    3. No family metadata → keyword fallback only
 
-def _matches_audience(service_name: str, service_description: str | None, audience: str) -> bool:
-    """Return True if the service likely targets the given audience."""
-    keywords = _AUDIENCE_KEYWORDS.get(audience, [])
+    Args:
+        svc:      Service ORM object with a ``metadata_`` dict attribute.
+        audience: Target audience axis value, e.g. ``"adult_female"``.
+
+    Returns:
+        True when the service matches the audience, False otherwise.
+    """
+    import unicodedata
+
+    metadata = svc.metadata_ or {}
+
+    if metadata.get("family"):
+        # Service has structured metadata
+        meta_audience = metadata.get("audience")
+        if meta_audience is not None:
+            # Explicit audience → match exclusively
+            return meta_audience == audience
+        else:
+            # audience=None in structured service → intentionally unisex
+            return True
+
+    # No structured metadata → keyword fallback
+    keywords = AUDIENCE_KEYWORDS.get(audience, [])
     if not keywords:
         return True  # Unknown audience → no filtering
-
-    import unicodedata
 
     def _nfd_lower(text: str) -> str:
         normalized = unicodedata.normalize("NFKD", text.lower())
         return "".join(c for c in normalized if not unicodedata.combining(c))
 
-    combined = _nfd_lower(f"{service_name} {service_description or ''}")
-    return any(kw in combined for kw in keywords)
+    normalized = _nfd_lower(f"{svc.name} {svc.description or ''}")
+    return any(kw in normalized for kw in keywords)
 
 
 @tool(args_schema=SearchServicesSchema)
@@ -437,7 +455,7 @@ async def search_services(
 
         # Step 1: Fetch all active services from database
         async with get_async_session() as session:
-            db_query = select(Service).where(Service.is_active == True)
+            db_query = select(Service).where(Service.is_active)
 
             # Filter by category if provided
             if category:
@@ -496,17 +514,15 @@ async def search_services(
         # Post-filter by audience if provided (BUG-NEW-2: audience parameter support)
         if audience:
             audience_filtered = [
-                (svc, score)
-                for svc, score in scored_services
-                if _matches_audience(svc.name, svc.description, audience)
-                or (svc.metadata_ or {}).get("audience") == audience
+                (svc, score) for svc, score in scored_services if _matches_audience(svc, audience)
             ]
-            # Fall back to unfiltered results if no audience match found
-            scored_services = audience_filtered if audience_filtered else scored_services
-            logger.info(
-                f"Audience filter '{audience}' applied: {len(audience_filtered)} matches "
-                f"(fallback={len(audience_filtered) == 0})"
-            )
+            if not audience_filtered:
+                logger.warning(
+                    "Audience filter '%s' eliminated all results — returning empty list",
+                    audience,
+                )
+            scored_services = audience_filtered
+            logger.info(f"Audience filter '{audience}' applied: {len(audience_filtered)} matches")
 
         # Take top max_results
         top_matches = scored_services[:max_results]
@@ -553,9 +569,7 @@ async def search_services(
         ):
             # Try 1: keyword filter on service name/description
             audience_narrowed = [
-                svc
-                for svc in top_service_objects
-                if _matches_audience(svc.name, svc.description, audience)
+                svc for svc in top_service_objects if _matches_audience(svc, audience)
             ]
             # Try 2: metadata filter (for services like "Tinte" that lack gendered names)
             if not audience_narrowed:
@@ -635,9 +649,9 @@ async def search_services(
                 {
                     "id": str(service_obj.id),
                     "name": service_obj.name,
-                    "description": service_obj.description[:150]
-                    if service_obj.description
-                    else None,
+                    "description": (
+                        service_obj.description[:150] if service_obj.description else None
+                    ),
                     "duration_minutes": service_obj.duration_minutes,
                     "category": service_obj.category.value,
                     "match_score": int(match_score),

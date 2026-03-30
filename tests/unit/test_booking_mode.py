@@ -18,9 +18,10 @@ import pytest
 from agent.modes.base import AgenticLoopResult
 from agent.modes.booking_context import BookingContext
 from agent.modes.booking_mode import (
-    BookingMode,
-    _AUDIENCE_KEYWORDS,
+    _AUDIENCE_NAME_FILTER,
     _CONFIRMATION_QUESTION_PATTERNS,
+    BookingMode,
+    _build_auto_confirmation_summary,
     _build_disambiguation_section,
     _build_offered_slots_section,
     _build_recommendations_section,
@@ -31,14 +32,13 @@ from agent.modes.booking_mode import (
     _detect_recommendation_decline,
     _extract_name_from_conversation,
     _extract_notes_from_conversation,
+    _looks_like_clarification,
     _normalize_text,
     _redact_name_tokens,
     _resolve_user_slot_selection,
 )
-from agent.modes.tool_extractors import _AUDIENCE_HINT_MAP
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
-
 
 # =============================================================================
 # Helpers
@@ -629,7 +629,6 @@ class TestNormalizeText:
 
 class TestPreResolvers:
     def test_resolve_customer_from_state(self):
-        mode = make_booking_mode()
         ctx = BookingContext()
         state = make_state(customer_name="Laura", customer_id="cust-100")
 
@@ -1250,7 +1249,7 @@ class TestExtractNameFromConversation:
 
 class TestAudienceKeywordsRejectedAsName:
     """BUG-2 regression: 'soy caballero' / 'soy dama' must NOT be captured as
-    customer_name. The _AUDIENCE_KEYWORDS set guards against this in
+    customer_name. The _AUDIENCE_NAME_FILTER set guards against this in
     _extract_name_from_conversation (Tier 1 — structured intro pattern)."""
 
     def test_soy_caballero_rejected(self):
@@ -1338,10 +1337,10 @@ class TestAudienceKeywordsRejectedAsName:
         assert ctx.customer_name == "Ana"
 
     def test_audience_keywords_constant_contains_key_words(self):
-        """Verify the _AUDIENCE_KEYWORDS set contains the expected demographic words."""
-        assert "caballero" in _AUDIENCE_KEYWORDS
-        assert "dama" in _AUDIENCE_KEYWORDS
-        assert "senora" in _AUDIENCE_KEYWORDS  # accent-stripped form
+        """Verify the _AUDIENCE_NAME_FILTER set contains the expected demographic words."""
+        assert "caballero" in _AUDIENCE_NAME_FILTER
+        assert "dama" in _AUDIENCE_NAME_FILTER
+        assert "senora" in _AUDIENCE_NAME_FILTER  # accent-stripped form
 
 
 # =============================================================================
@@ -1585,8 +1584,6 @@ class TestRecommendationsShownTiming:
 
     def test_recommendations_shown_set_in_build_response(self):
         """_build_response() sets recommendations_shown=True after LLM generates reply."""
-        from unittest.mock import MagicMock
-
         from agent.modes.base import AgenticLoopResult
 
         mode = make_booking_mode()
@@ -2211,12 +2208,12 @@ class TestStylistDesyncFix:
 
         await mode._pre_tool_call("book", tool_args)
 
-        assert mode._ctx.stylist_name == "Pilar", (
-            f"Expected stylist_name='Pilar', got {mode._ctx.stylist_name!r}"
-        )
-        assert mode._ctx.stylist_id == "uuid-pilar", (
-            f"Expected stylist_id='uuid-pilar', got {mode._ctx.stylist_id!r}"
-        )
+        assert (
+            mode._ctx.stylist_name == "Pilar"
+        ), f"Expected stylist_name='Pilar', got {mode._ctx.stylist_name!r}"
+        assert (
+            mode._ctx.stylist_id == "uuid-pilar"
+        ), f"Expected stylist_id='uuid-pilar', got {mode._ctx.stylist_id!r}"
 
     def test_f8_reads_last_booked_slot_when_selected_slot_cleared(self):
         """T-06: When selected_slot is None but last_booked_slot is set,
@@ -2257,9 +2254,9 @@ class TestStylistDesyncFix:
 
         assert "Pilar" in response_text, f"Expected 'Pilar' in response. Got:\n{response_text}"
         assert "10:00" in response_text, f"Expected '10:00' in response. Got:\n{response_text}"
-        assert "lunes 30 de marzo" in response_text, (
-            f"Expected date in response. Got:\n{response_text}"
-        )
+        assert (
+            "lunes 30 de marzo" in response_text
+        ), f"Expected date in response. Got:\n{response_text}"
 
 
 # =============================================================================
@@ -2713,9 +2710,9 @@ class TestBuildResponseRecommendationsGate:
             ],
             customer_name="Ana",
             customer_id="cust-001",
-            pending_recommendations=pending_recommendations
-            if pending_recommendations is not None
-            else ["Tratamiento"],
+            pending_recommendations=(
+                pending_recommendations if pending_recommendations is not None else ["Tratamiento"]
+            ),
             recommendations_shown=False,
         )
 
@@ -3199,3 +3196,536 @@ class TestBookingContextLastError:
         """BookingContext() default: last_error is None."""
         ctx = BookingContext()
         assert ctx.last_error is None
+
+
+# =============================================================================
+# REQ-3: _pre_tool_call injects audience into book() tool args
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestPreToolCallAudienceInjectionForBook:
+    """Verify _pre_tool_call injects service_audience_hint into book() args."""
+
+    def _make_ctx_with_slots(self, audience: str | None = "adult_female") -> BookingContext:
+        return BookingContext(
+            customer_id="550e8400-e29b-41d4-a716-446655440000",
+            customer_name="Ana",
+            service_audience_hint=audience,
+            offered_slots=[
+                {
+                    "stylist_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "full_datetime": "2026-04-10T10:00:00+01:00",
+                    "stylist_name": "María",
+                }
+            ],
+            selected_services=["Cortar"],
+            needs_availability_refresh=False,
+            confirmation_shown=True,
+            notes_asked=True,
+        )
+
+    async def test_injects_audience_when_not_set_in_args(self):
+        """When ctx.service_audience_hint is set and tool_args has no audience, it is injected."""
+        mode = make_booking_mode()
+        mode._ctx = self._make_ctx_with_slots(audience="adult_female")
+
+        tool_args = {
+            "customer_id": "FAKE-ID",
+            "services": ["Cortar"],
+            "first_name": "Ana",
+            "slot_index": 1,
+        }
+
+        await mode._pre_tool_call("book", tool_args)
+
+        # Result should have audience injected (may be ToolCallRejection for other reasons,
+        # but if it passes book guards, audience must be present)
+        # We check that audience was injected before book guards run by inspecting tool_args
+        # (the dict is mutated in place before guards)
+        assert (
+            tool_args.get("audience") == "adult_female"
+        ), f"Expected audience='adult_female' injected into tool_args, got: {tool_args}"
+
+    async def test_does_not_overwrite_existing_audience(self):
+        """When tool_args already has audience, it must not be overwritten."""
+        mode = make_booking_mode()
+        mode._ctx = self._make_ctx_with_slots(audience="adult_female")
+
+        tool_args = {
+            "customer_id": "FAKE-ID",
+            "services": ["Cortar"],
+            "first_name": "Ana",
+            "slot_index": 1,
+            "audience": "adult_female",  # Already set by LLM
+        }
+
+        await mode._pre_tool_call("book", tool_args)
+
+        # Should be preserved, not overwritten
+        assert tool_args.get("audience") == "adult_female"
+
+    async def test_no_injection_when_hint_is_none(self):
+        """When ctx.service_audience_hint is None, audience is not injected into book()."""
+        mode = make_booking_mode()
+        mode._ctx = self._make_ctx_with_slots(audience=None)
+
+        tool_args = {
+            "customer_id": "FAKE-ID",
+            "services": ["Cortar"],
+            "first_name": "Ana",
+            "slot_index": 1,
+        }
+
+        await mode._pre_tool_call("book", tool_args)
+
+        # audience should not have been injected
+        assert (
+            "audience" not in tool_args or tool_args.get("audience") is None
+        ), f"Expected no audience injection when hint is None, got: {tool_args}"
+
+    async def test_search_services_injection_still_works(self):
+        """Regression: existing search_services audience injection still functions."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(
+            service_audience_hint="adult_male",
+        )
+
+        tool_args: dict = {}
+        result = await mode._pre_tool_call("search_services", tool_args)
+
+        assert isinstance(result, dict), f"Expected dict from search_services, got {type(result)}"
+        assert (
+            result.get("audience") == "adult_male"
+        ), f"Expected audience='adult_male' injected into search_services args. Got: {result}"
+
+
+# =============================================================================
+# REQ-1: Audience Canonicalization in _pre_tool_call (T4.1)
+# =============================================================================
+
+
+class TestAudienceCanonicalizationInPreToolCall:
+    """Verify _pre_tool_call canonicalizes compound audience values."""
+
+    @pytest.mark.asyncio
+    async def test_compound_audience_canonicalized_before_search(self):
+        """AC-1.6: 'Dama / Señora' → 'adult_female' in search_services args."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
+
+        tool_args = {"query": "corte", "audience": "Dama / Señora"}
+        result = await mode._pre_tool_call("search_services", tool_args)
+
+        assert isinstance(result, dict)
+        assert result["audience"] == "adult_female"
+
+    @pytest.mark.asyncio
+    async def test_single_canonical_value_unchanged(self):
+        """AC-1.7: already-canonical value passes through."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
+
+        tool_args = {"query": "corte", "audience": "adult_male"}
+        result = await mode._pre_tool_call("search_services", tool_args)
+
+        assert isinstance(result, dict)
+        assert result["audience"] == "adult_male"
+
+    @pytest.mark.asyncio
+    async def test_accented_single_token_canonicalized(self):
+        """'señora' → 'adult_female'."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
+
+        tool_args = {"query": "corte", "audience": "señora"}
+        result = await mode._pre_tool_call("search_services", tool_args)
+
+        assert isinstance(result, dict)
+        assert result["audience"] == "adult_female"
+
+
+# =============================================================================
+# REQ-2: F-7 Auto-Recovery (T4.2)
+# =============================================================================
+
+
+class TestF7AutoRecovery:
+    """Verify _f7_auto_recover extracts service from user message."""
+
+    @pytest.mark.asyncio
+    async def test_f7_recovery_populates_from_search(self):
+        """AC-2.1: auto-recovery calls search_services and returns result."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+
+        mock_result = {
+            "resolved_service": {"id": "svc-1", "name": "Cortar", "duration_minutes": 40}
+        }
+
+        mock_tool = MagicMock()
+        mock_tool.ainvoke = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "agent.tools.search_services.search_services",
+            mock_tool,
+        ):
+            result = await mode._f7_auto_recover("quiero un corte de pelo", ctx)
+
+        assert result is not None
+        assert result.get("resolved_service", {}).get("name") == "Cortar"
+
+    @pytest.mark.asyncio
+    async def test_f7_skip_on_greeting_only(self):
+        """AC-2.4: 'hola' → recovery skipped (no service keyword)."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+
+        result = await mode._f7_auto_recover("hola", ctx)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_f7_no_double_recovery(self):
+        """AC-2.5: second call returns None when _f7_recovered is True."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx._f7_recovered = True
+
+        result = await mode._f7_auto_recover("quiero un corte", ctx)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_f7_empty_message_skipped(self):
+        mode = make_booking_mode()
+        ctx = BookingContext()
+
+        result = await mode._f7_auto_recover("", ctx)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_f7_search_exception_handled(self):
+        """Exception in search_services → returns None, no crash."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+
+        mock_tool = MagicMock()
+        mock_tool.ainvoke = AsyncMock(side_effect=RuntimeError("DB down"))
+
+        with patch(
+            "agent.tools.search_services.search_services",
+            mock_tool,
+        ):
+            result = await mode._f7_auto_recover("quiero un corte", ctx)
+
+        assert result is None
+
+
+# =============================================================================
+# REQ-3: Stylist Hallucination Hardening (T4.2)
+# =============================================================================
+
+
+class TestRedactHallucinatedStylists:
+    """Verify _redact_hallucinated_stylists replaces invented names."""
+
+    def test_redaction_replaces_hallucinated_name(self):
+        """AC-3.2: hallucinated name replaced with 'tu estilista'."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
+        ctx._last_hallucinated_names = {"Carmen"}
+
+        result = mode._redact_hallucinated_stylists("Carmen te atenderá", ctx)
+        assert "Carmen" not in result
+        assert "tu estilista" in result
+
+    def test_known_name_not_redacted(self):
+        """AC-3.3: real stylist name stays."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
+        ctx._last_hallucinated_names = {"Carmen"}
+
+        result = mode._redact_hallucinated_stylists("Ana te atenderá", ctx)
+        assert "Ana" in result
+
+    def test_redaction_case_insensitive(self):
+        """AC-3.4: case insensitive replacement."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.prefetched_stylists = [{"name": "Ana"}]
+        ctx._last_hallucinated_names = {"Carmen"}
+
+        result = mode._redact_hallucinated_stylists("CARMEN te ayudará", ctx)
+        assert "CARMEN" not in result
+        assert "carmen" not in result.lower() or "tu estilista" in result
+
+    def test_word_boundary_no_substring_replace(self):
+        """AC-3.5: 'Ana' hallucinated does NOT replace inside 'Banana'."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.prefetched_stylists = [{"name": "Pilar"}]
+        ctx._last_hallucinated_names = {"Ana"}
+
+        result = mode._redact_hallucinated_stylists("Me gusta la Banana", ctx)
+        assert "Banana" in result
+
+    def test_no_redaction_when_empty_hallucinated(self):
+        """AC-3.6: no hallucinated names → response unchanged."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.prefetched_stylists = [{"name": "Ana"}]
+        ctx._last_hallucinated_names = set()
+
+        original = "Ana te atenderá"
+        result = mode._redact_hallucinated_stylists(original, ctx)
+        assert result == original
+
+
+class TestStructuredCorrectionPrompt:
+    """Verify hallucination correction prompt uses numbered list."""
+
+    def test_correction_prompt_contains_numbered_list(self):
+        """AC-3.1: when force_stylist_correction=True, numbered list injected."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.force_stylist_correction = True
+        ctx.prefetched_stylists = [
+            {"name": "Ana"},
+            {"name": "Pilar"},
+            {"name": "Victor"},
+        ]
+
+        # Build dynamic context parts
+        mode._ctx = ctx
+        state = make_state()
+        mode._dynamic_context_state = state
+        mode._dynamic_context_index = 0
+
+        # Call the part that builds the dynamic context string
+        parts_text = BookingMode._build_dynamic_context(state, ctx)
+        assert "1. Ana" in parts_text
+        assert "2. Pilar" in parts_text
+        assert "3. Victor" in parts_text
+        assert "CORRECCIÓN CRÍTICA" in parts_text
+
+    def test_correction_prompt_fallback_when_no_stylists(self):
+        """Fallback: prefetched_stylists empty → generic text."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.force_stylist_correction = True
+        ctx.prefetched_stylists = []
+
+        mode._ctx = ctx
+        state = make_state()
+
+        parts_text = BookingMode._build_dynamic_context(state, ctx)
+        assert "CORRECCIÓN:" in parts_text
+        assert "1." not in parts_text
+
+
+# =============================================================================
+# REQ-4: Book Rejection Auto-Summary (T4.3)
+# =============================================================================
+
+
+class TestBuildAutoConfirmationSummary:
+    """Verify _build_auto_confirmation_summary generates correct output."""
+
+    def test_summary_contains_service_name(self):
+        """AC-4.6: non-empty string with service name."""
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar"]
+        ctx.stylist_name = "Pilar"
+        ctx.customer_name = "María"
+        ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
+
+        result = _build_auto_confirmation_summary(ctx)
+        assert "Cortar" in result
+        assert len(result) > 0
+
+    def test_summary_contains_stylist_name(self):
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar"]
+        ctx.stylist_name = "Pilar"
+        ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
+
+        result = _build_auto_confirmation_summary(ctx)
+        assert "Pilar" in result
+
+    def test_summary_no_uuids(self):
+        """AC-4.5: no UUID patterns in output."""
+        import re as re_mod
+
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar"]
+        ctx.stylist_name = "Pilar"
+        ctx.service_id = "94577ac8-9814-a06f-712b-f97f124fce72"
+        ctx.stylist_id = "abc12345-6789-0def-abcd-ef0123456789"
+        ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
+
+        result = _build_auto_confirmation_summary(ctx)
+        uuid_pattern = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+        assert not re_mod.search(uuid_pattern, result), f"UUID found in summary: {result}"
+
+    def test_summary_stylist_none_shows_placeholder(self):
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar"]
+        ctx.stylist_name = None
+        ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
+
+        result = _build_auto_confirmation_summary(ctx)
+        assert "tu estilista" in result
+
+    def test_summary_multiple_services_formatted(self):
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar", "Óleo Pigmento"]
+        ctx.stylist_name = "Ana"
+        ctx.selected_slot = {"date": "2026-04-03", "time": "10:00"}
+
+        result = _build_auto_confirmation_summary(ctx)
+        assert "Cortar" in result
+        assert "Óleo Pigmento" in result
+
+
+class TestBookRejectionAutoSummary:
+    """Verify book() rejection auto-generates summary when data complete."""
+
+    @pytest.mark.asyncio
+    async def test_auto_summary_injected_when_data_complete(self):
+        """AC-4.1: book() rejected with complete data → confirmation_summary_sent=True."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar"]
+        ctx.service_id = "svc-1"
+        ctx.service_category = "Peluquería"
+        ctx.stylist_id = "stylist-1"
+        ctx.stylist_name = "Pilar"
+        ctx.customer_name = "María"
+        ctx.customer_id = "cust-1"
+        ctx.notes_asked = True
+        ctx.confirmation_shown = False
+        ctx.confirmation_summary_sent = False
+        ctx.offered_slots = [{"date": "2026-04-03", "time": "09:00", "stylist_id": "stylist-1"}]
+        ctx.selected_slot = {"date": "2026-04-03", "time": "09:00", "stylist_id": "stylist-1"}
+        mode._ctx = ctx
+
+        from agent.modes.base import ToolCallRejection
+
+        result = await mode._pre_tool_call("book", {"slot_index": 0})
+        assert isinstance(result, ToolCallRejection)
+        assert ctx.confirmation_summary_sent is True
+
+    @pytest.mark.asyncio
+    async def test_no_auto_summary_when_data_incomplete(self):
+        """AC-4.4: incomplete data → existing rejection, no summary."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.confirmation_shown = False
+        ctx.confirmation_summary_sent = False
+        # No service, stylist, etc. — data is incomplete
+        mode._ctx = ctx
+
+        from agent.modes.base import ToolCallRejection
+
+        result = await mode._pre_tool_call("book", {"slot_index": 0})
+        assert isinstance(result, ToolCallRejection)
+        assert ctx.confirmation_summary_sent is False
+
+
+# =============================================================================
+# REQ-5: Notes Extraction Filter (T4.4)
+# =============================================================================
+
+
+class TestLooksLikeClarification:
+    """Verify _looks_like_clarification detects slot/option patterns."""
+
+    def test_pure_digit_is_clarification(self):
+        assert _looks_like_clarification("4") is True
+
+    def test_slot_selection_pattern_is_clarification(self):
+        assert _looks_like_clarification("4 y el 4") is True
+
+    def test_compound_digits_is_clarification(self):
+        assert _looks_like_clarification("3 y 4") is True
+
+    def test_too_short_is_clarification(self):
+        assert _looks_like_clarification("ok") is True
+
+    def test_real_note_not_clarification(self):
+        assert _looks_like_clarification("2 cm de largo") is False
+
+    def test_padded_digit_is_clarification(self):
+        assert _looks_like_clarification(" 4 ") is True
+
+    def test_two_digit_number_is_clarification(self):
+        assert _looks_like_clarification("12") is True
+
+    def test_pattern_1_y_el_1(self):
+        assert _looks_like_clarification("1 y el 1") is True
+
+    def test_comma_separated_digits(self):
+        assert _looks_like_clarification("3, 4") is True
+
+    def test_single_word_affirmative(self):
+        assert _looks_like_clarification("dale") is True
+
+    def test_complex_note_passes(self):
+        assert _looks_like_clarification("raíz oscura, puntas más claras") is False
+
+
+class TestNotesExtractionFilter:
+    """Verify clarification responses are NOT captured as notes."""
+
+    def _make_state_with_notes_question(self, user_reply: str) -> tuple:
+        """Build state where bot asked for notes and user replied."""
+        ctx = BookingContext()
+        ctx.notes = None
+        ctx.notes_asked = False
+
+        state = create_initial_state("conv-001", "+34612345678")
+        state["messages"] = [
+            {
+                "role": "assistant",
+                "content": "¿Tienes alguna indicación especial para tu cita?",
+            },
+            {"role": "user", "content": user_reply},
+        ]
+        return state, ctx
+
+    def test_slot_number_not_captured_as_notes(self):
+        """AC-5.1: '4' → ctx.notes remains None."""
+        state, ctx = self._make_state_with_notes_question("4")
+        _extract_notes_from_conversation(state, "4", ctx)
+        assert ctx.notes is None
+
+    def test_slot_selection_not_captured(self):
+        """AC-5.2: '4 y el 4' → ctx.notes remains None."""
+        state, ctx = self._make_state_with_notes_question("4 y el 4")
+        _extract_notes_from_conversation(state, "4 y el 4", ctx)
+        assert ctx.notes is None
+
+    def test_digit_compound_not_captured(self):
+        """AC-5.3: '3 y 4' → ctx.notes remains None."""
+        state, ctx = self._make_state_with_notes_question("3 y 4")
+        _extract_notes_from_conversation(state, "3 y 4", ctx)
+        assert ctx.notes is None
+
+    def test_real_note_captured(self):
+        """AC-5.5: '2 cm de largo' IS captured as notes."""
+        state, ctx = self._make_state_with_notes_question("2 cm de largo")
+        _extract_notes_from_conversation(state, "2 cm de largo", ctx)
+        assert ctx.notes == "2 cm de largo"
+
+    def test_complex_note_captured(self):
+        """AC-5.6: complex notes captured correctly."""
+        state, ctx = self._make_state_with_notes_question("raíz oscura, puntas más claras")
+        _extract_notes_from_conversation(state, "raíz oscura, puntas más claras", ctx)
+        assert ctx.notes == "raíz oscura, puntas más claras"
+
+    def test_decline_phrase_still_blocked(self):
+        """AC-5.7: 'no' still blocked by existing decline_phrases."""
+        state, ctx = self._make_state_with_notes_question("no")
+        _extract_notes_from_conversation(state, "no", ctx)
+        assert ctx.notes is None

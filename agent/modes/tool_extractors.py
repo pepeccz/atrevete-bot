@@ -19,6 +19,7 @@ import unicodedata
 from typing import Any
 
 from agent.modes.booking_context import BookingContext
+from shared.audience_maps import AUDIENCE_HINT_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -26,32 +27,7 @@ logger = logging.getLogger(__name__)
 # Axis hint maps (audience, hair_density, hair_length)
 # ============================================================================
 
-_AUDIENCE_HINT_MAP: dict[str, str] = {
-    # adult_male
-    "caballero": "adult_male",
-    "hombre": "adult_male",
-    "adulto": "adult_male",
-    "senor": "adult_male",
-    "chico": "adult_male",
-    # adult_female
-    "dama": "adult_female",
-    "mujer": "adult_female",
-    "adulta": "adult_female",
-    "senora": "adult_female",
-    "chica": "adult_female",
-    "seorita": "adult_female",
-    "srita": "adult_female",
-    # child_male
-    "nino": "child_male",
-    "nene": "child_male",
-    "chiquitin": "child_male",
-    # child_female
-    "nina": "child_female",
-    "nena": "child_female",
-    "chiquitina": "child_female",
-    # baby
-    "bebe": "baby",
-}
+# AUDIENCE_HINT_MAP is imported from shared.audience_maps (single source of truth)
 
 # Maps Spanish natural language → hair_density axis values used by resolve_candidates()
 # Axis values: "normal" | "extra"
@@ -120,7 +96,7 @@ def extract_service_audience_hint(value: str | None) -> str | None:
     if not normalized:
         return None
 
-    for token, hint in _AUDIENCE_HINT_MAP.items():
+    for token, hint in AUDIENCE_HINT_MAP.items():
         if re.search(rf"\b{re.escape(token)}\b", normalized):
             return hint
 
@@ -155,7 +131,7 @@ def resolve_pending_clarification(ctx: BookingContext, user_message: str = "") -
 
     Axis resolution strategy:
     - audience: derive canonical hint from ctx.service_audience_hint (preferred) OR
-      from user_message via _AUDIENCE_HINT_MAP (fallback), then match against option
+      from user_message via AUDIENCE_HINT_MAP (fallback), then match against option
       values/labels using multiple strategies (canonical value, label substring, token).
     - hair_density: match user_message against _HAIR_DENSITY_HINT_MAP
     - hair_length: match user_message against _HAIR_LENGTH_HINT_MAP
@@ -193,7 +169,7 @@ def resolve_pending_clarification(ctx: BookingContext, user_message: str = "") -
             # but the hint was never persisted from a previous turn.
             audience_hint = ctx.service_audience_hint
             if audience_hint is None and user_text:
-                audience_hint = _match_hint_map(user_text, _AUDIENCE_HINT_MAP)
+                audience_hint = _match_hint_map(user_text, AUDIENCE_HINT_MAP)
             if audience_hint is None:
                 still_pending.append(clarification)
                 continue
@@ -309,7 +285,7 @@ def _match_hint_map(normalized_text: str, hint_map: dict[str, str]) -> str | Non
     """
     best_key: str | None = None
     best_len = 0
-    for key, value in hint_map.items():
+    for key, _value in hint_map.items():
         if key in normalized_text and len(key) > best_len:
             best_key = key
             best_len = len(key)

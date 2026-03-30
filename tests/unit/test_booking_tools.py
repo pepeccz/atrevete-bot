@@ -231,20 +231,19 @@ class TestBookTool:
         customer_id = uuid4()
         stylist_id = uuid4()
         MADRID_TZ = ZoneInfo("Europe/Madrid")
-        start_time = datetime.now(MADRID_TZ) + timedelta(days=4)  # 4 days in future (passes 3-day rule)
+        start_time = datetime.now(MADRID_TZ) + timedelta(
+            days=4
+        )  # 4 days in future (passes 3-day rule)
 
         async with get_async_session() as session:
             customer = Customer(
-                id=customer_id,
-                phone="+34600000001",
-                first_name="Test",
-                last_name="Customer"
+                id=customer_id, phone="+34600000001", first_name="Test", last_name="Customer"
             )
             stylist = Stylist(
                 id=stylist_id,
                 name="Test Stylist",
                 category=ServiceCategory.HAIRDRESSING,
-                google_calendar_id="test@calendar.com"
+                google_calendar_id="test@calendar.com",
             )
             session.add(customer)
             session.add(stylist)
@@ -256,22 +255,26 @@ class TestBookTool:
             "event_id": "mock_event_123",
             "calendar_id": "test@calendar.com",
             "start_time": start_time.isoformat(),
-            "end_time": (start_time + timedelta(minutes=30)).isoformat()
+            "end_time": (start_time + timedelta(minutes=30)).isoformat(),
         }
 
-        with patch('agent.tools.calendar_tools.create_calendar_event', return_value=mock_calendar_response):
+        with patch(
+            "agent.tools.calendar_tools.create_calendar_event", return_value=mock_calendar_response
+        ):
             # Act: Call book() tool using ainvoke
             # Using "Cortar" from new PDF catalog (was "Cortar" in old catalog)
-            result = await book.ainvoke({
-                "customer_id": str(customer_id),
-                "first_name": "María",
-                "last_name": "López",
-                "notes": "Cliente prefiere estilista Ana",
-                "services": ["Cortar"],
-                "stylist_id": str(stylist_id),
-                "start_time": start_time.isoformat(),
-                "conversation_id": "test_conv_123"
-            })
+            result = await book.ainvoke(
+                {
+                    "customer_id": str(customer_id),
+                    "first_name": "María",
+                    "last_name": "López",
+                    "notes": "Cliente prefiere estilista Ana",
+                    "services": ["Cortar"],
+                    "stylist_id": str(stylist_id),
+                    "start_time": start_time.isoformat(),
+                    "conversation_id": "test_conv_123",
+                }
+            )
 
         # Assert: Booking succeeded
         assert result["success"] is True, f"Booking failed: {result}"
@@ -314,7 +317,7 @@ class TestBookTool:
                 id=stylist_id,
                 name="Test Stylist",
                 category=ServiceCategory.HAIRDRESSING,
-                google_calendar_id="test@calendar.com"
+                google_calendar_id="test@calendar.com",
             )
             session.add(stylist)
             await session.commit()
@@ -323,10 +326,10 @@ class TestBookTool:
         mock_service = AsyncMock()
         mock_service.events().insert().execute.return_value = {
             "id": "calendar_event_456",
-            "summary": "🟡 María - Cortar"
+            "summary": "🟡 María - Cortar",
         }
 
-        with patch('agent.tools.calendar_tools.get_calendar_client') as mock_get_client:
+        with patch("agent.tools.calendar_tools.get_calendar_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_client.get_service.return_value = mock_service
             mock_get_client.return_value = mock_client
@@ -339,7 +342,7 @@ class TestBookTool:
                 customer_name="María",
                 service_names="Cortar",
                 status="pending",
-                conversation_id="test_conv"
+                conversation_id="test_conv",
             )
 
         # Assert: Event created successfully
@@ -349,7 +352,9 @@ class TestBookTool:
         # Assert: Event summary has emoji 🟡 format
         call_args = mock_service.events().insert.call_args
         event_body = call_args.kwargs["body"]
-        assert "🟡" in event_body["summary"], f"Expected emoji 🟡 in summary: {event_body['summary']}"
+        assert "🟡" in event_body["summary"], (
+            f"Expected emoji 🟡 in summary: {event_body['summary']}"
+        )
         assert event_body["summary"] == "🟡 María - Cortar"
 
     async def test_book_saves_chatwoot_conversation_id(self):
@@ -376,13 +381,13 @@ class TestBookTool:
                 id=customer_id,
                 phone="+34600000002",
                 first_name="Test",
-                chatwoot_conversation_id=None  # Initially NULL
+                chatwoot_conversation_id=None,  # Initially NULL
             )
             stylist = Stylist(
                 id=stylist_id,
                 name="Test Stylist",
                 category=ServiceCategory.HAIRDRESSING,
-                google_calendar_id="test@calendar.com"
+                google_calendar_id="test@calendar.com",
             )
             session.add(customer)
             session.add(stylist)
@@ -394,21 +399,25 @@ class TestBookTool:
             "event_id": "mock_event_789",
             "calendar_id": "test@calendar.com",
             "start_time": start_time.isoformat(),
-            "end_time": (start_time + timedelta(minutes=30)).isoformat()
+            "end_time": (start_time + timedelta(minutes=30)).isoformat(),
         }
 
-        with patch('agent.tools.calendar_tools.create_calendar_event', return_value=mock_calendar_response):
+        with patch(
+            "agent.tools.calendar_tools.create_calendar_event", return_value=mock_calendar_response
+        ):
             # Act: Call book() with conversation_id using ainvoke
-            result = await book.ainvoke({
-                "customer_id": str(customer_id),
-                "first_name": "Pedro",
-                "last_name": None,
-                "notes": None,
-                "services": ["Cortar"],
-                "stylist_id": str(stylist_id),
-                "start_time": start_time.isoformat(),
-                "conversation_id": "chatwoot_conv_456"  # Provide conversation_id
-            })
+            result = await book.ainvoke(
+                {
+                    "customer_id": str(customer_id),
+                    "first_name": "Pedro",
+                    "last_name": None,
+                    "notes": None,
+                    "services": ["Cortar"],
+                    "stylist_id": str(stylist_id),
+                    "start_time": start_time.isoformat(),
+                    "conversation_id": "chatwoot_conv_456",  # Provide conversation_id
+                }
+            )
 
         # Assert: Booking succeeded
         assert result["success"] is True
@@ -441,38 +450,35 @@ class TestBookTool:
         start_time = datetime.now(MADRID_TZ) + timedelta(days=4)
 
         async with get_async_session() as session:
-            customer = Customer(
-                id=customer_id,
-                phone="+34600000003",
-                first_name="Test"
-            )
+            customer = Customer(id=customer_id, phone="+34600000003", first_name="Test")
             stylist = Stylist(
                 id=stylist_id,
                 name="Test Stylist",
                 category=ServiceCategory.HAIRDRESSING,
-                google_calendar_id="test@calendar.com"
+                google_calendar_id="test@calendar.com",
             )
             session.add(customer)
             session.add(stylist)
             await session.commit()
 
         # Mock Calendar API to simulate failure
-        mock_calendar_failure = {
-            "success": False,
-            "error": "Google Calendar API unavailable"
-        }
+        mock_calendar_failure = {"success": False, "error": "Google Calendar API unavailable"}
 
-        with patch('agent.tools.calendar_tools.create_calendar_event', return_value=mock_calendar_failure):
+        with patch(
+            "agent.tools.calendar_tools.create_calendar_event", return_value=mock_calendar_failure
+        ):
             # Act: Call book() - should fail using ainvoke
-            result = await book.ainvoke({
-                "customer_id": str(customer_id),
-                "first_name": "Ana",
-                "last_name": None,
-                "notes": None,
-                "services": ["Cortar"],
-                "stylist_id": str(stylist_id),
-                "start_time": start_time.isoformat()
-            })
+            result = await book.ainvoke(
+                {
+                    "customer_id": str(customer_id),
+                    "first_name": "Ana",
+                    "last_name": None,
+                    "notes": None,
+                    "services": ["Cortar"],
+                    "stylist_id": str(stylist_id),
+                    "start_time": start_time.isoformat(),
+                }
+            )
 
         # Assert: Booking failed
         assert result["success"] is False
@@ -486,3 +492,120 @@ class TestBookTool:
 
             assert len(appointments) == 0, "Appointment should NOT exist after rollback"
 
+
+# ===========================================================================
+# REQ-3: book() audience passthrough to resolve_service_names
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestBookAudiencePassthrough:
+    """Verify that book() accepts and forwards the audience kwarg to resolve_service_names."""
+
+    async def test_book_passes_audience_to_resolve_service_names(self):
+        """book() must pass audience kwarg to resolve_service_names()."""
+        from unittest.mock import AsyncMock, patch
+        from uuid import uuid4
+
+        from agent.tools.booking_tools import book
+
+        service_uuid = uuid4()
+        customer_uuid = uuid4()
+        stylist_uuid = uuid4()
+
+        mock_resolve = AsyncMock(return_value=([service_uuid], None))
+
+        with patch("agent.tools.booking_tools.resolve_service_names", mock_resolve):
+            # Call via ainvoke — audience injected
+            from agent.transactions.booking_transaction import BookingTransaction
+
+            with patch.object(
+                BookingTransaction,
+                "execute",
+                AsyncMock(
+                    return_value={
+                        "success": True,
+                        "appointment_id": str(uuid4()),
+                        "google_calendar_event_id": "cal123",
+                        "start_time": "2026-04-10T10:00:00+02:00",
+                        "end_time": "2026-04-10T11:00:00+02:00",
+                        "duration_minutes": 60,
+                        "customer_id": str(customer_uuid),
+                        "stylist_id": str(stylist_uuid),
+                        "service_ids": [str(service_uuid)],
+                    }
+                ),
+            ):
+                result = await book.ainvoke(
+                    {
+                        "customer_id": str(customer_uuid),
+                        "first_name": "Ana",
+                        "last_name": None,
+                        "notes": None,
+                        "services": ["Cortar"],
+                        "stylist_id": str(stylist_uuid),
+                        "start_time": "2026-04-10T10:00:00+02:00",
+                        "audience": "adult_female",
+                    }
+                )
+
+        # Verify resolve_service_names was called with audience kwarg
+        mock_resolve.assert_called_once()
+        call_kwargs = mock_resolve.call_args
+        # Either positional or keyword — the audience must be present
+        assert call_kwargs.kwargs.get("audience") == "adult_female" or (
+            len(call_kwargs.args) > 1 and call_kwargs.args[1] == "adult_female"
+        ), f"Expected audience='adult_female' in call to resolve_service_names. Got: {call_kwargs}"
+
+    async def test_book_passes_none_audience_when_absent(self):
+        """book() passes audience=None to resolve_service_names when not provided."""
+        from unittest.mock import AsyncMock, patch
+        from uuid import uuid4
+
+        from agent.tools.booking_tools import book
+
+        service_uuid = uuid4()
+        customer_uuid = uuid4()
+        stylist_uuid = uuid4()
+
+        mock_resolve = AsyncMock(return_value=([service_uuid], None))
+
+        with patch("agent.tools.booking_tools.resolve_service_names", mock_resolve):
+            from agent.transactions.booking_transaction import BookingTransaction
+
+            with patch.object(
+                BookingTransaction,
+                "execute",
+                AsyncMock(
+                    return_value={
+                        "success": True,
+                        "appointment_id": str(uuid4()),
+                        "google_calendar_event_id": "cal456",
+                        "start_time": "2026-04-10T10:00:00+02:00",
+                        "end_time": "2026-04-10T11:00:00+02:00",
+                        "duration_minutes": 60,
+                        "customer_id": str(customer_uuid),
+                        "stylist_id": str(stylist_uuid),
+                        "service_ids": [str(service_uuid)],
+                    }
+                ),
+            ):
+                await book.ainvoke(
+                    {
+                        "customer_id": str(customer_uuid),
+                        "first_name": "Juan",
+                        "last_name": None,
+                        "notes": None,
+                        "services": ["Barba"],
+                        "stylist_id": str(stylist_uuid),
+                        "start_time": "2026-04-10T10:00:00+02:00",
+                        # No audience provided
+                    }
+                )
+
+        mock_resolve.assert_called_once()
+        call_kwargs = mock_resolve.call_args
+        # audience should be None (default)
+        assert call_kwargs.kwargs.get("audience") is None, (
+            f"Expected audience=None. Got: {call_kwargs}"
+        )

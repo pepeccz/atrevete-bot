@@ -23,11 +23,11 @@ import logging
 import re
 import unicodedata
 
-from agent.tools.customer_tools import manage_customer
-
-from agent.modes.base import FIRST_TURN_INTRO, BaseModeNode
+from agent.modes.base import BaseModeNode
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
+from agent.tools.customer_tools import manage_customer
+from shared.audience_maps import AUDIENCE_HINT_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -37,35 +37,14 @@ logger = logging.getLogger(__name__)
 _WELCOME_NEW = "¿En qué puedo ayudarte hoy?"
 _WELCOME_RETURNING = "¡Hola de nuevo! 😊 ¿En qué puedo ayudarte hoy?"
 
-# ── ADR-4: Audience hint tokens ───────────────────────────────────────────────
-# Maps normalized message tokens → audience hint values
-_AUDIENCE_HINT_MAP: dict[str, str] = {
-    # adult_male
-    "caballero": "adult_male",
-    "hombre": "adult_male",
-    "senor": "adult_male",
-    "adulto": "adult_male",
-    # adult_female
-    "dama": "adult_female",
-    "mujer": "adult_female",
-    "senora": "adult_female",
-    "adulta": "adult_female",
-    # child_female
-    "nina": "child_female",
-    "nena": "child_female",
-    "hija": "child_female",
-    # child_male
-    "nino": "child_male",
-    "nene": "child_male",
-    "hijo": "child_male",
-}
+# ── ADR-4: Audience hint tokens — imported from shared.audience_maps ─────────
 
 # Tokens that signal booking intent in the greeting message.
 # F-9: These tokens are used both for booking handoff context AND for
 # deterministic BOOKING transition override in _resolve_target_mode().
 _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset(
     {
-        # People / gender / audience (from _AUDIENCE_HINT_MAP)
+        # People / gender / audience (from AUDIENCE_HINT_MAP)
         "mujer",
         "hombre",
         "nino",
@@ -100,13 +79,11 @@ _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset(
 # WhatsApp metadata (pending_whatsapp_name) ALWAYS takes priority over these.
 NAME_PATTERNS: list[re.Pattern[str]] = [
     re.compile(
-        r"(?:me llamo|mi nombre es)\s+"
-        r"([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+)?)",
+        r"(?:me llamo|mi nombre es)\s+" r"([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+)?)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:^|\.\s+)[Ss]oy\s+"
-        r"([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+)?)",
+        r"(?:^|\.\s+)[Ss]oy\s+" r"([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+)?)",
     ),
 ]
 
@@ -201,7 +178,7 @@ def _build_booking_handoff_context(message: str | None) -> dict:
     ctx: dict = {"opening_booking_request": message}
 
     normalized = _normalize_text(message)
-    for token, hint in _AUDIENCE_HINT_MAP.items():
+    for token, hint in AUDIENCE_HINT_MAP.items():
         if token in normalized:
             ctx["service_audience_hint"] = hint
             break

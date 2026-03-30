@@ -13,24 +13,23 @@ work both locally (Python 3.14) and in Docker (Python 3.11).
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 import uuid
 from importlib.machinery import ModuleSpec
 from types import ModuleType
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from database.models import ServiceCategory
-
 
 # ---------------------------------------------------------------------------
 # Load search_services module directly (bypass agent.tools.__init__)
 # because agent.tools.__init__ eagerly imports langchain_core which has
 # pydantic.v1 compatibility issues on Python 3.14.
 # ---------------------------------------------------------------------------
+
 
 def _load_search_services_module():
     """
@@ -46,25 +45,31 @@ def _load_search_services_module():
         import langchain_core.tools  # noqa: F401
     except ImportError:
         if "langchain_core.tools" not in sys.modules:
+
             def _tool_decorator(fn=None, args_schema=None, **kwargs):
                 """Minimal @tool stub that returns the function unchanged."""
                 if fn is None:
+
                     def wrapper(f):
                         # Attach an ainvoke method so tests can call it
                         async def ainvoke(args: dict[str, Any]):
                             return await f(**args)
+
                         f.ainvoke = ainvoke
                         return f
+
                     return wrapper
+
                 # Direct decoration (no args)
                 async def ainvoke(args: dict[str, Any]):
                     return await fn(**args)
+
                 fn.ainvoke = ainvoke
                 return fn
 
             lc_stub = ModuleType("langchain_core")
             lc_tools_stub = ModuleType("langchain_core.tools")
-            setattr(lc_tools_stub, "tool", _tool_decorator)
+            lc_tools_stub.tool = _tool_decorator
             sys.modules["langchain_core"] = lc_stub
             sys.modules["langchain_core.tools"] = lc_tools_stub
 
@@ -292,9 +297,9 @@ class TestSearchServicesEnvelope:
         with _patch_db([MECHAS, MECHAS_EXTRAS]):
             result = await _invoke("mechas")
 
-        assert "clarification_needed" in result, (
-            f"Expected 'clarification_needed' key in result, got: {list(result.keys())}"
-        )
+        assert (
+            "clarification_needed" in result
+        ), f"Expected 'clarification_needed' key in result, got: {list(result.keys())}"
         clarification = result["clarification_needed"]
         assert clarification["axis"] == "hair_density"
         assert clarification["question_hint"]
@@ -342,9 +347,9 @@ class TestSearchServicesEnvelope:
         with _patch_db([CORTE_CABALLERO]):
             result = await _invoke("corte caballero")
 
-        assert "resolved_service" in result, (
-            f"Expected 'resolved_service' key in result, got: {list(result.keys())}"
-        )
+        assert (
+            "resolved_service" in result
+        ), f"Expected 'resolved_service' key in result, got: {list(result.keys())}"
         resolved = result["resolved_service"]
         assert resolved["name"] == "Corte Caballero"
         assert resolved["duration_minutes"] == 40
@@ -384,7 +389,9 @@ class TestMetadataAwareScoring:
             ("corte caballero", CORTE_CABALLERO),
         ],
     )
-    def test_phase5_regression_queries_keep_expected_services_above_cutoff(self, query: str, service: MagicMock):
+    def test_phase5_regression_queries_keep_expected_services_above_cutoff(
+        self, query: str, service: MagicMock
+    ):
         assert _ss_mod._calculate_service_score(query, service) >= 60
 
     @pytest.mark.parametrize("query", ["mujer adulta", "corte dama", "corte señora"])
@@ -432,9 +439,9 @@ class TestMetadataAwareScoring:
         with _patch_db([BIOTERAPIA_FACIAL]):
             result = await _invoke("bioterapia facial")
 
-        assert "services" in result, (
-            f"Expected 'services' key in result, got: {list(result.keys())}"
-        )
+        assert (
+            "services" in result
+        ), f"Expected 'services' key in result, got: {list(result.keys())}"
         services = result["services"]
         assert len(services) >= 1
         # Should NOT be clarification or resolved_service
@@ -482,3 +489,250 @@ class TestMetadataAwareScoring:
             result = await _invoke("mechas")
 
         assert "error" in result or result.get("count", 0) == 0
+
+
+# ---------------------------------------------------------------------------
+# REQ-1 / REQ-2: Metadata-first filtering and no-silent-fallback
+# ---------------------------------------------------------------------------
+
+
+async def _invoke_with_audience(query: str, audience: str, services: list) -> dict:
+    """Helper to call search_services with audience param."""
+    args: dict[str, Any] = {"query": query, "audience": audience, "max_results": 10}
+    with _patch_db(services):
+        return await _ss_mod.search_services.ainvoke(args)
+
+
+# Fixtures for REQ-1 tests — use services with disambiguation_tags for proper scoring
+CORTE_FEMALE = _make_service(
+    "Cortar",
+    duration_minutes=40,
+    description="Corte capilar dama",
+    metadata_={
+        "family": "haircut",
+        "audience": "adult_female",
+        "disambiguation_tags": ["cortar", "corte", "corte dama", "corte mujer"],
+        "ask_if_missing": [],
+    },
+)
+
+CORTE_MALE = _make_service(
+    "Corte Caballero",
+    duration_minutes=30,
+    metadata_={
+        "family": "haircut",
+        "audience": "adult_male",
+        "disambiguation_tags": ["corte caballero", "caballero"],
+        "ask_if_missing": [],
+    },
+)
+
+CORTE_BABY = _make_service(
+    "Corte Bebé",
+    duration_minutes=20,
+    metadata_={
+        "family": "haircut",
+        "audience": "baby",
+        "disambiguation_tags": ["corte bebe", "bebe"],
+        "ask_if_missing": [],
+    },
+)
+
+CORTE_MALE = _make_service(
+    "Corte Caballero",
+    duration_minutes=30,
+    metadata_={
+        "family": "haircut",
+        "audience": "adult_male",
+        "disambiguation_tags": [],
+        "ask_if_missing": [],
+    },
+)
+
+CORTE_BABY = _make_service(
+    "Corte Bebé",
+    duration_minutes=20,
+    metadata_={
+        "family": "haircut",
+        "audience": "baby",
+        "disambiguation_tags": [],
+        "ask_if_missing": [],
+    },
+)
+
+# A service with null/absent metadata_.audience — keyword fallback applies
+TINTE_NO_META_AUDIENCE = _make_service(
+    "Tinte caballero color",
+    duration_minutes=90,
+    metadata_={
+        "family": "color",
+        "audience": None,
+        "disambiguation_tags": ["caballero"],
+        "ask_if_missing": [],
+    },
+)
+
+
+@pytest.mark.asyncio
+class TestMatchesAudienceMetadataFirst:
+    """REQ-1: _matches_audience uses metadata_.audience as primary signal."""
+
+    async def test_search_female_audience_excludes_male_and_baby(self):
+        """REQ-1 Scenario: search 'corte' with audience='adult_female' returns only Cortar."""
+        result = await _invoke_with_audience(
+            "corte", "adult_female", [CORTE_FEMALE, CORTE_MALE, CORTE_BABY]
+        )
+        # Should contain only Cortar (adult_female)
+        service_names = []
+        if "resolved_service" in result:
+            service_names = [result["resolved_service"]["name"]]
+        elif "services" in result:
+            service_names = [s["name"] for s in result["services"]]
+        elif "clarification_needed" in result:
+            service_names = [o["service_name"] for o in result["clarification_needed"]["options"]]
+
+        assert "Cortar" in service_names, f"Expected 'Cortar' in {service_names}"
+        assert "Corte Caballero" not in service_names, f"Male service leaked: {service_names}"
+        assert "Corte Bebé" not in service_names, f"Baby service leaked: {service_names}"
+
+    async def test_search_male_audience_excludes_female_and_baby(self):
+        """REQ-1: male audience filter returns only adult_male services."""
+        result = await _invoke_with_audience(
+            "corte", "adult_male", [CORTE_FEMALE, CORTE_MALE, CORTE_BABY]
+        )
+        service_names = []
+        if "resolved_service" in result:
+            service_names = [result["resolved_service"]["name"]]
+        elif "services" in result:
+            service_names = [s["name"] for s in result["services"]]
+        elif "clarification_needed" in result:
+            service_names = [o["service_name"] for o in result["clarification_needed"]["options"]]
+
+        assert "Corte Caballero" in service_names, f"Expected male service in {service_names}"
+        assert "Cortar" not in service_names, f"Female service leaked: {service_names}"
+
+
+class TestMatchesAudienceUnit:
+    """Unit tests for _matches_audience() — synchronous function."""
+
+    def test_metadata_audience_match_returns_true(self):
+        """Service with metadata_.audience == audience → True, no keyword scan."""
+        result = _ss_mod._matches_audience(CORTE_FEMALE, "adult_female")
+        assert result is True
+
+    def test_metadata_audience_mismatch_returns_false(self):
+        """Service with metadata_.audience != audience → False, no keyword scan."""
+        result = _ss_mod._matches_audience(CORTE_MALE, "adult_female")
+        assert result is False
+
+    def test_metadata_audience_present_skips_keyword_scan(self):
+        """When metadata_.audience is present, keyword scan is never performed.
+
+        CORTE_MALE has name 'Corte Caballero' which would match the 'caballero' keyword
+        for adult_male. But since metadata_.audience = 'adult_male', matching 'adult_female'
+        must return False without any keyword lookup.
+        """
+        # CORTE_MALE name contains 'Caballero' (adult_male keyword) — but we ask for adult_female
+        result = _ss_mod._matches_audience(CORTE_MALE, "adult_female")
+        assert result is False
+
+    def test_metadata_audience_null_with_family_is_unisex(self):
+        """Service with family + audience=None is intentionally unisex — always matches."""
+        # TINTE_NO_META_AUDIENCE has family="color" and audience=None → unisex service
+        result_male = _ss_mod._matches_audience(TINTE_NO_META_AUDIENCE, "adult_male")
+        result_female = _ss_mod._matches_audience(TINTE_NO_META_AUDIENCE, "adult_female")
+        assert result_male is True
+        assert result_female is True
+
+    def test_unisex_service_matches_any_audience(self):
+        """Unisex service (has family, audience=None) always matches any audience."""
+        svc = MagicMock()
+        svc.metadata_ = {"family": "hairstyle", "audience": None}
+        svc.name = "Peinado"
+        svc.description = "Peinado profesional"
+        assert _ss_mod._matches_audience(svc, "adult_female") is True
+        assert _ss_mod._matches_audience(svc, "adult_male") is True
+        assert _ss_mod._matches_audience(svc, "baby") is True
+
+    def test_service_with_family_and_audience_exact_match(self):
+        """Service with family + explicit audience → exact match only."""
+        svc = MagicMock()
+        svc.metadata_ = {"family": "haircut", "audience": "adult_male"}
+        svc.name = "Corte Caballero"
+        svc.description = "Corte para caballero"
+        assert _ss_mod._matches_audience(svc, "adult_male") is True
+        assert _ss_mod._matches_audience(svc, "adult_female") is False
+
+    def test_no_metadata_falls_back_to_keywords(self):
+        """Service with no family metadata → keyword fallback only."""
+        svc = MagicMock()
+        svc.metadata_ = {}
+        svc.name = "Manicura Caballero"
+        svc.description = "Manicura para caballero"
+        assert _ss_mod._matches_audience(svc, "adult_male") is True
+        assert _ss_mod._matches_audience(svc, "adult_female") is False
+
+    def test_metadata_absent_falls_back_to_keywords(self):
+        """Service with no metadata at all falls back to keyword matching."""
+        svc = _make_service("Corte Caballero Barbería", metadata_={})
+        # No metadata_.audience key at all — should use keyword fallback
+        result = _ss_mod._matches_audience(svc, "adult_male")
+        assert result is True
+
+
+@pytest.mark.asyncio
+class TestNoSilentFallback:
+    """REQ-2: audience filter that eliminates all results returns [] + WARNING log."""
+
+    async def test_empty_result_when_no_audience_match(self, caplog):
+        """When audience filter eliminates all results, return empty list + WARNING."""
+        import logging
+
+        # All services are adult_female — no adult_male services exist
+        with caplog.at_level(logging.WARNING, logger="agent.tools.search_services"):
+            result = await _invoke_with_audience("corte", "adult_male", [CORTE_FEMALE])
+
+        # Must return empty (not silently fall back to CORTE_FEMALE)
+        count = result.get("count", -1)
+        assert count == 0, f"Expected count=0 but got {count}. Result: {result}"
+
+        if "services" in result:
+            assert (
+                result["services"] == []
+            ), f"Expected empty services list but got {result['services']}"
+
+        # WARNING log must be emitted
+        warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any(
+            "adult_male" in msg or "Audience filter" in msg for msg in warning_msgs
+        ), f"Expected WARNING about audience filter. Got: {warning_msgs}"
+
+    async def test_no_fallback_does_not_leak_wrong_gender(self):
+        """Regression: female-only catalog must NOT return male results when male audience requested."""
+        result = await _invoke_with_audience("corte", "adult_male", [CORTE_FEMALE, CORTE_BABY])
+        # Neither CORTE_FEMALE nor CORTE_BABY should appear
+        service_names = []
+        if "resolved_service" in result:
+            service_names = [result["resolved_service"]["name"]]
+        elif "services" in result:
+            service_names = [s["name"] for s in result["services"]]
+
+        assert "Cortar" not in service_names, f"Female service leaked: {service_names}"
+        assert "Corte Bebé" not in service_names, f"Baby service leaked: {service_names}"
+
+    async def test_none_audience_applies_no_filter(self):
+        """REQ-2 Scenario: audience=None → no filter, all matching services returned."""
+        with _patch_db([CORTE_FEMALE, CORTE_MALE, CORTE_BABY]):
+            result = await _ss_mod.search_services.ainvoke({"query": "corte", "max_results": 10})
+
+        # All 3 services should potentially appear (no audience filter)
+        services = result.get("services", [])
+        resolved = result.get("resolved_service")
+        clarification = result.get("clarification_needed")
+
+        total = (
+            (1 if resolved else 0)
+            + (len(services))
+            + (len(clarification["options"]) if clarification else 0)
+        )
+        assert total > 0, f"Expected some services when audience=None, got: {result}"

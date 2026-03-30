@@ -73,6 +73,15 @@ class BookSchema(BaseModel):
         description="Chatwoot conversation ID for this customer (from conversation state)",
     )
 
+    audience: str | None = Field(
+        default=None,
+        description=(
+            "Optional audience hint to pass to service name resolution. "
+            "Examples: 'adult_female', 'adult_male', 'child_female', 'child_male'. "
+            "Injected automatically by _pre_tool_call when service_audience_hint is set."
+        ),
+    )
+
     @field_validator("stylist_id", "customer_id")
     @classmethod
     def validate_uuid_format(cls, v: str, info) -> str:
@@ -88,8 +97,8 @@ class BookSchema(BaseModel):
             return v
         try:
             UUID(v)
-        except ValueError:
-            raise ValueError(f"Invalid UUID format: '{v}'")
+        except ValueError as err:
+            raise ValueError(f"Invalid UUID format: '{v}'") from err
         return v
 
 
@@ -109,6 +118,7 @@ async def book(
     start_time: str,
     slot_index: int | None = None,
     conversation_id: str | None = None,
+    audience: str | None = None,
 ) -> dict[str, Any]:
     """
     Create a new appointment booking (atomic transaction).
@@ -198,7 +208,7 @@ async def book(
 
         logger.info(f"Resolving service names: {services}", extra={"services": services})
 
-        service_uuids, ambiguity_info = await resolve_service_names(services)
+        service_uuids, ambiguity_info = await resolve_service_names(services, audience=audience)
 
         # If ambiguity detected, return error with options for LLM to clarify
         if ambiguity_info:
@@ -257,7 +267,7 @@ async def book(
             }
 
         logger.info(
-            f"Booking requested",
+            "Booking requested",
             extra={
                 "customer_id": customer_id,
                 "first_name": first_name,
@@ -319,16 +329,17 @@ async def get_service_by_name(service_name: str, fuzzy: bool = True, limit: int 
         >>> services = await get_service_by_name("corte peinado largo", fuzzy=True, limit=5)
         >>> # Returns [Service(name="Corte + Peinado (Largo)"), ...] using RapidFuzz
     """
-    from database.connection import get_async_session
-    from database.models import Service
     from rapidfuzz import fuzz, process
     from sqlalchemy import select
+
+    from database.connection import get_async_session
+    from database.models import Service
 
     async with get_async_session() as session:
         try:
             if fuzzy:
                 # Load all active services for fuzzy matching
-                query = select(Service).where(Service.is_active == True)
+                query = select(Service).where(Service.is_active)
                 result = await session.execute(query)
                 all_services = list(result.scalars().all())
 
@@ -360,7 +371,7 @@ async def get_service_by_name(service_name: str, fuzzy: bool = True, limit: int 
                 query = (
                     select(Service)
                     .where(Service.name.ilike(service_name))
-                    .where(Service.is_active == True)
+                    .where(Service.is_active)
                     .limit(limit)
                 )
 
