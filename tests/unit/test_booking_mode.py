@@ -3729,3 +3729,57 @@ class TestNotesExtractionFilter:
         state, ctx = self._make_state_with_notes_question("no")
         _extract_notes_from_conversation(state, "no", ctx)
         assert ctx.notes is None
+
+
+# =============================================================================
+# TestToolChoiceComputation
+# =============================================================================
+
+
+class TestToolChoiceComputation:
+    """Tests for tool_choice='required' logic in BookingMode.handle (T3.1).
+
+    The logic lives inside BookingMode.handle and computes tool_choice
+    before calling _run_agentic_loop. We test it by inspecting the
+    conditions on a BookingContext directly — no LLM call needed.
+    """
+
+    def _compute_tool_choice(self, ctx: BookingContext) -> str | None:
+        """Replicate the tool_choice computation from BookingMode.handle."""
+        if (
+            not ctx.selected_services
+            and not ctx.service_id
+            and not ctx.pending_clarifications
+            and not ctx.confirmation_shown
+        ):
+            return "required"
+        return None
+
+    def test_tool_choice_required_when_service_unresolved(self):
+        """Empty ctx → tool_choice should be 'required'."""
+        ctx = BookingContext()
+        assert self._compute_tool_choice(ctx) == "required"
+
+    def test_tool_choice_none_when_service_id_set(self):
+        """ctx with service_id → tool_choice should be None."""
+        ctx = BookingContext()
+        ctx.service_id = "svc-001"
+        assert self._compute_tool_choice(ctx) is None
+
+    def test_tool_choice_none_when_selected_services(self):
+        """ctx with selected_services → tool_choice should be None."""
+        ctx = BookingContext()
+        ctx.selected_services = [{"id": "svc-001", "name": "Corte"}]
+        assert self._compute_tool_choice(ctx) is None
+
+    def test_tool_choice_none_when_confirmation_shown(self):
+        """ctx with confirmation_shown=True → tool_choice should be None."""
+        ctx = BookingContext()
+        ctx.confirmation_shown = True
+        assert self._compute_tool_choice(ctx) is None
+
+    def test_tool_choice_none_when_pending_clarifications(self):
+        """ctx with pending_clarifications → tool_choice should be None."""
+        ctx = BookingContext()
+        ctx.pending_clarifications = ["¿Qué tipo de corte?"]
+        assert self._compute_tool_choice(ctx) is None

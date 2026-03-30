@@ -549,7 +549,21 @@ class BookingMode(BaseModeNode):
         self._ctx = ctx
         self._current_state = state
         self._last_user_message = user_message or ""
-        result = await self._run_agentic_loop(messages, tools=self.get_tools())
+
+        # Force tool calling when service is unresolved (prevents F-7 tool skip)
+        tool_choice = None
+        if (
+            not ctx.selected_services
+            and not ctx.service_id
+            and not ctx.pending_clarifications
+            and not ctx.confirmation_shown
+        ):
+            tool_choice = "required"
+            logger.info("BookingMode: tool_choice='required' (service unresolved)")
+
+        result = await self._run_agentic_loop(
+            messages, tools=self.get_tools(), tool_choice=tool_choice
+        )
 
         # 6. Detect tool skips (R4/R6 list_stylists, F-7 search_services)
         await self._detect_tool_skips(result, ctx)
