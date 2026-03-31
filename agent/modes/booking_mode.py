@@ -27,7 +27,6 @@ from agent.modes.tool_extractors import (
     _clear_date_metadata,
     apply_all_tool_results,
     extract_service_audience_hint,
-    resolve_pending_clarification,
 )
 from agent.prompts.loader import (  # noqa: F401
     build_layered_messages,
@@ -497,14 +496,6 @@ class BookingMode(BaseModeNode):
         self._resolve_customer_from_state(state, ctx)
         self._resolve_audience_hint(state, ctx)
 
-        # 1c. Pre-resolve: attempt to resolve pending service clarification
-        # Pass the user message so hair_density/hair_length axes can be matched
-        # via hint maps (the audience axis uses service_audience_hint instead).
-        user_message_for_resolver = self._get_last_user_message(state)
-        resolved = resolve_pending_clarification(ctx, user_message=user_message_for_resolver)
-        if resolved:
-            logger.info("BookingMode: auto-resolved pending service clarification")
-
         # 1d. Pre-resolve: detect confirmation exchange (summary shown + user confirmed)
         if not ctx.confirmation_shown:
             _detect_confirmation_exchange(state, ctx)
@@ -529,7 +520,7 @@ class BookingMode(BaseModeNode):
         # dynamic context renders "✅ Estilista: Pilar" instead of "❌ pendiente".
         user_message_for_slot = self._get_last_user_message(state)
         if user_message_for_slot:
-            _resolve_user_slot_selection(user_message_for_slot, ctx)
+            _resolve_user_slot_selection(user_message_for_slot, ctx, state.get("messages", []))
 
         # 2. Fast-path: cancel / escalate (before LLM call)
         user_message = self._get_last_user_message(state)
@@ -537,8 +528,44 @@ class BookingMode(BaseModeNode):
         if special is not None:
             return special
 
-        # 3. Pre-resolve: prefetch stylists if needed
-        await self._maybe_prefetch_stylists(ctx)
+        # 2b. Detect add-on acceptance from user response (post-upsell gate turn)
+        if user_message and ctx.recommendations_shown and not ctx.recommendations_declined:
+            accepted_addon = _detect_addon_acceptance(user_message, ctx)
+            if accepted_addon and accepted_addon not in ctx.selected_services:
+                ctx.selected_services.append(accepted_addon)
+                ctx.recommendations_declined = False
+                if accepted_addon in ctx.pending_recommendations:
+                    ctx.pending_recommendations.remove(accepted_addon)
+                logger.info(
+                    "handle: upsell add-on accepted=%r, selected_services=%s",
+                    accepted_addon,
+                    ctx.selected_services,
+                )
+
+        # 2c. Gate for upsell: block stylists prefetch until add-ons resolved
+        upsell_active = False
+        if _should_gate_for_upsell(ctx):
+            if ctx.upsell_gate_attempts >= 2:
+                # Auto-advance: user didn't respond after 2 attempts → auto-decline
+                ctx.recommendations_declined = True
+                logger.info(
+                    "handle: upsell auto-declined after %d gate attempts",
+                    ctx.upsell_gate_attempts,
+                )
+            else:
+                upsell_active = True
+                ctx.upsell_gate_attempts += 1
+                addon_durations = await _fetch_addon_durations(ctx.pending_recommendations)
+                ctx._addon_durations_cache = addon_durations
+                logger.info(
+                    "handle: upsell gate active (attempts=%d), fetched durations for %d add-ons",
+                    ctx.upsell_gate_attempts,
+                    len(addon_durations),
+                )
+
+        # 3. Pre-resolve: prefetch stylists if needed (SKIPPED when upsell gate active)
+        if not upsell_active:
+            await self._maybe_prefetch_stylists(ctx)
 
         # 4. Build unified prompt
         messages = await self._build_messages(state, ctx)
@@ -590,7 +617,7 @@ class BookingMode(BaseModeNode):
         # LLM called list_stylists this turn and the user expressed a preference.
         # Runs only when stylist_id is still unset after the agentic loop.
         if not ctx.stylist_id and ctx.prefetched_stylists and user_message:
-            _try_resolve_stylist_from_message(user_message, ctx)
+            _try_resolve_stylist_from_message(user_message, ctx, state.get("messages", []))
 
         # 6c. Check if user declined recommendations
         _detect_recommendation_decline(user_message, ctx)
@@ -642,6 +669,10 @@ class BookingMode(BaseModeNode):
         prior turn. This prevents booking the wrong service when the audience changes
         (e.g. user starts with "caballero" context but then asks for "dama").
         """
+        # Guard: service already resolved — audience locked via service record
+        if ctx.service_id:
+            return
+
         # P0: always check the current user message first — explicit mention overrides stored hint
         user_msg = self._get_last_user_message(state)
         if user_msg:
@@ -1398,7 +1429,8 @@ class BookingMode(BaseModeNode):
                 user_msg = getattr(self, "_dynamic_context_state", None)
                 if user_msg is not None:
                     last_user = self._get_last_user_message(user_msg)
-                    _try_resolve_stylist_from_message(last_user, self._ctx)
+                    messages_for_guard = user_msg.get("messages", []) if user_msg else []
+                    _try_resolve_stylist_from_message(last_user, self._ctx, messages_for_guard)
             logger.info(
                 "_post_tool_result: list_stylists — %d stylists loaded, stylist_id=%s",
                 len(self._ctx.prefetched_stylists),
@@ -1599,15 +1631,27 @@ class BookingMode(BaseModeNode):
             _nfd_lower(s.get("name", "")) for s in ctx.prefetched_stylists if s.get("name")
         }
 
+        # Build per-word token set from compound stylist names (e.g. "Ana María" → {"ana", "maria"})
+        # Tokens shorter than 3 chars (e.g. "de", "la") are excluded to avoid false positives.
+        known_word_tokens: set[str] = set()
+        for s in ctx.prefetched_stylists:
+            name = s.get("name", "")
+            if name:
+                for tok in _nfd_lower(name).split():
+                    if len(tok) >= 3:
+                        known_word_tokens.add(tok)
+
         # Extract capitalized words (likely proper nouns)
         words = re.findall(r"\b[A-Z][a-záéíóúñ]*\b", response_text)
 
         hallucinated = []
         for word in words:
             normalized_word = _nfd_lower(word)
-            # Check if word is NOT in known stylists and NOT in blocklist
+            # Check if word is NOT in known stylists (full name) AND NOT a token of any known
+            # stylist's compound name AND NOT in blocklist
             if (
                 normalized_word not in known_stylists
+                and normalized_word not in known_word_tokens
                 and normalized_word not in _STYLIST_BLOCKLIST_WORDS
             ):
                 hallucinated.append(word)
@@ -1648,7 +1692,30 @@ class BookingMode(BaseModeNode):
         if not hallucinated_names:
             return response_text
 
+        # Build per-word token set from compound stylist names to avoid partial-name redaction.
+        # E.g. "Ana María" → tokens {"ana", "maria"} so "Ana" alone is NOT redacted.
+        def _nfd_lower(text: str) -> str:
+            normalized = unicodedata.normalize("NFD", text.lower())
+            return "".join(c for c in normalized if not unicodedata.combining(c))
+
+        known_word_tokens: set[str] = set()
+        for s in ctx.prefetched_stylists:
+            name = s.get("name", "")
+            if name:
+                for tok in _nfd_lower(name).split():
+                    if len(tok) >= 3:
+                        known_word_tokens.add(tok)
+
         for name in hallucinated_names:
+            # Skip redaction if this word is a token from any valid stylist's compound name.
+            # This prevents "Ana María" → "Ana tu estilista" when "Ana" is a component of a
+            # known stylist name.
+            if _nfd_lower(name) in known_word_tokens:
+                logger.debug(
+                    "Skipping redaction of %r — token belongs to a known stylist compound name",
+                    name,
+                )
+                continue
             response_text = re.sub(
                 rf"\b{re.escape(name)}\b",
                 "tu estilista",
@@ -1880,10 +1947,15 @@ class BookingMode(BaseModeNode):
         if disambiguation:
             parts.append(f"\n<clarification>\n{disambiguation}\n</clarification>")
 
-        # Combo recommendations
-        recommendations = _build_recommendations_section(ctx)
-        if recommendations:
-            parts.append(f"\n<recommendations>\n{recommendations}\n</recommendations>")
+        # Upsell gate — injected INSTEAD of <recommendations> when gate is active
+        if _should_gate_for_upsell(ctx):
+            upsell_section = _build_upsell_gate_section(ctx, ctx._addon_durations_cache)
+            parts.append(f"\n{upsell_section}")
+        else:
+            # Combo recommendations (only when upsell gate is NOT active)
+            recommendations = _build_recommendations_section(ctx)
+            if recommendations:
+                parts.append(f"\n<recommendations>\n{recommendations}\n</recommendations>")
 
         # Service details (transparency)
         details_section = _build_service_details_section(ctx)
@@ -2254,7 +2326,9 @@ _AUDIENCE_NAME_FILTER: frozenset[str] = frozenset(
 )
 
 
-def _try_resolve_stylist_from_message(user_message: str, ctx: BookingContext) -> None:
+def _try_resolve_stylist_from_message(
+    user_message: str, ctx: BookingContext, messages: list[dict] | None = None
+) -> None:
     """Attempt to resolve stylist_id/stylist_name from the user's message.
 
     GAP-04 fix: When the user says "quiero con Ana" or "para Pilar" and
@@ -2272,6 +2346,10 @@ def _try_resolve_stylist_from_message(user_message: str, ctx: BookingContext) ->
         return
     if ctx.stylist_id:
         return  # Already resolved — nothing to do
+
+    # Guard: only resolve if assistant actually presented stylists (context-guard)
+    if messages is not None and not _previous_assistant_presented_stylists(messages):
+        return
 
     normalized_msg = _normalize_text(user_message)
     for stylist in ctx.prefetched_stylists:
@@ -2310,7 +2388,9 @@ _AFFIRMATIVES: frozenset[str] = frozenset(
 )
 
 
-def _resolve_user_slot_selection(user_message: str, ctx: BookingContext) -> bool:
+def _resolve_user_slot_selection(
+    user_message: str, ctx: BookingContext, messages: list[dict] | None = None
+) -> bool:
     """Deterministically resolve a slot from user_message against ctx.offered_slots.
 
     Persists ctx.selected_slot, ctx.stylist_id, ctx.stylist_name if a match is found.
@@ -2325,6 +2405,7 @@ def _resolve_user_slot_selection(user_message: str, ctx: BookingContext) -> bool
     - ctx.offered_slots is empty or None
     - ctx.stylist_id is already set (already resolved — don't overwrite)
     - user message is a bare affirmative AND there are multiple offered slots (ambiguous)
+    - messages provided and last assistant message did NOT present slots (context guard)
     """
     # Guard: no slots offered yet
     if not ctx.offered_slots:
@@ -2332,6 +2413,10 @@ def _resolve_user_slot_selection(user_message: str, ctx: BookingContext) -> bool
 
     # Guard: slot already resolved — don't overwrite
     if ctx.stylist_id:
+        return False
+
+    # Guard: only resolve if assistant actually presented slots (context-guard)
+    if messages is not None and not _previous_assistant_presented_slots(messages):
         return False
 
     offered = ctx.offered_slots
@@ -2488,6 +2573,10 @@ def _extract_name_from_conversation(
     if not user_message or not user_message.strip():
         return
 
+    # Guard: customer already resolved via DB — name is authoritative, don't overwrite
+    if ctx.customer_id:
+        return
+
     # Tier 1: structured intro patterns — always safe, high precision
     # "me llamo X", "soy X", "mi nombre es X" → explicit name declaration
     match = _NAME_INTRO_PATTERN.search(user_message)
@@ -2568,6 +2657,64 @@ def _previous_assistant_asked_for_notes(messages: list[dict]) -> bool:
                 "especial",
             )
             return any(pattern in content for pattern in notes_ask_patterns)
+    return False
+
+
+def _previous_assistant_presented_slots(messages: list[dict]) -> bool:
+    """Check if the last assistant message presented time slot options.
+
+    Returns True if the last assistant message contains any of:
+    1. Numbered time entries like "1. " followed by time pattern (HH:MM)
+    2. The phrase "¿Alguno de estos horarios" (case-insensitive)
+    3. The keyword "horarios" or "disponibilidad"
+
+    Looks back at most through the full message list to find the last assistant message.
+    Returns False if no assistant message is found or none match slot-presentation patterns.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = msg.get("content") or ""
+            content_lower = content.lower()
+            # Pattern 1: numbered time entries (e.g. "1. Lunes a las 10:00")
+            if re.search(r"\d+\.\s+\w+.*\d{1,2}:\d{2}", content):
+                return True
+            # Pattern 2: explicit slot-question phrase
+            if "alguno de estos horarios" in content_lower:
+                return True
+            # Pattern 3: generic slot keywords
+            if "horarios" in content_lower or "disponibilidad" in content_lower:
+                return True
+            return False
+    return False
+
+
+def _previous_assistant_presented_stylists(messages: list[dict]) -> bool:
+    """Check if the last assistant message presented a stylist choice list.
+
+    Returns True if the last assistant message contains:
+    1. A numbered list with capitalized name entries (e.g. "1. Ana")
+    2. Combined with stylist context phrases ("estilista", "¿Con quién", "elige", etc.)
+
+    Returns False if no assistant message is found or none match stylist-list patterns.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = msg.get("content") or ""
+            content_lower = content.lower()
+            # Check for numbered capitalized-name pattern (e.g. "1. Ana\n2. Marta")
+            has_numbered_names = bool(re.search(r"\d+\.\s+[A-ZÁÉÍÓÚÑ]", content))
+            # Check for stylist context phrases
+            stylist_context_phrases = (
+                "estilista",
+                "con quien",
+                "con quién",
+                "elige",
+                "prefier",
+                "gust",
+                "quien",
+            )
+            has_stylist_context = any(phrase in content_lower for phrase in stylist_context_phrases)
+            return has_numbered_names and has_stylist_context
     return False
 
 
@@ -2687,7 +2834,12 @@ def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext)
 
     # F-2: Step 3 — check if the last user message is an affirmative confirmation
     user_text = _normalize_text(last_user.get("content", ""))
-    user_tokens = set(re.split(r"[\s,;.!?]+", user_text))
+    # Guard: only accept standalone affirmatives (≤ 3 words)
+    # Prevents "sí, pero quiero cambiar la hora" from triggering confirmation
+    user_words = [w for w in re.split(r"[\s,;.!?]+", user_text) if w]
+    if len(user_words) > 3:
+        return
+    user_tokens = set(user_words)
     has_confirmation = any(
         phrase in user_tokens or user_text.startswith(phrase)
         for phrase in _USER_CONFIRMATION_PHRASES
@@ -2773,8 +2925,8 @@ def _redact_name_tokens(text: str, name: str) -> str:
 def _build_disambiguation_section(ctx: BookingContext) -> str:
     """Build prompt section for pending disambiguation/clarification.
 
-    Pure renderer — no auto-resolve logic. The resolve_pending_clarification()
-    pre-resolver handles audience matching BEFORE this function is called.
+    Pure renderer — no auto-resolve logic. The LLM handles clarification
+    resolution natively via the <clarification> context block.
     Renders the first entry in pending_clarifications (FIFO queue).
     """
     lines: list[str] = []
@@ -2889,6 +3041,179 @@ def _detect_recommendation_decline(message: str, ctx: BookingContext) -> bool:
         ctx.recommendations_declined = True
         return True
     return False
+
+
+# ── Upsell gate helpers ──────────────────────────────────────────────────────
+
+
+def _should_gate_for_upsell(ctx: BookingContext) -> bool:
+    """Gate upsell: block stylists prefetch until add-ons resolved.
+
+    Returns True only when ALL conditions are met simultaneously:
+    - Service is resolved (service_id is not None)
+    - Has pending add-on recommendations to offer
+    - Recommendations not yet shown to user
+    - User has not declined recommendations
+    - Stylists not yet prefetched (gate is still needed)
+    """
+    return (
+        ctx.service_id is not None  # service resolved
+        and bool(ctx.pending_recommendations)  # has add-ons to offer
+        and not ctx.recommendations_shown  # not yet shown
+        and not ctx.recommendations_declined  # not declined
+        and not ctx.prefetched_stylists  # stylists not loaded yet
+    )
+
+
+async def _fetch_addon_durations(addon_names: list[str]) -> dict[str, int]:
+    """Query DB for duration_minutes of add-on services by name.
+
+    Returns a dict mapping service name → duration_minutes.
+    On any DB failure, returns {} with a warning log (non-fatal).
+    """
+    if not addon_names:
+        return {}
+
+    try:
+        from database.connection import get_async_session
+        from database.models import Service
+        from sqlalchemy import select
+
+        async with get_async_session() as session:
+            stmt = select(Service.name, Service.duration_minutes).where(
+                Service.name.in_(addon_names),
+                Service.is_active.is_(True),
+            )
+            rows = (await session.execute(stmt)).all()
+            return {row.name: row.duration_minutes for row in rows}
+    except Exception as exc:
+        logger.warning(
+            "_fetch_addon_durations: DB query failed (non-fatal), returning empty. error=%s",
+            exc,
+        )
+        return {}
+
+
+def _build_upsell_gate_section(ctx: BookingContext, addon_durations: dict[str, int]) -> str:
+    """Build the <upsell_gate> XML block injected into dynamic context.
+
+    Contains service name + description, list of add-ons with durations,
+    and explicit instruction to wait for user response before showing stylists.
+    Text is in castellano peninsular (España).
+    """
+    # Extract primary service info from selected_services_details
+    service_name = ctx.service_name or (
+        ctx.selected_services[0] if ctx.selected_services else "el servicio"
+    )
+    service_duration = ctx.service_duration_minutes
+    service_description = ""
+    if ctx.selected_services_details:
+        first_detail = ctx.selected_services_details[0]
+        service_description = first_detail.get("description", "")
+
+    # Build header line
+    duration_str = f" ({service_duration} min)" if service_duration else ""
+    description_part = f" — {service_description}" if service_description else ""
+    header = f"Servicio confirmado: {service_name}{duration_str}{description_part}"
+
+    # Build add-on list
+    addon_lines: list[str] = []
+    for i, addon_name in enumerate(ctx.pending_recommendations, start=1):
+        duration = addon_durations.get(addon_name)
+        if duration is not None:
+            addon_lines.append(f"{i}. {addon_name} (+{duration} min)")
+        else:
+            addon_lines.append(f"{i}. {addon_name}")
+    addon_list = "\n".join(addon_lines)
+
+    # Build instruction block (castellano peninsular)
+    instruction = (
+        f"INSTRUCCIÓN: Explica qué incluye {service_name} y ofrece los servicios complementarios."
+    )
+    if addon_durations:
+        instruction += ' Si la duración está disponible, menciónala (ej: "Son X minutos más").'
+    instruction += (
+        "\nPARA aquí y espera la respuesta del cliente ANTES de mostrar los estilistas."
+        "\nNUNCA menciones precios. Si el cliente pregunta → "
+        '"Para consultar los precios puedes visitar nuestra web o preguntarnos directamente en el salón."'
+    )
+
+    return (
+        "<upsell_gate>\n"
+        f"{header}\n"
+        "\nServicios complementarios disponibles:\n"
+        f"{addon_list}\n"
+        f"\n{instruction}\n"
+        "</upsell_gate>"
+    )
+
+
+def _detect_addon_acceptance(user_message: str, ctx: BookingContext) -> str | None:
+    """Detect if user accepted a pending add-on recommendation.
+
+    Deterministic token matching — no LLM call required.
+    Same pattern as _try_resolve_stylist_from_message().
+
+    Only activates when recommendations_shown=True (gate has already fired).
+    Returns the exact add-on name from pending_recommendations if accepted,
+    or None if no match found.
+    """
+    if not ctx.pending_recommendations or not ctx.recommendations_shown:
+        return None
+    if ctx.offered_slots:
+        return None  # Past slot-presentation phase — addon acceptance no longer valid
+    if not user_message:
+        return None
+
+    normalized_msg = _normalize_text(user_message)
+
+    # Check for acceptance phrases first
+    _ADDON_ACCEPT_PHRASES: tuple[str, ...] = (
+        "si",
+        "sí",
+        "vale",
+        "venga",
+        "también",
+        "tambien",
+        "y también",
+        "y tambien",
+        "añade",
+        "anade",
+        "agrega",
+        "quiero también",
+        "quiero tambien",
+        "ponme",
+        "y el",
+        "y la",
+    )
+    has_acceptance_phrase = any(phrase in normalized_msg for phrase in _ADDON_ACCEPT_PHRASES)
+
+    for rec_name in ctx.pending_recommendations:
+        # Tokenize the add-on name (min 3 chars per token)
+        tokens = [t for t in re.split(r"\W+", _normalize_text(rec_name)) if len(t) >= 3]
+        if not tokens:
+            continue
+        # Match: acceptance phrase AND at least one name token in message
+        if has_acceptance_phrase and any(tok in normalized_msg for tok in tokens):
+            logger.info(
+                "_detect_addon_acceptance: matched addon=%r from message=%r",
+                rec_name,
+                user_message[:80],
+            )
+            return rec_name
+        # Also match: just the name token alone (user said "el barro" without explicit affirmative)
+        if any(tok in normalized_msg for tok in tokens):
+            # Only if there's no decline phrase present
+            msg_has_decline = any(phrase in normalized_msg for phrase in _ADDON_DECLINE_PHRASES)
+            if not msg_has_decline:
+                logger.info(
+                    "_detect_addon_acceptance: matched addon=%r by name token from message=%r",
+                    rec_name,
+                    user_message[:80],
+                )
+                return rec_name
+
+    return None
 
 
 def _build_stylists_section(ctx: BookingContext) -> str:
