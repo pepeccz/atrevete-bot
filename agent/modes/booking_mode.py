@@ -25,6 +25,7 @@ from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.modes.booking_context import BookingContext, format_service_list
 from agent.modes.tool_extractors import (
     _clear_date_metadata,
+    _resolve_user_clarification_selection,
     apply_all_tool_results,
     extract_service_audience_hint,
 )
@@ -522,6 +523,13 @@ class BookingMode(BaseModeNode):
         if user_message_for_slot:
             _resolve_user_slot_selection(user_message_for_slot, ctx, state.get("messages", []))
 
+        # 1g. Pre-resolve: deterministically resolve clarification selection from user message.
+        # Runs BEFORE _build_dynamic_context so <clarification> context block is clean.
+        if user_message_for_slot and ctx.pending_clarifications:
+            _resolve_user_clarification_selection(
+                user_message_for_slot, ctx, state.get("messages", [])
+            )
+
         # 2. Fast-path: cancel / escalate (before LLM call)
         user_message = self._get_last_user_message(state)
         special = self._check_special_intents(state, user_message, intent, ctx)
@@ -579,12 +587,7 @@ class BookingMode(BaseModeNode):
 
         # Force tool calling when service is unresolved (prevents F-7 tool skip)
         tool_choice = None
-        if (
-            not ctx.selected_services
-            and not ctx.service_id
-            and not ctx.pending_clarifications
-            and not ctx.confirmation_shown
-        ):
+        if not ctx.selected_services and not ctx.service_id and not ctx.confirmation_shown:
             tool_choice = "required"
             logger.info("BookingMode: tool_choice='required' (service unresolved)")
 
@@ -1490,12 +1493,11 @@ class BookingMode(BaseModeNode):
             ctx.force_list_stylists_reminder = True
 
         # F-7: service not resolved and search_services not called
-        # Condition: service_id None, selected_services empty, no pending clarifications,
+        # Condition: service_id None, selected_services empty,
         # and search_services was not called
         if (
             ctx.service_id is None
             and not ctx.selected_services
-            and not ctx.pending_clarifications
             and not result.tool_results.get("search_services")
         ):
             logger.warning(

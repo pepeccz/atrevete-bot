@@ -29,6 +29,7 @@ import pytest
 from agent.modes.booking_context import BookingContext
 from agent.modes.booking_mode import (
     BookingMode,
+    _build_disambiguation_section,
     _detect_addon_acceptance,
     _detect_confirmation_exchange,
     _extract_name_from_conversation,
@@ -37,6 +38,7 @@ from agent.modes.booking_mode import (
     _resolve_user_slot_selection,
     _try_resolve_stylist_from_message,
 )
+from agent.modes.tool_extractors import _resolve_user_clarification_selection
 
 
 # =============================================================================
@@ -601,3 +603,80 @@ class TestDetectConfirmationExchangeThreshold:
         _detect_confirmation_exchange(state, ctx)
 
         assert not ctx.confirmation_shown
+
+
+# =============================================================================
+# Clarification loop fix — T5.2 integration
+# =============================================================================
+
+
+def _make_clarification_ctx_with_options() -> BookingContext:
+    """Return a BookingContext with audience clarification pending."""
+    options = [
+        {
+            "service_id": f"svc-{i}",
+            "service_name": f"Corte {i}",
+            "label": f"Opción {i}",
+            "value": f"opcion_{i}",
+            "category": "peluqueria",
+            "duration_minutes": 30,
+            "family": None,
+        }
+        for i in range(1, 6)
+    ]
+    ctx = BookingContext()
+    ctx.pending_clarifications = [{"axis": "audience", "options": options}]
+    return ctx
+
+
+def _clarification_assistant_messages() -> list[dict]:
+    return [
+        {
+            "role": "assistant",
+            "content": (
+                "¿El corte es para...?\n"
+                "1. Opción 1\n2. Opción 2\n3. Opción 3\n4. Opción 4\n5. Opción 5"
+            ),
+        }
+    ]
+
+
+class TestClarificationLoopFix:
+    """Integration scenario: pre-resolver → context build chain (T5.2)."""
+
+    def test_clarification_resolved_before_context_build(self):
+        """Turn sequence: user sends '4' → resolver fires → pending cleared → no <clarification>.
+
+        Simulates the pre-resolver + _build_dynamic_context pipeline:
+        1. Construct ctx with pending_clarifications
+        2. Call _resolve_user_clarification_selection with '4'
+        3. Assert pending_clarifications == [] and service_id set
+        4. Call _build_disambiguation_section and assert '<clarification>' block absent
+        """
+        ctx = _make_clarification_ctx_with_options()
+        messages = _clarification_assistant_messages()
+
+        resolved = _resolve_user_clarification_selection("4", ctx, messages)
+
+        assert resolved is True
+        assert ctx.service_id == "svc-4"
+        assert ctx.pending_clarifications == []
+
+        # After resolution, disambiguation section must be empty
+        disambiguation = _build_disambiguation_section(ctx)
+        assert "<clarification>" not in disambiguation
+        assert "CLARIFICACIÓN PENDIENTE" not in disambiguation
+
+    def test_unresolved_clarification_keeps_context_block(self):
+        """When resolver returns False (no match), clarification block persists."""
+        ctx = _make_clarification_ctx_with_options()
+        messages = _clarification_assistant_messages()
+
+        resolved = _resolve_user_clarification_selection("hola", ctx, messages)
+
+        assert resolved is False
+        assert len(ctx.pending_clarifications) == 1
+
+        # Disambiguation section should still contain the options
+        disambiguation = _build_disambiguation_section(ctx)
+        assert disambiguation  # non-empty — LLM will re-present the list

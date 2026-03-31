@@ -5,13 +5,17 @@ verifying that BookingContext is mutated correctly.
 """
 
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
 from agent.modes.booking_context import BookingContext
+from agent.modes.booking_mode import BookingMode
 from agent.modes.tool_extractors import (
     TOOL_EXTRACTORS,
     _apply_resolved_option,
+    _previous_assistant_presented_clarification,
+    _resolve_user_clarification_selection,
     _safe_parse,
     apply_all_tool_results,
     extract_booking_result,
@@ -20,7 +24,6 @@ from agent.modes.tool_extractors import (
     extract_service_fields,
     extract_slot_fields,
     extract_stylist_fields,
-    resolve_pending_clarification,
 )
 
 
@@ -872,202 +875,6 @@ class TestApplyAllToolResults:
             "query_info",  # GAP-03: no-op extractor prevents log noise for informational tool
         }
         assert expected == set(TOOL_EXTRACTORS.keys())
-
-
-# ============================================================================
-# resolve_pending_clarification (Phase 1 — Pending Clarification Resolver)
-# ============================================================================
-
-
-class TestResolvePendingClarification:
-    """Test resolve_pending_clarification pre-resolver."""
-
-    def test_no_pending_returns_false(self):
-        """Empty pending_clarifications → no-op."""
-        ctx = BookingContext(
-            service_audience_hint="adult_female",
-        )
-        assert resolve_pending_clarification(ctx) is False
-
-    def test_non_audience_axis_returns_false(self):
-        """hair_length axis → not auto-resolvable."""
-        ctx = BookingContext(
-            pending_clarifications=[
-                {
-                    "axis": "hair_length",
-                    "options": [
-                        {
-                            "value": "short",
-                            "label": "Corto",
-                            "service_id": "uuid-1",
-                            "service_name": "Corte Corto",
-                        },
-                    ],
-                },
-            ],
-            service_audience_hint="adult_female",
-        )
-        assert resolve_pending_clarification(ctx) is False
-        assert len(ctx.pending_clarifications) == 1
-
-    def test_no_hint_returns_false(self):
-        """Audience axis but no hint → can't resolve."""
-        ctx = BookingContext(
-            pending_clarifications=[
-                {
-                    "axis": "audience",
-                    "options": [
-                        {
-                            "value": "adult_female",
-                            "label": "Mujer",
-                            "service_id": "uuid-1",
-                            "service_name": "Corte Mujer",
-                        },
-                    ],
-                },
-            ],
-        )
-        assert resolve_pending_clarification(ctx) is False
-
-    def test_audience_match_resolves(self):
-        """Audience hint matches option → mutates ctx correctly."""
-        ctx = BookingContext(
-            service_audience_hint="adult_female",
-            pending_clarifications=[
-                {
-                    "axis": "audience",
-                    "question_hint": "¿Para quién es?",
-                    "options": [
-                        {
-                            "value": "adult_female",
-                            "label": "Mujer",
-                            "service_id": "uuid-1",
-                            "service_name": "Corte Mujer",
-                            "category": "corte",
-                            "duration_minutes": 45,
-                        },
-                        {
-                            "value": "adult_male",
-                            "label": "Hombre",
-                            "service_id": "uuid-2",
-                            "service_name": "Corte Hombre",
-                            "category": "corte",
-                            "duration_minutes": 30,
-                        },
-                    ],
-                },
-            ],
-        )
-        result = resolve_pending_clarification(ctx)
-
-        assert result is True
-        assert ctx.service_id == "uuid-1"
-        assert ctx.service_name == "Corte Mujer"
-        assert ctx.service_category == "corte"
-        assert ctx.service_duration_minutes == 45
-        assert ctx.selected_services == ["Corte Mujer"]
-        assert ctx.pending_clarifications == []
-        assert ctx.candidate_services == []
-
-    def test_audience_match_appends_to_existing_services(self):
-        """Second service resolved via clarification appends, not overwrites."""
-        ctx = BookingContext(
-            selected_services=["Tinte Mujer"],
-            service_audience_hint="adult_female",
-            pending_clarifications=[
-                {
-                    "axis": "audience",
-                    "options": [
-                        {
-                            "value": "adult_female",
-                            "label": "Mujer",
-                            "service_id": "uuid-corte-f",
-                            "service_name": "Corte Mujer",
-                        },
-                        {
-                            "value": "adult_male",
-                            "label": "Hombre",
-                            "service_id": "uuid-corte-m",
-                            "service_name": "Corte Hombre",
-                        },
-                    ],
-                },
-            ],
-        )
-        result = resolve_pending_clarification(ctx)
-
-        assert result is True
-        assert ctx.service_id == "uuid-corte-f"
-        assert ctx.service_name == "Corte Mujer"
-        assert ctx.selected_services == ["Corte Mujer", "Tinte Mujer"]
-        assert ctx.pending_clarifications == []
-
-    def test_no_match_returns_false(self):
-        """Hint doesn't match any option → leave pending."""
-        ctx = BookingContext(
-            service_audience_hint="baby",
-            pending_clarifications=[
-                {
-                    "axis": "audience",
-                    "options": [
-                        {
-                            "value": "adult_female",
-                            "label": "Mujer",
-                            "service_id": "uuid-1",
-                            "service_name": "Corte Mujer",
-                        },
-                        {
-                            "value": "adult_male",
-                            "label": "Hombre",
-                            "service_id": "uuid-2",
-                            "service_name": "Corte Hombre",
-                        },
-                    ],
-                },
-            ],
-        )
-        result = resolve_pending_clarification(ctx)
-
-        assert result is False
-        assert len(ctx.pending_clarifications) == 1
-        assert ctx.selected_services == []
-
-    def test_queue_pops_only_matching_entry(self):
-        """REQ-BRF-6: Resolve pops only the matched entry, preserves others."""
-        ctx = BookingContext(
-            service_audience_hint="adult_female",
-            pending_clarifications=[
-                {
-                    "axis": "audience",
-                    "options": [
-                        {
-                            "value": "adult_female",
-                            "label": "Mujer",
-                            "service_id": "uuid-corte-f",
-                            "service_name": "Corte Mujer",
-                        },
-                    ],
-                },
-                {
-                    "axis": "hair_density",
-                    "options": [
-                        {
-                            "value": "normal",
-                            "label": "Normal",
-                            "service_id": "uuid-mechas",
-                            "service_name": "Mechas",
-                        },
-                    ],
-                },
-            ],
-        )
-        result = resolve_pending_clarification(ctx)
-
-        assert result is True
-        assert ctx.service_name == "Corte Mujer"
-        # Only the audience entry was popped, hair_density remains
-        assert len(ctx.pending_clarifications) == 1
-        assert ctx.pending_clarifications[0]["axis"] == "hair_density"
 
 
 # ============================================================================
@@ -2255,201 +2062,6 @@ class TestExtractBookingResultResetTransient:
         assert ctx._booking_completed is False
 
 
-# ============================================================================
-# Bug fixes: audience clarification matching (Hotfix — "dama" must match
-# "Dama / Señora" label; "señora" must resolve to adult_female)
-# ============================================================================
-
-# Shared clarification fixture used across multiple tests
-_AUDIENCE_CLARIFICATION = {
-    "axis": "audience",
-    "question_hint": "¿El corte es para Dama / Señora, Niña o Niño?",
-    "options": [
-        {
-            "label": "Dama / Señora",
-            "value": "adult_female",
-            "service_name": "Corte de Señora",
-            "service_id": "uuid-corte-f",
-            "duration_minutes": 45,
-            "category": "HAIRDRESSING",
-        },
-        {
-            "label": "Niña",
-            "value": "child_female",
-            "service_name": "Corte Niña",
-            "service_id": "uuid-corte-nina",
-            "duration_minutes": 30,
-            "category": "HAIRDRESSING",
-        },
-        {
-            "label": "Niño",
-            "value": "child_male",
-            "service_name": "Corte Niño",
-            "service_id": "uuid-corte-nino",
-            "duration_minutes": 30,
-            "category": "HAIRDRESSING",
-        },
-    ],
-}
-
-
-class TestAudienceClarificationFix:
-    """Bug fix: audience clarification must resolve via natural user phrases.
-
-    Covers:
-    - "dama" → resolves to adult_female (label match + hint map)
-    - "para señora" → resolves to adult_female (hint map fallback)
-    - "para dama" → resolves to adult_female
-    - "es para dama" → resolves to adult_female
-    - "soy dama" → resolves to adult_female (via hint map used in _resolve_audience_hint)
-    - "señora" → resolves to adult_female (new hint map entry)
-    - Pre-existing ctx.service_audience_hint still works
-    """
-
-    def _make_ctx(self, hint: str | None = None) -> BookingContext:
-        """Create a context with pending audience clarification."""
-        return BookingContext(
-            service_audience_hint=hint,
-            pending_clarifications=[dict(_AUDIENCE_CLARIFICATION)],
-        )
-
-    # ── Tests: hint map covers "dama" and "señora" ──────────────────────────
-
-    def test_dama_resolves_via_hint_map(self):
-        """'dama' alone is in the hint map → adult_female resolved."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="dama")
-        assert result is True
-        assert ctx.service_name == "Corte de Señora"
-        assert ctx.pending_clarifications == []
-
-    def test_senora_resolves_via_hint_map(self):
-        """'señora' (normalized 'senora') is now in the hint map → adult_female resolved."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="señora")
-        assert result is True
-        assert ctx.service_name == "Corte de Señora"
-        assert ctx.pending_clarifications == []
-
-    def test_para_senora_resolves(self):
-        """'para señora' → 'senora' token matches the hint map."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="para señora")
-        assert result is True
-        assert ctx.service_name == "Corte de Señora"
-        assert ctx.pending_clarifications == []
-
-    def test_para_dama_resolves(self):
-        """'para dama' → 'dama' token matches the hint map."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="para dama")
-        assert result is True
-        assert ctx.service_name == "Corte de Señora"
-        assert ctx.pending_clarifications == []
-
-    def test_es_para_dama_resolves(self):
-        """'es para dama' → 'dama' token matches."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="es para dama")
-        assert result is True
-        assert ctx.service_name == "Corte de Señora"
-        assert ctx.pending_clarifications == []
-
-    def test_soy_dama_resolves(self):
-        """'soy dama' → 'dama' token matches."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="soy dama")
-        assert result is True
-        assert ctx.service_name == "Corte de Señora"
-        assert ctx.pending_clarifications == []
-
-    # ── Tests: label token matching ("dama" inside "Dama / Señora") ─────────
-
-    def test_dama_matches_label_token(self):
-        """'dama' appears as a token in label 'Dama / Señora' → matched."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="dama")
-        assert result is True
-        assert ctx.service_id == "uuid-corte-f"
-
-    def test_nina_resolves_to_child_female(self):
-        """'niña' → normalized 'nina' matches 'Nina' label."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="niña")
-        assert result is True
-        assert ctx.service_name == "Corte Niña"
-        assert ctx.service_id == "uuid-corte-nina"
-
-    def test_nino_resolves_to_child_male(self):
-        """'niño' → normalized 'nino' matches 'Niño' label."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="niño")
-        assert result is True
-        assert ctx.service_name == "Corte Niño"
-        assert ctx.service_id == "uuid-corte-nino"
-
-    # ── Tests: pre-existing canonical hint still works ───────────────────────
-
-    def test_canonical_hint_adult_female_still_works(self):
-        """Existing ctx.service_audience_hint='adult_female' → still resolves correctly."""
-        ctx = self._make_ctx(hint="adult_female")
-        result = resolve_pending_clarification(ctx, user_message="")
-        assert result is True
-        assert ctx.service_name == "Corte de Señora"
-
-    def test_canonical_hint_child_female_resolves_nina(self):
-        """Hint='child_female' → resolves to Niña option."""
-        ctx = self._make_ctx(hint="child_female")
-        result = resolve_pending_clarification(ctx, user_message="")
-        assert result is True
-        assert ctx.service_name == "Corte Niña"
-
-    # ── Tests: edge cases ────────────────────────────────────────────────────
-
-    def test_no_hint_and_no_user_message_stays_pending(self):
-        """No hint AND empty user_message → unresolvable → stays pending."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="")
-        assert result is False
-        assert len(ctx.pending_clarifications) == 1
-
-    def test_ambiguous_message_stays_pending(self):
-        """'un corte' → no audience token → stays pending."""
-        ctx = self._make_ctx()
-        result = resolve_pending_clarification(ctx, user_message="un corte")
-        assert result is False
-        assert len(ctx.pending_clarifications) == 1
-
-    def test_resolved_service_appended_not_overwritten(self):
-        """When existing service is in selected_services, resolved one is prepended."""
-        ctx = BookingContext(
-            service_audience_hint=None,
-            selected_services=["Tinte Color"],
-            pending_clarifications=[dict(_AUDIENCE_CLARIFICATION)],
-        )
-        result = resolve_pending_clarification(ctx, user_message="dama")
-        assert result is True
-        assert ctx.selected_services[0] == "Corte de Señora"
-        assert "Tinte Color" in ctx.selected_services
-
-    def test_service_id_set_after_resolution(self):
-        """After resolution, service_id and duration are set on ctx."""
-        ctx = self._make_ctx()
-        resolve_pending_clarification(ctx, user_message="dama")
-        assert ctx.service_id == "uuid-corte-f"
-        assert ctx.service_duration_minutes == 45
-
-    def test_candidate_services_cleared_after_resolution(self):
-        """candidate_services is cleared after audience resolution."""
-        ctx = BookingContext(
-            service_audience_hint=None,
-            candidate_services=[{"id": "x", "name": "X"}],
-            pending_clarifications=[dict(_AUDIENCE_CLARIFICATION)],
-        )
-        resolve_pending_clarification(ctx, user_message="dama")
-        assert ctx.candidate_services == []
-
-
 class TestAudienceHintMapExpansion:
     """Verify the expanded _AUDIENCE_HINT_MAP covers new tokens."""
 
@@ -2627,116 +2239,348 @@ class TestInlineAutoResolveMetadata:
 
 
 # ============================================================================
-# Numeric clarification resolution (booking-service-persistence)
+# Regression tests: booking-resolver-collision (SC-1, SC-3)
 # ============================================================================
 
 
-def _make_ctx_with_audience_clarification() -> BookingContext:
-    ctx = BookingContext()
-    ctx.pending_clarifications = [
-        {
-            "axis": "audience",
-            "question": "¿El corte es para...?",
-            "options": [
-                {
-                    "label": "Niña",
-                    "value": "child_female",
-                    "service_name": "Corte Niña",
-                    "service_id": "id-1",
-                    "duration_minutes": 30,
-                },
-                {
-                    "label": "Caballero",
-                    "value": "adult_male",
-                    "service_name": "Corte Caballero",
-                    "service_id": "id-2",
-                    "duration_minutes": 30,
-                },
-                {
-                    "label": "Niño",
-                    "value": "child_male",
-                    "service_name": "Corte Niño",
-                    "service_id": "id-3",
-                    "duration_minutes": 30,
-                },
-                {
-                    "label": "Dama / Señora",
-                    "value": "adult_female",
-                    "service_name": "Corte Dama",
-                    "service_id": "id-4",
-                    "duration_minutes": 40,
-                },
-                {
-                    "label": "Bebé",
-                    "value": "baby",
-                    "service_name": "Corte Bebé",
-                    "service_id": "id-5",
-                    "duration_minutes": 20,
-                },
-            ],
+class TestResolverRemovalRegression:
+    """SC-1 regression: resolve_pending_clarification must no longer exist in the pipeline.
+
+    After the booking-resolver-collision fix, the Python pre-resolver was removed.
+    The LLM handles all clarification resolution natively via <clarification> context.
+    """
+
+    def test_resolve_pending_clarification_not_importable(self):
+        """SC-1 guard: resolve_pending_clarification must not exist in tool_extractors module."""
+        import agent.modes.tool_extractors as te
+
+        assert not hasattr(te, "resolve_pending_clarification"), (
+            "resolve_pending_clarification still exists in tool_extractors — "
+            "it must be deleted as part of booking-resolver-collision fix"
+        )
+
+    def test_booking_mode_does_not_import_resolver(self):
+        """SC-1 guard: booking_mode module must not import resolve_pending_clarification."""
+        import ast
+        import inspect
+
+        import agent.modes.booking_mode as bm
+
+        source = inspect.getsource(bm)
+        tree = ast.parse(source)
+        imported_names: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    imported_names.append(alias.name)
+        assert "resolve_pending_clarification" not in imported_names, (
+            "booking_mode.py still imports resolve_pending_clarification — "
+            "it must be removed as part of booking-resolver-collision fix"
+        )
+
+
+class TestCompoundNameHallucinationRegression:
+    """SC-3 regression: compound stylist names must not be corrupted by partial redaction.
+
+    Covers:
+    - "Ana María" is NOT redacted to "Ana tu estilista"
+    - Individual word tokens of a known stylist are NOT flagged as hallucinated
+    - Truly hallucinated names (not in any known stylist's name) ARE still redacted
+    """
+
+    def _make_mode(self) -> BookingMode:
+        return BookingMode(tools=[], llm_client=MagicMock())
+
+    def test_compound_stylist_not_detected_as_hallucination(self):
+        """SC-3: 'Ana María' is a known stylist — 'Ana' and 'María' must NOT be flagged."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"name": "Ana María", "id": "1"},
+            ]
+        )
+        mode = self._make_mode()
+        response = "Ana María te atenderá con mucho gusto"
+
+        mode._detect_stylist_hallucination(response, ctx)
+
+        assert ctx.force_stylist_correction is False, (
+            "'Ana María' is a known stylist — should NOT trigger hallucination detection"
+        )
+
+    def test_compound_name_not_redacted_to_artifact(self):
+        """SC-3: Response containing known compound name 'Ana María' must remain intact."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"name": "Ana María", "id": "1"},
+            ]
+        )
+        ctx._last_hallucinated_names = set()
+        ctx.force_stylist_correction = False
+        mode = self._make_mode()
+
+        # Ensure no hallucination detected first
+        response = "Ana María puede atenderte el martes"
+        mode._detect_stylist_hallucination(response, ctx)
+
+        # Then ensure redact does not corrupt it
+        result = mode._redact_hallucinated_stylists(response, ctx)
+        assert "tu estilista" not in result, (
+            "'Ana María' must NOT be redacted — it is a known stylist compound name"
+        )
+        assert "Ana María" in result
+
+    def test_truly_hallucinated_name_still_redacted(self):
+        """Compound precision: hallucinated 'Carmen' IS still redacted, known 'Ana María' is not."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"name": "Ana María", "id": "1"},
+            ]
+        )
+        mode = self._make_mode()
+        response = "Carmen y Ana María pueden atenderte"
+
+        mode._detect_stylist_hallucination(response, ctx)
+        result = mode._redact_hallucinated_stylists(response, ctx)
+
+        # Carmen is hallucinated → redacted
+        assert "Carmen" not in result
+        assert "tu estilista" in result
+        # Ana (token of "Ana María") is NOT redacted
+        assert "Ana" in result
+
+    def test_word_token_of_known_stylist_not_flagged(self):
+        """Individual word 'Ana' must not be flagged when 'Ana María' is a known stylist."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"name": "Ana María", "id": "1"},
+            ]
+        )
+        mode = self._make_mode()
+        # Response mentions "Ana" alone (not the full compound name)
+        response = "Ana puede atenderte"
+
+        mode._detect_stylist_hallucination(response, ctx)
+
+        # "Ana" is a token of "Ana María" — should NOT flag hallucination
+        assert ctx.force_stylist_correction is False
+
+    def test_short_tokens_do_not_create_false_positives(self):
+        """Short tokens like 'de' in 'María de Los Ángeles' are excluded from token matching."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"name": "María de Los Ángeles", "id": "1"},
+            ]
+        )
+        mode = self._make_mode()
+        # "De" is capitalized but short — should not protect hallucinated names via token match
+        # "Los" is a known token (len=3) so it IS in known_word_tokens
+        response = "María de Los Ángeles te atiende"
+
+        mode._detect_stylist_hallucination(response, ctx)
+
+        # All words in response are tokens of the known stylist — no hallucination
+        assert ctx.force_stylist_correction is False
+
+
+# ============================================================================
+# _previous_assistant_presented_clarification
+# ============================================================================
+
+
+class TestPreviousAssistantPresentedClarification:
+    """Unit tests for the context-guard helper."""
+
+    def _clarification_msg(self) -> dict:
+        return {
+            "role": "assistant",
+            "content": "¿El corte es para...?\n1. Bebé\n2. Niño\n3. Niña\n4. Caballero\n5. Dama",
         }
+
+    def _plain_msg(self) -> dict:
+        return {"role": "assistant", "content": "Claro, enseguida te ayudo."}
+
+    def test_returns_true_when_numbered_list_present(self):
+        messages = [self._clarification_msg()]
+        assert _previous_assistant_presented_clarification(messages) is True
+
+    def test_returns_false_for_plain_assistant_message(self):
+        messages = [self._plain_msg()]
+        assert _previous_assistant_presented_clarification(messages) is False
+
+    def test_returns_false_when_no_assistant_messages(self):
+        messages = [{"role": "user", "content": "Hola"}]
+        assert _previous_assistant_presented_clarification(messages) is False
+
+    def test_returns_false_for_empty_messages(self):
+        assert _previous_assistant_presented_clarification([]) is False
+
+    def test_checks_last_assistant_message(self):
+        """Plain message after clarification → False (most recent is plain)."""
+        messages = [self._clarification_msg(), self._plain_msg()]
+        assert _previous_assistant_presented_clarification(messages) is False
+
+    def test_ignores_user_messages_between(self):
+        """User reply between assistant messages — last assistant has numbered list."""
+        messages = [
+            self._clarification_msg(),
+            {"role": "user", "content": "4"},
+        ]
+        # The last assistant message IS the clarification one
+        assert _previous_assistant_presented_clarification(messages) is True
+
+
+# ============================================================================
+# _resolve_user_clarification_selection
+# ============================================================================
+
+
+def _make_clarification_ctx(n_options: int = 5) -> BookingContext:
+    """Return a BookingContext with n clarification options on the audience axis."""
+    options = [
+        {
+            "service_id": f"svc-{i}",
+            "service_name": f"Servicio {i}",
+            "label": f"Opción {i}",
+            "value": f"opcion_{i}",
+            "category": "peluqueria",
+            "duration_minutes": 30,
+            "family": None,
+        }
+        for i in range(1, n_options + 1)
     ]
+    ctx = BookingContext()
+    ctx.pending_clarifications = [{"axis": "audience", "options": options}]
     return ctx
 
 
-class TestNumericClarificationResolution:
-    """Test that numeric index answers resolve audience/hair axis clarifications."""
+def _clarification_messages() -> list[dict]:
+    """Return a messages list whose last assistant msg has a numbered clarification list."""
+    return [
+        {
+            "role": "assistant",
+            "content": "¿El corte es para...?\n1. Opción 1\n2. Opción 2\n"
+            "3. Opción 3\n4. Opción 4\n5. Opción 5",
+        },
+    ]
 
-    def test_numeric_dot_resolves_audience(self):
-        """'4.' should resolve to option at index 3 (Dama/Señora)."""
-        ctx = _make_ctx_with_audience_clarification()
-        result = resolve_pending_clarification(ctx, user_message="4.")
+
+def _no_clarification_messages() -> list[dict]:
+    """Return a messages list whose last assistant msg has NO numbered list."""
+    return [{"role": "assistant", "content": "Claro, dime qué servicio deseas."}]
+
+
+class TestResolveUserClarificationSelection:
+    """Unit tests for _resolve_user_clarification_selection (T5.1)."""
+
+    # ── Happy-path ────────────────────────────────────────────────────────────
+
+    def test_bare_number_resolves(self):
+        """Sending '4' with 5 options → resolves to option 4."""
+        ctx = _make_clarification_ctx(5)
+        msgs = _clarification_messages()
+        result = _resolve_user_clarification_selection("4", ctx, msgs)
         assert result is True
-        assert ctx.service_id == "id-4"
-        assert "Corte Dama" in ctx.selected_services
-        assert len(ctx.pending_clarifications) == 0
+        assert ctx.service_id == "svc-4"
+        assert ctx.pending_clarifications == []
 
-    def test_numeric_no_dot_resolves_audience(self):
-        """'4' (no dot) should also resolve to option at index 3."""
-        ctx = _make_ctx_with_audience_clarification()
-        result = resolve_pending_clarification(ctx, user_message="4")
+    def test_number_with_text_resolves(self):
+        """'el 2 por favor' with 3 options → resolves to option 2."""
+        ctx = _make_clarification_ctx(3)
+        msgs = _clarification_messages()
+        result = _resolve_user_clarification_selection("el 2 por favor", ctx, msgs)
         assert result is True
-        assert ctx.service_id == "id-4"
-        assert "Corte Dama" in ctx.selected_services
+        assert ctx.service_id == "svc-2"
+        assert ctx.pending_clarifications == []
 
-    def test_date_string_does_not_trigger_numeric(self):
-        """'4 de abril' must NOT trigger numeric resolution (has extra text after digit)."""
-        ctx = _make_ctx_with_audience_clarification()
-        # '4 de abril' does not match r'^\s*(\d+)\.?\s*$' — should not resolve via numeric path
-        result = resolve_pending_clarification(ctx, user_message="4 de abril")
-        # Key assertion: service_id must NOT be "id-4" via numeric path
-        # (The hint-map fallback may or may not resolve, but not via numeric index)
-        assert ctx.service_id != "id-4" or result is False
-
-    def test_numeric_first_option_resolves(self):
-        """'1' resolves to the first option (Niña)."""
-        ctx = _make_ctx_with_audience_clarification()
-        result = resolve_pending_clarification(ctx, user_message="1")
+    def test_label_text_match(self):
+        """User sends 'opcion_3' (matches value field) → resolves to option 3."""
+        ctx = _make_clarification_ctx(5)
+        msgs = _clarification_messages()
+        result = _resolve_user_clarification_selection("opcion_3", ctx, msgs)
         assert result is True
-        assert ctx.service_id == "id-1"
-        assert "Corte Niña" in ctx.selected_services
+        assert ctx.service_id == "svc-3"
+        assert ctx.pending_clarifications == []
 
-    def test_numeric_last_option_resolves(self):
-        """'5' resolves to the last option (Bebé)."""
-        ctx = _make_ctx_with_audience_clarification()
-        result = resolve_pending_clarification(ctx, user_message="5")
-        assert result is True
-        assert ctx.service_id == "id-5"
-        assert "Corte Bebé" in ctx.selected_services
-
-    def test_numeric_out_of_range_falls_through_to_hint_map(self):
-        """'9' with only 5 options — no numeric match, falls through to hint map."""
-        ctx = _make_ctx_with_audience_clarification()
-        # Index 9 is out of range (only 5 options) — should NOT resolve via numeric path
-        result = resolve_pending_clarification(ctx, user_message="9")
-        # Hint map won't match "9" either → stays pending
+    def test_no_match_returns_false(self):
+        """Unrelated message 'hola' → False; ctx unchanged."""
+        ctx = _make_clarification_ctx(3)
+        msgs = _clarification_messages()
+        result = _resolve_user_clarification_selection("hola", ctx, msgs)
         assert result is False
+        assert ctx.service_id is None
         assert len(ctx.pending_clarifications) == 1
 
-    def test_numeric_with_leading_spaces_resolves(self):
-        """'  2  ' (whitespace padded) resolves to option at index 1."""
-        ctx = _make_ctx_with_audience_clarification()
-        result = resolve_pending_clarification(ctx, user_message="  2  ")
+    # ── Guard conditions ──────────────────────────────────────────────────────
+
+    def test_guard_empty_pending(self):
+        """Empty pending_clarifications → False immediately."""
+        ctx = BookingContext()
+        ctx.pending_clarifications = []
+        result = _resolve_user_clarification_selection("4", ctx)
+        assert result is False
+
+    def test_guard_service_already_set(self):
+        """service_id already set → False even with valid number."""
+        ctx = _make_clarification_ctx(3)
+        ctx.service_id = "already-set"
+        result = _resolve_user_clarification_selection("2", ctx, _clarification_messages())
+        assert result is False
+        assert ctx.service_id == "already-set"  # unchanged
+
+    def test_guard_no_clarification_in_history(self):
+        """Last assistant message had no numbered list → False."""
+        ctx = _make_clarification_ctx(5)
+        msgs = _no_clarification_messages()
+        result = _resolve_user_clarification_selection("3", ctx, msgs)
+        assert result is False
+        assert ctx.service_id is None
+        assert len(ctx.pending_clarifications) == 1
+
+    # ── Multi-entry preservation ───────────────────────────────────────────────
+
+    def test_preserves_other_pending_entries(self):
+        """Queue has 2 entries; resolving first keeps second intact."""
+        options_a = [
+            {
+                "service_id": "svc-a1",
+                "service_name": "Servicio A1",
+                "label": "A1",
+                "value": "a1",
+                "category": "peluqueria",
+                "duration_minutes": 30,
+                "family": None,
+            },
+            {
+                "service_id": "svc-a2",
+                "service_name": "Servicio A2",
+                "label": "A2",
+                "value": "a2",
+                "category": "peluqueria",
+                "duration_minutes": 30,
+                "family": None,
+            },
+        ]
+        options_b = [
+            {
+                "service_id": "svc-b1",
+                "service_name": "Servicio B1",
+                "label": "B1",
+                "value": "b1",
+                "category": "peluqueria",
+                "duration_minutes": 45,
+                "family": None,
+            },
+        ]
+        ctx = BookingContext()
+        entry_a = {"axis": "audience", "options": options_a}
+        entry_b = {"axis": "hair_density", "options": options_b}
+        ctx.pending_clarifications = [entry_a, entry_b]
+
+        msgs = [{"role": "assistant", "content": "¿Para quién?\n1. A1\n2. A2"}]
+        result = _resolve_user_clarification_selection("1", ctx, msgs)
+
         assert result is True
-        assert ctx.service_id == "id-2"
-        assert "Corte Caballero" in ctx.selected_services
+        assert ctx.service_id == "svc-a1"
+        # hair_density entry still pending
+        assert len(ctx.pending_clarifications) == 1
+        assert ctx.pending_clarifications[0]["axis"] == "hair_density"
