@@ -171,6 +171,21 @@ _CONFIRMATION_QUESTION_PATTERNS: tuple[str, ...] = (
     "quieres que reserve",
 )
 
+# Shared markers for notes-asking detection — used by both _build_response() counter
+# and _previous_assistant_asked_for_notes() flag.
+_NOTES_ASK_MARKERS: frozenset[str] = frozenset(
+    {
+        "nota",
+        "preferencia",
+        "indicacion",
+        "alergia",
+        "algo que debamos saber",
+        "algo que deba saber",
+        "comentario",
+        "especial",
+    }
+)
+
 # User affirmative phrases that confirm a booking after summary is shown
 _USER_CONFIRMATION_PHRASES: tuple[str, ...] = (
     "si",
@@ -509,10 +524,10 @@ class BookingMode(BaseModeNode):
         # 1e. Pre-resolve: detect notes exchange (bot asked + user replied)
         if ctx and not ctx.notes_asked:
             messages = state.get("messages", [])
-            if ctx.notes_ask_attempts >= 2:
+            if ctx.notes_ask_attempts >= 1:
                 ctx.notes_asked = True
                 logger.info(
-                    "handle: notes_asked auto-set True (attempts=%d >= 2)",
+                    "handle: notes_asked auto-set True (attempts=%d >= 1)",
                     ctx.notes_ask_attempts,
                 )
             elif _previous_assistant_asked_for_notes(messages):
@@ -599,8 +614,13 @@ class BookingMode(BaseModeNode):
         self._f7_recovered_this_turn = False
 
         # Force tool calling when service is unresolved (prevents F-7 tool skip)
+        # Also force when disambiguation state exists (M-4 pending-state guard)
         tool_choice = None
-        if not ctx.selected_services and not ctx.service_id and not ctx.confirmation_shown:
+        if (
+            (not ctx.selected_services and not ctx.service_id and not ctx.confirmation_shown)
+            or ctx.pending_clarifications
+            or ctx.candidate_services
+        ):
             tool_choice = "required"
             logger.info("BookingMode: tool_choice='required' (service unresolved)")
 
@@ -2171,14 +2191,6 @@ class BookingMode(BaseModeNode):
 
         # Detect notes-asking markers in outgoing response → increment attempts counter
         if ctx and not ctx.notes_asked:
-            _NOTES_ASK_MARKERS = (
-                "nota",
-                "preferencia",
-                "indicacion",
-                "alergia",
-                "algo que debamos saber",
-                "algo que deba saber",
-            )
             normalized_resp_notes = _normalize_text(response_text)
             if any(marker in normalized_resp_notes for marker in _NOTES_ASK_MARKERS):
                 ctx.notes_ask_attempts += 1
@@ -2661,17 +2673,7 @@ def _previous_assistant_asked_for_notes(messages: list[dict]) -> bool:
     for msg in reversed(messages):
         if msg.get("role") == "assistant":
             content = _normalize_text(msg.get("content") or "")
-            notes_ask_patterns = (
-                "nota",
-                "preferencia",
-                "algo que debamos saber",
-                "algo que deba saber",
-                "alergia",
-                "indicacion",
-                "comentario",
-                "especial",
-            )
-            return any(pattern in content for pattern in notes_ask_patterns)
+            return any(marker in content for marker in _NOTES_ASK_MARKERS)
     return False
 
 

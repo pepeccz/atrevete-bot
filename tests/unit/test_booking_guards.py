@@ -16,14 +16,13 @@ Coverage:
 All LLM calls are mocked — tests do NOT require a real LLM or DB.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agent.modes.base import ToolCallRejection
 from agent.modes.booking_context import BookingContext
 from agent.modes.booking_mode import BookingMode, _detect_confirmation_exchange
-
 
 # =============================================================================
 # Helpers
@@ -111,6 +110,7 @@ class TestGuardEmptyOfferedSlots:
             customer_id="cust-1",
             needs_availability_refresh=False,
             confirmation_shown=True,
+            notes_asked=True,  # notes gate already cleared in a real booking flow
         )
         args = {"customer_id": "cust-1", "slot_index": 2}
 
@@ -165,6 +165,7 @@ class TestGuardNeedsAvailabilityRefresh:
             customer_name="Pedro",
             customer_id="cust-1",
             confirmation_shown=True,
+            notes_asked=True,  # notes gate already cleared in a real booking flow
         )
         args = {"customer_id": "cust-1", "slot_index": 1}
 
@@ -218,6 +219,7 @@ class TestGuardEmptyServices:
             customer_name="Pedro",
             customer_id="cust-1",
             confirmation_shown=True,
+            notes_asked=True,  # notes gate already cleared in a real booking flow
         )
         args = {"customer_id": "cust-1", "slot_index": 1}
 
@@ -606,6 +608,7 @@ class TestConfirmationGate:
             customer_id="cust-123",
             needs_availability_refresh=False,
             confirmation_shown=False,
+            notes_asked=True,  # notes gate already cleared; testing confirmation guard specifically
         )
         args = {"customer_id": "cust-123", "slot_index": 1}
 
@@ -632,6 +635,7 @@ class TestConfirmationGate:
             customer_id="cust-123",
             needs_availability_refresh=False,
             confirmation_shown=True,
+            notes_asked=True,  # notes gate already cleared in a real booking flow
         )
         args = {"customer_id": "cust-123", "slot_index": 1}
 
@@ -834,3 +838,232 @@ class TestDetectConfirmationExchange:
         _detect_confirmation_exchange(state, ctx)
 
         assert ctx.confirmation_shown is False
+
+
+# =============================================================================
+# M-4: tool_choice='required' pending-state guard
+# =============================================================================
+
+
+def _make_state_with_mode_context(mode_context: dict | None = None) -> dict:
+    """Build a minimal ConversationState for TestToolChoicePendingGuard tests."""
+    from agent.state.schemas import create_initial_state
+
+    state = create_initial_state("conv-001", "+34612345678")
+    state["customer_name"] = "María"
+    state["customer_id"] = "cust-001"
+    state["is_first_interaction"] = False
+    state["current_mode"] = "BOOKING"
+    state["mode_context"] = mode_context or {}
+    state["messages"] = [{"role": "user", "content": "quiero reservar"}]
+    return state
+
+
+def _make_agentic_result():
+    """Return a minimal AgenticLoopResult for _run_agentic_loop mocks."""
+    from agent.modes.base import AgenticLoopResult
+
+    return AgenticLoopResult(response_text="ok", tool_results={})
+
+
+class TestToolChoicePendingGuard:
+    """M-4: tool_choice='required' when pending_clarifications or candidate_services is set.
+
+    Tests are integration-style: they call handle() with all heavy methods mocked
+    so we can assert on the tool_choice kwarg passed to _run_agentic_loop.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tool_choice_required_with_pending_clarifications_and_partial_service(self):
+        """S1: selected_services populated + pending_clarifications non-empty -> 'required'."""
+        mode = _make_mode()
+        state = _make_state_with_mode_context(
+            {
+                "selected_services": ["Corte Dama"],
+                "pending_clarifications": [{"question": "¿Para dama o caballero?"}],
+                "confirmation_shown": False,
+            }
+        )
+        intent = MagicMock()
+
+        loop_mock = AsyncMock(return_value=_make_agentic_result())
+        with (
+            patch.object(mode, "_run_agentic_loop", loop_mock),
+            patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
+            patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
+            patch.object(mode, "_detect_tool_skips", AsyncMock()),
+            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
+            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
+            patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
+        ):
+            await mode.handle(state, intent)
+
+        _args, _kwargs = loop_mock.call_args
+        assert _kwargs.get("tool_choice") == "required"
+
+    @pytest.mark.asyncio
+    async def test_tool_choice_required_with_candidate_services_and_partial_service(self):
+        """S2: selected_services populated + candidate_services non-empty -> 'required'."""
+        mode = _make_mode()
+        state = _make_state_with_mode_context(
+            {
+                "selected_services": ["Corte Dama"],
+                "candidate_services": [{"name": "Tinte", "id": "svc-2"}],
+                "confirmation_shown": False,
+            }
+        )
+        intent = MagicMock()
+
+        loop_mock = AsyncMock(return_value=_make_agentic_result())
+        with (
+            patch.object(mode, "_run_agentic_loop", loop_mock),
+            patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
+            patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
+            patch.object(mode, "_detect_tool_skips", AsyncMock()),
+            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
+            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
+            patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
+        ):
+            await mode.handle(state, intent)
+
+        _args, _kwargs = loop_mock.call_args
+        assert _kwargs.get("tool_choice") == "required"
+
+    @pytest.mark.asyncio
+    async def test_tool_choice_not_forced_after_pre_resolver_clears_pending_clarifications(self):
+        """S3: pending_clarifications cleared by pre-resolver -> NOT forced (only original guard).
+
+        When pre-resolver _resolve_user_clarification_selection runs and empties
+        pending_clarifications, the guard sees an empty list and should NOT force
+        tool_choice solely due to FR-1. Here we simulate this by providing a state
+        where selected_services is set and pending_clarifications will be cleared
+        (we mock it directly via mode_context with empty list after resolution).
+        """
+        mode = _make_mode()
+        # Simulate the state AFTER pre-resolver has already cleared pending_clarifications:
+        # selected_services is set, pending_clarifications is empty → no force
+        state = _make_state_with_mode_context(
+            {
+                "selected_services": ["Corte Dama"],
+                "pending_clarifications": [],  # already cleared
+                "confirmation_shown": False,
+            }
+        )
+        intent = MagicMock()
+
+        loop_mock = AsyncMock(return_value=_make_agentic_result())
+        with (
+            patch.object(mode, "_run_agentic_loop", loop_mock),
+            patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
+            patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
+            patch.object(mode, "_detect_tool_skips", AsyncMock()),
+            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
+            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
+            patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
+        ):
+            await mode.handle(state, intent)
+
+        _args, _kwargs = loop_mock.call_args
+        assert _kwargs.get("tool_choice") is None
+
+    @pytest.mark.asyncio
+    async def test_tool_choice_not_forced_after_pre_resolver_clears_candidate_services(self):
+        """S4: candidate_services cleared by pre-resolver -> NOT forced (only original guard).
+
+        When pre-resolver _resolve_user_candidate_selection runs and empties
+        candidate_services, the guard sees an empty list and should NOT force
+        tool_choice solely due to FR-2.
+        """
+        mode = _make_mode()
+        # Simulate state AFTER pre-resolver has already cleared candidate_services
+        state = _make_state_with_mode_context(
+            {
+                "selected_services": ["Corte Dama"],
+                "candidate_services": [],  # already cleared
+                "confirmation_shown": False,
+            }
+        )
+        intent = MagicMock()
+
+        loop_mock = AsyncMock(return_value=_make_agentic_result())
+        with (
+            patch.object(mode, "_run_agentic_loop", loop_mock),
+            patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
+            patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
+            patch.object(mode, "_detect_tool_skips", AsyncMock()),
+            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
+            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
+            patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
+        ):
+            await mode.handle(state, intent)
+
+        _args, _kwargs = loop_mock.call_args
+        assert _kwargs.get("tool_choice") is None
+
+    @pytest.mark.asyncio
+    async def test_tool_choice_required_original_behavior_no_service(self):
+        """S5 (regression): no service + no pending state -> still forced (FR-4 original guard).
+
+        Ensures the original behavior is preserved when pending state is empty
+        but service is not yet resolved.
+        """
+        mode = _make_mode()
+        state = _make_state_with_mode_context(
+            {
+                "selected_services": [],
+                "service_id": None,
+                "confirmation_shown": False,
+                "pending_clarifications": [],
+                "candidate_services": [],
+            }
+        )
+        intent = MagicMock()
+
+        loop_mock = AsyncMock(return_value=_make_agentic_result())
+        with (
+            patch.object(mode, "_run_agentic_loop", loop_mock),
+            patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
+            patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
+            patch.object(mode, "_detect_tool_skips", AsyncMock()),
+            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
+            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
+            patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
+        ):
+            await mode.handle(state, intent)
+
+        _args, _kwargs = loop_mock.call_args
+        assert _kwargs.get("tool_choice") == "required"
+
+    @pytest.mark.asyncio
+    async def test_tool_choice_not_forced_with_complete_service_no_pending(self):
+        """S6 (regression): service complete + no pending state -> NOT forced (FR-4).
+
+        Ensures normal flow is not disrupted when service is resolved and
+        there is no disambiguation state.
+        """
+        mode = _make_mode()
+        state = _make_state_with_mode_context(
+            {
+                "selected_services": ["Corte Dama"],
+                "service_id": "svc-001",
+                "confirmation_shown": False,
+                "pending_clarifications": [],
+                "candidate_services": [],
+            }
+        )
+        intent = MagicMock()
+
+        loop_mock = AsyncMock(return_value=_make_agentic_result())
+        with (
+            patch.object(mode, "_run_agentic_loop", loop_mock),
+            patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
+            patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
+            patch.object(mode, "_detect_tool_skips", AsyncMock()),
+            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
+            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
+            patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
+        ):
+            await mode.handle(state, intent)
+
+        _args, _kwargs = loop_mock.call_args
+        assert _kwargs.get("tool_choice") is None
