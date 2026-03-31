@@ -108,6 +108,128 @@ def _previous_assistant_presented_clarification(messages: list[dict]) -> bool:
     return False
 
 
+def _previous_assistant_presented_candidates(
+    messages: list[dict],
+    candidates: list[dict],
+) -> bool:
+    """Check if the most recent assistant message presented candidate services.
+
+    Iterates ``messages`` in reverse, finds the first (most recent)
+    ``role == "assistant"`` message, and returns True if its content contains
+    at least 2 service names from ``candidates`` (normalized substring match,
+    case-insensitive).
+
+    Returns False if:
+    - no assistant message is found
+    - ``candidates`` is empty
+    - fewer than 2 candidate names appear in the last assistant message
+    """
+    if not candidates:
+        return False
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = _normalize_text(msg.get("content") or "")
+            matches = sum(
+                1
+                for c in candidates
+                if _normalize_text(c.get("name", ""))
+                and _normalize_text(c.get("name", "")) in content
+            )
+            return matches >= 2
+    return False
+
+
+def _resolve_user_candidate_selection(
+    user_message: str,
+    ctx: BookingContext,
+    messages: list[dict] | None = None,
+) -> bool:
+    """Resolve a candidate service selection from the user message.
+
+    Deterministically matches the user's reply (number or service name) against
+    the stored options in ``ctx.candidate_services`` and calls
+    ``extract_service_fields()`` on success via a synthesized Shape-1 dict.
+    Must NOT call any tools or LLM — purely synchronous Python.
+
+    Guards (returns False immediately if ANY fail):
+    - ``ctx.candidate_services`` is empty
+    - ``ctx.service_id`` is already set (prevent overwrite)
+    - ``messages`` provided and last assistant did NOT present candidate names
+
+    Match logic (priority order):
+    1. Bare number: ``r'^\\s*(\\d+)\\s*$'`` → ``candidate_services[n-1]``
+    2. Number embedded in text: ``r'\\b(\\d+)\\b'`` → ``candidate_services[n-1]``
+    3. Service name: normalized substring match against candidate ``name`` field
+
+    On success: synthesizes Shape-1 dict and calls ``extract_service_fields()``
+    (which sets service_id/name/etc AND clears candidate_services), returns True.
+    On no match: returns False (LLM handles it normally).
+    """
+    # Guard: nothing to resolve
+    if not ctx.candidate_services:
+        return False
+
+    # Guard: service already resolved — don't overwrite
+    if ctx.service_id is not None:
+        return False
+
+    # Guard: only resolve if assistant actually presented candidate services
+    if messages is not None and not _previous_assistant_presented_candidates(
+        messages, ctx.candidate_services
+    ):
+        return False
+
+    candidates = ctx.candidate_services
+    matched_candidate: dict | None = None
+
+    # Priority 1: bare number  e.g. "2"
+    bare_match = re.match(r"^\s*(\d+)\s*$", user_message)
+    if bare_match:
+        idx = int(bare_match.group(1)) - 1
+        if 0 <= idx < len(candidates):
+            matched_candidate = candidates[idx]
+
+    # Priority 2: number embedded in text  e.g. "el 2 por favor"
+    if matched_candidate is None:
+        embedded_match = re.search(r"\b(\d+)\b", user_message)
+        if embedded_match:
+            idx = int(embedded_match.group(1)) - 1
+            if 0 <= idx < len(candidates):
+                matched_candidate = candidates[idx]
+
+    # Priority 3: service name substring match (normalized)
+    if matched_candidate is None:
+        user_norm = _normalize_text(user_message)
+        for candidate in candidates:
+            name_norm = _normalize_text(candidate.get("name", ""))
+            if name_norm and (name_norm in user_norm or user_norm in name_norm):
+                matched_candidate = candidate
+                break
+
+    if matched_candidate is None:
+        return False
+
+    # Synthesize Shape-1 dict and delegate to extract_service_fields
+    # (which handles all canonical fields AND clears candidate_services)
+    synthesized = {
+        "resolved_service": {
+            "id": matched_candidate["id"],
+            "name": matched_candidate["name"],
+            "duration_minutes": matched_candidate.get("duration_minutes"),
+            "price": matched_candidate.get("price"),
+            "category": matched_candidate.get("category"),
+            "description": matched_candidate.get("description"),
+        }
+    }
+    extract_service_fields(synthesized, ctx)
+    logger.debug(
+        "_resolve_user_candidate_selection: resolved '%s' (id=%s)",
+        matched_candidate.get("name"),
+        matched_candidate.get("id"),
+    )
+    return True
+
+
 def _resolve_user_clarification_selection(
     user_message: str,
     ctx: BookingContext,

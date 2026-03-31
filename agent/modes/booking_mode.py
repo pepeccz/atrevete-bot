@@ -25,6 +25,7 @@ from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.modes.booking_context import BookingContext, format_service_list
 from agent.modes.tool_extractors import (
     _clear_date_metadata,
+    _resolve_user_candidate_selection,
     _resolve_user_clarification_selection,
     apply_all_tool_results,
     extract_service_audience_hint,
@@ -529,6 +530,13 @@ class BookingMode(BaseModeNode):
             _resolve_user_clarification_selection(
                 user_message_for_slot, ctx, state.get("messages", [])
             )
+
+        # 1h. Deterministic candidate selection resolver
+        if ctx.candidate_services:
+            if _resolve_user_candidate_selection(
+                user_message_for_slot, ctx, state.get("messages", [])
+            ):
+                logger.debug("candidate_services resolved deterministically")
 
         # 2. Fast-path: cancel / escalate (before LLM call)
         user_message = self._get_last_user_message(state)

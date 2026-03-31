@@ -14,7 +14,9 @@ from agent.modes.booking_mode import BookingMode
 from agent.modes.tool_extractors import (
     TOOL_EXTRACTORS,
     _apply_resolved_option,
+    _previous_assistant_presented_candidates,
     _previous_assistant_presented_clarification,
+    _resolve_user_candidate_selection,
     _resolve_user_clarification_selection,
     _safe_parse,
     apply_all_tool_results,
@@ -2584,3 +2586,183 @@ class TestResolveUserClarificationSelection:
         # hair_density entry still pending
         assert len(ctx.pending_clarifications) == 1
         assert ctx.pending_clarifications[0]["axis"] == "hair_density"
+
+
+# ============================================================================
+# _previous_assistant_presented_candidates
+# ============================================================================
+
+
+class TestPreviousAssistantPresentedCandidates:
+    """Tests for the guard helper that detects candidate service presentation."""
+
+    def _make_candidates(self) -> list[dict]:
+        return [
+            {"id": "svc-1", "name": "Corte Dama", "duration_minutes": 45},
+            {"id": "svc-2", "name": "Bioterapia Capilar", "duration_minutes": 60},
+            {"id": "svc-3", "name": "Tinte Completo", "duration_minutes": 90},
+        ]
+
+    def test_candidate_names_present_in_last_assistant_message(self):
+        """Returns True when last assistant msg contains ≥2 candidate names."""
+        candidates = self._make_candidates()
+        messages = [
+            {"role": "user", "content": "quiero un servicio"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Encontré estas opciones:\n"
+                    "1. Corte Dama\n"
+                    "2. Bioterapia Capilar\n"
+                    "3. Tinte Completo\n"
+                    "¿Cuál elegís?"
+                ),
+            },
+        ]
+        assert _previous_assistant_presented_candidates(messages, candidates) is True
+
+    def test_no_candidate_names_in_last_assistant_message(self):
+        """Returns False when last assistant msg is plain text with no candidate names."""
+        candidates = self._make_candidates()
+        messages = [
+            {"role": "user", "content": "hola"},
+            {
+                "role": "assistant",
+                "content": "¡Hola! ¿En qué te puedo ayudar hoy?",
+            },
+        ]
+        assert _previous_assistant_presented_candidates(messages, candidates) is False
+
+    def test_empty_candidates_list_returns_false(self):
+        """Returns False immediately when candidates list is empty."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": "1. Corte Dama\n2. Bioterapia",
+            },
+        ]
+        assert _previous_assistant_presented_candidates(messages, []) is False
+
+    def test_only_one_candidate_name_in_message_returns_false(self):
+        """Returns False when only 1 candidate name appears (requires ≥2)."""
+        candidates = self._make_candidates()
+        messages = [
+            {
+                "role": "assistant",
+                "content": "El servicio Corte Dama es muy popular.",
+            },
+        ]
+        assert _previous_assistant_presented_candidates(messages, candidates) is False
+
+    def test_no_assistant_messages_returns_false(self):
+        """Returns False when there are no assistant messages."""
+        candidates = self._make_candidates()
+        messages = [
+            {"role": "user", "content": "quiero algo"},
+        ]
+        assert _previous_assistant_presented_candidates(messages, candidates) is False
+
+
+# ============================================================================
+# _resolve_user_candidate_selection
+# ============================================================================
+
+
+class TestResolveUserCandidateSelection:
+    """Tests for the candidate service selection pre-resolver."""
+
+    def _make_candidates(self) -> list[dict]:
+        return [
+            {"id": "svc-1", "name": "Corte Dama", "duration_minutes": 45, "category": "peluqueria"},
+            {
+                "id": "svc-2",
+                "name": "Bioterapia Capilar",
+                "duration_minutes": 60,
+                "category": "peluqueria",
+            },
+            {
+                "id": "svc-3",
+                "name": "Tinte Completo",
+                "duration_minutes": 90,
+                "category": "coloracion",
+            },
+        ]
+
+    def _make_messages_with_candidates(self) -> list[dict]:
+        return [
+            {"role": "user", "content": "quiero un servicio"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Encontré estas opciones:\n"
+                    "1. Corte Dama\n"
+                    "2. Bioterapia Capilar\n"
+                    "3. Tinte Completo\n"
+                    "¿Cuál elegís?"
+                ),
+            },
+        ]
+
+    def test_numeric_selection_resolves_by_index(self):
+        """User sends '2' → resolves candidate at index 1 (0-based)."""
+        ctx = BookingContext()
+        ctx.candidate_services = self._make_candidates()
+        messages = self._make_messages_with_candidates()
+
+        result = _resolve_user_candidate_selection("2", ctx, messages)
+
+        assert result is True
+        assert ctx.service_id == "svc-2"
+        assert ctx.service_name == "Bioterapia Capilar"
+        assert ctx.candidate_services == []
+
+    def test_service_name_text_match_resolves(self):
+        """User sends service name text → resolves via substring match."""
+        ctx = BookingContext()
+        ctx.candidate_services = self._make_candidates()
+        messages = self._make_messages_with_candidates()
+
+        result = _resolve_user_candidate_selection("bioterapia capilar", ctx, messages)
+
+        assert result is True
+        assert ctx.service_id == "svc-2"
+        assert ctx.service_name == "Bioterapia Capilar"
+        assert ctx.candidate_services == []
+
+    def test_no_match_returns_false_and_ctx_unchanged(self):
+        """User sends unrelated message → returns False, ctx unchanged."""
+        ctx = BookingContext()
+        ctx.candidate_services = self._make_candidates()
+        messages = self._make_messages_with_candidates()
+        original_candidates = list(ctx.candidate_services)
+
+        result = _resolve_user_candidate_selection("¿cuánto cuesta?", ctx, messages)
+
+        assert result is False
+        assert ctx.service_id is None
+        assert ctx.candidate_services == original_candidates
+
+    def test_guard_empty_candidate_services_returns_false_immediately(self):
+        """Returns False immediately when ctx.candidate_services is empty."""
+        ctx = BookingContext()
+        ctx.candidate_services = []
+        messages = self._make_messages_with_candidates()
+
+        result = _resolve_user_candidate_selection("1", ctx, messages)
+
+        assert result is False
+
+    def test_guard_no_presented_candidates_in_history(self):
+        """Returns False when last assistant msg does NOT contain candidate names."""
+        ctx = BookingContext()
+        ctx.candidate_services = self._make_candidates()
+        messages = [
+            {"role": "user", "content": "hola"},
+            {"role": "assistant", "content": "¡Hola! ¿En qué te puedo ayudar?"},
+        ]
+
+        result = _resolve_user_candidate_selection("1", ctx, messages)
+
+        assert result is False
+        assert ctx.service_id is None
+        assert len(ctx.candidate_services) == 3

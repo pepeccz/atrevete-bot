@@ -38,7 +38,10 @@ from agent.modes.booking_mode import (
     _resolve_user_slot_selection,
     _try_resolve_stylist_from_message,
 )
-from agent.modes.tool_extractors import _resolve_user_clarification_selection
+from agent.modes.tool_extractors import (
+    _resolve_user_candidate_selection,
+    _resolve_user_clarification_selection,
+)
 
 
 # =============================================================================
@@ -680,3 +683,103 @@ class TestClarificationLoopFix:
         # Disambiguation section should still contain the options
         disambiguation = _build_disambiguation_section(ctx)
         assert disambiguation  # non-empty — LLM will re-present the list
+
+
+# =============================================================================
+# Candidate Services Resolver Integration Tests
+# =============================================================================
+
+
+def _make_candidate_services() -> list[dict]:
+    """Three candidate services matching what search_services Shape-3 returns."""
+    return [
+        {
+            "id": "svc-1",
+            "name": "Corte Dama",
+            "duration_minutes": 45,
+            "category": "peluqueria",
+            "description": "Corte y secado para dama",
+        },
+        {
+            "id": "svc-2",
+            "name": "Bioterapia Capilar",
+            "duration_minutes": 60,
+            "category": "peluqueria",
+            "description": "Tratamiento nutritivo intensivo",
+        },
+        {
+            "id": "svc-3",
+            "name": "Tinte Completo",
+            "duration_minutes": 90,
+            "category": "coloracion",
+            "description": "Coloración completa con amoniaco",
+        },
+    ]
+
+
+def _candidate_assistant_messages() -> list[dict]:
+    """Simulate the assistant listing all three candidate services."""
+    return [
+        {"role": "user", "content": "quiero un servicio de pelo"},
+        {
+            "role": "assistant",
+            "content": (
+                "Encontré varias opciones que pueden interesarte:\n"
+                "1. Corte Dama\n"
+                "2. Bioterapia Capilar\n"
+                "3. Tinte Completo\n"
+                "¿Cuál de estas opciones te gustaría?"
+            ),
+        },
+    ]
+
+
+class TestCandidateServicesResolver:
+    """Integration scenario: candidate pre-resolver → context build chain (T6)."""
+
+    def test_candidate_resolved_before_context_build(self):
+        """Full 2-turn sequence: candidates presented → user selects '2' → resolved + cleared.
+
+        Simulates the pre-resolver + context pipeline:
+        1. Construct ctx with candidate_services populated
+        2. Provide messages where last assistant lists all candidate names
+        3. Call _resolve_user_candidate_selection with '2'
+        4. Assert True returned + service_id set to candidate[1].id + candidate_services == []
+        """
+        ctx = BookingContext()
+        ctx.candidate_services = _make_candidate_services()
+        messages = _candidate_assistant_messages()
+
+        resolved = _resolve_user_candidate_selection("2", ctx, messages)
+
+        assert resolved is True
+        assert ctx.service_id == "svc-2"
+        assert ctx.service_name == "Bioterapia Capilar"
+        assert ctx.candidate_services == []
+        # service_duration_minutes should be propagated from the candidate dict
+        assert ctx.service_duration_minutes == 60
+
+    def test_candidate_resolved_by_name(self):
+        """User types partial service name → resolves via substring match."""
+        ctx = BookingContext()
+        ctx.candidate_services = _make_candidate_services()
+        messages = _candidate_assistant_messages()
+
+        resolved = _resolve_user_candidate_selection("tinte completo", ctx, messages)
+
+        assert resolved is True
+        assert ctx.service_id == "svc-3"
+        assert ctx.service_name == "Tinte Completo"
+        assert ctx.candidate_services == []
+
+    def test_unresolved_candidate_keeps_candidate_services(self):
+        """When resolver returns False, candidate_services remains populated."""
+        ctx = BookingContext()
+        ctx.candidate_services = _make_candidate_services()
+        messages = _candidate_assistant_messages()
+
+        resolved = _resolve_user_candidate_selection("no sé cuál elegir", ctx, messages)
+
+        assert resolved is False
+        assert ctx.service_id is None
+        assert len(ctx.candidate_services) == 3
