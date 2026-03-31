@@ -131,6 +131,10 @@ _CANCEL_NEGATION_TOKENS: frozenset[str] = frozenset(
 # History window for message context
 _HISTORY_LIMIT = 8
 
+# Maximum number of times the <recommendations> block is injected into the prompt.
+# After this many injections the block is auto-suppressed (recommendations_shown=True).
+RECOMMENDATIONS_OFFER_THRESHOLD = 2
+
 # Confirmation summary detection — patterns that indicate the LLM showed
 # a confirmation summary to the user (Spanish booking context)
 _CONFIRMATION_SUMMARY_MARKERS: tuple[str, ...] = (
@@ -592,6 +596,7 @@ class BookingMode(BaseModeNode):
         self._ctx = ctx
         self._current_state = state
         self._last_user_message = user_message or ""
+        self._f7_recovered_this_turn = False
 
         # Force tool calling when service is unresolved (prevents F-7 tool skip)
         tool_choice = None
@@ -1544,7 +1549,7 @@ class BookingMode(BaseModeNode):
         Returns:
             The search_services result dict on success, None if recovery not possible.
         """
-        if getattr(ctx, "_f7_recovered", False):
+        if getattr(self, "_f7_recovered_this_turn", False):
             return None
 
         if not user_message or len(user_message.strip()) < 3:
@@ -1605,7 +1610,7 @@ class BookingMode(BaseModeNode):
                     "audience": ctx.service_audience_hint,
                 }
             )
-            ctx._f7_recovered = True
+            self._f7_recovered_this_turn = True
             logger.info(
                 "F-7 auto-recovery: search_services called with query=%r, audience=%r",
                 query,
@@ -2969,11 +2974,20 @@ def _build_recommendations_section(ctx: BookingContext) -> str:
     - No pending recommendations
     - User declined recommendations
     - Recommendations were already shown
+    - Offer threshold reached (auto-sets recommendations_shown=True)
+
+    Mutates ctx:
+    - Increments recommendations_offer_attempts by 1 on each non-empty return.
+    - Auto-sets recommendations_shown=True when threshold is reached (fallback path).
     """
     if not ctx.pending_recommendations or ctx.recommendations_declined:
         return ""
+    # Deterministic turn guard: after RECOMMENDATIONS_OFFER_THRESHOLD injections, auto-suppress.
+    if ctx.recommendations_offer_attempts >= RECOMMENDATIONS_OFFER_THRESHOLD:
+        ctx.recommendations_shown = True
+        return ""
     if ctx.recommendations_shown:
-        return ""  # Already shown once — don't repeat
+        return ""  # Already shown via fast path (_combo_offer_in_response) — don't repeat
 
     lines = ["SERVICIOS RECOMENDADOS (complementos opcionales):"]
     for rec in ctx.pending_recommendations:
@@ -2982,6 +2996,7 @@ def _build_recommendations_section(ctx: BookingContext) -> str:
         "Sugiere estos servicios de forma natural. "
         "Si la clienta dice que no, respeta su decisión y continúa."
     )
+    ctx.recommendations_offer_attempts += 1
     return "\n".join(lines)
 
 

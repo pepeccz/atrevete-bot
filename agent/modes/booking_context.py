@@ -91,6 +91,7 @@ class BookingContext:
     pending_recommendations: list[str] = field(default_factory=list)
     recommendations_shown: bool = False
     recommendations_declined: bool = False
+    recommendations_offer_attempts: int = 0  # incremented each time block is injected
 
     # ── Date substitution metadata (from find_next_available / check_availability) ──
     date_parse_error: bool = False
@@ -117,6 +118,9 @@ class BookingContext:
     notes_asked: bool = False
     notes_ask_attempts: int = 0
 
+    # ── Upsell gate ─────────────────────────────────────────────────────────
+    upsell_gate_attempts: int = 0
+
     # ── Tool-skip reminders (injected when LLM skips tools) ──────────────
     force_search_services_reminder: bool = False
     force_list_stylists_reminder: bool = False
@@ -124,6 +128,7 @@ class BookingContext:
 
     # ── Internal (not serialized) ───────────────────────────────────────
     _booking_completed: bool = field(default=False, repr=False)
+    _addon_durations_cache: dict = field(default_factory=dict, repr=False)
 
     # ── Display maps (ClassVar — excluded from dataclass fields) ────────
     _AUDIENCE_DISPLAY: ClassVar[dict[str, str]] = {
@@ -159,6 +164,7 @@ class BookingContext:
         self.pending_recommendations = []
         self.recommendations_shown = False
         self.recommendations_declined = False
+        self.recommendations_offer_attempts = 0
         self.book_failure_count = 0
         self.manage_customer_failure_count = 0
         self.needs_availability_refresh = False
@@ -168,6 +174,7 @@ class BookingContext:
         self.confirmation_summary_sent = False
         self.notes_asked = False
         self.notes_ask_attempts = 0
+        self.upsell_gate_attempts = 0
         self.force_search_services_reminder = False
         self.force_list_stylists_reminder = False
         self.force_stylist_correction = False
@@ -261,6 +268,9 @@ class BookingContext:
         Fields in CLEARABLE_NONE_FIELDS are always included even when None, so that
         merge_dicts can overwrite stale values already present in LangGraph state.
         All other None/empty values are omitted to keep mode_context lean.
+
+        Note: uses dataclasses.asdict() — new fields (e.g. recommendations_offer_attempts)
+        are automatically included without code changes here.
         """
         raw = dataclasses.asdict(self)
         return {
@@ -272,7 +282,11 @@ class BookingContext:
 
     @classmethod
     def from_mode_context(cls, mode_context: dict[str, Any]) -> BookingContext:
-        """Hydrate from mode_context dict (tolerant of missing/extra keys)."""
+        """Hydrate from mode_context dict (tolerant of missing/extra keys).
+
+        Note: uses dataclasses.fields() — new fields are auto-discovered and
+        backward-compatible (missing keys fall back to the dataclass default).
+        """
         field_names = {f.name for f in dataclasses.fields(cls) if not f.name.startswith("_")}
         filtered = {k: v for k, v in mode_context.items() if k in field_names}
         return cls(**filtered)
