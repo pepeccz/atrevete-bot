@@ -2189,6 +2189,16 @@ class BookingMode(BaseModeNode):
                     "(confirmation question pattern detected in response)"
                 )
 
+        # FR-4: increment confirmation gate turn counter when gate is blocked
+        # (summary sent but user has not confirmed yet). Observability only — no auto-confirm.
+        if ctx.confirmation_summary_sent and not ctx.confirmation_shown:
+            ctx.confirmation_gate_turn_count += 1
+            if ctx.confirmation_gate_turn_count >= 3:
+                logger.warning(
+                    "_build_response: confirmation gate blocked for %d turns",
+                    ctx.confirmation_gate_turn_count,
+                )
+
         # Detect notes-asking markers in outgoing response → increment attempts counter
         if ctx and not ctx.notes_asked:
             normalized_resp_notes = _normalize_text(response_text)
@@ -2809,13 +2819,19 @@ def _is_booking_data_complete(ctx: BookingContext) -> bool:
 
 
 def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext) -> None:
-    """Detect if the previous turn was a confirmation summary + user affirmative.
+    """Detect if the user confirmed after the confirmation summary was sent.
 
-    Scans the last few messages looking for:
-    1. An assistant message containing confirmation summary markers
-    2. A subsequent user message with an affirmative response
+    Uses a positional scan (Option A) to handle rapid double-messages:
+    1. Scan messages backward to find the last assistant message that contains
+       confirmation-summary markers (_CONFIRMATION_SUMMARY_MARKERS or
+       _CONFIRMATION_QUESTION_PATTERNS).
+    2. Collect up to 4 user messages appearing AFTER that assistant message.
+    3. For each, check if it is a short (≤3 words) affirmative phrase.
 
-    If both are found in sequence AND all booking data is complete, sets
+    If no summary assistant message is found in history, falls back to the
+    previous behavior: check only the last user message.
+
+    If both guards pass AND all booking data is complete, sets
     ctx.confirmation_shown = True so the book() gate in _pre_tool_call will
     allow the booking to proceed.
 
@@ -2828,48 +2844,87 @@ def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext)
     if not _is_booking_data_complete(ctx):
         return
 
-    # F-2: Step 1 — check deterministic flag instead of scanning assistant messages.
-    # The flag is set by _build_response() when the code detects summary markers in
-    # OUR outgoing response — more reliable than scanning conversation history.
+    # F-2: check deterministic flag — no summary sent yet, can't confirm.
     if not ctx.confirmation_summary_sent:
-        return  # No summary sent by code yet — can't confirm
+        return
 
     messages = state.get("messages", [])
-    if len(messages) < 1:
+    if not messages:
         return
 
-    # F-2: Step 2 — find the most recent user message in the last 6 messages
-    recent = messages[-6:]
-    last_user: dict | None = None
-    for msg in reversed(recent):
-        if msg.get("role") == "user":
-            last_user = msg
+    # ── Positional scan: find last assistant summary message ──────────────
+    summary_idx: int | None = None
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
+        if msg.get("role") != "assistant":
+            continue
+        normalized_content = _normalize_text(msg.get("content", ""))
+        if any(marker in normalized_content for marker in _CONFIRMATION_SUMMARY_MARKERS):
+            summary_idx = idx
+            break
+        if any(pattern in normalized_content for pattern in _CONFIRMATION_QUESTION_PATTERNS):
+            summary_idx = idx
             break
 
-    if last_user is None:
-        return  # No user message found
-
-    # F-2: Step 3 — check if the last user message is an affirmative confirmation
-    user_text = _normalize_text(last_user.get("content", ""))
-    # Guard: only accept standalone affirmatives (≤ 3 words)
-    # Prevents "sí, pero quiero cambiar la hora" from triggering confirmation
-    user_words = [w for w in re.split(r"[\s,;.!?]+", user_text) if w]
-    if len(user_words) > 3:
+    if summary_idx is None:
+        # Fallback: no summary assistant message found in history.
+        # Check only the last user message (original behavior).
+        last_user: dict | None = None
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                last_user = msg
+                break
+        if last_user is None:
+            return
+        user_text = _normalize_text(last_user.get("content", ""))
+        user_words = [w for w in re.split(r"[\s,;.!?]+", user_text) if w]
+        if len(user_words) > 3:
+            return
+        user_tokens = set(user_words)
+        if any(
+            phrase in user_tokens or user_text.startswith(phrase)
+            for phrase in _USER_CONFIRMATION_PHRASES
+        ):
+            ctx.confirmation_shown = True
+            logger.info(
+                "_detect_confirmation_exchange: fallback confirmation detected — "
+                "no summary in history, user confirmed with %r",
+                last_user.get("content", "")[:50],
+            )
         return
-    user_tokens = set(user_words)
-    has_confirmation = any(
-        phrase in user_tokens or user_text.startswith(phrase)
-        for phrase in _USER_CONFIRMATION_PHRASES
-    )
 
-    if has_confirmation:
-        ctx.confirmation_shown = True
-        logger.info(
-            "_detect_confirmation_exchange: F-2 confirmation detected — "
-            "confirmation_summary_sent=True, user confirmed with %r",
-            last_user.get("content", "")[:50],
+    # ── Collect up to 4 user messages AFTER the summary message ──────────
+    post_summary_user_msgs: list[dict] = []
+    for msg in messages[summary_idx + 1 :]:
+        if msg.get("role") == "user":
+            post_summary_user_msgs.append(msg)
+            if len(post_summary_user_msgs) >= 4:
+                break
+
+    if not post_summary_user_msgs:
+        return
+
+    # ── Check each post-summary user message for a short affirmative ─────
+    for user_msg in post_summary_user_msgs:
+        user_text = _normalize_text(user_msg.get("content", ""))
+        # Guard: only accept standalone affirmatives (≤ 3 words)
+        # Prevents "sí, pero quiero cambiar la hora" from triggering confirmation
+        user_words = [w for w in re.split(r"[\s,;.!?]+", user_text) if w]
+        if len(user_words) > 3:
+            continue
+        user_tokens = set(user_words)
+        has_confirmation = any(
+            phrase in user_tokens or user_text.startswith(phrase)
+            for phrase in _USER_CONFIRMATION_PHRASES
         )
-        return
+        if has_confirmation:
+            ctx.confirmation_shown = True
+            logger.info(
+                "_detect_confirmation_exchange: F-2 confirmation detected — "
+                "confirmation_summary_sent=True, user confirmed with %r",
+                user_msg.get("content", "")[:50],
+            )
+            return
 
 
 def _normalize_text(text: str | None) -> str:

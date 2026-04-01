@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, ClassVar
 
-
 CLEARABLE_NONE_FIELDS: frozenset[str] = frozenset({"offered_slots", "selected_slot"})
 """Fields that must be serialized even when their value is None.
 
@@ -113,6 +112,7 @@ class BookingContext:
     # ── Confirmation gate (prevents book() without user confirmation) ──
     confirmation_shown: bool = False
     confirmation_summary_sent: bool = False  # F-2: set by code when summary is rendered
+    confirmation_gate_turn_count: int = 0  # observability — incremented per blocked turn
 
     # ── Notes gate ─────────────────────────────────────────────────────────
     notes_asked: bool = False
@@ -172,6 +172,7 @@ class BookingContext:
         self.services_locked = False
         self.confirmation_shown = False
         self.confirmation_summary_sent = False
+        self.confirmation_gate_turn_count = 0
         self.notes_asked = False
         self.notes_ask_attempts = 0
         self.upsell_gate_attempts = 0

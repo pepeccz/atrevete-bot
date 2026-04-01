@@ -841,6 +841,205 @@ class TestDetectConfirmationExchange:
 
 
 # =============================================================================
+# M-3: positional multi-message scan (confirmation gate robustness)
+# =============================================================================
+
+
+def _make_complete_ctx(**kwargs) -> BookingContext:
+    """Build a BookingContext with all required fields for _is_booking_data_complete."""
+    defaults = dict(
+        service_id="svc-1",
+        service_name="Corte Dama",
+        selected_services=["Corte Dama"],
+        stylist_id="stylist-1",
+        stylist_name="María",
+        offered_slots=[
+            {
+                "stylist_id": "stylist-1",
+                "time": "10:00",
+                "full_datetime": "2026-03-27T10:00:00+01:00",
+            }
+        ],
+        customer_name="Laura",
+        customer_id="cust-1",
+        confirmation_shown=False,
+        confirmation_summary_sent=True,
+    )
+    defaults.update(kwargs)
+    return BookingContext(**defaults)
+
+
+_SUMMARY_CONTENT = (
+    "Resumen de tu cita:\n- Servicio: Corte Dama\n- Estilista: María\n¿Confirmo la cita?"
+)
+
+
+class TestDetectConfirmationExchangePositional:
+    """M-3: positional scan — multi-message and edge-case scenarios."""
+
+    def test_detects_affirmative_after_summary_rapid_double_message(self):
+        """FR-1: user sends 'sí' then '¿cuándo?' after summary → True (rapid double-message)."""
+        ctx = _make_complete_ctx()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": _SUMMARY_CONTENT},
+                {"role": "user", "content": "sí"},
+                {"role": "user", "content": "¿cuándo?"},
+            ]
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is True
+
+    def test_no_affirmative_after_summary(self):
+        """FR-1: only '¿cuándo?' after summary → gate stays blocked."""
+        ctx = _make_complete_ctx()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": _SUMMARY_CONTENT},
+                {"role": "user", "content": "¿cuándo?"},
+            ]
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_stale_si_before_summary_not_counted(self):
+        """FR-3: pre-summary 'sí' is excluded; only post-summary messages scanned."""
+        ctx = _make_complete_ctx()
+        state = {
+            "messages": [
+                {"role": "user", "content": "sí"},  # pre-summary — should be ignored
+                {"role": "assistant", "content": _SUMMARY_CONTENT},
+                {"role": "user", "content": "¿cuándo?"},  # no affirmative after summary
+            ]
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_normal_single_si_after_summary(self):
+        """FR-5: regression — single 'sí' after summary still works (standard path)."""
+        ctx = _make_complete_ctx()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": _SUMMARY_CONTENT},
+                {"role": "user", "content": "sí"},
+            ]
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is True
+
+    def test_long_message_with_si_not_counted(self):
+        """FR-2: 'sí me gustaría reservar para el martes' is > 3 words → rejected."""
+        ctx = _make_complete_ctx()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": _SUMMARY_CONTENT},
+                {"role": "user", "content": "sí me gustaría reservar para el martes"},
+            ]
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_no_summary_found_falls_back_to_last_message(self):
+        """Edge: no summary marker in history → falls back to last-user-message scan."""
+        ctx = _make_complete_ctx()
+        # No summary assistant message — fallback path should check last user message
+        state = {
+            "messages": [
+                {"role": "assistant", "content": "¿Para qué día te gustaría la cita?"},
+                {"role": "user", "content": "confirmo"},
+            ]
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is True
+
+    def test_window_cap_affirmative_beyond_4_not_counted(self):
+        """FR-1: 5 user messages after summary; affirmative only in 5th → False (cap=4)."""
+        ctx = _make_complete_ctx()
+        state = {
+            "messages": [
+                {"role": "assistant", "content": _SUMMARY_CONTENT},
+                {"role": "user", "content": "¿cuándo?"},
+                {"role": "user", "content": "¿qué hora?"},
+                {"role": "user", "content": "¿con quién?"},
+                {"role": "user", "content": "cambiá la hora"},
+                {"role": "user", "content": "dale"},  # 5th — beyond the cap of 4
+            ]
+        }
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_counter_increments_when_gate_blocked(self):
+        """FR-4: confirmation_summary_sent=True, no affirmative → counter increments."""
+        from agent.modes.base import AgenticLoopResult
+        from agent.state.schemas import create_initial_state
+
+        mode = _make_mode()
+        ctx = _make_complete_ctx(confirmation_gate_turn_count=0)
+        # Gate is blocked: summary sent, not confirmed
+        ctx.confirmation_summary_sent = True
+        ctx.confirmation_shown = False
+
+        state = create_initial_state("conv-test", "+34600000001")
+        state["messages"] = [
+            {"role": "assistant", "content": _SUMMARY_CONTENT},
+            {"role": "user", "content": "¿a qué hora?"},
+        ]
+
+        result = AgenticLoopResult(response_text="¿Confirmo la cita?", tool_results={})
+        mode._build_response(state, ctx, result)
+
+        assert ctx.confirmation_gate_turn_count == 1
+
+    def test_counter_resets_on_transient_reset(self):
+        """FR-4: reset_transient() zeroes the counter."""
+        ctx = _make_complete_ctx(confirmation_gate_turn_count=2)
+
+        ctx.reset_transient()
+
+        assert ctx.confirmation_gate_turn_count == 0
+
+    def test_warning_logged_at_threshold(self, caplog):
+        """FR-4: warning logged when counter reaches 3."""
+        import logging
+
+        from agent.modes.base import AgenticLoopResult
+        from agent.state.schemas import create_initial_state
+
+        mode = _make_mode()
+        ctx = _make_complete_ctx(confirmation_gate_turn_count=2)
+        ctx.confirmation_summary_sent = True
+        ctx.confirmation_shown = False
+
+        state = create_initial_state("conv-warn", "+34600000002")
+        state["messages"] = [
+            {"role": "assistant", "content": _SUMMARY_CONTENT},
+            {"role": "user", "content": "¿a qué hora?"},
+        ]
+
+        result = AgenticLoopResult(response_text="¿Confirmo la cita?", tool_results={})
+
+        with caplog.at_level(logging.WARNING, logger="agent.modes.booking_mode"):
+            mode._build_response(state, ctx, result)
+
+        assert ctx.confirmation_gate_turn_count == 3
+        assert any("confirmation gate blocked for 3 turns" in r.message for r in caplog.records)
+
+
+# =============================================================================
 # M-4: tool_choice='required' pending-state guard
 # =============================================================================
 
