@@ -21,6 +21,21 @@ from agent.tools.customer_tools import CustomerData, ManageCustomerSchema
 from agent.tools.info_tools import QueryFilters, QueryInfoSchema
 
 
+def _find_missing_required(schema: dict, path: str = "") -> list[str]:
+    """Recursively find objects with 'properties' but no 'required' field."""
+    issues = []
+    if schema.get("type") == "object" and "properties" in schema and "required" not in schema:
+        issues.append(path or "root")
+    for k, v in schema.items():
+        if isinstance(v, dict):
+            issues.extend(_find_missing_required(v, f"{path}.{k}" if path else k))
+        elif isinstance(v, list):
+            for i, item in enumerate(v):
+                if isinstance(item, dict):
+                    issues.extend(_find_missing_required(item, f"{path}.{k}[{i}]"))
+    return issues
+
+
 # ============================================================================
 # T4.1 — CustomerData model construction and defaults
 # ============================================================================
@@ -258,3 +273,37 @@ class TestQueryFiltersRequiredField:
                 f"QueryFilters.{field_name} is in 'required' but not nullable — "
                 "optional fields must allow null"
             )
+
+
+# ============================================================================
+# T4.7 — CustomerData 'required' field present (Azure strict schema fix)
+# ============================================================================
+
+
+class TestCustomerDataRequiredField:
+    def test_customer_data_schema_has_required(self):
+        """CustomerData JSON schema must include 'required' array.
+
+        Azure (via OpenRouter) rejects tool schemas where 'properties' exists
+        but 'required' is absent. Same root cause as QueryFilters (T4.6).
+        See: agent/tools/customer_tools.py CustomerData model_config.
+        """
+        schema = CustomerData.model_json_schema()
+        assert "required" in schema, (
+            "CustomerData schema is missing 'required' — Azure strict validation will reject it"
+        )
+
+    def test_customer_data_required_contains_all_properties(self):
+        """CustomerData 'required' must list every key in 'properties'."""
+        schema = CustomerData.model_json_schema()
+        properties = set(schema.get("properties", {}).keys())
+        required = set(schema.get("required", []))
+        assert properties == required, (
+            f"CustomerData 'required' {required} does not match 'properties' {properties}"
+        )
+
+    def test_manage_customer_schema_no_missing_required_anywhere(self):
+        """ManageCustomerSchema full JSON schema has no object with properties but no required."""
+        schema = ManageCustomerSchema.model_json_schema()
+        issues = _find_missing_required(schema)
+        assert not issues, f"ManageCustomerSchema has objects missing 'required': {issues}"

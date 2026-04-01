@@ -18,7 +18,7 @@ from uuid import UUID
 
 import phonenumbers
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -73,6 +73,14 @@ def normalize_phone(phone: str) -> str | None:
 
 class CustomerData(BaseModel):
     """Typed data payload for customer create/update actions."""
+
+    # Azure (via OpenRouter) requires 'required' when 'properties' exists,
+    # even for nullable fields. Same fix as QueryFilters in info_tools.py.
+    model_config = ConfigDict(
+        json_schema_extra=lambda schema, _: schema.update(
+            {"required": list(schema.get("properties", {}).keys())}
+        )
+    )
 
     customer_id: str | None = None
     first_name: str | None = None
