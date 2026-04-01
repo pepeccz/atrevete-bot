@@ -62,12 +62,7 @@ async def validate_category_consistency(service_ids: list[UUID]) -> dict:
         }
     """
     if not service_ids:
-        return {
-            "valid": True,
-            "error_code": None,
-            "error_message": None,
-            "categories_found": []
-        }
+        return {"valid": True, "error_code": None, "error_message": None, "categories_found": []}
 
     async with get_async_session() as session:
         try:
@@ -84,7 +79,7 @@ async def validate_category_consistency(service_ids: list[UUID]) -> dict:
                 # Mix detected
                 logger.warning(
                     f"Category mismatch detected: {category_names}",
-                    extra={"service_ids": [str(sid) for sid in service_ids]}
+                    extra={"service_ids": [str(sid) for sid in service_ids]},
                 )
 
                 return {
@@ -95,19 +90,19 @@ async def validate_category_consistency(service_ids: list[UUID]) -> dict:
                         f"({', '.join(category_names)}) en la misma cita. "
                         f"Por favor, elige servicios de una sola categoría."
                     ),
-                    "categories_found": category_names
+                    "categories_found": category_names,
                 }
 
             logger.info(
                 f"Category validation passed: all services are {category_names[0]}",
-                extra={"category": category_names[0]}
+                extra={"category": category_names[0]},
             )
 
             return {
                 "valid": True,
                 "error_code": None,
                 "error_message": None,
-                "categories_found": category_names
+                "categories_found": category_names,
             }
 
         except Exception as e:
@@ -116,10 +111,7 @@ async def validate_category_consistency(service_ids: list[UUID]) -> dict:
 
 
 async def validate_slot_availability(
-    stylist_id: UUID,
-    start_time: datetime,
-    duration_minutes: int,
-    session: AsyncSession
+    stylist_id: UUID, start_time: datetime, duration_minutes: int, session: AsyncSession
 ) -> dict:
     """
     Validate that a slot is available with 10-minute buffer.
@@ -170,13 +162,28 @@ async def validate_slot_availability(
     stmt = (
         select(Appointment)
         .where(Appointment.stylist_id == stylist_id)
-        .where(Appointment.status.in_([AppointmentStatus.PENDING.value, AppointmentStatus.CONFIRMED.value]))
+        .where(
+            Appointment.status.in_(
+                [
+                    AppointmentStatus.PENDING.value,
+                    AppointmentStatus.CONFIRMED.value,
+                    AppointmentStatus.HOLD.value,
+                ]
+            )
+        )
+        # Exclude expired HOLDs — lazy expiry pattern: HOLDs with hold_expires_at <= NOW()
+        # are treated as free slots (invisible to availability checks).
+        .where(text("(status != 'hold' OR hold_expires_at > NOW())"))
         # Check for overlap: existing appointment overlaps with [start_time, end_time]
         # Appointment starts before our end_time
         .where(Appointment.start_time < end_time)
         # Appointment ends after our start_time (calculated dynamically)
         # Note: Use bindparams() for proper SQLAlchemy 2.0 text() comparison
-        .where(text("start_time + (duration_minutes || ' minutes')::interval > :start_time").bindparams(start_time=start_time))
+        .where(
+            text(
+                "start_time + (duration_minutes || ' minutes')::interval > :start_time"
+            ).bindparams(start_time=start_time)
+        )
         .with_for_update()  # Row lock to prevent concurrent bookings
     )
 
@@ -197,8 +204,8 @@ async def validate_slot_availability(
                 "conflict_start": conflict.start_time.isoformat(),
                 "conflict_end": (
                     conflict.start_time + timedelta(minutes=conflict.duration_minutes)
-                ).isoformat()
-            }
+                ).isoformat(),
+            },
         )
 
         return {
@@ -208,19 +215,16 @@ async def validate_slot_availability(
                 "El horario seleccionado ya está ocupado. "
                 "Por favor, elige otro horario de los disponibles."
             ),
-            "conflicting_appointment_id": conflict.id
+            "conflicting_appointment_id": conflict.id,
         }
 
-    logger.info(
-        f"Slot available: {start_time} - {end_time}",
-        extra={"stylist_id": str(stylist_id)}
-    )
+    logger.info(f"Slot available: {start_time} - {end_time}", extra={"stylist_id": str(stylist_id)})
 
     return {
         "available": True,
         "error_code": None,
         "error_message": None,
-        "conflicting_appointment_id": None
+        "conflicting_appointment_id": None,
     }
 
 
@@ -273,9 +277,7 @@ async def validate_3_day_rule(requested_date: datetime) -> dict:
     # Ensure requested_date is timezone-aware and at midnight
     if requested_date.tzinfo is None:
         requested_date = requested_date.replace(tzinfo=MADRID_TZ)
-    requested_date_midnight = requested_date.replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    requested_date_midnight = requested_date.replace(hour=0, minute=0, second=0, microsecond=0)
 
     # Calculate days until appointment
     days_until = (requested_date_midnight - now).days
@@ -283,10 +285,7 @@ async def validate_3_day_rule(requested_date: datetime) -> dict:
     if days_until < MINIMUM_DAYS:
         logger.warning(
             f"3-day rule violation: {days_until} days until appointment (min: {MINIMUM_DAYS})",
-            extra={
-                "requested_date": requested_date.isoformat(),
-                "days_until": days_until
-            }
+            extra={"requested_date": requested_date.isoformat(), "days_until": days_until},
         )
 
         return {
@@ -298,12 +297,12 @@ async def validate_3_day_rule(requested_date: datetime) -> dict:
                 f"Por favor, elige una fecha a partir del {(now + timedelta(days=MINIMUM_DAYS)).strftime('%d/%m/%Y')}."
             ),
             "days_until_appointment": days_until,
-            "minimum_required_days": MINIMUM_DAYS
+            "minimum_required_days": MINIMUM_DAYS,
         }
 
     logger.info(
         f"3-day rule passed: {days_until} days until appointment",
-        extra={"requested_date": requested_date.isoformat()}
+        extra={"requested_date": requested_date.isoformat()},
     )
 
     return {
@@ -311,7 +310,7 @@ async def validate_3_day_rule(requested_date: datetime) -> dict:
         "error_code": None,
         "error_message": None,
         "days_until_appointment": days_until,
-        "minimum_required_days": MINIMUM_DAYS
+        "minimum_required_days": MINIMUM_DAYS,
     }
 
 
@@ -369,16 +368,19 @@ async def validate_appointment_limit(customer_id: UUID) -> dict:
             # Includes: appointments FOR the customer OR appointments MADE BY the customer
             now = datetime.now(MADRID_TZ)
 
-            stmt = select(func.count()).select_from(Appointment).where(
-                or_(
-                    Appointment.customer_id == customer_id,
-                    Appointment.booked_by_customer_id == customer_id
-                ),
-                Appointment.start_time > now,
-                Appointment.status.in_([
-                    AppointmentStatus.PENDING.value,
-                    AppointmentStatus.CONFIRMED.value
-                ])
+            stmt = (
+                select(func.count())
+                .select_from(Appointment)
+                .where(
+                    or_(
+                        Appointment.customer_id == customer_id,
+                        Appointment.booked_by_customer_id == customer_id,
+                    ),
+                    Appointment.start_time > now,
+                    Appointment.status.in_(
+                        [AppointmentStatus.PENDING.value, AppointmentStatus.CONFIRMED.value]
+                    ),
+                )
             )
 
             result = await session.execute(stmt)
@@ -390,8 +392,8 @@ async def validate_appointment_limit(customer_id: UUID) -> dict:
                     extra={
                         "customer_id": str(customer_id),
                         "current_count": current_count,
-                        "max_allowed": max_appointments
-                    }
+                        "max_allowed": max_appointments,
+                    },
                 )
 
                 return {
@@ -402,15 +404,12 @@ async def validate_appointment_limit(customer_id: UUID) -> dict:
                         f"Puedes cancelar una existente o esperar a que se complete para agendar otra."
                     ),
                     "current_count": current_count,
-                    "max_allowed": max_appointments
+                    "max_allowed": max_appointments,
                 }
 
             logger.info(
                 f"Appointment limit check passed: {current_count}/{max_appointments}",
-                extra={
-                    "customer_id": str(customer_id),
-                    "current_count": current_count
-                }
+                extra={"customer_id": str(customer_id), "current_count": current_count},
             )
 
             return {
@@ -418,7 +417,7 @@ async def validate_appointment_limit(customer_id: UUID) -> dict:
                 "error_code": None,
                 "error_message": None,
                 "current_count": current_count,
-                "max_allowed": max_appointments
+                "max_allowed": max_appointments,
             }
 
         except Exception as e:

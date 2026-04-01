@@ -25,6 +25,8 @@ import pytest
 from agent.utils.service_disambiguation import (
     ClarificationPayload,
     ResolvedService,
+    _AXIS_QUESTION_HINTS,
+    _AXIS_VALUE_LABELS,
     _to_resolved,
     resolve_candidates,
 )
@@ -222,9 +224,7 @@ class TestResolveCandidates:
             hair_density="normal",
         )
 
-        assert isinstance(result, ResolvedService), (
-            f"Expected ResolvedService, got {type(result)}"
-        )
+        assert isinstance(result, ResolvedService), f"Expected ResolvedService, got {type(result)}"
         assert result.name == "Mechas"
         assert result.duration_minutes == 60
         assert result.family == "highlights"
@@ -339,9 +339,7 @@ class TestResolveCandidates:
         the resolver should use the metadata group for disambiguation.
         """
         # Bioterapia has no family; Mechas family has hair_density ambiguity
-        result = resolve_candidates(
-            [MECHAS_STANDARD, MECHAS_EXTRAS, BIOTERAPIA_FACIAL]
-        )
+        result = resolve_candidates([MECHAS_STANDARD, MECHAS_EXTRAS, BIOTERAPIA_FACIAL])
 
         # Should return ClarificationPayload for the Mechas family
         assert isinstance(result, ClarificationPayload)
@@ -398,3 +396,25 @@ class TestResolvedServiceDescription:
         resolved = _to_resolved(service)
 
         assert resolved.description == "Corte capilar completo con lavado incluido"
+
+
+# ---------------------------------------------------------------------------
+# Axis labels and question hints
+# ---------------------------------------------------------------------------
+
+
+def test_audience_labels_are_colloquial():
+    """Labels de audiencia deben ser coloquiales, no vocabulario técnico de peluquería."""
+    labels = _AXIS_VALUE_LABELS["audience"]
+    assert labels["adult_male"] == "Hombre"
+    assert labels["adult_female"] == "Mujer"
+    assert "Caballero" not in labels.values()
+    assert "Dama / Señora" not in labels.values()
+
+
+def test_audience_question_hint_is_short():
+    """El hint de audiencia debe ser corto y coloquial."""
+    hint = _AXIS_QUESTION_HINTS["audience"]
+    assert hint == "¿Para quién es el corte?"
+    assert "caballero" not in hint.lower()
+    assert "dama" not in hint.lower()

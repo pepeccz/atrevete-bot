@@ -129,6 +129,18 @@ class TestFromModeContext:
         assert ctx.stylist_id is None
         assert ctx.selected_slot is None
 
+    def test_from_mode_context_restores_recommendations_offer_attempts(self):
+        """T3.3: round-trip via to_mode_context / from_mode_context preserves counter."""
+        original = BookingContext(recommendations_offer_attempts=1)
+        serialized = original.to_mode_context()
+        restored = BookingContext.from_mode_context(serialized)
+        assert restored.recommendations_offer_attempts == 1
+
+    def test_from_mode_context_defaults_attempts_when_missing(self):
+        """T3.3: missing key in older checkpoints falls back to default 0 (backward-compat)."""
+        ctx = BookingContext.from_mode_context({"service_id": "svc-001"})
+        assert ctx.recommendations_offer_attempts == 0
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # to_mode_context
@@ -218,6 +230,20 @@ class TestToModeContext:
     def test_clearable_none_fields_constant_correct(self):
         """CLEARABLE_NONE_FIELDS contains exactly offered_slots and selected_slot."""
         assert CLEARABLE_NONE_FIELDS == frozenset({"offered_slots", "selected_slot"})
+
+    def test_to_mode_context_includes_recommendations_offer_attempts(self):
+        """T3.3: recommendations_offer_attempts is serialized by to_mode_context()."""
+        ctx = BookingContext(recommendations_offer_attempts=2)
+        result = ctx.to_mode_context()
+        assert "recommendations_offer_attempts" in result
+        assert result["recommendations_offer_attempts"] == 2
+
+    def test_to_mode_context_includes_zero_attempt_count(self):
+        """T3.3: counter at 0 is included (meaningful state — not None/empty)."""
+        ctx = BookingContext()
+        result = ctx.to_mode_context()
+        assert "recommendations_offer_attempts" in result
+        assert result["recommendations_offer_attempts"] == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -595,6 +621,7 @@ class TestResetTransient:
             pending_recommendations=["Tinte"],
             recommendations_shown=True,
             recommendations_declined=True,
+            recommendations_offer_attempts=3,
             book_failure_count=3,
             needs_availability_refresh=True,
             services_locked=True,
@@ -660,6 +687,12 @@ class TestResetTransient:
         ctx.reset_transient()
         assert ctx.recommendations_declined is False
 
+    def test_reset_transient_resets_recommendations_offer_attempts(self):
+        """T3.2: recommendations_offer_attempts is zeroed by reset_transient()."""
+        ctx = BookingContext(recommendations_offer_attempts=3)
+        ctx.reset_transient()
+        assert ctx.recommendations_offer_attempts == 0
+
     def test_reset_transient_resets_book_failure_count(self):
         ctx = self._full_transient_context()
         ctx.reset_transient()
@@ -720,12 +753,12 @@ class TestResetTransient:
         ctx.reset_transient()
         assert ctx.customer_id == "cust-001"
 
-    def test_reset_transient_all_15_fields_cleared(self):
-        """Integration test: all 15 transient fields are cleared in one call."""
+    def test_reset_transient_all_16_fields_cleared(self):
+        """Integration test: all 16 transient fields are cleared in one call."""
         ctx = self._full_transient_context()
         ctx.reset_transient()
 
-        # All 15 transient fields must be at default
+        # All 16 transient fields must be at default
         assert ctx.selected_services == []
         assert ctx.selected_services_details == []
         assert ctx.pending_clarifications == []
@@ -738,6 +771,7 @@ class TestResetTransient:
         assert ctx.pending_recommendations == []
         assert ctx.recommendations_shown is False
         assert ctx.recommendations_declined is False
+        assert ctx.recommendations_offer_attempts == 0
         assert ctx.book_failure_count == 0
         assert ctx.needs_availability_refresh is False
         assert ctx.services_locked is False
@@ -1130,3 +1164,54 @@ class TestNotesGateBookingContext:
         assert ctx.date_substituted is None
         assert ctx.min_valid_date is None
         assert ctx.date_parse_error is False
+
+
+# ============================================================================
+# hold_id field (double-booking prevention — REQ-15)
+# ============================================================================
+
+
+class TestHoldIdField:
+    """Tests for the hold_id field added for double-booking prevention."""
+
+    def test_hold_id_defaults_to_none(self):
+        """REQ-15: hold_id defaults to None on a fresh BookingContext."""
+        ctx = BookingContext()
+        assert ctx.hold_id is None
+
+    def test_hold_id_can_be_set(self):
+        """hold_id can be set to a UUID string."""
+        ctx = BookingContext(hold_id="a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
+        assert ctx.hold_id == "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+
+    def test_hold_id_serializes_in_to_mode_context(self):
+        """REQ-15: hold_id is included in to_mode_context() when set."""
+        ctx = BookingContext(hold_id="abc-123")
+        mode_ctx = ctx.to_mode_context()
+        assert "hold_id" in mode_ctx
+        assert mode_ctx["hold_id"] == "abc-123"
+
+    def test_hold_id_omitted_when_none_in_to_mode_context(self):
+        """hold_id is NOT included in to_mode_context() when None (lean context)."""
+        ctx = BookingContext()
+        mode_ctx = ctx.to_mode_context()
+        # hold_id=None should be omitted (not in CLEARABLE_NONE_FIELDS)
+        assert "hold_id" not in mode_ctx
+
+    def test_hold_id_round_trips_via_from_mode_context(self):
+        """REQ-15: hold_id persists through serialization round-trip."""
+        ctx = BookingContext(hold_id="hold-uuid-999")
+        mode_ctx = ctx.to_mode_context()
+        restored = BookingContext.from_mode_context(mode_ctx)
+        assert restored.hold_id == "hold-uuid-999"
+
+    def test_hold_id_defaults_when_absent_in_from_mode_context(self):
+        """from_mode_context() with no hold_id key → defaults to None."""
+        ctx = BookingContext.from_mode_context({"customer_name": "Pepe"})
+        assert ctx.hold_id is None
+
+    def test_reset_transient_clears_hold_id(self):
+        """reset_transient() must clear hold_id so stale holds don't linger."""
+        ctx = BookingContext(hold_id="hold-to-clear")
+        ctx.reset_transient()
+        assert ctx.hold_id is None

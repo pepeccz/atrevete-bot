@@ -446,6 +446,7 @@ class BaseModeNode(ABC):
         self,
         messages: list,
         tools: list | None = None,
+        tool_choice: str | None = None,
     ) -> AgenticLoopResult:
         """
         Run an agentic loop with optional tool calls.
@@ -482,7 +483,15 @@ class BaseModeNode(ABC):
             seen_tool_calls: dict[str, Any] = {}
 
             while iterations < MAX_TOOL_ROUNDS:
-                llm_with_tools = self.llm.bind_tools(active_tools) if active_tools else self.llm
+                if active_tools:
+                    bind_kwargs: dict[str, Any] = {"strict": True}
+                    # Only force tool_choice on first iteration; after tool results
+                    # the LLM needs freedom to respond with text
+                    if tool_choice is not None and iterations == 0:
+                        bind_kwargs["tool_choice"] = tool_choice
+                    llm_with_tools = self.llm.bind_tools(active_tools, **bind_kwargs)
+                else:
+                    llm_with_tools = self.llm
                 response = await llm_with_tools.ainvoke(working_messages)
                 await self._track_token_usage(response, message_count=len(working_messages))
 

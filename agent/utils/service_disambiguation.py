@@ -101,7 +101,7 @@ class ClarificationPayload:
 
 # Human-readable question hints per axis (Spanish)
 _AXIS_QUESTION_HINTS: dict[str, str] = {
-    "audience": "¿El corte es para caballero, dama, niño, niña o bebé?",
+    "audience": "¿Para quién es el corte?",
     "hair_length": "¿Es para cabello corto/medio o largo?",
     "hair_density": "¿Es cabello normal o muy largo/denso (necesita servicio extra)?",
 }
@@ -112,8 +112,8 @@ _AXIS_VALUE_LABELS: dict[str, dict[str, str]] = {
         "baby": "Bebé",
         "child_male": "Niño",
         "child_female": "Niña",
-        "adult_male": "Caballero",
-        "adult_female": "Dama / Señora",
+        "adult_male": "Hombre",
+        "adult_female": "Mujer",
     },
     "hair_length": {
         "short_medium": "Corto o medio",
@@ -314,9 +314,7 @@ def resolve_candidates(
     # 4. Single match → resolve directly
     # -----------------------------------------------------------------------
     if len(active) == 1:
-        logger.info(
-            f"resolve_candidates: resolved to single service '{active[0].name}'"
-        )
+        logger.info(f"resolve_candidates: resolved to single service '{active[0].name}'")
         return _to_resolved(active[0])
 
     # -----------------------------------------------------------------------
@@ -348,9 +346,7 @@ def resolve_candidates(
     for fallback_axis in ("audience", "hair_length", "hair_density"):
         unique_values = {_meta(s).get(fallback_axis) for s in active} - {None}
         if len(unique_values) > 1:
-            logger.info(
-                f"resolve_candidates: fallback clarification on axis '{fallback_axis}'"
-            )
+            logger.info(f"resolve_candidates: fallback clarification on axis '{fallback_axis}'")
             return _build_clarification(fallback_axis, active)
 
     # -----------------------------------------------------------------------

@@ -34,6 +34,13 @@ DAY_NAMES = {
 }
 
 
+class QueryFilters(BaseModel):
+    """Typed filter payload for query_info tool."""
+
+    category: str | None = None
+    keywords: list[str] | None = None
+
+
 class QueryInfoSchema(BaseModel):
     """Schema for query_info tool parameters."""
 
@@ -47,12 +54,12 @@ class QueryInfoSchema(BaseModel):
         )
     )
 
-    filters: dict[str, Any] | None = Field(
+    filters: QueryFilters | None = Field(
         default=None,
         description=(
             "Optional filters for the query:\n"
-            "For 'services': {'category': 'Peluquería' | 'Estética'}\n"
-            "For 'faqs': {'keywords': ['hours', 'parking', 'address']}"
+            "For 'services': {category: 'Peluquería' | 'Estética'}\n"
+            "For 'faqs': {keywords: ['hours', 'parking', 'address']}"
         ),
     )
 
@@ -70,33 +77,27 @@ class QueryInfoSchema(BaseModel):
     @field_validator("filters", mode="before")
     @classmethod
     def parse_filters(cls, v):
-        """
-        Parse filters parameter to accept both dict and JSON string.
-
-        This handles cases where LLMs incorrectly serialize the filters
-        parameter as a JSON string instead of a native dict object.
-        """
+        """Parse filters: accept dict, JSON string, or QueryFilters instance."""
         if v is None:
             return None
-
+        if isinstance(v, QueryFilters):
+            return v
         if isinstance(v, str):
             try:
-                return json.loads(v)
-            except json.JSONDecodeError as e:
+                return QueryFilters.model_validate_json(v)
+            except Exception as e:
                 raise ValueError(
                     f"filters must be a valid JSON string or dict, got invalid JSON: {e}"
                 )
-
         if isinstance(v, dict):
-            return v
-
+            return QueryFilters.model_validate(v)
         raise ValueError(f"filters must be a dict or JSON string, got {type(v).__name__}")
 
 
 @tool(args_schema=QueryInfoSchema)
 async def query_info(
     type: Literal["services", "faqs", "hours", "location"],
-    filters: dict[str, Any] | None = None,
+    filters: QueryFilters | None = None,
     max_results: int = 10,
 ) -> dict[str, Any]:
     """
@@ -184,7 +185,7 @@ async def query_info(
         return {"error": f"Error querying {type}"}
 
 
-async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -> dict[str, Any]:
+async def _get_services(filters: QueryFilters | None, max_results: int = 10) -> dict[str, Any]:
     """
     Get active services with optional filtering and truncation (v3.2).
 
@@ -201,8 +202,8 @@ async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -
         query = select(Service).where(Service.is_active == True)
 
         # Filter by category if provided
-        if filters and "category" in filters:
-            category_value = filters["category"]
+        if filters and filters.category:
+            category_value = filters.category
             # Convert to ServiceCategory enum value
             if category_value in ["Peluquería", "PELUQUERIA", "HAIRDRESSING"]:
                 query = query.where(Service.category == ServiceCategory.HAIRDRESSING)
@@ -231,7 +232,7 @@ async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -
 
         logger.info(
             f"Retrieved {len(truncated_services)}/{total_count} services"
-            + (f" for category {filters.get('category')}" if filters else "")
+            + (f" for category {filters.category}" if filters else "")
             + (f" (truncated to {max_results})" if total_count > max_results else "")
         )
 
@@ -256,7 +257,7 @@ async def _get_services(filters: dict[str, Any] | None, max_results: int = 10) -
         }
 
 
-async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> dict[str, Any]:
+async def _get_faqs(filters: QueryFilters | None, max_results: int = 10) -> dict[str, Any]:
     """
     Get FAQ/policy information from database with truncation (v3.2).
 
@@ -279,8 +280,8 @@ async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> di
             faq_data = policy.value  # JSONB dict with 'question', 'answer', 'keywords'
 
             # Filter by keywords if provided
-            if filters and "keywords" in filters:
-                requested_keywords = filters["keywords"]
+            if filters and filters.keywords:
+                requested_keywords = filters.keywords
                 faq_keywords = faq_data.get("keywords", [])
                 # Check if any requested keyword matches FAQ keywords
                 if not any(kw in faq_keywords for kw in requested_keywords):
@@ -300,7 +301,7 @@ async def _get_faqs(filters: dict[str, Any] | None, max_results: int = 10) -> di
 
         logger.info(
             f"Retrieved {len(truncated_faqs)}/{total_count} FAQs"
-            + (f" for keywords: {filters.get('keywords')}" if filters else "")
+            + (f" for keywords: {filters.keywords}" if filters else "")
             + (f" (truncated to {max_results})" if total_count > max_results else "")
         )
 

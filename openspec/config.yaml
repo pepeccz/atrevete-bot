@@ -1,0 +1,72 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: Python 3.11+, FastAPI 0.116.1, LangGraph 0.6.7+, LangChain 0.3.0+, PostgreSQL 15+, SQLAlchemy 2.0+, Alembic 1.13+, Redis Stack, Next.js 16 (App Router), React 19, Tailwind CSS 3, TypeScript 5.6+
+  Architecture: LangGraph v6.0 mode-based agent (GREETING/BOOKING/GENERAL/ESCALATION), DB-first calendar with Google Calendar as push-only mirror, Chatwoot WhatsApp integration, Redis Streams for agent communication
+  Testing: pytest 8.3.0+, pytest-asyncio 0.24.0+, pytest-cov, coverage ≥60%
+  Style: black (line-length=100, py311), ruff (E/W/F/I/B/C4/UP), mypy strict (shared+database), Next.js ESLint
+
+strict_tdd: false
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules/packages
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group tasks by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+  apply:
+    - Follow existing code patterns and conventions
+    - NEVER use os.getenv() — always use shared/config.py
+    - NEVER use {**state} spread in LangGraph node returns
+    - ALWAYS use async/await for all I/O
+    - ALWAYS use UUID primary keys (not auto-increment)
+    - ALWAYS use DateTime(timezone=True) for timestamps
+    - Load relevant coding skills for the project stack
+  verify:
+    - Run tests if test infrastructure exists
+    - Compare implementation against every spec scenario
+  archive:
+    - Warn before merging destructive deltas (large removals)
+
+testing:
+  strict_tdd: false
+  detected: "2026-03-29"
+
+  test_runner:
+    command: "DATABASE_URL=\"postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db\" ./venv/bin/pytest"
+    framework: "pytest 8.3.0+"
+
+  layers:
+    unit:
+      available: true
+      tool: "pytest + pytest-asyncio"
+    integration:
+      available: true
+      tool: "pytest + httpx"
+    e2e:
+      available: true
+      tool: "pytest (tests/e2e/)"
+
+  coverage:
+    available: true
+    command: "--cov=agent --cov=shared --cov=database --cov-fail-under=60"
+
+  quality_tools:
+    linter:
+      available: true
+      command: "ruff check ."
+    type_checker:
+      available: true
+      command: "mypy ."
+    formatter:
+      available: true
+      command: "black ."

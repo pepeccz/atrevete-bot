@@ -72,6 +72,7 @@ class ServiceCategory(str, PyEnum):
 class AppointmentStatus(PyEnum):
     """Appointment lifecycle status."""
 
+    HOLD = "hold"  # Slot temporarily reserved while customer confirms (expires in 5 min)
     PENDING = "pending"  # Cita agendada, esperando confirmación del cliente
     CONFIRMED = "confirmed"  # Cliente confirmó asistencia
     COMPLETED = "completed"
@@ -437,6 +438,15 @@ class Appointment(Base):
         index=True,
     )
 
+    # HOLD expiry — only set for status=HOLD. Expired HOLDs are treated as free slots
+    # by all queries via lazy-expiry pattern (WHERE status != 'hold' OR hold_expires_at > NOW()).
+    # Note: The excl_no_overlap GIST exclusion constraint is created via raw DDL migration
+    # (database/alembic/versions/20260401_double_booking_prevention.py) because Alembic
+    # autogenerate cannot express functional EXCLUDE USING GIST constraints.
+    hold_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True, default=None
+    )
+
     # External integration IDs
     google_calendar_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -508,6 +518,15 @@ class Appointment(Base):
     __table_args__ = (
         # CHECK constraints
         CheckConstraint("duration_minutes > 0", name="check_appointment_duration_positive"),
+        # GIST exclusion constraint — prevents double-bookings at the DB level (L1 defense).
+        # NOT added via ORM (Alembic can't autogenerate EXCLUDE USING GIST). Instead,
+        # the raw DDL is in migration 20260401_double_booking_prevention.py:
+        #   EXCLUDE USING GIST (
+        #       stylist_id WITH =,
+        #       tstzrange(start_time, start_time + make_interval(mins => duration_minutes)) WITH &&
+        #   )
+        #   WHERE (status NOT IN ('cancelled', 'no_show', 'completed'))
+        # Requires btree_gist extension (also in the migration).
         # Conditional index on group_booking_id for group booking queries (sparse - only when NOT NULL)
         Index(
             "idx_appointments_group_booking_id",

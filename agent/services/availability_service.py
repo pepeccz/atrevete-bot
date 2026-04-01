@@ -39,6 +39,8 @@ from typing import Any, Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from datetime import timezone as dt_timezone
+
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,9 +79,7 @@ async def is_holiday(target_date: date | datetime) -> Optional[str]:
 
     try:
         async with get_async_session() as session:
-            result = await session.execute(
-                select(Holiday.name).where(Holiday.date == check_date)
-            )
+            result = await session.execute(select(Holiday.name).where(Holiday.date == check_date))
             row = result.first()
 
             if row:
@@ -128,7 +128,7 @@ async def get_busy_periods(
     async def _fetch(sess: AsyncSession) -> list[dict[str, Any]]:
         periods = []
 
-        # Query appointments (PENDING or CONFIRMED only)
+        # Query appointments (PENDING, CONFIRMED, or non-expired HOLD)
         # Broad range fetch — exact overlap filtered in Python to avoid tz-naive vs
         # tz-aware DataError in SQL datetime arithmetic (same pattern as
         # get_calendar_events_for_range, line 628). The SQL interval arithmetic
@@ -138,7 +138,13 @@ async def get_busy_periods(
             select(Appointment).where(
                 and_(
                     Appointment.stylist_id == stylist_id,
-                    Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
+                    Appointment.status.in_(
+                        [
+                            AppointmentStatus.PENDING,
+                            AppointmentStatus.CONFIRMED,
+                            AppointmentStatus.HOLD,
+                        ]
+                    ),
                     Appointment.start_time < end_time,
                     Appointment.start_time >= start_time - timedelta(hours=12),
                 )
@@ -146,21 +152,31 @@ async def get_busy_periods(
         )
         all_appointments = appt_result.scalars().all()
 
-        # Python-side exact overlap filter: appointment ends after range start
+        # Python-side exact overlap filter: appointment ends after range start.
+        # Also exclude expired HOLDs (lazy-expiry pattern) — they are treated as
+        # free slots once hold_expires_at <= now().
+        now_utc = datetime.now(dt_timezone.utc)
         appointments = [
-            appt for appt in all_appointments
+            appt
+            for appt in all_appointments
             if appt.start_time + timedelta(minutes=appt.duration_minutes) > start_time
+            and (
+                appt.status != AppointmentStatus.HOLD
+                or (appt.hold_expires_at is not None and appt.hold_expires_at > now_utc)
+            )
         ]
 
         for appt in appointments:
             appt_end = appt.start_time + timedelta(minutes=appt.duration_minutes)
-            periods.append({
-                "start": appt.start_time,
-                "end": appt_end,
-                "type": "appointment",
-                "title": f"Cita: {appt.first_name}",
-                "status": appt.status.value,
-            })
+            periods.append(
+                {
+                    "start": appt.start_time,
+                    "end": appt_end,
+                    "type": "appointment",
+                    "title": f"Cita: {appt.first_name}",
+                    "status": appt.status.value,
+                }
+            )
 
         # Query blocking events
         block_result = await sess.execute(
@@ -176,13 +192,15 @@ async def get_busy_periods(
         blocking_events = block_result.scalars().all()
 
         for block in blocking_events:
-            periods.append({
-                "start": block.start_time,
-                "end": block.end_time,
-                "type": "blocking_event",
-                "title": block.title,
-                "event_type": block.event_type.value,
-            })
+            periods.append(
+                {
+                    "start": block.start_time,
+                    "end": block.end_time,
+                    "type": "blocking_event",
+                    "title": block.title,
+                    "event_type": block.event_type.value,
+                }
+            )
 
         # Sort by start time
         periods.sort(key=lambda p: p["start"])
@@ -403,12 +421,10 @@ async def get_available_slots(
 
         # Create timezone-aware datetimes for the day boundaries
         day_start = datetime(
-            check_date.year, check_date.month, check_date.day,
-            start_hour, 0, 0, tzinfo=MADRID_TZ
+            check_date.year, check_date.month, check_date.day, start_hour, 0, 0, tzinfo=MADRID_TZ
         )
         day_end = datetime(
-            check_date.year, check_date.month, check_date.day,
-            end_hour, 0, 0, tzinfo=MADRID_TZ
+            check_date.year, check_date.month, check_date.day, end_hour, 0, 0, tzinfo=MADRID_TZ
         )
 
         # Get all busy periods for the day
@@ -439,13 +455,15 @@ async def get_available_slots(
                 if current_slot in adjacent_times:
                     adjacent_priority = 0  # Highest priority: starts right after appointment
 
-                available_slots.append({
-                    "time": current_slot.strftime("%H:%M"),
-                    "end_time": slot_end.strftime("%H:%M"),
-                    "full_datetime": current_slot.isoformat(),
-                    "stylist_id": str(stylist_id),
-                    "adjacent_priority": adjacent_priority,
-                })
+                available_slots.append(
+                    {
+                        "time": current_slot.strftime("%H:%M"),
+                        "end_time": slot_end.strftime("%H:%M"),
+                        "full_datetime": current_slot.isoformat(),
+                        "stylist_id": str(stylist_id),
+                        "adjacent_priority": adjacent_priority,
+                    }
+                )
 
             # Move to next slot
             current_slot += timedelta(minutes=slot_interval_minutes)
@@ -642,12 +660,15 @@ async def get_calendar_events_for_range(
                 select(Appointment).where(
                     and_(
                         Appointment.stylist_id.in_(stylist_ids),
-                        Appointment.status.in_([
-                            AppointmentStatus.PENDING,
-                            AppointmentStatus.CONFIRMED,
-                        ]),
+                        Appointment.status.in_(
+                            [
+                                AppointmentStatus.PENDING,
+                                AppointmentStatus.CONFIRMED,
+                            ]
+                        ),
                         Appointment.start_time < end_time,
-                        Appointment.start_time >= start_time - timedelta(hours=24),  # Buffer for duration
+                        Appointment.start_time
+                        >= start_time - timedelta(hours=24),  # Buffer for duration
                     )
                 )
             )
@@ -655,7 +676,8 @@ async def get_calendar_events_for_range(
 
             # Filter in Python for exact overlap check (appointment ends after our start time)
             appointments = [
-                appt for appt in all_appointments
+                appt
+                for appt in all_appointments
                 if appt.start_time + timedelta(minutes=appt.duration_minutes) > start_time
             ]
 
@@ -693,23 +715,25 @@ async def get_calendar_events_for_range(
                     title_parts.append(f"- {service_names}")
                 title = " ".join(title_parts)
 
-                events.append({
-                    "id": f"appt-{appt.id}",
-                    "title": title,
-                    "start": start_madrid.isoformat(),
-                    "end": end_madrid.isoformat(),
-                    "backgroundColor": "#7C3AED",  # Default violet
-                    "borderColor": "#7C3AED",
-                    "extendedProps": {
-                        "appointment_id": str(appt.id),
-                        "customer_id": str(appt.customer_id),
-                        "stylist_id": str(appt.stylist_id),
-                        "status": appt.status.value,
-                        "duration_minutes": appt.duration_minutes,
-                        "notes": appt.notes,
-                        "type": "appointment",
-                    },
-                })
+                events.append(
+                    {
+                        "id": f"appt-{appt.id}",
+                        "title": title,
+                        "start": start_madrid.isoformat(),
+                        "end": end_madrid.isoformat(),
+                        "backgroundColor": "#7C3AED",  # Default violet
+                        "borderColor": "#7C3AED",
+                        "extendedProps": {
+                            "appointment_id": str(appt.id),
+                            "customer_id": str(appt.customer_id),
+                            "stylist_id": str(appt.stylist_id),
+                            "status": appt.status.value,
+                            "duration_minutes": appt.duration_minutes,
+                            "notes": appt.notes,
+                            "type": "appointment",
+                        },
+                    }
+                )
 
             # Fetch blocking events
             block_result = await session.execute(
@@ -725,11 +749,11 @@ async def get_calendar_events_for_range(
 
             # Color map for blocking event types
             block_colors = {
-                "vacation": "#DC2626",   # Red
-                "meeting": "#D97706",    # Amber
-                "break": "#059669",      # Emerald
-                "general": "#6B7280",    # Gray
-                "personal": "#EC4899",   # Pink
+                "vacation": "#DC2626",  # Red
+                "meeting": "#D97706",  # Amber
+                "break": "#059669",  # Emerald
+                "general": "#6B7280",  # Gray
+                "personal": "#EC4899",  # Pink
             }
 
             for block in blocking_events:
@@ -739,24 +763,28 @@ async def get_calendar_events_for_range(
                 start_madrid = block.start_time.astimezone(MADRID_TZ)
                 end_madrid = block.end_time.astimezone(MADRID_TZ)
 
-                events.append({
-                    "id": f"block-{block.id}",
-                    "title": block.title,
-                    "start": start_madrid.isoformat(),
-                    "end": end_madrid.isoformat(),
-                    "backgroundColor": color,
-                    "borderColor": color,
-                    "extendedProps": {
-                        "blocking_event_id": str(block.id),
-                        "stylist_id": str(block.stylist_id),
-                        "description": block.description,
-                        "event_type": block.event_type.value,
-                        "type": "blocking_event",
-                        # Include recurring series info if available
-                        "recurring_series_id": str(block.recurring_series_id) if block.recurring_series_id else None,
-                        "occurrence_index": block.occurrence_index,
-                    },
-                })
+                events.append(
+                    {
+                        "id": f"block-{block.id}",
+                        "title": block.title,
+                        "start": start_madrid.isoformat(),
+                        "end": end_madrid.isoformat(),
+                        "backgroundColor": color,
+                        "borderColor": color,
+                        "extendedProps": {
+                            "blocking_event_id": str(block.id),
+                            "stylist_id": str(block.stylist_id),
+                            "description": block.description,
+                            "event_type": block.event_type.value,
+                            "type": "blocking_event",
+                            # Include recurring series info if available
+                            "recurring_series_id": str(block.recurring_series_id)
+                            if block.recurring_series_id
+                            else None,
+                            "occurrence_index": block.occurrence_index,
+                        },
+                    }
+                )
 
             # Fetch holidays (salon-wide closures)
             start_date = start_time.date()
@@ -773,19 +801,21 @@ async def get_calendar_events_for_range(
             holidays = holiday_result.scalars().all()
 
             for holiday in holidays:
-                events.append({
-                    "id": f"holiday-{holiday.id}",
-                    "title": f"FESTIVO: {holiday.name}",
-                    "start": holiday.date.isoformat(),
-                    "end": holiday.date.isoformat(),
-                    "allDay": True,
-                    "backgroundColor": "#991B1B",  # Dark red
-                    "borderColor": "#7F1D1D",
-                    "extendedProps": {
-                        "holiday_id": str(holiday.id),
-                        "type": "holiday",
-                    },
-                })
+                events.append(
+                    {
+                        "id": f"holiday-{holiday.id}",
+                        "title": f"FESTIVO: {holiday.name}",
+                        "start": holiday.date.isoformat(),
+                        "end": holiday.date.isoformat(),
+                        "allDay": True,
+                        "backgroundColor": "#991B1B",  # Dark red
+                        "borderColor": "#7F1D1D",
+                        "extendedProps": {
+                            "holiday_id": str(holiday.id),
+                            "type": "holiday",
+                        },
+                    }
+                )
 
         logger.info(
             f"Found {len(events)} calendar events for {len(stylist_ids)} stylists "

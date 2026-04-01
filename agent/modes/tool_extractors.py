@@ -29,55 +29,6 @@ logger = logging.getLogger(__name__)
 
 # AUDIENCE_HINT_MAP is imported from shared.audience_maps (single source of truth)
 
-# Maps Spanish natural language → hair_density axis values used by resolve_candidates()
-# Axis values: "normal" | "extra"
-_HAIR_DENSITY_HINT_MAP: dict[str, str] = {
-    "normal": "normal",
-    "medio": "normal",
-    "fino": "normal",
-    "cabello normal": "normal",
-    "pelo normal": "normal",
-    "pelo fino": "normal",
-    "cabello fino": "normal",
-    "cabello medio": "normal",
-    "pelo medio": "normal",
-    "poco pelo": "normal",
-    "grueso": "extra",
-    "denso": "extra",
-    "espeso": "extra",
-    "mucho pelo": "extra",
-    "bastante pelo": "extra",
-    "pelo grueso": "extra",
-    "cabello grueso": "extra",
-    "pelo denso": "extra",
-    "cabello denso": "extra",
-    "pelo espeso": "extra",
-    "cabello espeso": "extra",
-    "muy largo": "extra",
-    "pelo muy largo": "extra",
-    "cabello muy largo": "extra",
-    "extra grueso": "extra",
-}
-
-# Maps Spanish natural language → hair_length axis values used by resolve_candidates()
-# Axis values: "short_medium" | "long"
-_HAIR_LENGTH_HINT_MAP: dict[str, str] = {
-    "corto": "short_medium",
-    "medio": "short_medium",
-    "por los hombros": "short_medium",
-    "pelo corto": "short_medium",
-    "pelo medio": "short_medium",
-    "cabello corto": "short_medium",
-    "cabello medio": "short_medium",
-    "corto o medio": "short_medium",
-    "largo": "long",
-    "muy largo": "long",
-    "pelo largo": "long",
-    "cabello largo": "long",
-    "pelo muy largo": "long",
-    "cabello muy largo": "long",
-}
-
 
 def _normalize_text(value: str | None) -> str:
     """Unicode NFKD normalization, lowercase, strip accents."""
@@ -101,195 +52,6 @@ def extract_service_audience_hint(value: str | None) -> str | None:
             return hint
 
     return None
-
-
-# ============================================================================
-# Pre-resolvers (called before prompt building)
-# ============================================================================
-
-
-def resolve_pending_clarification(ctx: BookingContext, user_message: str = "") -> bool:
-    """Attempt to resolve pending clarifications from the queue using axis hint maps.
-
-    Called as a pre-resolver in BookingMode.handle() AFTER _resolve_audience_hint()
-    and BEFORE _build_messages(). Iterates ctx.pending_clarifications and attempts
-    to match the user's natural-language answer against the appropriate hint map
-    for each axis. Handles all 3 axes: audience, hair_density, hair_length.
-
-    Args:
-        ctx: The current BookingContext (mutated in place on match).
-        user_message: The raw user message from the current turn. Used to match
-            ALL axes: audience (fallback when ctx.service_audience_hint is None),
-            hair_density, and hair_length via their respective hint maps.
-
-    On a successful match for any axis:
-    - Sets service_id, service_name, service_category, service_duration_minutes
-    - Appends to selected_services (NOT overwrite)
-    - Removes the matched entry from pending_clarifications
-    - Clears candidate_services
-    Returns True if any resolution happened, False otherwise.
-
-    Axis resolution strategy:
-    - audience: derive canonical hint from ctx.service_audience_hint (preferred) OR
-      from user_message via AUDIENCE_HINT_MAP (fallback), then match against option
-      values/labels using multiple strategies (canonical value, label substring, token).
-    - hair_density: match user_message against _HAIR_DENSITY_HINT_MAP
-    - hair_length: match user_message against _HAIR_LENGTH_HINT_MAP
-    """
-    if not ctx.pending_clarifications:
-        return False
-
-    resolved_any = False
-
-    # Normalize user message for hint map matching
-    user_text = _normalize_text(user_message)
-
-    # Iterate over a copy so we can safely remove items during iteration
-    remaining_clarifications = list(ctx.pending_clarifications)
-    still_pending: list[dict] = []
-
-    for clarification in remaining_clarifications:
-        axis = clarification.get("axis")
-
-        # ── audience axis: use service_audience_hint OR derive from user_message ──
-        if axis == "audience":
-            options = clarification.get("options", [])
-            # ── Numeric index resolution (user typed "4" or "4.") ──
-            _numeric = re.match(r"^\s*(\d+)\.?\s*$", user_message.strip())
-            if _numeric:
-                _idx = int(_numeric.group(1)) - 1
-                if 0 <= _idx < len(options):
-                    _apply_resolved_option(ctx, options[_idx], axis, f"numeric_index_{_idx + 1}")
-                    resolved_any = True
-                    continue
-            # ── Existing hint map logic (unchanged) ──
-            # Derive hint from user_message if not already in context.
-            # This handles the common case where the user answers the clarification
-            # question with a natural phrase like "dama", "para señora", "soy mujer",
-            # but the hint was never persisted from a previous turn.
-            audience_hint = ctx.service_audience_hint
-            if audience_hint is None and user_text:
-                audience_hint = _match_hint_map(user_text, AUDIENCE_HINT_MAP)
-            if audience_hint is None:
-                still_pending.append(clarification)
-                continue
-            hint_lower = _normalize_text(audience_hint)
-            options = clarification.get("options", [])
-            matched = False
-            for opt in options:
-                opt_val = _normalize_text(opt.get("value", ""))
-                opt_label = _normalize_text(opt.get("label", ""))
-                # Match canonical value (e.g. "adult_female" in "adult_female")
-                # OR match label tokens (e.g. "dama" in "dama / senora")
-                # OR the option value is contained in the hint (substring match)
-                if (
-                    hint_lower in opt_val
-                    or opt_val in hint_lower
-                    or hint_lower in opt_label
-                    or _label_tokens_match(hint_lower, opt_label)
-                    or _label_tokens_match(user_text, opt_label)
-                ):
-                    _apply_resolved_option(ctx, opt, axis, audience_hint)
-                    matched = True
-                    resolved_any = True
-                    break
-            if not matched:
-                still_pending.append(clarification)
-            continue
-
-        # ── hair_density axis: scan user_text against hint map ──
-        if axis == "hair_density":
-            options = clarification.get("options", [])
-            # ── Numeric index resolution ──
-            _numeric = re.match(r"^\s*(\d+)\.?\s*$", user_message.strip())
-            if _numeric:
-                _idx = int(_numeric.group(1)) - 1
-                if 0 <= _idx < len(options):
-                    _apply_resolved_option(ctx, options[_idx], axis, f"numeric_index_{_idx + 1}")
-                    resolved_any = True
-                    continue
-            # ── Existing hint map logic (unchanged) ──
-            resolved_value = _match_hint_map(user_text, _HAIR_DENSITY_HINT_MAP)
-            if resolved_value:
-                options = clarification.get("options", [])
-                matched = False
-                for opt in options:
-                    if _normalize_text(opt.get("value")) == resolved_value:
-                        _apply_resolved_option(ctx, opt, axis, resolved_value)
-                        matched = True
-                        resolved_any = True
-                        break
-                if not matched:
-                    still_pending.append(clarification)
-            else:
-                still_pending.append(clarification)
-            continue
-
-        # ── hair_length axis: scan user_text against hint map ──
-        if axis == "hair_length":
-            options = clarification.get("options", [])
-            # ── Numeric index resolution ──
-            _numeric = re.match(r"^\s*(\d+)\.?\s*$", user_message.strip())
-            if _numeric:
-                _idx = int(_numeric.group(1)) - 1
-                if 0 <= _idx < len(options):
-                    _apply_resolved_option(ctx, options[_idx], axis, f"numeric_index_{_idx + 1}")
-                    resolved_any = True
-                    continue
-            # ── Existing hint map logic (unchanged) ──
-            resolved_value = _match_hint_map(user_text, _HAIR_LENGTH_HINT_MAP)
-            if resolved_value:
-                options = clarification.get("options", [])
-                matched = False
-                for opt in options:
-                    if _normalize_text(opt.get("value")) == resolved_value:
-                        _apply_resolved_option(ctx, opt, axis, resolved_value)
-                        matched = True
-                        resolved_any = True
-                        break
-                if not matched:
-                    still_pending.append(clarification)
-            else:
-                still_pending.append(clarification)
-            continue
-
-        # ── Unknown axis: keep as-is ──
-        still_pending.append(clarification)
-
-    if resolved_any:
-        ctx.pending_clarifications = still_pending
-
-    return resolved_any
-
-
-def _label_tokens_match(user_normalized: str, label_normalized: str) -> bool:
-    """Return True if any word-token from user_normalized appears in label_normalized.
-
-    Used to match user answers like "dama" against option labels like "dama / senora".
-    Only considers tokens of 4+ characters to avoid false positives from short words.
-    """
-    if not user_normalized or not label_normalized:
-        return False
-    tokens = re.split(r"\W+", user_normalized)
-    return any(
-        len(tok) >= 4 and re.search(rf"\b{re.escape(tok)}\b", label_normalized) for tok in tokens
-    )
-
-
-def _match_hint_map(normalized_text: str, hint_map: dict[str, str]) -> str | None:
-    """Scan normalized_text for keys in hint_map, longest match wins.
-
-    Returns the axis value (e.g. "normal", "extra", "short_medium", "long")
-    if a match is found, None otherwise. Prefers longer keys to avoid
-    false positives from short substrings.
-    """
-    best_key: str | None = None
-    best_len = 0
-    for key, _value in hint_map.items():
-        if key in normalized_text and len(key) > best_len:
-            best_key = key
-            best_len = len(key)
-    return hint_map[best_key] if best_key else None
 
 
 def _apply_resolved_option(ctx: BookingContext, opt: dict, axis: str, resolved_value: str) -> None:
@@ -328,6 +90,232 @@ def _apply_resolved_option(ctx: BookingContext, opt: dict, axis: str, resolved_v
         resolved_value,
         len(ctx.pending_clarifications),
     )
+
+
+def _previous_assistant_presented_clarification(messages: list[dict]) -> bool:
+    """Check if the most recent assistant message presented a numbered clarification list.
+
+    Iterates ``messages`` in reverse, finds the first (most recent)
+    ``role == "assistant"`` message, and returns True if its content matches
+    the numbered-list pattern ``r'^\\d+\\.\\s'`` in multiline mode.
+
+    Returns False if no assistant message is found or the last one has no numbered list.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = msg.get("content") or ""
+            return bool(re.search(r"^\d+\.\s", content, re.MULTILINE))
+    return False
+
+
+def _previous_assistant_presented_candidates(
+    messages: list[dict],
+    candidates: list[dict],
+) -> bool:
+    """Check if the most recent assistant message presented candidate services.
+
+    Iterates ``messages`` in reverse, finds the first (most recent)
+    ``role == "assistant"`` message, and returns True if its content contains
+    at least 2 service names from ``candidates`` (normalized substring match,
+    case-insensitive).
+
+    Returns False if:
+    - no assistant message is found
+    - ``candidates`` is empty
+    - fewer than 2 candidate names appear in the last assistant message
+    """
+    if not candidates:
+        return False
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = _normalize_text(msg.get("content") or "")
+            matches = sum(
+                1
+                for c in candidates
+                if _normalize_text(c.get("name", ""))
+                and _normalize_text(c.get("name", "")) in content
+            )
+            return matches >= 2
+    return False
+
+
+def _resolve_user_candidate_selection(
+    user_message: str,
+    ctx: BookingContext,
+    messages: list[dict] | None = None,
+) -> bool:
+    """Resolve a candidate service selection from the user message.
+
+    Deterministically matches the user's reply (number or service name) against
+    the stored options in ``ctx.candidate_services`` and calls
+    ``extract_service_fields()`` on success via a synthesized Shape-1 dict.
+    Must NOT call any tools or LLM — purely synchronous Python.
+
+    Guards (returns False immediately if ANY fail):
+    - ``ctx.candidate_services`` is empty
+    - ``ctx.service_id`` is already set (prevent overwrite)
+    - ``messages`` provided and last assistant did NOT present candidate names
+
+    Match logic (priority order):
+    1. Bare number: ``r'^\\s*(\\d+)\\s*$'`` → ``candidate_services[n-1]``
+    2. Number embedded in text: ``r'\\b(\\d+)\\b'`` → ``candidate_services[n-1]``
+    3. Service name: normalized substring match against candidate ``name`` field
+
+    On success: synthesizes Shape-1 dict and calls ``extract_service_fields()``
+    (which sets service_id/name/etc AND clears candidate_services), returns True.
+    On no match: returns False (LLM handles it normally).
+    """
+    # Guard: nothing to resolve
+    if not ctx.candidate_services:
+        return False
+
+    # Guard: service already resolved — don't overwrite
+    if ctx.service_id is not None:
+        return False
+
+    # Guard: only resolve if assistant actually presented candidate services
+    if messages is not None and not _previous_assistant_presented_candidates(
+        messages, ctx.candidate_services
+    ):
+        return False
+
+    candidates = ctx.candidate_services
+    matched_candidate: dict | None = None
+
+    # Priority 1: bare number  e.g. "2"
+    bare_match = re.match(r"^\s*(\d+)\s*$", user_message)
+    if bare_match:
+        idx = int(bare_match.group(1)) - 1
+        if 0 <= idx < len(candidates):
+            matched_candidate = candidates[idx]
+
+    # Priority 2: number embedded in text  e.g. "el 2 por favor"
+    if matched_candidate is None:
+        embedded_match = re.search(r"\b(\d+)\b", user_message)
+        if embedded_match:
+            idx = int(embedded_match.group(1)) - 1
+            if 0 <= idx < len(candidates):
+                matched_candidate = candidates[idx]
+
+    # Priority 3: service name substring match (normalized)
+    if matched_candidate is None:
+        user_norm = _normalize_text(user_message)
+        for candidate in candidates:
+            name_norm = _normalize_text(candidate.get("name", ""))
+            if name_norm and (name_norm in user_norm or user_norm in name_norm):
+                matched_candidate = candidate
+                break
+
+    if matched_candidate is None:
+        return False
+
+    # Synthesize Shape-1 dict and delegate to extract_service_fields
+    # (which handles all canonical fields AND clears candidate_services)
+    synthesized = {
+        "resolved_service": {
+            "id": matched_candidate["id"],
+            "name": matched_candidate["name"],
+            "duration_minutes": matched_candidate.get("duration_minutes"),
+            "price": matched_candidate.get("price"),
+            "category": matched_candidate.get("category"),
+            "description": matched_candidate.get("description"),
+        }
+    }
+    extract_service_fields(synthesized, ctx)
+    logger.debug(
+        "_resolve_user_candidate_selection: resolved '%s' (id=%s)",
+        matched_candidate.get("name"),
+        matched_candidate.get("id"),
+    )
+    return True
+
+
+def _resolve_user_clarification_selection(
+    user_message: str,
+    ctx: BookingContext,
+    messages: list[dict] | None = None,
+) -> bool:
+    """Resolve a clarification selection from the user message.
+
+    Deterministically matches the user's reply (number or label text) against
+    the stored options in ``ctx.pending_clarifications[0]`` and calls
+    ``_apply_resolved_option()`` on success.  Must NOT call any tools or LLM —
+    purely synchronous Python.
+
+    Guards (returns False immediately if ANY fail):
+    - ``ctx.pending_clarifications`` is empty
+    - ``ctx.service_id`` is already set (prevent overwrite)
+    - ``messages`` provided and last assistant did NOT present a numbered list
+
+    Match logic (priority order):
+    1. Bare number: ``r'^\\s*(\\d+)\\s*$'`` → ``options[n-1]``
+    2. Number embedded in text: ``r'\\b(\\d+)\\b'`` → ``options[n-1]``
+    3. Label/value text: normalized substring containment
+
+    On success: calls ``_apply_resolved_option()``, removes matched entry from
+    ``ctx.pending_clarifications``, returns True.
+    On no match: returns False (LLM handles it normally).
+    """
+    # Guard: nothing to resolve
+    if not ctx.pending_clarifications:
+        return False
+
+    # Guard: service already resolved — don't overwrite
+    if ctx.service_id is not None:
+        return False
+
+    # Guard: only resolve if assistant actually presented a clarification list
+    if messages is not None and not _previous_assistant_presented_clarification(messages):
+        return False
+
+    # Work on the first pending entry (FIFO)
+    entry = ctx.pending_clarifications[0]
+    options: list[dict] = entry.get("options", [])
+    axis: str = entry.get("axis", "")
+
+    if not options:
+        return False
+
+    matched_opt: dict | None = None
+    resolved_value: str = ""
+
+    # Priority 1: bare number  e.g. "4"
+    bare_match = re.match(r"^\s*(\d+)\s*$", user_message)
+    if bare_match:
+        idx = int(bare_match.group(1)) - 1
+        if 0 <= idx < len(options):
+            matched_opt = options[idx]
+            resolved_value = str(idx + 1)
+
+    # Priority 2: number embedded in text  e.g. "el 2 por favor"
+    if matched_opt is None:
+        embedded_match = re.search(r"\b(\d+)\b", user_message)
+        if embedded_match:
+            idx = int(embedded_match.group(1)) - 1
+            if 0 <= idx < len(options):
+                matched_opt = options[idx]
+                resolved_value = str(idx + 1)
+
+    # Priority 3: label / value substring match (normalized)
+    if matched_opt is None:
+        user_norm = _normalize_text(user_message)
+        for opt in options:
+            label_norm = _normalize_text(opt.get("label"))
+            value_norm = _normalize_text(opt.get("value"))
+            if (label_norm and (label_norm in user_norm or user_norm in label_norm)) or (
+                value_norm and (value_norm in user_norm or user_norm in value_norm)
+            ):
+                matched_opt = opt
+                resolved_value = opt.get("value", opt.get("label", ""))
+                break
+
+    if matched_opt is None:
+        return False
+
+    # Apply and remove resolved entry
+    _apply_resolved_option(ctx, matched_opt, axis, resolved_value)
+    ctx.pending_clarifications = [e for e in ctx.pending_clarifications if e is not entry]
+    return True
 
 
 # ============================================================================
@@ -799,6 +787,82 @@ def _upsert_service_detail(ctx: BookingContext, svc: dict) -> None:
 # Dispatcher
 # ============================================================================
 
+
+def extract_create_hold_result(result: dict, ctx: BookingContext) -> None:
+    """Extract create_hold() result into BookingContext.
+
+    On success: stores hold_id in ctx.hold_id.
+    On SLOT_UNAVAILABLE: clears slot state and sets needs_availability_refresh.
+    Other errors: logged, no state mutation.
+    """
+    status = result.get("status")
+    if status == "ok":
+        ctx.hold_id = result.get("hold_id")
+        logger.info("extract_create_hold_result: HOLD created — hold_id=%s", ctx.hold_id)
+    elif result.get("error") == "SLOT_UNAVAILABLE":
+        ctx.offered_slots = None
+        ctx.selected_slot = None
+        ctx.hold_id = None
+        ctx.needs_availability_refresh = True
+        logger.info(
+            "extract_create_hold_result: SLOT_UNAVAILABLE — cleared slot state, "
+            "needs_availability_refresh=True"
+        )
+    else:
+        logger.warning(
+            "extract_create_hold_result: unexpected error — %s: %s",
+            result.get("error"),
+            result.get("message"),
+        )
+
+
+def extract_confirm_from_hold_result(result: dict, ctx: BookingContext) -> None:
+    """Extract confirm_from_hold() result into BookingContext.
+
+    On success: marks booking as completed (delegates to same flag as book()).
+    On HOLD_EXPIRED: clears hold_id and slot, triggers availability refresh.
+    On HOLD_INVALID_STATE / HOLD_NOT_FOUND: logs warning, no state mutation.
+    """
+    status = result.get("status")
+    if status == "ok":
+        ctx._booking_completed = True
+        ctx.book_failure_count = 0
+        ctx.hold_id = None
+        ctx.offered_slots = None
+        ctx.last_booked_slot = ctx.selected_slot  # Snapshot for F-8 confirmation render
+        ctx.selected_slot = None
+        # Capture service names for confirmation message
+        if ctx.service_name:
+            ctx.confirmed_services = [ctx.service_name]
+        elif ctx.selected_services:
+            ctx.confirmed_services = list(ctx.selected_services)
+        ctx.reset_transient()
+        logger.info(
+            "extract_confirm_from_hold_result: booking confirmed via hold (appointment_id=%s)",
+            result.get("appointment_id"),
+        )
+    elif result.get("error") == "HOLD_EXPIRED":
+        ctx.hold_id = None
+        ctx.offered_slots = None
+        ctx.selected_slot = None
+        ctx.needs_availability_refresh = True
+        logger.warning(
+            "extract_confirm_from_hold_result: HOLD_EXPIRED — cleared hold/slot, "
+            "needs_availability_refresh=True"
+        )
+    elif result.get("error") in ("HOLD_INVALID_STATE", "HOLD_NOT_FOUND"):
+        logger.warning(
+            "extract_confirm_from_hold_result: error=%s — %s",
+            result.get("error"),
+            result.get("message"),
+        )
+    else:
+        logger.warning(
+            "extract_confirm_from_hold_result: unexpected result — %s",
+            result,
+        )
+
+
 TOOL_EXTRACTORS: dict[str, Any] = {
     "search_services": extract_service_fields,
     "check_availability": extract_slot_fields,
@@ -806,6 +870,8 @@ TOOL_EXTRACTORS: dict[str, Any] = {
     "list_stylists": extract_stylist_fields,
     "manage_customer": extract_customer_fields,
     "book": extract_booking_result,
+    "create_hold": extract_create_hold_result,
+    "confirm_from_hold": extract_confirm_from_hold_result,
     # GAP-03: query_info is informational — no-op extractor prevents log noise
     # and provides a hook for future field extraction if needed.
     "query_info": extract_query_info_fields,

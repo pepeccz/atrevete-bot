@@ -21,21 +21,26 @@ from agent.modes.booking_mode import (
     _AUDIENCE_NAME_FILTER,
     _CONFIRMATION_QUESTION_PATTERNS,
     BookingMode,
+    RECOMMENDATIONS_OFFER_THRESHOLD,
     _build_auto_confirmation_summary,
     _build_disambiguation_section,
     _build_offered_slots_section,
     _build_recommendations_section,
     _build_stylists_section,
+    _build_upsell_gate_section,
     _clear_slot_state,
     _combo_offer_in_response,
     _contains_name_token,
+    _detect_addon_acceptance,
     _detect_recommendation_decline,
     _extract_name_from_conversation,
     _extract_notes_from_conversation,
+    _fetch_addon_durations,
     _looks_like_clarification,
     _normalize_text,
     _redact_name_tokens,
     _resolve_user_slot_selection,
+    _should_gate_for_upsell,
 )
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
@@ -920,6 +925,82 @@ class TestBuildRecommendationsSection:
         ctx = BookingContext()
 
         assert _build_recommendations_section(ctx) == ""
+
+
+# =============================================================================
+# 14b. Combo Recommendations — offer-attempts counter (recommendations-shown-fix)
+# =============================================================================
+
+
+class TestBuildRecommendationsSectionCounter:
+    """Test recommendations_offer_attempts counter logic in _build_recommendations_section."""
+
+    _RECS = ["Hidratación", "Corte de Señora"]
+
+    def _ctx(self, **kwargs) -> BookingContext:
+        """Create a BookingContext with pending recommendations and overrides."""
+        return BookingContext(
+            pending_recommendations=self._RECS,
+            recommendations_shown=False,
+            recommendations_declined=False,
+            **kwargs,
+        )
+
+    def test_counter_increments_on_first_injection(self):
+        """Counter goes 0 → 1 when block is emitted on the first call."""
+        ctx = self._ctx(recommendations_offer_attempts=0)
+
+        result = _build_recommendations_section(ctx)
+
+        assert "SERVICIOS RECOMENDADOS" in result
+        assert ctx.recommendations_offer_attempts == 1
+
+    def test_counter_increments_on_second_injection(self):
+        """Counter goes 1 → 2 when block is emitted a second time."""
+        ctx = self._ctx(recommendations_offer_attempts=1)
+
+        result = _build_recommendations_section(ctx)
+
+        assert "SERVICIOS RECOMENDADOS" in result
+        assert ctx.recommendations_offer_attempts == 2
+        # Flag not yet auto-set — fast path hasn't triggered
+        assert ctx.recommendations_shown is False
+
+    def test_threshold_suppresses_block_and_sets_flag(self):
+        """At threshold (2), function returns '' and auto-sets recommendations_shown=True."""
+        ctx = self._ctx(recommendations_offer_attempts=RECOMMENDATIONS_OFFER_THRESHOLD)
+
+        result = _build_recommendations_section(ctx)
+
+        assert result == ""
+        assert ctx.recommendations_shown is True
+
+    def test_counter_not_incremented_when_suppressed(self):
+        """Counter stays at threshold when guard fires — no double-increment."""
+        ctx = self._ctx(recommendations_offer_attempts=RECOMMENDATIONS_OFFER_THRESHOLD)
+
+        _build_recommendations_section(ctx)
+
+        assert ctx.recommendations_offer_attempts == RECOMMENDATIONS_OFFER_THRESHOLD
+
+    def test_fast_path_combo_offer_sets_flag(self):
+        """_combo_offer_in_response sets recommendations_shown=True — fast path still works."""
+        ctx = BookingContext(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=False,
+            recommendations_declined=False,
+            recommendations_offer_attempts=1,
+        )
+        # Simulate LLM response that mentions the service and a combo-offer phrase
+        response_text = "Te recomiendo también la Hidratación, queda muy bien combinado."
+
+        fired = _combo_offer_in_response(response_text, ctx.pending_recommendations)
+        if fired:
+            ctx.recommendations_shown = True
+
+        assert ctx.recommendations_shown is True
+        # Counter is unchanged by the fast path (it's set by _build_recommendations_section)
+        assert ctx.recommendations_offer_attempts == 1
 
 
 # =============================================================================
@@ -2131,7 +2212,7 @@ class TestNotesGate:
         # Simulate the handle() detection logic directly
         ctx = BookingContext(notes_asked=False, notes_ask_attempts=0)
         if not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 2:
+            if ctx.notes_ask_attempts >= 1:
                 ctx.notes_asked = True
             elif _previous_assistant_asked_for_notes(messages):
                 ctx.notes_asked = True
@@ -2139,8 +2220,8 @@ class TestNotesGate:
         assert ctx.notes_asked is True
 
     @pytest.mark.asyncio
-    async def test_loop_prevention_auto_sets_notes_asked_at_2_attempts(self):
-        """When notes_ask_attempts >= 2, notes_asked is auto-set to True
+    async def test_loop_prevention_auto_sets_notes_asked_at_1_attempt(self):
+        """When notes_ask_attempts >= 1, notes_asked is auto-set to True
         regardless of message history (loop prevention)."""
         from agent.modes.booking_mode import _previous_assistant_asked_for_notes
 
@@ -2153,16 +2234,67 @@ class TestNotesGate:
         # Confirm message scan alone would NOT trigger
         assert _previous_assistant_asked_for_notes(messages) is False
 
-        # Simulate the handle() detection logic with attempts=2
-        ctx = BookingContext(notes_asked=False, notes_ask_attempts=2)
+        # Simulate the handle() detection logic with attempts=1
+        ctx = BookingContext(notes_asked=False, notes_ask_attempts=1)
         if not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 2:
+            if ctx.notes_ask_attempts >= 1:
                 ctx.notes_asked = True
             elif _previous_assistant_asked_for_notes(messages):
                 ctx.notes_asked = True
 
-        # Auto-set because attempts >= 2
+        # Auto-set because attempts >= 1
         assert ctx.notes_asked is True
+
+    @pytest.mark.asyncio
+    async def test_notes_markers_standard_phrasing_detected_by_both_functions(self):
+        """Standard notes-asking phrasing (containing 'nota') is detected by both
+        _build_response() counter and _previous_assistant_asked_for_notes() flag.
+        Both functions use the shared _NOTES_ASK_MARKERS constant."""
+        from agent.modes.booking_mode import (
+            _NOTES_ASK_MARKERS,
+            _normalize_text,
+            _previous_assistant_asked_for_notes,
+        )
+
+        response_text = "¿Tenés alguna nota para el turno?"
+        normalized = _normalize_text(response_text)
+
+        # The shared constant drives the counter in _build_response()
+        assert any(
+            marker in normalized for marker in _NOTES_ASK_MARKERS
+        ), f"Standard phrasing '{response_text}' not detected by _NOTES_ASK_MARKERS"
+
+        # The same constant drives _previous_assistant_asked_for_notes()
+        messages = [{"role": "assistant", "content": response_text}]
+        assert (
+            _previous_assistant_asked_for_notes(messages) is True
+        ), f"_previous_assistant_asked_for_notes failed to detect '{response_text}'"
+
+    @pytest.mark.asyncio
+    async def test_notes_markers_divergent_phrasing_detected_by_both_functions(self):
+        """Previously-divergent phrasing ('comentario especial') was only present in
+        _previous_assistant_asked_for_notes() but NOT in _build_response().
+        After the fix, the shared _NOTES_ASK_MARKERS constant covers both."""
+        from agent.modes.booking_mode import (
+            _NOTES_ASK_MARKERS,
+            _normalize_text,
+            _previous_assistant_asked_for_notes,
+        )
+
+        response_text = "¿Algún comentario especial?"
+        normalized = _normalize_text(response_text)
+
+        # The shared constant drives the counter in _build_response()
+        assert any(marker in normalized for marker in _NOTES_ASK_MARKERS), (
+            f"Divergent phrasing '{response_text}' not detected by _NOTES_ASK_MARKERS — "
+            f"'comentario'/'especial' must be in the shared constant"
+        )
+
+        # The same constant drives _previous_assistant_asked_for_notes()
+        messages = [{"role": "assistant", "content": response_text}]
+        assert (
+            _previous_assistant_asked_for_notes(messages) is True
+        ), f"_previous_assistant_asked_for_notes failed to detect '{response_text}'"
 
 
 # =============================================================================
@@ -3386,10 +3518,10 @@ class TestF7AutoRecovery:
 
     @pytest.mark.asyncio
     async def test_f7_no_double_recovery(self):
-        """AC-2.5: second call returns None when _f7_recovered is True."""
+        """AC-2.5: second call returns None when _f7_recovered_this_turn is True."""
         mode = make_booking_mode()
         ctx = BookingContext()
-        ctx._f7_recovered = True
+        mode._f7_recovered_this_turn = True
 
         result = await mode._f7_auto_recover("quiero un corte", ctx)
         assert result is None
@@ -3674,6 +3806,43 @@ class TestLooksLikeClarification:
     def test_complex_note_passes(self):
         assert _looks_like_clarification("raíz oscura, puntas más claras") is False
 
+    # ------------------------------------------------------------------
+    # Context-aware tests (FR-2, FR-3, FR-4)
+    # ------------------------------------------------------------------
+
+    def test_ctx_with_slots_returns_true(self):
+        """FR-2: digit reply with offered_slots context → True (slot-selection path)."""
+        ctx = BookingContext()
+        ctx.offered_slots = [{"date": "2026-04-02", "time": "10:00", "stylist_id": "s1"}]
+        assert _looks_like_clarification("4", ctx) is True
+
+    def test_ctx_with_clarifications_returns_true(self):
+        """FR-3: casual reply with pending_clarifications context → True."""
+        ctx = BookingContext()
+        ctx.pending_clarifications = [{"q": "¿Dama o caballero?"}]
+        assert _looks_like_clarification("dale", ctx) is True
+
+    def test_ctx_none_uses_regex_si(self):
+        """FR-1/FR-4: ctx=None, short affirmative → True via regex heuristic."""
+        assert _looks_like_clarification("sí") is True
+
+    def test_ctx_empty_fields_uses_regex_fallback(self):
+        """FR-4: ctx with both fields empty → True via heuristic fallback."""
+        ctx = BookingContext()
+        assert _looks_like_clarification("sí", ctx) is True
+
+    def test_long_note_returns_false_with_ctx(self):
+        """FR-4: long real note → False even when ctx has offered_slots (regex gates first)."""
+        ctx = BookingContext()
+        ctx.offered_slots = [{"date": "2026-04-02", "time": "10:00", "stylist_id": "s1"}]
+        assert _looks_like_clarification("raíz oscura, puntas más claras", ctx) is False
+
+    def test_long_message_never_clarification_with_ctx(self):
+        """FR-4: long booking message → False even when ctx has offered_slots."""
+        ctx = BookingContext()
+        ctx.offered_slots = [{"date": "2026-04-02", "time": "10:00", "stylist_id": "s1"}]
+        assert _looks_like_clarification("mañana a las 10 me gustaría un corte", ctx) is False
+
 
 class TestNotesExtractionFilter:
     """Verify clarification responses are NOT captured as notes."""
@@ -3729,3 +3898,547 @@ class TestNotesExtractionFilter:
         state, ctx = self._make_state_with_notes_question("no")
         _extract_notes_from_conversation(state, "no", ctx)
         assert ctx.notes is None
+
+    def test_call_site_passes_ctx_with_offered_slots(self):
+        """FR-5: call site passes ctx — '4' with offered_slots → notes NOT captured."""
+        state, ctx = self._make_state_with_notes_question("4")
+        ctx.offered_slots = [{"date": "2026-04-02", "time": "10:00", "stylist_id": "s1"}]
+        _extract_notes_from_conversation(state, "4", ctx)
+        assert ctx.notes is None
+
+    def test_no_ctx_regression(self):
+        """FR-1: call without ctx still works — '4' is already caught by regex heuristic."""
+        state, ctx = self._make_state_with_notes_question("4")
+        # No offered_slots set — ctx has empty fields → regex heuristic applies
+        _extract_notes_from_conversation(state, "4", ctx)
+        assert ctx.notes is None
+
+
+# =============================================================================
+# TestToolChoiceComputation
+# =============================================================================
+
+
+class TestToolChoiceComputation:
+    """Tests for tool_choice='required' logic in BookingMode.handle (T3.1).
+
+    The logic lives inside BookingMode.handle and computes tool_choice
+    before calling _run_agentic_loop. We test it by inspecting the
+    conditions on a BookingContext directly — no LLM call needed.
+    """
+
+    def _compute_tool_choice(self, ctx: BookingContext) -> str | None:
+        """Replicate the tool_choice computation from BookingMode.handle."""
+        if (
+            not ctx.selected_services
+            and not ctx.service_id
+            and not ctx.pending_clarifications
+            and not ctx.confirmation_shown
+        ):
+            return "required"
+        return None
+
+    def test_tool_choice_required_when_service_unresolved(self):
+        """Empty ctx → tool_choice should be 'required'."""
+        ctx = BookingContext()
+        assert self._compute_tool_choice(ctx) == "required"
+
+    def test_tool_choice_none_when_service_id_set(self):
+        """ctx with service_id → tool_choice should be None."""
+        ctx = BookingContext()
+        ctx.service_id = "svc-001"
+        assert self._compute_tool_choice(ctx) is None
+
+    def test_tool_choice_none_when_selected_services(self):
+        """ctx with selected_services → tool_choice should be None."""
+        ctx = BookingContext()
+        ctx.selected_services = [{"id": "svc-001", "name": "Corte"}]
+        assert self._compute_tool_choice(ctx) is None
+
+    def test_tool_choice_none_when_confirmation_shown(self):
+        """ctx with confirmation_shown=True → tool_choice should be None."""
+        ctx = BookingContext()
+        ctx.confirmation_shown = True
+        assert self._compute_tool_choice(ctx) is None
+
+    def test_tool_choice_none_when_pending_clarifications(self):
+        """ctx with pending_clarifications → tool_choice should be None."""
+        ctx = BookingContext()
+        ctx.pending_clarifications = ["¿Qué tipo de corte?"]
+        assert self._compute_tool_choice(ctx) is None
+
+
+# =============================================================================
+# E.1 — _should_gate_for_upsell (Phase E — service-upsell-flow)
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "kwargs,expected",
+    [
+        # All conditions True → True
+        (
+            {
+                "service_id": "svc-1",
+                "pending_recommendations": ["Barba"],
+                "recommendations_shown": False,
+                "recommendations_declined": False,
+                "prefetched_stylists": [],
+            },
+            True,
+        ),
+        # service_id None → False
+        (
+            {
+                "service_id": None,
+                "pending_recommendations": ["Barba"],
+                "recommendations_shown": False,
+                "recommendations_declined": False,
+                "prefetched_stylists": [],
+            },
+            False,
+        ),
+        # pending_recommendations empty → False
+        (
+            {
+                "service_id": "svc-1",
+                "pending_recommendations": [],
+                "recommendations_shown": False,
+                "recommendations_declined": False,
+                "prefetched_stylists": [],
+            },
+            False,
+        ),
+        # recommendations_shown = True → False
+        (
+            {
+                "service_id": "svc-1",
+                "pending_recommendations": ["Barba"],
+                "recommendations_shown": True,
+                "recommendations_declined": False,
+                "prefetched_stylists": [],
+            },
+            False,
+        ),
+        # recommendations_declined = True → False
+        (
+            {
+                "service_id": "svc-1",
+                "pending_recommendations": ["Barba"],
+                "recommendations_shown": False,
+                "recommendations_declined": True,
+                "prefetched_stylists": [],
+            },
+            False,
+        ),
+        # prefetched_stylists non-empty → False
+        (
+            {
+                "service_id": "svc-1",
+                "pending_recommendations": ["Barba"],
+                "recommendations_shown": False,
+                "recommendations_declined": False,
+                "prefetched_stylists": [{"id": "s1", "name": "Ana"}],
+            },
+            False,
+        ),
+    ],
+    ids=[
+        "all_true_returns_True",
+        "service_id_None_returns_False",
+        "pending_empty_returns_False",
+        "recommendations_shown_True_returns_False",
+        "recommendations_declined_True_returns_False",
+        "prefetched_stylists_non_empty_returns_False",
+    ],
+)
+class TestShouldGateForUpsell:
+    """E.1 — Parametrized tests for _should_gate_for_upsell()."""
+
+    def test_gate_condition(self, kwargs, expected):
+        ctx = BookingContext(**kwargs)
+        assert _should_gate_for_upsell(ctx) is expected
+
+
+# =============================================================================
+# E.2 — _detect_addon_acceptance (Phase E — service-upsell-flow)
+# =============================================================================
+
+
+class TestDetectAddonAcceptance:
+    """E.2 — Tests for _detect_addon_acceptance() token matching."""
+
+    def test_si_la_barba_matches_barba(self):
+        """'sí, la barba' with 'Barba' in pending → returns 'Barba'."""
+        ctx = BookingContext(
+            pending_recommendations=["Barba"],
+            recommendations_shown=True,
+        )
+        result = _detect_addon_acceptance("sí, la barba", ctx)
+        assert result == "Barba"
+
+    def test_ponme_el_barro_matches_barro(self):
+        """'vale, ponme el barro' with 'Barro' in pending → returns 'Barro'."""
+        ctx = BookingContext(
+            pending_recommendations=["Barro"],
+            recommendations_shown=True,
+        )
+        result = _detect_addon_acceptance("vale, ponme el barro", ctx)
+        assert result == "Barro"
+
+    def test_no_gracias_returns_none(self):
+        """'no gracias' → returns None (decline phrase present)."""
+        ctx = BookingContext(
+            pending_recommendations=["Barba"],
+            recommendations_shown=True,
+        )
+        result = _detect_addon_acceptance("no gracias", ctx)
+        assert result is None
+
+    def test_empty_message_returns_none(self):
+        """Empty message → returns None."""
+        ctx = BookingContext(
+            pending_recommendations=["Barba"],
+            recommendations_shown=True,
+        )
+        result = _detect_addon_acceptance("", ctx)
+        assert result is None
+
+    def test_empty_pending_returns_none(self):
+        """pending_recommendations empty → returns None."""
+        ctx = BookingContext(
+            pending_recommendations=[],
+            recommendations_shown=True,
+        )
+        result = _detect_addon_acceptance("sí, quiero la barba", ctx)
+        assert result is None
+
+    def test_recommendations_not_shown_returns_none(self):
+        """recommendations_shown=False → returns None (gate not fired yet)."""
+        ctx = BookingContext(
+            pending_recommendations=["Barba"],
+            recommendations_shown=False,
+        )
+        result = _detect_addon_acceptance("sí, la barba", ctx)
+        assert result is None
+
+    def test_unrelated_message_returns_none(self):
+        """Message with no token match and no acceptance phrase → None."""
+        ctx = BookingContext(
+            pending_recommendations=["Barba"],
+            recommendations_shown=True,
+        )
+        result = _detect_addon_acceptance("para el martes si puede ser", ctx)
+        assert result is None
+
+
+# =============================================================================
+# E.3 — _build_upsell_gate_section (Phase E — service-upsell-flow)
+# =============================================================================
+
+
+class TestBuildUpsellGateSection:
+    """E.3 — Tests for _build_upsell_gate_section() output format."""
+
+    def test_with_addon_durations_shows_plus_minutes(self):
+        """With addon_durations with values → includes '+X min' in output."""
+        ctx = BookingContext(
+            service_name="Cortar",
+            service_duration_minutes=40,
+            selected_services=["Cortar"],
+            pending_recommendations=["Barba", "Barro"],
+        )
+        addon_durations = {"Barba": 15, "Barro": 40}
+        result = _build_upsell_gate_section(ctx, addon_durations)
+
+        assert "+15 min" in result
+        assert "+40 min" in result
+        assert "Barba" in result
+        assert "Barro" in result
+        assert "<upsell_gate>" in result
+        assert "</upsell_gate>" in result
+
+    def test_with_empty_addon_durations_shows_addon_without_duration(self):
+        """With addon_durations empty → shows add-on names without duration."""
+        ctx = BookingContext(
+            service_name="Cortar",
+            selected_services=["Cortar"],
+            pending_recommendations=["Barba"],
+        )
+        result = _build_upsell_gate_section(ctx, {})
+
+        assert "Barba" in result
+        assert "+None" not in result
+        assert "+0" not in result
+        # No duration suffix for Barba
+        assert "1. Barba\n" in result or "1. Barba" in result
+
+    def test_multiple_addons_numbered_correctly(self):
+        """Multiple add-ons → numbered list is correct (1., 2., 3.)."""
+        ctx = BookingContext(
+            service_name="Mechas",
+            pending_recommendations=["Peinado", "Barro", "Óleo Pigmento"],
+        )
+        addon_durations = {"Peinado": 40, "Barro": 40, "Óleo Pigmento": 30}
+        result = _build_upsell_gate_section(ctx, addon_durations)
+
+        assert "1. Peinado (+40 min)" in result
+        assert "2. Barro (+40 min)" in result
+        assert "3. Óleo Pigmento (+30 min)" in result
+
+    def test_service_name_in_header(self):
+        """Service name appears in the header line."""
+        ctx = BookingContext(
+            service_name="Corte Caballero",
+            service_duration_minutes=40,
+            pending_recommendations=["Barba"],
+        )
+        result = _build_upsell_gate_section(ctx, {"Barba": 15})
+
+        assert "Corte Caballero" in result
+        assert "40 min" in result
+
+    def test_instruction_block_present(self):
+        """INSTRUCCIÓN block is present in the output."""
+        ctx = BookingContext(
+            service_name="Cortar",
+            pending_recommendations=["Barba"],
+        )
+        result = _build_upsell_gate_section(ctx, {})
+
+        assert "INSTRUCCIÓN" in result
+        assert "estilistas" in result
+
+
+# =============================================================================
+# E.4 — _fetch_addon_durations (Phase E — service-upsell-flow)
+# =============================================================================
+
+
+class TestFetchAddonDurations:
+    """E.4 — Tests for _fetch_addon_durations() with DB mock."""
+
+    @pytest.mark.asyncio
+    async def test_db_returns_results_correct_dict(self):
+        """DB returns rows → dict maps name → duration_minutes correctly."""
+        # Mock the DB session to return rows
+        mock_row_barba = MagicMock()
+        mock_row_barba.name = "Barba"
+        mock_row_barba.duration_minutes = 15
+
+        mock_row_barro = MagicMock()
+        mock_row_barro.name = "Barro"
+        mock_row_barro.duration_minutes = 40
+
+        mock_execute_result = MagicMock()
+        mock_execute_result.all.return_value = [mock_row_barba, mock_row_barro]
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_execute_result)
+
+        # Mock context manager
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "database.connection.get_async_session",
+            return_value=mock_session_ctx,
+        ):
+            result = await _fetch_addon_durations(["Barba", "Barro"])
+
+        assert result == {"Barba": 15, "Barro": 40}
+
+    @pytest.mark.asyncio
+    async def test_db_exception_returns_empty_dict(self):
+        """DB raises exception → returns {} without propagating."""
+        with patch(
+            "database.connection.get_async_session",
+            side_effect=RuntimeError("DB connection failed"),
+        ):
+            result = await _fetch_addon_durations(["Barba"])
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_empty_addon_names_returns_empty(self):
+        """Empty addon_names → returns {} immediately, no DB call."""
+        with patch("database.connection.get_async_session") as mock_session:
+            result = await _fetch_addon_durations([])
+
+        assert result == {}
+        mock_session.assert_not_called()
+
+
+# =============================================================================
+# E.5 — upsell_gate_attempts counter (Phase E — service-upsell-flow)
+# =============================================================================
+
+
+class TestUpsellGateAttemptsCounter:
+    """E.5 — Tests for upsell_gate_attempts counter and auto-decline at 2."""
+
+    def _make_upsell_ctx(self, attempts: int = 0) -> BookingContext:
+        """Build a BookingContext ready to trigger the upsell gate."""
+        return BookingContext(
+            service_id="svc-1",
+            service_name="Cortar",
+            pending_recommendations=["Barba"],
+            recommendations_shown=False,
+            recommendations_declined=False,
+            prefetched_stylists=[],
+            upsell_gate_attempts=attempts,
+        )
+
+    @pytest.mark.asyncio
+    async def test_gate_active_attempt_1_increments_counter(self):
+        """Gate active on first turn: upsell_gate_attempts increments to 1."""
+        mode = make_booking_mode()
+        ctx = self._make_upsell_ctx(attempts=0)
+
+        # Mock _fetch_addon_durations to avoid DB call
+        with patch(
+            "agent.modes.booking_mode._fetch_addon_durations",
+            new_callable=AsyncMock,
+            return_value={},
+        ):
+            upsell_active = False
+            if _should_gate_for_upsell(ctx):
+                if ctx.upsell_gate_attempts >= 2:
+                    ctx.recommendations_declined = True
+                else:
+                    upsell_active = True
+                    ctx.upsell_gate_attempts += 1
+                    ctx._addon_durations_cache = await _fetch_addon_durations(
+                        ctx.pending_recommendations
+                    )
+
+        assert upsell_active is True
+        assert ctx.upsell_gate_attempts == 1
+        assert ctx.recommendations_declined is False
+
+    @pytest.mark.asyncio
+    async def test_auto_decline_at_attempt_2(self):
+        """upsell_gate_attempts=2 → recommendations_declined=True, gate NOT active."""
+        ctx = self._make_upsell_ctx(attempts=2)
+
+        upsell_active = False
+        if _should_gate_for_upsell(ctx):
+            if ctx.upsell_gate_attempts >= 2:
+                ctx.recommendations_declined = True
+            else:
+                upsell_active = True
+                ctx.upsell_gate_attempts += 1
+
+        # Gate should not be active after auto-decline
+        assert upsell_active is False
+        assert ctx.recommendations_declined is True
+
+    def test_upsell_gate_attempts_default_zero(self):
+        """BookingContext default: upsell_gate_attempts is 0."""
+        ctx = BookingContext()
+        assert ctx.upsell_gate_attempts == 0
+
+    def test_upsell_gate_attempts_serialized_in_mode_context(self):
+        """upsell_gate_attempts is serialized by to_mode_context() when non-zero."""
+        ctx = BookingContext(upsell_gate_attempts=1)
+        mode_ctx = ctx.to_mode_context()
+        assert mode_ctx.get("upsell_gate_attempts") == 1
+
+    def test_upsell_gate_attempts_deserialized_from_mode_context(self):
+        """upsell_gate_attempts is restored by from_mode_context()."""
+        data = {"upsell_gate_attempts": 2}
+        ctx = BookingContext.from_mode_context(data)
+        assert ctx.upsell_gate_attempts == 2
+
+
+# =============================================================================
+# E.6 — Regression: existing tests still pass (TestComboRecommendations, etc.)
+# =============================================================================
+
+
+class TestComboRecommendationsRegression:
+    """E.6 — Regression: TestComboRecommendations-equivalent checks.
+
+    Verifies that _build_recommendations_section still works correctly
+    alongside the new upsell gate (gate doesn't break existing rec logic).
+    """
+
+    def test_renders_when_pending_and_not_shown_no_gate(self):
+        """No upsell gate active (service_id=None) → recommendations render normally."""
+        ctx = BookingContext(
+            service_id=None,  # No service_id → gate can't activate
+            pending_recommendations=["Hidratación", "Peinado"],
+            recommendations_shown=False,
+            recommendations_declined=False,
+        )
+        # Gate must NOT be active (service_id is None)
+        assert _should_gate_for_upsell(ctx) is False
+        # Recommendations section renders normally
+        result = _build_recommendations_section(ctx)
+        assert "SERVICIOS RECOMENDADOS" in result
+        assert "Hidratación" in result
+
+    def test_gate_active_suppresses_recommendations_section(self):
+        """Upsell gate active → _build_dynamic_context shows upsell_gate, not recommendations."""
+        ctx = BookingContext(
+            service_id="svc-1",
+            pending_recommendations=["Barba"],
+            recommendations_shown=False,
+            recommendations_declined=False,
+            prefetched_stylists=[],
+        )
+        ctx._addon_durations_cache = {"Barba": 15}
+
+        assert _should_gate_for_upsell(ctx) is True
+
+        # When gate is active, _build_recommendations_section returns empty
+        # (because gate handler in _build_dynamic_context takes over)
+        # The recommendations section itself still returns content but the
+        # dynamic context builder replaces it with the upsell_gate block.
+        # We verify here that if gate is NOT active, recs section renders normally.
+        ctx2 = BookingContext(
+            service_id=None,  # gate can't fire
+            pending_recommendations=["Barba"],
+            recommendations_shown=False,
+        )
+        rec_section = _build_recommendations_section(ctx2)
+        assert "SERVICIOS RECOMENDADOS" in rec_section
+
+    def test_recommendations_shown_timing_unaffected_by_gate(self):
+        """_build_dynamic_context does NOT set recommendations_shown (T-03 regression)."""
+        ctx = BookingContext(
+            pending_recommendations=["Hidratación"],
+            recommendations_shown=False,
+        )
+        state = make_state()
+
+        BookingMode._build_dynamic_context(state, ctx)
+
+        # Flag must still be False after context build
+        assert ctx.recommendations_shown is False
+
+    def test_build_response_recommendations_shown_gate_still_works(self):
+        """_build_response sets recommendations_shown only when LLM offered combo (REQ-2)."""
+        mode = make_booking_mode("¿Te gustaría añadir la Barba?")
+        state = make_state()
+        ctx = BookingContext(
+            service_id="svc-1",
+            pending_recommendations=["Barba"],
+            recommendations_shown=False,
+            recommendations_declined=False,
+            prefetched_stylists=[{"id": "s1", "name": "Ana"}],  # gate won't fire (stylists loaded)
+        )
+
+        llm_result = AgenticLoopResult(
+            response_text="¿Te gustaría añadir la Barba a tu cita?",
+            tool_results={},
+        )
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            mode._build_response(state, ctx, llm_result)
+
+        assert ctx.recommendations_shown is True

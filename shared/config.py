@@ -67,8 +67,11 @@ class Settings(BaseSettings):
     # OpenRouter (Unified LLM API)
     OPENROUTER_API_KEY: str = Field(default="sk-or-placeholder")
     LLM_MODEL: str = Field(
-        default="openai/gpt-4o-mini",
-        description="AI model for conversations (OpenRouter format). Options: openai/gpt-4o-mini, anthropic/claude-sonnet-3.5, anthropic/claude-haiku-4.5",
+        default="openai/gpt-4.1-mini",
+        description=(
+            "AI model for conversations (OpenRouter format). "
+            "Default: openai/gpt-4.1-mini (strict tool calling, constrained decoding)"
+        ),
     )
     SITE_URL: str = Field(
         default="https://atrevetepeluqueria.com",
