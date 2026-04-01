@@ -1164,3 +1164,54 @@ class TestNotesGateBookingContext:
         assert ctx.date_substituted is None
         assert ctx.min_valid_date is None
         assert ctx.date_parse_error is False
+
+
+# ============================================================================
+# hold_id field (double-booking prevention — REQ-15)
+# ============================================================================
+
+
+class TestHoldIdField:
+    """Tests for the hold_id field added for double-booking prevention."""
+
+    def test_hold_id_defaults_to_none(self):
+        """REQ-15: hold_id defaults to None on a fresh BookingContext."""
+        ctx = BookingContext()
+        assert ctx.hold_id is None
+
+    def test_hold_id_can_be_set(self):
+        """hold_id can be set to a UUID string."""
+        ctx = BookingContext(hold_id="a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
+        assert ctx.hold_id == "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+
+    def test_hold_id_serializes_in_to_mode_context(self):
+        """REQ-15: hold_id is included in to_mode_context() when set."""
+        ctx = BookingContext(hold_id="abc-123")
+        mode_ctx = ctx.to_mode_context()
+        assert "hold_id" in mode_ctx
+        assert mode_ctx["hold_id"] == "abc-123"
+
+    def test_hold_id_omitted_when_none_in_to_mode_context(self):
+        """hold_id is NOT included in to_mode_context() when None (lean context)."""
+        ctx = BookingContext()
+        mode_ctx = ctx.to_mode_context()
+        # hold_id=None should be omitted (not in CLEARABLE_NONE_FIELDS)
+        assert "hold_id" not in mode_ctx
+
+    def test_hold_id_round_trips_via_from_mode_context(self):
+        """REQ-15: hold_id persists through serialization round-trip."""
+        ctx = BookingContext(hold_id="hold-uuid-999")
+        mode_ctx = ctx.to_mode_context()
+        restored = BookingContext.from_mode_context(mode_ctx)
+        assert restored.hold_id == "hold-uuid-999"
+
+    def test_hold_id_defaults_when_absent_in_from_mode_context(self):
+        """from_mode_context() with no hold_id key → defaults to None."""
+        ctx = BookingContext.from_mode_context({"customer_name": "Pepe"})
+        assert ctx.hold_id is None
+
+    def test_reset_transient_clears_hold_id(self):
+        """reset_transient() must clear hold_id so stale holds don't linger."""
+        ctx = BookingContext(hold_id="hold-to-clear")
+        ctx.reset_transient()
+        assert ctx.hold_id is None

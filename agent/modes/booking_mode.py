@@ -413,11 +413,13 @@ def _build_auto_confirmation_summary(ctx: "BookingContext") -> str:
 def _get_all_booking_tools() -> list:
     """Lazy-load all booking tools to avoid circular imports.
 
-    Returns a list of 7 LangChain tool functions for the agentic loop.
+    Returns a list of 9 LangChain tool functions for the agentic loop.
+    Includes create_hold and confirm_from_hold for the HOLD-based booking flow.
     """
     from agent.tools.availability_tools import check_availability, find_next_available
     from agent.tools.booking_tools import book
     from agent.tools.customer_tools import manage_customer
+    from agent.tools.hold_tools import confirm_from_hold, create_hold
     from agent.tools.info_tools import list_stylists, query_info
     from agent.tools.search_services import search_services
 
@@ -429,6 +431,8 @@ def _get_all_booking_tools() -> list:
         find_next_available,
         manage_customer,
         book,
+        create_hold,
+        confirm_from_hold,
     ]
 
 
@@ -436,7 +440,7 @@ def _clear_slot_state(ctx: BookingContext) -> None:
     """Reset slot selection and confirmation state before a new availability search.
 
     Clears: offered_slots, selected_slot, stylist_id, stylist_name,
-    confirmation_shown, confirmation_summary_sent.
+    confirmation_shown, confirmation_summary_sent, hold_id.
 
     Does NOT clear needs_availability_refresh — that flag is managed separately
     by SLOT_TAKEN and extract_slot_fields().
@@ -447,7 +451,107 @@ def _clear_slot_state(ctx: BookingContext) -> None:
     ctx.stylist_name = None
     ctx.confirmation_shown = False
     ctx.confirmation_summary_sent = False
-    logger.info("_clear_slot_state: cleared slot and confirmation state")
+    ctx.hold_id = None
+    logger.info("_clear_slot_state: cleared slot and confirmation state (including hold_id)")
+
+
+async def _maybe_create_hold(ctx: BookingContext) -> None:
+    """Programmatically create a HOLD when a slot has been selected but not yet held.
+
+    Called as a pre-resolver in BookingMode.handle() after slot resolution (step 1f).
+    This closes the race condition window between showing availability to the user
+    and them confirming the booking.
+
+    Conditions for creating a hold:
+    - ctx.selected_slot is set (slot was just selected by user)
+    - ctx.hold_id is None (no active hold yet)
+    - ctx.confirmation_shown is False (hold should be created BEFORE confirmation, not after)
+    - ctx.customer_id is available (required for the appointment row)
+    - ctx.stylist_id is available (required for the appointment row)
+    - ctx.service_duration_minutes or ctx.selected_services_details has duration info
+
+    If create_hold fails (SLOT_UNAVAILABLE), ctx.hold_id remains None and the next
+    LLM turn will show the slot as taken. The GIST constraint still provides L1 safety.
+    """
+    if not ctx.selected_slot:
+        return
+    if ctx.hold_id:
+        return  # Already held
+    if ctx.confirmation_shown:
+        return  # Confirmation already received — don't overwrite with new hold
+    if not ctx.customer_id or not ctx.stylist_id:
+        return  # Missing required IDs — skip hold creation
+    if ctx._booking_completed:
+        return  # Booking already done
+
+    # Determine duration from context
+    duration = ctx.service_duration_minutes
+    if not duration and ctx.selected_services_details:
+        # selected_services_details stores "duration" (not "duration_minutes") — check both
+        duration = (
+            sum(
+                d.get("duration_minutes") or d.get("duration") or 0
+                for d in ctx.selected_services_details
+            )
+            or None
+        )
+    if not duration:
+        logger.debug("_maybe_create_hold: no duration available, skipping hold creation")
+        return
+
+    start_time_str = ctx.selected_slot.get("full_datetime") or ctx.selected_slot.get("start_time")
+    if not start_time_str:
+        logger.debug("_maybe_create_hold: no full_datetime in selected_slot, skipping")
+        return
+
+    # Determine service IDs — use selected_services_details IDs or fall back to service_id
+    service_ids: list[str] = []
+    if ctx.selected_services_details:
+        service_ids = [str(d.get("id")) for d in ctx.selected_services_details if d.get("id")]
+    if not service_ids and ctx.service_id:
+        service_ids = [ctx.service_id]
+    if not service_ids:
+        logger.debug("_maybe_create_hold: no service_ids available, skipping hold creation")
+        return
+
+    from agent.tools.hold_tools import create_hold  # lazy import to avoid circular
+
+    idempotency_key = f"{ctx.customer_id}:{ctx.stylist_id}:{start_time_str}"
+    try:
+        result = await create_hold.ainvoke(
+            {
+                "stylist_id": ctx.stylist_id,
+                "service_ids": service_ids,
+                "start_time": start_time_str,
+                "customer_id": ctx.customer_id,
+                "duration_minutes": duration,
+                "idempotency_key": idempotency_key,
+                "first_name": ctx.customer_name or "Cliente",
+            }
+        )
+        if isinstance(result, str):
+            import json
+
+            result = json.loads(result)
+        if result.get("status") == "ok":
+            ctx.hold_id = result["hold_id"]
+            logger.info(
+                "_maybe_create_hold: HOLD created — hold_id=%s expires_at=%s",
+                ctx.hold_id,
+                result.get("expires_at"),
+            )
+        else:
+            logger.warning(
+                "_maybe_create_hold: HOLD creation failed — error=%s message=%s",
+                result.get("error"),
+                result.get("message"),
+            )
+            # If slot is taken, signal that availability needs refresh
+            if result.get("error") == "SLOT_UNAVAILABLE":
+                ctx.needs_availability_refresh = True
+    except Exception as e:
+        logger.error("_maybe_create_hold: unexpected error: %s", e, exc_info=True)
+        # Non-fatal: the GIST constraint (L1) still provides protection
 
 
 # ============================================================================
@@ -559,6 +663,13 @@ class BookingMode(BaseModeNode):
         user_message_for_slot = self._get_last_user_message(state)
         if user_message_for_slot:
             _resolve_user_slot_selection(user_message_for_slot, ctx, state.get("messages", []))
+
+        # 1i. Pre-resolver: HOLD creation — create a temporary hold on the slot as soon
+        # as a slot is selected (confirmation_shown=False means the LLM is about to
+        # present the confirmation summary). This closes the race window between
+        # availability display and booking confirmation.
+        # Runs only when: slot selected + no hold yet + all required IDs available.
+        await _maybe_create_hold(ctx)
 
         # 1g. Pre-resolve: deterministically resolve clarification selection from user message.
         # Runs BEFORE _build_dynamic_context so <clarification> context block is clean.
@@ -2084,6 +2195,18 @@ class BookingMode(BaseModeNode):
                     "DEBES usar SOLO los nombres que aparecen en la lista de estilistas "
                     "disponibles. Nunca inventes o asumas nombres que no están en la lista."
                 )
+
+        # HOLD-based confirmation routing
+        # When hold_id is set, the LLM must use confirm_from_hold instead of book().
+        # If hold_id is None, the legacy direct book() path is used (backward compat — REQ-18).
+        if ctx.hold_id:
+            parts.append(
+                f"\n<hold_context>\n"
+                f"✅ Horario reservado temporalmente (hold_id: {ctx.hold_id}).\n"
+                f"Cuando el cliente confirme, llamá `confirm_from_hold(hold_id='{ctx.hold_id}')` "
+                f"en lugar de `book()`. NO llames `book()` mientras hold_id esté activo.\n"
+                f"</hold_context>"
+            )
 
         # Book failure circuit breaker
         if ctx.book_failure_count >= 2:

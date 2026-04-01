@@ -787,6 +787,82 @@ def _upsert_service_detail(ctx: BookingContext, svc: dict) -> None:
 # Dispatcher
 # ============================================================================
 
+
+def extract_create_hold_result(result: dict, ctx: BookingContext) -> None:
+    """Extract create_hold() result into BookingContext.
+
+    On success: stores hold_id in ctx.hold_id.
+    On SLOT_UNAVAILABLE: clears slot state and sets needs_availability_refresh.
+    Other errors: logged, no state mutation.
+    """
+    status = result.get("status")
+    if status == "ok":
+        ctx.hold_id = result.get("hold_id")
+        logger.info("extract_create_hold_result: HOLD created — hold_id=%s", ctx.hold_id)
+    elif result.get("error") == "SLOT_UNAVAILABLE":
+        ctx.offered_slots = None
+        ctx.selected_slot = None
+        ctx.hold_id = None
+        ctx.needs_availability_refresh = True
+        logger.info(
+            "extract_create_hold_result: SLOT_UNAVAILABLE — cleared slot state, "
+            "needs_availability_refresh=True"
+        )
+    else:
+        logger.warning(
+            "extract_create_hold_result: unexpected error — %s: %s",
+            result.get("error"),
+            result.get("message"),
+        )
+
+
+def extract_confirm_from_hold_result(result: dict, ctx: BookingContext) -> None:
+    """Extract confirm_from_hold() result into BookingContext.
+
+    On success: marks booking as completed (delegates to same flag as book()).
+    On HOLD_EXPIRED: clears hold_id and slot, triggers availability refresh.
+    On HOLD_INVALID_STATE / HOLD_NOT_FOUND: logs warning, no state mutation.
+    """
+    status = result.get("status")
+    if status == "ok":
+        ctx._booking_completed = True
+        ctx.book_failure_count = 0
+        ctx.hold_id = None
+        ctx.offered_slots = None
+        ctx.last_booked_slot = ctx.selected_slot  # Snapshot for F-8 confirmation render
+        ctx.selected_slot = None
+        # Capture service names for confirmation message
+        if ctx.service_name:
+            ctx.confirmed_services = [ctx.service_name]
+        elif ctx.selected_services:
+            ctx.confirmed_services = list(ctx.selected_services)
+        ctx.reset_transient()
+        logger.info(
+            "extract_confirm_from_hold_result: booking confirmed via hold (appointment_id=%s)",
+            result.get("appointment_id"),
+        )
+    elif result.get("error") == "HOLD_EXPIRED":
+        ctx.hold_id = None
+        ctx.offered_slots = None
+        ctx.selected_slot = None
+        ctx.needs_availability_refresh = True
+        logger.warning(
+            "extract_confirm_from_hold_result: HOLD_EXPIRED — cleared hold/slot, "
+            "needs_availability_refresh=True"
+        )
+    elif result.get("error") in ("HOLD_INVALID_STATE", "HOLD_NOT_FOUND"):
+        logger.warning(
+            "extract_confirm_from_hold_result: error=%s — %s",
+            result.get("error"),
+            result.get("message"),
+        )
+    else:
+        logger.warning(
+            "extract_confirm_from_hold_result: unexpected result — %s",
+            result,
+        )
+
+
 TOOL_EXTRACTORS: dict[str, Any] = {
     "search_services": extract_service_fields,
     "check_availability": extract_slot_fields,
@@ -794,6 +870,8 @@ TOOL_EXTRACTORS: dict[str, Any] = {
     "list_stylists": extract_stylist_fields,
     "manage_customer": extract_customer_fields,
     "book": extract_booking_result,
+    "create_hold": extract_create_hold_result,
+    "confirm_from_hold": extract_confirm_from_hold_result,
     # GAP-03: query_info is informational — no-op extractor prevents log noise
     # and provides a hook for future field extraction if needed.
     "query_info": extract_query_info_fields,

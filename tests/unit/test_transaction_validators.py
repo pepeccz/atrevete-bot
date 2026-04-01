@@ -263,7 +263,8 @@ class TestValidate3DayRule:
         assert "partir del" in result["error_message"]
         # Should include a date in format DD/MM/YYYY
         import re
-        assert re.search(r'\d{2}/\d{2}/\d{4}', result["error_message"])
+
+        assert re.search(r"\d{2}/\d{2}/\d{4}", result["error_message"])
 
 
 # ============================================================================
@@ -290,9 +291,7 @@ class TestValidateSlotAvailability:
         return datetime(2025, 11, 8, 10, 0, 0, tzinfo=MADRID_TZ)
 
     @pytest.mark.asyncio
-    async def test_slot_available_when_no_conflicts(
-        self, mock_session, stylist_id, start_time
-    ):
+    async def test_slot_available_when_no_conflicts(self, mock_session, stylist_id, start_time):
         """Test that slot is available when no conflicts exist."""
         # Mock empty result (no conflicting appointments)
         mock_result = MagicMock()
@@ -334,9 +333,7 @@ class TestValidateSlotAvailability:
         assert result["conflicting_appointment_id"] == conflict_id
 
     @pytest.mark.asyncio
-    async def test_slot_checks_with_for_update_lock(
-        self, mock_session, stylist_id, start_time
-    ):
+    async def test_slot_checks_with_for_update_lock(self, mock_session, stylist_id, start_time):
         """Test that query uses SELECT FOR UPDATE for row locking."""
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
@@ -353,9 +350,7 @@ class TestValidateSlotAvailability:
         # We can't easily test the exact SQL, but we verified it's called
 
     @pytest.mark.asyncio
-    async def test_slot_includes_buffer_time(
-        self, mock_session, stylist_id, start_time
-    ):
+    async def test_slot_includes_buffer_time(self, mock_session, stylist_id, start_time):
         """Test that duration includes 10-minute buffer."""
         # Duration passed should already include buffer
         # This test verifies the end_time calculation
@@ -390,9 +385,7 @@ class TestValidateSlotAvailability:
         assert result["available"] is True
 
     @pytest.mark.asyncio
-    async def test_multiple_conflicts_returns_first(
-        self, mock_session, stylist_id, start_time
-    ):
+    async def test_multiple_conflicts_returns_first(self, mock_session, stylist_id, start_time):
         """Test that if multiple conflicts exist, first one is returned."""
         conflict1_id = uuid4()
         conflict2_id = uuid4()
@@ -418,6 +411,63 @@ class TestValidateSlotAvailability:
         assert result["available"] is False
         # Returns first conflict
         assert result["conflicting_appointment_id"] == conflict1_id
+
+    @pytest.mark.asyncio
+    async def test_active_hold_blocks_slot(self, mock_session, stylist_id, start_time):
+        """REQ-12: active HOLD (hold_expires_at in future) → slot UNAVAILABLE.
+
+        When the query returns a HOLD appointment (the SQL WHERE includes HOLD status),
+        validate_slot_availability must report the slot as taken. The expired-hold
+        filter `(status != 'hold' OR hold_expires_at > NOW())` is expressed as
+        a raw text() clause in the ORM query — active holds are NOT filtered out
+        by the SQL (only expired ones are excluded), so the mock simulates the DB
+        returning an active HOLD row.
+        """
+        from zoneinfo import ZoneInfo
+
+        conflict_id = uuid4()
+        future_expires = datetime.now(ZoneInfo("UTC")) + timedelta(minutes=3)
+
+        mock_hold = MagicMock()
+        mock_hold.id = conflict_id
+        mock_hold.start_time = start_time
+        mock_hold.duration_minutes = 60
+        mock_hold.status = AppointmentStatus.HOLD
+        mock_hold.hold_expires_at = future_expires
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_hold]
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await validate_slot_availability(
+            stylist_id, start_time, duration_minutes=60, session=mock_session
+        )
+
+        # Active HOLD should block the slot
+        assert result["available"] is False
+        assert result["error_code"] == "SLOT_TAKEN"
+        assert result["conflicting_appointment_id"] == conflict_id
+
+    @pytest.mark.asyncio
+    async def test_expired_hold_does_not_block_slot(self, mock_session, stylist_id, start_time):
+        """REQ-13: expired HOLD (hold_expires_at in past) → slot AVAILABLE.
+
+        The SQL clause `(status != 'hold' OR hold_expires_at > NOW())` excludes
+        expired holds from the result set. We simulate this by having the DB
+        return an empty result (as if the expired hold was filtered out by SQL).
+        """
+        # DB returns empty result because the expired HOLD was excluded by SQL filter
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await validate_slot_availability(
+            stylist_id, start_time, duration_minutes=60, session=mock_session
+        )
+
+        # Expired HOLD should NOT block the slot
+        assert result["available"] is True
+        assert result["error_code"] is None
 
 
 # ============================================================================

@@ -451,12 +451,30 @@ class BookingTransaction:
                     }
 
                 except IntegrityError as e:
+                    await session.rollback()
+                    error_str = str(e)
+
+                    # Check if the GIST exclusion constraint fired (double-booking)
+                    if "excl_no_overlap" in error_str:
+                        logger.warning(
+                            f"[{trace_id}] GIST exclusion constraint fired (double-booking attempt)",
+                            extra={"error": error_str[:200]},
+                        )
+                        return {
+                            "success": False,
+                            "error_code": "SLOT_TAKEN",
+                            "error_message": (
+                                "El horario reservado ya no está disponible, "
+                                "te muestro otras opciones."
+                            ),
+                            "details": {"constraint": "excl_no_overlap"},
+                        }
+
                     logger.error(
                         f"[{trace_id}] Database integrity error",
-                        extra={"error": str(e)},
+                        extra={"error": error_str},
                         exc_info=True,
                     )
-                    await session.rollback()
 
                     # Try to delete calendar event (cleanup on rollback)
                     if "google_event_id" in locals():
@@ -479,7 +497,7 @@ class BookingTransaction:
                         "success": False,
                         "error_code": "DATABASE_INTEGRITY_ERROR",
                         "error_message": "Error de integridad en la base de datos",
-                        "details": {"error": str(e)},
+                        "details": {"error": error_str},
                     }
 
                 except SQLAlchemyError as e:

@@ -73,6 +73,11 @@ class BookingContext:
     customer_name: str | None = None
     customer_id: str | None = None
 
+    # ── HOLD-based booking (double-booking prevention) ───────────────────
+    # Populated by create_hold() after slot selection; cleared after confirm_from_hold()
+    # or when the booking flow resets. None means the legacy direct book() path is used.
+    hold_id: str | None = None
+
     # ── Optional data ───────────────────────────────────────────────────
     notes: str | None = None
 
@@ -165,6 +170,7 @@ class BookingContext:
         self.recommendations_shown = False
         self.recommendations_declined = False
         self.recommendations_offer_attempts = 0
+        self.hold_id = None
         self.book_failure_count = 0
         self.manage_customer_failure_count = 0
         self.needs_availability_refresh = False

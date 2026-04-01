@@ -280,3 +280,129 @@ class TestGetBusyPeriodsOverlapDetection:
 
         assert len(result) == 1
         assert result[0]["title"] == "Cita: Overlap"
+
+
+# ============================================================================
+# HOLD-related busy period tests (REQ-14)
+# ============================================================================
+
+
+class TestGetBusyPeriodsHoldStatus:
+    """REQ-14: get_busy_periods includes active HOLDs and excludes expired HOLDs."""
+
+    @pytest.mark.asyncio
+    async def test_active_hold_appears_in_busy_periods(self):
+        """REQ-14: HOLD with hold_expires_at in future is included as a busy period."""
+        from datetime import timezone as dt_timezone
+
+        stylist_id = uuid4()
+        query_start = datetime(2026, 4, 15, 9, 0, tzinfo=MADRID_TZ)
+        query_end = datetime(2026, 4, 15, 18, 0, tzinfo=MADRID_TZ)
+
+        hold_start = datetime(2026, 4, 15, 10, 0, tzinfo=MADRID_TZ)
+        future_expires = datetime.now(dt_timezone.utc) + timedelta(minutes=3)
+
+        hold_appt = _make_mock_appointment(
+            stylist_id,
+            hold_start,
+            duration_minutes=60,
+            first_name="HoldCustomer",
+            status=AppointmentStatus.HOLD,
+        )
+        hold_appt.hold_expires_at = future_expires
+
+        session = _mock_session_with_results([hold_appt], [])
+        result = await get_busy_periods(stylist_id, query_start, query_end, session=session)
+
+        # Active HOLD must appear as a busy period
+        assert len(result) == 1
+        assert result[0]["type"] == "appointment"
+        assert result[0]["status"] == "hold"
+
+    @pytest.mark.asyncio
+    async def test_expired_hold_excluded_from_busy_periods(self):
+        """REQ-14: HOLD with hold_expires_at in past is excluded from busy periods."""
+        from datetime import timezone as dt_timezone
+
+        stylist_id = uuid4()
+        query_start = datetime(2026, 4, 15, 9, 0, tzinfo=MADRID_TZ)
+        query_end = datetime(2026, 4, 15, 18, 0, tzinfo=MADRID_TZ)
+
+        hold_start = datetime(2026, 4, 15, 10, 0, tzinfo=MADRID_TZ)
+        past_expires = datetime.now(dt_timezone.utc) - timedelta(minutes=10)  # Expired 10 min ago
+
+        expired_hold = _make_mock_appointment(
+            stylist_id,
+            hold_start,
+            duration_minutes=60,
+            first_name="ExpiredHold",
+            status=AppointmentStatus.HOLD,
+        )
+        expired_hold.hold_expires_at = past_expires
+
+        session = _mock_session_with_results([expired_hold], [])
+        result = await get_busy_periods(stylist_id, query_start, query_end, session=session)
+
+        # Expired HOLD must NOT appear (treated as free slot)
+        assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_hold_with_none_expires_at_excluded(self):
+        """HOLD with hold_expires_at=None is treated as expired and excluded."""
+        stylist_id = uuid4()
+        query_start = datetime(2026, 4, 15, 9, 0, tzinfo=MADRID_TZ)
+        query_end = datetime(2026, 4, 15, 18, 0, tzinfo=MADRID_TZ)
+
+        hold_start = datetime(2026, 4, 15, 10, 0, tzinfo=MADRID_TZ)
+
+        hold_no_expiry = _make_mock_appointment(
+            stylist_id,
+            hold_start,
+            duration_minutes=60,
+            first_name="NoExpiry",
+            status=AppointmentStatus.HOLD,
+        )
+        hold_no_expiry.hold_expires_at = None  # Missing expiry — treat as expired
+
+        session = _mock_session_with_results([hold_no_expiry], [])
+        result = await get_busy_periods(stylist_id, query_start, query_end, session=session)
+
+        # HOLD with None expiry is excluded (defensive behavior)
+        assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_mixed_active_and_expired_holds(self):
+        """Active HOLD is included; expired HOLD is excluded in the same query result."""
+        from datetime import timezone as dt_timezone
+
+        stylist_id = uuid4()
+        query_start = datetime(2026, 4, 15, 9, 0, tzinfo=MADRID_TZ)
+        query_end = datetime(2026, 4, 15, 18, 0, tzinfo=MADRID_TZ)
+
+        active_start = datetime(2026, 4, 15, 10, 0, tzinfo=MADRID_TZ)
+        expired_start = datetime(2026, 4, 15, 11, 0, tzinfo=MADRID_TZ)
+
+        active_hold = _make_mock_appointment(
+            stylist_id,
+            active_start,
+            duration_minutes=60,
+            first_name="ActiveHold",
+            status=AppointmentStatus.HOLD,
+        )
+        active_hold.hold_expires_at = datetime.now(dt_timezone.utc) + timedelta(minutes=3)
+
+        expired_hold = _make_mock_appointment(
+            stylist_id,
+            expired_start,
+            duration_minutes=60,
+            first_name="ExpiredHold",
+            status=AppointmentStatus.HOLD,
+        )
+        expired_hold.hold_expires_at = datetime.now(dt_timezone.utc) - timedelta(minutes=5)
+
+        session = _mock_session_with_results([active_hold, expired_hold], [])
+        result = await get_busy_periods(stylist_id, query_start, query_end, session=session)
+
+        # Only active hold appears
+        assert len(result) == 1
+        assert result[0]["title"] == "Cita: ActiveHold"
