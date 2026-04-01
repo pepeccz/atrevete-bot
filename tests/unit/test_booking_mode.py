@@ -2260,15 +2260,15 @@ class TestNotesGate:
         normalized = _normalize_text(response_text)
 
         # The shared constant drives the counter in _build_response()
-        assert any(
-            marker in normalized for marker in _NOTES_ASK_MARKERS
-        ), f"Standard phrasing '{response_text}' not detected by _NOTES_ASK_MARKERS"
+        assert any(marker in normalized for marker in _NOTES_ASK_MARKERS), (
+            f"Standard phrasing '{response_text}' not detected by _NOTES_ASK_MARKERS"
+        )
 
         # The same constant drives _previous_assistant_asked_for_notes()
         messages = [{"role": "assistant", "content": response_text}]
-        assert (
-            _previous_assistant_asked_for_notes(messages) is True
-        ), f"_previous_assistant_asked_for_notes failed to detect '{response_text}'"
+        assert _previous_assistant_asked_for_notes(messages) is True, (
+            f"_previous_assistant_asked_for_notes failed to detect '{response_text}'"
+        )
 
     @pytest.mark.asyncio
     async def test_notes_markers_divergent_phrasing_detected_by_both_functions(self):
@@ -2292,9 +2292,9 @@ class TestNotesGate:
 
         # The same constant drives _previous_assistant_asked_for_notes()
         messages = [{"role": "assistant", "content": response_text}]
-        assert (
-            _previous_assistant_asked_for_notes(messages) is True
-        ), f"_previous_assistant_asked_for_notes failed to detect '{response_text}'"
+        assert _previous_assistant_asked_for_notes(messages) is True, (
+            f"_previous_assistant_asked_for_notes failed to detect '{response_text}'"
+        )
 
 
 # =============================================================================
@@ -2340,12 +2340,12 @@ class TestStylistDesyncFix:
 
         await mode._pre_tool_call("book", tool_args)
 
-        assert (
-            mode._ctx.stylist_name == "Pilar"
-        ), f"Expected stylist_name='Pilar', got {mode._ctx.stylist_name!r}"
-        assert (
-            mode._ctx.stylist_id == "uuid-pilar"
-        ), f"Expected stylist_id='uuid-pilar', got {mode._ctx.stylist_id!r}"
+        assert mode._ctx.stylist_name == "Pilar", (
+            f"Expected stylist_name='Pilar', got {mode._ctx.stylist_name!r}"
+        )
+        assert mode._ctx.stylist_id == "uuid-pilar", (
+            f"Expected stylist_id='uuid-pilar', got {mode._ctx.stylist_id!r}"
+        )
 
     def test_f8_reads_last_booked_slot_when_selected_slot_cleared(self):
         """T-06: When selected_slot is None but last_booked_slot is set,
@@ -2386,9 +2386,9 @@ class TestStylistDesyncFix:
 
         assert "Pilar" in response_text, f"Expected 'Pilar' in response. Got:\n{response_text}"
         assert "10:00" in response_text, f"Expected '10:00' in response. Got:\n{response_text}"
-        assert (
-            "lunes 30 de marzo" in response_text
-        ), f"Expected date in response. Got:\n{response_text}"
+        assert "lunes 30 de marzo" in response_text, (
+            f"Expected date in response. Got:\n{response_text}"
+        )
 
 
 # =============================================================================
@@ -3375,9 +3375,9 @@ class TestPreToolCallAudienceInjectionForBook:
         # but if it passes book guards, audience must be present)
         # We check that audience was injected before book guards run by inspecting tool_args
         # (the dict is mutated in place before guards)
-        assert (
-            tool_args.get("audience") == "adult_female"
-        ), f"Expected audience='adult_female' injected into tool_args, got: {tool_args}"
+        assert tool_args.get("audience") == "adult_female", (
+            f"Expected audience='adult_female' injected into tool_args, got: {tool_args}"
+        )
 
     async def test_does_not_overwrite_existing_audience(self):
         """When tool_args already has audience, it must not be overwritten."""
@@ -3412,9 +3412,9 @@ class TestPreToolCallAudienceInjectionForBook:
         await mode._pre_tool_call("book", tool_args)
 
         # audience should not have been injected
-        assert (
-            "audience" not in tool_args or tool_args.get("audience") is None
-        ), f"Expected no audience injection when hint is None, got: {tool_args}"
+        assert "audience" not in tool_args or tool_args.get("audience") is None, (
+            f"Expected no audience injection when hint is None, got: {tool_args}"
+        )
 
     async def test_search_services_injection_still_works(self):
         """Regression: existing search_services audience injection still functions."""
@@ -3427,9 +3427,9 @@ class TestPreToolCallAudienceInjectionForBook:
         result = await mode._pre_tool_call("search_services", tool_args)
 
         assert isinstance(result, dict), f"Expected dict from search_services, got {type(result)}"
-        assert (
-            result.get("audience") == "adult_male"
-        ), f"Expected audience='adult_male' injected into search_services args. Got: {result}"
+        assert result.get("audience") == "adult_male", (
+            f"Expected audience='adult_male' injected into search_services args. Got: {result}"
+        )
 
 
 # =============================================================================
@@ -3561,7 +3561,7 @@ class TestRedactHallucinatedStylists:
     """Verify _redact_hallucinated_stylists replaces invented names."""
 
     def test_redaction_replaces_hallucinated_name(self):
-        """AC-3.2: hallucinated name replaced with 'tu estilista'."""
+        """AC-3.2: hallucinated name replaced with '[estilista]'."""
         mode = make_booking_mode()
         ctx = BookingContext()
         ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
@@ -3569,7 +3569,7 @@ class TestRedactHallucinatedStylists:
 
         result = mode._redact_hallucinated_stylists("Carmen te atenderá", ctx)
         assert "Carmen" not in result
-        assert "tu estilista" in result
+        assert "[estilista]" in result
 
     def test_known_name_not_redacted(self):
         """AC-3.3: real stylist name stays."""
@@ -3590,7 +3590,7 @@ class TestRedactHallucinatedStylists:
 
         result = mode._redact_hallucinated_stylists("CARMEN te ayudará", ctx)
         assert "CARMEN" not in result
-        assert "carmen" not in result.lower() or "tu estilista" in result
+        assert "carmen" not in result.lower() or "[estilista]" in result
 
     def test_word_boundary_no_substring_replace(self):
         """AC-3.5: 'Ana' hallucinated does NOT replace inside 'Banana'."""
@@ -3707,7 +3707,7 @@ class TestBuildAutoConfirmationSummary:
         ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
 
         result = _build_auto_confirmation_summary(ctx)
-        assert "tu estilista" in result
+        assert "[estilista pendiente]" in result
 
     def test_summary_multiple_services_formatted(self):
         ctx = BookingContext()

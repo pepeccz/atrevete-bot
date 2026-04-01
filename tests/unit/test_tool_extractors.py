@@ -2346,7 +2346,7 @@ class TestCompoundNameHallucinationRegression:
 
         # Carmen is hallucinated → redacted
         assert "Carmen" not in result
-        assert "tu estilista" in result
+        assert "[estilista]" in result
         # Ana (token of "Ana María") is NOT redacted
         assert "Ana" in result
 
