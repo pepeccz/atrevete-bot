@@ -65,6 +65,9 @@ htmlcov/
 # Redis dumps
 dump.rdb
 
+# Generated files
+*.pdf
+
 # Bmad Method
 .bmad-core-old
 .bmad-core
