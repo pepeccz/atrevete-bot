@@ -13,6 +13,7 @@ Contains 30+ configurable parameters organized in 7 categories:
 Usage:
     DATABASE_URL="postgresql+asyncpg://..." python -m database.seeds.system_settings_seed
 """
+
 import asyncio
 import sys
 from uuid import uuid4
@@ -158,7 +159,6 @@ SYSTEM_SETTINGS = [
         "requires_restart": False,
         "display_order": 9,
     },
-
     # ========== BOOKING SETTINGS (7) ==========
     {
         "category": SettingCategory.BOOKING.value,
@@ -258,14 +258,13 @@ SYSTEM_SETTINGS = [
         "requires_restart": False,
         "display_order": 16,
     },
-
     # ========== LLM SETTINGS (6) ==========
     {
         "category": SettingCategory.LLM.value,
         "key": "llm_model",
-        "value": "openai/gpt-4o-mini",
+        "value": "openai/gpt-4.1-mini",
         "value_type": SettingValueType.STRING.value,
-        "default_value": "openai/gpt-4o-mini",
+        "default_value": "openai/gpt-4.1-mini",
         "min_value": None,
         "max_value": None,
         "allowed_values": None,
@@ -344,7 +343,6 @@ SYSTEM_SETTINGS = [
         "requires_restart": False,
         "display_order": 20,
     },
-
     # ========== RATE LIMITING SETTINGS (3) ==========
     {
         "category": SettingCategory.RATE_LIMITING.value,
@@ -388,7 +386,6 @@ SYSTEM_SETTINGS = [
         "requires_restart": False,
         "display_order": 23,
     },
-
     # ========== CACHE SETTINGS (3) ==========
     {
         "category": SettingCategory.CACHE.value,
@@ -432,7 +429,6 @@ SYSTEM_SETTINGS = [
         "requires_restart": False,
         "display_order": 26,
     },
-
     # ========== ARCHIVAL SETTINGS (2) ==========
     {
         "category": SettingCategory.ARCHIVAL.value,
@@ -462,7 +458,6 @@ SYSTEM_SETTINGS = [
         "requires_restart": False,
         "display_order": 28,
     },
-
     # ========== GCAL SYNC SETTINGS (2) ==========
     {
         "category": SettingCategory.GCAL_SYNC.value,
@@ -563,6 +558,7 @@ async def seed_system_settings(db_url: str | None = None) -> None:
 async def main():
     """Main entry point for seeding."""
     import os
+
     db_url = os.environ.get("DATABASE_URL")
     await seed_system_settings(db_url)
 
