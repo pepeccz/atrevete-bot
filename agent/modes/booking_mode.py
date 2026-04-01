@@ -315,15 +315,21 @@ _CLARIFICATION_RE = re.compile(
 )
 
 
-def _looks_like_clarification(msg: str) -> bool:
+def _looks_like_clarification(msg: str, ctx: "BookingContext | None" = None) -> bool:
     """Return True if msg looks like a slot/option selection, not appointment notes.
 
     Matches pure numbers, compound slot patterns (e.g., "4 y el 4"), and
     single-word affirmatives/negatives. Also returns True for ultra-short
     messages (< 3 chars after stripping).
 
+    When *ctx* is provided and the message matches the regex heuristic,
+    offered_slots / pending_clarifications disambiguate the reason (logged
+    at DEBUG level).  Behaviour is identical when ctx is None.
+
     Args:
         msg: User message to check.
+        ctx: Optional BookingContext for context-aware disambiguation.
+            When None (default), falls back to regex heuristic only.
 
     Returns:
         True if the message is likely a clarification response.
@@ -331,7 +337,18 @@ def _looks_like_clarification(msg: str) -> bool:
     stripped = msg.strip()
     if len(stripped) < 3:
         return True
-    return bool(_CLARIFICATION_RE.match(stripped))
+    if not _CLARIFICATION_RE.match(stripped):
+        return False
+    # Regex matched — disambiguate with context when available
+    if ctx is not None:
+        if ctx.offered_slots:
+            logger.debug("_looks_like_clarification: slot-selection path for %r", stripped)
+            return True
+        if ctx.pending_clarifications:
+            logger.debug("_looks_like_clarification: clarification path for %r", stripped)
+            return True
+    # No context signal or ctx is None — heuristic-only
+    return True
 
 
 def _build_auto_confirmation_summary(ctx: "BookingContext") -> str:
@@ -1518,12 +1535,21 @@ class BookingMode(BaseModeNode):
                 for s in ctx.prefetched_stylists
             )
         ):
-            logger.warning(
-                "BookingMode: LLM ignored prefetched stylists — none of %s found in response. "
-                "Setting force_list_stylists_reminder.",
-                [s.get("name") for s in ctx.prefetched_stylists],
-            )
-            ctx.force_list_stylists_reminder = True
+            # M-5 guard: suppress if user is mid-selection (assistant just presented list)
+            state_messages = getattr(self, "_current_state", {}).get("messages", [])
+            if _previous_assistant_presented_stylists(state_messages):
+                logger.debug(
+                    "BookingMode: Condition B suppressed — user is mid-selection "
+                    "(previous assistant presented stylist list). prefetched=%s",
+                    [s.get("name") for s in ctx.prefetched_stylists],
+                )
+            else:
+                logger.warning(
+                    "BookingMode: LLM ignored prefetched stylists — none of %s "
+                    "found in response. Setting force_list_stylists_reminder.",
+                    [s.get("name") for s in ctx.prefetched_stylists],
+                )
+                ctx.force_list_stylists_reminder = True
 
         # F-7: service not resolved and search_services not called
         # Condition: service_id None, selected_services empty,
@@ -2783,7 +2809,7 @@ def _extract_notes_from_conversation(
         return
 
     # Skip messages that look like clarification responses (slot numbers, affirmatives)
-    if _looks_like_clarification(user_message):
+    if _looks_like_clarification(user_message, ctx):
         logger.debug(
             "_extract_notes_from_conversation: skipped clarification-like message %r",
             user_message,
@@ -3157,9 +3183,10 @@ async def _fetch_addon_durations(addon_names: list[str]) -> dict[str, int]:
         return {}
 
     try:
+        from sqlalchemy import select
+
         from database.connection import get_async_session
         from database.models import Service
-        from sqlalchemy import select
 
         async with get_async_session() as session:
             stmt = select(Service.name, Service.duration_minutes).where(

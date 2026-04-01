@@ -28,7 +28,6 @@ from agent.modes.base import AgenticLoopResult
 from agent.modes.booking_context import BookingContext
 from agent.modes.booking_mode import BookingMode
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -228,10 +227,11 @@ class TestPreToolCallCategoryInjection:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestDetectToolSkipsConditionB:
     """REQ-8: Condition B fires when prefetched stylists are absent from LLM response."""
 
-    def test_fires_when_no_name_in_response(self):
+    async def test_fires_when_no_name_in_response(self):
         """When prefetched names do not appear in response_text, reminder is set."""
         mode = make_booking_mode()
         ctx = BookingContext(
@@ -244,11 +244,11 @@ class TestDetectToolSkipsConditionB:
             )
         )
 
-        mode._detect_tool_skips(result, ctx)
+        await mode._detect_tool_skips(result, ctx)
 
         assert ctx.force_list_stylists_reminder is True
 
-    def test_fires_when_all_names_absent(self):
+    async def test_fires_when_all_names_absent(self):
         """Even with multiple prefetched stylists, if none appear, reminder fires."""
         mode = make_booking_mode()
         ctx = BookingContext(
@@ -262,11 +262,11 @@ class TestDetectToolSkipsConditionB:
             response_text="¿Con quién preferís trabajar? Elige según tu preferencia."
         )
 
-        mode._detect_tool_skips(result, ctx)
+        await mode._detect_tool_skips(result, ctx)
 
         assert ctx.force_list_stylists_reminder is True
 
-    def test_suppressed_when_name_present_in_response(self):
+    async def test_suppressed_when_name_present_in_response(self):
         """When at least one prefetched name appears in response_text, reminder is NOT set."""
         mode = make_booking_mode()
         ctx = BookingContext(
@@ -281,12 +281,12 @@ class TestDetectToolSkipsConditionB:
             )
         )
 
-        mode._detect_tool_skips(result, ctx)
+        await mode._detect_tool_skips(result, ctx)
 
         # "Ana" is in response → Condition B must NOT set force_list_stylists_reminder to True
         assert ctx.force_list_stylists_reminder is False
 
-    def test_suppressed_when_name_present_case_insensitive(self):
+    async def test_suppressed_when_name_present_case_insensitive(self):
         """Name matching is case-insensitive (e.g. 'ANA' matches 'Ana')."""
         mode = make_booking_mode()
         ctx = BookingContext(
@@ -295,11 +295,11 @@ class TestDetectToolSkipsConditionB:
         )
         result = make_agentic_loop_result(response_text="¿Con quién? Opciones: 1. ANA  2. Marta")
 
-        mode._detect_tool_skips(result, ctx)
+        await mode._detect_tool_skips(result, ctx)
 
         assert ctx.force_list_stylists_reminder is False
 
-    def test_suppressed_when_stylist_already_selected(self):
+    async def test_suppressed_when_stylist_already_selected(self):
         """Condition B must NOT fire when stylist_id is already set (stylist resolved)."""
         mode = make_booking_mode()
         ctx = BookingContext(
@@ -312,12 +312,12 @@ class TestDetectToolSkipsConditionB:
             )
         )
 
-        mode._detect_tool_skips(result, ctx)
+        await mode._detect_tool_skips(result, ctx)
 
         # stylist_id is set → Condition B guard MUST NOT fire
         assert ctx.force_list_stylists_reminder is not True
 
-    def test_suppressed_when_no_prefetched_stylists(self):
+    async def test_suppressed_when_no_prefetched_stylists(self):
         """When ctx.prefetched_stylists is empty, Condition B cannot fire."""
         mode = make_booking_mode()
         ctx = BookingContext(
@@ -331,13 +331,13 @@ class TestDetectToolSkipsConditionB:
             tool_results={"list_stylists": {"stylists": [], "count": 0}},
         )
 
-        mode._detect_tool_skips(result, ctx)
+        await mode._detect_tool_skips(result, ctx)
 
         # No prefetched_stylists → Condition B cannot fire
         # force_list_stylists_reminder should be False here (Condition A suppressed by tool_results)
         assert ctx.force_list_stylists_reminder is False
 
-    def test_suppressed_when_empty_response_text(self):
+    async def test_suppressed_when_empty_response_text(self):
         """When response_text is empty, Condition B cannot fire (no text to scan)."""
         mode = make_booking_mode()
         ctx = BookingContext(
@@ -346,13 +346,13 @@ class TestDetectToolSkipsConditionB:
         )
         result = make_agentic_loop_result(response_text="")
 
-        mode._detect_tool_skips(result, ctx)
+        await mode._detect_tool_skips(result, ctx)
 
         # No response_text → Condition B guard cannot fire
         # (The `and result.response_text` guard in the condition prevents it)
         assert ctx.force_list_stylists_reminder is not True
 
-    def test_second_name_match_suppresses_reminder(self):
+    async def test_second_name_match_suppresses_reminder(self):
         """If only the second prefetched name appears in response, reminder is suppressed."""
         mode = make_booking_mode()
         ctx = BookingContext(
@@ -366,10 +366,60 @@ class TestDetectToolSkipsConditionB:
             response_text="Tenemos disponibilidad con Marta para esta semana."
         )
 
-        mode._detect_tool_skips(result, ctx)
+        await mode._detect_tool_skips(result, ctx)
 
         # "Marta" found in response → NOT all names absent → Condition B suppressed
         assert ctx.force_list_stylists_reminder is False
+
+    async def test_mid_selection_guard_suppresses_flag_when_list_was_shown(self):
+        """M-5 guard: when assistant already presented stylist list last turn,
+        Condition B must NOT set force_list_stylists_reminder (user is mid-selection)."""
+        mode = make_booking_mode()
+        ctx = BookingContext(
+            prefetched_stylists=[{"name": "Ana", "id": "uuid-ana"}],
+            stylist_id=None,
+        )
+        # Simulate: assistant showed stylist list last turn (both markers required by
+        # _previous_assistant_presented_stylists: numbered capitalized name + stylist phrase)
+        mode._current_state = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "¿Con quién querés tu turno?\n1. Ana\n2. Marta",
+                }
+            ]
+        }
+        # Response text does NOT contain the name → outer Condition B would fire
+        result = make_agentic_loop_result(response_text="Perfecto, ¿cuál preferís?")
+
+        await mode._detect_tool_skips(result, ctx)
+
+        # Guard must suppress → flag stays False
+        assert ctx.force_list_stylists_reminder is False
+
+    async def test_genuine_skip_sets_flag_when_no_prior_presentation(self):
+        """M-5 guard: when no prior stylist list presentation, Condition B still fires."""
+        mode = make_booking_mode()
+        ctx = BookingContext(
+            prefetched_stylists=[{"name": "Ana", "id": "uuid-ana"}],
+            stylist_id=None,
+        )
+        # Simulate: last assistant message was NOT a stylist list
+        mode._current_state = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Perfecto, ya tenés tu cita agendada.",
+                }
+            ]
+        }
+        # Response text does NOT contain the name → Condition B should fire
+        result = make_agentic_loop_result(response_text="¿Querés agregar algo más?")
+
+        await mode._detect_tool_skips(result, ctx)
+
+        # No prior presentation → guard inactive → flag must be True
+        assert ctx.force_list_stylists_reminder is True
 
 
 # ---------------------------------------------------------------------------

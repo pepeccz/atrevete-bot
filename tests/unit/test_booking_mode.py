@@ -3806,6 +3806,43 @@ class TestLooksLikeClarification:
     def test_complex_note_passes(self):
         assert _looks_like_clarification("raíz oscura, puntas más claras") is False
 
+    # ------------------------------------------------------------------
+    # Context-aware tests (FR-2, FR-3, FR-4)
+    # ------------------------------------------------------------------
+
+    def test_ctx_with_slots_returns_true(self):
+        """FR-2: digit reply with offered_slots context → True (slot-selection path)."""
+        ctx = BookingContext()
+        ctx.offered_slots = [{"date": "2026-04-02", "time": "10:00", "stylist_id": "s1"}]
+        assert _looks_like_clarification("4", ctx) is True
+
+    def test_ctx_with_clarifications_returns_true(self):
+        """FR-3: casual reply with pending_clarifications context → True."""
+        ctx = BookingContext()
+        ctx.pending_clarifications = [{"q": "¿Dama o caballero?"}]
+        assert _looks_like_clarification("dale", ctx) is True
+
+    def test_ctx_none_uses_regex_si(self):
+        """FR-1/FR-4: ctx=None, short affirmative → True via regex heuristic."""
+        assert _looks_like_clarification("sí") is True
+
+    def test_ctx_empty_fields_uses_regex_fallback(self):
+        """FR-4: ctx with both fields empty → True via heuristic fallback."""
+        ctx = BookingContext()
+        assert _looks_like_clarification("sí", ctx) is True
+
+    def test_long_note_returns_false_with_ctx(self):
+        """FR-4: long real note → False even when ctx has offered_slots (regex gates first)."""
+        ctx = BookingContext()
+        ctx.offered_slots = [{"date": "2026-04-02", "time": "10:00", "stylist_id": "s1"}]
+        assert _looks_like_clarification("raíz oscura, puntas más claras", ctx) is False
+
+    def test_long_message_never_clarification_with_ctx(self):
+        """FR-4: long booking message → False even when ctx has offered_slots."""
+        ctx = BookingContext()
+        ctx.offered_slots = [{"date": "2026-04-02", "time": "10:00", "stylist_id": "s1"}]
+        assert _looks_like_clarification("mañana a las 10 me gustaría un corte", ctx) is False
+
 
 class TestNotesExtractionFilter:
     """Verify clarification responses are NOT captured as notes."""
@@ -3860,6 +3897,20 @@ class TestNotesExtractionFilter:
         """AC-5.7: 'no' still blocked by existing decline_phrases."""
         state, ctx = self._make_state_with_notes_question("no")
         _extract_notes_from_conversation(state, "no", ctx)
+        assert ctx.notes is None
+
+    def test_call_site_passes_ctx_with_offered_slots(self):
+        """FR-5: call site passes ctx — '4' with offered_slots → notes NOT captured."""
+        state, ctx = self._make_state_with_notes_question("4")
+        ctx.offered_slots = [{"date": "2026-04-02", "time": "10:00", "stylist_id": "s1"}]
+        _extract_notes_from_conversation(state, "4", ctx)
+        assert ctx.notes is None
+
+    def test_no_ctx_regression(self):
+        """FR-1: call without ctx still works — '4' is already caught by regex heuristic."""
+        state, ctx = self._make_state_with_notes_question("4")
+        # No offered_slots set — ctx has empty fields → regex heuristic applies
+        _extract_notes_from_conversation(state, "4", ctx)
         assert ctx.notes is None
 
 
