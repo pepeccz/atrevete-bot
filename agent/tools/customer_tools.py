@@ -71,6 +71,15 @@ def normalize_phone(phone: str) -> str | None:
 # ============================================================================
 
 
+class CustomerData(BaseModel):
+    """Typed data payload for customer create/update actions."""
+
+    customer_id: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    notes: str | None = None
+
+
 class ManageCustomerSchema(BaseModel):
     """Schema for manage_customer tool parameters."""
 
@@ -87,12 +96,12 @@ class ManageCustomerSchema(BaseModel):
         description="Customer phone number (required for get/create, optional for update)"
     )
 
-    data: dict[str, Any] | None = Field(
+    data: CustomerData | None = Field(
         default=None,
         description=(
             "Additional data for the action:\n"
-            "For 'create': {'first_name': str, 'last_name': str (optional), 'notes': str (optional)}\n"
-            "For 'update': {'customer_id': str, 'first_name': str (optional), 'last_name': str (optional), 'notes': str (optional)}"
+            "For 'create': {first_name: str (required), last_name: str (optional), notes: str (optional)}\n"
+            "For 'update': {customer_id: str (optional), first_name: str (optional), last_name: str (optional), notes: str (optional)}"
         ),
     )
 
@@ -111,7 +120,7 @@ class GetCustomerHistorySchema(BaseModel):
 
 @tool(args_schema=ManageCustomerSchema)
 async def manage_customer(
-    action: Literal["get", "create", "update"], phone: str, data: dict[str, Any] | None = None
+    action: Literal["get", "create", "update"], phone: str, data: CustomerData | None = None
 ) -> dict[str, Any]:
     """
     Manage customer operations (get, create, update).
@@ -196,9 +205,9 @@ async def manage_customer(
         if action == "get":
             return await _get_customer(phone)
         elif action == "create":
-            return await _create_customer(phone, data or {})
+            return await _create_customer(phone, data or CustomerData())
         elif action == "update":
-            return await _update_customer(phone, data or {})
+            return await _update_customer(phone, data or CustomerData())
         else:
             logger.error(f"Invalid action: {action}")
             return {"error": f"Invalid action: {action}"}
@@ -258,7 +267,7 @@ async def _get_customer(phone: str) -> dict[str, Any]:
         return {"error": "Failed to retrieve customer from database", "details": str(e)}
 
 
-async def _create_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
+async def _create_customer(phone: str, data: CustomerData) -> dict[str, Any]:
     """
     Create a new customer record.
 
@@ -269,13 +278,13 @@ async def _create_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
         logger.error(f"Invalid phone number format: {phone}")
         return {"error": "Invalid phone number format", "phone": phone}
 
-    first_name = data.get("first_name")
+    first_name = data.first_name
     if not first_name:
         logger.error("first_name is required for customer creation")
         return {"error": "first_name is required", "data": data}
 
-    last_name = data.get("last_name", "")
-    notes = data.get("notes")
+    last_name = data.last_name or ""
+    notes = data.notes
 
     try:
         async with get_async_session() as session:
@@ -317,7 +326,7 @@ async def _create_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
         return {"error": "Failed to create customer in database", "details": str(e)}
 
 
-async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
+async def _update_customer(phone: str, data: CustomerData) -> dict[str, Any]:
     """
     Update customer's name.
 
@@ -325,10 +334,10 @@ async def _update_customer(phone: str, data: dict[str, Any]) -> dict[str, Any]:
 
     If customer_id is not provided, looks up the customer by phone number first.
     """
-    customer_id_str = data.get("customer_id")
-    first_name = data.get("first_name")
-    last_name = data.get("last_name")
-    notes = data.get("notes")
+    customer_id_str = data.customer_id
+    first_name = data.first_name
+    last_name = data.last_name
+    notes = data.notes
 
     # At least one field must be provided for update
     if not any([first_name, last_name, notes]):
