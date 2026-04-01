@@ -366,7 +366,7 @@ def _build_auto_confirmation_summary(ctx: "BookingContext") -> str:
     services = (
         ", ".join(ctx.selected_services) if ctx.selected_services else ctx.service_name or "?"
     )
-    stylist = ctx.stylist_name or "tu estilista"
+    stylist = ctx.stylist_name or "[estilista pendiente]"
 
     # Extract date/time from selected_slot or first offered slot
     slot = ctx.selected_slot or (ctx.offered_slots[0] if ctx.offered_slots else None)
@@ -1855,7 +1855,7 @@ class BookingMode(BaseModeNode):
             ctx: BookingContext with hallucination detection results.
 
         Returns:
-            Response text with hallucinated names replaced by "tu estilista".
+            Response text with hallucinated names replaced by "[estilista]".
         """
         if not response_text or not ctx.prefetched_stylists:
             return response_text
@@ -1880,7 +1880,7 @@ class BookingMode(BaseModeNode):
 
         for name in hallucinated_names:
             # Skip redaction if this word is a token from any valid stylist's compound name.
-            # This prevents "Ana María" → "Ana tu estilista" when "Ana" is a component of a
+            # This prevents "Ana María" → "Ana [estilista]" when "Ana" is a component of a
             # known stylist name.
             if _nfd_lower(name) in known_word_tokens:
                 logger.debug(
@@ -1890,11 +1890,11 @@ class BookingMode(BaseModeNode):
                 continue
             response_text = re.sub(
                 rf"\b{re.escape(name)}\b",
-                "tu estilista",
+                "[estilista]",
                 response_text,
                 flags=re.IGNORECASE,
             )
-            logger.info("Redacted hallucinated stylist name %r → 'tu estilista'", name)
+            logger.info("Redacted hallucinated stylist name %r → '[estilista]'", name)
 
         return response_text
 

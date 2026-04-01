@@ -14,7 +14,7 @@ import logging
 from typing import Any, Literal
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
 from database.connection import get_async_session
@@ -36,6 +36,15 @@ DAY_NAMES = {
 
 class QueryFilters(BaseModel):
     """Typed filter payload for query_info tool."""
+
+    # Azure (via OpenRouter) requires 'required' to be present when 'properties' exists,
+    # even for nullable fields. This override emits required: ["category", "keywords"]
+    # so the schema is accepted by strict OpenAI-compatible providers.
+    model_config = ConfigDict(
+        json_schema_extra=lambda schema, _: schema.update(
+            {"required": list(schema.get("properties", {}).keys())}
+        )
+    )
 
     category: str | None = None
     keywords: list[str] | None = None
