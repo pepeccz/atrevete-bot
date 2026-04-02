@@ -3561,7 +3561,7 @@ class TestRedactHallucinatedStylists:
     """Verify _redact_hallucinated_stylists replaces invented names."""
 
     def test_redaction_replaces_hallucinated_name(self):
-        """AC-3.2: hallucinated name replaced with '[estilista]'."""
+        """AC-3.2: hallucinated name replaced with 'tu estilista' (natural language, no brackets)."""
         mode = make_booking_mode()
         ctx = BookingContext()
         ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
@@ -3569,7 +3569,8 @@ class TestRedactHallucinatedStylists:
 
         result = mode._redact_hallucinated_stylists("Carmen te atenderá", ctx)
         assert "Carmen" not in result
-        assert "[estilista]" in result
+        assert "tu estilista" in result
+        assert "[estilista]" not in result
 
     def test_known_name_not_redacted(self):
         """AC-3.3: real stylist name stays."""
@@ -3590,7 +3591,8 @@ class TestRedactHallucinatedStylists:
 
         result = mode._redact_hallucinated_stylists("CARMEN te ayudará", ctx)
         assert "CARMEN" not in result
-        assert "carmen" not in result.lower() or "[estilista]" in result
+        assert "carmen" not in result.lower()
+        assert "tu estilista" in result
 
     def test_word_boundary_no_substring_replace(self):
         """AC-3.5: 'Ana' hallucinated does NOT replace inside 'Banana'."""
@@ -3612,6 +3614,30 @@ class TestRedactHallucinatedStylists:
         original = "Ana te atenderá"
         result = mode._redact_hallucinated_stylists(original, ctx)
         assert result == original
+
+    def test_redaction_uses_natural_language_not_placeholder(self):
+        """T-05: redaction output must contain 'tu estilista', never '[estilista]' brackets."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
+        ctx._last_hallucinated_names = {"Carmen"}
+
+        result = mode._redact_hallucinated_stylists("Tu cita es con Carmen a las 10:00", ctx)
+        assert "tu estilista" in result
+        assert "[estilista]" not in result
+        assert "Carmen" not in result
+
+    def test_redaction_does_not_affect_known_stylists(self):
+        """T-05: known stylist names must NOT be redacted."""
+        mode = make_booking_mode()
+        ctx = BookingContext()
+        ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
+        ctx._last_hallucinated_names = {"Carmen"}
+
+        result = mode._redact_hallucinated_stylists("Tu cita es con Ana", ctx)
+        assert "Ana" in result
+        assert "[estilista]" not in result
+        assert "tu estilista" not in result
 
 
 class TestStructuredCorrectionPrompt:
@@ -3665,7 +3691,7 @@ class TestBuildAutoConfirmationSummary:
     """Verify _build_auto_confirmation_summary generates correct output."""
 
     def test_summary_contains_service_name(self):
-        """AC-4.6: non-empty string with service name."""
+        """AC-4.6: non-empty string with service name in natural sentence."""
         ctx = BookingContext()
         ctx.selected_services = ["Cortar"]
         ctx.stylist_name = "Pilar"
@@ -3675,6 +3701,7 @@ class TestBuildAutoConfirmationSummary:
         result = _build_auto_confirmation_summary(ctx)
         assert "Cortar" in result
         assert len(result) > 0
+        assert result.startswith("Te agendo")
 
     def test_summary_contains_stylist_name(self):
         ctx = BookingContext()
@@ -3684,6 +3711,10 @@ class TestBuildAutoConfirmationSummary:
 
         result = _build_auto_confirmation_summary(ctx)
         assert "Pilar" in result
+        assert result.startswith("Te agendo")
+        # No labeled fields (new compact format)
+        assert "Estilista:" not in result
+        assert "Servicio:" not in result
 
     def test_summary_no_uuids(self):
         """AC-4.5: no UUID patterns in output."""
@@ -3707,7 +3738,8 @@ class TestBuildAutoConfirmationSummary:
         ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
 
         result = _build_auto_confirmation_summary(ctx)
-        assert "[estilista pendiente]" in result
+        assert "la estilista asignada" in result
+        assert "[estilista pendiente]" not in result
 
     def test_summary_multiple_services_formatted(self):
         ctx = BookingContext()
@@ -3718,6 +3750,54 @@ class TestBuildAutoConfirmationSummary:
         result = _build_auto_confirmation_summary(ctx)
         assert "Cortar" in result
         assert "Óleo Pigmento" in result
+        assert result.startswith("Te agendo")
+
+    def test_summary_notes_omitted_when_none(self):
+        """T-10c: when notes=None, output does NOT contain 'nota:'."""
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar"]
+        ctx.stylist_name = "Pilar"
+        ctx.notes = None
+        ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
+
+        result = _build_auto_confirmation_summary(ctx)
+        assert "nota:" not in result
+
+    def test_summary_notes_omitted_when_ninguna(self):
+        """T-10c: when notes='ninguna', output does NOT contain 'nota:'."""
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar"]
+        ctx.stylist_name = "Pilar"
+        ctx.notes = "ninguna"
+        ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
+
+        result = _build_auto_confirmation_summary(ctx)
+        assert "nota:" not in result
+
+    def test_summary_notes_included_when_present(self):
+        """T-10c: when notes has real content, 'nota:' appears in output."""
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar"]
+        ctx.stylist_name = "Pilar"
+        ctx.notes = "Alergia al amoniaco"
+        ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
+
+        result = _build_auto_confirmation_summary(ctx)
+        assert "nota:" in result
+        assert "Alergia al amoniaco" in result
+
+    def test_summary_no_customer_name(self):
+        """T-10d: customer name MUST NOT appear in summary output (identity.md rule)."""
+        ctx = BookingContext()
+        ctx.selected_services = ["Cortar"]
+        ctx.stylist_name = "Pilar"
+        ctx.customer_name = "María Rodríguez"
+        ctx.selected_slot = {"date": "2026-04-03", "time": "09:00"}
+
+        result = _build_auto_confirmation_summary(ctx)
+        assert "María" not in result
+        assert "Rodríguez" not in result
+        assert "Nombre:" not in result
 
 
 class TestBookRejectionAutoSummary:
@@ -4187,7 +4267,7 @@ class TestBuildUpsellGateSection:
         assert "3. Óleo Pigmento (+30 min)" in result
 
     def test_service_name_in_header(self):
-        """Service name appears in the header line."""
+        """Service name appears in the header line, but no primary service duration."""
         ctx = BookingContext(
             service_name="Corte Caballero",
             service_duration_minutes=40,
@@ -4196,7 +4276,10 @@ class TestBuildUpsellGateSection:
         result = _build_upsell_gate_section(ctx, {"Barba": 15})
 
         assert "Corte Caballero" in result
-        assert "40 min" in result
+        # Primary service duration must NOT appear in header (minimal UX change)
+        assert "40 min" not in result
+        # Add-on duration MUST still appear
+        assert "15 min" in result
 
     def test_instruction_block_present(self):
         """INSTRUCCIÓN block is present in the output."""
