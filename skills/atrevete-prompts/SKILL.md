@@ -74,22 +74,26 @@ Each rule/instruction type has exactly ONE canonical home.
 
 ## Token Budgets
 
-Token estimate: `len(content) // 4`
+Token estimate: `len(content) // 4` (proxy — real GPT tokens ≈ words × 1.3)
 
-| File | Token Budget | Char Budget | Purpose |
-|------|-------------|-------------|---------|
-| `shared/identity.md` | ≤800 | ≤3,200 | Who is Maite |
-| `shared/critical_rules.md` | ≤1,200 | ≤4,800 | Hard constraints |
-| `shared/glossary.md` | ≤600 | ≤2,400 | Business terms |
-| `modes/greeting.md` | ≤400 | ≤1,600 | First contact |
-| `modes/booking.md` | ≤1,000 | ≤4,000 | Booking flow |
-| `modes/general.md` | ≤500 | ≤2,000 | FAQs |
-| `modes/escalation.md` | ≤400 | ≤1,600 | Handoff |
-| **SHARED TOTAL** | **≤2,600** | **≤10,400** | Core system |
+| File | Token Budget | Chars (actual) | Purpose |
+|------|-------------|----------------|---------|
+| `shared/identity.md` | ≤350 | ≤1,400 | Who is Maite — currently ~301t |
+| `shared/critical_rules.md` | ≤1,100 | ≤4,400 | Hard constraints — currently ~1,056t |
+| `shared/glossary.md` | N/A | N/A | **NOT loaded at runtime** — developer reference only |
+| `modes/greeting.md` | ≤280 | ≤1,120 | First contact — currently ~232t |
+| `modes/booking.md` | ≤1,800 | ≤7,200 | Booking flow (8-step + errors) — currently ~1,734t |
+| `modes/general.md` | ≤450 | ≤1,800 | FAQs — currently ~443t |
+| `modes/escalation.md` | N/A | N/A | **NOT loaded at runtime** — FSM in Python, doc only |
+| **RUNTIME TOTAL** | **≤3,980** | **≤15,920** | shared/ + active mode overlay |
+
+> **Note on `modes/booking.md`**: This file has a higher budget than other modes because it covers an 8-step flow with error handling, date parsing, and upsell logic. The 1,800t ceiling reflects the minimum after a full deduplication pass (April 2026). Do NOT compress below ~1,500t without a dedicated exploration — further cuts risk behavioral regressions on Steps 4–8.
+
+> **Note on `glossary.md` and `escalation.md`**: These files are **never injected into the LLM context**. `glossary.md` is excluded by `loader.py` (tools serve the service catalog). `escalation.md` is never loaded because EscalationMode is a deterministic Python FSM. Edits to these files have zero runtime impact.
 
 **Measure current size**:
 ```bash
-python -c "print(len(open('agent/prompts/shared/identity.md').read()) // 4)"
+python3 -c "print(len(open('agent/prompts/modes/booking.md').read()) // 4)"
 ```
 
 ---
