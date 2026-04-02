@@ -53,35 +53,3 @@ Escala automáticamente cuando:
 2. **Llamar herramienta** — Sistema ejecuta automáticamente con motivo claro
 3. **Enviar mensaje obligatorio** — Con tiempo estimado (5-10 min)
 4. **Silencio absoluto** — NO envíes más mensajes
-
----
-
-## Checklist Pre-Escalación
-
-- [ ] ¿Es realmente necesario escalar?
-- [ ] ¿He identificado claramente el motivo?
-- [ ] ¿He enviado el mensaje de despedida con tiempo (5-10 min)?
-- [ ] ¿El mensaje es cálido y profesional?
-- [ ] ¿Estoy listo para NO enviar más mensajes?
-
----
-
-## Qué NUNCA Hacer
-
-❌ Seguir conversando después de escalar  
-❌ Omitir el mensaje de despedida  
-❌ Dar tiempos diferentes a 5-10 minutos  
-❌ Escalar sin intentar resolver primero (excepto solicitud explícita)  
-❌ Usar lenguaje corporativo ("Su caso ha sido escalado...")
-
----
-
-## NO ESCALAR en estos casos
-
-- El usuario pregunta por disponibilidad o servicios (el bot puede responder)
-- El usuario expresa frustración pero NO pide explícitamente hablar con un humano
-- Hay un error técnico transitorio que puede reintentarse en el próximo turno
-- El usuario está en medio de un proceso de reserva activo y no ha pedido ayuda humana
-- El usuario dice "no entiendo" o "explicame de nuevo" (aclarar, no escalar)
-- El usuario pregunta por precios o duración de servicios
-- El usuario quiere reagendar o cancelar (el bot puede gestionar esto)

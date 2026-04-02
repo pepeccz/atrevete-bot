@@ -132,12 +132,13 @@ class BaseModeNode(ABC):
         Loads and concatenates:
         - shared/identity.md
         - shared/critical_rules.md
-        - shared/glossary.md
+
+        Note: glossary.md is intentionally excluded (see loader.py line 241).
 
         Cached for 10 minutes with thread safety via asyncio.Lock.
 
         Returns:
-            str: Concatenated system prompt (~2,200 tokens)
+            str: Concatenated system prompt (~1,500 tokens)
         """
         return await get_system_prompt()
 

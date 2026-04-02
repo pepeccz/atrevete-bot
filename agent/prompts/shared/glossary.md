@@ -1,3 +1,5 @@
+<!-- Developer reference only — NOT loaded at runtime. See loader.py. -->
+
 # Glosario de Servicios y Términos Técnicos
 
 ## Resumen del Catálogo
@@ -156,82 +158,3 @@
 |----------|----------|-------------|
 | Peeling Corporal | 60 min | Exfoliación corporal profunda |
 | Piernas Perfectas + Presoterapia (30 min) | 90 min | Tratamiento que drena toxinas y reafirma |
-
----
-
-## Glosario Técnico
-
-### Términos de Coloración
-
-**Cultura de Color**
-Coloración profesional con pigmentos de alta calidad. Ofrece resultados duraderos y vibrantes con máximo cuidado del cabello.
-
-**Óleo Pigmento**
-Coloración con aceites nutritivos que nutren mientras colorean. Ideal para cabellos que necesitan cuidado extra durante el proceso de coloración.
-
-**Barro / Barro Gold / Barro Extra**
-Coloración con arcilla natural que nutre el cabello. El Gold aporta tonos dorados cálidos. Extra proporciona nutrición profunda intensiva.
-
-**Prepigmentar**
-Proceso de prepigmentación para preparar el cabello antes de ciertos colores. Paso previo necesario para algunos tipos de coloración.
-
-**Tratamiento Precolor**
-Tratamiento previo que prepara el cabello para un mejor resultado del color. Acondiciona y protege antes de la coloración.
-
-### Términos de Tratamientos Capilares
-
-**Infoactivo Fuerza**
-Tratamiento fortalecedor que activa la fuerza capilar desde la raíz. Ideal para cabellos débiles o con caída.
-
-**Infoactivo Sensitivo**
-Tratamiento específico para cueros cabelludos sensibles o irritados. Calma, protege y reduce la irritación.
-
-**Agua Lluvia**
-Tratamiento hidratante que aporta brillo y suavidad como la lluvia fresca. Purifica y equilibra.
-
-**Agua Tierra**
-Tratamiento capilar detoxificante que purifica el cuero cabelludo y equilibra la grasa. Limpieza profunda natural.
-
-### Términos de Mechas
-
-**Mechas Localizadas**
-Mechas en zonas específicas para aportar luz y dimensión. Efecto sun-kissed natural.
-
-**Mechas Localizadas Express**
-Versión rápida de mechas localizadas para un toque de luz express. Ideal cuando el tiempo es limitado.
-
-### Términos de Peinados
-
-**Moldeado**
-Peinado con productos profesionales para dar forma y textura al cabello. Acabado pulido y duradero.
-
-**Recogido**
-Peinado elegante con el cabello completamente recogido. Ideal para eventos formales.
-
-**Semirecogido**
-Peinado que combina cabello recogido y suelto. Elegante con toque natural.
-
-### Términos de Estética
-
-**Bioterapia**
-Tratamientos personalizados según tipo de piel. Uso de ingredientes naturales y biotecnológicos.
-
-**Bioterapia Sculptor**
-Tratamiento corporal anticelulítico que reduce nódulos grasos y retención de líquidos.
-
-**Bioterapia Podal**
-Tratamiento específico para pies cansados y fatigados que hidrata y revitaliza.
-
-**Radiofrecuencia**
-Tecnología anti-edad combinada con bioterapia. Estimula colágeno para rejuvenecimiento.
-
-**Presoterapia**
-Tratamiento que drena toxinas, descongestiona y reafirma mediante presión controlada.
-
----
-
-## Notas de Uso
-
-- **Máximo 5 servicios por cita:** No se pueden agendar más de 5 servicios en una sola cita.
-- **No combinar categorías:** No se pueden mezclar servicios de Peluquería y Estética en la misma cita.
-- **Servicios con variantes:** el sistema detecta automáticamente cuándo se necesita aclaración según los metadatos del servicio.
