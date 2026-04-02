@@ -249,6 +249,12 @@ _STYLIST_BLOCKLIST_WORDS: frozenset[str] = frozenset(
         "gracias",
         "listo",
         "dale",
+        "si",
+        "sí",
+        "sip",
+        "ok",
+        "no",
+        "nop",
         "venga",
         "bien",
         "correcto",
@@ -366,7 +372,7 @@ def _build_auto_confirmation_summary(ctx: "BookingContext") -> str:
     services = (
         ", ".join(ctx.selected_services) if ctx.selected_services else ctx.service_name or "?"
     )
-    stylist = ctx.stylist_name or "[estilista pendiente]"
+    stylist = ctx.stylist_name or "la estilista asignada"
 
     # Extract date/time from selected_slot or first offered slot
     slot = ctx.selected_slot or (ctx.offered_slots[0] if ctx.offered_slots else None)
@@ -381,28 +387,23 @@ def _build_auto_confirmation_summary(ctx: "BookingContext") -> str:
     else:
         datetime_str = "?"
 
-    customer = ctx.customer_name or "?"
-    notes = ctx.notes.strip() if ctx.notes and ctx.notes.strip() else "ninguna"
+    notes = ctx.notes.strip() if ctx.notes and ctx.notes.strip() else None
 
     logger.info(
-        "_build_auto_confirmation_summary: services=%r, stylist=%r, "
-        "datetime=%r, customer=%r, notes=%r",
+        "_build_auto_confirmation_summary: services=%r, stylist=%r, datetime=%r, notes=%r",
         services,
         stylist,
         datetime_str,
-        customer,
         notes,
     )
 
-    return (
-        f"📋 *Resumen de tu cita:*\n"
-        f"✂️ Servicio: {services}\n"
-        f"💇 Estilista: {stylist}\n"
-        f"📅 Fecha y hora: {datetime_str}\n"
-        f"👤 Nombre: {customer}\n"
-        f"📝 Notas: {notes}\n\n"
-        f"¿Confirmas la reserva? 😊"
-    )
+    # Compact WhatsApp-natural sentence — no labeled fields, no customer name
+    # (identity.md rule: NUNCA uses el nombre del cliente en tus respuestas)
+    parts = [f"el *{datetime_str}*", f"con *{stylist}*", f"para *{services}*"]
+    if notes and notes.lower() not in ("ninguna", "sin notas", "none"):
+        parts.append(f"(nota: {notes})")
+    summary_line = " ".join(parts)
+    return f"Te agendo {summary_line}. ¿Lo confirmo? 😊"
 
 
 # ============================================================================
@@ -1814,7 +1815,7 @@ class BookingMode(BaseModeNode):
                         known_word_tokens.add(tok)
 
         # Extract capitalized words (likely proper nouns)
-        words = re.findall(r"\b[A-Z][a-záéíóúñ]*\b", response_text)
+        words = [w for w in re.findall(r"\b[A-Z][a-záéíóúñ]*\b", response_text) if len(w) >= 3]
 
         hallucinated = []
         for word in words:
@@ -1855,7 +1856,7 @@ class BookingMode(BaseModeNode):
             ctx: BookingContext with hallucination detection results.
 
         Returns:
-            Response text with hallucinated names replaced by "[estilista]".
+            Response text with hallucinated names replaced by "tu estilista".
         """
         if not response_text or not ctx.prefetched_stylists:
             return response_text
@@ -1890,11 +1891,11 @@ class BookingMode(BaseModeNode):
                 continue
             response_text = re.sub(
                 rf"\b{re.escape(name)}\b",
-                "[estilista]",
+                "tu estilista",
                 response_text,
                 flags=re.IGNORECASE,
             )
-            logger.info("Redacted hallucinated stylist name %r → '[estilista]'", name)
+            logger.info("Redacted hallucinated stylist name %r → 'tu estilista'", name)
 
         return response_text
 
@@ -3162,8 +3163,7 @@ def _build_disambiguation_section(ctx: BookingContext) -> str:
         lines.append(f"  Pregunta: {hint}")
         for i, opt in enumerate(options, 1):
             label_display = opt.get("label", opt.get("value", ""))
-            desc = opt.get("description", "")
-            lines.append(f"  {i}. {label_display}" + (f" — {desc}" if desc else ""))
+            lines.append(f"  {i}. {label_display}")
 
     if ctx.candidate_services and not ctx.service_name:
         names = [s.get("name", "") for s in ctx.candidate_services[:5] if isinstance(s, dict)]
@@ -3207,18 +3207,14 @@ def _build_recommendations_section(ctx: BookingContext) -> str:
 
 
 def _build_service_details_section(ctx: BookingContext) -> str:
-    """Build prompt section describing what each selected service includes."""
+    """Build prompt section identifying the selected service by name."""
     if not ctx.selected_services_details:
         return ""
     lines: list[str] = []
     for detail in ctx.selected_services_details:
         name = detail.get("name", "")
-        dur = detail.get("duration")
-        desc = detail.get("description", "")
-        if not desc:
-            continue
-        dur_str = f" ({dur}min)" if dur else ""
-        lines.append(f"- **{name}**{dur_str}: {desc}")
+        if name:
+            lines.append(f"- **{name}**")
     return "\n".join(lines)
 
 
@@ -3329,24 +3325,17 @@ async def _fetch_addon_durations(addon_names: list[str]) -> dict[str, int]:
 def _build_upsell_gate_section(ctx: BookingContext, addon_durations: dict[str, int]) -> str:
     """Build the <upsell_gate> XML block injected into dynamic context.
 
-    Contains service name + description, list of add-ons with durations,
+    Contains service name, list of add-ons with durations,
     and explicit instruction to wait for user response before showing stylists.
     Text is in castellano peninsular (España).
     """
-    # Extract primary service info from selected_services_details
+    # Extract primary service name
     service_name = ctx.service_name or (
         ctx.selected_services[0] if ctx.selected_services else "el servicio"
     )
-    service_duration = ctx.service_duration_minutes
-    service_description = ""
-    if ctx.selected_services_details:
-        first_detail = ctx.selected_services_details[0]
-        service_description = first_detail.get("description", "")
 
-    # Build header line
-    duration_str = f" ({service_duration} min)" if service_duration else ""
-    description_part = f" — {service_description}" if service_description else ""
-    header = f"Servicio confirmado: {service_name}{duration_str}{description_part}"
+    # Build header line (name only — no duration, no description)
+    header = f"Servicio confirmado: {service_name}"
 
     # Build add-on list
     addon_lines: list[str] = []
@@ -3359,9 +3348,7 @@ def _build_upsell_gate_section(ctx: BookingContext, addon_durations: dict[str, i
     addon_list = "\n".join(addon_lines)
 
     # Build instruction block (castellano peninsular)
-    instruction = (
-        f"INSTRUCCIÓN: Explica qué incluye {service_name} y ofrece los servicios complementarios."
-    )
+    instruction = f"INSTRUCCIÓN: Confirma {service_name} y ofrece los servicios complementarios."
     if addon_durations:
         instruction += ' Si la duración está disponible, menciónala (ej: "Son X minutos más").'
     instruction += (
