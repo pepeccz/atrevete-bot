@@ -117,6 +117,9 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "hey",
         "saludos",
         "buen día",
+        "como estas",
+        "wenas",
+        "qué tal",  # "qué tal" can match mid-conversation, monitor
     ],
     "book": [
         "cita",
@@ -152,6 +155,9 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "sí",
         "ok",
         "dale",
+        "dlae",
+        "dlee",
+        "dales",
         "vale",
         "claro",
         "perfecto",
@@ -162,6 +168,10 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "acepto",
         "exacto",
         "así es",
+        "va",
+        "listo",
+        "hecho",
+        "venga ya",
     ],
     "reject": [
         "no",
@@ -172,6 +182,10 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "para nada",
         "no me interesa",
         "no, gracias",
+        "nel",
+        "nop",
+        "qué va",
+        "ni hablar",
     ],
     "cancel": [
         "cancelar",
@@ -197,6 +211,8 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "urgente",
         "reclamar",
         "queja",
+        "reclamación",
+        "quiero quejarme",
     ],
     "retry": [
         "intentar",
@@ -441,6 +457,7 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
         )
     best_intent: str | None = None
     best_confidence: float = 0.0
+    best_kw_len: int = 0  # length of best-matching keyword (longer = more specific)
 
     # Collect ALL intents that match above threshold to detect conflicts
     matched_intents: dict[str, float] = {}
@@ -448,22 +465,31 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
     for intent, keywords in KEYWORD_MAP.items():
         # Find the best-matching keyword for this intent
         intent_best_confidence: float = 0.0
+        intent_best_kw_len: int = 0
         for kw in keywords:
             kw_lower = kw.lower()
             confidence = _keyword_matches(text_normalized, kw_lower)
-            if confidence > intent_best_confidence:
+            if confidence > intent_best_confidence or (
+                confidence == intent_best_confidence and len(kw_lower) > intent_best_kw_len
+            ):
                 intent_best_confidence = confidence
-                if confidence == 0.90:
-                    # Can't do better — short-circuit to next intent
+                intent_best_kw_len = len(kw_lower)
+                if confidence == 0.90 and len(kw_lower) >= len(text_normalized):
+                    # Exact full-text match — can't do better — short-circuit
                     break
 
         if intent_best_confidence > 0.0:
             matched_intents[intent] = intent_best_confidence
 
-        # Update global best if this intent scored higher
-        if intent_best_confidence > best_confidence:
+        # Update global best: prefer higher confidence, then longer keyword on ties
+        if intent_best_confidence > best_confidence or (
+            intent_best_confidence == best_confidence
+            and intent_best_confidence > 0.0
+            and intent_best_kw_len > best_kw_len
+        ):
             best_confidence = intent_best_confidence
             best_intent = intent
+            best_kw_len = intent_best_kw_len
 
     if best_intent is None:
         return None

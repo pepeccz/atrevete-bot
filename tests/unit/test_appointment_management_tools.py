@@ -30,7 +30,10 @@ MADRID_TZ = ZoneInfo("Europe/Madrid")
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _make_mock_appointment(hours_from_now: float = 72.0) -> MagicMock:
+def _make_mock_appointment(
+    hours_from_now: float = 72.0,
+    service_ids: list | None = None,
+) -> MagicMock:
     """Build a mock Appointment ORM object for use in list tests."""
     appt = MagicMock()
     appt.id = uuid4()
@@ -43,6 +46,7 @@ def _make_mock_appointment(hours_from_now: float = 72.0) -> MagicMock:
     appt.stylist.name = "María"
     appt.status = MagicMock()
     appt.status.value = "pending"
+    appt.service_ids = service_ids if service_ids is not None else [uuid4()]
 
     return appt
 
@@ -180,6 +184,68 @@ class TestListCustomerAppointments:
         assert "appointments" in result
         # Must NOT raise — always returns a dict
         assert isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_list_customer_appointments_includes_service_name(self):
+        """T-05: items dict must contain 'service_name' key populated by _get_service_names."""
+        customer = _make_mock_customer()
+        appt = _make_mock_appointment(hours_from_now=72)
+
+        with (
+            patch(
+                "agent.services.appointment_query_service._get_customer_by_phone",
+                new_callable=AsyncMock,
+                return_value=customer,
+            ),
+            patch(
+                "agent.services.appointment_query_service._get_upcoming_appointments",
+                new_callable=AsyncMock,
+                return_value=[appt],
+            ),
+            patch(
+                "agent.services.appointment_query_service._get_service_names",
+                new_callable=AsyncMock,
+                return_value="Corte Caballero",
+            ),
+        ):
+            result = await _list_customer_appointments(limit=5, customer_phone="+34600000001")
+
+        assert result["success"] is True
+        assert len(result["appointments"]) == 1
+        first = result["appointments"][0]
+        assert "service_name" in first
+        assert first["service_name"] == "Corte Caballero"
+
+    @pytest.mark.asyncio
+    async def test_list_customer_appointments_service_name_fallback(self):
+        """T-05: when appointment has empty service_ids, service_name falls back to 'servicios'."""
+        customer = _make_mock_customer()
+        appt = _make_mock_appointment(hours_from_now=72, service_ids=[])
+
+        with (
+            patch(
+                "agent.services.appointment_query_service._get_customer_by_phone",
+                new_callable=AsyncMock,
+                return_value=customer,
+            ),
+            patch(
+                "agent.services.appointment_query_service._get_upcoming_appointments",
+                new_callable=AsyncMock,
+                return_value=[appt],
+            ),
+            patch(
+                "agent.services.appointment_query_service._get_service_names",
+                new_callable=AsyncMock,
+                return_value="servicios",
+            ),
+        ):
+            result = await _list_customer_appointments(limit=5, customer_phone="+34600000001")
+
+        assert result["success"] is True
+        assert len(result["appointments"]) == 1
+        first = result["appointments"][0]
+        assert "service_name" in first
+        assert first["service_name"] == "servicios"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

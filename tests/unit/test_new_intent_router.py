@@ -115,6 +115,19 @@ class TestClassifyByKeywords:
         assert result is not None
         assert result.intent == "confirm"
 
+    @pytest.mark.parametrize("typo", ["dlae", "dlee", "dales"])
+    def test_confirm_intent_typo_variants(self, typo):
+        """T-10e: 'dlae', 'dlee', 'dales' are common typos of 'dale' → confirm intent."""
+        result = classify_by_keywords(typo)
+        assert result is not None
+        assert result.intent == "confirm", f"Expected 'confirm' for typo '{typo}', got {result}"
+
+    def test_dale_still_confirm_regression(self):
+        """T-10e regression: 'dale' still maps to 'confirm' after typo variants added."""
+        result = classify_by_keywords("dale")
+        assert result is not None
+        assert result.intent == "confirm"
+
     # ------ reject intent ------
 
     def test_no_returns_reject(self):
@@ -462,3 +475,35 @@ class TestIntentRouterClassify:
         # The human message should include the current_mode
         human_message = messages[1]
         assert "BOOKING" in human_message.content
+
+
+# =============================================================================
+# New keyword additions — tone-polish-medium
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("va", "confirm"),
+        ("listo", "confirm"),
+        ("hecho", "confirm"),
+        ("venga ya", "confirm"),
+        ("nel", "reject"),
+        ("nop", "reject"),
+        ("qué va", "reject"),
+        ("ni hablar", "reject"),
+        ("como estas", "greet"),
+        ("wenas", "greet"),
+        ("qué tal", "greet"),
+        ("reclamación", "escalate"),
+        ("quiero quejarme", "escalate"),
+    ],
+)
+def test_new_keywords_classify_correctly(text, expected):
+    """All keywords added in tone-polish-medium classify to their expected intent."""
+    result = classify_by_keywords(text)
+    assert result is not None, f"Expected intent '{expected}' for text {text!r}, got None"
+    assert result.intent == expected, (
+        f"Expected intent '{expected}' for text {text!r}, got '{result.intent}'"
+    )

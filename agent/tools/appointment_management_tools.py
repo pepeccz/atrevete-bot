@@ -82,6 +82,7 @@ async def _list_customer_appointments(limit: int, customer_phone: str) -> dict[s
     try:
         from agent.services.appointment_query_service import (
             _get_customer_by_phone,
+            _get_service_names,
             _get_upcoming_appointments,
         )
 
@@ -111,6 +112,7 @@ async def _list_customer_appointments(limit: int, customer_phone: str) -> dict[s
             appt_time = appt.start_time.astimezone(MADRID_TZ)
             hours_until = (appt_time - now).total_seconds() / 3600
             stylist_name = appt.stylist.name if appt.stylist else "tu estilista"
+            service_name = await _get_service_names(appt.service_ids or [])
 
             items.append(
                 {
@@ -119,6 +121,7 @@ async def _list_customer_appointments(limit: int, customer_phone: str) -> dict[s
                     "date_display": _format_date_spanish(appt_time),
                     "time_display": appt_time.strftime("%H:%M"),
                     "stylist_name": stylist_name,
+                    "service_name": service_name,
                     "status": appt.status.value
                     if hasattr(appt.status, "value")
                     else str(appt.status),

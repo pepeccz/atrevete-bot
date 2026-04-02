@@ -432,9 +432,7 @@ class TestDynamicContextInjection:
         ctx = BookingContext(force_search_services_reminder=True)
         mode = BookingMode(tools=[], llm_client=MagicMock())
 
-        dynamic_context = mode._build_dynamic_context(
-            {"mode_context": {}, "history": []}, ctx
-        )
+        dynamic_context = mode._build_dynamic_context({"mode_context": {}, "history": []}, ctx)
 
         assert "search_services" in dynamic_context
         assert "DEBES llamar search_services" in dynamic_context
@@ -444,9 +442,7 @@ class TestDynamicContextInjection:
         ctx = BookingContext(force_list_stylists_reminder=True)
         mode = BookingMode(tools=[], llm_client=MagicMock())
 
-        dynamic_context = mode._build_dynamic_context(
-            {"mode_context": {}, "history": []}, ctx
-        )
+        dynamic_context = mode._build_dynamic_context({"mode_context": {}, "history": []}, ctx)
 
         assert "list_stylists" in dynamic_context
         assert "DEBES llamar list_stylists" in dynamic_context
@@ -456,9 +452,7 @@ class TestDynamicContextInjection:
         ctx = BookingContext(force_stylist_correction=True)
         mode = BookingMode(tools=[], llm_client=MagicMock())
 
-        dynamic_context = mode._build_dynamic_context(
-            {"mode_context": {}, "history": []}, ctx
-        )
+        dynamic_context = mode._build_dynamic_context({"mode_context": {}, "history": []}, ctx)
 
         assert "CORRECCIÓN" in dynamic_context
         assert "nombres" in dynamic_context.lower()
@@ -472,10 +466,76 @@ class TestDynamicContextInjection:
         )
         mode = BookingMode(tools=[], llm_client=MagicMock())
 
-        dynamic_context = mode._build_dynamic_context(
-            {"mode_context": {}, "history": []}, ctx
-        )
+        dynamic_context = mode._build_dynamic_context({"mode_context": {}, "history": []}, ctx)
 
         # Should not contain warning markers
         assert "⚠️ Recordatorio" not in dynamic_context
         assert "⚠️ CORRECCIÓN" not in dynamic_context
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T-10: Hallucination Guard — Affirmation Words and Min-Length Filter
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestHallucinationGuardAffirmationWords:
+    """T-10: Affirmation words and short tokens should not trigger hallucination."""
+
+    def test_affirmation_word_si_not_flagged(self):
+        """'Si' as capitalized response should NOT trigger hallucination detection."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"name": "Ana", "id": "1"},
+            ]
+        )
+        mode = BookingMode(tools=[], llm_client=MagicMock())
+        # "Si" is in blocklist AND len < 3 — should not be a hallucinated name
+        response = "Si, claro, con mucho gusto"
+
+        mode._detect_stylist_hallucination(response, ctx)
+
+        assert ctx.force_stylist_correction is False
+
+    def test_affirmation_word_sip_not_flagged(self):
+        """'Sip' (3 chars, in blocklist) should NOT trigger hallucination detection."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"name": "Ana", "id": "1"},
+            ]
+        )
+        mode = BookingMode(tools=[], llm_client=MagicMock())
+        response = "Sip, perfecto"
+
+        mode._detect_stylist_hallucination(response, ctx)
+
+        assert ctx.force_stylist_correction is False
+
+    def test_affirmation_word_ok_not_flagged(self):
+        """'Ok' (2 chars, filtered by min-length guard) should NOT trigger hallucination."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"name": "Ana", "id": "1"},
+            ]
+        )
+        mode = BookingMode(tools=[], llm_client=MagicMock())
+        response = "Ok, te lo agendo ahora"
+
+        mode._detect_stylist_hallucination(response, ctx)
+
+        assert ctx.force_stylist_correction is False
+
+    def test_min_length_guard_two_char_word_skipped(self):
+        """2-char capitalized words like 'Si' are not considered candidates (len < 3)."""
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"name": "Ana", "id": "1"},
+            ]
+        )
+        mode = BookingMode(tools=[], llm_client=MagicMock())
+        # "Ok Ana" — "Ok" filtered by min-length, "Ana" is a known stylist
+        response = "Ok Ana te atenderá"
+
+        mode._detect_stylist_hallucination(response, ctx)
+
+        # "Ok" filtered out, "Ana" is known → no hallucination
+        assert ctx.force_stylist_correction is False
