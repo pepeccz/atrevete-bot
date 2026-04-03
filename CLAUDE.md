@@ -353,6 +353,13 @@ These rules apply across ALL components:
 
 ---
 
+## Deploy
+
+The testing deploy of this project is by SSH server by *pepe@server* in the folder */home/pepe/Proyectos/atrevete-bot* by **docker compose**
+
+YOU CAN'T RUN THIS PROJECT IN OTHER MACHINES, just in the up said
+---
+
 ## Resources
 
 - **[CLAUDE.md](CLAUDE.md)** — Comprehensive development guide (most up-to-date)
