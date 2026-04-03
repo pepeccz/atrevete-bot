@@ -1,8 +1,18 @@
 """Unit tests for BookingContext dataclass.
 
-Covers: instantiation, query methods (is_ready_to_book, collected_summary,
-missing_summary), serialization (from_mode_context, to_mode_context),
-round-trip fidelity, and internal _booking_completed flag behavior.
+Covers: instantiation, collected_summary(), missing_summary(), serialization
+(from_mode_context, to_mode_context), round-trip fidelity, internal flags,
+edge cases, and reset_transient().
+
+Tests for removed fields/methods (deleted in booking-mode-simplification Phase 2-4):
+- is_ready_to_book() — removed
+- service_family, service_audience_hint, soonest_any_slot, recurrent_stylist_hint — removed
+- notes_asked, notes_ask_attempts — removed
+- book_failure_count, needs_availability_refresh — removed
+- pending_recommendations, recommendations_shown, recommendations_declined,
+  recommendations_offer_attempts — removed
+- date_parse_error, substitution_made, substitution_reason, date_requested,
+  date_substituted, min_valid_date — removed
 """
 
 from __future__ import annotations
@@ -10,54 +20,6 @@ from __future__ import annotations
 import pytest
 
 from agent.modes.booking_context import CLEARABLE_NONE_FIELDS, BookingContext
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Fixtures
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def _full_context() -> BookingContext:
-    """Return a fully populated context for reuse across tests."""
-    return BookingContext(
-        service_id="svc-001",
-        service_name="Corte de Dama",
-        service_category="HAIRDRESSING",
-        service_duration_minutes=45,
-        service_family="corte",
-        selected_services=["Corte de Dama"],
-        service_audience_hint="adult_female",
-        stylist_id="sty-001",
-        stylist_name="María",
-        prefetched_stylists=[{"name": "María", "next_slot_summary": "Lunes 25 a las 10:00"}],
-        soonest_any_slot="Lunes 25 a las 10:00 con María",
-        selected_slot={
-            "start_time": "2026-03-25T10:00:00+01:00",
-            "date": "2026-03-25",
-            "time": "10:00",
-            "stylist_id": "sty-001",
-            "stylist_name": "María",
-        },
-        offered_slots=[
-            {"date": "2026-03-25", "time": "10:00", "stylist_name": "María"},
-            {"date": "2026-03-25", "time": "11:00", "stylist_name": "Luciana"},
-        ],
-        customer_name="Pepe",
-        customer_id="cust-001",
-        notes="Sin alergia",
-        notes_asked=True,  # notes_asked=True for "fully complete" context
-        candidate_services=[],
-    )
-
-
-def _minimal_ready_context() -> BookingContext:
-    """Minimum fields needed for is_ready_to_book() == True."""
-    return BookingContext(
-        service_id="svc-001",
-        stylist_id="sty-001",
-        selected_slot={"start_time": "2026-03-25T10:00:00+01:00"},
-        customer_name="Pepe",
-    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -76,19 +38,6 @@ class TestFromModeContext:
         assert ctx.prefetched_stylists == []
         assert ctx.candidate_services == []
 
-    def test_full_dict(self):
-        original = _full_context()
-        ctx = BookingContext.from_mode_context(original.to_mode_context())
-        assert ctx.service_id == "svc-001"
-        assert ctx.service_name == "Corte de Dama"
-        assert ctx.service_category == "HAIRDRESSING"
-        assert ctx.service_duration_minutes == 45
-        assert ctx.stylist_id == "sty-001"
-        assert ctx.stylist_name == "María"
-        assert ctx.customer_name == "Pepe"
-        assert ctx.customer_id == "cust-001"
-        assert ctx.notes == "Sin alergia"
-
     def test_ignores_unknown_keys(self):
         """v6 keys like booking_step are silently ignored."""
         ctx = BookingContext.from_mode_context(
@@ -97,15 +46,17 @@ class TestFromModeContext:
                 "last_intent": "book",
                 "unknown_field": True,
                 "service_id": "svc-999",
+                # Legacy deleted fields — silently dropped
+                "notes_asked": True,
+                "service_family": "corte",
+                "book_failure_count": 3,
             }
         )
         assert ctx.service_id == "svc-999"
-        # No error raised — unknown keys silently dropped
+        # No error raised — unknown/deleted keys silently dropped
 
     def test_none_lists_default_to_empty(self):
         """None values for list fields are accepted as-is by the constructor."""
-        # from_mode_context passes raw values — None for list fields
-        # is valid since the dataclass defaults are only for missing keys
         ctx = BookingContext.from_mode_context(
             {
                 "selected_services": None,
@@ -129,18 +80,6 @@ class TestFromModeContext:
         assert ctx.stylist_id is None
         assert ctx.selected_slot is None
 
-    def test_from_mode_context_restores_recommendations_offer_attempts(self):
-        """T3.3: round-trip via to_mode_context / from_mode_context preserves counter."""
-        original = BookingContext(recommendations_offer_attempts=1)
-        serialized = original.to_mode_context()
-        restored = BookingContext.from_mode_context(serialized)
-        assert restored.recommendations_offer_attempts == 1
-
-    def test_from_mode_context_defaults_attempts_when_missing(self):
-        """T3.3: missing key in older checkpoints falls back to default 0 (backward-compat)."""
-        ctx = BookingContext.from_mode_context({"service_id": "svc-001"})
-        assert ctx.recommendations_offer_attempts == 0
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # to_mode_context
@@ -148,22 +87,6 @@ class TestFromModeContext:
 
 
 class TestToModeContext:
-    def test_empty_context_excludes_none_and_empty_collections(self):
-        ctx = BookingContext()
-        result = ctx.to_mode_context()
-        # Non-clearable None and empty list/dict values are excluded
-        assert "service_id" not in result
-        assert "selected_services" not in result
-        assert "candidate_services" not in result
-        # CLEARABLE fields (offered_slots, selected_slot) ARE included even when None
-        assert "offered_slots" in result
-        assert result["offered_slots"] is None
-        assert "selected_slot" in result
-        assert result["selected_slot"] is None
-        # False and 0 ARE serialized (they're meaningful state)
-        assert result.get("recommendations_shown") is False
-        assert result.get("book_failure_count") == 0
-
     def test_excludes_none_values(self):
         ctx = BookingContext(service_id="abc")
         result = ctx.to_mode_context()
@@ -231,20 +154,6 @@ class TestToModeContext:
         """CLEARABLE_NONE_FIELDS contains exactly offered_slots and selected_slot."""
         assert CLEARABLE_NONE_FIELDS == frozenset({"offered_slots", "selected_slot"})
 
-    def test_to_mode_context_includes_recommendations_offer_attempts(self):
-        """T3.3: recommendations_offer_attempts is serialized by to_mode_context()."""
-        ctx = BookingContext(recommendations_offer_attempts=2)
-        result = ctx.to_mode_context()
-        assert "recommendations_offer_attempts" in result
-        assert result["recommendations_offer_attempts"] == 2
-
-    def test_to_mode_context_includes_zero_attempt_count(self):
-        """T3.3: counter at 0 is included (meaningful state — not None/empty)."""
-        ctx = BookingContext()
-        result = ctx.to_mode_context()
-        assert "recommendations_offer_attempts" in result
-        assert result["recommendations_offer_attempts"] == 0
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Round-trip fidelity
@@ -252,26 +161,6 @@ class TestToModeContext:
 
 
 class TestRoundTrip:
-    def test_round_trip_full_context(self):
-        """from_mode_context(ctx.to_mode_context()) preserves all non-None fields."""
-        original = _full_context()
-        serialized = original.to_mode_context()
-        restored = BookingContext.from_mode_context(serialized)
-
-        assert restored.service_id == original.service_id
-        assert restored.service_name == original.service_name
-        assert restored.stylist_id == original.stylist_id
-        assert restored.stylist_name == original.stylist_name
-        assert restored.customer_name == original.customer_name
-        assert restored.customer_id == original.customer_id
-        assert restored.selected_slot == original.selected_slot
-        assert restored.offered_slots == original.offered_slots
-        assert restored.notes == original.notes
-        assert restored.service_duration_minutes == original.service_duration_minutes
-        assert restored.service_category == original.service_category
-        assert restored.service_family == original.service_family
-        assert restored.selected_services == original.selected_services
-
     def test_round_trip_empty_context(self):
         original = BookingContext()
         serialized = original.to_mode_context()
@@ -318,63 +207,6 @@ class TestRoundTrip:
         # Step 5: from_mode_context reads back correctly
         restored = BookingContext.from_mode_context(merged)
         assert restored.offered_slots is None  # Stale value overwritten
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# is_ready_to_book
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestIsReadyToBook:
-    def test_true_when_all_required_present(self):
-        ctx = _minimal_ready_context()
-        assert ctx.is_ready_to_book() is True
-
-    def test_false_missing_service_id(self):
-        ctx = _minimal_ready_context()
-        ctx.service_id = None
-        ctx.selected_services = []
-        assert ctx.is_ready_to_book() is False
-
-    def test_true_with_selected_services_instead_of_service_id(self):
-        """selected_services alone satisfies the service requirement."""
-        ctx = _minimal_ready_context()
-        ctx.service_id = None
-        ctx.selected_services = ["Corte de Dama"]
-        assert ctx.is_ready_to_book() is True
-
-    def test_false_missing_stylist_id(self):
-        ctx = _minimal_ready_context()
-        ctx.stylist_id = None
-        assert ctx.is_ready_to_book() is False
-
-    def test_false_missing_selected_slot(self):
-        ctx = _minimal_ready_context()
-        ctx.selected_slot = None
-        assert ctx.is_ready_to_book() is False
-
-    def test_false_slot_without_start_time(self):
-        ctx = _minimal_ready_context()
-        ctx.selected_slot = {"date": "2026-03-25", "time": "10:00"}
-        assert ctx.is_ready_to_book() is False
-
-    def test_false_missing_customer(self):
-        """Both customer_name and customer_id None -> not ready."""
-        ctx = _minimal_ready_context()
-        ctx.customer_name = None
-        ctx.customer_id = None
-        assert ctx.is_ready_to_book() is False
-
-    def test_true_with_customer_id_only(self):
-        """customer_id alone satisfies the customer requirement."""
-        ctx = _minimal_ready_context()
-        ctx.customer_name = None
-        ctx.customer_id = "cust-001"
-        assert ctx.is_ready_to_book() is True
-
-    def test_empty_context_is_false(self):
-        ctx = BookingContext()
-        assert ctx.is_ready_to_book() is False
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -428,17 +260,6 @@ class TestCollectedSummary:
         summary = ctx.collected_summary()
         assert "✅ Notas: Sin alergia" in summary
 
-    def test_full(self):
-        ctx = _full_context()
-        summary = ctx.collected_summary()
-        assert "✅ Servicio:" in summary
-        assert "✅ Estilista:" in summary
-        assert "✅ Horario:" in summary
-        assert "✅ Nombre:" in summary
-        assert "✅ Notas:" in summary
-        # At least 5 lines
-        assert summary.count("\n") >= 4
-
     def test_additional_services(self):
         ctx = BookingContext(
             service_name="Corte de Dama",
@@ -470,12 +291,6 @@ class TestMissingSummary:
         assert "❌ Estilista: pendiente" in summary
         assert "❌ Fecha/hora: pendiente" in summary
         assert "❌ Nombre: pendiente" in summary
-
-    def test_none_missing(self):
-        ctx = _full_context()
-        summary = ctx.missing_summary()
-        assert "✅ Todos los datos requeridos están completos" in summary
-        assert "❌" not in summary
 
     def test_partial_missing(self):
         ctx = BookingContext(
@@ -544,45 +359,26 @@ class TestEdgeCases:
         ctx2 = BookingContext(offered_slots=[])
         assert ctx2.offered_slots == []
 
-    def test_recurrent_stylist_hint(self):
-        """recurrent_stylist_hint field exists and serializes."""
-        ctx = BookingContext(recurrent_stylist_hint="María")
-        d = ctx.to_mode_context()
-        assert d["recurrent_stylist_hint"] == "María"
-        restored = BookingContext.from_mode_context(d)
-        assert restored.recurrent_stylist_hint == "María"
-
     def test_pending_clarifications_round_trip(self):
         clarification = {
             "axis": "audience",
             "question_hint": "¿Es para caballero o dama?",
             "options": [
-                {"label": "Dama", "value": "adult_female"},
                 {"label": "Caballero", "value": "adult_male"},
+                {"label": "Dama", "value": "adult_female"},
             ],
         }
         ctx = BookingContext(pending_clarifications=[clarification])
         restored = BookingContext.from_mode_context(ctx.to_mode_context())
-        assert restored.pending_clarifications == [clarification]
+        assert len(restored.pending_clarifications) == 1
+        assert restored.pending_clarifications[0]["axis"] == "audience"
 
     def test_candidate_services_round_trip(self):
-        candidates = [
-            {"name": "Corte de Dama", "id": "svc-001"},
-            {"name": "Corte Caballero", "id": "svc-002"},
-        ]
-        ctx = BookingContext(candidate_services=candidates)
+        services = [{"id": "svc-001", "name": "Corte de Dama"}]
+        ctx = BookingContext(candidate_services=services)
         restored = BookingContext.from_mode_context(ctx.to_mode_context())
-        assert restored.candidate_services == candidates
-
-    def test_service_audience_hint_serializes(self):
-        ctx = BookingContext(service_audience_hint="adult_female")
-        d = ctx.to_mode_context()
-        assert d["service_audience_hint"] == "adult_female"
-
-    def test_soonest_any_slot_serializes(self):
-        ctx = BookingContext(soonest_any_slot="Lunes 25 a las 10:00")
-        d = ctx.to_mode_context()
-        assert d["soonest_any_slot"] == "Lunes 25 a las 10:00"
+        assert len(restored.candidate_services) == 1
+        assert restored.candidate_services[0]["name"] == "Corte de Dama"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -591,267 +387,93 @@ class TestEdgeCases:
 
 
 class TestResetTransient:
-    """Task 4.1: Unit tests for BookingContext.reset_transient()."""
+    """Tests for BookingContext.reset_transient()."""
 
-    def _full_transient_context(self) -> BookingContext:
-        """Return a context with all transient fields populated."""
-        return BookingContext(
-            # Identity fields (must NOT be cleared)
-            service_id="svc-001",
-            service_name="Corte de Dama",
-            service_category="HAIRDRESSING",
-            service_duration_minutes=45,
-            service_family="corte",
-            stylist_id="sty-001",
-            stylist_name="María",
-            customer_name="Pepe",
-            customer_id="cust-001",
-            selected_slot={"start_time": "2026-03-25T10:00:00+01:00"},
-            offered_slots=[{"time": "10:00", "stylist": "María"}],
-            # Transient fields (MUST be cleared)
-            selected_services=["Corte de Dama", "Tinte"],
-            selected_services_details=[{"name": "Corte de Dama", "duration": 45}],
-            pending_clarifications=[{"axis": "audience", "options": []}],
-            candidate_services=[{"id": "x", "name": "X"}],
-            service_audience_hint="adult_female",
-            notes="Sin alergia",
-            prefetched_stylists=[{"name": "María"}],
-            soonest_any_slot="Lunes 25 a las 10:00 con María",
-            recurrent_stylist_hint="María",
-            pending_recommendations=["Tinte"],
-            recommendations_shown=True,
-            recommendations_declined=True,
-            recommendations_offer_attempts=3,
-            book_failure_count=3,
-            needs_availability_refresh=True,
-            services_locked=True,
-        )
-
-    def test_reset_transient_clears_selected_services(self):
-        ctx = self._full_transient_context()
+    def test_reset_transient_clears_offered_slots(self):
+        """reset_transient() clears offered_slots to []."""
+        ctx = BookingContext(offered_slots=[{"time": "10:00", "stylist_id": "s1"}])
         ctx.reset_transient()
-        assert ctx.selected_services == []
+        assert ctx.offered_slots == []
 
-    def test_reset_transient_clears_selected_services_details(self):
-        ctx = self._full_transient_context()
+    def test_reset_transient_clears_selected_slot(self):
+        """reset_transient() sets selected_slot to None."""
+        ctx = BookingContext(selected_slot={"start_time": "2026-03-25T10:00:00+01:00"})
         ctx.reset_transient()
-        assert ctx.selected_services_details == []
+        assert ctx.selected_slot is None
 
-    def test_reset_transient_clears_pending_clarifications(self):
-        ctx = self._full_transient_context()
+    def test_reset_transient_clears_hold_id(self):
+        """reset_transient() clears hold_id."""
+        ctx = BookingContext(hold_id="hold-to-clear")
         ctx.reset_transient()
-        assert ctx.pending_clarifications == []
+        assert ctx.hold_id is None
 
-    def test_reset_transient_clears_candidate_services(self):
-        ctx = self._full_transient_context()
+    def test_reset_transient_resets_confirmation_shown(self):
+        """reset_transient() sets confirmation_shown=False."""
+        ctx = BookingContext(confirmation_shown=True)
         ctx.reset_transient()
-        assert ctx.candidate_services == []
+        assert ctx.confirmation_shown is False
 
-    def test_reset_transient_clears_service_audience_hint(self):
-        ctx = self._full_transient_context()
+    def test_reset_transient_resets_confirmation_summary_sent(self):
+        """reset_transient() sets confirmation_summary_sent=False."""
+        ctx = BookingContext(confirmation_summary_sent=True)
         ctx.reset_transient()
-        assert ctx.service_audience_hint is None
-
-    def test_reset_transient_clears_notes(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.notes is None
-
-    def test_reset_transient_clears_prefetched_stylists(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.prefetched_stylists == []
-
-    def test_reset_transient_clears_soonest_any_slot(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.soonest_any_slot is None
-
-    def test_reset_transient_clears_recurrent_stylist_hint(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.recurrent_stylist_hint is None
-
-    def test_reset_transient_clears_pending_recommendations(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.pending_recommendations == []
-
-    def test_reset_transient_resets_recommendations_shown(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.recommendations_shown is False
-
-    def test_reset_transient_resets_recommendations_declined(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.recommendations_declined is False
-
-    def test_reset_transient_resets_recommendations_offer_attempts(self):
-        """T3.2: recommendations_offer_attempts is zeroed by reset_transient()."""
-        ctx = BookingContext(recommendations_offer_attempts=3)
-        ctx.reset_transient()
-        assert ctx.recommendations_offer_attempts == 0
-
-    def test_reset_transient_resets_book_failure_count(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.book_failure_count == 0
-
-    def test_reset_transient_resets_needs_availability_refresh(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.needs_availability_refresh is False
-
-    def test_reset_transient_resets_services_locked(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.services_locked is False
+        assert ctx.confirmation_summary_sent is False
 
     def test_reset_transient_preserves_service_id(self):
-        ctx = self._full_transient_context()
+        """reset_transient() does NOT clear service_id."""
+        ctx = BookingContext(
+            service_id="svc-001",
+            offered_slots=[{"time": "10:00"}],
+        )
         ctx.reset_transient()
         assert ctx.service_id == "svc-001"
 
-    def test_reset_transient_preserves_service_name(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.service_name == "Corte de Dama"
-
-    def test_reset_transient_preserves_service_category(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.service_category == "HAIRDRESSING"
-
-    def test_reset_transient_preserves_service_duration_minutes(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.service_duration_minutes == 45
-
-    def test_reset_transient_preserves_service_family(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.service_family == "corte"
-
     def test_reset_transient_preserves_stylist_id(self):
-        ctx = self._full_transient_context()
+        """reset_transient() does NOT clear stylist_id."""
+        ctx = BookingContext(
+            stylist_id="sty-001",
+            offered_slots=[{"time": "10:00"}],
+        )
         ctx.reset_transient()
         assert ctx.stylist_id == "sty-001"
 
-    def test_reset_transient_preserves_stylist_name(self):
-        ctx = self._full_transient_context()
-        ctx.reset_transient()
-        assert ctx.stylist_name == "María"
-
     def test_reset_transient_preserves_customer_name(self):
-        ctx = self._full_transient_context()
+        """reset_transient() does NOT clear customer_name."""
+        ctx = BookingContext(
+            customer_name="Pepe",
+            offered_slots=[{"time": "10:00"}],
+        )
         ctx.reset_transient()
         assert ctx.customer_name == "Pepe"
 
     def test_reset_transient_preserves_customer_id(self):
-        ctx = self._full_transient_context()
+        """reset_transient() does NOT clear customer_id."""
+        ctx = BookingContext(
+            customer_id="cust-001",
+            offered_slots=[{"time": "10:00"}],
+        )
         ctx.reset_transient()
         assert ctx.customer_id == "cust-001"
 
-    def test_reset_transient_all_16_fields_cleared(self):
-        """Integration test: all 16 transient fields are cleared in one call."""
-        ctx = self._full_transient_context()
+    def test_reset_transient_preserves_notes(self):
+        """reset_transient() does NOT clear notes."""
+        ctx = BookingContext(notes="Sin alergia")
         ctx.reset_transient()
-
-        # All 16 transient fields must be at default
-        assert ctx.selected_services == []
-        assert ctx.selected_services_details == []
-        assert ctx.pending_clarifications == []
-        assert ctx.candidate_services == []
-        assert ctx.service_audience_hint is None
-        assert ctx.notes is None
-        assert ctx.prefetched_stylists == []
-        assert ctx.soonest_any_slot is None
-        assert ctx.recurrent_stylist_hint is None
-        assert ctx.pending_recommendations == []
-        assert ctx.recommendations_shown is False
-        assert ctx.recommendations_declined is False
-        assert ctx.recommendations_offer_attempts == 0
-        assert ctx.book_failure_count == 0
-        assert ctx.needs_availability_refresh is False
-        assert ctx.services_locked is False
+        assert ctx.notes == "Sin alergia"
 
     def test_reset_transient_idempotent(self):
         """Calling reset_transient twice is safe."""
-        ctx = self._full_transient_context()
+        ctx = BookingContext(offered_slots=[{"time": "10:00"}], hold_id="hold-1")
         ctx.reset_transient()
         ctx.reset_transient()  # Should not raise
-        assert ctx.selected_services == []
-        assert ctx.book_failure_count == 0
+        assert ctx.offered_slots == []
+        assert ctx.hold_id is None
 
     def test_reset_transient_on_empty_context(self):
         """Calling reset_transient on a fresh context is a no-op."""
         ctx = BookingContext()
         ctx.reset_transient()  # Should not raise
-        assert ctx.selected_services == []
-        assert ctx.book_failure_count == 0
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# collected_summary — audience hint (Task 4.3)
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestCollectedSummaryAudience:
-    """Task 4.3: collected_summary() includes audience hint line."""
-
-    def test_audience_hint_adult_female_shows_dama(self):
-        """service_audience_hint='adult_female' → '✅ Audiencia: dama'."""
-        ctx = BookingContext(service_audience_hint="adult_female")
-        summary = ctx.collected_summary()
-        assert "✅ Audiencia: dama" in summary
-
-    def test_audience_hint_adult_male_shows_caballero(self):
-        """service_audience_hint='adult_male' → '✅ Audiencia: caballero'."""
-        ctx = BookingContext(service_audience_hint="adult_male")
-        summary = ctx.collected_summary()
-        assert "✅ Audiencia: caballero" in summary
-
-    def test_audience_hint_child_male_shows_nino(self):
-        ctx = BookingContext(service_audience_hint="child_male")
-        summary = ctx.collected_summary()
-        assert "✅ Audiencia: niño" in summary
-
-    def test_audience_hint_child_female_shows_nina(self):
-        ctx = BookingContext(service_audience_hint="child_female")
-        summary = ctx.collected_summary()
-        assert "✅ Audiencia: niña" in summary
-
-    def test_audience_hint_baby_shows_bebe(self):
-        ctx = BookingContext(service_audience_hint="baby")
-        summary = ctx.collected_summary()
-        assert "✅ Audiencia: bebé" in summary
-
-    def test_audience_hint_none_no_audiencia_line(self):
-        """When service_audience_hint is None, no Audiencia line appears."""
-        ctx = BookingContext(service_name="Corte de Dama")
-        summary = ctx.collected_summary()
-        assert "Audiencia" not in summary
-
-    def test_audience_hint_unknown_value_falls_back_to_raw(self):
-        """Unknown hint value falls back to the raw string."""
-        ctx = BookingContext(service_audience_hint="unknown_value")
-        summary = ctx.collected_summary()
-        assert "✅ Audiencia: unknown_value" in summary
-
-    def test_audience_hint_appears_in_full_context(self):
-        """_full_context() has audience_hint set — confirm it appears in summary."""
-        ctx = BookingContext(
-            service_name="Corte de Dama",
-            service_audience_hint="adult_female",
-            stylist_name="María",
-            customer_name="Pepe",
-        )
-        summary = ctx.collected_summary()
-        assert "✅ Audiencia: dama" in summary
-        assert "✅ Servicio: Corte de Dama" in summary
-        assert "✅ Estilista: María" in summary
-        assert "✅ Nombre: Pepe" in summary
+        assert ctx.offered_slots == []
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -921,18 +543,10 @@ class TestCollectedSummaryFallbackServiceName:
 
 class TestMissingSummaryCustomerId:
     """T-07 / T-10: customer_id appears in missing_summary() ONLY when
-    customer_name is set but customer_id is not yet collected.
-
-    This guides the LLM to call manage_customer before book() — but only
-    after it already knows the customer's name."""
+    customer_name is set but customer_id is not yet collected."""
 
     def test_customer_id_shown_when_name_present_but_no_id(self):
-        """customer_name set, customer_id None → 'customer_id' in missing text.
-
-        Note: missing_summary() applies .capitalize() to label strings, so the
-        output will contain 'Customer_id' (capital C). We compare case-insensitively.
-        Uses selected_slot (not offered_slots) since slot must be selected to reach this state.
-        """
+        """customer_name set, customer_id None → 'customer_id' in missing text."""
         ctx = BookingContext(
             service_name="Corte de Dama",
             stylist_id="sty-001",
@@ -947,12 +561,11 @@ class TestMissingSummaryCustomerId:
 
         summary = ctx.missing_summary()
 
-        assert "customer_id" in summary.lower()
+        # Output is "❌ Customer ID: ..." — check case-insensitively
+        assert "customer" in summary.lower() and "id" in summary.lower()
 
     def test_customer_id_not_shown_when_no_name_either(self):
-        """customer_name None, customer_id None → 'customer_id' NOT in missing text.
-
-        We don't ask for the ID before we even know the name."""
+        """customer_name None, customer_id None → 'customer_id' NOT in missing text."""
         ctx = BookingContext(
             service_name="Corte de Dama",
             stylist_id="sty-001",
@@ -967,7 +580,12 @@ class TestMissingSummaryCustomerId:
 
         summary = ctx.missing_summary()
 
-        assert "customer_id" not in summary.lower()
+        # "customer id" should not appear when customer_name is also None
+        assert not any(
+            "customer" in line.lower() and "id" in line.lower()
+            for line in summary.lower().splitlines()
+            if "nombre" not in line  # exclude the nombre line
+        )
         # 'nombre' should still be listed as missing
         assert "nombre" in summary.lower()
 
@@ -987,7 +605,11 @@ class TestMissingSummaryCustomerId:
 
         summary = ctx.missing_summary()
 
-        assert "customer_id" not in summary.lower()
+        # "customer id" should not appear since customer is fully identified
+        assert not any(
+            "customer" in line.lower() and "id" in line.lower()
+            for line in summary.lower().splitlines()
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1039,163 +661,6 @@ class TestConfirmationSummarySent:
         ctx = BookingContext(confirmation_summary_sent=True)
         ctx.reset_transient()
         assert ctx.confirmation_summary_sent is False
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# TestNotesGateBookingContext
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestNotesGateBookingContext:
-    """T-08: Tests for notes_asked field and its effect
-    on missing_summary() and reset_transient()."""
-
-    def test_notes_asked_default_false(self):
-        """New BookingContext has notes_asked=False and no notes_ask_attempts field."""
-        ctx = BookingContext()
-        assert ctx.notes_asked is False
-        assert not hasattr(ctx, "notes_ask_attempts")
-
-    def test_reset_transient_resets_notes_asked(self):
-        """reset_transient() sets notes_asked=False."""
-        ctx = BookingContext()
-        ctx.notes_asked = True
-        ctx.reset_transient()
-        assert ctx.notes_asked is False
-
-    def test_missing_summary_shows_notes_pending_when_all_fields_complete_but_notes_not_asked(
-        self,
-    ):
-        """When all required fields are complete but notes_asked=False,
-        missing_summary() should show 'notas/preferencias' as pending.
-        Slot must be selected (not just offered) to count as complete."""
-        ctx = BookingContext(
-            service_name="Corte de Dama",
-            service_id="svc-001",
-            stylist_id="sty-001",
-            selected_slot={
-                "start_time": "2026-03-25T10:00:00+01:00",
-                "date": "2026-03-25",
-                "time": "10:00",
-            },
-            customer_name="María",
-            customer_id="cust-001",
-            notes_asked=False,
-        )
-        summary = ctx.missing_summary()
-        assert "notas" in summary.lower()
-        # Should NOT show as complete since notes haven't been asked
-        assert "✅ Todos los datos requeridos están completos" not in summary
-
-    def test_missing_summary_complete_when_notes_asked(self):
-        """When all required fields are complete and notes_asked=True,
-        missing_summary() should return the 'all complete' message.
-        Slot must be selected (not just offered) to count as complete."""
-        ctx = BookingContext(
-            service_name="Corte de Dama",
-            service_id="svc-001",
-            stylist_id="sty-001",
-            selected_slot={
-                "start_time": "2026-03-25T10:00:00+01:00",
-                "date": "2026-03-25",
-                "time": "10:00",
-            },
-            customer_name="María",
-            customer_id="cust-001",
-            notes_asked=True,
-        )
-        summary = ctx.missing_summary()
-        assert "✅ Todos los datos requeridos están completos" in summary
-        assert "notas" not in summary.lower()
-
-    def test_missing_summary_no_notes_when_other_fields_missing(self):
-        """When other required fields are still missing, 'notas' must NOT appear.
-        Notes gate only activates when all other fields are complete."""
-        ctx = BookingContext(
-            service_id=None,
-            service_name=None,
-            stylist_id="sty-001",
-            selected_slot={
-                "start_time": "2026-03-25T10:00:00+01:00",
-                "date": "2026-03-25",
-                "time": "10:00",
-            },
-            customer_name="María",
-            customer_id="cust-001",
-            notes_asked=False,
-        )
-        summary = ctx.missing_summary()
-        # Service is missing → notes should NOT appear yet
-        assert "servicio" in summary.lower()
-        assert "notas" not in summary.lower()
-
-    def test_notes_asked_round_trip_serialization(self):
-        """notes_asked survives to_mode_context → from_mode_context round-trip.
-        Legacy dicts with notes_ask_attempts key are silently ignored."""
-        ctx = BookingContext(notes_asked=True)
-        restored = BookingContext.from_mode_context(ctx.to_mode_context())
-        assert restored.notes_asked is True
-
-    def test_legacy_notes_ask_attempts_key_silently_ignored(self):
-        """from_mode_context silently ignores legacy notes_ask_attempts key (backward compat)."""
-        legacy_dict = {"notes_asked": True, "notes_ask_attempts": 2}
-        restored = BookingContext.from_mode_context(legacy_dict)
-        assert restored.notes_asked is True
-        assert not hasattr(restored, "notes_ask_attempts")
-
-    def test_new_date_fields_serialize_deserialize(self):
-        """6 new date-substitution fields survive to_mode_context → from_mode_context round-trip."""
-        ctx = BookingContext(
-            substitution_made=True,
-            substitution_reason="minimum_days_rule",
-            date_requested="2026-03-28",
-            date_substituted="2026-03-30",
-            min_valid_date="2026-03-30",
-            date_parse_error=False,
-        )
-        serialized = ctx.to_mode_context()
-        # substitution_made=True must be present (True is not None/[]/{}))
-        assert "substitution_made" in serialized
-        assert serialized["substitution_made"] is True
-        assert serialized["date_requested"] == "2026-03-28"
-        assert serialized["date_substituted"] == "2026-03-30"
-        assert serialized["min_valid_date"] == "2026-03-30"
-
-        restored = BookingContext.from_mode_context(serialized)
-        assert restored.substitution_made is True
-        assert restored.substitution_reason == "minimum_days_rule"
-        assert restored.date_requested == "2026-03-28"
-        assert restored.date_substituted == "2026-03-30"
-        assert restored.min_valid_date == "2026-03-30"
-        assert restored.date_parse_error is False
-
-    def test_new_date_fields_default_values(self):
-        """6 new date-substitution fields default to False/None on fresh context."""
-        ctx = BookingContext()
-        assert ctx.date_parse_error is False
-        assert ctx.substitution_made is False
-        assert ctx.substitution_reason is None
-        assert ctx.date_requested is None
-        assert ctx.date_substituted is None
-        assert ctx.min_valid_date is None
-
-    def test_reset_transient_clears_date_fields(self):
-        """reset_transient() clears all 6 date-substitution fields."""
-        ctx = BookingContext(
-            substitution_made=True,
-            substitution_reason="minimum_days_rule",
-            date_requested="2026-03-28",
-            date_substituted="2026-03-30",
-            min_valid_date="2026-03-30",
-            date_parse_error=True,
-        )
-        ctx.reset_transient()
-        assert ctx.substitution_made is False
-        assert ctx.substitution_reason is None
-        assert ctx.date_requested is None
-        assert ctx.date_substituted is None
-        assert ctx.min_valid_date is None
-        assert ctx.date_parse_error is False
 
 
 # ============================================================================

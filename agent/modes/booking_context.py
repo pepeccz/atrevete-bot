@@ -1,17 +1,35 @@
 """
-BookingContext — Slim data-bag for the LLM-driven booking flow.
+BookingContext — Minimal data-bag for the LLM-driven booking flow.
 
-Replaces the rigid BookingDraftContext + BookingSubstep enum from v6.
-Every field maps 1:1 to either a BookSchema requirement or a prompt
-rendering need. There is NO step enum, NO transition table.
+20 fields only — every field maps 1:1 to either a BookSchema requirement
+or a prompt rendering need. No hint fields, no counters, no force-flags.
+The LLM reads conversation history and handles extraction itself.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class InterpretationReason(StrEnum):
+    """Canonical semantic reasons produced while interpreting availability results.
+
+    The values are shared by booking mode and availability tools so semantic
+    payloads stay stable across prompt rendering, transition decisions, and tests.
+    Kept for backward compat — availability_tools.py imports this enum.
+    """
+
+    MINIMUM_DAYS_RULE = "minimum_days_rule"
+    NO_AVAILABILITY = "no_availability"
+    STYLIST_UNAVAILABLE = "stylist_unavailable"
+    SUCCESS = "success"
+
 
 CLEARABLE_NONE_FIELDS: frozenset[str] = frozenset({"offered_slots", "selected_slot"})
 """Fields that must be serialized even when their value is None.
@@ -23,294 +41,70 @@ SLOT_TAKEN clears them.
 """
 
 
-class InterpretationReason(StrEnum):
-    """Canonical semantic reasons produced while interpreting availability results.
-
-    The values are shared by booking mode and availability tools so semantic
-    payloads stay stable across prompt rendering, transition decisions, and tests.
-    """
-
-    MINIMUM_DAYS_RULE = "minimum_days_rule"
-    NO_AVAILABILITY = "no_availability"
-    STYLIST_UNAVAILABLE = "stylist_unavailable"
-    SUCCESS = "success"
-
-
 @dataclass
 class BookingContext:
-    """Collected booking data for the LLM-driven booking flow.
+    """Minimal booking state — only what cannot be derived from tool results or conversation."""
 
-    Fields are organized in logical groups matching the booking workflow.
-    All fields are optional — the LLM decides what to collect next.
-    """
-
-    # ── Primary service (populated by extract_service_fields) ───────────
+    # ── Service ──────────────────────────────────────────────────────────────
     service_id: str | None = None
     service_name: str | None = None
-    service_category: str | None = None
     service_duration_minutes: int | None = None
-    service_family: str | None = None
-
-    # ── Services list (primary + add-ons, passed to book().services) ────
+    service_category: str | None = None
     selected_services: list[str] = field(default_factory=list)
-    selected_services_details: list[dict[str, Any]] = field(default_factory=list)
+    selected_services_details: list[dict] = field(default_factory=list)
+    services_locked: bool = False
+    pending_clarifications: list[dict] = field(default_factory=list)
+    candidate_services: list[dict] = field(default_factory=list)
 
-    # ── Stylist (populated by extract_stylist_fields or pre-resolver) ───
+    # ── Stylist & availability ────────────────────────────────────────────────
     stylist_id: str | None = None
     stylist_name: str | None = None
-
-    # ── Slot (populated after user confirms) ────────────────────────────
-    selected_slot: dict[str, Any] | None = None
-    last_booked_slot: dict | None = None
-
-    # ── Post-booking metadata (persists through reset_transient) ────────
-    confirmed_services: list[str] = field(default_factory=list)
-
-    # ── Offered slots (ephemeral, for prompt rendering) ─────────────────
-    offered_slots: list[dict[str, Any]] | None = None
-
-    # ── Customer (populated by extract_customer_fields or state) ────────
-    customer_name: str | None = None
-    customer_id: str | None = None
-
-    # ── HOLD-based booking (double-booking prevention) ───────────────────
-    # Populated by create_hold() after slot selection; cleared after confirm_from_hold()
-    # or when the booking flow resets. None means the legacy direct book() path is used.
+    prefetched_stylists: list[dict] = field(default_factory=list)
+    offered_slots: list[dict] | None = None
+    selected_slot: dict | None = None
     hold_id: str | None = None
 
-    # ── Optional data ───────────────────────────────────────────────────
+    # ── Customer ──────────────────────────────────────────────────────────────
+    customer_id: str | None = None
+    customer_name: str | None = None
     notes: str | None = None
 
-    # ── Disambiguation state (from search_services shapes 2 & 3) ───────
-    pending_clarifications: list[dict[str, Any]] = field(default_factory=list)
-    candidate_services: list[dict[str, Any]] = field(default_factory=list)
-
-    # ── Hints (from pre-resolvers) ──────────────────────────────────────
-    service_audience_hint: str | None = None
-    service_audience_hint_source: str | None = None  # tracks which service set the hint
-    preferred_date_hint: str | None = None  # raw date expression from user ("el viernes que viene")
-    stylist_name_hint: str | None = None  # raw stylist name from user ("con Ana")
-    notes_hint: str | None = None  # raw allergy/preference from user ("alérgica al amoniaco")
-    prefetched_stylists: list[dict[str, Any]] = field(default_factory=list)
-    soonest_any_slot: str | None = None
-    recurrent_stylist_hint: str | None = None
-
-    # ── Combo recommendations (populated by extract_service_fields) ────
-    pending_recommendations: list[str] = field(default_factory=list)
-    recommendations_shown: bool = False
-    recommendations_declined: bool = False
-    recommendations_offer_attempts: int = 0  # incremented each time block is injected
-
-    # ── Date substitution metadata (from find_next_available / check_availability) ──
-    date_parse_error: bool = False
-    substitution_made: bool = False
-    substitution_reason: str | None = None
-    date_requested: str | None = None
-    date_substituted: str | None = None
-    min_valid_date: str | None = None
-
-    # ── Failure tracking ────────────────────────────────────────────────
-    book_failure_count: int = 0
-    manage_customer_failure_count: int = 0
-    name_ask_count: int = 0
-    slots_shown_count: int = 0
-    needs_availability_refresh: bool = False
-    last_error: str | None = None
-
-    # ── Service lock (prevents overwrite during SLOT_TAKEN retry) ──────
-    services_locked: bool = False
-
-    # ── Confirmation gate (prevents book() without user confirmation) ──
+    # ── Confirmation ─────────────────────────────────────────────────────────
     confirmation_shown: bool = False
-    confirmation_summary_sent: bool = False  # F-2: set by code when summary is rendered
-    confirmation_gate_turn_count: int = 0  # observability — incremented per blocked turn
+    confirmation_summary_sent: bool = False
 
-    # ── Notes gate ─────────────────────────────────────────────────────────
-    notes_asked: bool = False
-
-    # ── Prompt injection tracking (set by _build_response when content is shown) ──
-    name_asked: bool = False  # True when name-ask content was injected into response
-    slots_presented: bool = False  # True when <offered_slots> block was shown
-    stylists_presented: bool = False  # True when <available_stylists> block was shown
-
-    # ── Upsell gate ─────────────────────────────────────────────────────────
-    upsell_gate_attempts: int = 0
-
-    # ── Tool-skip reminders (injected when LLM skips tools) ──────────────
-    force_search_services_reminder: bool = False
-    force_list_stylists_reminder: bool = False
-    force_stylist_correction: bool = False
-
-    # ── Internal (not serialized) ───────────────────────────────────────
+    # ── Internal (not serialized) ─────────────────────────────────────────────
     _booking_completed: bool = field(default=False, repr=False)
-    _addon_durations_cache: dict = field(default_factory=dict, repr=False)  # stores addon metadata
-
-    # ── Display maps (ClassVar — excluded from dataclass fields) ────────
-    _AUDIENCE_DISPLAY: ClassVar[dict[str, str]] = {
-        "adult_female": "dama",
-        "adult_male": "caballero",
-        "child_male": "niño",
-        "child_female": "niña",
-        "baby": "bebé",
-    }
 
     # ═══════════════════════════════════════════════════════════════════
     # Methods
     # ═══════════════════════════════════════════════════════════════════
 
-    def reset_transient(self) -> None:
-        """Clear all transient booking fields after a successful booking.
+    @classmethod
+    def from_mode_context(cls, data: dict[str, Any]) -> BookingContext:
+        """Tolerant hydration — silently ignores ALL unknown keys.
 
-        Call this immediately after setting _booking_completed = True so the
-        context is clean for a potential follow-up booking in the same session.
-        Fields that identify the customer (customer_name, customer_id) and
-        stylist (stylist_id, stylist_name) are intentionally preserved as they
-        are likely to be reused.
+        Critical for backward compat with existing Redis checkpoints that
+        have 49 fields from the previous BookingContext implementation.
+        Missing keys fall back to dataclass defaults.
         """
-        self.selected_services = []
-        self.selected_services_details = []
-        self.pending_clarifications = []
-        self.candidate_services = []
-        self.service_audience_hint = None
-        self.service_audience_hint_source = None
-        self.notes = None
-        self.prefetched_stylists = []
-        self.soonest_any_slot = None
-        self.recurrent_stylist_hint = None
-        self.preferred_date_hint = None
-        self.stylist_name_hint = None
-        self.notes_hint = None
-        self.pending_recommendations = []
-        self.recommendations_shown = False
-        self.recommendations_declined = False
-        self.recommendations_offer_attempts = 0
-        self.hold_id = None
-        self.book_failure_count = 0
-        self.manage_customer_failure_count = 0
-        self.name_ask_count = 0
-        self.slots_shown_count = 0
-        self.needs_availability_refresh = False
-        self.last_error = None
-        self.services_locked = False
-        self.confirmation_shown = False
-        self.confirmation_summary_sent = False
-        self.confirmation_gate_turn_count = 0
-        self.notes_asked = False
-        self.upsell_gate_attempts = 0
-        self.force_search_services_reminder = False
-        self.force_list_stylists_reminder = False
-        self.force_stylist_correction = False
-        self.name_asked = False
-        self.slots_presented = False
-        self.stylists_presented = False
-        self.date_parse_error = False
-        self.substitution_made = False
-        self.substitution_reason = None
-        self.date_requested = None
-        self.date_substituted = None
-        self.min_valid_date = None
-
-    def is_ready_to_book(self) -> bool:
-        """Check if all REQUIRED fields for book() are present."""
-        has_service = bool(self.service_id or self.selected_services)
-        has_stylist = bool(self.stylist_id)
-        has_slot = bool(self.selected_slot and self.selected_slot.get("start_time"))
-        has_customer = bool(self.customer_name or self.customer_id)
-        return has_service and has_stylist and has_slot and has_customer
-
-    def collected_summary(self) -> str:
-        """Render human-readable summary of collected data for prompt injection."""
-        lines: list[str] = []
-        # P4 fix: fallback to first selected_services entry when service_name is None
-        display_service_name = self.service_name
-        if not display_service_name and self.selected_services:
-            display_service_name = self.selected_services[0]
-        if display_service_name:
-            parts = [display_service_name]
-            if self.service_duration_minutes:
-                parts.append(f"{self.service_duration_minutes} min")
-            if self.service_category:
-                parts.append(self.service_category)
-            lines.append(f"✅ Servicio: {' — '.join(parts)}")
-        if self.selected_services and len(self.selected_services) > 1:
-            extras = [s for s in self.selected_services if s != display_service_name]
-            if extras:
-                lines.append(f"✅ Servicios adicionales: {', '.join(extras)}")
-        if self.service_audience_hint:
-            display = self._AUDIENCE_DISPLAY.get(
-                self.service_audience_hint, self.service_audience_hint
+        field_names = {f.name for f in dataclasses.fields(cls) if not f.name.startswith("_")}
+        known = {k: v for k, v in data.items() if k in field_names}
+        unknown_keys = set(data.keys()) - field_names
+        if unknown_keys:
+            logger.debug(
+                "from_mode_context: silently dropping %d unknown key(s): %s",
+                len(unknown_keys),
+                sorted(unknown_keys),
             )
-            lines.append(f"✅ Audiencia: {display}")
-        if self.stylist_name:
-            lines.append(f"✅ Estilista: {self.stylist_name}")
-        if self.selected_slot:
-            slot_date = self.selected_slot.get("date", "")
-            slot_time = self.selected_slot.get("time", "")
-            lines.append(f"✅ Horario: {slot_date} a las {slot_time}")
-        if self.customer_name:
-            lines.append(f"✅ Nombre: {self.customer_name}")
-        if self.customer_id:
-            lines.append(f"✅ Customer ID: {self.customer_id}")
-        if self.service_id:
-            lines.append(f"✅ Service ID: {self.service_id}")
-        if self.notes:
-            lines.append(f"✅ Notas: {self.notes}")
-        return "\n".join(lines) if lines else "(ningún dato recogido todavía)"
-
-    def missing_summary(self) -> str:
-        """Render human-readable summary of missing REQUIRED fields.
-
-        Slot state has three levels:
-        - selected_slot is set → data is collected, omit from missing
-        - offered_slots non-empty but no selected_slot → slots shown, waiting for user choice
-        - both empty/None → date/time not started yet
-        """
-        missing: list[str] = []
-        if not self.service_name and not self.selected_services:
-            missing.append("servicio")
-        if not self.stylist_id:
-            missing.append("estilista")
-        if self.selected_slot is not None:
-            pass  # date/time resolved — don't add to missing
-        elif self.offered_slots:
-            missing.append("⏳ Horario: ofrecido — esperando elección del cliente")
-        else:
-            missing.append("fecha/hora")
-        if not self.customer_name:
-            if self.manage_customer_failure_count >= 2 or self.name_ask_count >= 3:
-                missing.append(
-                    "nombre (⚠️ cliente no pudo proveer nombre — continuá sin nombre,"
-                    " el equipo lo registrará)"
-                )
-            else:
-                missing.append("nombre")
-        # Show customer_id as missing only when we have a name but no ID.
-        # This guides the LLM to call manage_customer before book().
-        if self.customer_name and not self.customer_id:
-            missing.append("customer_id (llamá manage_customer para obtenerlo)")
-        # Notes step: show pending only when all other required fields are complete
-        if not missing and not self.notes_asked:
-            missing.append("notas/preferencias (preguntá si tiene alguna indicación especial)")
-        if not missing:
-            return "✅ Todos los datos requeridos están completos"
-        lines: list[str] = []
-        for label in missing:
-            # Pre-formatted entries (e.g. ⏳ lines) are emitted as-is
-            if label.startswith("⏳") or label.startswith("❌") or label.startswith("✅"):
-                lines.append(label)
-            else:
-                lines.append(f"❌ {label.capitalize()}: pendiente")
-        return "\n".join(lines)
+        return cls(**known)
 
     def to_mode_context(self) -> dict[str, Any]:
-        """Serialize to dict for mode_context storage.
+        """Serialize all fields to dict. Skip None values and empty lists/dicts.
 
-        Fields in CLEARABLE_NONE_FIELDS are always included even when None, so that
-        merge_dicts can overwrite stale values already present in LangGraph state.
-        All other None/empty values are omitted to keep mode_context lean.
-
-        Note: uses dataclasses.asdict() — new fields (e.g. recommendations_offer_attempts)
-        are automatically included without code changes here.
+        Fields in CLEARABLE_NONE_FIELDS are always included even when None so
+        that merge_dicts can overwrite stale values already present in LangGraph state.
+        Boolean False and int 0 ARE serialized (they're meaningful state).
         """
         raw = dataclasses.asdict(self)
         return {
@@ -320,16 +114,104 @@ class BookingContext:
             and (k in CLEARABLE_NONE_FIELDS or (v is not None and v != [] and v != {}))
         }
 
-    @classmethod
-    def from_mode_context(cls, mode_context: dict[str, Any]) -> BookingContext:
-        """Hydrate from mode_context dict (tolerant of missing/extra keys).
+    def missing_summary(self) -> str:
+        """Returns <missing_data> XML block listing what's still needed.
 
-        Note: uses dataclasses.fields() — new fields are auto-discovered and
-        backward-compatible (missing keys fall back to the dataclass default).
+        Logic:
+        - service missing → "Servicio: pendiente"
+        - stylist missing → "Estilista: pendiente"
+        - slots missing AND stylist set → "Horario: pendiente"
+        - customer_name missing → "Nombre: pendiente"
+        - notes missing AND service/stylist/slot/name all set → "Notas: pendiente"
+        - If nothing missing → return empty string
         """
-        field_names = {f.name for f in dataclasses.fields(cls) if not f.name.startswith("_")}
-        filtered = {k: v for k, v in mode_context.items() if k in field_names}
-        return cls(**filtered)
+        missing: list[str] = []
+
+        if not self.service_name and not self.selected_services:
+            missing.append("❌ Servicio: pendiente")
+
+        if not self.stylist_id:
+            missing.append("❌ Estilista: pendiente")
+
+        if self.selected_slot is not None:
+            pass  # slot resolved — don't add to missing
+        elif self.offered_slots:
+            missing.append("⏳ Horario: ofrecido — esperando elección")
+        else:
+            missing.append("❌ Fecha/hora: pendiente")
+
+        if not self.customer_name:
+            missing.append("❌ Nombre: pendiente")
+
+        if self.customer_name and not self.customer_id:
+            missing.append("❌ Customer ID: llamá manage_customer")
+
+        # Notes step: only show when all other required fields are complete
+        everything_else_complete = not missing
+        if everything_else_complete and not self.notes:
+            missing.append("❌ Notas: preguntá si tiene preferencias")
+
+        return "\n".join(missing)
+
+    def collected_summary(self) -> str:
+        """Returns <collected_data> XML block with what's confirmed.
+
+        Only includes non-None fields. Used for prompt injection.
+        """
+        lines: list[str] = []
+
+        # Service — fallback to first selected_services entry when service_name is None
+        display_service_name = self.service_name
+        if not display_service_name and self.selected_services:
+            display_service_name = self.selected_services[0]
+
+        if display_service_name:
+            parts = [display_service_name]
+            if self.service_duration_minutes:
+                parts.append(f"{self.service_duration_minutes} min")
+            if self.service_category:
+                parts.append(self.service_category)
+            lines.append(f"✅ Servicio: {' — '.join(parts)}")
+
+        # Additional services beyond the primary
+        if self.selected_services and len(self.selected_services) > 1:
+            extras = [s for s in self.selected_services if s != display_service_name]
+            if extras:
+                lines.append(f"✅ Servicios adicionales: {', '.join(extras)}")
+
+        if self.stylist_name:
+            lines.append(f"✅ Estilista: {self.stylist_name}")
+
+        if self.selected_slot:
+            slot_date = self.selected_slot.get("date", "")
+            slot_time = self.selected_slot.get("time", "")
+            lines.append(f"✅ Horario: {slot_date} a las {slot_time}")
+
+        if self.customer_name:
+            lines.append(f"✅ Nombre: {self.customer_name}")
+
+        if self.customer_id:
+            lines.append(f"✅ Customer ID: {self.customer_id}")
+
+        if self.service_id:
+            lines.append(f"✅ Service ID: {self.service_id}")
+
+        if self.notes:
+            lines.append(f"✅ Notas: {self.notes}")
+
+        return "\n".join(lines) if lines else "(ningún dato recogido todavía)"
+
+    def reset_transient(self) -> None:
+        """Reset ephemeral booking fields after a successful booking or flow restart.
+
+        Keeps: service/stylist/customer/notes data (likely to be reused).
+        Resets: offered_slots, selected_slot, hold_id, confirmation flags.
+        """
+        self.offered_slots = []
+        self.selected_slot = None
+        self.hold_id = None
+        self.confirmation_shown = False
+        self.confirmation_summary_sent = False
 
 
 def format_service_list(services: list[str]) -> str:

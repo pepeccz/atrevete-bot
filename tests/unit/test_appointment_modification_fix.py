@@ -251,9 +251,9 @@ class TestSnapshotAndSituationalInstructions:
         import agent.tools.appointment_management_tools as amt
 
         source = inspect.getsource(amt)
-        assert (
-            '"stylist_id"' in source or "'stylist_id'" in source
-        ), "appointment_management_tools must include 'stylist_id' in snapshot dict"
+        assert '"stylist_id"' in source or "'stylist_id'" in source, (
+            "appointment_management_tools must include 'stylist_id' in snapshot dict"
+        )
 
     def test_stylist_id_sourced_from_stylist_relationship(self):
         """stylist_id must be fetched from appt.stylist.id (already loaded relationship)."""
@@ -366,116 +366,3 @@ class TestSnapshotAndSituationalInstructions:
 
         # When slots exist, the slot-list branch fires — no stylist_id hint
         assert "uuid-marta-001" not in result
-
-
-# =============================================================================
-# T-08 — FIX-4: Warmer upsell instruction framing
-# =============================================================================
-
-
-class TestUpsellInstructionWarmFraming:
-    """_build_upsell_gate_section must use warm framing and include decline option."""
-
-    def _make_booking_context_with_upsell(
-        self,
-        service_name: str = "Corte Caballero",
-        recommendations: list[str] | None = None,
-    ):
-        """Build a minimal BookingContext with pending recommendations for upsell."""
-        from agent.modes.booking_context import BookingContext
-
-        return BookingContext(
-            service_id="svc-001",
-            service_name=service_name,
-            service_category="HAIRDRESSING",
-            pending_recommendations=recommendations or ["Barba"],
-        )
-
-    def test_upsell_instruction_contains_warm_framing(self):
-        """Instruction must frame add-ons as things that 'combinan bien' with the service."""
-        from agent.modes.booking_mode import _build_upsell_gate_section
-
-        ctx = self._make_booking_context_with_upsell(
-            service_name="Corte Caballero",
-            recommendations=["Barba"],
-        )
-        addon_durations = {"Barba": 20}
-
-        result = _build_upsell_gate_section(ctx, addon_durations)
-
-        assert (
-            "combinan bien" in result
-        ), "Upsell instruction must use warm framing: 'combinan bien'"
-
-    def test_upsell_instruction_includes_decline_option(self):
-        """Instruction must give the client an explicit decline option."""
-        from agent.modes.booking_mode import _build_upsell_gate_section
-
-        ctx = self._make_booking_context_with_upsell(
-            service_name="Corte Caballero",
-            recommendations=["Barba"],
-        )
-        addon_durations = {"Barba": 20}
-
-        result = _build_upsell_gate_section(ctx, addon_durations)
-
-        assert (
-            "prefieres solo" in result or "solo el" in result
-        ), "Upsell instruction must include decline option phrasing"
-
-    def test_upsell_instruction_preserves_stop_instruction(self):
-        """The PARA aquí stop instruction must still be present."""
-        from agent.modes.booking_mode import _build_upsell_gate_section
-
-        ctx = self._make_booking_context_with_upsell(
-            service_name="Corte Caballero",
-            recommendations=["Barba"],
-        )
-        addon_durations = {"Barba": 20}
-
-        result = _build_upsell_gate_section(ctx, addon_durations)
-
-        assert "PARA aquí" in result, "Stop instruction 'PARA aquí' must be preserved"
-
-    def test_upsell_instruction_preserves_no_prices_rule(self):
-        """The no-prices rule must still be present after the rewrite."""
-        from agent.modes.booking_mode import _build_upsell_gate_section
-
-        ctx = self._make_booking_context_with_upsell(
-            service_name="Corte Caballero",
-            recommendations=["Barba"],
-        )
-        addon_durations = {"Barba": 20}
-
-        result = _build_upsell_gate_section(ctx, addon_durations)
-
-        assert (
-            "NUNCA" in result and "precio" in result.lower()
-        ), "No-prices rule must be preserved in upsell instruction"
-
-    def test_upsell_instruction_names_the_service(self):
-        """Instruction must reference the actual service name for context."""
-        from agent.modes.booking_mode import _build_upsell_gate_section
-
-        ctx = self._make_booking_context_with_upsell(
-            service_name="Tinte Completo",
-            recommendations=["Tratamiento Hidratante"],
-        )
-        addon_durations = {"Tratamiento Hidratante": 30}
-
-        result = _build_upsell_gate_section(ctx, addon_durations)
-
-        assert "Tinte Completo" in result, "Service name must appear in upsell instruction"
-
-    def test_upsell_instruction_not_mechanical_list_framing(self):
-        """Old mechanical framing ('Confirma X y ofrece los servicios complementarios') must be gone."""
-        from agent.modes.booking_mode import _build_upsell_gate_section
-
-        ctx = self._make_booking_context_with_upsell()
-        addon_durations = {"Barba": 20}
-
-        result = _build_upsell_gate_section(ctx, addon_durations)
-
-        assert (
-            "ofrece los servicios complementarios" not in result
-        ), "Old mechanical framing must be replaced with warm framing"
