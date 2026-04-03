@@ -326,6 +326,54 @@ def _resolve_general_candidate_selection(
     return None
 
 
+def _extract_booking_hints(user_message: str) -> dict[str, str | None]:
+    """Extract preferred stylist and date hints from user message.
+
+    Used when first entering BOOKING mode to capture upfront preferences
+    ("con Pilar", "el viernes") so the LLM can skip asking for them again.
+
+    Returns dict with keys: preferred_stylist_name, preferred_date_hint.
+    Both may be None. Never raises — robustness guaranteed.
+    """
+    import re
+
+    if not user_message:
+        return {"preferred_stylist_name": None, "preferred_date_hint": None}
+
+    try:
+        msg_lower = user_message.lower()
+
+        # Stylist detection — static list (ordered longest-first to avoid "ana" matching "ana maria")
+        # Use word-boundary regex to avoid matching "ana" inside "semana", "mañana", etc.
+        KNOWN_STYLISTS = ["ana maria", "ana", "marta", "victor", "pilar", "harolyn"]
+        preferred_stylist = None
+        for name in KNOWN_STYLISTS:
+            if re.search(r"\b" + re.escape(name) + r"\b", msg_lower):
+                preferred_stylist = name.title()
+                break
+
+        # Date hint — Spanish date expressions (raw phrase passed to find_next_available)
+        DATE_PATTERN = re.compile(
+            r"(?:el\s+)?(?:próxim[oa]\s+)?(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)"
+            r"|ma[nñ]ana"
+            r"|pasado\s+ma[nñ]ana"
+            r"|(?:el\s+)?\d{1,2}(?:\s+de\s+\w+)?"
+            r"|esta\s+semana"
+            r"|(?:la\s+)?semana\s+que\s+viene"
+            r"|próxim[oa]\s+semana",
+            re.IGNORECASE,
+        )
+        date_match = DATE_PATTERN.search(user_message)
+        preferred_date = date_match.group(0).strip() if date_match else None
+
+        return {
+            "preferred_stylist_name": preferred_stylist,
+            "preferred_date_hint": preferred_date,
+        }
+    except Exception:
+        return {"preferred_stylist_name": None, "preferred_date_hint": None}
+
+
 def _build_general_booking_handoff(state: ConversationState, user_message: str) -> dict[str, Any]:
     mode_context = state.get("mode_context") or {}
     handoff = mode_context.get("general_booking_handoff")
@@ -639,7 +687,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         if current_mode == "GENERAL" and not restored_booking_draft:
             general_booking_handoff = _build_general_booking_handoff(state, user_message)
 
-        booking_context = {**general_booking_handoff, **restored_booking_draft, **intent_data}
+        # Extract contextual hints from user message (preferred stylist/date mentioned upfront)
+        booking_hints = _extract_booking_hints(user_message) if user_message else {}
+        booking_context = {
+            **general_booking_handoff,
+            **booking_hints,
+            **restored_booking_draft,
+            **intent_data,
+        }
         return {
             **transition_mode(state, "BOOKING", context_update=booking_context),
             "last_node": "router",

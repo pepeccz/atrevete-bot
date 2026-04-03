@@ -288,7 +288,8 @@ class TestMissingSummary:
         ctx = BookingContext()
         summary = ctx.missing_summary()
         assert "❌ Servicio: pendiente" in summary
-        assert "❌ Estilista: pendiente" in summary
+        # Stylist is gated: only shown when service is known (R3)
+        assert "❌ Estilista: pendiente" not in summary
         assert "❌ Fecha/hora: pendiente" in summary
         # Name is gated: only shown when service+stylist+slot are all set
         assert "Nombre" not in summary
@@ -708,6 +709,45 @@ class TestConfirmationSummarySent:
         ctx = BookingContext(confirmation_summary_sent=True)
         ctx.reset_transient()
         assert ctx.confirmation_summary_sent is False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TestBookingContextHints — preferred_stylist_name / preferred_date_hint
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestBookingContextHints:
+    """Tests for preferred_stylist_name/preferred_date_hint fields and display logic."""
+
+    def test_stylist_hidden_when_no_service(self):
+        """S1: empty ctx → 'Estilista' NOT in missing_summary."""
+        ctx = BookingContext()
+        assert "Estilista" not in ctx.missing_summary()
+
+    def test_stylist_shown_when_service_known(self):
+        """S2: service set, no stylist → 'Estilista' IN missing_summary."""
+        ctx = BookingContext(service_name="Cortar")
+        assert "Estilista" in ctx.missing_summary()
+
+    def test_stylist_hidden_when_confirmed(self):
+        """S3: stylist set → 'Estilista' NOT in missing_summary."""
+        ctx = BookingContext(service_name="Cortar", stylist_id="uuid")
+        assert "Estilista" not in ctx.missing_summary()
+
+    def test_preferred_stylist_shown_in_collected(self):
+        """S4: preferred_stylist_name set, no stylist_id → 💡 hint in collected_summary."""
+        ctx = BookingContext(preferred_stylist_name="Pilar")
+        assert "💡 Estilista preferida" in ctx.collected_summary()
+
+    def test_preferred_stylist_hidden_when_confirmed(self):
+        """S5: preferred_stylist_name AND stylist_id set → hint NOT shown."""
+        ctx = BookingContext(preferred_stylist_name="Pilar", stylist_id="uuid")
+        assert "💡 Estilista preferida" not in ctx.collected_summary()
+
+    def test_preferred_date_shown_in_collected(self):
+        """S6: preferred_date_hint set, no selected_slot → 💡 hint in collected_summary."""
+        ctx = BookingContext(preferred_date_hint="el viernes")
+        assert "💡 Fecha preferida" in ctx.collected_summary()
 
 
 # ============================================================================

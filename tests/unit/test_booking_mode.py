@@ -227,7 +227,8 @@ class TestBookingContextSummaries:
         ctx = BookingContext()
         summary = ctx.missing_summary()
         assert "servicio" in summary.lower()
-        assert "estilista" in summary.lower()
+        # Stylist is gated: only shown when service is known (R3)
+        assert "estilista" not in summary.lower()
         assert "fecha/hora" in summary.lower()
         # Name is gated: only shown when service+stylist+slot are all set
         assert "nombre" not in summary.lower()

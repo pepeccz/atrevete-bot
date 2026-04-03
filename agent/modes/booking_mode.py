@@ -332,6 +332,15 @@ class BookingMode(BaseModeNode):
         """
         ctx: BookingContext | None = getattr(self, "_ctx", None)
 
+        # Gate: list_stylists requires service to be resolved first
+        if tool_name == "list_stylists":
+            if ctx and not ctx.service_category:
+                return ToolCallRejection(
+                    name="list_stylists",
+                    error_code="SERVICE_NOT_RESOLVED",
+                    error_message="Primero resolvé el servicio con search_services() antes de mostrar estilistas.",
+                )
+
         # ── Availability tools: stylist gate then clear stale slot state ──────────
         if tool_name in ("check_availability", "find_next_available"):
             if ctx:

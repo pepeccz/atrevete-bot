@@ -69,6 +69,10 @@ class BookingContext:
     customer_name: str | None = None
     notes: str | None = None
 
+    # ── Booking hints (extracted from first user message) ────────────────────
+    preferred_stylist_name: str | None = None
+    preferred_date_hint: str | None = None
+
     # ── Confirmation ─────────────────────────────────────────────────────────
     confirmation_shown: bool = False
     confirmation_summary_sent: bool = False
@@ -130,7 +134,7 @@ class BookingContext:
         if not self.service_name and not self.selected_services:
             missing.append("❌ Servicio: pendiente")
 
-        if not self.stylist_id:
+        if not self.stylist_id and (self.service_name or self.selected_services):
             missing.append("❌ Estilista: pendiente")
 
         if self.selected_slot is not None:
@@ -195,6 +199,11 @@ class BookingContext:
 
         if self.customer_name:
             lines.append(f"✅ Nombre: {self.customer_name}")
+
+        if self.preferred_stylist_name and not self.stylist_id:
+            lines.append(f"💡 Estilista preferida (sin confirmar): {self.preferred_stylist_name}")
+        if self.preferred_date_hint and not self.selected_slot:
+            lines.append(f"💡 Fecha preferida (sin confirmar): {self.preferred_date_hint}")
 
         if self.customer_id:
             lines.append(f"✅ Customer ID: {self.customer_id}")

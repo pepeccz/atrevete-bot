@@ -647,6 +647,41 @@ class TestAIDisclosureInBookingMode:
 
 
 # =============================================================================
+# SERVICE_NOT_RESOLVED gate in _pre_tool_call
+# =============================================================================
+
+
+class TestServiceNotResolvedGate:
+    """SERVICE_NOT_RESOLVED gate on list_stylists."""
+
+    @pytest.mark.asyncio
+    async def test_list_stylists_rejected_without_service(self):
+        """S7: no service_category → ToolCallRejection(SERVICE_NOT_RESOLVED)."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(service_category=None)
+        result = await mode._pre_tool_call("list_stylists", {})
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "SERVICE_NOT_RESOLVED"
+
+    @pytest.mark.asyncio
+    async def test_list_stylists_passes_with_service(self):
+        """S8: service_category set → gate passes through."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(service_category="Peluquería")
+        result = await mode._pre_tool_call("list_stylists", {})
+        assert not isinstance(result, ToolCallRejection)
+
+    @pytest.mark.asyncio
+    async def test_no_stylists_shown_regression(self):
+        """S9: NO_STYLISTS_SHOWN gate still works for availability tools."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(prefetched_stylists=[])
+        result = await mode._pre_tool_call("find_next_available", {})
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_STYLISTS_SHOWN"
+
+
+# =============================================================================
 # Stylist gate in _pre_tool_call
 # =============================================================================
 
@@ -702,3 +737,46 @@ class TestStylistGate:
         assert "OBLIGATORIO" in content
         assert "find_next_available" in content
         assert "list_stylists()" in content
+
+
+# =============================================================================
+# _extract_booking_hints — pure function tests
+# =============================================================================
+
+
+from agent.graphs.conversation_flow import _extract_booking_hints  # noqa: E402
+
+
+class TestExtractBookingHints:
+    """Pure function tests — no mocking needed."""
+
+    def test_extracts_stylist_and_date(self):
+        """S10: both hints detected."""
+        result = _extract_booking_hints("quiero una cita el viernes con Pilar")
+        assert result["preferred_date_hint"] is not None
+        assert "viernes" in result["preferred_date_hint"]
+        assert result["preferred_stylist_name"] == "Pilar"
+
+    def test_extracts_date_only(self):
+        """S11: date but no stylist."""
+        result = _extract_booking_hints("holaa teneis hueco la semana que viene")
+        assert result["preferred_date_hint"] is not None
+        assert "semana" in result["preferred_date_hint"].lower()
+        assert result["preferred_stylist_name"] is None
+
+    def test_no_hints(self):
+        """S12: no date, no stylist."""
+        result = _extract_booking_hints("quiero cortarme el pelo")
+        assert result["preferred_stylist_name"] is None
+        assert result["preferred_date_hint"] is None
+
+    def test_robustness_empty_input(self):
+        """S13: empty/None input → no exception."""
+        assert _extract_booking_hints("") == {
+            "preferred_stylist_name": None,
+            "preferred_date_hint": None,
+        }
+        assert _extract_booking_hints(None) == {
+            "preferred_stylist_name": None,
+            "preferred_date_hint": None,
+        }
