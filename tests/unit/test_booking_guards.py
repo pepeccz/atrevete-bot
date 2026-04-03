@@ -76,6 +76,68 @@ class TestConfirmationGate:
 
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "CONFIRMATION_NOT_SHOWN"
+        # Branch 3 (notes missing) must set safety-net flag
+        assert mode._ctx.confirmation_summary_sent is True
+
+    @pytest.mark.asyncio
+    async def test_confirmation_gate_blocks_book_without_notes(self):
+        """All data except notes → CONFIRMATION_NOT_SHOWN with missing info."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            service_id="svc-1",
+            service_name="Corte Dama",
+            stylist_id="s1",
+            stylist_name="Maria",
+            selected_slot={
+                "stylist_id": "s1",
+                "time": "10:00",
+                "start_time": "2026-03-27T10:00:00+01:00",
+                "day_label": "Jueves 27",
+            },
+            selected_services=["Corte Dama"],
+            customer_name="Laura García",
+            customer_id="cust-123",
+            notes=None,
+            confirmation_shown=False,
+        )
+        args = {"customer_id": "cust-123", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "CONFIRMATION_NOT_SHOWN"
+        assert "Notas" in result.error_message
+        assert mode._ctx.confirmation_summary_sent is True
+
+    @pytest.mark.asyncio
+    async def test_confirmation_gate_generates_summary_with_all_data(self):
+        """All data including notes → branch 1: generates summary, sets flag."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            service_id="svc-1",
+            service_name="Corte Dama",
+            stylist_id="s1",
+            stylist_name="Maria",
+            selected_slot={
+                "stylist_id": "s1",
+                "time": "10:00",
+                "start_time": "2026-03-27T10:00:00+01:00",
+                "day_label": "Jueves 27",
+            },
+            selected_services=["Corte Dama"],
+            customer_name="Laura García",
+            customer_id="cust-123",
+            notes="Sin preferencias",
+            confirmation_shown=False,
+        )
+        args = {"customer_id": "cust-123", "slot_index": 1}
+
+        result = await mode._pre_tool_call("book", args)
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "CONFIRMATION_NOT_SHOWN"
+        assert "resumen" in result.error_message.lower() or "confirmo" in result.error_message.lower()
+        assert mode._ctx.confirmation_summary_sent is True
 
     @pytest.mark.asyncio
     async def test_confirmation_gate_allows_book_after_confirmation(self):

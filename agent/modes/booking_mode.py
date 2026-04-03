@@ -362,7 +362,13 @@ class BookingMode(BaseModeNode):
             # Gate 1: confirmation required
             if not ctx.confirmation_shown:
                 # Auto-generate confirmation summary if all data available
-                if ctx.service_id and ctx.stylist_id and ctx.selected_slot and ctx.customer_name:
+                if (
+                    ctx.service_id
+                    and ctx.stylist_id
+                    and ctx.selected_slot
+                    and ctx.customer_name
+                    and ctx.notes
+                ):
                     summary = self._build_confirmation_summary(ctx)
                     ctx.confirmation_summary_sent = True
                     return ToolCallRejection(
@@ -380,11 +386,15 @@ class BookingMode(BaseModeNode):
                         error_message="Esperá la confirmación del usuario antes de llamar book().",
                     )
                 else:
+                    missing = ctx.missing_summary()
+                    ctx.confirmation_summary_sent = True
                     return ToolCallRejection(
                         name=tool_name,
                         error_code="CONFIRMATION_NOT_SHOWN",
                         error_message=(
-                            "Mostrá el resumen de confirmación y esperá la respuesta del usuario."
+                            "Todavía falta info:\n"
+                            f"{missing}\n\n"
+                            "Recogé los datos que faltan antes de confirmar."
                         ),
                     )
 
