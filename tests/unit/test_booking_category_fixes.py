@@ -373,28 +373,20 @@ class TestDetectToolSkipsConditionB:
 
     async def test_mid_selection_guard_suppresses_flag_when_list_was_shown(self):
         """M-5 guard: when assistant already presented stylist list last turn,
-        Condition B must NOT set force_list_stylists_reminder (user is mid-selection)."""
+        Condition B must NOT set force_list_stylists_reminder (user is mid-selection).
+        Uses ctx.stylists_presented=True (set by _build_response on the previous turn)."""
         mode = make_booking_mode()
         ctx = BookingContext(
             prefetched_stylists=[{"name": "Ana", "id": "uuid-ana"}],
             stylist_id=None,
+            stylists_presented=True,  # replaces _previous_assistant_presented_stylists scan
         )
-        # Simulate: assistant showed stylist list last turn (both markers required by
-        # _previous_assistant_presented_stylists: numbered capitalized name + stylist phrase)
-        mode._current_state = {
-            "messages": [
-                {
-                    "role": "assistant",
-                    "content": "¿Con quién querés tu turno?\n1. Ana\n2. Marta",
-                }
-            ]
-        }
-        # Response text does NOT contain the name → outer Condition B would fire
+        # Response text does NOT contain the name → outer Condition B would fire without guard
         result = make_agentic_loop_result(response_text="Perfecto, ¿cuál preferís?")
 
         await mode._detect_tool_skips(result, ctx)
 
-        # Guard must suppress → flag stays False
+        # ctx.stylists_presented=True → guard suppresses → flag stays False
         assert ctx.force_list_stylists_reminder is False
 
     async def test_genuine_skip_sets_flag_when_no_prior_presentation(self):

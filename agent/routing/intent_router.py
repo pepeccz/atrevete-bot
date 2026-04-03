@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 from agent.fsm.models import Intent, IntentType
 
-
 # ============================================================================
 # v6.0 IntentResult — Structured output from the v6.0 intent classifier
 # ============================================================================
@@ -502,6 +501,15 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
         logger.debug(
             "classify_by_keywords: multi-intent conflict detected (greet + %s) — deferring to LLM",
             [i for i in _ACTIONABLE_INTENTS if i in matched_intents],
+        )
+        return None
+
+    # Greet passthrough: ALWAYS defer greet to LLM — the LLM correctly handles
+    # compound greetings with typos that keywords can't detect.
+    if best_intent == "greet":
+        logger.debug(
+            "classify_by_keywords: greet passthrough — deferring to LLM | text_preview=%s",
+            text[:60],
         )
         return None
 

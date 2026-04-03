@@ -121,10 +121,11 @@ async def _list_customer_appointments(limit: int, customer_phone: str) -> dict[s
                     "date_display": _format_date_spanish(appt_time),
                     "time_display": appt_time.strftime("%H:%M"),
                     "stylist_name": stylist_name,
+                    "stylist_id": str(appt.stylist.id) if appt.stylist else None,
                     "service_name": service_name,
-                    "status": appt.status.value
-                    if hasattr(appt.status, "value")
-                    else str(appt.status),
+                    "status": (
+                        appt.status.value if hasattr(appt.status, "value") else str(appt.status)
+                    ),
                     "start_time_iso": appt_time.isoformat(),
                     "hours_until": round(hours_until, 1),
                 }

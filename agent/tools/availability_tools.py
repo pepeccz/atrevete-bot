@@ -19,21 +19,15 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
-from zoneinfo import ZoneInfo
-
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from agent.services.availability_service import (
-    check_slot_availability,
     get_available_slots,
-    get_soonest_slot_any_stylist,
-    get_stylist_by_id,
     is_holiday,
 )
 from agent.modes.booking_context import InterpretationReason
 from agent.tools.calendar_tools import (
-    generate_time_slots_async,
     get_stylists_by_category,
 )
 from agent.utils import parse_natural_date, MADRID_TZ
@@ -565,24 +559,10 @@ async def find_next_available(
 
         search_start = earliest_valid.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # v4.2: Get soonest slot with ANY stylist (if a specific stylist was selected)
+        # v4.3: soonest_any suppressed — caused LLM to auto-book a different stylist's slot
+        # when a specific stylist_id was provided (e.g., during reschedule flows).
+        # The "earliest with any stylist" suggestion was confusing and led to incorrect bookings.
         soonest_any = None
-        if selected_stylist:
-            soonest_any = await get_soonest_slot_any_stylist(
-                category=category_enum,
-                service_duration_minutes=effective_duration,
-                search_days=max_days_to_search,
-            )
-            if soonest_any:
-                # Check if it's a different stylist than selected
-                soonest_any["is_soonest_any"] = True
-                soonest_any["is_different_stylist"] = soonest_any["stylist_id"] != str(
-                    selected_stylist_uuid
-                )
-                logger.info(
-                    f"Soonest any slot: {soonest_any['time']} on {soonest_any['date']} "
-                    f"with {soonest_any['stylist_name']} (different={soonest_any['is_different_stylist']})"
-                )
 
         # Collect ALL slots from selected stylist(s) across multiple dates (DB-first)
         all_slots_by_stylist = {stylist.id: [] for stylist in stylists}

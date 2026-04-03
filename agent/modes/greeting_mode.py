@@ -447,9 +447,14 @@ class GreetingMode(BaseModeNode):
         if response_text and customer_name:
             if self._contains_customer_name_token(response_text, customer_name):
                 self.logger.warning(
-                    "GreetingMode: LLM leaked customer name token in response, using fallback"
+                    "customer_name_leak_detected",
+                    extra={
+                        "token": customer_name,
+                        "mode": "GREETING",
+                        "response_preview": response_text[:80],
+                    },
                 )
-                return fallback_response
+                return "Perfecto, ¿me podés confirmar tu nombre completo?"
 
         if response_text:
             # Also reject responses that ask for name

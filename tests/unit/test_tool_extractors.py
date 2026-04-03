@@ -28,7 +28,6 @@ from agent.modes.tool_extractors import (
     extract_stylist_fields,
 )
 
-
 # ============================================================================
 # _safe_parse
 # ============================================================================
@@ -866,7 +865,10 @@ class TestApplyAllToolResults:
         assert ctx.service_id is None  # No crash
 
     def test_tool_extractors_registry_complete(self):
-        """Verify TOOL_EXTRACTORS has all expected tool names."""
+        """Verify TOOL_EXTRACTORS has all expected tool names.
+
+        Updated to include create_hold and confirm_from_hold after HOLD-based booking flow.
+        """
         expected = {
             "search_services",
             "check_availability",
@@ -874,6 +876,8 @@ class TestApplyAllToolResults:
             "list_stylists",
             "manage_customer",
             "book",
+            "create_hold",
+            "confirm_from_hold",
             "query_info",  # GAP-03: no-op extractor prevents log noise for informational tool
         }
         assert expected == set(TOOL_EXTRACTORS.keys())
@@ -2282,106 +2286,163 @@ class TestResolverRemovalRegression:
 
 
 class TestCompoundNameHallucinationRegression:
-    """SC-3 regression: compound stylist names must not be corrupted by partial redaction.
+    """SC-3 regression: compound stylist names and hallucination detection via _pre_tool_call.
 
-    Covers:
-    - "Ana María" is NOT redacted to "Ana tu estilista"
-    - Individual word tokens of a known stylist are NOT flagged as hallucinated
-    - Truly hallucinated names (not in any known stylist's name) ARE still redacted
+    After booking-mode-restrictor-cleanup:
+    - _detect_stylist_hallucination() and _redact_hallucinated_stylists() were removed
+    - force_stylist_correction is now set via _pre_tool_call when book() has a stylist_id
+      NOT in {s['id'] for s in ctx.prefetched_stylists}
+    - Text-scanning of response text is no longer used
+
+    These tests verify the NEW behavior: force_stylist_correction is set based on
+    tool call validation, not response text analysis.
     """
 
     def _make_mode(self) -> BookingMode:
         return BookingMode(tools=[], llm_client=MagicMock())
 
-    def test_compound_stylist_not_detected_as_hallucination(self):
-        """SC-3: 'Ana María' is a known stylist — 'Ana' and 'María' must NOT be flagged."""
+    @pytest.mark.asyncio
+    async def test_compound_stylist_valid_id_no_correction(self):
+        """SC-3: When book() has a valid stylist_id for 'Ana María', no correction needed."""
         ctx = BookingContext(
             prefetched_stylists=[
-                {"name": "Ana María", "id": "1"},
-            ]
+                {"name": "Ana María", "id": "valid-id-1"},
+            ],
+            offered_slots=[
+                {
+                    "stylist_id": "valid-id-1",
+                    "stylist": "Ana María",
+                    "time": "10:00",
+                    "date": "2026-04-10",
+                    "full_datetime": "2026-04-10T10:00:00+02:00",
+                }
+            ],
+            customer_id="cust-1",
+            customer_name="Laura",
+            service_id="svc-1",
+            selected_services=["Corte de Dama"],
+            notes="ninguna",
+            notes_asked=True,
+            confirmation_shown=True,
         )
         mode = self._make_mode()
-        response = "Ana María te atenderá con mucho gusto"
+        mode._ctx = ctx
+        mode._current_state = {}
 
-        mode._detect_stylist_hallucination(response, ctx)
+        tool_args = {
+            "stylist_id": "valid-id-1",
+            "start_time": "2026-04-10T10:00:00+02:00",
+        }
+        await mode._pre_tool_call("book", tool_args)
 
-        assert ctx.force_stylist_correction is False, (
-            "'Ana María' is a known stylist — should NOT trigger hallucination detection"
-        )
+        assert (
+            ctx.force_stylist_correction is False
+        ), "'Ana María' is a known stylist (valid-id-1 in prefetched) — should NOT flag correction"
 
-    def test_compound_name_not_redacted_to_artifact(self):
-        """SC-3: Response containing known compound name 'Ana María' must remain intact."""
+    @pytest.mark.asyncio
+    async def test_hallucinated_stylist_id_sets_correction(self):
+        """SC-3: book(slot_index=1) where resolved stylist_id not in prefetched → flag set.
+
+        Uses the slot_index path: _pre_tool_call resolves slot_index=1 to offered_slots[0],
+        then checks if the resolved stylist_id is in prefetched_stylists. If not, it sets
+        force_stylist_correction=True (lines 1244-1256 of booking_mode.py).
+        """
         ctx = BookingContext(
             prefetched_stylists=[
-                {"name": "Ana María", "id": "1"},
-            ]
+                {"name": "Ana María", "id": "valid-id-1"},
+            ],
+            offered_slots=[
+                {
+                    "stylist_id": "hallucinated-id-99",  # NOT in prefetched_stylists
+                    "stylist": "Carmen",
+                    "time": "10:00",
+                    "date": "2026-04-10",
+                    "full_datetime": "2026-04-10T10:00:00+02:00",
+                }
+            ],
+            customer_id="cust-1",
+            customer_name="Laura",
+            service_id="svc-1",
+            selected_services=["Corte de Dama"],
+            notes="ninguna",
+            notes_asked=True,
+            confirmation_shown=True,
         )
-        ctx._last_hallucinated_names = set()
-        ctx.force_stylist_correction = False
         mode = self._make_mode()
+        mode._ctx = ctx
+        mode._current_state = {}
 
-        # Ensure no hallucination detected first
-        response = "Ana María puede atenderte el martes"
-        mode._detect_stylist_hallucination(response, ctx)
+        # Use slot_index path — resolves to offered_slots[0] with hallucinated-id-99
+        tool_args = {"slot_index": 1}
+        await mode._pre_tool_call("book", tool_args)
 
-        # Then ensure redact does not corrupt it
-        result = mode._redact_hallucinated_stylists(response, ctx)
-        assert "tu estilista" not in result, (
-            "'Ana María' must NOT be redacted — it is a known stylist compound name"
+        # hallucinated-id-99 is NOT in prefetched_stylists → correction flag set
+        assert ctx.force_stylist_correction is True
+
+    @pytest.mark.asyncio
+    async def test_detect_stylist_hallucination_method_removed(self):
+        """SC-3 guard: _detect_stylist_hallucination must NOT exist on BookingMode."""
+        mode = self._make_mode()
+        assert not hasattr(mode, "_detect_stylist_hallucination"), (
+            "_detect_stylist_hallucination still exists on BookingMode — "
+            "it must be deleted as part of booking-mode-restrictor-cleanup"
         )
-        assert "Ana María" in result
 
-    def test_truly_hallucinated_name_still_redacted(self):
-        """Compound precision: hallucinated 'Carmen' IS still redacted, known 'Ana María' is not."""
+    @pytest.mark.asyncio
+    async def test_redact_hallucinated_stylists_method_removed(self):
+        """SC-3 guard: _redact_hallucinated_stylists must NOT exist on BookingMode."""
+        mode = self._make_mode()
+        assert not hasattr(mode, "_redact_hallucinated_stylists"), (
+            "_redact_hallucinated_stylists still exists on BookingMode — "
+            "it must be deleted as part of booking-mode-restrictor-cleanup"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stylist_blocklist_constant_removed(self):
+        """SC-3 guard: _STYLIST_BLOCKLIST_WORDS constant must NOT exist in booking_mode module."""
+        import agent.modes.booking_mode as bm
+
+        assert not hasattr(bm, "_STYLIST_BLOCKLIST_WORDS"), (
+            "_STYLIST_BLOCKLIST_WORDS still exists in booking_mode — "
+            "it must be deleted as part of booking-mode-restrictor-cleanup"
+        )
+
+    @pytest.mark.asyncio
+    async def test_slot_index_with_compound_name_no_correction(self):
+        """slot_index path with 'Ana María' resolves to valid ID → no correction."""
         ctx = BookingContext(
             prefetched_stylists=[
-                {"name": "Ana María", "id": "1"},
-            ]
+                {"name": "Ana María", "id": "valid-id-1"},
+                {"name": "Pilar", "id": "valid-id-2"},
+            ],
+            offered_slots=[
+                {
+                    "stylist_id": "valid-id-1",
+                    "stylist": "Ana María",
+                    "time": "10:00",
+                    "date": "2026-04-10",
+                    "full_datetime": "2026-04-10T10:00:00+02:00",
+                }
+            ],
+            customer_id="cust-1",
+            customer_name="Laura",
+            service_id="svc-1",
+            selected_services=["Corte de Dama"],
+            notes="ninguna",
+            notes_asked=True,
+            confirmation_shown=True,
         )
         mode = self._make_mode()
-        response = "Carmen y Ana María pueden atenderte"
+        mode._ctx = ctx
+        mode._current_state = {}
 
-        mode._detect_stylist_hallucination(response, ctx)
-        result = mode._redact_hallucinated_stylists(response, ctx)
+        # LLM uses slot_index=1 (1-based) → resolves to offered_slots[0] with valid-id-1
+        tool_args = {"slot_index": 1}
+        await mode._pre_tool_call("book", tool_args)
 
-        # Carmen is hallucinated → redacted
-        assert "Carmen" not in result
-        assert "[estilista]" in result
-        # Ana (token of "Ana María") is NOT redacted
-        assert "Ana" in result
-
-    def test_word_token_of_known_stylist_not_flagged(self):
-        """Individual word 'Ana' must not be flagged when 'Ana María' is a known stylist."""
-        ctx = BookingContext(
-            prefetched_stylists=[
-                {"name": "Ana María", "id": "1"},
-            ]
-        )
-        mode = self._make_mode()
-        # Response mentions "Ana" alone (not the full compound name)
-        response = "Ana puede atenderte"
-
-        mode._detect_stylist_hallucination(response, ctx)
-
-        # "Ana" is a token of "Ana María" — should NOT flag hallucination
-        assert ctx.force_stylist_correction is False
-
-    def test_short_tokens_do_not_create_false_positives(self):
-        """Short tokens like 'de' in 'María de Los Ángeles' are excluded from token matching."""
-        ctx = BookingContext(
-            prefetched_stylists=[
-                {"name": "María de Los Ángeles", "id": "1"},
-            ]
-        )
-        mode = self._make_mode()
-        # "De" is capitalized but short — should not protect hallucinated names via token match
-        # "Los" is a known token (len=3) so it IS in known_word_tokens
-        response = "María de Los Ángeles te atiende"
-
-        mode._detect_stylist_hallucination(response, ctx)
-
-        # All words in response are tokens of the known stylist — no hallucination
-        assert ctx.force_stylist_correction is False
+        assert (
+            ctx.force_stylist_correction is False
+        ), "Resolved slot for 'Ana María' uses valid-id-1 — no correction needed"
 
 
 # ============================================================================

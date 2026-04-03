@@ -87,6 +87,7 @@ class BookingContext:
 
     # ── Hints (from pre-resolvers) ──────────────────────────────────────
     service_audience_hint: str | None = None
+    service_audience_hint_source: str | None = None  # tracks which service set the hint
     prefetched_stylists: list[dict[str, Any]] = field(default_factory=list)
     soonest_any_slot: str | None = None
     recurrent_stylist_hint: str | None = None
@@ -108,6 +109,8 @@ class BookingContext:
     # ── Failure tracking ────────────────────────────────────────────────
     book_failure_count: int = 0
     manage_customer_failure_count: int = 0
+    name_ask_count: int = 0
+    slots_shown_count: int = 0
     needs_availability_refresh: bool = False
     last_error: str | None = None
 
@@ -123,6 +126,11 @@ class BookingContext:
     notes_asked: bool = False
     notes_ask_attempts: int = 0
 
+    # ── Prompt injection tracking (set by _build_response when content is shown) ──
+    name_asked: bool = False  # True when name-ask content was injected into response
+    slots_presented: bool = False  # True when <offered_slots> block was shown
+    stylists_presented: bool = False  # True when <available_stylists> block was shown
+
     # ── Upsell gate ─────────────────────────────────────────────────────────
     upsell_gate_attempts: int = 0
 
@@ -133,7 +141,7 @@ class BookingContext:
 
     # ── Internal (not serialized) ───────────────────────────────────────
     _booking_completed: bool = field(default=False, repr=False)
-    _addon_durations_cache: dict = field(default_factory=dict, repr=False)
+    _addon_durations_cache: dict = field(default_factory=dict, repr=False)  # stores addon metadata
 
     # ── Display maps (ClassVar — excluded from dataclass fields) ────────
     _AUDIENCE_DISPLAY: ClassVar[dict[str, str]] = {
@@ -162,6 +170,7 @@ class BookingContext:
         self.pending_clarifications = []
         self.candidate_services = []
         self.service_audience_hint = None
+        self.service_audience_hint_source = None
         self.notes = None
         self.prefetched_stylists = []
         self.soonest_any_slot = None
@@ -173,6 +182,8 @@ class BookingContext:
         self.hold_id = None
         self.book_failure_count = 0
         self.manage_customer_failure_count = 0
+        self.name_ask_count = 0
+        self.slots_shown_count = 0
         self.needs_availability_refresh = False
         self.last_error = None
         self.services_locked = False
@@ -185,6 +196,9 @@ class BookingContext:
         self.force_search_services_reminder = False
         self.force_list_stylists_reminder = False
         self.force_stylist_correction = False
+        self.name_asked = False
+        self.slots_presented = False
+        self.stylists_presented = False
         self.date_parse_error = False
         self.substitution_made = False
         self.substitution_reason = None
@@ -242,20 +256,28 @@ class BookingContext:
     def missing_summary(self) -> str:
         """Render human-readable summary of missing REQUIRED fields.
 
-        Note: selected_slot is NOT checked here because slot selection is managed
-        conversationally by the LLM (it calls book() with slot data directly).
-        offered_slots presence is used as a proxy for "date/time in progress".
+        Slot state has three levels:
+        - selected_slot is set → data is collected, omit from missing
+        - offered_slots non-empty but no selected_slot → slots shown, waiting for user choice
+        - both empty/None → date/time not started yet
         """
         missing: list[str] = []
         if not self.service_name and not self.selected_services:
             missing.append("servicio")
         if not self.stylist_id:
             missing.append("estilista")
-        if not self.offered_slots:
+        if self.selected_slot is not None:
+            pass  # date/time resolved — don't add to missing
+        elif self.offered_slots:
+            missing.append("⏳ Horario: ofrecido — esperando elección del cliente")
+        else:
             missing.append("fecha/hora")
         if not self.customer_name:
-            if self.manage_customer_failure_count >= 2:
-                missing.append("nombre (⚠️ guardar falló — pedir confirmación verbal)")
+            if self.manage_customer_failure_count >= 2 or self.name_ask_count >= 3:
+                missing.append(
+                    "nombre (⚠️ cliente no pudo proveer nombre — continuá sin nombre,"
+                    " el equipo lo registrará)"
+                )
             else:
                 missing.append("nombre")
         # Show customer_id as missing only when we have a name but no ID.
@@ -267,7 +289,14 @@ class BookingContext:
             missing.append("notas/preferencias (preguntá si tiene alguna indicación especial)")
         if not missing:
             return "✅ Todos los datos requeridos están completos"
-        return "\n".join(f"❌ {label.capitalize()}: pendiente" for label in missing)
+        lines: list[str] = []
+        for label in missing:
+            # Pre-formatted entries (e.g. ⏳ lines) are emitted as-is
+            if label.startswith("⏳") or label.startswith("❌") or label.startswith("✅"):
+                lines.append(label)
+            else:
+                lines.append(f"❌ {label.capitalize()}: pendiente")
+        return "\n".join(lines)
 
     def to_mode_context(self) -> dict[str, Any]:
         """Serialize to dict for mode_context storage.

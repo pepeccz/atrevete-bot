@@ -684,7 +684,7 @@ class TestDetectConfirmationExchange:
             service_id="svc-1",
             selected_services=["Corte Dama"],
             stylist_id="stylist-1",
-            offered_slots=[{"stylist_id": "stylist-1", "time": "10:00"}],
+            selected_slot={"date": "2026-03-27", "time": "10:00", "stylist_id": "stylist-1"},
             customer_name=None,  # <-- missing
             customer_id=None,  # <-- missing
             confirmation_shown=False,
@@ -706,7 +706,7 @@ class TestDetectConfirmationExchange:
             service_id=None,
             selected_services=[],  # <-- missing
             stylist_id="stylist-1",
-            offered_slots=[{"stylist_id": "stylist-1", "time": "10:00"}],
+            selected_slot={"date": "2026-03-27", "time": "10:00", "stylist_id": "stylist-1"},
             customer_name="Laura",
             customer_id="cust-1",
             confirmation_shown=False,
@@ -724,20 +724,20 @@ class TestDetectConfirmationExchange:
 
     def test_confirmation_shown_set_on_complete_data_si(self):
         """All booking data complete + confirmation_summary_sent=True + user 'sí' ->
-        confirmation_shown = True (F-2: uses deterministic flag, not message scanning)."""
+        confirmation_shown = True (F-2: uses deterministic flag, not message scanning).
+        selected_slot required (not just offered_slots) to pass _is_booking_data_complete."""
         ctx = BookingContext(
             service_id="svc-1",
             service_name="Corte Dama",
             selected_services=["Corte Dama"],
             stylist_id="stylist-1",
             stylist_name="María",
-            offered_slots=[
-                {
-                    "stylist_id": "stylist-1",
-                    "time": "10:00",
-                    "full_datetime": "2026-03-27T10:00:00+01:00",
-                }
-            ],
+            selected_slot={
+                "stylist_id": "stylist-1",
+                "time": "10:00",
+                "date": "2026-03-27",
+                "full_datetime": "2026-03-27T10:00:00+01:00",
+            },
             customer_name="Laura García",
             customer_id="cust-123",
             confirmation_shown=False,
@@ -765,12 +765,13 @@ class TestDetectConfirmationExchange:
 
     def test_confirmation_shown_set_with_confirmamos_marker(self):
         """Summary sent (confirmation_summary_sent=True) + user 'perfecto' -> True.
-        F-2: flag-based detection replaces message marker scanning."""
+        F-2: flag-based detection replaces message marker scanning.
+        selected_slot required to pass _is_booking_data_complete."""
         ctx = BookingContext(
             service_id="svc-2",
             selected_services=["Tinte"],
             stylist_id="stylist-2",
-            offered_slots=[{"stylist_id": "stylist-2", "time": "14:00"}],
+            selected_slot={"stylist_id": "stylist-2", "time": "14:00", "date": "2026-03-27"},
             customer_name="Ana",
             customer_id="cust-456",
             confirmation_shown=False,
@@ -792,12 +793,13 @@ class TestDetectConfirmationExchange:
 
     def test_confirmation_not_set_when_no_summary_marker(self):
         """All data complete but assistant message has NO summary marker ->
-        confirmation_shown stays False even if user says 'sí'."""
+        confirmation_shown stays False even if user says 'sí'.
+        selected_slot required to pass _is_booking_data_complete."""
         ctx = BookingContext(
             service_id="svc-1",
             selected_services=["Corte Dama"],
             stylist_id="stylist-1",
-            offered_slots=[{"stylist_id": "stylist-1", "time": "10:00"}],
+            selected_slot={"stylist_id": "stylist-1", "time": "10:00", "date": "2026-03-27"},
             customer_name="Laura",
             customer_id="cust-1",
             confirmation_shown=False,
@@ -815,12 +817,13 @@ class TestDetectConfirmationExchange:
 
     def test_confirmation_not_set_when_user_not_affirmative(self):
         """All data complete, summary shown, but user says something non-affirmative ->
-        confirmation_shown stays False."""
+        confirmation_shown stays False.
+        selected_slot required to pass _is_booking_data_complete."""
         ctx = BookingContext(
             service_id="svc-1",
             selected_services=["Corte Dama"],
             stylist_id="stylist-1",
-            offered_slots=[{"stylist_id": "stylist-1", "time": "10:00"}],
+            selected_slot={"stylist_id": "stylist-1", "time": "10:00", "date": "2026-03-27"},
             customer_name="Laura",
             customer_id="cust-1",
             confirmation_shown=False,
@@ -846,20 +849,23 @@ class TestDetectConfirmationExchange:
 
 
 def _make_complete_ctx(**kwargs) -> BookingContext:
-    """Build a BookingContext with all required fields for _is_booking_data_complete."""
+    """Build a BookingContext with all required fields for _is_booking_data_complete.
+
+    Uses selected_slot (not offered_slots) since _is_booking_data_complete was updated
+    to require selected_slot instead of offered_slots (T-H2 fix).
+    """
     defaults = dict(
         service_id="svc-1",
         service_name="Corte Dama",
         selected_services=["Corte Dama"],
         stylist_id="stylist-1",
         stylist_name="María",
-        offered_slots=[
-            {
-                "stylist_id": "stylist-1",
-                "time": "10:00",
-                "full_datetime": "2026-03-27T10:00:00+01:00",
-            }
-        ],
+        selected_slot={
+            "stylist_id": "stylist-1",
+            "time": "10:00",
+            "date": "2026-03-27",
+            "full_datetime": "2026-03-27T10:00:00+01:00",
+        },
         customer_name="Laura",
         customer_id="cust-1",
         confirmation_shown=False,
@@ -1091,8 +1097,6 @@ class TestToolChoicePendingGuard:
             patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
             patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
             patch.object(mode, "_detect_tool_skips", AsyncMock()),
-            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
-            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
             patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
         ):
             await mode.handle(state, intent)
@@ -1119,8 +1123,6 @@ class TestToolChoicePendingGuard:
             patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
             patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
             patch.object(mode, "_detect_tool_skips", AsyncMock()),
-            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
-            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
             patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
         ):
             await mode.handle(state, intent)
@@ -1156,8 +1158,6 @@ class TestToolChoicePendingGuard:
             patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
             patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
             patch.object(mode, "_detect_tool_skips", AsyncMock()),
-            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
-            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
             patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
         ):
             await mode.handle(state, intent)
@@ -1190,8 +1190,6 @@ class TestToolChoicePendingGuard:
             patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
             patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
             patch.object(mode, "_detect_tool_skips", AsyncMock()),
-            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
-            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
             patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
         ):
             await mode.handle(state, intent)
@@ -1224,8 +1222,6 @@ class TestToolChoicePendingGuard:
             patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
             patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
             patch.object(mode, "_detect_tool_skips", AsyncMock()),
-            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
-            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
             patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
         ):
             await mode.handle(state, intent)
@@ -1258,8 +1254,6 @@ class TestToolChoicePendingGuard:
             patch.object(mode, "_build_messages", AsyncMock(return_value=[])),
             patch.object(mode, "_maybe_prefetch_stylists", AsyncMock()),
             patch.object(mode, "_detect_tool_skips", AsyncMock()),
-            patch.object(mode, "_detect_stylist_hallucination", MagicMock()),
-            patch.object(mode, "_check_special_intents", MagicMock(return_value=None)),
             patch.object(mode, "_build_response", MagicMock(return_value={"last_node": "booking"})),
         ):
             await mode.handle(state, intent)

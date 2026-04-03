@@ -7,51 +7,24 @@ Covers:
 - 4.2: _resolve_user_clarification_selection() with all 3 axes (audience, hair_density, hair_length)
 - 4.3: Clarification dedup — replace-by-axis behavior in extract_service_fields Shape 2
 - 4.4: search_services schema has hair_density / hair_length params — threaded to resolve_candidates
-- 4.5: Cancel phrase guard — soft phrases don't cancel during active booking context
+- 4.5: Cancel/escalate handled by intent_router upstream (booking-mode-restrictor-cleanup Item 2)
+       _check_special_intents, _CANCEL_PHRASES, _SOFT_CANCEL_PHRASES removed from BookingMode.
 
 REQ-MSF-1, REQ-MSF-2, REQ-MSF-3, REQ-MSF-4
 """
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from agent.modes.booking_context import BookingContext
-from agent.modes.booking_mode import BookingMode, _CANCEL_PHRASES, _SOFT_CANCEL_PHRASES
+from agent.modes.booking_mode import BookingMode
 from agent.modes.tool_extractors import (
     _resolve_user_clarification_selection,
     extract_service_fields,
 )
-from agent.routing.intent_router import IntentResult
-from agent.state.schemas import create_initial_state
 
 # =============================================================================
 # Helpers
 # =============================================================================
-
-
-def make_booking_mode() -> BookingMode:
-    mock_llm = MagicMock()
-    mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-    return BookingMode(tools=[], llm_client=mock_llm)
-
-
-def make_state(
-    user_message: str = "test",
-    mode_context: dict | None = None,
-) -> dict:
-    state = create_initial_state("conv-001", "+34612345678")
-    state["customer_name"] = "Elena"
-    state["customer_id"] = "cust-001"
-    state["is_first_interaction"] = False
-    state["current_mode"] = "BOOKING"
-    state["mode_context"] = mode_context or {}
-    state["messages"] = [{"role": "user", "content": user_message}]
-    return state
-
-
-def make_intent(intent: str = "book") -> IntentResult:
-    return IntentResult(intent=intent, confidence=0.9, raw_input="test", mode_hint="BOOKING")
 
 
 def _make_clarification_messages(question: str) -> list[dict]:
@@ -102,7 +75,6 @@ class TestHintMapsNotPresent:
     def test_audience_hint_map_is_imported_from_shared(self):
         """AUDIENCE_HINT_MAP is the canonical audience resolver — imported from shared."""
         import agent.modes.tool_extractors as te
-
         from shared.audience_maps import AUDIENCE_HINT_MAP
 
         # tool_extractors imports and uses AUDIENCE_HINT_MAP from shared.audience_maps
@@ -772,149 +744,6 @@ class TestSearchServicesSchemaExtension:
 
 
 # =============================================================================
-# 4.5: Cancel phrase guard — soft phrases don't cancel during active booking
-# =============================================================================
-
-
-class TestCancelPhraseGuardActiveBooking:
-    """REQ-MSF-4: _SOFT_CANCEL_PHRASES only fire when there is NO active booking context."""
-
-    def test_no_me_interesa_not_in_cancel_phrases(self):
-        """'no me interesa' must NOT be in _CANCEL_PHRASES (moved to _SOFT_CANCEL_PHRASES)."""
-        assert "no me interesa" not in _CANCEL_PHRASES, (
-            "'no me interesa' is in _CANCEL_PHRASES — it was intentionally moved to "
-            "_SOFT_CANCEL_PHRASES to prevent cancelling active bookings"
-        )
-
-    def test_mejor_no_not_in_cancel_phrases(self):
-        """'mejor no' must NOT be in _CANCEL_PHRASES (moved to _SOFT_CANCEL_PHRASES)."""
-        assert "mejor no" not in _CANCEL_PHRASES, (
-            "'mejor no' is in _CANCEL_PHRASES — it was intentionally moved to "
-            "_SOFT_CANCEL_PHRASES to prevent cancelling active bookings"
-        )
-
-    def test_soft_cancel_phrases_set_exists(self):
-        """_SOFT_CANCEL_PHRASES must exist and contain the moved phrases."""
-        assert "no me interesa" in _SOFT_CANCEL_PHRASES
-        assert "mejor no" in _SOFT_CANCEL_PHRASES
-
-    def test_no_me_interesa_does_not_cancel_with_selected_services(self):
-        """'no me interesa' must NOT cancel when selected_services is non-empty."""
-        mode = make_booking_mode()
-        ctx = BookingContext(selected_services=["Cultura de Color"])
-        state = make_state("no me interesa")
-
-        result = mode._check_special_intents(state, "no me interesa", make_intent("reject"), ctx)
-
-        assert result is None, (
-            "_check_special_intents cancelled booking for 'no me interesa' "
-            "when selected_services was non-empty — soft phrases should be suppressed"
-        )
-
-    def test_mejor_no_does_not_cancel_with_selected_services(self):
-        """'mejor no' must NOT cancel when selected_services is non-empty."""
-        mode = make_booking_mode()
-        ctx = BookingContext(selected_services=["Mechas"])
-        state = make_state("mejor no")
-
-        result = mode._check_special_intents(state, "mejor no", make_intent("reject"), ctx)
-
-        assert result is None
-
-    def test_no_me_interesa_does_not_cancel_with_pending_clarifications(self):
-        """'no me interesa' must NOT cancel when pending_clarifications is non-empty."""
-        mode = make_booking_mode()
-        ctx = BookingContext(
-            pending_clarifications=[
-                {
-                    "axis": "hair_density",
-                    "options": [
-                        {
-                            "label": "Normal",
-                            "value": "normal",
-                            "service_name": "Mechas",
-                            "service_id": "m1",
-                        },
-                    ],
-                }
-            ]
-        )
-        state = make_state("no me interesa")
-
-        result = mode._check_special_intents(state, "no me interesa", make_intent("reject"), ctx)
-
-        assert result is None
-
-    def test_no_me_interesa_does_not_cancel_with_both_active(self):
-        """'no me interesa' must NOT cancel when BOTH selected_services and pending_clarifications."""
-        mode = make_booking_mode()
-        ctx = BookingContext(
-            selected_services=["Corte de Dama"],
-            pending_clarifications=[
-                {
-                    "axis": "hair_density",
-                    "options": [
-                        {"label": "N", "value": "normal", "service_name": "S", "service_id": "s"},
-                    ],
-                }
-            ],
-        )
-        state = make_state("no me interesa eso")
-
-        result = mode._check_special_intents(
-            state, "no me interesa eso", make_intent("reject"), ctx
-        )
-
-        assert result is None
-
-    def test_no_me_interesa_can_cancel_in_idle_state(self):
-        """'no me interesa' CAN cancel when selected_services=[] AND pending_clarifications=[]."""
-        mode = make_booking_mode()
-        ctx = BookingContext()  # Empty context — idle state
-        state = make_state("no me interesa, gracias")
-
-        result = mode._check_special_intents(
-            state, "no me interesa, gracias", make_intent("book"), ctx
-        )
-
-        assert result is not None
-        assert result["current_mode"] == "GENERAL"
-
-    def test_mejor_no_can_cancel_in_idle_state(self):
-        """'mejor no' CAN cancel when no active booking context."""
-        mode = make_booking_mode()
-        ctx = BookingContext()  # Idle
-        state = make_state("mejor no")
-
-        result = mode._check_special_intents(state, "mejor no", make_intent("book"), ctx)
-
-        assert result is not None
-        assert result["current_mode"] == "GENERAL"
-
-    def test_explicit_cancel_always_cancels_regardless_of_context(self):
-        """'cancelar' MUST always cancel, even with active booking context."""
-        mode = make_booking_mode()
-        ctx = BookingContext(selected_services=["Mechas", "Corte de Dama"])
-        state = make_state("cancelar")
-
-        result = mode._check_special_intents(state, "cancelar", make_intent("cancel"), ctx)
-
-        assert result is not None
-        assert result["current_mode"] == "GENERAL"
-
-    def test_no_me_interesa_without_ctx_does_cancel(self):
-        """Without ctx (None), soft phrases fall through to default behavior (cancel)."""
-        mode = make_booking_mode()
-        state = make_state("no me interesa")
-
-        # No ctx passed — defaults to no active context → soft phrases active
-        result = mode._check_special_intents(state, "no me interesa", make_intent("book"), ctx=None)
-
-        assert result is not None
-        assert result["current_mode"] == "GENERAL"
-
-
-# =============================================================================
 # Phase 3: Mode stability — verify no new inertia guard needed
 # =============================================================================
 
@@ -925,16 +754,53 @@ class TestPhase3ModeStability:
     The design (D5) stated that Rule 7 already handles mode stability:
     'current_mode=BOOKING and intent not in (cancel, reject, ask_info) → stay BOOKING'
 
-    This test class verifies that the required constants/behavior exist.
+    Cancel/escalate detection is now handled exclusively by intent_router.py upstream
+    (Item 2 of booking-mode-restrictor-cleanup). _check_special_intents and the
+    _CANCEL_PHRASES / _SOFT_CANCEL_PHRASES constants have been removed.
     """
 
-    def test_cancel_phrases_set_is_frozenset(self):
-        """_CANCEL_PHRASES must be a frozenset (immutable, prevents accidental mutation)."""
-        assert isinstance(_CANCEL_PHRASES, frozenset)
+    def test_cancel_phrases_not_in_booking_mode(self):
+        """_CANCEL_PHRASES must NOT exist in booking_mode (removed by restrictor-cleanup)."""
+        import agent.modes.booking_mode as bm
 
-    def test_soft_cancel_phrases_set_is_frozenset(self):
-        """_SOFT_CANCEL_PHRASES must be a frozenset."""
-        assert isinstance(_SOFT_CANCEL_PHRASES, frozenset)
+        assert not hasattr(bm, "_CANCEL_PHRASES"), (
+            "_CANCEL_PHRASES found in booking_mode — it was intentionally removed. "
+            "Cancel detection is now handled by intent_router.py upstream."
+        )
+
+    def test_soft_cancel_phrases_not_in_booking_mode(self):
+        """_SOFT_CANCEL_PHRASES must NOT exist in booking_mode (removed by restrictor-cleanup)."""
+        import agent.modes.booking_mode as bm
+
+        assert not hasattr(
+            bm, "_SOFT_CANCEL_PHRASES"
+        ), "_SOFT_CANCEL_PHRASES found in booking_mode — it was intentionally removed."
+
+    def test_check_special_intents_not_in_booking_mode(self):
+        """_check_special_intents must NOT exist in BookingMode (removed by restrictor-cleanup)."""
+        assert not hasattr(BookingMode, "_check_special_intents"), (
+            "_check_special_intents found in BookingMode — it was intentionally removed. "
+            "Cancel/escalate is now handled by intent_router.py."
+        )
+
+    def test_handle_has_cancel_intent_fast_path(self):
+        """handle() must have a fast-path for intent_name == 'cancel' via router."""
+        import inspect
+
+        source = inspect.getsource(BookingMode.handle)
+        assert 'intent_name == "cancel"' in source, (
+            "BookingMode.handle() missing cancel fast-path — "
+            "the router-based cancel detection must be present."
+        )
+
+    def test_handle_has_escalate_intent_fast_path(self):
+        """handle() must have a fast-path for intent_name == 'escalate' via router."""
+        import inspect
+
+        source = inspect.getsource(BookingMode.handle)
+        assert (
+            'intent_name == "escalate"' in source
+        ), "BookingMode.handle() missing escalate fast-path."
 
     def test_conversation_flow_has_booking_inertia_rule(self):
         """Rule 7 in conversation_flow.py: current_mode=BOOKING + non-cancel/reject/ask_info → stay."""

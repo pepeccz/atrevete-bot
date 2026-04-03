@@ -610,6 +610,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     if current_mode == "ESCALATION" and intent_result.intent not in ("book",):
         return {"mode_context": {**intent_data}, "last_node": "router"}
 
+    # Rule 7.8: Stay in APPOINTMENT_MANAGEMENT while a flow is active.
+    # Mirrors Rule 7.5 (ESCALATION inertia). Responses like "1", "sí", "el martes"
+    # may be classified as confirm/ambiguous by the router but must NOT eject
+    # the user from the appointment management flow. Allow "book" and "greet"
+    # to exit (user wants to start a new booking or restart from scratch).
+    if current_mode == "APPOINTMENT_MANAGEMENT" and intent_result.intent not in ("book", "greet"):
+        return {"mode_context": {**intent_data}, "last_node": "router"}
+
     # Rule 2.7: reschedule/check_appointments → APPOINTMENT_MANAGEMENT
     if intent_result.intent in ("reschedule", "check_appointments"):
         return {

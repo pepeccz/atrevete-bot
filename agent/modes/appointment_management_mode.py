@@ -531,10 +531,7 @@ class AppointmentManagementMode(BaseModeNode):
             elif "available_stylists" in parsed:
                 for stylist_entry in parsed.get("available_stylists", []):
                     slots.extend(stylist_entry.get("slots", []))
-                # Also include soonest_any if present
-                soonest = parsed.get("soonest_any")
-                if soonest:
-                    slots.insert(0, soonest)
+                # v4.3: soonest_any no longer inserted — removed at source in availability_tools.py
 
             if slots:
                 ctx.offered_slots = slots
@@ -899,9 +896,18 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
     # Case 6: Action=reschedule, appointment selected
     if ctx.action == "reschedule" and ctx.selected_appointment_id:
         if not ctx.offered_slots:
+            snap = ctx.selected_appointment_snapshot or {}
+            stylist_name = snap.get("stylist_name", "la estilista")
+            stylist_id_hint = snap.get("stylist_id")
+            stylist_hint = ""
+            if stylist_id_hint:
+                stylist_hint = (
+                    f" La cita original era con {stylist_name} (stylist_id: {stylist_id_hint}). "
+                    "Si el cliente no indica otra preferencia, usá ese stylist_id en find_next_available."
+                )
             lines.append(
                 "Llamá check_availability o find_next_available para buscar horarios disponibles "
-                "y mostrárselos al cliente."
+                f"y mostrárselos al cliente.{stylist_hint}"
             )
         elif not ctx.pending_new_slot:
             lines.append(

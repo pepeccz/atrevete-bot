@@ -382,6 +382,22 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
     # Shape 1: resolved_service — unambiguous single match
     if "resolved_service" in result:
         svc = result["resolved_service"]
+
+        # ── ADDITIVE MODE: second+ service in same agentic round ──────────
+        # When primary service already resolved AND not locked AND incoming ID
+        # differs, APPEND to selected_services without overwriting scalar fields.
+        if ctx.service_id and not ctx.services_locked and str(svc.get("id", "")) != ctx.service_id:
+            if svc["name"] not in ctx.selected_services:
+                ctx.selected_services.append(svc["name"])
+                _upsert_service_detail(ctx, svc)
+            logger.info(
+                "extract_service_fields: ADDITIVE — appended '%s' (primary='%s')",
+                svc["name"],
+                ctx.service_name,
+            )
+            return
+
+        # ── PRIMARY PATH ──────────────────────────────────────────────────
         ctx.service_id = str(svc["id"])
         ctx.service_name = svc["name"]
         ctx.service_category = svc.get("category")
@@ -401,9 +417,11 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
             if not any(opt.get("service_name") == resolved_name for opt in pc.get("options", []))
         ]
         ctx.candidate_services = []
-        # Infer audience hint if not already set
+        # Infer audience hint if not already set; track source service name
         if not ctx.service_audience_hint:
             ctx.service_audience_hint = extract_service_audience_hint(svc.get("name"))
+            if ctx.service_audience_hint:
+                ctx.service_audience_hint_source = svc.get("name")
         # Path C: metadata propagated here (see REQ-3)
         # Extract combo recommendations if present and not yet loaded
         combo_recs = svc.get("combo_recommendations", [])
@@ -445,17 +463,21 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
                         ctx.service_audience_hint,
                     )
                     return
-        # Axis-based upsert: replace existing entry for same axis instead of
-        # blindly appending (prevents duplicate clarification entries for the
-        # same axis when the LLM retries a failed clarification question).
+        # Axis+service_key upsert: replace existing entry for same (axis, service_key)
+        # pair instead of same axis alone. This preserves clarifications for two
+        # different services that share the same axis (e.g., both need "audience").
         axis = clarification.get("axis")
+        service_key = clarification.get("service_key", "")
         ctx.pending_clarifications = [
-            pc for pc in ctx.pending_clarifications if pc.get("axis") != axis
+            pc
+            for pc in ctx.pending_clarifications
+            if not (pc.get("axis") == axis and pc.get("service_key", "") == service_key)
         ]
         ctx.pending_clarifications.append(clarification)
         logger.info(
-            "extract_service_fields: clarification upserted (axis=%s, queue_size=%d)",
+            "extract_service_fields: clarification upserted (axis=%s, service_key=%r, queue_size=%d)",
             axis,
+            service_key,
             len(ctx.pending_clarifications),
         )
         return

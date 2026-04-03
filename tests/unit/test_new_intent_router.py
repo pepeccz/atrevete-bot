@@ -38,25 +38,21 @@ class TestClassifyByKeywords:
 
     def test_hola_returns_greet(self):
         result = classify_by_keywords("hola")
-        assert result is not None
-        assert result.intent == "greet"
+        assert result is None
 
     def test_hola_has_high_confidence(self):
-        """Exact match → 0.90 confidence."""
+        """Greet defers to LLM — no keyword result to inspect."""
         result = classify_by_keywords("hola")
-        assert result is not None
-        assert result.confidence == 0.90
+        assert result is None
 
     def test_buenas_returns_greet(self):
         result = classify_by_keywords("buenas")
-        assert result is not None
-        assert result.intent == "greet"
+        assert result is None
 
     def test_hola_uppercase_returns_greet(self):
-        """Classification is case-insensitive."""
+        """Greet defers to LLM regardless of case."""
         result = classify_by_keywords("HOLA")
-        assert result is not None
-        assert result.intent == "greet"
+        assert result is None
 
     # ------ book intent ------
 
@@ -196,13 +192,13 @@ class TestClassifyByKeywords:
 
     def test_exact_match_confidence_090(self):
         """Exact full-text match → 0.90 (HIGH)."""
-        result = classify_by_keywords("hola")
+        result = classify_by_keywords("reservar")
         assert result is not None
         assert result.confidence == 0.90
 
     def test_starts_with_match_confidence_090(self):
         """Text starts with keyword → 0.90 (HIGH)."""
-        result = classify_by_keywords("hola, buenos días")
+        result = classify_by_keywords("reservar algo para mañana")
         assert result is not None
         assert result.confidence == 0.90
 
@@ -240,11 +236,10 @@ class TestClassifyByKeywords:
         result = classify_by_keywords("Hola, necesito hablar con una persona")
         assert result is None
 
-    def test_pure_greet_still_works(self):
-        """Pure greeting without actionable intent still returns greet."""
+    def test_pure_greet_defers_to_llm(self):
+        """Pure greeting without actionable intent defers to LLM (not keyword fast-path)."""
         result = classify_by_keywords("Hola, buenas tardes")
-        assert result is not None
-        assert result.intent == "greet"
+        assert result is None
 
     def test_pure_book_still_works(self):
         """Pure booking without greeting still returns book."""
@@ -255,9 +250,9 @@ class TestClassifyByKeywords:
     # ------ mode_hint ------
 
     def test_greet_mode_hint_is_greeting(self):
+        """Greet defers to LLM — no keyword result, no mode_hint to inspect."""
         result = classify_by_keywords("hola")
-        assert result is not None
-        assert result.mode_hint == "GREETING"
+        assert result is None
 
     def test_book_mode_hint_is_booking(self):
         result = classify_by_keywords("quiero una cita")
@@ -305,15 +300,16 @@ class TestIntentRouterClassify:
 
     # ------ Keyword fast path — LLM must NOT be called ------
 
-    async def test_hola_does_not_call_llm(self):
-        """High-confidence keyword match → LLM is never called."""
-        mock_llm = self._make_mock_llm()
+    async def test_hola_calls_llm_and_returns_greet(self):
+        """Greet passthrough → keyword returns None → LLM is called."""
+        llm_response = json.dumps({"intent": "greet", "confidence": 0.95})
+        mock_llm = self._make_mock_llm(llm_response)
         router = IntentRouter(llm_client=mock_llm)
 
         result = await router.classify("hola")
 
         assert result.intent == "greet"
-        mock_llm.ainvoke.assert_not_called()
+        mock_llm.ainvoke.assert_called_once()
 
     async def test_quiero_una_cita_does_not_call_llm(self):
         mock_llm = self._make_mock_llm()
@@ -493,9 +489,6 @@ class TestIntentRouterClassify:
         ("nop", "reject"),
         ("qué va", "reject"),
         ("ni hablar", "reject"),
-        ("como estas", "greet"),
-        ("wenas", "greet"),
-        ("qué tal", "greet"),
         ("reclamación", "escalate"),
         ("quiero quejarme", "escalate"),
     ],
@@ -507,3 +500,41 @@ def test_new_keywords_classify_correctly(text, expected):
     assert result.intent == expected, (
         f"Expected intent '{expected}' for text {text!r}, got '{result.intent}'"
     )
+
+
+# =============================================================================
+# Greet passthrough regression tests — greeting-intent-passthrough
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "como estas",
+        "wenas",
+        "qué tal",
+    ],
+)
+def test_greet_keywords_defer_to_llm(text):
+    """Greet keywords always return None — greet intent is never fast-pathed."""
+    result = classify_by_keywords(text)
+    assert result is None, f"Expected None for greet text {text!r}, got {result}"
+
+
+def test_classify_keywords_greet_with_typo_returns_none():
+    """Regression: compound greeting with typos must defer to LLM (original bug).
+
+    'hola queiro cortarme el eplo' — keyword sees 'hola' (greet) but the
+    typo 'queiro'/'eplo' prevents any book keyword from matching.
+    The greet passthrough guard must return None so the LLM correctly
+    classifies this as 'book'.
+    """
+    result = classify_by_keywords("hola queiro cortarme el eplo")
+    assert result is None
+
+
+def test_classify_keywords_book_still_fast_path():
+    """Non-greet intents with high-confidence keywords still bypass the LLM."""
+    result = classify_by_keywords("quiero reservar una cita")
+    assert result is not None
+    assert result.intent == "book"

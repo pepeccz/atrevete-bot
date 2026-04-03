@@ -5,13 +5,13 @@ Coverage (Commit 1 — P1: one-liner guards):
 - SC-2: _extract_name_from_conversation locked when ctx.customer_id is set
 - SC-7 (regression): guards do NOT block when ctx fields are None
 
-Coverage (Commit 2 — P2: context-guard helpers):
-- _previous_assistant_presented_slots: True for each detection pattern, False otherwise
-- _previous_assistant_presented_stylists: True for numbered stylists + context, False otherwise
-- SC-3: _resolve_user_slot_selection blocked when no slots were presented
+Coverage (Commit 2 — P2: context-guard helpers — updated by booking-mode-restrictor-cleanup):
+- ctx.slots_presented flag: replaces _previous_assistant_presented_slots (removed)
+- ctx.stylists_presented flag: replaces _previous_assistant_presented_stylists (removed)
+- SC-3: _resolve_user_slot_selection blocked when ctx.slots_presented=False
 - SC-4: _detect_addon_acceptance blocked when ctx.offered_slots is non-empty
-- SC-5: _try_resolve_stylist_from_message blocked when stylists were not listed
-- SC-8 (regression): slot resolver fires when slots WERE shown and user says "2"
+- SC-5: _try_resolve_stylist_from_message blocked when ctx.stylists_presented=False
+- SC-8 (regression): slot resolver fires when ctx.slots_presented=True
 
 Coverage (Commit 3 — P3: confirmation threshold):
 - SC-6a: standalone "sí" opens gate
@@ -24,8 +24,6 @@ All LLM calls are mocked — tests do NOT require a real LLM or DB.
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from agent.modes.booking_context import BookingContext
 from agent.modes.booking_mode import (
     BookingMode,
@@ -33,8 +31,6 @@ from agent.modes.booking_mode import (
     _detect_addon_acceptance,
     _detect_confirmation_exchange,
     _extract_name_from_conversation,
-    _previous_assistant_presented_slots,
-    _previous_assistant_presented_stylists,
     _resolve_user_slot_selection,
     _try_resolve_stylist_from_message,
 )
@@ -42,7 +38,6 @@ from agent.modes.tool_extractors import (
     _resolve_user_candidate_selection,
     _resolve_user_clarification_selection,
 )
-
 
 # =============================================================================
 # Helpers
@@ -183,117 +178,131 @@ class TestExtractNameRegression:
 
 
 # =============================================================================
-# Commit 2 — P2: _previous_assistant_presented_slots helper tests
+# Commit 2 — P2: ctx.slots_presented flag tests (replaces _previous_assistant_presented_slots)
 # =============================================================================
 
 
-class TestPreviousAssistantPresentedSlots:
-    """Tests for the _previous_assistant_presented_slots helper."""
+class TestSlotsPresentedCtxFlag:
+    """Tests for ctx.slots_presented flag — replaces _previous_assistant_presented_slots.
 
-    def test_returns_true_for_numbered_time_options(self):
-        """Numbered time entries like '1. Lunes a las 10:00' → True."""
-        messages = [
-            _assistant_msg(
-                "Aquí tienes los horarios disponibles:\n1. Lunes a las 10:00\n2. Martes a las 11:30"
-            ),
-        ]
-        assert _previous_assistant_presented_slots(messages) is True
+    The flag is now set by _build_response() when ctx.offered_slots is non-empty
+    (booking-mode-restrictor-cleanup Item 4). _resolve_user_slot_selection uses
+    ctx.slots_presented instead of scanning message history.
+    """
 
-    def test_returns_true_for_horarios_keyword(self):
-        """Message containing 'horarios' → True."""
-        messages = [
-            _assistant_msg("Estos son los horarios disponibles para esta semana."),
-        ]
-        assert _previous_assistant_presented_slots(messages) is True
+    def test_slots_presented_default_is_false(self):
+        """ctx.slots_presented defaults to False on a fresh BookingContext."""
+        ctx = BookingContext()
+        assert ctx.slots_presented is False
 
-    def test_returns_true_for_alguno_de_estos_horarios(self):
-        """Message containing '¿Alguno de estos horarios' → True."""
-        messages = [
-            _assistant_msg("¿Alguno de estos horarios te viene bien?"),
-        ]
-        assert _previous_assistant_presented_slots(messages) is True
+    def test_slots_presented_can_be_set_to_true(self):
+        """Setting ctx.slots_presented=True enables slot resolution guard."""
+        ctx = BookingContext()
+        ctx.slots_presented = True
+        assert ctx.slots_presented is True
 
-    def test_returns_false_for_name_ask(self):
-        """Message asking for name → False."""
-        messages = [
-            _assistant_msg("¿Cuál es tu nombre?"),
-        ]
-        assert _previous_assistant_presented_slots(messages) is False
+    def test_resolve_slot_blocked_when_flag_false(self):
+        """Guard: when messages is not None and ctx.slots_presented=False → blocked."""
+        ctx = BookingContext(
+            offered_slots=[
+                {
+                    "date": "Lunes",
+                    "time": "10:00",
+                    "full_datetime": "2026-04-06T10:00:00",
+                    "stylist_id": "stylist-1",
+                    "stylist_name": "Ana",
+                },
+            ],
+            slots_presented=False,  # explicit False
+        )
+        messages = [_assistant_msg("¿Cuál es tu nombre?")]
 
-    def test_returns_false_for_empty_messages(self):
-        """No messages → False."""
-        assert _previous_assistant_presented_slots([]) is False
+        result = _resolve_user_slot_selection("1", ctx, messages)
 
-    def test_returns_false_for_no_assistant_message(self):
-        """Only user messages → False."""
-        messages = [_user_msg("quiero una cita")]
-        assert _previous_assistant_presented_slots(messages) is False
+        assert result is False
+        assert ctx.selected_slot is None
 
-    def test_ignores_user_messages_for_check(self):
-        """User message with time pattern doesn't count — needs assistant message."""
-        messages = [
-            _user_msg("a las 10:00"),
-        ]
-        assert _previous_assistant_presented_slots(messages) is False
+    def test_resolve_slot_passes_when_flag_true(self):
+        """When ctx.slots_presented=True, resolver fires regardless of message content."""
+        ctx = BookingContext(
+            offered_slots=[
+                {
+                    "date": "Lunes",
+                    "time": "10:00",
+                    "full_datetime": "2026-04-06T10:00:00",
+                    "stylist_id": "stylist-1",
+                    "stylist_name": "Ana",
+                },
+            ],
+            slots_presented=True,
+        )
+        messages = [_assistant_msg("¿Cuál es tu nombre?")]  # content doesn't matter now
 
-    def test_checks_last_assistant_message(self):
-        """Only last assistant message is checked."""
-        messages = [
-            _assistant_msg("¿Alguno de estos horarios te viene bien?"),
-            _user_msg("el 2"),
-            _assistant_msg("¿Tu nombre?"),  # last assistant message — no slots
-        ]
-        assert _previous_assistant_presented_slots(messages) is False
+        result = _resolve_user_slot_selection("1", ctx, messages)
+
+        assert result is True
+        assert ctx.selected_slot is not None
+
+    def test_resolve_slot_bypassed_when_messages_none(self):
+        """Guard bypassed when messages=None (backward compat)."""
+        ctx = BookingContext(
+            offered_slots=[
+                {
+                    "date": "Lunes",
+                    "time": "10:00",
+                    "full_datetime": "2026-04-06T10:00:00",
+                    "stylist_id": "stylist-1",
+                    "stylist_name": "Ana",
+                },
+            ],
+            slots_presented=False,
+        )
+
+        result = _resolve_user_slot_selection("1", ctx, None)
+
+        assert result is True
 
 
 # =============================================================================
-# Commit 2 — P2: _previous_assistant_presented_stylists helper tests
+# Commit 2 — P2: ctx.stylists_presented flag tests (replaces _previous_assistant_presented_stylists)
 # =============================================================================
 
 
-class TestPreviousAssistantPresentedStylists:
-    """Tests for the _previous_assistant_presented_stylists helper."""
+class TestStylistsPresentedCtxFlag:
+    """Tests for ctx.stylists_presented flag — replaces _previous_assistant_presented_stylists.
 
-    def test_returns_true_for_numbered_stylist_list(self):
-        """Numbered list with capitalized names + 'con quién' context → True."""
-        messages = [
-            _assistant_msg("¿Con quién te gustaría la cita?\n1. Ana\n2. Marta\n3. Sofía"),
-        ]
-        assert _previous_assistant_presented_stylists(messages) is True
+    The flag is set by _build_response() when prefetched_stylists is non-empty.
+    _try_resolve_stylist_from_message uses ctx.stylists_presented instead of scanning history.
+    """
 
-    def test_returns_true_for_estilista_with_elije(self):
-        """'estilista' + 'elige' in message → True."""
-        messages = [
-            _assistant_msg("Elige tu estilista preferida:\n1. Laura\n2. Carmen"),
-        ]
-        assert _previous_assistant_presented_stylists(messages) is True
+    def test_stylists_presented_default_is_false(self):
+        """ctx.stylists_presented defaults to False on a fresh BookingContext."""
+        ctx = BookingContext()
+        assert ctx.stylists_presented is False
 
-    def test_returns_false_for_unrelated_message(self):
-        """Unrelated assistant message → False."""
-        messages = [
-            _assistant_msg("¿A qué hora te viene mejor?"),
-        ]
-        assert _previous_assistant_presented_stylists(messages) is False
+    def test_stylists_presented_can_be_set_to_true(self):
+        """Setting ctx.stylists_presented=True enables stylist resolution."""
+        ctx = BookingContext()
+        ctx.stylists_presented = True
+        assert ctx.stylists_presented is True
 
-    def test_returns_false_for_name_ask(self):
-        """Name-asking message → False."""
-        messages = [
-            _assistant_msg("¿Cuál es tu nombre?"),
-        ]
-        assert _previous_assistant_presented_stylists(messages) is False
+    def test_not_in_booking_mode(self):
+        """_previous_assistant_presented_stylists must NOT exist in booking_mode module."""
+        import agent.modes.booking_mode as bm
 
-    def test_returns_false_for_empty_messages(self):
-        """No messages → False."""
-        assert _previous_assistant_presented_stylists([]) is False
+        assert not hasattr(bm, "_previous_assistant_presented_stylists"), (
+            "_previous_assistant_presented_stylists found in booking_mode — "
+            "it was replaced by ctx.stylists_presented flag."
+        )
 
-    def test_checks_last_assistant_message(self):
-        """Only last assistant message is checked."""
-        messages = [
-            _assistant_msg("¿Con quién te gustaría la cita?\n1. Ana\n2. Marta"),
-            _user_msg("Ana"),
-            _assistant_msg("¿Cuál es el día que prefieres?"),  # last — no stylists
-        ]
-        assert _previous_assistant_presented_stylists(messages) is False
+    def test_not_slots_in_booking_mode(self):
+        """_previous_assistant_presented_slots must NOT exist in booking_mode module."""
+        import agent.modes.booking_mode as bm
+
+        assert not hasattr(bm, "_previous_assistant_presented_slots"), (
+            "_previous_assistant_presented_slots found in booking_mode — "
+            "it was replaced by ctx.slots_presented flag."
+        )
 
 
 # =============================================================================
@@ -302,10 +311,14 @@ class TestPreviousAssistantPresentedStylists:
 
 
 class TestResolveUserSlotSelectionGuard:
-    """SC-3: _resolve_user_slot_selection returns False when slots weren't presented."""
+    """SC-3: _resolve_user_slot_selection returns False when ctx.slots_presented=False.
+
+    Guard now uses ctx.slots_presented flag (set by _build_response) instead of
+    scanning message history (booking-mode-restrictor-cleanup Item 4).
+    """
 
     def test_sc3_blocked_when_no_slot_presentation(self):
-        """SC-3: last assistant message didn't show slots → returns False."""
+        """SC-3: ctx.slots_presented=False (default) → returns False when messages provided."""
         ctx = BookingContext(
             offered_slots=[
                 {
@@ -323,6 +336,7 @@ class TestResolveUserSlotSelectionGuard:
                     "stylist_name": "Ana",
                 },
             ]
+            # slots_presented defaults to False
         )
         messages = [_assistant_msg("¿Cuál es tu nombre?")]
 
@@ -356,10 +370,10 @@ class TestResolveUserSlotSelectionGuard:
 
 
 class TestResolveUserSlotSelectionRegression:
-    """SC-8: resolver fires correctly when last assistant DID present slots."""
+    """SC-8: resolver fires correctly when ctx.slots_presented=True."""
 
     def test_sc8_resolves_slot_when_slots_were_shown(self):
-        """SC-8: numbered slot list in last assistant message → resolver fires."""
+        """SC-8: ctx.slots_presented=True → resolver fires and selects correct slot."""
         ctx = BookingContext(
             offered_slots=[
                 {
@@ -390,17 +404,12 @@ class TestResolveUserSlotSelectionRegression:
                     "stylist_id": "stylist-3",
                     "stylist_name": "Sofía",
                 },
-            ]
+            ],
+            slots_presented=True,  # guard flag: slots were shown this turn
         )
         messages = [
-            _assistant_msg(
-                "¿Alguno de estos horarios te viene bien?\n"
-                "1. Lunes a las 10:00\n"
-                "2. Martes a las 11:00\n"
-                "3. Miércoles a las 12:00\n"
-                "4. Jueves a las 13:00"
-            )
-        ]
+            _assistant_msg("¿Cuál es tu nombre?")
+        ]  # content irrelevant — flag controls guard
 
         result = _resolve_user_slot_selection("2", ctx, messages)
 
@@ -450,16 +459,21 @@ class TestDetectAddonAcceptanceGuard:
 
 
 class TestTryResolveStylistGuard:
-    """SC-5: _try_resolve_stylist_from_message skips when stylists weren't shown."""
+    """SC-5: _try_resolve_stylist_from_message uses ctx.stylists_presented flag.
 
-    def test_sc5_blocked_when_no_stylist_presentation(self):
-        """SC-5: last assistant message didn't list stylists → stylist_id stays None."""
+    Guard now uses ctx.stylists_presented (set by _build_response) instead of
+    scanning message history (booking-mode-restrictor-cleanup Item 4).
+    """
+
+    def test_sc5_blocked_when_stylists_presented_false(self):
+        """SC-5: ctx.stylists_presented=False (default) → stylist_id stays None."""
         ctx = BookingContext(
             stylist_id=None,
             prefetched_stylists=[
                 {"id": "stylist-1", "name": "Laura"},
                 {"id": "stylist-2", "name": "Sofía"},
             ],
+            # stylists_presented defaults to False
         )
         messages = [_assistant_msg("¿Cuándo quieres la cita?")]
 
@@ -467,18 +481,17 @@ class TestTryResolveStylistGuard:
 
         assert ctx.stylist_id is None
 
-    def test_sc5_fires_when_stylists_were_listed(self):
-        """SC-5 regression: stylists listed in last message → resolver fires."""
+    def test_sc5_fires_when_stylists_presented_true(self):
+        """SC-5 regression: ctx.stylists_presented=True → resolver fires."""
         ctx = BookingContext(
             stylist_id=None,
             prefetched_stylists=[
                 {"id": "stylist-1", "name": "Laura"},
                 {"id": "stylist-2", "name": "Sofía"},
             ],
+            stylists_presented=True,  # guard flag: stylists were shown
         )
-        messages = [
-            _assistant_msg("¿Con quién te gustaría la cita?\n1. Laura\n2. Sofía"),
-        ]
+        messages = [_assistant_msg("¿Cuándo quieres la cita?")]  # content irrelevant
 
         _try_resolve_stylist_from_message("quiero con Laura", ctx, messages)
 
@@ -514,20 +527,22 @@ def _make_confirmation_state(
         customer_name="Ana" if booking_complete else None,
         customer_id="cust-1" if booking_complete else None,
         selected_services=["Corte Dama"] if booking_complete else [],
-        offered_slots=[
-            {"date": "Lunes", "time": "10:00", "stylist_id": "s-1", "stylist_name": "Ana"}
-        ]
-        if booking_complete
-        else None,
-        selected_slot={
-            "date": "Lunes",
-            "time": "10:00",
-            "full_datetime": "2026-04-06T10:00:00",
-            "stylist_id": "s-1",
-            "stylist_name": "Ana",
-        }
-        if booking_complete
-        else None,
+        offered_slots=(
+            [{"date": "Lunes", "time": "10:00", "stylist_id": "s-1", "stylist_name": "Ana"}]
+            if booking_complete
+            else None
+        ),
+        selected_slot=(
+            {
+                "date": "Lunes",
+                "time": "10:00",
+                "full_datetime": "2026-04-06T10:00:00",
+                "stylist_id": "s-1",
+                "stylist_name": "Ana",
+            }
+            if booking_complete
+            else None
+        ),
         stylist_id="s-1" if booking_complete else None,
         stylist_name="Ana" if booking_complete else None,
     )

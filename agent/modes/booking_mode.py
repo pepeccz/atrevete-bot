@@ -47,45 +47,6 @@ logger = logging.getLogger(__name__)
 # Constants
 # ============================================================================
 
-# Cancel/Escalate detection phrases (Spanish, accent-normalized)
-# NOTE: broad conversational negations ("no me interesa", "mejor no") have been
-# intentionally removed. They are valid replies to clarification questions and
-# should NOT cancel an active booking. They are still handled by _SOFT_CANCEL_PHRASES
-# which are only active when there is no booking context.
-_CANCEL_PHRASES: frozenset[str] = frozenset(
-    {
-        "cancelar",
-        "anular",
-        "no quiero reservar",
-        "dejalo",
-        "dejalo por ahora",
-        "olvidalo",
-        "dejemoslo",
-        "cancela",
-        "lo dejo",
-        "lo dejo por ahora",
-        "mejor lo dejo",
-        "he cambiado de opinion",
-        "cambie de opinion",
-        "ya no quiero",
-        "lo cancelo",
-        "no quiero hacer la reserva",
-        "no quiero la cita",
-    }
-)
-
-# Soft cancel phrases: only trigger cancellation when there is NO active booking
-# context (i.e., selected_services is empty AND pending_clarifications is empty).
-# These are broad negations that can be valid mid-clarification responses.
-_SOFT_CANCEL_PHRASES: frozenset[str] = frozenset(
-    {
-        "no me interesa",
-        "mejor no",
-        "paso",
-        "no quiero",
-    }
-)
-
 _ADDON_DECLINE_PHRASES: frozenset[str] = frozenset(
     {
         "no gracias",
@@ -101,33 +62,6 @@ _ADDON_DECLINE_PHRASES: frozenset[str] = frozenset(
     }
 )
 
-_ESCALATE_PHRASES: frozenset[str] = frozenset(
-    {
-        "humano",
-        "persona real",
-        "hablar con alguien",
-        "agente",
-        "quiero hablar con",
-        "operador",
-    }
-)
-
-# Negation tokens that neutralize cancel phrases
-# e.g. "no quiero cancelar" is NOT a cancel intent
-_CANCEL_NEGATION_TOKENS: frozenset[str] = frozenset(
-    {
-        "no cancelar",
-        "no quiero cancelar",
-        "no anular",
-        "no la canceles",
-        "no canceles",
-        "sigue",
-        "seguimos",
-        "continuemos",
-        "continua",
-    }
-)
-
 # History window for message context
 _HISTORY_LIMIT = 8
 
@@ -135,44 +69,8 @@ _HISTORY_LIMIT = 8
 # After this many injections the block is auto-suppressed (recommendations_shown=True).
 RECOMMENDATIONS_OFFER_THRESHOLD = 2
 
-# Confirmation summary detection — patterns that indicate the LLM showed
-# a confirmation summary to the user (Spanish booking context)
-_CONFIRMATION_SUMMARY_MARKERS: tuple[str, ...] = (
-    "resumen de tu cita",
-    "resumen de la cita",
-    "confirmo la cita",
-    "confirmo tu cita",
-    "confirmamos la cita",
-    "confirmamos tu cita",
-    "confirmamos?",
-    "¿confirmo?",
-    "¿confirmo la cita?",
-    "¿confirmamos?",
-    "¿te confirmo",
-    "¿lo confirmo",
-    "¿quieres que confirme",
-    "¿queres que confirme",
-    "datos de tu cita",
-    "datos de la cita",
-)
-
-# Confirmation question patterns — the LLM asking for confirmation in question form.
-# These supplement _CONFIRMATION_SUMMARY_MARKERS for detection in _build_response().
-_CONFIRMATION_QUESTION_PATTERNS: tuple[str, ...] = (
-    "confirmo",
-    "confirmamos",
-    "te parece bien",
-    "te parece correcto",
-    "esta todo bien",
-    "esta todo correcto",
-    "procedemos",
-    "reservo",
-    "queres que reserve",
-    "quieres que reserve",
-)
-
-# Shared markers for notes-asking detection — used by both _build_response() counter
-# and _previous_assistant_asked_for_notes() flag.
+# Shared markers for notes-asking detection — used by _build_response() to detect
+# when name-ask / notes-ask content was shown (sets ctx.notes_ask_attempts).
 _NOTES_ASK_MARKERS: frozenset[str] = frozenset(
     {
         "nota",
@@ -214,101 +112,24 @@ _USER_CONFIRMATION_PHRASES: tuple[str, ...] = (
     "tal cual",
 )
 
-# Common Spanish words to skip when detecting stylist name hallucinations.
-# Shared between _detect_stylist_hallucination and _redact_hallucinated_stylists.
-# All in lowercase (compared via NFD-lowered text).
-_STYLIST_BLOCKLIST_WORDS: frozenset[str] = frozenset(
+# Placeholder names that the LLM should NOT use when creating customer records.
+# Used by _pre_tool_call to reject manage_customer(create) with fake/generic names.
+# All values must be NFD-lowered (no accents) — comparison uses _nfd_lower().
+_PLACEHOLDER_CUSTOMER_NAMES: frozenset[str] = frozenset(
     {
-        # Function words / articles
-        "la",
-        "del",
-        "los",
-        "el",
-        "es",
-        "un",
-        "una",
-        "unos",
-        "unas",
-        "te",
-        "nos",
-        "sos",
-        "por",
-        "con",
-        "para",
-        "que",
-        "hay",
-        # Greetings / affirmations / common responses
-        "hola",
-        "perfecto",
-        "genial",
-        "claro",
-        "bueno",
-        "vale",
-        "entendido",
-        "estupendo",
-        "gracias",
-        "listo",
-        "dale",
-        "si",
-        "sí",
-        "sip",
-        "ok",
-        "no",
-        "nop",
-        "venga",
-        "bien",
-        "correcto",
-        # Pronouns / subject words
-        "tenemos",
-        "puedo",
-        "tienes",
-        "quieres",
-        "estas",
-        "puede",
-        "podemos",
-        # Salon-specific common nouns (not proper names)
-        "estilista",
-        "profesional",
-        "especialista",
-        "peluqueria",
-        "estetica",
-        "salon",
-        "corte",
-        "tinte",
-        "reserva",
-        "cita",
-        "disponibilidad",
-        "horario",
-        "servicio",
-        "servicios",
-        # Days of week
-        "lunes",
-        "martes",
-        "miercoles",
-        "jueves",
-        "viernes",
-        "sabado",
-        "domingo",
-        # Months
-        "enero",
-        "febrero",
-        "marzo",
-        "abril",
-        "mayo",
-        "junio",
-        "julio",
-        "agosto",
-        "septiembre",
-        "octubre",
-        "noviembre",
-        "diciembre",
-        # Bot identity / salon name tokens
-        "maite",
-        "atrevete",
-        "alcobendas",
+        "cliente",
+        "clienta",
+        "usuario",
+        "usuaria",
+        "desconocido",
+        "desconocida",
+        "anonimo",
+        "anonima",
+        "test",
+        "testing",
+        "prueba",
     }
 )
-
 
 # Clarification-response patterns — messages that look like slot/option selections,
 # not real appointment notes. Used by _looks_like_clarification().
@@ -645,16 +466,13 @@ class BookingMode(BaseModeNode):
 
         # 1e. Pre-resolve: detect notes exchange (bot asked + user replied)
         if ctx and not ctx.notes_asked:
-            messages = state.get("messages", [])
-            if ctx.notes_ask_attempts >= 1:
+            if ctx.notes_ask_attempts >= 2:
                 ctx.notes_asked = True
                 logger.info(
-                    "handle: notes_asked auto-set True (attempts=%d >= 1)",
+                    "handle: notes_asked auto-set True (attempts=%d >= 2)",
                     ctx.notes_ask_attempts,
                 )
-            elif _previous_assistant_asked_for_notes(messages):
-                ctx.notes_asked = True
-                logger.info("handle: notes_asked=True (bot asked, user replied)")
+            # ctx.notes_asked is also set directly by _build_response via _NOTES_ASK_MARKERS
 
         # 1f. Pre-resolve: deterministically persist slot/stylist from user message.
         # This covers the tool_skip case where the LLM does not call book() on the
@@ -686,11 +504,36 @@ class BookingMode(BaseModeNode):
             ):
                 logger.debug("candidate_services resolved deterministically")
 
-        # 2. Fast-path: cancel / escalate (before LLM call)
+        # 1i-name. Pre-resolve: extract customer name BEFORE the agentic loop so the
+        # LLM sees ctx.customer_name already populated in <missing_data>/<collected_data>.
+        # This prevents the loop from calling manage_customer(get) without a name,
+        # receiving exists=False, and asking for the name again instead of creating.
+        # Must run before the LLM loop so dynamic context is built with the name set.
+        if not ctx.customer_id and not ctx.customer_name and user_message_for_slot:
+            _extract_name_from_conversation(state, user_message_for_slot, ctx)
+
+        # 2. Fast-path: cancel / escalate via router intent (before LLM call)
+        # Intent router classifies cancel/escalate upstream — we trust intent.intent directly.
         user_message = self._get_last_user_message(state)
-        special = self._check_special_intents(state, user_message, intent, ctx)
-        if special is not None:
-            return special
+        intent_name = self._extract_intent_name(intent)
+        if intent_name == "cancel":
+            logger.info("BookingMode: cancel intent from router, transitioning to GENERAL")
+            response = "Entendido, cancelamos la reserva. ¿Puedo ayudarte en algo más? 😊"
+            return {
+                **transition_mode(state, "GENERAL"),
+                **add_message(state, "assistant", response),
+                "last_node": "booking",
+                "user_message": None,
+            }
+        if intent_name == "escalate":
+            logger.info("BookingMode: escalate intent from router, transitioning to ESCALATION")
+            response = "Te paso con una persona del equipo. Un momento. 🙏"
+            return {
+                **transition_mode(state, "ESCALATION"),
+                **add_message(state, "assistant", response),
+                "last_node": "booking",
+                "user_message": None,
+            }
 
         # 2b. Detect add-on acceptance from user response (post-upsell gate turn)
         if user_message and ctx.recommendations_shown and not ctx.recommendations_declined:
@@ -719,12 +562,12 @@ class BookingMode(BaseModeNode):
             else:
                 upsell_active = True
                 ctx.upsell_gate_attempts += 1
-                addon_durations = await _fetch_addon_durations(ctx.pending_recommendations)
-                ctx._addon_durations_cache = addon_durations
+                addon_metadata = await _fetch_addon_metadata(ctx.pending_recommendations)
+                ctx._addon_durations_cache = addon_metadata
                 logger.info(
-                    "handle: upsell gate active (attempts=%d), fetched durations for %d add-ons",
+                    "handle: upsell gate active (attempts=%d), fetched metadata for %d add-ons",
                     ctx.upsell_gate_attempts,
-                    len(addon_durations),
+                    len(addon_metadata),
                 )
 
         # 3. Pre-resolve: prefetch stylists if needed (SKIPPED when upsell gate active)
@@ -746,10 +589,8 @@ class BookingMode(BaseModeNode):
         # Also force when disambiguation state exists (M-4 pending-state guard)
         tool_choice = None
         if (
-            (not ctx.selected_services and not ctx.service_id and not ctx.confirmation_shown)
-            or ctx.pending_clarifications
-            or ctx.candidate_services
-        ):
+            not ctx.selected_services and not ctx.service_id and not ctx.confirmation_shown
+        ) or ctx.candidate_services:
             tool_choice = "required"
             logger.info("BookingMode: tool_choice='required' (service unresolved)")
 
@@ -759,9 +600,6 @@ class BookingMode(BaseModeNode):
 
         # 6. Detect tool skips (R4/R6 list_stylists, F-7 search_services)
         await self._detect_tool_skips(result, ctx)
-
-        # 7. Detect stylist hallucinations (R2)
-        self._detect_stylist_hallucination(result.response_text or "", ctx)
 
         # R6 priority fix: when force_stylist_correction is True, the correction
         # prompt already includes the full stylist list — suppress the list reminder
@@ -787,11 +625,10 @@ class BookingMode(BaseModeNode):
         # 6c. Check if user declined recommendations
         _detect_recommendation_decline(user_message, ctx)
 
-        # 6d. P1/P2/P3 fix: extract customer name from user message if still missing.
-        # When the LLM asked for the name and the user replied, the LLM may
-        # acknowledge the name without calling manage_customer. We extract it
-        # from the conversation context to avoid the manage_customer loop.
-        if not ctx.customer_name and user_message:
+        # 6d. Post-loop name extraction fallback: catches the rare case where the
+        # pre-resolver (1i-name) didn't fire (e.g. ctx.customer_id was set mid-loop
+        # then cleared, or edge case in the first pre-resolver guard).
+        if not ctx.customer_name and not ctx.customer_id and user_message:
             _extract_name_from_conversation(state, user_message, ctx)
 
         # 6e. T-06: extract notes from conversation when bot previously asked for them.
@@ -1013,11 +850,25 @@ class BookingMode(BaseModeNode):
         if tool_name == "search_services":
             ctx_ss: BookingContext | None = getattr(self, "_ctx", None)
             if ctx_ss and ctx_ss.service_audience_hint and not tool_args.get("audience"):
-                tool_args["audience"] = ctx_ss.service_audience_hint
-                logger.info(
-                    "_pre_tool_call: injected audience=%s into search_services",
-                    ctx_ss.service_audience_hint,
-                )
+                # Guard: only inject hint if derived from the same service family.
+                # Compare normalized source name against current query to prevent
+                # cross-contamination when user mentions two different services.
+                source = _normalize_text(ctx_ss.service_audience_hint_source or "")
+                query = _normalize_text(tool_args.get("query", ""))
+                if not source or source in query or query in source:
+                    tool_args["audience"] = ctx_ss.service_audience_hint
+                    logger.info(
+                        "_pre_tool_call: injected audience=%s into search_services (source=%r)",
+                        ctx_ss.service_audience_hint,
+                        source,
+                    )
+                else:
+                    logger.info(
+                        "_pre_tool_call: skipped audience hint injection "
+                        "(source=%r does not match query=%r)",
+                        source,
+                        query,
+                    )
 
             # Canonicalize audience value if present (tokenizes compound values
             # like "Dama / Señora" → "adult_female")
@@ -1063,6 +914,26 @@ class BookingMode(BaseModeNode):
                 phone,
                 data,
             )
+
+            # Guard: reject manage_customer(create) with placeholder/generic names.
+            # The LLM sometimes invents names like "Cliente" or "Usuario" when the
+            # customer hasn't provided their real name yet.
+            if action == "create":
+                raw_first = _nfd_lower((data.get("first_name") or "").strip())
+                if raw_first and raw_first in _PLACEHOLDER_CUSTOMER_NAMES:
+                    logger.warning(
+                        "_pre_tool_call: rejecting manage_customer(create) — "
+                        "placeholder first_name=%r detected",
+                        data.get("first_name"),
+                    )
+                    return ToolCallRejection(
+                        name="manage_customer",
+                        error_code="PLACEHOLDER_NAME",
+                        error_message=(
+                            "Primero preguntá el nombre real al cliente antes de crear el"
+                            " registro. No uses nombres genéricos como 'Cliente' o 'Usuario'."
+                        ),
+                    )
 
             # P1/P2/P3 fix: intercept name-only manage_customer calls.
             # When the LLM calls manage_customer just to "save" a name (create or update
@@ -1129,15 +1000,6 @@ class BookingMode(BaseModeNode):
                     )
 
             return tool_args
-
-        if tool_name == "book":
-            ctx_bk: BookingContext | None = getattr(self, "_ctx", None)
-            if ctx_bk and ctx_bk.service_audience_hint and not tool_args.get("audience"):
-                tool_args["audience"] = ctx_bk.service_audience_hint
-                logger.info(
-                    "_pre_tool_call: injected audience=%s into book",
-                    ctx_bk.service_audience_hint,
-                )
 
         if tool_name != "book":
             return tool_args
@@ -1389,6 +1251,22 @@ class BookingMode(BaseModeNode):
                 ctx.stylist_id = tool_args["stylist_id"]
                 ctx.stylist_name = stylist_name
 
+            # Hallucination guard: even after slot_index resolution, the resolved
+            # stylist_id may not be in prefetched_stylists (e.g. stale offered_slots).
+            resolved_stylist_id = tool_args.get("stylist_id", "")
+            if ctx and ctx.prefetched_stylists and resolved_stylist_id:
+                known_ids = {s.get("id") for s in ctx.prefetched_stylists}
+                if resolved_stylist_id not in known_ids:
+                    logger.warning(
+                        "_pre_tool_call: slot_index path — resolved stylist_id=%r "
+                        "not in known prefetched set %s — setting force_stylist_correction=True",
+                        resolved_stylist_id,
+                        known_ids,
+                    )
+                    ctx.force_stylist_correction = True
+                else:
+                    ctx.force_stylist_correction = False
+
             return tool_args
 
         # ── No slot_index: validate directly-passed stylist_id ────────────
@@ -1492,6 +1370,24 @@ class BookingMode(BaseModeNode):
                     ),
                 )
 
+        # ── Validate final stylist_id against known stylists (hallucination guard) ──
+        # If the book() call reaches here with a stylist_id not in prefetched_stylists,
+        # set force_stylist_correction to inject correction prompt next turn.
+        # (Detection moved from text-scanning to tool-call validation — Item 1 cleanup)
+        final_stylist_id = tool_args.get("stylist_id", "")
+        if ctx and ctx.prefetched_stylists and final_stylist_id:
+            known_ids = {s.get("id") for s in ctx.prefetched_stylists}
+            if final_stylist_id not in known_ids:
+                logger.warning(
+                    "_pre_tool_call: book() stylist_id=%r not in known prefetched set %s "
+                    "— setting force_stylist_correction=True",
+                    final_stylist_id,
+                    known_ids,
+                )
+                ctx.force_stylist_correction = True
+            else:
+                ctx.force_stylist_correction = False
+
         return tool_args
 
     async def _post_tool_result(
@@ -1574,11 +1470,12 @@ class BookingMode(BaseModeNode):
                         exc,
                     )
 
-        elif tool_name == "check_availability":
+        elif tool_name in ("check_availability", "find_next_available"):
             extract_slot_fields(parsed, self._ctx)
             logger.info(
-                "_post_tool_result: check_availability — extracted offered_slots (count=%d)",
-                len(self._ctx.offered_slots),
+                "_post_tool_result: %s — extracted offered_slots (count=%d)",
+                tool_name,
+                len(self._ctx.offered_slots or []),
             )
 
         elif tool_name == "list_stylists":
@@ -1596,8 +1493,11 @@ class BookingMode(BaseModeNode):
                     last_user = self._get_last_user_message(user_msg)
                     messages_for_guard = user_msg.get("messages", []) if user_msg else []
                     _try_resolve_stylist_from_message(last_user, self._ctx, messages_for_guard)
+            # Successful list_stylists → LLM now has the real names, no correction needed
+            self._ctx.force_stylist_correction = False
             logger.info(
-                "_post_tool_result: list_stylists — %d stylists loaded, stylist_id=%s",
+                "_post_tool_result: list_stylists — %d stylists loaded, stylist_id=%s, "
+                "force_stylist_correction reset to False",
                 len(self._ctx.prefetched_stylists),
                 self._ctx.stylist_id,
             )
@@ -1636,32 +1536,28 @@ class BookingMode(BaseModeNode):
         else:
             ctx.force_list_stylists_reminder = False
 
-        # Condition B: LLM had prefetched stylists but none appeared in the response
-        # This detects Gemini/LLM non-compliance with the <available_stylists> context block
+        # Condition B: LLM had prefetched stylists but list_stylists not called this turn,
+        # stylists not yet presented (prior turns) and none of their names appear in the
+        # current response (current-turn guard). Empty response also suppresses the reminder.
+        response_lower = (result.response_text or "").lower()
+        name_in_response = bool(
+            response_lower
+            and any(s.get("name", "").lower() in response_lower for s in ctx.prefetched_stylists)
+        )
         if (
             ctx.prefetched_stylists
             and not ctx.stylist_id
-            and result.response_text
-            and not any(
-                s.get("name", "").lower() in result.response_text.lower()
-                for s in ctx.prefetched_stylists
-            )
+            and not result.tool_results.get("list_stylists")
+            and not ctx.stylists_presented
+            and not name_in_response
+            and bool(response_lower)
         ):
-            # M-5 guard: suppress if user is mid-selection (assistant just presented list)
-            state_messages = getattr(self, "_current_state", {}).get("messages", [])
-            if _previous_assistant_presented_stylists(state_messages):
-                logger.debug(
-                    "BookingMode: Condition B suppressed — user is mid-selection "
-                    "(previous assistant presented stylist list). prefetched=%s",
-                    [s.get("name") for s in ctx.prefetched_stylists],
-                )
-            else:
-                logger.warning(
-                    "BookingMode: LLM ignored prefetched stylists — none of %s "
-                    "found in response. Setting force_list_stylists_reminder.",
-                    [s.get("name") for s in ctx.prefetched_stylists],
-                )
-                ctx.force_list_stylists_reminder = True
+            logger.warning(
+                "BookingMode: Condition B — list_stylists not called and stylists not yet "
+                "presented. Setting force_list_stylists_reminder. prefetched=%s",
+                [s.get("name") for s in ctx.prefetched_stylists],
+            )
+            ctx.force_list_stylists_reminder = True
 
         # F-7: service not resolved and search_services not called
         # Condition: service_id None, selected_services empty,
@@ -1779,126 +1675,6 @@ class BookingMode(BaseModeNode):
             logger.exception("F-7 auto-recovery: search_services call failed")
             return None
 
-    def _detect_stylist_hallucination(self, response_text: str, ctx: BookingContext) -> None:
-        """Detect when LLM invents stylist names not in the database (R2).
-
-        Extracts capitalized proper nouns from response, filters against known stylists,
-        and warns if hallucinated names are detected. Sets force_stylist_correction=True
-        to inject a correction prompt next turn.
-
-        Args:
-            response_text: LLM response text to scan
-            ctx: BookingContext with prefetched_stylists list
-        """
-        if not ctx.prefetched_stylists or not response_text:
-            ctx.force_stylist_correction = False
-            return
-
-        # Build normalized stylist names set (lowercase, accent-normalized)
-        def _nfd_lower(text: str) -> str:
-            """Normalize text to NFD form (decomposed accents) and lowercase."""
-            normalized = unicodedata.normalize("NFD", text.lower())
-            return "".join(c for c in normalized if not unicodedata.combining(c))
-
-        known_stylists = {
-            _nfd_lower(s.get("name", "")) for s in ctx.prefetched_stylists if s.get("name")
-        }
-
-        # Build per-word token set from compound stylist names (e.g. "Ana María" → {"ana", "maria"})
-        # Tokens shorter than 3 chars (e.g. "de", "la") are excluded to avoid false positives.
-        known_word_tokens: set[str] = set()
-        for s in ctx.prefetched_stylists:
-            name = s.get("name", "")
-            if name:
-                for tok in _nfd_lower(name).split():
-                    if len(tok) >= 3:
-                        known_word_tokens.add(tok)
-
-        # Extract capitalized words (likely proper nouns)
-        words = [w for w in re.findall(r"\b[A-Z][a-záéíóúñ]*\b", response_text) if len(w) >= 3]
-
-        hallucinated = []
-        for word in words:
-            normalized_word = _nfd_lower(word)
-            # Check if word is NOT in known stylists (full name) AND NOT a token of any known
-            # stylist's compound name AND NOT in blocklist
-            if (
-                normalized_word not in known_stylists
-                and normalized_word not in known_word_tokens
-                and normalized_word not in _STYLIST_BLOCKLIST_WORDS
-            ):
-                hallucinated.append(word)
-
-        if hallucinated:
-            log_extra: dict[str, Any] = {
-                "event": "stylist_hallucination_detected",
-                "hallucinated_names": hallucinated,
-                "valid_names": [s["name"] for s in ctx.prefetched_stylists],
-            }
-            conversation_id = getattr(ctx, "conversation_id", None)
-            if conversation_id is not None:
-                log_extra["conversation_id"] = conversation_id
-            logger.warning("Stylist hallucination detected", extra=log_extra)
-            ctx.force_stylist_correction = True
-            ctx._last_hallucinated_names = set(hallucinated)
-        else:
-            ctx.force_stylist_correction = False
-            ctx._last_hallucinated_names = set()
-
-    def _redact_hallucinated_stylists(self, response_text: str, ctx: BookingContext) -> str:
-        """Replace hallucinated stylist names in outgoing response with placeholder.
-
-        Uses word-boundary regex to avoid mangling substrings. Only runs when
-        hallucination was detected (ctx._last_hallucinated_names is non-empty).
-
-        Args:
-            response_text: The LLM's response text.
-            ctx: BookingContext with hallucination detection results.
-
-        Returns:
-            Response text with hallucinated names replaced by "tu estilista".
-        """
-        if not response_text or not ctx.prefetched_stylists:
-            return response_text
-
-        hallucinated_names = getattr(ctx, "_last_hallucinated_names", set())
-        if not hallucinated_names:
-            return response_text
-
-        # Build per-word token set from compound stylist names to avoid partial-name redaction.
-        # E.g. "Ana María" → tokens {"ana", "maria"} so "Ana" alone is NOT redacted.
-        def _nfd_lower(text: str) -> str:
-            normalized = unicodedata.normalize("NFD", text.lower())
-            return "".join(c for c in normalized if not unicodedata.combining(c))
-
-        known_word_tokens: set[str] = set()
-        for s in ctx.prefetched_stylists:
-            name = s.get("name", "")
-            if name:
-                for tok in _nfd_lower(name).split():
-                    if len(tok) >= 3:
-                        known_word_tokens.add(tok)
-
-        for name in hallucinated_names:
-            # Skip redaction if this word is a token from any valid stylist's compound name.
-            # This prevents "Ana María" → "Ana [estilista]" when "Ana" is a component of a
-            # known stylist name.
-            if _nfd_lower(name) in known_word_tokens:
-                logger.debug(
-                    "Skipping redaction of %r — token belongs to a known stylist compound name",
-                    name,
-                )
-                continue
-            response_text = re.sub(
-                rf"\b{re.escape(name)}\b",
-                "tu estilista",
-                response_text,
-                flags=re.IGNORECASE,
-            )
-            logger.info("Redacted hallucinated stylist name %r → 'tu estilista'", name)
-
-        return response_text
-
     def _refresh_dynamic_context(self, working_messages: list) -> None:
         """Rebuild the dynamic context SystemMessage with fresh ctx data.
 
@@ -1955,78 +1731,6 @@ class BookingMode(BaseModeNode):
                             break
         except Exception as exc:
             logger.warning("_maybe_prefetch_stylists failed (non-fatal): %s", exc)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Special Intent Detection (fast path — no LLM call)
-    # ──────────────────────────────────────────────────────────────────────
-
-    def _check_special_intents(
-        self,
-        state: ConversationState,
-        user_message: str,
-        intent: Any,
-        ctx: "BookingContext | None" = None,
-    ) -> dict | None:
-        """Check for cancel/escalate before running the agentic loop.
-
-        Returns a state update dict if a special intent is detected,
-        or None to continue normal processing.
-
-        Cancel negation detection: "no quiero cancelar" → NOT a cancel.
-
-        Cancel scoping (REQ-MSF-4): _SOFT_CANCEL_PHRASES are only treated as
-        cancellations when there is NO active booking context (selected_services
-        is empty AND pending_clarifications is empty). This prevents broad
-        negations like "no me interesa" from cancelling an in-progress booking
-        when the user is simply answering a clarification question.
-        """
-        intent_name = self._extract_intent_name(intent)
-        msg_lower = _normalize_text(user_message)
-
-        # Determine if we have an active booking context
-        has_active_context = bool(
-            ctx is not None and (ctx.selected_services or ctx.pending_clarifications)
-        )
-
-        # ── Cancel intent ───────────────────────────────────────────────
-        # Always check explicit cancel phrases
-        is_cancel = intent_name == "cancel" or any(p in msg_lower for p in _CANCEL_PHRASES)
-
-        # Only check soft phrases when there is NO active booking context
-        if not is_cancel and not has_active_context:
-            is_cancel = any(p in msg_lower for p in _SOFT_CANCEL_PHRASES)
-
-        if is_cancel:
-            # Check for negation: "no quiero cancelar" is NOT a cancel
-            is_negated = any(neg in msg_lower for neg in _CANCEL_NEGATION_TOKENS)
-            if not is_negated:
-                logger.info(
-                    "BookingMode: cancel intent detected, transitioning to GENERAL "
-                    "(has_active_context=%s)",
-                    has_active_context,
-                )
-                response = "Entendido, cancelamos la reserva. ¿Puedo ayudarte en algo más? 😊"
-                return {
-                    **transition_mode(state, "GENERAL"),
-                    **add_message(state, "assistant", response),
-                    "last_node": "booking",
-                    "user_message": None,
-                }
-
-        # ── Escalate intent ─────────────────────────────────────────────
-        is_escalate = intent_name == "escalate" or any(p in msg_lower for p in _ESCALATE_PHRASES)
-
-        if is_escalate:
-            logger.info("BookingMode: escalate intent detected, transitioning to ESCALATION")
-            response = "Te paso con una persona del equipo. Un momento. 🙏"
-            return {
-                **transition_mode(state, "ESCALATION"),
-                **add_message(state, "assistant", response),
-                "last_node": "booking",
-                "user_message": None,
-            }
-
-        return None
 
     @staticmethod
     def _extract_intent_name(intent: Any) -> str:
@@ -2264,14 +1968,18 @@ class BookingMode(BaseModeNode):
             date_str = selected_slot.get("date", "")
             time_str = selected_slot.get("time", "")
             stylist = ctx.stylist_name or ""
+            # Use confirmed_services only when they don't contain spurious
+            # duplicates.  When a single service was selected but
+            # confirmed_services grew (e.g. ["Corte Caballero", "Cortar"]),
+            # fall back to ctx.service_name which is the canonical resolved
+            # name.  Genuine multi-service bookings (add-ons) are preserved
+            # because selected_services will also have multiple entries.
+            _selected_count = len(ctx.selected_services) if ctx.selected_services else 1
             services_display = (
                 format_service_list(ctx.confirmed_services)
-                if ctx.confirmed_services
-                else (ctx.service_name or ", ".join(ctx.selected_services))
+                if ctx.confirmed_services and len(ctx.confirmed_services) <= _selected_count
+                else (ctx.service_name or ", ".join(ctx.selected_services or []))
             )
-            # Append duration when available (e.g. "Cortar (40 min)")
-            if ctx.service_duration_minutes and services_display:
-                services_display = f"{services_display} ({ctx.service_duration_minutes} min)"
             # Build price line only if available in service details
             price_parts = [
                 d.get("price") for d in (ctx.selected_services_details or []) if d.get("price")
@@ -2305,10 +2013,6 @@ class BookingMode(BaseModeNode):
                 services_display,
             )
 
-        # Stylist hallucination redaction (replace invented names with placeholder)
-        if ctx.force_stylist_correction:
-            response_text = self._redact_hallucinated_stylists(response_text, ctx)
-
         # Name redaction (privacy guard — LLM must not expose customer names)
         response_text = self._redact_names(state, response_text)
 
@@ -2319,24 +2023,20 @@ class BookingMode(BaseModeNode):
         # First-turn intro (EU AI Act compliance)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
 
-        # F-2: detect confirmation summary in OUR outgoing response and set deterministic flag
+        # F-2: organic confirmation heuristic — 3-condition check (replaces long marker lists).
+        # The deterministic path (auto-gen summary in _pre_tool_call) already sets the flag.
+        # This heuristic catches the rare case where the LLM composes its own summary organically.
         if not ctx.confirmation_summary_sent and _is_booking_data_complete(ctx):
-            normalized_resp = _normalize_text(response_text)
-            if any(marker in normalized_resp for marker in _CONFIRMATION_SUMMARY_MARKERS):
-                ctx.confirmation_summary_sent = True
-                logger.info(
-                    "_build_response: confirmation_summary_sent=True (summary detected in response)"
-                )
-
-        # F-2 additive: also detect confirmation question pattern when booking data is complete.
-        # Catches cases where the LLM asks "¿Reservo?" instead of rendering a formal summary block.
-        if not ctx.confirmation_summary_sent and _is_booking_data_complete(ctx):
-            normalized_resp_q = _normalize_text(response_text)
-            if any(pattern in normalized_resp_q for pattern in _CONFIRMATION_QUESTION_PATTERNS):
+            svc_token = _normalize_text(ctx.service_name or "")
+            resp_normalized = _normalize_text(response_text)
+            has_service_mention = bool(svc_token and svc_token in resp_normalized)
+            has_time_ref = bool(re.search(r"\d{1,2}:\d{2}", response_text))
+            ends_with_question = response_text.rstrip().endswith("?")
+            if has_service_mention and has_time_ref and ends_with_question:
                 ctx.confirmation_summary_sent = True
                 logger.info(
                     "_build_response: confirmation_summary_sent=True "
-                    "(confirmation question pattern detected in response)"
+                    "(organic heuristic: service_name + time + trailing ?)"
                 )
 
         # FR-4: increment confirmation gate turn counter when gate is blocked
@@ -2358,6 +2058,29 @@ class BookingMode(BaseModeNode):
                     "_build_response: notes_ask_attempts incremented to %d",
                     ctx.notes_ask_attempts,
                 )
+
+        # Track what was shown this turn via explicit ctx flags (replaces _previous_assistant_* scans)
+        # name_asked: set when name-asking markers appear in outgoing response
+        if not ctx.name_asked:
+            normalized_resp_name = _normalize_text(response_text)
+            _name_ask_markers = (
+                "nombre",
+                "como te llamas",
+                "como te llamas",
+                "te llamás",
+                "apellidos",
+            )
+            if any(marker in normalized_resp_name for marker in _name_ask_markers):
+                ctx.name_asked = True
+                logger.info("_build_response: name_asked=True (name-ask content in response)")
+        # slots_presented: set when offered_slots were non-empty this turn (slots section was built)
+        if not ctx.slots_presented and ctx.offered_slots:
+            ctx.slots_presented = True
+            logger.info("_build_response: slots_presented=True (offered_slots non-empty)")
+        # stylists_presented: set when prefetched_stylists were non-empty this turn
+        if not ctx.stylists_presented and ctx.prefetched_stylists:
+            ctx.stylists_presented = True
+            logger.info("_build_response: stylists_presented=True (prefetched_stylists non-empty)")
 
         # T-03 fix: set recommendations_shown AFTER the LLM has generated its
         # response — not during _build_dynamic_context() (before LLM sees the
@@ -2429,20 +2152,26 @@ class BookingMode(BaseModeNode):
 
         The booking.md prompt instructs the LLM not to mention the customer's
         name, but this is a hard code-level safety net in case it does.
+
+        Uses whole-response fallback: if any name token is detected, the entire
+        response is replaced with a safe fallback sentence (avoids grammar artifacts).
         """
-        names_to_redact: list[str] = []
+        names_to_check: list[str] = []
 
         customer_name = state.get("customer_name")
         pending_name = state.get("pending_whatsapp_name")
         if customer_name:
-            names_to_redact.append(str(customer_name))
+            names_to_check.append(str(customer_name))
         if pending_name and pending_name != customer_name:
-            names_to_redact.append(str(pending_name))
+            names_to_check.append(str(pending_name))
 
-        for name in names_to_redact:
+        for name in names_to_check:
             if _contains_name_token(text, name):
-                self.logger.warning("BookingMode: redacting customer name tokens from response")
-                text = _redact_name_tokens(text, name)
+                logger.warning(
+                    "customer_name_leak_detected",
+                    extra={"token": name, "mode": "BOOKING", "response_preview": text[:80]},
+                )
+                return "De acuerdo, aquí tienes el resumen de tu reserva."
 
         return text
 
@@ -2534,8 +2263,10 @@ def _try_resolve_stylist_from_message(
     if ctx.stylist_id:
         return  # Already resolved — nothing to do
 
-    # Guard: only resolve if assistant actually presented stylists (context-guard)
-    if messages is not None and not _previous_assistant_presented_stylists(messages):
+    # Guard: only resolve if assistant actually presented stylists (context-guard).
+    # Uses ctx.stylists_presented flag (set by _build_response) — deterministic, no message scan.
+    # When messages is None (direct call / unit test), guard is skipped for backward compat.
+    if messages is not None and not ctx.stylists_presented:
         return
 
     normalized_msg = _normalize_text(user_message)
@@ -2590,7 +2321,7 @@ def _resolve_user_slot_selection(
 
     Guard conditions (returns False immediately if):
     - ctx.offered_slots is empty or None
-    - ctx.stylist_id is already set (already resolved — don't overwrite)
+    - ctx.selected_slot is already set (slot already resolved — don't overwrite)
     - user message is a bare affirmative AND there are multiple offered slots (ambiguous)
     - messages provided and last assistant message did NOT present slots (context guard)
     """
@@ -2599,11 +2330,13 @@ def _resolve_user_slot_selection(
         return False
 
     # Guard: slot already resolved — don't overwrite
-    if ctx.stylist_id:
+    if ctx.selected_slot is not None:
         return False
 
-    # Guard: only resolve if assistant actually presented slots (context-guard)
-    if messages is not None and not _previous_assistant_presented_slots(messages):
+    # Guard: only resolve if assistant actually presented slots (context-guard).
+    # Uses ctx.slots_presented flag (set by _build_response) — deterministic, no message scan.
+    # When messages is None (direct call / unit test), guard is skipped for backward compat.
+    if messages is not None and not ctx.slots_presented:
         return False
 
     offered = ctx.offered_slots
@@ -2782,8 +2515,8 @@ def _extract_name_from_conversation(
 
     # Tier 2: bare-name pattern — only when bot previously asked for name
     # (prevents "Perfecto" or service names from being captured as customer names)
-    messages = state.get("messages", [])
-    if not _previous_assistant_asked_for_name(messages):
+    # Use ctx.name_asked flag (deterministic, set by _build_response).
+    if not ctx.name_asked:
         return
 
     match = _BARE_NAME_PATTERN.match(user_message.strip())
@@ -2797,102 +2530,14 @@ def _extract_name_from_conversation(
             )
             return
 
-
-def _previous_assistant_asked_for_name(messages: list[dict]) -> bool:
-    """Check if the most recent assistant message asked for the customer's name.
-
-    Looks for name-asking patterns like "nombre", "¿cómo te llamas?", etc.
-    in the last assistant message.
-    """
-    # Find the last assistant message
-    for msg in reversed(messages):
-        if msg.get("role") == "assistant":
-            content = (msg.get("content") or "").lower()
-            name_ask_patterns = (
-                "nombre",
-                "como te llamas",
-                "cómo te llamás",
-                "a nombre de",
-                "tu nombre",
-                "su nombre",
-                "decime tu nombre",
-                "dime tu nombre",
-                "quien seria",
-                "quién sería",
-            )
-            return any(pattern in content for pattern in name_ask_patterns)
-    return False
-
-
-def _previous_assistant_asked_for_notes(messages: list[dict]) -> bool:
-    """Check if the most recent assistant message asked for notes/preferences.
-
-    Scans reversed messages for the last assistant turn and checks for
-    notes-asking phrases like 'nota', 'preferencia', 'alergia', etc.
-    """
-    for msg in reversed(messages):
-        if msg.get("role") == "assistant":
-            content = _normalize_text(msg.get("content") or "")
-            return any(marker in content for marker in _NOTES_ASK_MARKERS)
-    return False
-
-
-def _previous_assistant_presented_slots(messages: list[dict]) -> bool:
-    """Check if the last assistant message presented time slot options.
-
-    Returns True if the last assistant message contains any of:
-    1. Numbered time entries like "1. " followed by time pattern (HH:MM)
-    2. The phrase "¿Alguno de estos horarios" (case-insensitive)
-    3. The keyword "horarios" or "disponibilidad"
-
-    Looks back at most through the full message list to find the last assistant message.
-    Returns False if no assistant message is found or none match slot-presentation patterns.
-    """
-    for msg in reversed(messages):
-        if msg.get("role") == "assistant":
-            content = msg.get("content") or ""
-            content_lower = content.lower()
-            # Pattern 1: numbered time entries (e.g. "1. Lunes a las 10:00")
-            if re.search(r"\d+\.\s+\w+.*\d{1,2}:\d{2}", content):
-                return True
-            # Pattern 2: explicit slot-question phrase
-            if "alguno de estos horarios" in content_lower:
-                return True
-            # Pattern 3: generic slot keywords
-            if "horarios" in content_lower or "disponibilidad" in content_lower:
-                return True
-            return False
-    return False
-
-
-def _previous_assistant_presented_stylists(messages: list[dict]) -> bool:
-    """Check if the last assistant message presented a stylist choice list.
-
-    Returns True if the last assistant message contains:
-    1. A numbered list with capitalized name entries (e.g. "1. Ana")
-    2. Combined with stylist context phrases ("estilista", "¿Con quién", "elige", etc.)
-
-    Returns False if no assistant message is found or none match stylist-list patterns.
-    """
-    for msg in reversed(messages):
-        if msg.get("role") == "assistant":
-            content = msg.get("content") or ""
-            content_lower = content.lower()
-            # Check for numbered capitalized-name pattern (e.g. "1. Ana\n2. Marta")
-            has_numbered_names = bool(re.search(r"\d+\.\s+[A-ZÁÉÍÓÚÑ]", content))
-            # Check for stylist context phrases
-            stylist_context_phrases = (
-                "estilista",
-                "con quien",
-                "con quién",
-                "elige",
-                "prefier",
-                "gust",
-                "quien",
-            )
-            has_stylist_context = any(phrase in content_lower for phrase in stylist_context_phrases)
-            return has_numbered_names and has_stylist_context
-    return False
+    # Bot asked for name but extraction still failed — increment re-ask counter
+    if ctx.customer_name is None:
+        ctx.name_ask_count += 1
+        logger.debug(
+            "_extract_name_from_conversation: name extraction failed after bot asked"
+            " — name_ask_count now %d",
+            ctx.name_ask_count,
+        )
 
 
 def _extract_notes_from_conversation(
@@ -2901,7 +2546,7 @@ def _extract_notes_from_conversation(
     """Extract notes from user message when the bot just asked for notes/preferences.
 
     Only runs when:
-    1. The last assistant message asked for notes (_previous_assistant_asked_for_notes).
+    1. ctx.notes_asked is True (set by _build_response when notes-asking content was shown).
     2. ctx.notes is None (not yet collected).
 
     Decline phrases (e.g. "no", "nada") are ignored — ctx.notes stays None
@@ -2910,8 +2555,8 @@ def _extract_notes_from_conversation(
     if not user_message or ctx.notes is not None:
         return
 
-    messages = state.get("messages", [])
-    if not _previous_assistant_asked_for_notes(messages):
+    # Use ctx.notes_asked flag (set by _build_response via _NOTES_ASK_MARKERS or attempts counter)
+    if not ctx.notes_asked:
         return
 
     # If the user's reply is a refusal, skip — don't capture "no" as a note
@@ -2956,25 +2601,26 @@ def _is_booking_data_complete(ctx: BookingContext) -> bool:
     question (e.g., "¿Para dama?" → "Sí").
 
     Required fields:
-    - service_id or selected_services (service chosen)
-    - stylist_id (stylist chosen)
-    - offered_slots (availability checked = date/time in progress)
-    - customer_name or customer_id (customer identified)
+     - service_id or selected_services (service chosen)
+     - stylist_id (stylist chosen)
+     - selected_slot is not None (user explicitly chose a slot from the offered list)
+     - customer_name or customer_id (customer identified)
     """
     has_service = bool(ctx.service_id or ctx.selected_services)
     has_stylist = bool(ctx.stylist_id)
-    has_slots = bool(ctx.offered_slots)
+    has_slot_selected = ctx.selected_slot is not None
     has_customer = bool(ctx.customer_name or ctx.customer_id)
-    return has_service and has_stylist and has_slots and has_customer
+    return has_service and has_stylist and has_slot_selected and has_customer
 
 
 def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext) -> None:
     """Detect if the user confirmed after the confirmation summary was sent.
 
     Uses a positional scan (Option A) to handle rapid double-messages:
-    1. Scan messages backward to find the last assistant message that contains
-       confirmation-summary markers (_CONFIRMATION_SUMMARY_MARKERS or
-       _CONFIRMATION_QUESTION_PATTERNS).
+    1. Scan messages backward to find the last assistant message that looks like
+       a confirmation summary (organic heuristic: time reference + trailing ?).
+       Since ctx.confirmation_summary_sent is now set deterministically by code,
+       this scan is used only to find the position in history for the user reply.
     2. Collect up to 4 user messages appearing AFTER that assistant message.
     3. For each, check if it is a short (≤3 words) affirmative phrase.
 
@@ -3003,22 +2649,32 @@ def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext)
         return
 
     # ── Positional scan: find last assistant summary message ──────────────
+    # Primary: organic heuristic (time ref + trailing ?).
+    # Fallback when ctx.confirmation_summary_sent=True: use last assistant message
+    # as the anchor, since we know a summary was sent (set deterministically by code).
     summary_idx: int | None = None
     for idx in range(len(messages) - 1, -1, -1):
         msg = messages[idx]
         if msg.get("role") != "assistant":
             continue
-        normalized_content = _normalize_text(msg.get("content", ""))
-        if any(marker in normalized_content for marker in _CONFIRMATION_SUMMARY_MARKERS):
-            summary_idx = idx
-            break
-        if any(pattern in normalized_content for pattern in _CONFIRMATION_QUESTION_PATTERNS):
+        content = msg.get("content", "")
+        # Organic heuristic: response with HH:MM time ref and trailing question mark
+        if re.search(r"\d{1,2}:\d{2}", content) and content.rstrip().endswith("?"):
             summary_idx = idx
             break
 
     if summary_idx is None:
-        # Fallback: no summary assistant message found in history.
-        # Check only the last user message (original behavior).
+        if ctx.confirmation_summary_sent:
+            # ctx tells us a summary was sent but we can't pinpoint it by content.
+            # Use the last assistant message as anchor so we scan all subsequent user
+            # messages (enables rapid double-message detection).
+            for idx in range(len(messages) - 1, -1, -1):
+                if messages[idx].get("role") == "assistant":
+                    summary_idx = idx
+                    break
+
+    if summary_idx is None:
+        # Truly no assistant message found — nothing to anchor on.
         last_user: dict | None = None
         for msg in reversed(messages):
             if msg.get("role") == "user":
@@ -3110,37 +2766,6 @@ def _contains_name_token(response_text: str, customer_name: str) -> bool:
     return False
 
 
-def _redact_name_tokens(text: str, name: str) -> str:
-    """Redact individual name tokens (>= 3 chars) from text.
-
-    Uses case-insensitive + accent-insensitive matching.
-    Preserves original text around the redacted tokens.
-    """
-    tokens = re.split(r"\W+", name)
-    for token in tokens:
-        if len(token) < 3:
-            continue
-        # Case-insensitive pass
-        pattern = rf"\b{re.escape(token)}\b"
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
-        # Accent-insensitive pass
-        stripped_token = _nfd_lower(token)
-        if stripped_token != token.lower():
-            text_nfd = _nfd_lower(text)
-            pattern_nfd = rf"\b{re.escape(stripped_token)}\b"
-            if re.search(pattern_nfd, text_nfd):
-                text = re.sub(pattern_nfd, "", text_nfd, flags=re.IGNORECASE)
-
-    # Clean up artifacts
-    text = re.sub(r"  +", " ", text).strip()
-    text = re.sub(r"^[,;.\s]+", "", text).strip()
-    # Clean orphaned punctuation left after name removal (e.g. ", !" → "!")
-    text = re.sub(r",\s*([!?.])", r"\1", text)
-    text = re.sub(r"\s+([!?.,;:])", r"\1", text)
-    text = re.sub(r"  +", " ", text).strip()
-    return text
-
-
 # ── Dynamic context section builders ────────────────────────────────────────
 
 
@@ -3149,21 +2774,23 @@ def _build_disambiguation_section(ctx: BookingContext) -> str:
 
     Pure renderer — no auto-resolve logic. The LLM handles clarification
     resolution natively via the <clarification> context block.
-    Renders the first entry in pending_clarifications (FIFO queue).
+    Renders ALL entries in pending_clarifications (multi-service support).
     """
     lines: list[str] = []
 
-    pending = ctx.pending_clarifications[0] if ctx.pending_clarifications else None
-    if pending:
+    for pending in ctx.pending_clarifications:
         axis = pending.get("axis", "")
         hint = pending.get("question_hint", "")
+        service_key = pending.get("service_key", "")
         options = pending.get("options", [])
 
-        lines.append(f"CLARIFICACIÓN PENDIENTE ({axis}):")
+        tag = f' servicio="{service_key}"' if service_key else ""
+        lines.append(f'<clarification{tag} axis="{axis}">')
         lines.append(f"  Pregunta: {hint}")
         for i, opt in enumerate(options, 1):
             label_display = opt.get("label", opt.get("value", ""))
             lines.append(f"  {i}. {label_display}")
+        lines.append("</clarification>")
 
     if ctx.candidate_services and not ctx.service_name:
         names = [s.get("name", "") for s in ctx.candidate_services[:5] if isinstance(s, dict)]
@@ -3292,10 +2919,10 @@ def _should_gate_for_upsell(ctx: BookingContext) -> bool:
     )
 
 
-async def _fetch_addon_durations(addon_names: list[str]) -> dict[str, int]:
-    """Query DB for duration_minutes of add-on services by name.
+async def _fetch_addon_metadata(addon_names: list[str]) -> dict[str, dict[str, Any]]:
+    """Query DB for duration_minutes and description of add-on services by name.
 
-    Returns a dict mapping service name → duration_minutes.
+    Returns a dict mapping service name → {"duration_minutes": int, "description": str | None}.
     On any DB failure, returns {} with a warning log (non-fatal).
     """
     if not addon_names:
@@ -3308,24 +2935,32 @@ async def _fetch_addon_durations(addon_names: list[str]) -> dict[str, int]:
         from database.models import Service
 
         async with get_async_session() as session:
-            stmt = select(Service.name, Service.duration_minutes).where(
+            stmt = select(Service.name, Service.duration_minutes, Service.description).where(
                 Service.name.in_(addon_names),
                 Service.is_active.is_(True),
             )
             rows = (await session.execute(stmt)).all()
-            return {row.name: row.duration_minutes for row in rows}
+            return {
+                row.name: {
+                    "duration_minutes": row.duration_minutes,
+                    "description": row.description,
+                }
+                for row in rows
+            }
     except Exception as exc:
         logger.warning(
-            "_fetch_addon_durations: DB query failed (non-fatal), returning empty. error=%s",
+            "_fetch_addon_metadata: DB query failed (non-fatal), returning empty. error=%s",
             exc,
         )
         return {}
 
 
-def _build_upsell_gate_section(ctx: BookingContext, addon_durations: dict[str, int]) -> str:
+def _build_upsell_gate_section(
+    ctx: BookingContext, addon_metadata: dict[str, dict[str, Any]]
+) -> str:
     """Build the <upsell_gate> XML block injected into dynamic context.
 
-    Contains service name, list of add-ons with durations,
+    Contains service name, list of add-ons with descriptions and durations,
     and explicit instruction to wait for user response before showing stylists.
     Text is in castellano peninsular (España).
     """
@@ -3337,22 +2972,33 @@ def _build_upsell_gate_section(ctx: BookingContext, addon_durations: dict[str, i
     # Build header line (name only — no duration, no description)
     header = f"Servicio confirmado: {service_name}"
 
-    # Build add-on list
+    # Build add-on list with descriptions
     addon_lines: list[str] = []
     for i, addon_name in enumerate(ctx.pending_recommendations, start=1):
-        duration = addon_durations.get(addon_name)
+        meta = addon_metadata.get(addon_name, {})
+        duration = meta.get("duration_minutes")
+        desc = meta.get("description") or ""
+        line = f"{i}. {addon_name}"
+        if desc:
+            line += f" — {desc}"
         if duration is not None:
-            addon_lines.append(f"{i}. {addon_name} (+{duration} min)")
-        else:
-            addon_lines.append(f"{i}. {addon_name}")
+            line += f" (+{duration} min)"
+        addon_lines.append(line)
     addon_list = "\n".join(addon_lines)
 
-    # Build instruction block (castellano peninsular)
-    instruction = f"INSTRUCCIÓN: Confirma {service_name} y ofrece los servicios complementarios."
-    if addon_durations:
-        instruction += ' Si la duración está disponible, menciónala (ej: "Son X minutos más").'
-    instruction += (
-        "\nPARA aquí y espera la respuesta del cliente ANTES de mostrar los estilistas."
+    # Build instruction block (rioplatense warm framing)
+    instruction = (
+        f"INSTRUCCIÓN: El cliente eligió {service_name}. "
+        f"Usá la descripción de cada complementario para presentarlo de forma atractiva y natural. "
+        f"No menciones el nombre técnico de la base de datos tal cual si suena raro en español — "
+        f"reformulalo con palabras que cualquier cliente entendería "
+        f"(ej: 'Barro' → 'un tratamiento nutritivo con barro', 'Peinado' → 'un secado con forma'). "
+        f"Lo mismo aplica al servicio principal: si {service_name!r} es un infinitivo o suena técnico, "
+        f"nombrálo de forma natural (ej: 'Cortar' → 'el corte', 'Secado' → 'un secado'). "
+        f"Presentalos como servicios que combinan muy bien con el servicio elegido. "
+        f"Incluí siempre la opción de declinar mencionando el servicio de forma natural "
+        f"('o preferís solo el corte', no 'solo el Cortar')."
+        "\nPARA aquí. Esperá la respuesta del cliente ANTES de continuar con los estilistas."
         "\nNUNCA menciones precios. Si el cliente pregunta → "
         '"Para consultar los precios puedes visitar nuestra web o preguntarnos directamente en el salón."'
     )
@@ -3508,4 +3154,11 @@ def _build_offered_slots_section(ctx: BookingContext) -> str:
         "\n⚠️ Cuando llames a book(), usá slot_index con el número del hueco (1, 2, 3...)."
         " NO copies stylist_id ni full_datetime manualmente."
     )
+    lines.append(
+        "\nACCIÓN: Mostrá esta lista completa al cliente y cerrá el mensaje con "
+        "'¿Alguno de estos horarios te viene bien, o prefieres que busque en otra fecha?' "
+        "PARA. No preguntes el nombre ni nada más en este mensaje."
+    )
+    if ctx and sorted_slots:
+        ctx.slots_shown_count += 1
     return "\n".join(lines)

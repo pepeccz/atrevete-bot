@@ -19,7 +19,6 @@ from agent.modes.base import AgenticLoopResult
 from agent.modes.booking_context import BookingContext, format_service_list
 from agent.modes.tool_extractors import extract_booking_result
 
-
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -258,11 +257,18 @@ class TestBuildResponseConfirmationMessage:
         self,
         confirmed_services: list[str],
         service_name: str | None = None,
+        selected_services: list[str] | None = None,
     ) -> BookingContext:
         ctx = BookingContext(
             stylist_name="Ana",
             stylist_id="sty-001",
             service_name=service_name,
+            # selected_services defaults to confirmed_services when not supplied —
+            # in a real booking selected_services is always populated and must match
+            # confirmed_services for the Bug C guard to allow format_service_list().
+            selected_services=(
+                selected_services if selected_services is not None else list(confirmed_services)
+            ),
             last_booked_slot={"date": "lunes 25 de marzo", "time": "10:00"},
             customer_name="María",
             customer_id="cust-001",
@@ -272,11 +278,16 @@ class TestBuildResponseConfirmationMessage:
         return ctx
 
     def test_confirmation_message_includes_all_services(self):
-        """confirmed_services=['Corte Caballero','Corte Niño'] → message has 'Corte Caballero y Corte Niño' (SC-1)."""
+        """confirmed_services=['Corte Caballero','Corte Niño'] → message has 'Corte Caballero y Corte Niño' (SC-1).
+
+        Bug C guard: selected_services mirrors confirmed_services (genuine multi-service booking)
+        so both are shown.
+        """
         mode = make_booking_mode()
         state = make_state()
         ctx = self._make_completed_ctx(
             confirmed_services=["Corte Caballero", "Corte Niño"],
+            # selected_services defaults to confirmed_services (genuine 2-service booking)
         )
         llm_result = AgenticLoopResult(
             response_text="Cita confirmada.",

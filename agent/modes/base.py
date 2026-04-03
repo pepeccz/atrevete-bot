@@ -75,8 +75,7 @@ class ModeResult(TypedDict, total=False):
     user_message: str | None
 
 
-MAX_TOOL_ROUNDS = 3
-_TOOL_CALL_PATTERN = re.compile(r"\[[\w_]+(?:\([^\)]*\))?\](?!\()")
+MAX_TOOL_ROUNDS = 4
 
 # EU AI Act first-turn disclosure enforced in code.
 FIRST_TURN_INTRO = "¡Hola! 🌸 Soy Maite, la asistenta virtual con IA de Atrévete Peluquería."
@@ -288,7 +287,7 @@ class BaseModeNode(ABC):
     @staticmethod
     def _sanitize_response(text: str) -> str:
         """
-        Strip pseudo-tool-call text and action narration from LLM output before user delivery.
+        Strip action narration from LLM output before user delivery.
 
         Removes patterns like:
         - "Voy a..." (upcoming actions)
@@ -297,7 +296,7 @@ class BaseModeNode(ABC):
         - "Un momento..." (one moment)
         - "Permíteme..." (allow me)
         """
-        cleaned = _TOOL_CALL_PATTERN.sub("", text)
+        cleaned = text
 
         # Strip action narration sentences (only if at sentence start)
         # These indicate the LLM is narrating upcoming tool calls instead of executing silently

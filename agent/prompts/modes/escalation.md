@@ -1,5 +1,11 @@
-<!-- REFERENCE ONLY: EscalationMode is implemented as a deterministic FSM in agent/modes/escalation_mode.py.
-     This file is NOT loaded at runtime. It serves as documentation of the intended escalation flow. -->
+<!-- ⚠️  REFERENCE ONLY — NOT LOADED AT RUNTIME ⚠️
+     EscalationMode is a deterministic FSM in agent/modes/escalation_mode.py.
+     This file is documentation only. Edits here have ZERO runtime effect.
+     See: agent/modes/escalation_mode.py for the actual implementation. -->
+
+> **⚠️ ARCHIVO DE REFERENCIA — NO SE CARGA EN RUNTIME**
+> EscalationMode es un FSM determinístico implementado en `agent/modes/escalation_mode.py`.
+> Editar este archivo NO tiene efecto en el bot. Solo sirve como documentación del flujo.
 
 # Modo ESCALACIÓN
 

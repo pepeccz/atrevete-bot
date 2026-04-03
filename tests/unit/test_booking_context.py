@@ -931,11 +931,16 @@ class TestMissingSummaryCustomerId:
 
         Note: missing_summary() applies .capitalize() to label strings, so the
         output will contain 'Customer_id' (capital C). We compare case-insensitively.
+        Uses selected_slot (not offered_slots) since slot must be selected to reach this state.
         """
         ctx = BookingContext(
             service_name="Corte de Dama",
             stylist_id="sty-001",
-            offered_slots=[{"time": "10:00"}],
+            selected_slot={
+                "start_time": "2026-03-25T10:00:00+01:00",
+                "date": "2026-03-25",
+                "time": "10:00",
+            },
             customer_name="María",
             customer_id=None,
         )
@@ -951,7 +956,11 @@ class TestMissingSummaryCustomerId:
         ctx = BookingContext(
             service_name="Corte de Dama",
             stylist_id="sty-001",
-            offered_slots=[{"time": "10:00"}],
+            selected_slot={
+                "start_time": "2026-03-25T10:00:00+01:00",
+                "date": "2026-03-25",
+                "time": "10:00",
+            },
             customer_name=None,
             customer_id=None,
         )
@@ -967,7 +976,11 @@ class TestMissingSummaryCustomerId:
         ctx = BookingContext(
             service_name="Corte de Dama",
             stylist_id="sty-001",
-            offered_slots=[{"time": "10:00"}],
+            selected_slot={
+                "start_time": "2026-03-25T10:00:00+01:00",
+                "date": "2026-03-25",
+                "time": "10:00",
+            },
             customer_name="María",
             customer_id="cust-001",
         )
@@ -1056,12 +1069,17 @@ class TestNotesGateBookingContext:
         self,
     ):
         """When all required fields are complete but notes_asked=False,
-        missing_summary() should show 'notas/preferencias' as pending."""
+        missing_summary() should show 'notas/preferencias' as pending.
+        Slot must be selected (not just offered) to count as complete."""
         ctx = BookingContext(
             service_name="Corte de Dama",
             service_id="svc-001",
             stylist_id="sty-001",
-            offered_slots=[{"time": "10:00"}],
+            selected_slot={
+                "start_time": "2026-03-25T10:00:00+01:00",
+                "date": "2026-03-25",
+                "time": "10:00",
+            },
             customer_name="María",
             customer_id="cust-001",
             notes_asked=False,
@@ -1073,12 +1091,17 @@ class TestNotesGateBookingContext:
 
     def test_missing_summary_complete_when_notes_asked(self):
         """When all required fields are complete and notes_asked=True,
-        missing_summary() should return the 'all complete' message."""
+        missing_summary() should return the 'all complete' message.
+        Slot must be selected (not just offered) to count as complete."""
         ctx = BookingContext(
             service_name="Corte de Dama",
             service_id="svc-001",
             stylist_id="sty-001",
-            offered_slots=[{"time": "10:00"}],
+            selected_slot={
+                "start_time": "2026-03-25T10:00:00+01:00",
+                "date": "2026-03-25",
+                "time": "10:00",
+            },
             customer_name="María",
             customer_id="cust-001",
             notes_asked=True,
@@ -1094,7 +1117,11 @@ class TestNotesGateBookingContext:
             service_id=None,
             service_name=None,
             stylist_id="sty-001",
-            offered_slots=[{"time": "10:00"}],
+            selected_slot={
+                "start_time": "2026-03-25T10:00:00+01:00",
+                "date": "2026-03-25",
+                "time": "10:00",
+            },
             customer_name="María",
             customer_id="cust-001",
             notes_asked=False,

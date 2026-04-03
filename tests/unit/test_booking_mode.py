@@ -19,9 +19,8 @@ from agent.modes.base import AgenticLoopResult
 from agent.modes.booking_context import BookingContext
 from agent.modes.booking_mode import (
     _AUDIENCE_NAME_FILTER,
-    _CONFIRMATION_QUESTION_PATTERNS,
-    BookingMode,
     RECOMMENDATIONS_OFFER_THRESHOLD,
+    BookingMode,
     _build_auto_confirmation_summary,
     _build_disambiguation_section,
     _build_offered_slots_section,
@@ -35,10 +34,9 @@ from agent.modes.booking_mode import (
     _detect_recommendation_decline,
     _extract_name_from_conversation,
     _extract_notes_from_conversation,
-    _fetch_addon_durations,
+    _fetch_addon_metadata,
     _looks_like_clarification,
     _normalize_text,
-    _redact_name_tokens,
     _resolve_user_slot_selection,
     _should_gate_for_upsell,
 )
@@ -109,114 +107,51 @@ class TestBookingModeInstantiation:
 
 
 class TestCancelEscalateDetection:
-    """Tests for _check_special_intents fast path."""
+    """Tests for cancel/escalate detection via intent.intent (replaces _check_special_intents)."""
 
-    def test_cancel_phrase_transitions_to_general(self):
+    def test_check_special_intents_method_gone(self):
+        """_check_special_intents method no longer exists on BookingMode."""
+        assert not hasattr(BookingMode, "_check_special_intents"), (
+            "_check_special_intents was removed in restrictor cleanup"
+        )
+
+    def test_cancel_intent_from_router_detected_by_extract_intent_name(self):
+        """Cancel intent from router → _extract_intent_name returns 'cancel'."""
         mode = make_booking_mode()
-        state = make_state(user_message="cancelar mi cita")
-        intent = make_intent("book")
-
-        result = mode._check_special_intents(state, "cancelar mi cita", intent)
-
-        assert result is not None
-        assert result["current_mode"] == "GENERAL"
-
-    def test_negation_does_not_cancel(self):
-        """'no quiero cancelar' should NOT trigger cancellation."""
-        mode = make_booking_mode()
-        state = make_state(user_message="no quiero cancelar")
-        intent = make_intent("book")
-
-        result = mode._check_special_intents(state, "no quiero cancelar", intent)
-
-        assert result is None  # No special intent — continues normal flow
-
-    def test_escalate_phrase_transitions_to_escalation(self):
-        mode = make_booking_mode()
-        state = make_state(user_message="necesito hablar con alguien")
-        intent = make_intent("book")
-
-        result = mode._check_special_intents(state, "necesito hablar con alguien", intent)
-
-        assert result is not None
-        assert result["current_mode"] == "ESCALATION"
-
-    def test_cancel_intent_from_router_transitions(self):
-        """Cancel intent from router (not phrase) should also transition."""
-        mode = make_booking_mode()
-        state = make_state(user_message="ya no quiero")
         intent = make_intent("cancel")
+        result = mode._extract_intent_name(intent)
+        assert result == "cancel"
 
-        result = mode._check_special_intents(state, "ya no quiero", intent)
-
-        assert result is not None
-        assert result["current_mode"] == "GENERAL"
-
-    def test_escalate_intent_from_router_transitions(self):
+    def test_escalate_intent_from_router_detected_by_extract_intent_name(self):
+        """Escalate intent from router → _extract_intent_name returns 'escalate'."""
         mode = make_booking_mode()
-        state = make_state(user_message="ayuda")
         intent = make_intent("escalate")
+        result = mode._extract_intent_name(intent)
+        assert result == "escalate"
 
-        result = mode._check_special_intents(state, "ayuda", intent)
-
-        assert result is not None
-        assert result["current_mode"] == "ESCALATION"
-
-    def test_normal_message_returns_none(self):
+    def test_book_intent_not_cancel(self):
+        """'book' intent → _extract_intent_name does not return cancel."""
         mode = make_booking_mode()
-        state = make_state(user_message="quiero un corte de pelo")
         intent = make_intent("book")
+        result = mode._extract_intent_name(intent)
+        assert result not in ("cancel", "escalate")
 
-        result = mode._check_special_intents(state, "quiero un corte de pelo", intent)
+    def test_cancel_constants_gone(self):
+        """_CANCEL_PHRASES constant no longer exists in booking_mode module."""
+        import agent.modes.booking_mode as bm
 
-        assert result is None
-
-    def test_cancel_sets_last_node_and_clears_user_message(self):
-        mode = make_booking_mode()
-        state = make_state(user_message="cancelar")
-        intent = make_intent("book")
-
-        result = mode._check_special_intents(state, "cancelar", intent)
-
-        assert result is not None
-        assert result["last_node"] == "booking"
-        assert result["user_message"] is None
-
-    def test_continuemos_negates_cancel(self):
-        """'continuemos' is a negation token — should not cancel."""
-        mode = make_booking_mode()
-        state = make_state(user_message="no quiero cancelar, continuemos")
-        intent = make_intent("book")
-
-        result = mode._check_special_intents(state, "no quiero cancelar, continuemos", intent)
-
-        assert result is None
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "lo dejo",
-            "mejor no",
-            "he cambiado de opinión",
-            "cambié de opinión",
-            "paso",
-            "ya no quiero",
-            "lo cancelo",
-            "lo dejo por ahora",
-            "mejor lo dejo",
-            "Mejor no, he cambiado de opinión. Lo dejo por ahora.",
-        ],
-    )
-    def test_new_cancel_phrases_detected(self, message):
-        """Common Spanish cancel expressions must trigger cancellation."""
-        mode = make_booking_mode()
-        state = make_state(user_message=message)
-        intent = make_intent("book")
-
-        result = mode._check_special_intents(state, message, intent)
-
-        assert result is not None, f"Cancel not detected for: {message!r}"
-        assert result["current_mode"] == "GENERAL"
+        assert not hasattr(bm, "_CANCEL_PHRASES"), (
+            "_CANCEL_PHRASES was removed in restrictor cleanup"
+        )
+        assert not hasattr(bm, "_SOFT_CANCEL_PHRASES"), (
+            "_SOFT_CANCEL_PHRASES was removed in restrictor cleanup"
+        )
+        assert not hasattr(bm, "_ESCALATE_PHRASES"), (
+            "_ESCALATE_PHRASES was removed in restrictor cleanup"
+        )
+        assert not hasattr(bm, "_CANCEL_NEGATION_TOKENS"), (
+            "_CANCEL_NEGATION_TOKENS was removed in restrictor cleanup"
+        )
 
 
 # =============================================================================
@@ -239,37 +174,40 @@ class TestNameRedaction:
         """Tokens < 3 chars (e.g. 'de') should not trigger a match."""
         assert _contains_name_token("Hola de todos", "Ana de García") is False
 
-    def test_redact_name_tokens_removes_name(self):
-        result = _redact_name_tokens("Hola María, tu cita está confirmada.", "María")
-        assert "María" not in result
-        assert "confirmada" in result
+    def test_redact_name_tokens_function_gone(self):
+        """_redact_name_tokens was removed — whole-response fallback is used instead."""
+        import agent.modes.booking_mode as bm
 
-    def test_redact_name_tokens_compound_name(self):
-        result = _redact_name_tokens("Hola María José, tu cita está lista.", "María José")
-        assert "María" not in result
-        assert "José" not in result
-        assert "lista" in result
+        assert not hasattr(bm, "_redact_name_tokens"), (
+            "_redact_name_tokens was removed in restrictor cleanup"
+        )
 
-    def test_redact_name_tokens_no_match_unchanged(self):
-        original = "Tu cita está confirmada."
-        result = _redact_name_tokens(original, "Carlos")
-        assert result == original
-
-    def test_redact_names_on_mode_instance(self):
-        """_redact_names method on BookingMode uses state customer names."""
+    def test_redact_names_on_mode_instance_returns_fallback(self):
+        """_redact_names now returns a safe fallback sentence when name is detected."""
         mode = make_booking_mode()
         state = make_state(customer_name="Laura")
         text = "Perfecto Laura, ya tienes tu cita."
 
         result = mode._redact_names(state, text)
 
+        # Whole-response fallback — no partial redaction
         assert "Laura" not in result
-        assert "cita" in result
+        assert result == "De acuerdo, aquí tienes el resumen de tu reserva."
 
     def test_redact_names_no_name_in_state_unchanged(self):
         mode = make_booking_mode()
         state = make_state(customer_name=None)
         text = "Tu cita está lista."
+
+        result = mode._redact_names(state, text)
+
+        assert result == text
+
+    def test_redact_names_no_leak_passes_through(self):
+        """Response without customer name passes through unchanged."""
+        mode = make_booking_mode()
+        state = make_state(customer_name="Carlos")
+        text = "Tu cita está confirmada para el martes a las 10:00."
 
         result = mode._redact_names(state, text)
 
@@ -298,7 +236,8 @@ class TestBuildDisambiguationSection:
 
         result = _build_disambiguation_section(ctx)
 
-        assert "CLARIFICACIÓN PENDIENTE" in result
+        assert "<clarification" in result
+        assert 'axis="audience"' in result
         assert "¿Para quién es?" in result
         assert "Mujer adulta" in result
 
@@ -336,7 +275,8 @@ class TestBuildDisambiguationSection:
 
         result = _build_disambiguation_section(ctx)
 
-        assert "CLARIFICACIÓN PENDIENTE (audience)" in result
+        assert "<clarification" in result
+        assert 'axis="audience"' in result
         assert "Mujer adulta" in result
         assert "Hombre adulto" in result
         assert "CLARIFICACIÓN RESUELTA" not in result
@@ -582,10 +522,11 @@ class TestBookingContextSummaries:
     def test_missing_summary_all_complete(self):
         # T-07: customer_id is now required when customer_name is present.
         # "All complete" requires both customer_name AND customer_id AND notes_asked=True.
+        # T-H2: selected_slot (not offered_slots) is required to mark slot as complete.
         ctx = BookingContext(
             service_name="Corte",
             stylist_id="sty-001",
-            offered_slots=[{"time": "10:00", "date": "2026-03-23"}],
+            selected_slot={"date": "2026-03-23", "time": "10:00"},
             customer_name="María",
             customer_id="cust-001",
             notes_asked=True,
@@ -1075,17 +1016,20 @@ class TestDetectRecommendationDecline:
 
 
 class TestNoGraciasConflictFix:
-    """Verify 'no gracias' no longer triggers cancel intent."""
+    """Verify 'no gracias' no longer triggers cancel intent.
+    Since _check_special_intents is removed, cancel is only via router intent.
+    """
 
-    def test_no_gracias_does_not_cancel(self):
-        """'no gracias' should NOT trigger cancel — it's too generic."""
+    def test_no_gracias_book_intent_not_cancel(self):
+        """'book' intent (not cancel) → _extract_intent_name returns 'book', not 'cancel'."""
         mode = make_booking_mode()
-        state = make_state(user_message="no gracias")
         intent = make_intent("book")
+        result = mode._extract_intent_name(intent)
+        assert result == "book"  # Not 'cancel' — no cancel triggered
 
-        result = mode._check_special_intents(state, "no gracias", intent)
-
-        assert result is None  # No cancel — normal flow continues
+    def test_check_special_intents_method_not_present(self):
+        """_check_special_intents no longer exists — removed in cleanup."""
+        assert not hasattr(BookingMode, "_check_special_intents")
 
 
 # =============================================================================
@@ -1226,10 +1170,14 @@ class TestExtractNameFromConversation:
     previous assistant message asked for the name."""
 
     def test_extracts_bare_name_after_name_question(self):
-        """User replies 'María' after assistant asked '¿Tu nombre?'."""
+        """User replies 'María' after assistant asked '¿Tu nombre?'.
+
+        Requires ctx.name_asked=True (set by _build_response when bot asks).
+        """
         from agent.modes.booking_mode import _extract_name_from_conversation
 
         ctx = BookingContext()
+        ctx.name_asked = True  # Required: bare-name path only runs when bot asked
         state = {
             "messages": [
                 {"role": "assistant", "content": "¿A nombre de quién sería la cita?"},
@@ -1306,11 +1254,12 @@ class TestExtractNameFromConversation:
         assert ctx.customer_name is None
 
     def test_no_extraction_when_name_already_set(self):
-        """When customer_name is already set, extraction should not be called
-        (the caller checks this, but we verify the function is safe)."""
+        """When customer_name is already set and name_asked=True, bare-name extraction
+        still runs (no short-circuit on customer_name) — only customer_id blocks it."""
         from agent.modes.booking_mode import _extract_name_from_conversation
 
         ctx = BookingContext(customer_name="Existing")
+        ctx.name_asked = True  # bot already asked
         state = {
             "messages": [
                 {"role": "assistant", "content": "¿Tu nombre?"},
@@ -1318,7 +1267,8 @@ class TestExtractNameFromConversation:
             ],
         }
 
-        # Even if called, it should overwrite — but the caller checks ctx.customer_name first
+        # Function has no guard on customer_name (only customer_id blocks it)
+        # So "Laura" replaces "Existing" when name_asked=True
         _extract_name_from_conversation(state, "Laura", ctx)
         assert ctx.customer_name == "Laura"
 
@@ -1549,8 +1499,12 @@ class TestNotesExtraction:
         }
 
     def test_notes_extracted_when_bot_asked(self):
-        """Bot asked for notes, user replied → ctx.notes captures the reply."""
+        """Bot asked for notes, user replied → ctx.notes captures the reply.
+
+        Requires ctx.notes_asked=True (set by _build_response when notes marker shown).
+        """
         ctx = BookingContext()
+        ctx.notes_asked = True  # Required: extraction only runs when bot asked
         state = self._state_with_notes_question("sin gluten, alergia al polvo")
 
         _extract_notes_from_conversation(state, "sin gluten, alergia al polvo", ctx)
@@ -1603,8 +1557,12 @@ class TestNotesExtraction:
         assert ctx.notes is None
 
     def test_notes_with_alergia_keyword_in_bot_message(self):
-        """Bot message containing 'alergia' also triggers notes extraction."""
+        """Bot message containing 'alergia' also triggers notes extraction.
+
+        Requires ctx.notes_asked=True (set by _build_response when notes marker shown).
+        """
         ctx = BookingContext()
+        ctx.notes_asked = True  # Required: extraction only runs when bot asked
         state = {
             "messages": [
                 {
@@ -2192,108 +2150,55 @@ class TestNotesGate:
             )
 
     @pytest.mark.asyncio
-    async def test_handle_sets_notes_asked_when_bot_asked_and_user_replied(self):
-        """notes_asked is set to True when the last assistant message asked for notes
-        and the user has replied (via _previous_assistant_asked_for_notes detection)."""
-        from agent.modes.booking_mode import _previous_assistant_asked_for_notes
+    async def test_notes_asked_flag_auto_set_via_attempts(self):
+        """notes_asked is set to True when notes_ask_attempts >= 2 (loop prevention)."""
+        ctx = BookingContext(notes_asked=False, notes_ask_attempts=2)
+        # Simulate the handle() detection logic
+        if not ctx.notes_asked:
+            if ctx.notes_ask_attempts >= 2:
+                ctx.notes_asked = True
+        assert ctx.notes_asked is True
 
-        # Build message history: bot asked for notes, user replied
-        messages = [
-            {
-                "role": "assistant",
-                "content": "¿Tenés alguna nota o preferencia especial para tu cita?",
-            },
-            {"role": "user", "content": "Sin preferencias específicas"},
-        ]
-
-        # Confirm the detection function picks up the notes question
-        assert _previous_assistant_asked_for_notes(messages) is True
-
-        # Simulate the handle() detection logic directly
+    @pytest.mark.asyncio
+    async def test_notes_asked_flag_not_set_when_attempts_below_threshold(self):
+        """notes_asked stays False when attempts < 2 and flag not set by _build_response."""
         ctx = BookingContext(notes_asked=False, notes_ask_attempts=0)
         if not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 1:
+            if ctx.notes_ask_attempts >= 2:
                 ctx.notes_asked = True
-            elif _previous_assistant_asked_for_notes(messages):
-                ctx.notes_asked = True
-
-        assert ctx.notes_asked is True
+        assert ctx.notes_asked is False
 
     @pytest.mark.asyncio
-    async def test_loop_prevention_auto_sets_notes_asked_at_1_attempt(self):
-        """When notes_ask_attempts >= 1, notes_asked is auto-set to True
-        regardless of message history (loop prevention)."""
-        from agent.modes.booking_mode import _previous_assistant_asked_for_notes
-
-        # Messages without a notes question — message scan would NOT trigger
-        messages = [
-            {"role": "assistant", "content": "¿Qué servicio deseas?"},
-            {"role": "user", "content": "Un corte"},
-        ]
-
-        # Confirm message scan alone would NOT trigger
-        assert _previous_assistant_asked_for_notes(messages) is False
-
-        # Simulate the handle() detection logic with attempts=1
-        ctx = BookingContext(notes_asked=False, notes_ask_attempts=1)
-        if not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 1:
-                ctx.notes_asked = True
-            elif _previous_assistant_asked_for_notes(messages):
-                ctx.notes_asked = True
-
-        # Auto-set because attempts >= 1
-        assert ctx.notes_asked is True
-
-    @pytest.mark.asyncio
-    async def test_notes_markers_standard_phrasing_detected_by_both_functions(self):
-        """Standard notes-asking phrasing (containing 'nota') is detected by both
-        _build_response() counter and _previous_assistant_asked_for_notes() flag.
-        Both functions use the shared _NOTES_ASK_MARKERS constant."""
+    async def test_notes_markers_standard_phrasing_detected_by_build_response_counter(self):
+        """Standard notes-asking phrasing (containing 'nota') is detected by
+        _build_response() counter via _NOTES_ASK_MARKERS constant."""
         from agent.modes.booking_mode import (
             _NOTES_ASK_MARKERS,
             _normalize_text,
-            _previous_assistant_asked_for_notes,
         )
 
         response_text = "¿Tenés alguna nota para el turno?"
         normalized = _normalize_text(response_text)
 
-        # The shared constant drives the counter in _build_response()
         assert any(marker in normalized for marker in _NOTES_ASK_MARKERS), (
             f"Standard phrasing '{response_text}' not detected by _NOTES_ASK_MARKERS"
         )
 
-        # The same constant drives _previous_assistant_asked_for_notes()
-        messages = [{"role": "assistant", "content": response_text}]
-        assert _previous_assistant_asked_for_notes(messages) is True, (
-            f"_previous_assistant_asked_for_notes failed to detect '{response_text}'"
-        )
-
     @pytest.mark.asyncio
-    async def test_notes_markers_divergent_phrasing_detected_by_both_functions(self):
-        """Previously-divergent phrasing ('comentario especial') was only present in
-        _previous_assistant_asked_for_notes() but NOT in _build_response().
-        After the fix, the shared _NOTES_ASK_MARKERS constant covers both."""
+    async def test_notes_markers_divergent_phrasing_detected(self):
+        """Previously-divergent phrasing ('comentario especial') is detected by
+        _NOTES_ASK_MARKERS constant used in _build_response()."""
         from agent.modes.booking_mode import (
             _NOTES_ASK_MARKERS,
             _normalize_text,
-            _previous_assistant_asked_for_notes,
         )
 
         response_text = "¿Algún comentario especial?"
         normalized = _normalize_text(response_text)
 
-        # The shared constant drives the counter in _build_response()
         assert any(marker in normalized for marker in _NOTES_ASK_MARKERS), (
             f"Divergent phrasing '{response_text}' not detected by _NOTES_ASK_MARKERS — "
             f"'comentario'/'especial' must be in the shared constant"
-        )
-
-        # The same constant drives _previous_assistant_asked_for_notes()
-        messages = [{"role": "assistant", "content": response_text}]
-        assert _previous_assistant_asked_for_notes(messages) is True, (
-            f"_previous_assistant_asked_for_notes failed to detect '{response_text}'"
         )
 
 
@@ -2535,18 +2440,48 @@ class TestResolveUserSlotSelection:
         assert ctx.selected_slot["stylist_id"] == "uuid-ana"
 
     def test_resolve_slot_guard_already_set(self):
-        """ctx.stylist_id already set → resolver is a no-op (returns False, fields unchanged)."""
+        """ctx.selected_slot already set → resolver is a no-op (returns False, fields unchanged).
+
+        Note: guard changed from stylist_id to selected_slot (T-H1 fix).
+        When stylist_id is set but selected_slot is None, resolver PROCEEDS to allow
+        slot selection (this was the original bug — premature guard blocked selection).
+        """
+        slot = {
+            "date": "2026-04-06",
+            "time": "10:00",
+            "full_datetime": "2026-04-06T10:00:00+02:00",
+            "stylist_id": "uuid-ana",
+            "stylist_name": "Ana",
+        }
+        ctx = BookingContext(
+            offered_slots=_make_offered_slots_two(),
+            selected_slot=slot,  # slot already selected → guard fires
+        )
+
+        result = _resolve_user_slot_selection("2", ctx)
+
+        assert result is False
+        # selected_slot unchanged
+        assert ctx.selected_slot == slot
+
+    def test_resolve_slot_guard_proceeds_when_stylist_set_no_slot(self):
+        """ctx.stylist_id set but selected_slot=None → resolver PROCEEDS (T-H1 fix).
+
+        Before the fix, stylist_id being set would block the resolver, preventing
+        the user from selecting a slot after slots were shown for a known stylist.
+        """
         ctx = BookingContext(
             offered_slots=_make_offered_slots_two(),
             stylist_id="pre-existing-uuid",
             stylist_name="ExistingStylelist",
+            selected_slot=None,  # no slot chosen yet
         )
 
         result = _resolve_user_slot_selection("1", ctx)
 
-        assert result is False
-        assert ctx.stylist_id == "pre-existing-uuid"
-        assert ctx.stylist_name == "ExistingStylelist"
+        # Resolver should proceed and select slot 1
+        assert result is True
+        assert ctx.selected_slot is not None
 
     def test_resolve_slot_guard_no_offered_slots(self):
         """offered_slots is empty → returns False immediately."""
@@ -2630,7 +2565,11 @@ class TestResolveUserSlotSelection:
 
 
 class TestConfirmationQuestionPatternDetection:
-    """Tests for the additive confirmation question pattern check in _build_response()."""
+    """Tests for the organic confirmation heuristic in _build_response().
+
+    The old _CONFIRMATION_QUESTION_PATTERNS constant was removed.
+    The new heuristic requires: service_name token + HH:MM time ref + trailing '?'.
+    """
 
     def _make_complete_ctx(self) -> BookingContext:
         """Return a BookingContext with all booking data complete."""
@@ -2639,20 +2578,21 @@ class TestConfirmationQuestionPatternDetection:
             service_name="Corte de Dama",
             stylist_id="sty-001",
             stylist_name="Ana",
-            offered_slots=[{"time": "10:00", "date": "lunes"}],
+            selected_slot={"date": "2026-04-06", "time": "10:00", "stylist_id": "sty-001"},
             customer_name="María",
             customer_id="cust-001",
             confirmation_summary_sent=False,
         )
 
     def test_confirmation_question_pattern_sets_flag(self):
-        """Complete booking data + '¿Queres que lo reservo?' → confirmation_summary_sent=True."""
+        """Organic heuristic: service_name + time ref + trailing ? → confirmation_summary_sent=True."""
         mode = make_booking_mode()
         state = make_state()
         ctx = self._make_complete_ctx()
 
+        # Response contains: "corte" (service token) + "10:00" (time) + trailing "?"
         llm_result = AgenticLoopResult(
-            response_text="¿Queres que lo reservo?",
+            response_text="Te agendo el corte de dama a las 10:00 con Ana. ¿Lo confirmo?",
             tool_results={},
         )
 
@@ -2665,13 +2605,13 @@ class TestConfirmationQuestionPatternDetection:
         assert ctx.confirmation_summary_sent is True
 
     def test_confirmation_question_confirmamos_sets_flag(self):
-        """Complete booking data + '¿Confirmamos?' → flag set."""
+        """Organic heuristic fires when all 3 conditions are met."""
         mode = make_booking_mode()
         state = make_state()
         ctx = self._make_complete_ctx()
 
         llm_result = AgenticLoopResult(
-            response_text="Perfecto, ¿confirmamos la cita para el lunes?",
+            response_text="Corte de Dama el lunes a las 10:00 con Ana. ¿Confirmamos?",
             tool_results={},
         )
 
@@ -2683,14 +2623,15 @@ class TestConfirmationQuestionPatternDetection:
 
         assert ctx.confirmation_summary_sent is True
 
-    def test_confirmation_question_procedemos_sets_flag(self):
-        """Complete booking data + 'procedemos' → flag set."""
+    def test_confirmation_question_no_service_name_does_not_set_flag(self):
+        """Without service name in response, organic heuristic does NOT fire."""
         mode = make_booking_mode()
         state = make_state()
         ctx = self._make_complete_ctx()
 
+        # No "Corte de Dama" in response → heuristic fails
         llm_result = AgenticLoopResult(
-            response_text="¿Procedemos con la reserva?",
+            response_text="¿Procedemos con la reserva a las 10:00?",
             tool_results={},
         )
 
@@ -2700,7 +2641,7 @@ class TestConfirmationQuestionPatternDetection:
         ):
             mode._build_response(state, ctx, llm_result)
 
-        assert ctx.confirmation_summary_sent is True
+        assert ctx.confirmation_summary_sent is False
 
     def test_confirmation_pattern_incomplete_data_does_not_set_flag(self):
         """Incomplete booking (stylist_id missing) + question → flag stays False."""
@@ -2749,13 +2690,6 @@ class TestConfirmationQuestionPatternDetection:
             mode._build_response(state, ctx, llm_result)
 
         assert ctx.confirmation_summary_sent is True  # still True
-
-    def test_confirmation_pattern_constant_contents(self):
-        """Verify _CONFIRMATION_QUESTION_PATTERNS contains key phrases."""
-        assert "confirmamos" in _CONFIRMATION_QUESTION_PATTERNS
-        assert "reservo" in _CONFIRMATION_QUESTION_PATTERNS
-        assert "procedemos" in _CONFIRMATION_QUESTION_PATTERNS
-        assert "te parece bien" in _CONFIRMATION_QUESTION_PATTERNS
 
 
 # =============================================================================
@@ -3357,8 +3291,9 @@ class TestPreToolCallAudienceInjectionForBook:
             notes_asked=True,
         )
 
-    async def test_injects_audience_when_not_set_in_args(self):
-        """When ctx.service_audience_hint is set and tool_args has no audience, it is injected."""
+    async def test_audience_not_injected_into_book(self):
+        """Bug D fix: audience_hint must NOT be injected into book() args.
+        selected_services (already resolved) are authoritative — no re-resolution needed."""
         mode = make_booking_mode()
         mode._ctx = self._make_ctx_with_slots(audience="adult_female")
 
@@ -3371,12 +3306,9 @@ class TestPreToolCallAudienceInjectionForBook:
 
         await mode._pre_tool_call("book", tool_args)
 
-        # Result should have audience injected (may be ToolCallRejection for other reasons,
-        # but if it passes book guards, audience must be present)
-        # We check that audience was injected before book guards run by inspecting tool_args
-        # (the dict is mutated in place before guards)
-        assert tool_args.get("audience") == "adult_female", (
-            f"Expected audience='adult_female' injected into tool_args, got: {tool_args}"
+        # audience must NOT have been injected — Bug D fix
+        assert "audience" not in tool_args, (
+            f"Expected no audience injection into book() args, got: {tool_args}"
         )
 
     async def test_does_not_overwrite_existing_audience(self):
@@ -3550,94 +3482,6 @@ class TestF7AutoRecovery:
             result = await mode._f7_auto_recover("quiero un corte", ctx)
 
         assert result is None
-
-
-# =============================================================================
-# REQ-3: Stylist Hallucination Hardening (T4.2)
-# =============================================================================
-
-
-class TestRedactHallucinatedStylists:
-    """Verify _redact_hallucinated_stylists replaces invented names."""
-
-    def test_redaction_replaces_hallucinated_name(self):
-        """AC-3.2: hallucinated name replaced with 'tu estilista' (natural language, no brackets)."""
-        mode = make_booking_mode()
-        ctx = BookingContext()
-        ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
-        ctx._last_hallucinated_names = {"Carmen"}
-
-        result = mode._redact_hallucinated_stylists("Carmen te atenderá", ctx)
-        assert "Carmen" not in result
-        assert "tu estilista" in result
-        assert "[estilista]" not in result
-
-    def test_known_name_not_redacted(self):
-        """AC-3.3: real stylist name stays."""
-        mode = make_booking_mode()
-        ctx = BookingContext()
-        ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
-        ctx._last_hallucinated_names = {"Carmen"}
-
-        result = mode._redact_hallucinated_stylists("Ana te atenderá", ctx)
-        assert "Ana" in result
-
-    def test_redaction_case_insensitive(self):
-        """AC-3.4: case insensitive replacement."""
-        mode = make_booking_mode()
-        ctx = BookingContext()
-        ctx.prefetched_stylists = [{"name": "Ana"}]
-        ctx._last_hallucinated_names = {"Carmen"}
-
-        result = mode._redact_hallucinated_stylists("CARMEN te ayudará", ctx)
-        assert "CARMEN" not in result
-        assert "carmen" not in result.lower()
-        assert "tu estilista" in result
-
-    def test_word_boundary_no_substring_replace(self):
-        """AC-3.5: 'Ana' hallucinated does NOT replace inside 'Banana'."""
-        mode = make_booking_mode()
-        ctx = BookingContext()
-        ctx.prefetched_stylists = [{"name": "Pilar"}]
-        ctx._last_hallucinated_names = {"Ana"}
-
-        result = mode._redact_hallucinated_stylists("Me gusta la Banana", ctx)
-        assert "Banana" in result
-
-    def test_no_redaction_when_empty_hallucinated(self):
-        """AC-3.6: no hallucinated names → response unchanged."""
-        mode = make_booking_mode()
-        ctx = BookingContext()
-        ctx.prefetched_stylists = [{"name": "Ana"}]
-        ctx._last_hallucinated_names = set()
-
-        original = "Ana te atenderá"
-        result = mode._redact_hallucinated_stylists(original, ctx)
-        assert result == original
-
-    def test_redaction_uses_natural_language_not_placeholder(self):
-        """T-05: redaction output must contain 'tu estilista', never '[estilista]' brackets."""
-        mode = make_booking_mode()
-        ctx = BookingContext()
-        ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
-        ctx._last_hallucinated_names = {"Carmen"}
-
-        result = mode._redact_hallucinated_stylists("Tu cita es con Carmen a las 10:00", ctx)
-        assert "tu estilista" in result
-        assert "[estilista]" not in result
-        assert "Carmen" not in result
-
-    def test_redaction_does_not_affect_known_stylists(self):
-        """T-05: known stylist names must NOT be redacted."""
-        mode = make_booking_mode()
-        ctx = BookingContext()
-        ctx.prefetched_stylists = [{"name": "Ana"}, {"name": "Pilar"}]
-        ctx._last_hallucinated_names = {"Carmen"}
-
-        result = mode._redact_hallucinated_stylists("Tu cita es con Ana", ctx)
-        assert "Ana" in result
-        assert "[estilista]" not in result
-        assert "tu estilista" not in result
 
 
 class TestStructuredCorrectionPrompt:
@@ -3931,7 +3775,7 @@ class TestNotesExtractionFilter:
         """Build state where bot asked for notes and user replied."""
         ctx = BookingContext()
         ctx.notes = None
-        ctx.notes_asked = False
+        ctx.notes_asked = True  # Extraction requires bot to have asked
 
         state = create_initial_state("conv-001", "+34612345678")
         state["messages"] = [
@@ -4221,15 +4065,18 @@ class TestBuildUpsellGateSection:
     """E.3 — Tests for _build_upsell_gate_section() output format."""
 
     def test_with_addon_durations_shows_plus_minutes(self):
-        """With addon_durations with values → includes '+X min' in output."""
+        """With addon_metadata with values → includes '+X min' in output."""
         ctx = BookingContext(
             service_name="Cortar",
             service_duration_minutes=40,
             selected_services=["Cortar"],
             pending_recommendations=["Barba", "Barro"],
         )
-        addon_durations = {"Barba": 15, "Barro": 40}
-        result = _build_upsell_gate_section(ctx, addon_durations)
+        addon_metadata = {
+            "Barba": {"duration_minutes": 15, "description": None},
+            "Barro": {"duration_minutes": 40, "description": None},
+        }
+        result = _build_upsell_gate_section(ctx, addon_metadata)
 
         assert "+15 min" in result
         assert "+40 min" in result
@@ -4238,8 +4085,8 @@ class TestBuildUpsellGateSection:
         assert "<upsell_gate>" in result
         assert "</upsell_gate>" in result
 
-    def test_with_empty_addon_durations_shows_addon_without_duration(self):
-        """With addon_durations empty → shows add-on names without duration."""
+    def test_with_empty_addon_metadata_shows_addon_without_duration(self):
+        """With addon_metadata empty → shows add-on names without duration."""
         ctx = BookingContext(
             service_name="Cortar",
             selected_services=["Cortar"],
@@ -4259,8 +4106,12 @@ class TestBuildUpsellGateSection:
             service_name="Mechas",
             pending_recommendations=["Peinado", "Barro", "Óleo Pigmento"],
         )
-        addon_durations = {"Peinado": 40, "Barro": 40, "Óleo Pigmento": 30}
-        result = _build_upsell_gate_section(ctx, addon_durations)
+        addon_metadata = {
+            "Peinado": {"duration_minutes": 40, "description": None},
+            "Barro": {"duration_minutes": 40, "description": None},
+            "Óleo Pigmento": {"duration_minutes": 30, "description": None},
+        }
+        result = _build_upsell_gate_section(ctx, addon_metadata)
 
         assert "1. Peinado (+40 min)" in result
         assert "2. Barro (+40 min)" in result
@@ -4273,13 +4124,32 @@ class TestBuildUpsellGateSection:
             service_duration_minutes=40,
             pending_recommendations=["Barba"],
         )
-        result = _build_upsell_gate_section(ctx, {"Barba": 15})
+        result = _build_upsell_gate_section(
+            ctx, {"Barba": {"duration_minutes": 15, "description": None}}
+        )
 
         assert "Corte Caballero" in result
         # Primary service duration must NOT appear in header (minimal UX change)
         assert "40 min" not in result
         # Add-on duration MUST still appear
         assert "15 min" in result
+
+    def test_addon_description_appears_in_output(self):
+        """With addon_metadata with description → description appears in output."""
+        ctx = BookingContext(
+            service_name="Cortar",
+            pending_recommendations=["Barro"],
+        )
+        addon_metadata = {
+            "Barro": {
+                "duration_minutes": 40,
+                "description": "Mascarilla nutritiva de barro volcánico",
+            },
+        }
+        result = _build_upsell_gate_section(ctx, addon_metadata)
+
+        assert "Mascarilla nutritiva de barro volcánico" in result
+        assert "+40 min" in result
 
     def test_instruction_block_present(self):
         """INSTRUCCIÓN block is present in the output."""
@@ -4294,24 +4164,26 @@ class TestBuildUpsellGateSection:
 
 
 # =============================================================================
-# E.4 — _fetch_addon_durations (Phase E — service-upsell-flow)
+# E.4 — _fetch_addon_metadata (Phase E — service-upsell-flow)
 # =============================================================================
 
 
 class TestFetchAddonDurations:
-    """E.4 — Tests for _fetch_addon_durations() with DB mock."""
+    """E.4 — Tests for _fetch_addon_metadata() with DB mock."""
 
     @pytest.mark.asyncio
     async def test_db_returns_results_correct_dict(self):
-        """DB returns rows → dict maps name → duration_minutes correctly."""
+        """DB returns rows → dict maps name → {duration_minutes, description} correctly."""
         # Mock the DB session to return rows
         mock_row_barba = MagicMock()
         mock_row_barba.name = "Barba"
         mock_row_barba.duration_minutes = 15
+        mock_row_barba.description = "Arreglo de barba profesional"
 
         mock_row_barro = MagicMock()
         mock_row_barro.name = "Barro"
         mock_row_barro.duration_minutes = 40
+        mock_row_barro.description = None
 
         mock_execute_result = MagicMock()
         mock_execute_result.all.return_value = [mock_row_barba, mock_row_barro]
@@ -4328,9 +4200,12 @@ class TestFetchAddonDurations:
             "database.connection.get_async_session",
             return_value=mock_session_ctx,
         ):
-            result = await _fetch_addon_durations(["Barba", "Barro"])
+            result = await _fetch_addon_metadata(["Barba", "Barro"])
 
-        assert result == {"Barba": 15, "Barro": 40}
+        assert result == {
+            "Barba": {"duration_minutes": 15, "description": "Arreglo de barba profesional"},
+            "Barro": {"duration_minutes": 40, "description": None},
+        }
 
     @pytest.mark.asyncio
     async def test_db_exception_returns_empty_dict(self):
@@ -4339,7 +4214,7 @@ class TestFetchAddonDurations:
             "database.connection.get_async_session",
             side_effect=RuntimeError("DB connection failed"),
         ):
-            result = await _fetch_addon_durations(["Barba"])
+            result = await _fetch_addon_metadata(["Barba"])
 
         assert result == {}
 
@@ -4347,7 +4222,7 @@ class TestFetchAddonDurations:
     async def test_empty_addon_names_returns_empty(self):
         """Empty addon_names → returns {} immediately, no DB call."""
         with patch("database.connection.get_async_session") as mock_session:
-            result = await _fetch_addon_durations([])
+            result = await _fetch_addon_metadata([])
 
         assert result == {}
         mock_session.assert_not_called()
@@ -4379,9 +4254,9 @@ class TestUpsellGateAttemptsCounter:
         mode = make_booking_mode()
         ctx = self._make_upsell_ctx(attempts=0)
 
-        # Mock _fetch_addon_durations to avoid DB call
+        # Mock _fetch_addon_metadata to avoid DB call
         with patch(
-            "agent.modes.booking_mode._fetch_addon_durations",
+            "agent.modes.booking_mode._fetch_addon_metadata",
             new_callable=AsyncMock,
             return_value={},
         ):
@@ -4392,7 +4267,7 @@ class TestUpsellGateAttemptsCounter:
                 else:
                     upsell_active = True
                     ctx.upsell_gate_attempts += 1
-                    ctx._addon_durations_cache = await _fetch_addon_durations(
+                    ctx._addon_durations_cache = await _fetch_addon_metadata(
                         ctx.pending_recommendations
                     )
 
@@ -4471,7 +4346,7 @@ class TestComboRecommendationsRegression:
             recommendations_declined=False,
             prefetched_stylists=[],
         )
-        ctx._addon_durations_cache = {"Barba": 15}
+        ctx._addon_durations_cache = {"Barba": {"duration_minutes": 15, "description": None}}
 
         assert _should_gate_for_upsell(ctx) is True
 
@@ -4525,3 +4400,202 @@ class TestComboRecommendationsRegression:
             mode._build_response(state, ctx, llm_result)
 
         assert ctx.recommendations_shown is True
+
+
+# =============================================================================
+# booking-flow-ux-fixes — Task 3.1/3.2: Hallucinated stylist redaction guard
+# =============================================================================
+
+
+# =============================================================================
+# booking-flow-ux-fixes — Task 3.3: Upsell gate has no duration instruction
+# =============================================================================
+
+
+class TestUpsellGateNoDurationInstruction:
+    """FR-01 / FR-02: _build_upsell_gate_section must NOT include any
+    instruction telling the LLM to mention the add-on duration out loud."""
+
+    def test_upsell_gate_no_duration_instruction(self):
+        """Even when addon_metadata is non-empty, the gate instruction MUST NOT
+        contain 'menciónala', 'minutos más', or 'minutos'."""
+        ctx = BookingContext(
+            service_name="Corte Señora",
+            pending_recommendations=["Barro"],
+        )
+        addon_durations = {"Barro": {"duration_minutes": 40, "description": None}}
+
+        result = _build_upsell_gate_section(ctx, addon_durations)
+
+        assert "menciónala" not in result, "Gate must not instruct LLM to mention duration"
+        assert "minutos más" not in result, "Gate must not mention 'minutos más'"
+        # The add-on data itself uses (+N min) for internal context — that is fine.
+        # The INSTRUCTION part is what we guard. Extract just the INSTRUCCIÓN line:
+        instruction_start = result.find("INSTRUCCIÓN:")
+        if instruction_start != -1:
+            instruction_text = result[instruction_start:]
+            assert "minutos" not in instruction_text, (
+                "INSTRUCCIÓN must not reference minutes at all"
+            )
+
+
+# =============================================================================
+# booking-flow-ux-fixes-2 — 6 regression tests for bugs A / B / C / D
+# =============================================================================
+
+
+class TestBookingFlowUxFixes2:
+    """Regression tests for booking-flow-ux-fixes-2 (Bugs B, C, D).
+
+    Note: Bug A tests (T-A1, T-A2) tested _detect_stylist_hallucination which
+    was removed in booking-mode-restrictor-cleanup Item 1. The equivalent
+    coverage is in test_booking_stylist_hallucination_guard.py.
+    """
+
+    # ------------------------------------------------------------------
+    # T-B: confirmation has no duration suffix
+    # ------------------------------------------------------------------
+
+    def test_confirmation_no_duration_suffix(self):
+        """Bug B fix — T-B: _build_response() with service_duration_minutes=40
+        must NOT include '40 min' or 'min)' in the confirmation message."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = BookingContext(
+            stylist_name="Ana",
+            stylist_id="sty-001",
+            selected_services=["Corte Mujer"],
+            service_name="Corte Mujer",
+            service_duration_minutes=40,
+            selected_slot={"date": "lunes 7 de abril", "time": "10:00"},
+            customer_name="María",
+            customer_id="cust-001",
+        )
+        ctx._booking_completed = True
+
+        llm_result = AgenticLoopResult(response_text="OK", tool_results={})
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        response_text = updates["messages"][0]["content"]
+
+        assert "min)" not in response_text, (
+            f"Duration suffix '(40 min)' must not appear in confirmation. Got:\n{response_text}"
+        )
+        assert "40 min" not in response_text, (
+            f"Duration '40 min' must not appear in confirmation. Got:\n{response_text}"
+        )
+
+    # ------------------------------------------------------------------
+    # T-C1: single service — no spurious concatenation
+    # ------------------------------------------------------------------
+
+    def test_single_service_display_no_concatenation(self):
+        """Bug C fix — T-C1: When selected_services has 1 item but confirmed_services
+        has 2 (extractor artifact), services_display must show only the selected one."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = BookingContext(
+            stylist_name="Ana",
+            stylist_id="sty-001",
+            selected_services=["Corte Caballero"],
+            service_name="Corte Caballero",
+            # confirmed_services has a spurious extra entry (extractor bug)
+            confirmed_services=["Corte Caballero", "Cortar"],
+            selected_slot={"date": "lunes 7 de abril", "time": "10:00"},
+            customer_name="María",
+            customer_id="cust-001",
+        )
+        ctx._booking_completed = True
+
+        llm_result = AgenticLoopResult(response_text="OK", tool_results={})
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        response_text = updates["messages"][0]["content"]
+
+        assert "Corte Caballero" in response_text, "The selected service name must appear"
+        assert "Cortar" not in response_text, (
+            "Spurious extra service 'Cortar' must NOT appear in confirmation"
+        )
+
+    # ------------------------------------------------------------------
+    # T-C2: multi-service booking — both names preserved
+    # ------------------------------------------------------------------
+
+    def test_multi_service_display_preserved(self):
+        """Bug C fix — T-C2: When selected_services and confirmed_services both have 2
+        items, both service names must appear in the confirmation."""
+        mode = make_booking_mode()
+        state = make_state()
+        ctx = BookingContext(
+            stylist_name="Ana",
+            stylist_id="sty-001",
+            selected_services=["Corte Mujer", "Tinte"],
+            confirmed_services=["Corte Mujer", "Tinte"],
+            selected_slot={"date": "lunes 7 de abril", "time": "10:00"},
+            customer_name="María",
+            customer_id="cust-001",
+        )
+        ctx._booking_completed = True
+
+        llm_result = AgenticLoopResult(response_text="OK", tool_results={})
+
+        with (
+            patch("agent.modes.booking_mode.get_system_prompt", return_value=""),
+            patch("agent.modes.booking_mode.load_markdown", return_value=""),
+        ):
+            updates = mode._build_response(state, ctx, llm_result)
+
+        response_text = updates["messages"][0]["content"]
+
+        assert "Corte Mujer" in response_text, "First service must appear"
+        assert "Tinte" in response_text, "Second service must appear"
+
+    # ------------------------------------------------------------------
+    # T-D: book() pre-tool-call does NOT inject audience
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_book_pretool_no_audience_injection(self):
+        """Bug D fix — T-D: _pre_tool_call('book', {}) with ctx.service_audience_hint
+        set must NOT inject 'audience' key into the returned args."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext(
+            customer_id="550e8400-e29b-41d4-a716-446655440000",
+            customer_name="María",
+            service_audience_hint="adult_female",
+            offered_slots=[
+                {
+                    "stylist_id": "550e8400-e29b-41d4-a716-446655440001",
+                    "full_datetime": "2026-04-10T10:00:00+01:00",
+                    "stylist_name": "Ana",
+                }
+            ],
+            selected_services=["Corte Mujer"],
+            needs_availability_refresh=False,
+            confirmation_shown=True,
+            notes_asked=True,
+        )
+
+        tool_args: dict = {
+            "customer_id": "FAKE-ID",
+            "services": ["Corte Mujer"],
+            "slot_index": 1,
+        }
+
+        result = await mode._pre_tool_call("book", tool_args)
+
+        # 'audience' must NOT be injected — selected_services already resolved
+        if isinstance(result, dict):
+            assert "audience" not in result, (
+                f"Bug D fix: audience must NOT be injected into book() args. Got: {result}"
+            )
