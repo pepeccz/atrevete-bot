@@ -805,6 +805,26 @@ class BookingMode(BaseModeNode):
         if tool_name in ("check_availability", "find_next_available"):
             ctx_av: BookingContext | None = getattr(self, "_ctx", None)
             if ctx_av:
+                # Hard gate: reject availability search if no service resolved yet.
+                # Without a service_id we don't know duration or category — the
+                # resulting slots would be meaningless and confusing to the user.
+                if not ctx_av.service_id and not ctx_av.selected_services:
+                    logger.warning(
+                        "_pre_tool_call: rejecting %s — no service resolved yet. "
+                        "LLM must call search_services first.",
+                        tool_name,
+                    )
+                    return ToolCallRejection(
+                        name=tool_name,
+                        error_code="NO_SERVICE_RESOLVED",
+                        error_message=(
+                            "STOP. No puedes buscar disponibilidad todavía. "
+                            "Primero debés resolver qué servicio quiere la clienta "
+                            "llamando a search_services. "
+                            "Preguntá: '¿Qué servicio te gustaría reservar?'"
+                        ),
+                    )
+
                 _clear_slot_state(ctx_av)
                 _clear_date_metadata(ctx_av)
 
