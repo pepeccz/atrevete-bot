@@ -31,6 +31,7 @@ from agent.modes.booking_mode import (
     _combo_offer_in_response,
     _contains_name_token,
     _detect_addon_acceptance,
+    _detect_confirmation_exchange,
     _detect_recommendation_decline,
     _extract_name_from_conversation,
     _extract_notes_from_conversation,
@@ -2150,56 +2151,81 @@ class TestNotesGate:
             )
 
     @pytest.mark.asyncio
-    async def test_notes_asked_flag_auto_set_via_attempts(self):
-        """notes_asked is set to True when notes_ask_attempts >= 2 (loop prevention)."""
-        ctx = BookingContext(notes_asked=False, notes_ask_attempts=2)
-        # Simulate the handle() detection logic
-        if not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 2:
+    async def test_notes_asked_set_deterministically_when_booking_data_complete(self):
+        """notes_asked is set to True deterministically by _build_response when all
+        booking data is complete, notes is None, and notes_asked is False."""
+        from agent.modes.booking_mode import _is_booking_data_complete
+
+        ctx = BookingContext(
+            service_id="svc-001",
+            service_name="Corte de Dama",
+            stylist_id="sty-001",
+            stylist_name="Ana",
+            selected_slot={
+                "start_time": "2026-04-01T10:00:00+02:00",
+                "date": "2026-04-01",
+                "time": "10:00",
+            },
+            customer_name="María",
+            customer_id="cust-001",
+            notes=None,
+            notes_asked=False,
+        )
+        assert _is_booking_data_complete(ctx) is True
+        # Simulate the deterministic trigger in _build_response
+        if ctx and not ctx.notes_asked and ctx.notes is None:
+            if _is_booking_data_complete(ctx):
                 ctx.notes_asked = True
         assert ctx.notes_asked is True
 
     @pytest.mark.asyncio
-    async def test_notes_asked_flag_not_set_when_attempts_below_threshold(self):
-        """notes_asked stays False when attempts < 2 and flag not set by _build_response."""
-        ctx = BookingContext(notes_asked=False, notes_ask_attempts=0)
-        if not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 2:
+    async def test_notes_asked_not_set_when_booking_data_incomplete(self):
+        """notes_asked stays False when booking data is incomplete (trigger does not fire)."""
+        from agent.modes.booking_mode import _is_booking_data_complete
+
+        ctx = BookingContext(
+            service_id="svc-001",
+            service_name="Corte de Dama",
+            stylist_id=None,  # missing stylist — data NOT complete
+            selected_slot=None,
+            customer_name="María",
+            notes=None,
+            notes_asked=False,
+        )
+        assert _is_booking_data_complete(ctx) is False
+        # Simulate the deterministic trigger — should NOT fire
+        if ctx and not ctx.notes_asked and ctx.notes is None:
+            if _is_booking_data_complete(ctx):
                 ctx.notes_asked = True
         assert ctx.notes_asked is False
 
     @pytest.mark.asyncio
-    async def test_notes_markers_standard_phrasing_detected_by_build_response_counter(self):
-        """Standard notes-asking phrasing (containing 'nota') is detected by
-        _build_response() counter via _NOTES_ASK_MARKERS constant."""
-        from agent.modes.booking_mode import (
-            _NOTES_ASK_MARKERS,
-            _normalize_text,
+    async def test_notes_asked_not_set_when_notes_already_provided(self):
+        """notes_asked trigger is skipped when ctx.notes is already set (notes provided upfront)."""
+        from agent.modes.booking_mode import _is_booking_data_complete
+
+        ctx = BookingContext(
+            service_id="svc-001",
+            service_name="Corte de Dama",
+            stylist_id="sty-001",
+            stylist_name="Ana",
+            selected_slot={
+                "start_time": "2026-04-01T10:00:00+02:00",
+                "date": "2026-04-01",
+                "time": "10:00",
+            },
+            customer_name="María",
+            customer_id="cust-001",
+            notes="soy alérgica al amoniaco",
+            notes_asked=False,
         )
-
-        response_text = "¿Tenés alguna nota para el turno?"
-        normalized = _normalize_text(response_text)
-
-        assert any(marker in normalized for marker in _NOTES_ASK_MARKERS), (
-            f"Standard phrasing '{response_text}' not detected by _NOTES_ASK_MARKERS"
-        )
-
-    @pytest.mark.asyncio
-    async def test_notes_markers_divergent_phrasing_detected(self):
-        """Previously-divergent phrasing ('comentario especial') is detected by
-        _NOTES_ASK_MARKERS constant used in _build_response()."""
-        from agent.modes.booking_mode import (
-            _NOTES_ASK_MARKERS,
-            _normalize_text,
-        )
-
-        response_text = "¿Algún comentario especial?"
-        normalized = _normalize_text(response_text)
-
-        assert any(marker in normalized for marker in _NOTES_ASK_MARKERS), (
-            f"Divergent phrasing '{response_text}' not detected by _NOTES_ASK_MARKERS — "
-            f"'comentario'/'especial' must be in the shared constant"
-        )
+        assert _is_booking_data_complete(ctx) is True
+        # Simulate the deterministic trigger — should NOT fire because notes is set
+        if ctx and not ctx.notes_asked and ctx.notes is None:
+            if _is_booking_data_complete(ctx):
+                ctx.notes_asked = True
+        # notes_asked remains False — it's irrelevant when notes are already captured
+        assert ctx.notes_asked is False
 
 
 # =============================================================================
@@ -4599,3 +4625,127 @@ class TestBookingFlowUxFixes2:
             assert "audience" not in result, (
                 f"Bug D fix: audience must NOT be injected into book() args. Got: {result}"
             )
+
+
+# =============================================================================
+# UP-4: _detect_confirmation_exchange (simplified — no HH:MM scan)
+# =============================================================================
+
+
+def _make_complete_ctx_for_detection(**kwargs) -> BookingContext:
+    """Build a BookingContext with all booking data filled in."""
+    defaults = dict(
+        service_id="svc-001",
+        service_name="Corte de Dama",
+        stylist_id="sty-001",
+        stylist_name="Ana",
+        selected_slot={"date": "2026-04-06", "time": "10:00", "stylist_id": "sty-001"},
+        customer_name="María",
+        customer_id="cust-001",
+        confirmation_summary_sent=True,
+    )
+    defaults.update(kwargs)
+    return BookingContext(**defaults)
+
+
+class TestDetectConfirmationExchange:
+    """UP-4: _detect_confirmation_exchange uses flag-only anchor (no HH:MM scan)."""
+
+    def _state_with_messages(self, messages: list[dict]) -> dict:
+        state = create_initial_state("conv-001", "+34612345678")
+        state["messages"] = messages
+        return state
+
+    def test_si_after_summary_flag_true_detects_confirmation(self):
+        """'sí' when confirmation_summary_sent=True → ctx.confirmation_shown = True."""
+        ctx = _make_complete_ctx_for_detection(confirmation_summary_sent=True)
+        # Last assistant message has NO HH:MM time reference
+        state = self._state_with_messages(
+            [
+                {"role": "assistant", "content": "¿Te confirmo la cita con Ana para el lunes?"},
+                {"role": "user", "content": "sí"},
+            ]
+        )
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is True
+
+    def test_si_after_summary_no_hhmm_still_detects(self):
+        """Confirmation is detected even when last assistant message has NO HH:MM time ref."""
+        ctx = _make_complete_ctx_for_detection(confirmation_summary_sent=True)
+        state = self._state_with_messages(
+            [
+                {"role": "assistant", "content": "¿Confirmo el Corte de Dama con Ana el lunes?"},
+                {"role": "user", "content": "dale"},
+            ]
+        )
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is True
+
+    def test_flag_false_no_detection_even_with_si(self):
+        """'sí' when confirmation_summary_sent=False → confirmation_shown stays False."""
+        ctx = _make_complete_ctx_for_detection(confirmation_summary_sent=False)
+        ctx.confirmation_shown = False
+        state = self._state_with_messages(
+            [
+                {"role": "assistant", "content": "¿Tienes alguna preferencia de estilista?"},
+                {"role": "user", "content": "sí"},
+            ]
+        )
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_long_user_message_not_treated_as_confirmation(self):
+        """User message with > 3 words is NOT treated as confirmation (standalone guard)."""
+        ctx = _make_complete_ctx_for_detection(confirmation_summary_sent=True)
+        state = self._state_with_messages(
+            [
+                {"role": "assistant", "content": "¿Confirmo la cita con Ana?"},
+                {"role": "user", "content": "sí, pero quiero cambiar la hora a otra diferente"},
+            ]
+        )
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_no_assistant_message_returns_early(self):
+        """No assistant message in history → function returns without setting flag."""
+        ctx = _make_complete_ctx_for_detection(confirmation_summary_sent=True)
+        ctx.confirmation_shown = False
+        state = self._state_with_messages(
+            [
+                {"role": "user", "content": "sí"},
+            ]
+        )
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False
+
+    def test_incomplete_booking_data_returns_early(self):
+        """Missing stylist_id → data not complete → function returns without setting flag."""
+        ctx = BookingContext(
+            service_id="svc-001",
+            service_name="Corte de Dama",
+            stylist_id=None,  # ← missing
+            customer_name="María",
+            customer_id="cust-001",
+            confirmation_summary_sent=True,
+        )
+        ctx.confirmation_shown = False
+        state = self._state_with_messages(
+            [
+                {"role": "assistant", "content": "¿Confirmo?"},
+                {"role": "user", "content": "sí"},
+            ]
+        )
+
+        _detect_confirmation_exchange(state, ctx)
+
+        assert ctx.confirmation_shown is False

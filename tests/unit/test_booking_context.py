@@ -1047,23 +1047,21 @@ class TestConfirmationSummarySent:
 
 
 class TestNotesGateBookingContext:
-    """T-08: Tests for notes_asked / notes_ask_attempts fields and their effect
+    """T-08: Tests for notes_asked field and its effect
     on missing_summary() and reset_transient()."""
 
-    def test_notes_fields_default_false_zero(self):
-        """New BookingContext has notes_asked=False and notes_ask_attempts=0."""
+    def test_notes_asked_default_false(self):
+        """New BookingContext has notes_asked=False and no notes_ask_attempts field."""
         ctx = BookingContext()
         assert ctx.notes_asked is False
-        assert ctx.notes_ask_attempts == 0
+        assert not hasattr(ctx, "notes_ask_attempts")
 
-    def test_reset_transient_resets_notes_fields(self):
-        """reset_transient() sets notes_asked=False and notes_ask_attempts=0."""
+    def test_reset_transient_resets_notes_asked(self):
+        """reset_transient() sets notes_asked=False."""
         ctx = BookingContext()
         ctx.notes_asked = True
-        ctx.notes_ask_attempts = 3
         ctx.reset_transient()
         assert ctx.notes_asked is False
-        assert ctx.notes_ask_attempts == 0
 
     def test_missing_summary_shows_notes_pending_when_all_fields_complete_but_notes_not_asked(
         self,
@@ -1131,12 +1129,19 @@ class TestNotesGateBookingContext:
         assert "servicio" in summary.lower()
         assert "notas" not in summary.lower()
 
-    def test_notes_fields_round_trip_serialization(self):
-        """notes_asked and notes_ask_attempts survive to_mode_context → from_mode_context."""
-        ctx = BookingContext(notes_asked=True, notes_ask_attempts=2)
+    def test_notes_asked_round_trip_serialization(self):
+        """notes_asked survives to_mode_context → from_mode_context round-trip.
+        Legacy dicts with notes_ask_attempts key are silently ignored."""
+        ctx = BookingContext(notes_asked=True)
         restored = BookingContext.from_mode_context(ctx.to_mode_context())
         assert restored.notes_asked is True
-        assert restored.notes_ask_attempts == 2
+
+    def test_legacy_notes_ask_attempts_key_silently_ignored(self):
+        """from_mode_context silently ignores legacy notes_ask_attempts key (backward compat)."""
+        legacy_dict = {"notes_asked": True, "notes_ask_attempts": 2}
+        restored = BookingContext.from_mode_context(legacy_dict)
+        assert restored.notes_asked is True
+        assert not hasattr(restored, "notes_ask_attempts")
 
     def test_new_date_fields_serialize_deserialize(self):
         """6 new date-substitution fields survive to_mode_context → from_mode_context round-trip."""

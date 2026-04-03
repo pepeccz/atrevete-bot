@@ -30,6 +30,20 @@ _STEP_DESCRIBE = "DESCRIBE"
 _STEP_CONTACT = "CONTACT"
 _STEP_DONE = "DONE"
 
+# ── Urgency signals — UP-1 ──────────────────────────────────────────────────────
+_URGENCY_SIGNALS: frozenset[str] = frozenset(
+    {
+        "urgente",
+        "emergencia",
+        "ahora mismo",
+        "lo antes posible",
+        "inmediato",
+        "inmediatamente",
+        "necesito hablar ya",
+        "urgente necesito",
+    }
+)
+
 # ── Response templates ──────────────────────────────────────────────────────────
 _ALREADY_ESCALATED = (
     "Ya he contactado con nuestro equipo. Te atenderán en breve. 🙏 "
@@ -70,6 +84,17 @@ def _normalize_contact_preference(text: str) -> str:
     if any(k in lower for k in ("llamada", "telefono", "teléfono", "llamen", "llamar", "llama")):
         return "llamada"
     return text.strip()
+
+
+def _is_urgent(text: str) -> bool:
+    """Detect high-confidence urgency signals in user text.
+
+    Returns True when any signal in _URGENCY_SIGNALS is a substring of the
+    lowercased, stripped message.  Multi-word signals require an exact substring
+    match so "ya" alone does NOT trigger this (it is not in the signal set).
+    """
+    lower = text.lower().strip()
+    return any(signal in lower for signal in _URGENCY_SIGNALS)
 
 
 class EscalationMode(BaseModeNode):
@@ -143,6 +168,43 @@ class EscalationMode(BaseModeNode):
                 updates["ai_disclosure_sent"] = True
             return updates
 
+        # ── Recover last user message ──────────────────────────────────────────
+        # Must be done early — needed by urgency fast-path (UP-1) and FSM steps.
+        messages = state.get("messages", [])
+        user_text = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                user_text = msg.get("content", "").strip()
+                break
+
+        # UP-1 — Fast path for urgency signals on fresh ESCALATION entry.
+        # Guards: no step set yet (fresh entry) AND escalation not already triggered (done).
+        if (
+            not ctx.get("escalation_step")
+            and not state.get("escalation_triggered")
+            and _is_urgent(user_text)
+        ):
+            self.logger.info(
+                "EscalationMode: urgency fast-path | conversation=%s | text=%r",
+                conversation_id,
+                user_text[:60],
+            )
+            ctx["escalation_step"] = _STEP_CONTACT
+            ctx["issue_summary"] = user_text
+            final_response, disclosure_sent = self._maybe_prepend_intro(
+                _CONTACT_PROMPT,
+                state,
+            )
+            updates = {
+                **add_message(state, "assistant", final_response),
+                "mode_context": ctx,
+                "last_node": "escalation",
+                "user_message": None,
+            }
+            if disclosure_sent:
+                updates["ai_disclosure_sent"] = True
+            return updates
+
         # ── Guard: fresh ESCALATION entry — reset FSM step to ACKNOWLEDGE ──────
         # If we just transitioned INTO ESCALATION from another mode, stale
         # mode_context may contain escalation_step=CONTACT from a prior
@@ -174,14 +236,6 @@ class EscalationMode(BaseModeNode):
             if disclosure_sent:
                 updates["ai_disclosure_sent"] = True
             return updates
-
-        # ── Recover last user message ──────────────────────────────────────────
-        messages = state.get("messages", [])
-        user_text = ""
-        for msg in reversed(messages):
-            if msg.get("role") == "user":
-                user_text = msg.get("content", "").strip()
-                break
 
         # ── T3.1: ACKNOWLEDGE step ─────────────────────────────────────────────
         if step == _STEP_ACKNOWLEDGE:

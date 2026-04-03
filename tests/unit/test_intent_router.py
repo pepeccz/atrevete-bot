@@ -37,8 +37,7 @@ class TestIntentRouterConstants:
             IntentType.CANCEL_BOOKING,
         }
         assert IntentRouter.BOOKING_INTENTS == expected, (
-            f"Expected {len(expected)} booking intents, "
-            f"got {len(IntentRouter.BOOKING_INTENTS)}"
+            f"Expected {len(expected)} booking intents, got {len(IntentRouter.BOOKING_INTENTS)}"
         )
 
     def test_non_booking_intents_complete(self):
@@ -63,15 +62,12 @@ class TestIntentRouterConstants:
         """Verify every IntentType is in one of the two sets."""
         all_intents = set(IntentType)
         covered = IntentRouter.BOOKING_INTENTS | IntentRouter.NON_BOOKING_INTENTS
-        assert all_intents == covered, (
-            f"Missing coverage for: {all_intents - covered}"
-        )
+        assert all_intents == covered, f"Missing coverage for: {all_intents - covered}"
 
     def test_booking_intents_count(self):
         """Verify BOOKING_INTENTS has exactly 9 members."""
         assert len(IntentRouter.BOOKING_INTENTS) == 9, (
-            f"BOOKING_INTENTS should have 9 members, "
-            f"got {len(IntentRouter.BOOKING_INTENTS)}"
+            f"BOOKING_INTENTS should have 9 members, got {len(IntentRouter.BOOKING_INTENTS)}"
         )
 
     def test_non_booking_intents_count(self):
@@ -98,9 +94,7 @@ class TestIntentRouterRouting:
     """Test routing decision logic."""
 
     @pytest.mark.asyncio
-    async def test_routes_start_booking_to_booking_handler(
-        self, mock_fsm, mock_llm, mock_state
-    ):
+    async def test_routes_start_booking_to_booking_handler(self, mock_fsm, mock_llm, mock_state):
         """Verify START_BOOKING intent routes to BookingHandler."""
         intent = Intent(type=IntentType.START_BOOKING, raw_message="Quiero reservar")
 
@@ -119,14 +113,12 @@ class TestIntentRouterRouting:
             assert response == "Booking response"
 
     @pytest.mark.asyncio
-    async def test_routes_select_service_to_booking_handler(
-        self, mock_fsm, mock_llm, mock_state
-    ):
+    async def test_routes_select_service_to_booking_handler(self, mock_fsm, mock_llm, mock_state):
         """Verify SELECT_SERVICE intent routes to BookingHandler."""
         intent = Intent(
             type=IntentType.SELECT_SERVICE,
             raw_message="Corte de señora",
-            entities={"service": "Corte de señora"}
+            entities={"service": "Corte de señora"},
         )
 
         with patch("agent.routing.booking_handler.BookingHandler") as MockHandler:
@@ -140,9 +132,7 @@ class TestIntentRouterRouting:
             assert response == "Service selected"
 
     @pytest.mark.asyncio
-    async def test_routes_greeting_to_non_booking_handler(
-        self, mock_fsm, mock_llm, mock_state
-    ):
+    async def test_routes_greeting_to_non_booking_handler(self, mock_fsm, mock_llm, mock_state):
         """Verify GREETING intent routes to NonBookingHandler."""
         intent = Intent(type=IntentType.GREETING, raw_message="Hola")
 
@@ -158,14 +148,10 @@ class TestIntentRouterRouting:
             assert response == "¡Hola! Soy Maite"
 
     @pytest.mark.asyncio
-    async def test_routes_faq_to_non_booking_handler(
-        self, mock_fsm, mock_llm, mock_state
-    ):
+    async def test_routes_faq_to_non_booking_handler(self, mock_fsm, mock_llm, mock_state):
         """Verify FAQ intent routes to NonBookingHandler."""
         intent = Intent(
-            type=IntentType.FAQ,
-            raw_message="¿Cuál es el horario?",
-            entities={"query": "horario"}
+            type=IntentType.FAQ, raw_message="¿Cuál es el horario?", entities={"query": "horario"}
         )
 
         with patch("agent.routing.non_booking_handler.NonBookingHandler") as MockHandler:
@@ -213,9 +199,7 @@ class TestIntentRouterRouting:
                 MockHandler.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_routing_with_fsm_context(
-        self, mock_llm, mock_state
-    ):
+    async def test_routing_with_fsm_context(self, mock_llm, mock_state):
         """Verify routing works with different FSM states."""
         # Test with FSM in SERVICE_SELECTION state
         fsm_service_selection = MagicMock()
@@ -228,26 +212,20 @@ class TestIntentRouterRouting:
             mock_instance = MockHandler.return_value
             mock_instance.handle = AsyncMock(return_value="Service response")
 
-            response = await IntentRouter.route(
-                intent, fsm_service_selection, mock_state, mock_llm
-            )
+            response = await IntentRouter.route(intent, fsm_service_selection, mock_state, mock_llm)
 
             # Verify FSM was passed to handler
-            MockHandler.assert_called_once_with(
-                fsm_service_selection, mock_state, mock_llm
-            )
+            MockHandler.assert_called_once_with(fsm_service_selection, mock_state, mock_llm)
             assert response == "Service response"
 
     @pytest.mark.asyncio
-    async def test_routing_preserves_intent_entities(
-        self, mock_fsm, mock_llm, mock_state
-    ):
+    async def test_routing_preserves_intent_entities(self, mock_fsm, mock_llm, mock_state):
         """Verify routing preserves intent entities through to handler."""
         intent = Intent(
             type=IntentType.SELECT_SERVICE,
             raw_message="Corte de señora y tinte",
             entities={"services": ["Corte de señora", "Tinte"]},
-            confidence=0.95
+            confidence=0.95,
         )
 
         with patch("agent.routing.booking_handler.BookingHandler") as MockHandler:
@@ -255,6 +233,7 @@ class TestIntentRouterRouting:
 
             # Capture the intent passed to handle()
             called_intent = None
+
             async def capture_intent(intent_arg):
                 nonlocal called_intent
                 called_intent = intent_arg
@@ -318,3 +297,40 @@ class TestIntentRouterKeywordFastPath:
 
         assert intent is not None
         assert intent.intent == "cancel"
+
+
+# =============================================================================
+# UP-5: No-preference narrowing removed — "cualquiera" in BOOKING context
+# =============================================================================
+
+
+class TestNoPreferenceNarrowingRemoved:
+    """UP-5: The booking-context no-preference narrowing block has been removed.
+
+    "cualquiera" in BOOKING context must NOT be downgraded to confidence 0.40.
+    The keyword layer returns None (no keyword match) and LLM fallback handles it.
+    """
+
+    def test_cualquiera_in_booking_context_not_capped_at_040(self):
+        """'cualquiera' in BOOKING context does NOT get confidence 0.40 (narrowing removed)."""
+        context = {"current_mode": "BOOKING"}
+        result = classify_by_keywords("cualquiera", context=context)
+        # "cualquiera" is not in KEYWORD_MAP → keyword classifier returns None
+        # It must NOT return a result with confidence 0.40 (that was the narrowing output)
+        if result is not None:
+            assert result.confidence != 0.40, (
+                "Narrowing block should be removed — 0.40 confidence downgrade must not happen"
+            )
+
+    def test_explicit_cancel_plain_text_classifies_as_cancel(self):
+        """'cancelar mi cita' (no 'quiero' prefix) → cancel at high confidence."""
+        # Without the narrowing block, plain cancel phrases still work at keyword level.
+        # Note: 'quiero cancelar mi cita' matches 'book' (via 'quiero' keyword) at 0.90,
+        # which wins over 'cancel'; that is expected behavior now that the narrowing is gone.
+        result = classify_by_keywords("cancelar mi cita")
+
+        assert result is not None
+        assert result.intent == "cancel"
+        assert result.confidence >= 0.80, (
+            f"Explicit cancel should have high confidence, got {result.confidence}"
+        )

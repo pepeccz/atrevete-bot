@@ -124,7 +124,6 @@ class BookingContext:
 
     # ── Notes gate ─────────────────────────────────────────────────────────
     notes_asked: bool = False
-    notes_ask_attempts: int = 0
 
     # ── Prompt injection tracking (set by _build_response when content is shown) ──
     name_asked: bool = False  # True when name-ask content was injected into response
@@ -191,7 +190,6 @@ class BookingContext:
         self.confirmation_summary_sent = False
         self.confirmation_gate_turn_count = 0
         self.notes_asked = False
-        self.notes_ask_attempts = 0
         self.upsell_gate_attempts = 0
         self.force_search_services_reminder = False
         self.force_list_stylists_reminder = False

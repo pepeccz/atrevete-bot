@@ -388,65 +388,53 @@ class TestSlotsShownCount:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# T-M3: notes_asked threshold >= 2
+# T-M3: notes_asked deterministic trigger
 # ══════════════════════════════════════════════════════════════════════════
 
 
-class TestNotesAskedThreshold:
-    """T-M3: notes_asked auto-set threshold changed from >= 1 to >= 2."""
+class TestNotesAskedDeterministicTrigger:
+    """T-M3: notes_asked set deterministically by _build_response when booking data complete."""
 
-    def _make_state_with_ctx(self, ctx: BookingContext) -> dict:
-        """Minimal state dict for preprocess logic."""
-        return {"messages": [], "mode_context": ctx.to_mode_context()}
+    def test_notes_asked_not_set_when_booking_data_incomplete(self):
+        """Deterministic trigger does NOT fire when booking data is incomplete."""
+        from agent.modes.booking_mode import _is_booking_data_complete
 
-    @pytest.mark.asyncio
-    async def test_notes_asked_not_set_at_one_attempt(self):
-        """notes_ask_attempts=1 → notes_asked stays False (threshold is >= 2)."""
-        mode = _make_booking_mode()
         ctx = BookingContext(
             service_id="svc-001",
             service_name="Corte Caballero",
-            stylist_id="sty-001",
+            stylist_id=None,  # missing — data NOT complete
+            selected_slot=None,
             notes_asked=False,
-            notes_ask_attempts=1,
         )
-        mode._ctx = ctx
-
-        # Simulate the preprocess logic inline (lines 689-700 of booking_mode.py)
-        messages = []
-        if ctx and not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 2:
+        assert _is_booking_data_complete(ctx) is False
+        # Simulate trigger — should not fire
+        if ctx and not ctx.notes_asked and ctx.notes is None:
+            if _is_booking_data_complete(ctx):
                 ctx.notes_asked = True
-
         assert ctx.notes_asked is False
 
-    @pytest.mark.asyncio
-    async def test_notes_asked_set_at_two_attempts(self):
-        """notes_ask_attempts=2 → notes_asked becomes True (threshold met)."""
-        mode = _make_booking_mode()
+    def test_notes_asked_set_when_booking_data_complete(self):
+        """Deterministic trigger fires when all booking data is complete."""
+        from agent.modes.booking_mode import _is_booking_data_complete
+
         ctx = BookingContext(
             service_id="svc-001",
             service_name="Corte Caballero",
             stylist_id="sty-001",
+            stylist_name="Ana",
+            selected_slot={
+                "start_time": "2026-04-01T10:00:00+02:00",
+                "date": "2026-04-01",
+                "time": "10:00",
+            },
+            customer_name="María",
+            customer_id="cust-001",
+            notes=None,
             notes_asked=False,
-            notes_ask_attempts=2,
         )
-        mode._ctx = ctx
-
-        # Simulate the preprocess logic
-        if ctx and not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 2:
+        assert _is_booking_data_complete(ctx) is True
+        # Simulate trigger — should fire
+        if ctx and not ctx.notes_asked and ctx.notes is None:
+            if _is_booking_data_complete(ctx):
                 ctx.notes_asked = True
-
-        assert ctx.notes_asked is True
-
-    @pytest.mark.asyncio
-    async def test_notes_asked_set_at_three_attempts(self):
-        """notes_ask_attempts=3 → notes_asked becomes True (threshold still met)."""
-        ctx = BookingContext(notes_asked=False, notes_ask_attempts=3)
-
-        if ctx and not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 2:
-                ctx.notes_asked = True
-
         assert ctx.notes_asked is True

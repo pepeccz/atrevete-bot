@@ -5,6 +5,7 @@ Coverage:
 - F-4 regression: no LLM call when escalation_triggered=True
 - Silence determinism: the return value is consistent when already escalated
 - FSM step transitions (ACKNOWLEDGE → DESCRIBE → CONTACT → DONE)
+- UP-1: _is_urgent() detection + urgency fast-path in handle()
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +17,8 @@ from agent.modes.escalation_mode import (
     _ALREADY_ESCALATED,
     _ACKNOWLEDGE_REPLY,
     _CONTACT_PROMPT,
+    _URGENCY_SIGNALS,
+    _is_urgent,
     _normalize_contact_preference,
 )
 from agent.state.schemas import create_initial_state
@@ -155,12 +158,17 @@ class TestEscalationFSMTransitions:
 
     @pytest.mark.asyncio
     async def test_fresh_entry_starts_at_acknowledge(self):
-        """First time in ESCALATION (previous_mode != ESCALATION) → ACKNOWLEDGE step."""
+        """First time in ESCALATION (previous_mode != ESCALATION) → ACKNOWLEDGE step.
+
+        Uses a non-urgent message so the UP-1 fast-path does NOT trigger.
+        For the urgency fast-path behavior, see TestUrgencyFastPath.
+        """
         mode = _make_escalation_mode()
         state = _make_state(
             current_mode="BOOKING",  # transitioning FROM booking
             escalation_triggered=False,
             escalation_step=None,
+            user_message="quisiera hablar con alguien del equipo",  # non-urgent
         )
 
         result = await mode.handle(state, intent=None)
@@ -209,3 +217,136 @@ class TestNormalizeContactPreference:
 
     def test_unknown_passed_through(self):
         assert _normalize_contact_preference("email") == "email"
+
+
+# =============================================================================
+# UP-1: _is_urgent() unit tests
+# =============================================================================
+
+
+class TestIsUrgent:
+    """UP-1: _is_urgent() detects all 8 required urgency signals."""
+
+    @pytest.mark.parametrize(
+        "signal",
+        list(_URGENCY_SIGNALS),
+    )
+    def test_all_signals_return_true(self, signal: str):
+        """Each individual signal phrase must trigger _is_urgent()."""
+        assert _is_urgent(signal) is True, f"_is_urgent({signal!r}) should return True"
+
+    def test_all_signals_case_insensitive(self):
+        """Urgency detection is case-insensitive."""
+        assert _is_urgent("URGENTE necesito ayuda") is True
+        assert _is_urgent("EMERGENCIA en el salon") is True
+        assert _is_urgent("Inmediatamente por favor") is True
+
+    def test_standalone_ya_does_not_trigger(self):
+        """'ya' alone must NOT trigger the urgency fast-path (UP-1 spec)."""
+        assert _is_urgent("ya") is False
+
+    def test_empty_string_does_not_trigger(self):
+        assert _is_urgent("") is False
+
+    def test_unrelated_text_does_not_trigger(self):
+        assert _is_urgent("quiero reservar una cita") is False
+        assert _is_urgent("hola buenas tardes") is False
+
+    def test_signal_embedded_in_sentence(self):
+        """Urgency signal embedded inside a sentence is still detected."""
+        assert _is_urgent("por favor es urgente necesito que me atiendas") is True
+        assert _is_urgent("mañana es emergencia me quedo sin tiempo") is True
+
+
+# =============================================================================
+# UP-1: urgency fast-path in handle()
+# =============================================================================
+
+
+class TestUrgencyFastPath:
+    """UP-1: handle() jumps directly to CONTACT when urgency signal present on fresh entry."""
+
+    @pytest.mark.asyncio
+    async def test_urgency_fast_path_jumps_to_contact(self):
+        """Fresh ESCALATION entry with urgency signal → bot asks for contact preference."""
+        mode = EscalationMode(tools=[], llm_client=_make_mock_llm())
+        state = _make_state(
+            current_mode="BOOKING",  # transitioning FROM booking (fresh entry)
+            escalation_triggered=False,
+            escalation_step=None,
+            user_message="Es URGENTE necesito hablar con alguien AHORA MISMO",
+        )
+
+        result = await mode.handle(state, intent=None)
+
+        # Must respond with the CONTACT prompt (not ACKNOWLEDGE)
+        messages = result.get("messages", [])
+        assert messages, "Expected a response message"
+        assert _CONTACT_PROMPT in messages[0]["content"]
+
+        # Must set escalation_step = CONTACT in mode_context
+        assert result.get("mode_context", {}).get("escalation_step") == "CONTACT"
+
+        # issue_summary must be captured from user text
+        assert result.get("mode_context", {}).get("issue_summary")
+
+        # No LLM should have been called
+        mode.llm.ainvoke.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_urgency_fast_path_does_not_fire_mid_fsm(self):
+        """When escalation_step is already set (mid-FSM), urgency does NOT re-trigger fast-path."""
+        mode = EscalationMode(tools=[], llm_client=_make_mock_llm())
+        state = _make_state(
+            current_mode="ESCALATION",
+            escalation_triggered=False,
+            escalation_step="DESCRIBE",  # mid-FSM
+            user_message="urgente por favor",
+        )
+
+        result = await mode.handle(state, intent=None)
+
+        # Must continue from DESCRIBE → send CONTACT prompt (normal FSM flow)
+        # and advance to CONTACT step, not be re-jumped
+        messages = result.get("messages", [])
+        assert messages
+        # The DESCRIBE step moves to CONTACT and asks for contact preference
+        assert _CONTACT_PROMPT in messages[0]["content"]
+        assert result.get("mode_context", {}).get("escalation_step") == "CONTACT"
+
+    @pytest.mark.asyncio
+    async def test_no_urgency_fresh_entry_starts_acknowledge(self):
+        """Fresh entry WITHOUT urgency signal still follows normal ACKNOWLEDGE path."""
+        mode = EscalationMode(tools=[], llm_client=_make_mock_llm())
+        state = _make_state(
+            current_mode="BOOKING",
+            escalation_triggered=False,
+            escalation_step=None,
+            user_message="quisiera hablar con alguien del salón",
+        )
+
+        result = await mode.handle(state, intent=None)
+
+        messages = result.get("messages", [])
+        assert messages
+        assert _ACKNOWLEDGE_REPLY in messages[0]["content"]
+        # step advances to DESCRIBE (normal flow)
+        assert result.get("mode_context", {}).get("escalation_step") == "DESCRIBE"
+
+    @pytest.mark.asyncio
+    async def test_urgency_single_ya_does_not_fast_path(self):
+        """'ya' alone does not trigger urgency fast-path — starts normal ACKNOWLEDGE."""
+        mode = EscalationMode(tools=[], llm_client=_make_mock_llm())
+        state = _make_state(
+            current_mode="BOOKING",
+            escalation_triggered=False,
+            escalation_step=None,
+            user_message="ya",
+        )
+
+        result = await mode.handle(state, intent=None)
+
+        messages = result.get("messages", [])
+        assert messages
+        # Should follow normal flow (ACKNOWLEDGE), not fast-path (CONTACT)
+        assert _ACKNOWLEDGE_REPLY in messages[0]["content"]

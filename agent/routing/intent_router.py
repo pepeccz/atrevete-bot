@@ -371,25 +371,6 @@ def _keyword_matches(text_lower: str, kw_lower: str) -> float:
     return 0.0
 
 
-_BOOKING_NO_PREF_PHRASES: tuple[str, ...] = (
-    "no tengo preferencia",
-    "sin preferencia",
-    "cualquiera",
-    "no importa",
-    "nada mas",
-    "nada más",
-    "no, nada",
-)
-
-_EXPLICIT_CANCEL_PHRASES: tuple[str, ...] = (
-    "quiero cancelar",
-    "cancelar mi cita",
-    "cancelar la cita",
-    "cancelar reserva",
-    "anular",
-)
-
-
 def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult | None:
     """
     Fast synchronous keyword-based intent classification.
@@ -412,11 +393,6 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
 
     When multiple intents match at the same confidence level, the first match
     (by KEYWORD_MAP insertion order) wins.
-
-    Booking-context narrowing (context["current_mode"] == "BOOKING"):
-    - No-preference and qualifier phrases downgrade `reject` confidence to ≤0.40
-      so they fall through to the LLM / substep handler instead of triggering
-      an early-exit cancel. Explicit cancel phrases are unaffected.
 
     Slot-selection shortcut (context["booking_step"] == "slot_selection"):
     - A bare digit reply ("1", "2", "3", ...) is classified as "confirm" with
@@ -512,21 +488,6 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
             text[:60],
         )
         return None
-
-    # Booking-context narrowing: downgrade `reject` for no-preference / qualifier
-    # phrases so they fall through to the LLM rather than triggering an early exit.
-    if best_intent == "reject" and (context or {}).get("current_mode") == "BOOKING":
-        # Explicit cancel phrases must keep full confidence regardless
-        is_explicit_cancel = any(phrase in text_normalized for phrase in _EXPLICIT_CANCEL_PHRASES)
-        if not is_explicit_cancel:
-            is_no_pref = any(phrase in text_normalized for phrase in _BOOKING_NO_PREF_PHRASES)
-            if is_no_pref:
-                logger.debug(
-                    "classify_by_keywords: BOOKING context no-preference downgrade "
-                    "| text_preview=%s",
-                    text[:60],
-                )
-                best_confidence = min(best_confidence, 0.40)
 
     return IntentResult(
         intent=best_intent,

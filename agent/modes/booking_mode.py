@@ -69,21 +69,6 @@ _HISTORY_LIMIT = 8
 # After this many injections the block is auto-suppressed (recommendations_shown=True).
 RECOMMENDATIONS_OFFER_THRESHOLD = 2
 
-# Shared markers for notes-asking detection — used by _build_response() to detect
-# when name-ask / notes-ask content was shown (sets ctx.notes_ask_attempts).
-_NOTES_ASK_MARKERS: frozenset[str] = frozenset(
-    {
-        "nota",
-        "preferencia",
-        "indicacion",
-        "alergia",
-        "algo que debamos saber",
-        "algo que deba saber",
-        "comentario",
-        "especial",
-    }
-)
-
 # User affirmative phrases that confirm a booking after summary is shown
 _USER_CONFIRMATION_PHRASES: tuple[str, ...] = (
     "si",
@@ -463,16 +448,6 @@ class BookingMode(BaseModeNode):
         # 1d. Pre-resolve: detect confirmation exchange (summary shown + user confirmed)
         if not ctx.confirmation_shown:
             _detect_confirmation_exchange(state, ctx)
-
-        # 1e. Pre-resolve: detect notes exchange (bot asked + user replied)
-        if ctx and not ctx.notes_asked:
-            if ctx.notes_ask_attempts >= 2:
-                ctx.notes_asked = True
-                logger.info(
-                    "handle: notes_asked auto-set True (attempts=%d >= 2)",
-                    ctx.notes_ask_attempts,
-                )
-            # ctx.notes_asked is also set directly by _build_response via _NOTES_ASK_MARKERS
 
         # 1f. Pre-resolve: deterministically persist slot/stylist from user message.
         # This covers the tool_skip case where the LLM does not call book() on the
@@ -2049,14 +2024,18 @@ class BookingMode(BaseModeNode):
                     ctx.confirmation_gate_turn_count,
                 )
 
-        # Detect notes-asking markers in outgoing response → increment attempts counter
-        if ctx and not ctx.notes_asked:
-            normalized_resp_notes = _normalize_text(response_text)
-            if any(marker in normalized_resp_notes for marker in _NOTES_ASK_MARKERS):
-                ctx.notes_ask_attempts += 1
+        # Deterministic notes gate: set notes_asked=True when all booking data is
+        # complete and the LLM just had an opportunity to ask about notes.
+        # Post-loop placement is critical: _pre_tool_call evaluated notes_asked=False
+        # DURING the loop (blocking book()), and missing_summary() showed notes as
+        # pending BEFORE the loop (guiding the LLM to ask). Now we flip the flag
+        # so next turn's _pre_tool_call allows book() and _extract_notes captures
+        # the user's reply.
+        if ctx and not ctx.notes_asked and ctx.notes is None:
+            if _is_booking_data_complete(ctx):
+                ctx.notes_asked = True
                 logger.info(
-                    "_build_response: notes_ask_attempts incremented to %d",
-                    ctx.notes_ask_attempts,
+                    "_build_response: notes_asked set True (deterministic — booking data complete)"
                 )
 
         # Track what was shown this turn via explicit ctx flags (replaces _previous_assistant_* scans)
@@ -2546,7 +2525,7 @@ def _extract_notes_from_conversation(
     """Extract notes from user message when the bot just asked for notes/preferences.
 
     Only runs when:
-    1. ctx.notes_asked is True (set by _build_response when notes-asking content was shown).
+    1. ctx.notes_asked is True (set deterministically by _build_response when booking data is complete).
     2. ctx.notes is None (not yet collected).
 
     Decline phrases (e.g. "no", "nada") are ignored — ctx.notes stays None
@@ -2555,7 +2534,7 @@ def _extract_notes_from_conversation(
     if not user_message or ctx.notes is not None:
         return
 
-    # Use ctx.notes_asked flag (set by _build_response via _NOTES_ASK_MARKERS or attempts counter)
+    # Use ctx.notes_asked flag (set deterministically by _build_response when booking data is complete)
     if not ctx.notes_asked:
         return
 
@@ -2616,16 +2595,9 @@ def _is_booking_data_complete(ctx: BookingContext) -> bool:
 def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext) -> None:
     """Detect if the user confirmed after the confirmation summary was sent.
 
-    Uses a positional scan (Option A) to handle rapid double-messages:
-    1. Scan messages backward to find the last assistant message that looks like
-       a confirmation summary (organic heuristic: time reference + trailing ?).
-       Since ctx.confirmation_summary_sent is now set deterministically by code,
-       this scan is used only to find the position in history for the user reply.
-    2. Collect up to 4 user messages appearing AFTER that assistant message.
-    3. For each, check if it is a short (≤3 words) affirmative phrase.
-
-    If no summary assistant message is found in history, falls back to the
-    previous behavior: check only the last user message.
+    Relies on ctx.confirmation_summary_sent (set deterministically by code) as the
+    sole signal that a summary was shown. Uses the last assistant message as anchor
+    and scans up to 4 subsequent user messages for short affirmative phrases.
 
     If both guards pass AND all booking data is complete, sets
     ctx.confirmation_shown = True so the book() gate in _pre_tool_call will
@@ -2648,58 +2620,17 @@ def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext)
     if not messages:
         return
 
-    # ── Positional scan: find last assistant summary message ──────────────
-    # Primary: organic heuristic (time ref + trailing ?).
-    # Fallback when ctx.confirmation_summary_sent=True: use last assistant message
-    # as the anchor, since we know a summary was sent (set deterministically by code).
+    # Find last assistant message as the anchor (we know summary was sent via flag)
     summary_idx: int | None = None
     for idx in range(len(messages) - 1, -1, -1):
-        msg = messages[idx]
-        if msg.get("role") != "assistant":
-            continue
-        content = msg.get("content", "")
-        # Organic heuristic: response with HH:MM time ref and trailing question mark
-        if re.search(r"\d{1,2}:\d{2}", content) and content.rstrip().endswith("?"):
+        if messages[idx].get("role") == "assistant":
             summary_idx = idx
             break
 
     if summary_idx is None:
-        if ctx.confirmation_summary_sent:
-            # ctx tells us a summary was sent but we can't pinpoint it by content.
-            # Use the last assistant message as anchor so we scan all subsequent user
-            # messages (enables rapid double-message detection).
-            for idx in range(len(messages) - 1, -1, -1):
-                if messages[idx].get("role") == "assistant":
-                    summary_idx = idx
-                    break
-
-    if summary_idx is None:
-        # Truly no assistant message found — nothing to anchor on.
-        last_user: dict | None = None
-        for msg in reversed(messages):
-            if msg.get("role") == "user":
-                last_user = msg
-                break
-        if last_user is None:
-            return
-        user_text = _normalize_text(last_user.get("content", ""))
-        user_words = [w for w in re.split(r"[\s,;.!?]+", user_text) if w]
-        if len(user_words) > 3:
-            return
-        user_tokens = set(user_words)
-        if any(
-            phrase in user_tokens or user_text.startswith(phrase)
-            for phrase in _USER_CONFIRMATION_PHRASES
-        ):
-            ctx.confirmation_shown = True
-            logger.info(
-                "_detect_confirmation_exchange: fallback confirmation detected — "
-                "no summary in history, user confirmed with %r",
-                last_user.get("content", "")[:50],
-            )
         return
 
-    # ── Collect up to 4 user messages AFTER the summary message ──────────
+    # ── Collect up to 4 user messages AFTER the anchor ───────────────────
     post_summary_user_msgs: list[dict] = []
     for msg in messages[summary_idx + 1 :]:
         if msg.get("role") == "user":
@@ -2726,7 +2657,7 @@ def _detect_confirmation_exchange(state: ConversationState, ctx: BookingContext)
         if has_confirmation:
             ctx.confirmation_shown = True
             logger.info(
-                "_detect_confirmation_exchange: F-2 confirmation detected — "
+                "_detect_confirmation_exchange: confirmation detected — "
                 "confirmation_summary_sent=True, user confirmed with %r",
                 user_msg.get("content", "")[:50],
             )
