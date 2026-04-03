@@ -140,7 +140,13 @@ class BookingContext:
         else:
             missing.append("❌ Fecha/hora: pendiente")
 
-        if not self.customer_name:
+        service_known = bool(self.service_name or self.selected_services)
+        if (
+            not self.customer_name
+            and service_known
+            and self.stylist_id
+            and self.selected_slot is not None
+        ):
             missing.append("❌ Nombre: pendiente")
 
         if self.customer_name and not self.customer_id:

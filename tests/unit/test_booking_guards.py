@@ -205,9 +205,9 @@ class TestSlotIndexResolution:
 
     @pytest.mark.asyncio
     async def test_availability_tool_clears_slot_state(self):
-        """check_availability/find_next_available clears offered_slots and selected_slot."""
+        """find_next_available clears offered_slots and selected_slot when stylists are shown."""
         mode = _make_mode()
-        ctx = BookingContext()
+        ctx = BookingContext(prefetched_stylists=[{"name": "Ana", "id": "test-uuid"}])
         ctx.offered_slots = [{"stylist_id": "s1"}]
         ctx.selected_slot = {"stylist_id": "s1"}
         mode._ctx = ctx
@@ -217,9 +217,9 @@ class TestSlotIndexResolution:
 
     @pytest.mark.asyncio
     async def test_check_availability_clears_slot_state(self):
-        """check_availability also clears slot state."""
+        """check_availability clears slot state when stylists are shown."""
         mode = _make_mode()
-        ctx = BookingContext()
+        ctx = BookingContext(prefetched_stylists=[{"name": "Ana", "id": "test-uuid"}])
         ctx.offered_slots = [{"stylist_id": "s1"}]
         ctx.selected_slot = {"stylist_id": "s1"}
         mode._ctx = ctx
@@ -536,3 +536,169 @@ class TestConfirmationGateHandleFix:
 
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "CONFIRMATION_NOT_SHOWN"
+
+
+# =============================================================================
+# AI Disclosure in BookingMode.handle()
+# =============================================================================
+
+
+class TestAIDisclosureInBookingMode:
+    """BookingMode.handle() must prepend AI disclosure on the first turn.
+
+    Covers S1 (first turn → discloses), S2 (already sent → no double),
+    S3 (prior message contains disclosure → no double).
+    """
+
+    @pytest.mark.asyncio
+    async def test_disclosure_prepended_on_first_turn(self):
+        """S1: ai_disclosure_sent=False, no prior assistant messages → prepends FIRST_TURN_INTRO."""
+        from agent.modes.base import FIRST_TURN_INTRO
+
+        mode = _make_mode()
+        state = _make_handle_state(mode_context={})
+        state["ai_disclosure_sent"] = False
+        state["messages"] = [{"role": "user", "content": "Quiero reservar un corte"}]
+
+        with (
+            patch.object(
+                BookingMode,
+                "_run_agentic_loop",
+                new_callable=AsyncMock,
+                return_value=_make_stub_loop_result(),
+            ),
+            patch.object(BookingMode, "_apply_tool_results"),
+        ):
+            result = await mode.handle(state, intent="book")
+
+        # The messages list in result has exactly one new message (the assistant reply)
+        new_messages = result.get("messages", [])
+        assert new_messages, "No messages in result"
+        assistant_content = new_messages[0]["content"]
+        assert assistant_content.startswith(FIRST_TURN_INTRO), (
+            f"Expected disclosure prefix. Got: {assistant_content[:80]!r}"
+        )
+        assert result.get("ai_disclosure_sent") is True
+
+    @pytest.mark.asyncio
+    async def test_no_disclosure_on_second_turn(self):
+        """S2: ai_disclosure_sent=True → response does NOT start with disclosure."""
+        from agent.modes.base import FIRST_TURN_INTRO
+
+        mode = _make_mode()
+        state = _make_handle_state(mode_context={})
+        state["ai_disclosure_sent"] = True
+        state["messages"] = [
+            {"role": "assistant", "content": f"{FIRST_TURN_INTRO} ¿En qué te ayudo?"},
+            {"role": "user", "content": "Quiero reservar"},
+        ]
+
+        with (
+            patch.object(
+                BookingMode,
+                "_run_agentic_loop",
+                new_callable=AsyncMock,
+                return_value=_make_stub_loop_result(),
+            ),
+            patch.object(BookingMode, "_apply_tool_results"),
+        ):
+            result = await mode.handle(state, intent="book")
+
+        new_messages = result.get("messages", [])
+        assert new_messages
+        assistant_content = new_messages[0]["content"]
+        assert not assistant_content.startswith(FIRST_TURN_INTRO), (
+            f"Disclosure was repeated on second turn: {assistant_content[:80]!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_double_disclosure_if_already_in_messages(self):
+        """S3: ai_disclosure_sent=False but prior message contains 'soy maite' → no double."""
+        from agent.modes.base import FIRST_TURN_INTRO
+
+        mode = _make_mode()
+        state = _make_handle_state(mode_context={})
+        state["ai_disclosure_sent"] = False
+        state["messages"] = [
+            {
+                "role": "assistant",
+                "content": f"{FIRST_TURN_INTRO} ¡Bienvenida!",
+            },
+            {"role": "user", "content": "Quiero reservar"},
+        ]
+
+        with (
+            patch.object(
+                BookingMode,
+                "_run_agentic_loop",
+                new_callable=AsyncMock,
+                return_value=_make_stub_loop_result(),
+            ),
+            patch.object(BookingMode, "_apply_tool_results"),
+        ):
+            result = await mode.handle(state, intent="book")
+
+        new_messages = result.get("messages", [])
+        assert new_messages
+        assistant_content = new_messages[0]["content"]
+        assert not assistant_content.startswith(FIRST_TURN_INTRO), (
+            f"Double disclosure detected: {assistant_content[:80]!r}"
+        )
+
+
+# =============================================================================
+# Stylist gate in _pre_tool_call
+# =============================================================================
+
+
+class TestStylistGate:
+    """_pre_tool_call rejects availability tools when stylist list was never shown.
+
+    Covers S4 (find_next_available blocked), S5 (check_availability blocked),
+    S6 (passes with non-empty prefetched_stylists even if stylist_id is None),
+    and S7 (booking.md contains OBLIGATORIO rule).
+    """
+
+    @pytest.mark.asyncio
+    async def test_find_next_available_rejected_without_stylists(self):
+        """S4: ctx.prefetched_stylists=[] → ToolCallRejection(NO_STYLISTS_SHOWN)."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(prefetched_stylists=[])
+
+        result = await mode._pre_tool_call("find_next_available", {})
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_STYLISTS_SHOWN"
+
+    @pytest.mark.asyncio
+    async def test_check_availability_rejected_without_stylists(self):
+        """S5: ctx.prefetched_stylists=[] → ToolCallRejection(NO_STYLISTS_SHOWN)."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(prefetched_stylists=[])
+
+        result = await mode._pre_tool_call("check_availability", {})
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "NO_STYLISTS_SHOWN"
+
+    @pytest.mark.asyncio
+    async def test_find_next_available_passes_with_stylists_no_stylist_id(self):
+        """S6: prefetched_stylists non-empty, stylist_id=None → NOT a ToolCallRejection."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            prefetched_stylists=[{"name": "Ana", "id": "test-uuid"}],
+            stylist_id=None,
+        )
+
+        result = await mode._pre_tool_call("find_next_available", {})
+
+        assert not isinstance(result, ToolCallRejection), (
+            f"Expected pass-through but got ToolCallRejection: {result}"
+        )
+
+    def test_booking_md_contains_obligatorio_rule(self):
+        """S7: booking.md contains 'OBLIGATORIO' near list_stylists and find_next_available."""
+        content = open("agent/prompts/modes/booking.md").read()
+        assert "OBLIGATORIO" in content
+        assert "find_next_available" in content
+        assert "list_stylists()" in content

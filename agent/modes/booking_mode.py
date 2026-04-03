@@ -288,6 +288,7 @@ class BookingMode(BaseModeNode):
 
         # 8. Build response (F-8 override for confirmed bookings)
         response_text = self._build_response(result, ctx)
+        response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
 
         updates: dict[str, Any] = {
             **add_message(state, "assistant", response_text),
@@ -295,6 +296,8 @@ class BookingMode(BaseModeNode):
             "last_node": "booking",
             "user_message": None,
         }
+        if disclosure_sent:
+            updates["ai_disclosure_sent"] = True
 
         # Propagate customer name to top-level state if discovered
         if ctx.customer_name and not state.get("customer_name"):
@@ -329,9 +332,15 @@ class BookingMode(BaseModeNode):
         """
         ctx: BookingContext | None = getattr(self, "_ctx", None)
 
-        # ── Availability tools: clear stale slot state ─────────────────────────
+        # ── Availability tools: stylist gate then clear stale slot state ──────────
         if tool_name in ("check_availability", "find_next_available"):
             if ctx:
+                if not ctx.prefetched_stylists:
+                    return ToolCallRejection(
+                        name=tool_name,
+                        error_code="NO_STYLISTS_SHOWN",
+                        error_message="Llamá list_stylists() primero y esperá la elección del cliente antes de buscar disponibilidad.",
+                    )
                 ctx.offered_slots = []
                 ctx.selected_slot = None
             return tool_args

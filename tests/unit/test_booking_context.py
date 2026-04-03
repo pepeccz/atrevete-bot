@@ -290,7 +290,8 @@ class TestMissingSummary:
         assert "❌ Servicio: pendiente" in summary
         assert "❌ Estilista: pendiente" in summary
         assert "❌ Fecha/hora: pendiente" in summary
-        assert "❌ Nombre: pendiente" in summary
+        # Name is gated: only shown when service+stylist+slot are all set
+        assert "Nombre" not in summary
 
     def test_partial_missing(self):
         ctx = BookingContext(
@@ -474,6 +475,52 @@ class TestResetTransient:
         ctx = BookingContext()
         ctx.reset_transient()  # Should not raise
         assert ctx.offered_slots == []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# missing_summary — name timing gate (BUG-3)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestMissingSummaryNameTiming:
+    """BUG-3: missing_summary() must NOT ask for name until service+stylist+slot are resolved.
+
+    Covers S8 (empty ctx → no name), S9 (service only → no name),
+    S10 (all context set, no name → name appears), S11 (name set → no name line).
+    """
+
+    def test_name_hidden_when_no_service_no_stylist_no_slot(self):
+        """S8: empty BookingContext → missing_summary() does NOT contain 'Nombre'."""
+        ctx = BookingContext()
+        summary = ctx.missing_summary()
+        assert "Nombre" not in summary
+
+    def test_name_hidden_when_service_set_but_no_stylist_slot(self):
+        """S9: service_name set, no stylist_id, no selected_slot → does NOT contain 'Nombre'."""
+        ctx = BookingContext(service_name="Cortar")
+        summary = ctx.missing_summary()
+        assert "Nombre" not in summary
+
+    def test_name_shown_when_service_stylist_slot_set(self):
+        """S10: service+stylist_id+selected_slot set, no customer_name → CONTAINS 'Nombre'."""
+        ctx = BookingContext(
+            service_name="Cortar",
+            stylist_id="test-uuid-stylist",
+            selected_slot={"date": "2026-04-10", "time": "10:20"},
+        )
+        summary = ctx.missing_summary()
+        assert "❌ Nombre: pendiente" in summary
+
+    def test_name_hidden_when_already_set(self):
+        """S11: all fields set including customer_name → does NOT contain 'Nombre' line."""
+        ctx = BookingContext(
+            service_name="Cortar",
+            stylist_id="test-uuid-stylist",
+            selected_slot={"date": "2026-04-10", "time": "10:20"},
+            customer_name="María",
+        )
+        summary = ctx.missing_summary()
+        assert "Nombre" not in summary
 
 
 # ═══════════════════════════════════════════════════════════════════════

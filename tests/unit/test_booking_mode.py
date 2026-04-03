@@ -229,7 +229,8 @@ class TestBookingContextSummaries:
         assert "servicio" in summary.lower()
         assert "estilista" in summary.lower()
         assert "fecha/hora" in summary.lower()
-        assert "nombre" in summary.lower()
+        # Name is gated: only shown when service+stylist+slot are all set
+        assert "nombre" not in summary.lower()
 
     def test_missing_summary_partial(self):
         ctx = BookingContext(
@@ -489,9 +490,9 @@ class TestPreToolCallSlotResolution:
 
     @pytest.mark.asyncio
     async def test_availability_tool_clears_slot_state(self):
-        """find_next_available clears offered_slots and selected_slot."""
+        """find_next_available clears offered_slots and selected_slot when stylists are shown."""
         mode = BookingMode.__new__(BookingMode)
-        ctx = BookingContext()
+        ctx = BookingContext(prefetched_stylists=[{"name": "Ana", "id": "test-uuid"}])
         ctx.offered_slots = [{"stylist_id": "s1"}]
         ctx.selected_slot = {"stylist_id": "s1"}
         mode._ctx = ctx
