@@ -374,6 +374,29 @@ def _extract_booking_hints(user_message: str) -> dict[str, str | None]:
         return {"preferred_stylist_name": None, "preferred_date_hint": None}
 
 
+def _should_transition_general_to_booking(
+    mode_context: dict | None,
+    intent: str,
+) -> bool:
+    """Return True when GeneralMode should hand off to BOOKING.
+
+    Tiered certainty:
+    - HIGH (resolved_service present): accept 'confirm' or 'ambiguous'
+    - MEDIUM (candidate_services or pending_clarifications, no resolved): 'confirm' only
+    - LOW (no handoff or empty): always False
+    """
+    handoff = (mode_context or {}).get("general_booking_handoff") or {}
+    if not handoff:
+        return False
+    resolved = handoff.get("resolved_service")
+    candidates = handoff.get("candidate_services") or handoff.get("pending_clarifications")
+    if resolved:
+        return intent in ("confirm", "ambiguous")
+    if candidates:
+        return intent == "confirm"
+    return False
+
+
 def _build_general_booking_handoff(state: ConversationState, user_message: str) -> dict[str, Any]:
     mode_context = state.get("mode_context") or {}
     handoff = mode_context.get("general_booking_handoff")
@@ -671,6 +694,25 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         return {
             "current_mode": "APPOINTMENT_MANAGEMENT",
             "mode_context": {**intent_data},
+            "last_node": "router",
+        }
+
+    # Rule 7.9: GENERAL with resolved/candidate services + user confirmation → BOOKING
+    # Handles: user confirms after GeneralMode resolved a service, avoiding the
+    # infinite GENERAL loop (confirm/ambiguous had no GENERAL→BOOKING path before).
+    if current_mode == "GENERAL" and _should_transition_general_to_booking(
+        _mode_context, intent_result.intent
+    ):
+        logger.info(
+            "router_node: Rule 7.9 GENERAL→BOOKING | intent=%s | conversation_id=%s",
+            intent_result.intent,
+            conversation_id,
+        )
+        _general_handoff = _build_general_booking_handoff(state, user_message)
+        _booking_hints = _extract_booking_hints(user_message) if user_message else {}
+        _booking_ctx = {**_general_handoff, **_booking_hints, **intent_data}
+        return {
+            **transition_mode(state, "BOOKING", context_update=_booking_ctx),
             "last_node": "router",
         }
 

@@ -744,7 +744,10 @@ class TestStylistGate:
 # =============================================================================
 
 
-from agent.graphs.conversation_flow import _extract_booking_hints  # noqa: E402
+from agent.graphs.conversation_flow import (  # noqa: E402
+    _extract_booking_hints,
+    _should_transition_general_to_booking,
+)
 
 
 class TestExtractBookingHints:
@@ -780,3 +783,54 @@ class TestExtractBookingHints:
             "preferred_stylist_name": None,
             "preferred_date_hint": None,
         }
+
+
+# =============================================================================
+# Rule 7.9 helper — _should_transition_general_to_booking
+# =============================================================================
+
+
+class TestShouldTransitionGeneralToBooking:
+    """Tests for Rule 7.9 helper — GENERAL→BOOKING tiered certainty logic."""
+
+    def test_resolved_service_confirm(self):
+        """S1: resolved_service + confirm → True."""
+        ctx = {"general_booking_handoff": {"resolved_service": {"id": "uuid", "name": "Cortar"}}}
+        assert _should_transition_general_to_booking(ctx, "confirm") is True
+
+    def test_resolved_service_ambiguous(self):
+        """S2: resolved_service + ambiguous → True (high certainty accepts ambiguous)."""
+        ctx = {"general_booking_handoff": {"resolved_service": {"id": "uuid"}}}
+        assert _should_transition_general_to_booking(ctx, "ambiguous") is True
+
+    def test_candidates_confirm(self):
+        """S3: candidate_services + confirm → True (medium certainty)."""
+        ctx = {"general_booking_handoff": {"candidate_services": [{"id": "uuid"}]}}
+        assert _should_transition_general_to_booking(ctx, "confirm") is True
+
+    def test_candidates_ambiguous_rejected(self):
+        """S4: candidate_services + ambiguous → False (medium certainty rejects ambiguous)."""
+        ctx = {"general_booking_handoff": {"candidate_services": [{"id": "uuid"}]}}
+        assert _should_transition_general_to_booking(ctx, "ambiguous") is False
+
+    def test_empty_handoff(self):
+        """S5: empty handoff dict → False."""
+        assert _should_transition_general_to_booking({}, "confirm") is False
+
+    def test_none_handoff(self):
+        """S6: None general_booking_handoff → False."""
+        assert (
+            _should_transition_general_to_booking({"general_booking_handoff": None}, "confirm")
+            is False
+        )
+
+    def test_no_mode_context(self):
+        """S6b: None mode_context → False."""
+        assert _should_transition_general_to_booking(None, "confirm") is False
+
+    def test_general_md_no_self_transition(self):
+        """S9: general.md does not contain self-transition instruction."""
+        with open("agent/prompts/modes/general.md") as f:
+            content = f.read()
+        assert "transición al modo BOOKING" not in content
+        assert "Voy a ayudarte a agendar" not in content
