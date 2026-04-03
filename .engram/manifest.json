@@ -8,6 +8,14 @@
       "sessions": 856,
       "memories": 1053,
       "prompts": 62
+    },
+    {
+      "id": "cd14c20a",
+      "created_by": "pepe",
+      "created_at": "2026-04-03T20:28:44Z",
+      "sessions": 1416,
+      "memories": 916,
+      "prompts": 1104
     }
   ]
 }
