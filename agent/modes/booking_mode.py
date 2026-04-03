@@ -341,6 +341,24 @@ class BookingMode(BaseModeNode):
                     error_message="Primero resolvé el servicio con search_services() antes de mostrar estilistas.",
                 )
 
+        # Gate: search_services with stylist name → redirect to availability tools
+        if tool_name == "search_services":
+            if ctx and ctx.prefetched_stylists and not ctx.stylist_id:
+                query = (tool_args.get("query") or "").strip().lower()
+                for stylist in ctx.prefetched_stylists:
+                    stylist_name = stylist.get("name", "").strip().lower()
+                    if query and stylist_name and query == stylist_name:
+                        return ToolCallRejection(
+                            name="search_services",
+                            error_code="STYLIST_NOT_SERVICE",
+                            error_message=(
+                                f"'{stylist['name']}' es una estilista, no un servicio. "
+                                f"Usá find_next_available(stylist_id=\"{stylist['id']}\") o "
+                                f"check_availability(stylist_id=\"{stylist['id']}\") "
+                                "para buscar disponibilidad."
+                            ),
+                        )
+
         # ── Availability tools: stylist gate then clear stale slot state ──────────
         if tool_name in ("check_availability", "find_next_available"):
             if ctx:

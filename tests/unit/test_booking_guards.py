@@ -320,6 +320,90 @@ class TestNonBookToolsPassthrough:
 
 
 # =============================================================================
+# Gate: search_services with stylist name → STYLIST_NOT_SERVICE
+# =============================================================================
+
+
+MOCK_STYLISTS = [
+    {"name": "Pilar", "id": "uuid-pilar"},
+    {"name": "Ana Maria", "id": "uuid-ana-maria"},
+    {"name": "Victor", "id": "uuid-victor"},
+]
+
+
+class TestStylistNotServiceGate:
+    """_pre_tool_call rejects search_services when query matches a stylist name."""
+
+    @pytest.mark.asyncio
+    async def test_s1_rejects_exact_stylist_name(self):
+        """S1: search_services('Pilar') with stylists loaded → STYLIST_NOT_SERVICE."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(prefetched_stylists=MOCK_STYLISTS, stylist_id=None)
+
+        result = await mode._pre_tool_call("search_services", {"query": "Pilar"})
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "STYLIST_NOT_SERVICE"
+        assert "uuid-pilar" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_s2_rejects_compound_stylist_name(self):
+        """S2: search_services('Ana Maria') → STYLIST_NOT_SERVICE with correct UUID."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(prefetched_stylists=MOCK_STYLISTS, stylist_id=None)
+
+        result = await mode._pre_tool_call("search_services", {"query": "Ana Maria"})
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "STYLIST_NOT_SERVICE"
+        assert "uuid-ana-maria" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_s3_allows_actual_service_query(self):
+        """S3: search_services('corte pelo') with stylists loaded → pass through."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(prefetched_stylists=MOCK_STYLISTS, stylist_id=None)
+
+        result = await mode._pre_tool_call("search_services", {"query": "corte pelo"})
+
+        assert not isinstance(result, ToolCallRejection)
+        assert result == {"query": "corte pelo"}
+
+    @pytest.mark.asyncio
+    async def test_s4_allows_when_stylist_already_selected(self):
+        """S4: stylist_id already set → search_services passes through."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            prefetched_stylists=MOCK_STYLISTS, stylist_id="uuid-pilar"
+        )
+
+        result = await mode._pre_tool_call("search_services", {"query": "Pilar"})
+
+        assert not isinstance(result, ToolCallRejection)
+
+    @pytest.mark.asyncio
+    async def test_s5_allows_when_no_prefetched_stylists(self):
+        """S5: no prefetched stylists → search_services passes through."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(prefetched_stylists=[], stylist_id=None)
+
+        result = await mode._pre_tool_call("search_services", {"query": "Pilar"})
+
+        assert not isinstance(result, ToolCallRejection)
+
+    @pytest.mark.asyncio
+    async def test_s6_case_insensitive_match(self):
+        """S6: search_services('pilar') lowercase → STYLIST_NOT_SERVICE."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(prefetched_stylists=MOCK_STYLISTS, stylist_id=None)
+
+        result = await mode._pre_tool_call("search_services", {"query": "pilar"})
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "STYLIST_NOT_SERVICE"
+
+
+# =============================================================================
 # Circuit breaker: get_tools() uses getattr for book_failure_count
 # =============================================================================
 
