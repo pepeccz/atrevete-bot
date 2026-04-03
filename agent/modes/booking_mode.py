@@ -243,6 +243,14 @@ class BookingMode(BaseModeNode):
         # 1. Load context
         ctx = BookingContext.from_mode_context(mode_context)
 
+        # 1b. Confirmation gate: if user just confirmed, unlock book()
+        #     The LLM already showed the summary (confirmation_summary_sent=True) and
+        #     the intent router classified this turn as "confirm". Flip the flag so
+        #     _pre_tool_call lets book() / confirm_from_hold() through.
+        intent_str = str(intent) if intent else ""
+        if not ctx.confirmation_shown and ctx.confirmation_summary_sent and "confirm" in intent_str:
+            ctx.confirmation_shown = True
+
         # 2. Cross-mode customer handoff
         self._resolve_customer_from_state(state, ctx)
 

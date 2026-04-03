@@ -8,6 +8,7 @@ Coverage (simplified after booking-mode-simplification Phase 2-4):
 - _pre_tool_call availability tools: clear stale slot state
 - get_tools() circuit breaker via getattr fallback (book_failure_count via getattr)
 - ToolCallRejection in agentic loop
+- TestConfirmationGateHandleFix: handle() flips confirmation_shown on "confirm" intent
 
 Removed in Phase 4 (fields/functions deleted from BookingMode/BookingContext):
 - Guards for offered_slots empty, needs_availability_refresh, selected_services empty,
@@ -17,13 +18,14 @@ Removed in Phase 4 (fields/functions deleted from BookingMode/BookingContext):
 - TestToolChoicePendingGuard — _detect_tool_skips deleted
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent.modes.base import ToolCallRejection
+from agent.modes.base import AgenticLoopResult, ToolCallRejection
 from agent.modes.booking_context import BookingContext
 from agent.modes.booking_mode import BookingMode
+from agent.state.schemas import create_initial_state
 
 
 # =============================================================================
@@ -384,3 +386,153 @@ class TestToolCallRejectionInAgenticLoop:
 
         # tool.ainvoke WAS called
         mock_tool.ainvoke.assert_called_once()
+
+
+# =============================================================================
+# Confirmation gate in handle() — BUG-1 fix (booking-confirmation-and-clarification-fix)
+# =============================================================================
+
+
+def _make_handle_state(mode_context: dict | None = None) -> dict:
+    """Build a minimal ConversationState for BookingMode.handle() tests."""
+    state = create_initial_state("conv-test", "+34600000000")
+    state["current_mode"] = "BOOKING"
+    state["is_first_interaction"] = False
+    state["messages"] = [{"role": "user", "content": "sí, confirmalo"}]
+    state["mode_context"] = mode_context or {}
+    return state
+
+
+def _make_stub_loop_result() -> AgenticLoopResult:
+    """Build a minimal AgenticLoopResult to return from mocked _run_agentic_loop."""
+    return AgenticLoopResult(
+        response_text="Reserva procesada.",
+        tool_results={},
+    )
+
+
+class TestConfirmationGateHandleFix:
+    """handle() must flip confirmation_shown=True when all gate conditions are met.
+
+    Covers spec scenarios S1/S2/S3 (R1) and lock-in tests for S4/S5/S6 (R3).
+    The underlying BUG-1 fix is already in booking_mode.py; these tests lock it in.
+    """
+
+    @pytest.mark.asyncio
+    async def test_confirmation_shown_flipped_on_confirm_intent(self):
+        """S1: confirmation_summary_sent=True + intent='confirm' → confirmation_shown flips True."""
+        mode = _make_mode()
+        state = _make_handle_state(
+            mode_context={
+                "confirmation_summary_sent": True,
+                "confirmation_shown": False,
+            }
+        )
+
+        with (
+            patch.object(
+                BookingMode,
+                "_run_agentic_loop",
+                new_callable=AsyncMock,
+                return_value=_make_stub_loop_result(),
+            ),
+            patch.object(BookingMode, "_apply_tool_results"),
+        ):
+            result = await mode.handle(state, intent="confirm")
+
+        assert result["mode_context"]["confirmation_shown"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_flip_without_summary_sent(self):
+        """S2: confirmation_summary_sent=False → confirmation_shown stays False even on 'confirm'."""
+        mode = _make_mode()
+        state = _make_handle_state(
+            mode_context={
+                "confirmation_summary_sent": False,
+                "confirmation_shown": False,
+            }
+        )
+
+        with (
+            patch.object(
+                BookingMode,
+                "_run_agentic_loop",
+                new_callable=AsyncMock,
+                return_value=_make_stub_loop_result(),
+            ),
+            patch.object(BookingMode, "_apply_tool_results"),
+        ):
+            result = await mode.handle(state, intent="confirm")
+
+        assert result["mode_context"]["confirmation_shown"] is False
+
+    @pytest.mark.asyncio
+    async def test_no_flip_on_wrong_intent(self):
+        """S3: intent='book' → confirmation_shown stays False even with summary_sent=True."""
+        mode = _make_mode()
+        state = _make_handle_state(
+            mode_context={
+                "confirmation_summary_sent": True,
+                "confirmation_shown": False,
+            }
+        )
+
+        with (
+            patch.object(
+                BookingMode,
+                "_run_agentic_loop",
+                new_callable=AsyncMock,
+                return_value=_make_stub_loop_result(),
+            ),
+            patch.object(BookingMode, "_apply_tool_results"),
+        ):
+            result = await mode.handle(state, intent="book")
+
+        assert result["mode_context"]["confirmation_shown"] is False
+
+    @pytest.mark.asyncio
+    async def test_pre_tool_call_allows_book_when_confirmed(self):
+        """S4: confirmation_shown=True → _pre_tool_call does NOT return CONFIRMATION_NOT_SHOWN."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            confirmation_shown=True,
+            customer_id="test-uuid",
+            offered_slots=[{"stylist_id": "s1", "start_time": "2026-04-10T10:20:00"}],
+            selected_services=["Corte Dama"],
+        )
+
+        result = await mode._pre_tool_call("book", {"slot_index": 1})
+
+        # Must NOT be a CONFIRMATION_NOT_SHOWN rejection
+        if isinstance(result, ToolCallRejection):
+            assert result.error_code != "CONFIRMATION_NOT_SHOWN", (
+                "book() was rejected with CONFIRMATION_NOT_SHOWN despite confirmation_shown=True"
+            )
+
+    @pytest.mark.asyncio
+    async def test_pre_tool_call_rejects_book_when_not_confirmed(self):
+        """S5: confirmation_shown=False + confirmation_summary_sent=True → CONFIRMATION_NOT_SHOWN."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            confirmation_shown=False,
+            confirmation_summary_sent=True,
+        )
+
+        result = await mode._pre_tool_call("book", {})
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "CONFIRMATION_NOT_SHOWN"
+
+    @pytest.mark.asyncio
+    async def test_pre_tool_call_rejects_confirm_from_hold_when_not_confirmed(self):
+        """S6: confirm_from_hold with confirmation_shown=False → CONFIRMATION_NOT_SHOWN."""
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            confirmation_shown=False,
+            confirmation_summary_sent=True,
+        )
+
+        result = await mode._pre_tool_call("confirm_from_hold", {})
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "CONFIRMATION_NOT_SHOWN"
