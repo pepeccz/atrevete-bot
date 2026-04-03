@@ -436,7 +436,11 @@ class BookingMode(BaseModeNode):
 
     def _apply_tool_results(self, result: AgenticLoopResult, ctx: BookingContext) -> None:
         """Thin bridge to apply_all_tool_results from tool_extractors."""
-        tool_results = result.tool_results if result.tool_results else []
+        tool_results = result.tool_results
+        # Guard: apply_all_tool_results expects a dict; a falsy value or a list
+        # (e.g. empty [] from AgenticLoopResult default) must become an empty dict.
+        if not isinstance(tool_results, dict):
+            tool_results = {}
         apply_all_tool_results(tool_results, ctx)
 
     # ──────────────────────────────────────────────────────────────────────
