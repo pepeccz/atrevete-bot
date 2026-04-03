@@ -126,6 +126,116 @@ _CLARIFICATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── Early context hint patterns (pre-resolver — runs before agentic loop) ────
+_DATE_HINT_PATTERNS: tuple[str, ...] = (
+    # Matches against _normalize_text() output (no accents, lowercase)
+    r"\b(?:el\s+)?(?:proximo\s+|siguiente\s+)?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b",
+    r"\bmanana\b",
+    r"\bhoy\b",
+    r"\bpasado\s+manana\b",
+    r"\bpro?xima?\s+semana\b",
+    r"\bel\s+\d{1,2}(?:\s+de\s+\w+)?\b",
+)
+_STYLIST_HINT_PATTERNS: tuple[str, ...] = (
+    # Matches against original text (case-sensitive for proper nouns)
+    r"\bcon\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)?)\b",
+    r"\bprefiero\s+(?:a\s+)?([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)\b",
+    r"\bque\s+me\s+atienda\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)\b",
+    r"\bme\s+atienda\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)\b",
+)
+_NOTES_HINT_PATTERNS: tuple[str, ...] = (
+    # Matches against _normalize_text() output (no accents, lowercase)
+    r"\balergic[ao]\s+(?:al?\s+)?\w+\b",
+    r"\bno\s+puedo\s+con\s+\w+\b",
+    r"\bpelo\s+(?:muy\s+)?\w+\b",
+    r"\bcabello\s+(?:muy\s+)?\w+\b",
+    r"\bsoy\s+sensible\s+\w+\b",
+)
+_DATE_STOPWORDS: frozenset[str] = frozenset(
+    {
+        # All values are already normalized (accent-stripped, lowercase) for O(1) lookup
+        # via _normalize_text(token) in _DATE_STOPWORDS
+        "lunes",
+        "martes",
+        "miercoles",
+        "jueves",
+        "viernes",
+        "sabado",
+        "domingo",
+        "manana",  # mañana → manana
+        "hoy",
+        "pasado",
+        "proximo",  # próximo → proximo
+        "proxima",  # próxima → proxima
+        "semana",
+        "siguiente",
+        "que",
+        "viene",
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+    }
+)
+
+
+def _extract_early_booking_hints(
+    state: ConversationState, ctx: BookingContext, user_message: str
+) -> None:
+    """Extract date/stylist/notes hints from user message before the agentic loop.
+
+    Runs as the first pre-resolver so hints are available for all subsequent
+    resolvers. Uses most-recent-mention semantics — later turns override earlier.
+    Does NOT overwrite already-confirmed fields.
+    """
+    if not user_message:
+        return
+
+    text = _normalize_text(user_message)
+    original = user_message  # keep original case for stylist name matching
+
+    # ── Date hint ────────────────────────────────────────────────────────────
+    # Skip if slot already selected (date confirmed)
+    # Patterns matched against normalized text (accent-stripped, lowercase)
+    if not ctx.selected_slot:
+        for pattern in _DATE_HINT_PATTERNS:
+            m = re.search(pattern, text, re.IGNORECASE)
+            if m:
+                # Use the normalized match value (safe for prompt injection)
+                ctx.preferred_date_hint = m.group(0).strip()
+                logger.debug("_extract_early_booking_hints: date hint=%r", ctx.preferred_date_hint)
+                break
+
+    # ── Stylist hint ─────────────────────────────────────────────────────────
+    # Skip if stylist already confirmed
+    # Patterns matched against original text to capture proper-cased name
+    if not ctx.stylist_id:
+        for pattern in _STYLIST_HINT_PATTERNS:
+            m = re.search(pattern, original, re.IGNORECASE)
+            if m:
+                ctx.stylist_name_hint = m.group(1).strip()
+                logger.debug("_extract_early_booking_hints: stylist hint=%r", ctx.stylist_name_hint)
+                break
+
+    # ── Notes hint ───────────────────────────────────────────────────────────
+    # Skip if notes already captured
+    # Patterns matched against normalized text
+    if not ctx.notes:
+        for pattern in _NOTES_HINT_PATTERNS:
+            m = re.search(pattern, text, re.IGNORECASE)
+            if m:
+                ctx.notes_hint = m.group(0).strip()
+                logger.debug("_extract_early_booking_hints: notes hint=%r", ctx.notes_hint)
+                break
+
 
 def _looks_like_clarification(msg: str, ctx: "BookingContext | None" = None) -> bool:
     """Return True if msg looks like a slot/option selection, not appointment notes.
@@ -442,6 +552,7 @@ class BookingMode(BaseModeNode):
         ctx = BookingContext.from_mode_context(mode_context)
 
         # 1. Pre-resolve: populate context deterministically
+        _extract_early_booking_hints(state, ctx, self._get_last_user_message(state) or "")
         self._resolve_customer_from_state(state, ctx)
         self._resolve_audience_hint(state, ctx)
 
@@ -1643,8 +1754,24 @@ class BookingMode(BaseModeNode):
         filtered = [t for t in tokens if t.lower() not in stopwords]
         query = " ".join(filtered).strip() if filtered else query
 
-        if len(query.strip()) < 2:
-            logger.debug("F-7 auto-recovery: query too short after stripping: %r", query)
+        # F-7 decontamination: strip date words and stylist names from query
+        tokens = query.split()
+        filtered = [t for t in tokens if _normalize_text(t) not in _DATE_STOPWORDS]
+        # Strip known stylist names (case-insensitive, tokens ≥ 3 chars)
+        if ctx.prefetched_stylists:
+            stylist_names_normalized = {
+                tok
+                for s in ctx.prefetched_stylists
+                for tok in re.split(r"\W+", _normalize_text(s.get("name", "")))
+                if len(tok) >= 3
+            }
+            filtered = [t for t in filtered if _normalize_text(t) not in stylist_names_normalized]
+        # Always use the decontaminated result (even if empty — guard below handles it)
+        query = " ".join(filtered).strip()
+
+        # Guard: don't call search_services with empty/trivial query
+        if len(query.strip()) <= 2:
+            logger.debug("F-7 auto-recovery: query too short after decontamination: %r", query)
             return None
 
         # Truncate to avoid search noise
@@ -1813,6 +1940,21 @@ class BookingMode(BaseModeNode):
 
         # Missing data
         parts.append(f"\n<missing_data>\n{ctx.missing_summary()}\n</missing_data>")
+
+        # Early context hints (date/stylist/notes mentioned before formal collection)
+        early_hints: list[str] = []
+        if ctx.preferred_date_hint:
+            early_hints.append(f'- Fecha preferida: "{ctx.preferred_date_hint}"')
+        if ctx.stylist_name_hint:
+            early_hints.append(f'- Estilista preferida: "{ctx.stylist_name_hint}"')
+        if ctx.notes_hint:
+            early_hints.append(f'- Preferencias: "{ctx.notes_hint}"')
+        if early_hints:
+            parts.append(
+                "<early_context>\nEl usuario mencionó en un turno anterior:\n"
+                + "\n".join(early_hints)
+                + "\n</early_context>"
+            )
 
         # Disambiguation (pending clarification or candidate services)
         disambiguation = _build_disambiguation_section(ctx)
@@ -2265,7 +2407,30 @@ def _try_resolve_stylist_from_message(
     # Guard: only resolve if assistant actually presented stylists (context-guard).
     # Uses ctx.stylists_presented flag (set by _build_response) — deterministic, no message scan.
     # When messages is None (direct call / unit test), guard is skipped for backward compat.
+    # RELAXED: when stylist_name_hint is set AND prefetched_stylists available,
+    # attempt resolution even before formal presentation.
     if messages is not None and not ctx.stylists_presented:
+        if not (ctx.stylist_name_hint and ctx.prefetched_stylists):
+            return
+        # Hint-based early resolution path: try matching hint against prefetched list
+        hint_normalized = _normalize_text(ctx.stylist_name_hint)
+        for stylist in ctx.prefetched_stylists:
+            name = stylist.get("name", "")
+            stylist_id = stylist.get("id") or stylist.get("stylist_id")
+            if not name or not stylist_id:
+                continue
+            name_tokens = [tok for tok in re.split(r"\W+", _normalize_text(name)) if len(tok) >= 3]
+            if any(tok in hint_normalized or hint_normalized in tok for tok in name_tokens):
+                ctx.stylist_id = str(stylist_id)
+                ctx.stylist_name = name
+                ctx.stylist_name_hint = None  # consumed
+                logger.info(
+                    "_try_resolve_stylist: hint-based resolution stylist_id=%s name=%r",
+                    ctx.stylist_id,
+                    name,
+                )
+                return
+        # Hint didn't match — keep it for when list is formally shown
         return
 
     normalized_msg = _normalize_text(user_message)
@@ -2552,6 +2717,13 @@ def _extract_notes_from_conversation(
     so the LLM can decide whether to re-ask or proceed.
     """
     if not user_message or ctx.notes is not None:
+        return
+
+    # Early capture: consume notes_hint set by pre-resolver
+    if ctx.notes_hint and not ctx.notes:
+        ctx.notes = ctx.notes_hint
+        ctx.notes_hint = None
+        logger.info("_extract_notes: captured from early hint: %r", ctx.notes)
         return
 
     # Use ctx.notes_asked flag (set deterministically by _build_response when booking data is complete)

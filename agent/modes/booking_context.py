@@ -88,6 +88,9 @@ class BookingContext:
     # ── Hints (from pre-resolvers) ──────────────────────────────────────
     service_audience_hint: str | None = None
     service_audience_hint_source: str | None = None  # tracks which service set the hint
+    preferred_date_hint: str | None = None  # raw date expression from user ("el viernes que viene")
+    stylist_name_hint: str | None = None  # raw stylist name from user ("con Ana")
+    notes_hint: str | None = None  # raw allergy/preference from user ("alérgica al amoniaco")
     prefetched_stylists: list[dict[str, Any]] = field(default_factory=list)
     soonest_any_slot: str | None = None
     recurrent_stylist_hint: str | None = None
@@ -174,6 +177,9 @@ class BookingContext:
         self.prefetched_stylists = []
         self.soonest_any_slot = None
         self.recurrent_stylist_hint = None
+        self.preferred_date_hint = None
+        self.stylist_name_hint = None
+        self.notes_hint = None
         self.pending_recommendations = []
         self.recommendations_shown = False
         self.recommendations_declined = False

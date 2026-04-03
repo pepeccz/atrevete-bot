@@ -39,6 +39,7 @@ Tras mostrar los estilistas, esperá la elección antes de buscar disponibilidad
 **Para llamar herramientas con `stylist_id`**: copia el UUID exacto desde `<available_stylists>`. NUNCA inventes ni generes un UUID.
 
 **3. Disponibilidad** — **Solo cuando el servicio esté resuelto** (paso 1 completo). En cuanto el cliente confirme estilista (stylist_id resuelto), llamá INMEDIATAMENTE `find_next_available(service_category, stylist_id=<uuid>)` sin esperar que el usuario proponga fecha.
+Si hay `<early_context>` en el contexto con fecha preferida, usála como `start_date` en `find_next_available`. Si esa fecha no tiene disponibilidad, mostrá las alternativas más cercanas con una frase natural como "Busqué el [día] pero no había hueco — aquí tenés las próximas opciones:".
 
 Si el usuario ya indicó una fecha específica: usá `check_availability(service_category, date, stylist_id=<uuid>)` en su lugar.
 Si eligió "La más temprana" (stylist_id=None): `find_next_available(service_category, stylist_id=None)`
