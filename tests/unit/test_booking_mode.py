@@ -522,6 +522,7 @@ class TestBookRejectionAutoSummary:
         ctx.stylist_name = "Pilar"
         ctx.customer_name = "María"
         ctx.customer_id = "cust-1"
+        ctx.notes = "Sin preferencias"
         ctx.confirmation_shown = False
         ctx.confirmation_summary_sent = False
         ctx.offered_slots = [{"date": "2026-04-03", "time": "09:00", "stylist_id": "stylist-1"}]
@@ -534,7 +535,7 @@ class TestBookRejectionAutoSummary:
 
     @pytest.mark.asyncio
     async def test_no_auto_summary_when_data_incomplete(self):
-        """AC-4.4: incomplete data → rejection with missing info, safety-net flag set."""
+        """AC-4.4: incomplete data → rejection with missing info, no flag set."""
         mode = make_booking_mode()
         ctx = BookingContext()
         ctx.confirmation_shown = False
@@ -544,10 +545,8 @@ class TestBookRejectionAutoSummary:
 
         result = await mode._pre_tool_call("book", {"slot_index": 0})
         assert isinstance(result, ToolCallRejection)
-        # Branch 3 now sets safety-net flag to prevent double-confirmation bug
-        assert ctx.confirmation_summary_sent is True
-        # But no auto-generated summary text (branch 1 didn't fire)
-        assert "confirmo" not in result.error_message.lower()
+        # Branch 3 must NOT set confirmation_summary_sent (prevents poison state)
+        assert ctx.confirmation_summary_sent is False
 
 
 # =============================================================================

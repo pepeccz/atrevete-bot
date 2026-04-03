@@ -76,8 +76,8 @@ class TestConfirmationGate:
 
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "CONFIRMATION_NOT_SHOWN"
-        # Branch 3 (notes missing) must set safety-net flag
-        assert mode._ctx.confirmation_summary_sent is True
+        # Branch 3 must NOT set confirmation_summary_sent (prevents poison state)
+        assert mode._ctx.confirmation_summary_sent is False
 
     @pytest.mark.asyncio
     async def test_confirmation_gate_blocks_book_without_notes(self):
@@ -107,7 +107,8 @@ class TestConfirmationGate:
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "CONFIRMATION_NOT_SHOWN"
         assert "Notas" in result.error_message
-        assert mode._ctx.confirmation_summary_sent is True
+        # Branch 3 must NOT set confirmation_summary_sent (prevents poison state)
+        assert mode._ctx.confirmation_summary_sent is False
 
     @pytest.mark.asyncio
     async def test_confirmation_gate_generates_summary_with_all_data(self):
@@ -566,12 +567,15 @@ class TestConfirmationGateHandleFix:
 
     @pytest.mark.asyncio
     async def test_confirmation_shown_flipped_on_confirm_intent(self):
-        """S1: confirmation_summary_sent=True + intent='confirm' → confirmation_shown flips True."""
+        """S1: confirmation_summary_sent=True + core data present + intent='confirm' → flips True."""
         mode = _make_mode()
         state = _make_handle_state(
             mode_context={
                 "confirmation_summary_sent": True,
                 "confirmation_shown": False,
+                "service_id": "svc-1",
+                "stylist_id": "s1",
+                "selected_slot": {"stylist_id": "s1", "time": "10:00"},
             }
         )
 
@@ -587,6 +591,33 @@ class TestConfirmationGateHandleFix:
             result = await mode.handle(state, intent="confirm")
 
         assert result["mode_context"]["confirmation_shown"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_flip_when_slot_missing(self):
+        """confirmation_summary_sent=True but selected_slot=None → confirmation_shown stays False."""
+        mode = _make_mode()
+        state = _make_handle_state(
+            mode_context={
+                "confirmation_summary_sent": True,
+                "confirmation_shown": False,
+                "service_id": "svc-1",
+                "stylist_id": "s1",
+                # selected_slot intentionally absent
+            }
+        )
+
+        with (
+            patch.object(
+                BookingMode,
+                "_run_agentic_loop",
+                new_callable=AsyncMock,
+                return_value=_make_stub_loop_result(),
+            ),
+            patch.object(BookingMode, "_apply_tool_results"),
+        ):
+            result = await mode.handle(state, intent="confirm")
+
+        assert result["mode_context"]["confirmation_shown"] is False
 
     @pytest.mark.asyncio
     async def test_no_flip_without_summary_sent(self):

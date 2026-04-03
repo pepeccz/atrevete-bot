@@ -248,7 +248,14 @@ class BookingMode(BaseModeNode):
         #     the intent router classified this turn as "confirm". Flip the flag so
         #     _pre_tool_call lets book() / confirm_from_hold() through.
         intent_str = str(intent) if intent else ""
-        if not ctx.confirmation_shown and ctx.confirmation_summary_sent and "confirm" in intent_str:
+        if (
+            not ctx.confirmation_shown
+            and ctx.confirmation_summary_sent
+            and "confirm" in intent_str
+            and ctx.service_id
+            and ctx.stylist_id
+            and ctx.selected_slot
+        ):
             ctx.confirmation_shown = True
 
         # 2. Cross-mode customer handoff
@@ -405,7 +412,6 @@ class BookingMode(BaseModeNode):
                     )
                 else:
                     missing = ctx.missing_summary()
-                    ctx.confirmation_summary_sent = True
                     return ToolCallRejection(
                         name=tool_name,
                         error_code="CONFIRMATION_NOT_SHOWN",
