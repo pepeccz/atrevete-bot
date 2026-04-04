@@ -140,7 +140,7 @@ class BookingContext:
         if self.selected_slot is not None:
             pass  # slot resolved — don't add to missing
         elif self.offered_slots:
-            missing.append("⏳ Horario: ofrecido — esperando elección")
+            missing.append("⏳ Horario: elige uno de los ofrecidos")
         else:
             missing.append("❌ Fecha/hora: pendiente")
 
@@ -176,18 +176,18 @@ class BookingContext:
             display_service_name = self.selected_services[0]
 
         if display_service_name:
-            parts = [display_service_name]
+            # Show all services as a combined line when multiple
+            if self.selected_services and len(self.selected_services) > 1:
+                all_names = " + ".join(self.selected_services)
+                parts = [all_names]
+            else:
+                parts = [display_service_name]
             if self.service_duration_minutes:
-                parts.append(f"{self.service_duration_minutes} min")
+                suffix = " total" if len(self.selected_services) > 1 else ""
+                parts.append(f"{self.service_duration_minutes} min{suffix}")
             if self.service_category:
                 parts.append(self.service_category)
             lines.append(f"✅ Servicio: {' — '.join(parts)}")
-
-        # Additional services beyond the primary
-        if self.selected_services and len(self.selected_services) > 1:
-            extras = [s for s in self.selected_services if s != display_service_name]
-            if extras:
-                lines.append(f"✅ Servicios adicionales: {', '.join(extras)}")
 
         if self.stylist_name:
             lines.append(f"✅ Estilista: {self.stylist_name}")

@@ -96,6 +96,32 @@ def _upsert_service_detail(ctx: BookingContext, svc: dict) -> None:
         )
 
 
+def _update_combined_duration(ctx: BookingContext, new_svc: dict) -> None:
+    """Recalculate service_duration_minutes as the sum of all selected services.
+
+    Called after ADDITIVE append. Uses selected_services_details for known
+    durations, plus the incoming service's duration_minutes.
+    """
+    total = 0
+    seen_names: set[str] = set()
+    for detail in ctx.selected_services_details:
+        dur = detail.get("duration_minutes") or detail.get("duration") or 0
+        name = detail.get("name", "")
+        if dur and name:
+            total += dur
+            seen_names.add(name)
+    # Add incoming service if not already counted via details
+    new_name = new_svc.get("name", "")
+    if new_name not in seen_names:
+        new_dur = new_svc.get("duration_minutes") or 0
+        total += new_dur
+    # Add primary service if not in details
+    if ctx.service_duration_minutes and ctx.service_name and ctx.service_name not in seen_names:
+        total += ctx.service_duration_minutes
+    if total > 0:
+        ctx.service_duration_minutes = total
+
+
 def _clear_date_metadata(ctx: BookingContext) -> None:
     """No-op — date substitution metadata fields were removed in the 20-field rewrite.
 
@@ -154,10 +180,13 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
             if svc["name"] not in ctx.selected_services:
                 ctx.selected_services.append(svc["name"])
                 _upsert_service_detail(ctx, svc)
+            # Update combined duration: sum all known durations
+            _update_combined_duration(ctx, svc)
             logger.info(
-                "extract_service_fields: ADDITIVE — appended '%s' (primary='%s')",
+                "extract_service_fields: ADDITIVE — appended '%s' (primary='%s', combined=%d min)",
                 svc["name"],
                 ctx.service_name,
+                ctx.service_duration_minutes or 0,
             )
             return
 
