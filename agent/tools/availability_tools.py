@@ -74,11 +74,23 @@ class CheckAvailabilitySchema(BaseModel):
     stylist_id: str | None = Field(
         default=None, description="Optional preferred stylist UUID as string"
     )
+    service_duration_minutes: int | None = Field(
+        default=None,
+        description=(
+            "Duration of the selected service in minutes. "
+            "Used to ensure proper slot spacing (e.g., 70-min service won't show 10:00 and 10:30). "
+            "If not provided, uses conservative 90-minute estimate."
+        ),
+    )
 
 
 @tool(args_schema=CheckAvailabilitySchema)
 async def check_availability(
-    service_category: str, date: str, time_range: str | None = None, stylist_id: str | None = None
+    service_category: str,
+    date: str,
+    time_range: str | None = None,
+    stylist_id: str | None = None,
+    service_duration_minutes: int | None = None,
 ) -> dict[str, Any]:
     """
     Check availability across stylist calendars with natural date parsing.
@@ -246,14 +258,15 @@ async def check_availability(
 
         # Query availability for each stylist using DB-first service
         all_slots = []
+        effective_duration = service_duration_minutes or CONSERVATIVE_SERVICE_DURATION_MINUTES
 
         for stylist in stylists:
             # Get available slots from DB (queries appointments + blocking_events)
             available_slots = await get_available_slots(
                 stylist_id=stylist.id,
                 target_date=requested_date,
-                service_duration_minutes=CONSERVATIVE_SERVICE_DURATION_MINUTES,
-                slot_interval_minutes=30,  # Generate slots every 30 minutes
+                service_duration_minutes=effective_duration,
+                pack_slots=True,
             )
 
             # Convert to output format (slots already have correct string format from availability_service)

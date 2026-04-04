@@ -126,6 +126,20 @@ def configure_logging() -> None:
     # Add handler to root logger
     root_logger.addHandler(console_handler)
 
+    # Silence noisy third-party loggers in production
+    _noisy_loggers = [
+        "httpcore",
+        "httpcore.http11",
+        "httpcore.connection",
+        "httpx",
+        "openai",
+        "openai._base_client",
+        "urllib3",
+        "urllib3.connectionpool",
+    ]
+    for logger_name in _noisy_loggers:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
     # Log configuration complete
     root_logger.info(
         f"Logging configured: level={settings.LOG_LEVEL}, format=JSON"
