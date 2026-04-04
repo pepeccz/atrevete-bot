@@ -573,6 +573,8 @@ class TestToolChoiceComputation:
             and not ctx.candidate_services
         ):
             return "required"
+        if ctx.pending_clarifications and not ctx.service_id:
+            return "required"
         return None
 
     def test_tool_choice_required_when_service_unresolved(self):
@@ -598,8 +600,15 @@ class TestToolChoiceComputation:
         ctx.confirmation_shown = True
         assert self._compute_tool_choice(ctx) is None
 
-    def test_tool_choice_none_when_pending_clarifications(self):
-        """ctx with pending_clarifications → tool_choice should be None."""
+    def test_tool_choice_required_when_pending_clarifications_no_service(self):
+        """ctx with pending_clarifications + no service_id → tool_choice='required'."""
         ctx = BookingContext()
-        ctx.pending_clarifications = ["¿Qué tipo de corte?"]
+        ctx.pending_clarifications = [{"axis": "audience"}]
+        assert self._compute_tool_choice(ctx) == "required"
+
+    def test_tool_choice_none_when_pending_clarifications_with_service(self):
+        """ctx with pending_clarifications + service_id set → tool_choice=None."""
+        ctx = BookingContext()
+        ctx.pending_clarifications = [{"axis": "hair_length"}]
+        ctx.service_id = "svc-1"
         assert self._compute_tool_choice(ctx) is None

@@ -264,8 +264,7 @@ class BookingMode(BaseModeNode):
         # 3. Race-condition hold creation
         await _maybe_create_hold(ctx)
 
-        # 4. tool_choice only when completely blank-slate
-        #    (no service, no candidates, no slots, no clarifications)
+        # 4. tool_choice: force tool use when service unresolved
         tool_choice: str | None = None
         if (
             not ctx.service_id
@@ -277,6 +276,9 @@ class BookingMode(BaseModeNode):
         ):
             tool_choice = "required"
             logger.info("BookingMode: tool_choice='required' (blank slate)")
+        elif ctx.pending_clarifications and not ctx.service_id:
+            tool_choice = "required"
+            logger.info("BookingMode: tool_choice='required' (pending clarifications, no service)")
 
         # Store for _pre_tool_call access
         self._ctx = ctx
