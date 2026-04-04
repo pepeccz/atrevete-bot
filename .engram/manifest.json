@@ -16,6 +16,14 @@
       "sessions": 1416,
       "memories": 916,
       "prompts": 1104
+    },
+    {
+      "id": "02b5be33",
+      "created_by": "pcabeza",
+      "created_at": "2026-04-04T22:31:14Z",
+      "sessions": 3,
+      "memories": 38,
+      "prompts": 0
     }
   ]
 }
