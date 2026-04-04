@@ -75,7 +75,7 @@ class ModeResult(TypedDict, total=False):
     user_message: str | None
 
 
-MAX_TOOL_ROUNDS = 4
+MAX_TOOL_ROUNDS = 6
 
 # EU AI Act first-turn disclosure enforced in code.
 FIRST_TURN_INTRO = "¡Hola! 🌸 Soy Maite, la asistenta virtual con IA de Atrévete Peluquería."
@@ -623,6 +623,26 @@ class BaseModeNode(ABC):
                     "Agentic loop hit MAX_TOOL_ROUNDS (%d)",
                     MAX_TOOL_ROUNDS,
                 )
+
+            # Final text recovery: if loop ended with tool_calls and empty text,
+            # do one more LLM call WITHOUT tools to generate a user-facing response.
+            if not response_text.strip() and tool_results:
+                self.logger.info("Final text recovery: calling LLM without tools")
+                recovery_response = await self.llm.ainvoke(working_messages)
+                await self._track_token_usage(
+                    recovery_response, message_count=len(working_messages)
+                )
+                recovery_content = (
+                    recovery_response.content
+                    if hasattr(recovery_response, "content")
+                    else recovery_response
+                )
+                recovery_text = (
+                    recovery_content
+                    if isinstance(recovery_content, str)
+                    else str(recovery_content)
+                )
+                response_text = self._sanitize_response(recovery_text)
 
             return AgenticLoopResult(
                 response_text=response_text,

@@ -73,6 +73,8 @@ async def test_run_agentic_loop_stops_after_max_tool_rounds():
             for idx in range(MAX_TOOL_ROUNDS)
         ]
     )
+    # Final text recovery: LLM called without tools after MAX_TOOL_ROUNDS
+    llm.ainvoke = AsyncMock(return_value=_make_response(content="Recovery text."))
 
     mode = _DummyMode(tools=[], llm_client=llm)
     mode.logger = MagicMock()
@@ -85,11 +87,39 @@ async def test_run_agentic_loop_stops_after_max_tool_rounds():
     # tool_results accumulates results as lists (BUG-1 fix: multiple calls append)
     assert result.tool_results["loop_tool"][-1] == {"round": "ok"}
     assert llm_with_tools.ainvoke.await_count == MAX_TOOL_ROUNDS
-    # Check that the MAX_TOOL_ROUNDS warning was logged (among other potential warnings)
+    # Final recovery call happened
+    assert llm.ainvoke.await_count == 1
+    assert result.response_text == "Recovery text."
+    # Check that the MAX_TOOL_ROUNDS warning was logged
     warning_calls = [
         call for call in mode.logger.warning.call_args_list if "MAX_TOOL_ROUNDS" in str(call)
     ]
     assert len(warning_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_final_text_recovery_not_triggered_when_text_present():
+    """When loop exits normally with text, no recovery call is made."""
+    llm = MagicMock()
+    llm_with_tools = MagicMock()
+    llm.bind_tools.return_value = llm_with_tools
+    llm_with_tools.ainvoke = AsyncMock(
+        side_effect=[
+            _make_response(tool_calls=[{"id": "tc-1", "name": "t1", "args": {}}]),
+            _make_response(content="Normal response."),
+        ]
+    )
+    llm.ainvoke = AsyncMock()  # Should NOT be called
+
+    mode = _DummyMode(tools=[], llm_client=llm)
+
+    result = await mode._run_agentic_loop(
+        messages=[SimpleNamespace(content="hola")],
+        tools=[_make_tool("t1")],
+    )
+
+    assert result.response_text == "Normal response."
+    llm.ainvoke.assert_not_called()
 
 
 def test_create_initial_state_default_is_first_interaction():
