@@ -22,7 +22,7 @@ def upgrade() -> None:
     op.add_column('services', sa.Column('audience', sa.String(30), nullable=True))
 
     # 2. Backfill from metadata_ JSONB
-    op.execute("UPDATE services SET audience = metadata_->>'audience' WHERE metadata_->>'audience' IS NOT NULL")
+    op.execute("UPDATE services SET audience = metadata->>'audience' WHERE metadata->>'audience' IS NOT NULL")
 
     # 3. Create partial index on active services
     op.create_index(
@@ -38,7 +38,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute(
-        "UPDATE services SET metadata_ = jsonb_set(COALESCE(metadata_, '{}'::jsonb), '{audience}', to_jsonb(audience)) WHERE audience IS NOT NULL"
+        "UPDATE services SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{audience}', to_jsonb(audience)) WHERE audience IS NOT NULL"
     )
     op.drop_index('idx_services_audience', table_name='services')
     op.drop_column('services', 'audience')
