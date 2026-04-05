@@ -156,6 +156,7 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
         if svc and svc.get("name") and svc["name"] not in ctx.selected_services:
             ctx.selected_services.append(svc["name"])
             _upsert_service_detail(ctx, svc)
+            _update_combined_duration(ctx, svc)
             logger.info(
                 "extract_service_fields: services_locked but APPENDED '%s' (selected_services=%s)",
                 svc["name"],
@@ -182,6 +183,24 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
                 _upsert_service_detail(ctx, svc)
             # Update combined duration: sum all known durations
             _update_combined_duration(ctx, svc)
+            # Clear clarifications matching this resolved service (by name or ID)
+            resolved_name = svc["name"]
+            resolved_id = str(svc.get("id", ""))
+            ctx.pending_clarifications = [
+                pc
+                for pc in ctx.pending_clarifications
+                if not any(
+                    opt.get("service_name") == resolved_name
+                    or str(opt.get("service_id", "")) == resolved_id
+                    for opt in pc.get("options", [])
+                )
+            ]
+            # Lock after additive if no pending clarifications remain
+            if not ctx.services_locked and not ctx.pending_clarifications:
+                ctx.services_locked = True
+                logger.info(
+                    "extract_service_fields: services_locked=True (additive resolved, no clarifications)"
+                )
             logger.info(
                 "extract_service_fields: ADDITIVE — appended '%s' (primary='%s', combined=%d min)",
                 svc["name"],
@@ -218,6 +237,13 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
             logger.info(
                 "extract_service_fields: stored resolved_axes=%s",
                 resolved_axes,
+            )
+
+        # Lock services when primary is resolved and no pending clarifications
+        if not ctx.services_locked and not ctx.pending_clarifications:
+            ctx.services_locked = True
+            logger.info(
+                "extract_service_fields: services_locked=True (primary resolved, no clarifications)"
             )
 
         logger.info(

@@ -380,6 +380,15 @@ class BookingMode(BaseModeNode):
         elif ctx.pending_clarifications and not ctx.service_id:
             tool_choice = "required"
             logger.info("BookingMode: tool_choice='required' (pending clarifications, no service)")
+        elif (
+            (ctx.service_id or ctx.selected_services)
+            and not ctx.prefetched_stylists
+            and not ctx.stylist_id
+            and not ctx.offered_slots
+            and not ctx.confirmation_shown
+        ):
+            tool_choice = "required"
+            logger.info("BookingMode: tool_choice='required' (service resolved, need stylists)")
 
         # Store for _pre_tool_call access
         self._ctx = ctx
@@ -466,9 +475,22 @@ class BookingMode(BaseModeNode):
                     error_message="Primero resolvé el servicio con search_services() antes de mostrar estilistas.",
                 )
 
-        # Gate: search_services with stylist name → redirect to availability tools
-        # Also: auto-inject resolved axes so disambiguation doesn't re-ask
+        # Gate: search_services — reject when services are fully resolved
         if tool_name == "search_services":
+            if ctx and ctx.service_id and not ctx.pending_clarifications:
+                svc_list = (
+                    ", ".join(ctx.selected_services) if ctx.selected_services else ctx.service_name
+                )
+                return ToolCallRejection(
+                    name="search_services",
+                    error_code="SERVICES_ALREADY_RESOLVED",
+                    error_message=(
+                        f"Servicios ya resueltos: {svc_list}. "
+                        "No busques de nuevo. Continuá con el siguiente paso del flujo."
+                    ),
+                )
+
+            # Auto-inject resolved axes so disambiguation doesn't re-ask
             if ctx and ctx.resolved_axes:
                 axis_param_map = {
                     "audience": "audience",
@@ -505,6 +527,15 @@ class BookingMode(BaseModeNode):
         if tool_name in ("check_availability", "find_next_available"):
             if ctx:
                 if not ctx.prefetched_stylists:
+                    # Capture date hint before rejecting — don't lose user's date
+                    date_arg = tool_args.get("start_date") or tool_args.get("date")
+                    if date_arg and not ctx.preferred_date_hint:
+                        ctx.preferred_date_hint = str(date_arg)
+                        logger.info(
+                            "Captured preferred_date_hint='%s' from rejected %s",
+                            date_arg,
+                            tool_name,
+                        )
                     return ToolCallRejection(
                         name=tool_name,
                         error_code="NO_STYLISTS_SHOWN",
