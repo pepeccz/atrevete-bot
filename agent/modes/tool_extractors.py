@@ -146,38 +146,14 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
 
     Also infers audience hint from service name for auto-resolving clarifications.
     """
-    # ── Guard: when locked, protect scalar fields but allow appending to selected_services
-    if ctx.services_locked:
-        svc = result.get("resolved_service") or (
-            result.get("services", [None])[0]
-            if isinstance(result.get("services"), list) and len(result.get("services", [])) == 1
-            else None
-        )
-        if svc and svc.get("name") and svc["name"] not in ctx.selected_services:
-            ctx.selected_services.append(svc["name"])
-            _upsert_service_detail(ctx, svc)
-            _update_combined_duration(ctx, svc)
-            logger.info(
-                "extract_service_fields: services_locked but APPENDED '%s' (selected_services=%s)",
-                svc["name"],
-                ctx.selected_services,
-            )
-        else:
-            logger.info(
-                "extract_service_fields: services_locked, no new service to append "
-                "(selected_services=%s)",
-                ctx.selected_services,
-            )
-        return
-
     # Shape 1: resolved_service — unambiguous single match
     if "resolved_service" in result:
         svc = result["resolved_service"]
 
         # ── ADDITIVE MODE: second+ service in same agentic round ──────────
-        # When primary service already resolved AND not locked AND incoming ID
-        # differs, APPEND to selected_services without overwriting scalar fields.
-        if ctx.service_id and not ctx.services_locked and str(svc.get("id", "")) != ctx.service_id:
+        # When primary service already resolved AND incoming ID differs,
+        # APPEND to selected_services without overwriting scalar fields.
+        if ctx.service_id and str(svc.get("id", "")) != ctx.service_id:
             if svc["name"] not in ctx.selected_services:
                 ctx.selected_services.append(svc["name"])
                 _upsert_service_detail(ctx, svc)
@@ -195,12 +171,6 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
                     for opt in pc.get("options", [])
                 )
             ]
-            # Lock after additive if no pending clarifications remain
-            if not ctx.services_locked and not ctx.pending_clarifications:
-                ctx.services_locked = True
-                logger.info(
-                    "extract_service_fields: services_locked=True (additive resolved, no clarifications)"
-                )
             logger.info(
                 "extract_service_fields: ADDITIVE — appended '%s' (primary='%s', combined=%d min)",
                 svc["name"],
@@ -239,13 +209,6 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
                 resolved_axes,
             )
 
-        # Lock services when primary is resolved and no pending clarifications
-        if not ctx.services_locked and not ctx.pending_clarifications:
-            ctx.services_locked = True
-            logger.info(
-                "extract_service_fields: services_locked=True (primary resolved, no clarifications)"
-            )
-
         logger.info(
             "extract_service_fields: resolved service '%s' (id=%s)",
             svc.get("name"),
@@ -268,6 +231,11 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
                 if hint:
                     # We found a hint — queue the clarification for the LLM to ask
                     break
+
+        # Inject original_query so the prompt can instruct the LLM to re-use it
+        clarification["original_query"] = result.get("query", "")
+        if not clarification.get("service_key"):
+            clarification["service_key"] = result.get("query", "")
 
         # Axis+service_key upsert: replace existing entry for same (axis, service_key)
         # pair instead of same axis alone. This preserves clarifications for two
@@ -489,16 +457,6 @@ def extract_booking_result(result: dict, ctx: BookingContext) -> None:
             result.get("error_code"),
         )
         return
-
-    # Lock services on FIRST book() attempt (success OR failure).
-    # This prevents SLOT_TAKEN retry from clobbering selected_services.
-    if not ctx.services_locked:
-        ctx.services_locked = True
-        logger.info(
-            "extract_booking_result: services_locked=True on first book() attempt "
-            "(selected_services=%s)",
-            ctx.selected_services,
-        )
 
     if result.get("success"):
         ctx._booking_completed = True

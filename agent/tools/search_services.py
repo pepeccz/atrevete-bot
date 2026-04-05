@@ -242,21 +242,20 @@ class SearchServicesSchema(BaseModel):
     hair_density: Literal["normal", "extra"] | None = Field(
         default=None,
         description=(
-            "Optional hair density/volume hint to resolve services that have a "
-            "'normal' vs 'extra' (very dense or very long hair) variant. "
-            "Pass this if the customer has already mentioned their hair density "
-            "(e.g. 'pelo fino/normal' → 'normal'; 'pelo grueso/denso/muy largo' → 'extra'). "
-            "When provided, avoids a follow-up clarification question."
+            "Hair density hint — ONLY pass this if the customer has EXPLICITLY stated "
+            "their hair density in the current conversation. Do NOT guess or assume a default. "
+            "Values: 'pelo fino/normal' → 'normal'; 'pelo grueso/denso/muy largo' → 'extra'. "
+            "If the customer hasn't mentioned hair density, omit this parameter entirely."
         ),
     )
 
     hair_length: Literal["short_medium", "long"] | None = Field(
         default=None,
         description=(
-            "Optional hair length hint to resolve services that differ by hair length. "
-            "Pass this if the customer has already mentioned their hair length "
-            "(e.g. 'pelo corto o medio' → 'short_medium'; 'pelo largo' → 'long'). "
-            "When provided, avoids a follow-up clarification question."
+            "Hair length hint — ONLY pass this if the customer has EXPLICITLY stated "
+            "their hair length in the current conversation. Do NOT guess or assume a default. "
+            "Values: 'pelo corto o medio' → 'short_medium'; 'pelo largo' → 'long'. "
+            "If the customer hasn't mentioned hair length, omit this parameter entirely."
         ),
     )
 

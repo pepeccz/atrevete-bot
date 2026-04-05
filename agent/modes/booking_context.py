@@ -52,7 +52,6 @@ class BookingContext:
     service_category: str | None = None
     selected_services: list[str] = field(default_factory=list)
     selected_services_details: list[dict] = field(default_factory=list)
-    services_locked: bool = False
     pending_clarifications: list[dict] = field(default_factory=list)
     candidate_services: list[dict] = field(default_factory=list)
 

@@ -79,6 +79,11 @@ def _resolve_slot_from_message(user_message: str, ctx: BookingContext) -> bool:
     import re
 
     if not ctx.offered_slots or ctx.selected_slot is not None:
+        logger.debug(
+            "_resolve_slot_from_message: skipped (offered_slots=%s, selected_slot=%s)",
+            "empty/None" if not ctx.offered_slots else len(ctx.offered_slots),
+            "set" if ctx.selected_slot is not None else "None",
+        )
         return False
 
     text = user_message.strip()
@@ -86,6 +91,13 @@ def _resolve_slot_from_message(user_message: str, ctx: BookingContext) -> bool:
         return False
 
     num_slots = len(ctx.offered_slots)
+    slot_times = [s.get("time", "?") for s in ctx.offered_slots]
+    logger.debug(
+        "_resolve_slot_from_message: trying to match '%s' against %d slots (times=%s)",
+        text[:60],
+        num_slots,
+        slot_times,
+    )
 
     # Strategy 1: bare digit (1-N)
     bare_digit = re.fullmatch(r"\d+", text)
@@ -93,6 +105,7 @@ def _resolve_slot_from_message(user_message: str, ctx: BookingContext) -> bool:
         idx = int(bare_digit.group())
         if 1 <= idx <= num_slots:
             return _persist_slot(ctx, idx - 1)
+        logger.debug("_resolve_slot_from_message: bare digit %d out of range (1-%d)", idx, num_slots)
         return False
 
     # Strategy 2: time string — extract HH:MM from message
@@ -105,6 +118,11 @@ def _resolve_slot_from_message(user_message: str, ctx: BookingContext) -> bool:
             slot_hour_min = slot_time.lstrip("0") if slot_time.startswith("0") else slot_time
             if target_time == slot_time or target_time == slot_hour_min:
                 return _persist_slot(ctx, i)
+        logger.debug(
+            "_resolve_slot_from_message: time '%s' matched regex but no slot match (slots=%s)",
+            target_time,
+            slot_times,
+        )
         return False
 
     # Strategy 3: "las N" / "a las N" (hour without minutes)
@@ -119,7 +137,11 @@ def _resolve_slot_from_message(user_message: str, ctx: BookingContext) -> bool:
                     return _persist_slot(ctx, i)
             except (ValueError, IndexError):
                 continue
+        logger.debug(
+            "_resolve_slot_from_message: hour %d no match (slots=%s)", target_hour, slot_times
+        )
 
+    logger.debug("_resolve_slot_from_message: no strategy matched for '%s'", text[:60])
     return False
 
 
@@ -365,7 +387,8 @@ class BookingMode(BaseModeNode):
         # 3. Race-condition hold creation
         await _maybe_create_hold(ctx)
 
-        # 4. tool_choice: force tool use when service unresolved
+        # 4. tool_choice: force tool use ONLY on blank-slate turns.
+        #    All other states trust the LLM + <missing_data> context to pick the right tool.
         tool_choice: str | None = None
         if (
             not ctx.service_id
@@ -377,18 +400,6 @@ class BookingMode(BaseModeNode):
         ):
             tool_choice = "required"
             logger.info("BookingMode: tool_choice='required' (blank slate)")
-        elif ctx.pending_clarifications and not ctx.service_id:
-            tool_choice = "required"
-            logger.info("BookingMode: tool_choice='required' (pending clarifications, no service)")
-        elif (
-            (ctx.service_id or ctx.selected_services)
-            and not ctx.prefetched_stylists
-            and not ctx.stylist_id
-            and not ctx.offered_slots
-            and not ctx.confirmation_shown
-        ):
-            tool_choice = "required"
-            logger.info("BookingMode: tool_choice='required' (service resolved, need stylists)")
 
         # Store for _pre_tool_call access
         self._ctx = ctx
@@ -475,21 +486,8 @@ class BookingMode(BaseModeNode):
                     error_message="Primero resolvé el servicio con search_services() antes de mostrar estilistas.",
                 )
 
-        # Gate: search_services — reject when services are fully resolved
+        # ── search_services: auto-inject resolved axes, guard stylist-as-service ──
         if tool_name == "search_services":
-            if ctx and ctx.service_id and not ctx.pending_clarifications:
-                svc_list = (
-                    ", ".join(ctx.selected_services) if ctx.selected_services else ctx.service_name
-                )
-                return ToolCallRejection(
-                    name="search_services",
-                    error_code="SERVICES_ALREADY_RESOLVED",
-                    error_message=(
-                        f"Servicios ya resueltos: {svc_list}. "
-                        "No busques de nuevo. Continuá con el siguiente paso del flujo."
-                    ),
-                )
-
             # Auto-inject resolved axes so disambiguation doesn't re-ask
             if ctx and ctx.resolved_axes:
                 axis_param_map = {
@@ -545,12 +543,41 @@ class BookingMode(BaseModeNode):
                 ctx.selected_slot = None
             return tool_args
 
-        # ── book() / confirm_from_hold(): UUID injection + gates ──────────────
+        # ── book() / confirm_from_hold(): slot resolution → confirmation → injection
         if tool_name in ("book", "confirm_from_hold"):
             if not ctx:
                 return tool_args
 
-            # Gate 1: confirmation required
+            # Step A: slot_index → UUID resolution (ALWAYS runs first)
+            # Persists selected_slot even when later gates reject the call.
+            # This breaks the circular dependency where selected_slot could
+            # never be set because the confirmation gate rejected first.
+            slot_index = tool_args.get("slot_index")
+            if slot_index is not None and ctx.offered_slots:
+                try:
+                    idx = int(slot_index)
+                    if 1 <= idx <= len(ctx.offered_slots):
+                        slot = ctx.offered_slots[idx - 1]
+                        tool_args["stylist_id"] = slot.get("stylist_id")
+                        tool_args["start_time"] = slot.get("start_time")
+                        ctx.selected_slot = slot
+                    else:
+                        return ToolCallRejection(
+                            name=tool_name,
+                            error_code="INVALID_SLOT_INDEX",
+                            error_message=(
+                                f"slot_index {idx} fuera de rango "
+                                f"(1-{len(ctx.offered_slots)}). Mostrá la lista de nuevo."
+                            ),
+                        )
+                except (ValueError, TypeError):
+                    return ToolCallRejection(
+                        name=tool_name,
+                        error_code="INVALID_SLOT_INDEX",
+                        error_message="slot_index debe ser un número entero.",
+                    )
+
+            # Step B: confirmation gate
             if not ctx.confirmation_shown:
                 # Auto-generate confirmation summary if all data available
                 if (
@@ -588,7 +615,7 @@ class BookingMode(BaseModeNode):
                         ),
                     )
 
-            # Gate 2: customer_id injection
+            # Step C: customer_id injection
             if ctx.customer_id:
                 tool_args["customer_id"] = ctx.customer_id
             elif not tool_args.get("customer_id"):
@@ -600,33 +627,7 @@ class BookingMode(BaseModeNode):
                     ),
                 )
 
-            # Gate 3: slot_index → UUID resolution
-            slot_index = tool_args.get("slot_index")
-            if slot_index is not None and ctx.offered_slots:
-                try:
-                    idx = int(slot_index)
-                    if 1 <= idx <= len(ctx.offered_slots):
-                        slot = ctx.offered_slots[idx - 1]
-                        tool_args["stylist_id"] = slot.get("stylist_id")
-                        tool_args["start_time"] = slot.get("start_time")
-                        ctx.selected_slot = slot
-                    else:
-                        return ToolCallRejection(
-                            name=tool_name,
-                            error_code="INVALID_SLOT_INDEX",
-                            error_message=(
-                                f"slot_index {idx} fuera de rango "
-                                f"(1-{len(ctx.offered_slots)}). Mostrá la lista de nuevo."
-                            ),
-                        )
-                except (ValueError, TypeError):
-                    return ToolCallRejection(
-                        name=tool_name,
-                        error_code="INVALID_SLOT_INDEX",
-                        error_message="slot_index debe ser un número entero.",
-                    )
-
-            # Inject services and notes
+            # Step D: Inject services and notes
             if ctx.selected_services:
                 tool_args["services"] = list(ctx.selected_services)
             elif ctx.service_id:
@@ -798,11 +799,17 @@ class BookingMode(BaseModeNode):
         if ctx.pending_clarifications:
             for clar in ctx.pending_clarifications:
                 axis = clar.get("axis", "opción")
+                question = clar.get("question_hint", "")
+                original_query = clar.get("original_query", "")
                 options = clar.get("options", [])
-                svc = clar.get("service_name", "servicio")
-                opts_text = "\n".join(f"- {o}" for o in options)
+                opts_text = "\n".join(
+                    f"- {o.get('label', o) if isinstance(o, dict) else o}"
+                    for o in options
+                )
                 parts.append(
-                    f"<clarification service='{svc}' axis='{axis}'>\n{opts_text}\n</clarification>"
+                    f"<clarification axis='{axis}' question='{question}'"
+                    f" original_query='{original_query}'>"
+                    f"\n{opts_text}\n</clarification>"
                 )
 
         if ctx.candidate_services:

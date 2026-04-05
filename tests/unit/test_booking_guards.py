@@ -1011,3 +1011,183 @@ class TestShouldTransitionGeneralToBooking:
             content = f.read()
         assert "transición al modo BOOKING" not in content
         assert "Voy a ayudarte a agendar" not in content
+
+
+# =============================================================================
+# booking-data-integrity: Gate reorder — slot resolution before confirmation
+# =============================================================================
+
+
+class TestGateReorderSlotPersistence:
+    """Verify slot_index→UUID resolution (Step A) runs BEFORE confirmation gate (Step B).
+
+    This is the critical fix for the circular dependency where selected_slot could
+    never be set because the confirmation gate rejected first.
+    """
+
+    @pytest.mark.asyncio
+    async def test_s1_slot_persists_through_confirmation_rejection(self):
+        """S1: book() rejected for missing confirmation, BUT selected_slot IS set.
+
+        GIVEN offered_slots has 4 slots and selected_slot is None
+        WHEN LLM calls book(slot_index=3)
+        THEN selected_slot is set to offered_slots[2]
+        AND the call is rejected with CONFIRMATION_NOT_SHOWN
+        """
+        mode = _make_mode()
+        slots = [
+            {"stylist_id": "s1", "start_time": "2026-04-15T14:00:00+02:00", "time": "14:00",
+             "stylist_name": "Pilar", "day_label": "Miércoles 15 de abril"},
+            {"stylist_id": "s1", "start_time": "2026-04-15T15:20:00+02:00", "time": "15:20",
+             "stylist_name": "Pilar", "day_label": "Miércoles 15 de abril"},
+            {"stylist_id": "s1", "start_time": "2026-04-15T16:40:00+02:00", "time": "16:40",
+             "stylist_name": "Pilar", "day_label": "Miércoles 15 de abril"},
+            {"stylist_id": "s1", "start_time": "2026-04-15T18:00:00+02:00", "time": "18:00",
+             "stylist_name": "Pilar", "day_label": "Miércoles 15 de abril"},
+        ]
+        mode._ctx = BookingContext(
+            service_id="svc-cortar",
+            service_name="Cortar",
+            stylist_id="s1",
+            stylist_name="Pilar",
+            offered_slots=slots,
+            selected_slot=None,  # NOT yet selected
+            selected_services=["Cortar", "Peinado Largo"],
+            customer_name="Maria Garcia",
+            notes=None,  # missing → confirmation won't auto-generate
+            confirmation_shown=False,
+        )
+
+        result = await mode._pre_tool_call("book", {"slot_index": 3})
+
+        # Rejected because confirmation_shown is False
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "CONFIRMATION_NOT_SHOWN"
+
+        # BUT selected_slot WAS persisted by Step A (before the rejection)
+        assert mode._ctx.selected_slot is not None
+        assert mode._ctx.selected_slot["time"] == "16:40"
+        assert mode._ctx.selected_slot["start_time"] == "2026-04-15T16:40:00+02:00"
+
+    @pytest.mark.asyncio
+    async def test_s1_slot_persists_and_summary_generated_when_all_data_present(self):
+        """S1 variant: all data present → slot persists AND summary is generated.
+
+        GIVEN offered_slots, customer_name, notes all set, selected_slot is None
+        WHEN book(slot_index=3) called
+        THEN selected_slot set AND confirmation_summary_sent=True AND rejection includes summary
+        """
+        mode = _make_mode()
+        slots = [
+            {"stylist_id": "s1", "start_time": "2026-04-15T14:00:00+02:00", "time": "14:00",
+             "stylist_name": "Pilar", "day_label": "Miércoles 15 de abril"},
+            {"stylist_id": "s1", "start_time": "2026-04-15T15:20:00+02:00", "time": "15:20",
+             "stylist_name": "Pilar", "day_label": "Miércoles 15 de abril"},
+            {"stylist_id": "s1", "start_time": "2026-04-15T16:40:00+02:00", "time": "16:40",
+             "stylist_name": "Pilar", "day_label": "Miércoles 15 de abril"},
+        ]
+        mode._ctx = BookingContext(
+            service_id="svc-cortar",
+            service_name="Cortar",
+            stylist_id="s1",
+            stylist_name="Pilar",
+            offered_slots=slots,
+            selected_slot=None,
+            selected_services=["Cortar"],
+            customer_name="Maria Garcia",
+            notes="Sin preferencias",
+            confirmation_shown=False,
+        )
+
+        result = await mode._pre_tool_call("book", {"slot_index": 3})
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "CONFIRMATION_NOT_SHOWN"
+        # Step A persisted the slot
+        assert mode._ctx.selected_slot is not None
+        assert mode._ctx.selected_slot["time"] == "16:40"
+        # Step B saw all data complete → generated summary
+        assert mode._ctx.confirmation_summary_sent is True
+        assert "confirmo" in result.error_message.lower() or "resumen" in result.error_message.lower()
+
+    @pytest.mark.asyncio
+    async def test_s2_invalid_slot_index_rejected_before_confirmation(self):
+        """S2: Invalid slot_index → INVALID_SLOT_INDEX, selected_slot remains None.
+
+        GIVEN offered_slots has 4 slots
+        WHEN book(slot_index=7) called
+        THEN rejected with INVALID_SLOT_INDEX and selected_slot stays None
+        """
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            service_id="svc-1",
+            stylist_id="s1",
+            offered_slots=[
+                {"stylist_id": "s1", "start_time": "2026-04-15T14:00", "time": "14:00"},
+                {"stylist_id": "s1", "start_time": "2026-04-15T15:20", "time": "15:20"},
+                {"stylist_id": "s1", "start_time": "2026-04-15T16:40", "time": "16:40"},
+                {"stylist_id": "s1", "start_time": "2026-04-15T18:00", "time": "18:00"},
+            ],
+            selected_slot=None,
+            confirmation_shown=False,
+        )
+
+        result = await mode._pre_tool_call("book", {"slot_index": 7})
+
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "INVALID_SLOT_INDEX"
+        assert mode._ctx.selected_slot is None
+
+    @pytest.mark.asyncio
+    async def test_s3_happy_path_all_gates_pass(self):
+        """S3: All gates pass → book() proceeds with resolved args.
+
+        GIVEN selected_slot set, confirmation_shown=True, customer_id exists
+        WHEN book(slot_index=2) called
+        THEN slot resolved, args include stylist_id, start_time, customer_id, services
+        """
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            service_id="svc-1",
+            service_name="Cortar",
+            stylist_id="s1",
+            stylist_name="Pilar",
+            offered_slots=[
+                {"stylist_id": "s1", "start_time": "2026-04-15T14:00:00+02:00", "time": "14:00"},
+                {"stylist_id": "s1", "start_time": "2026-04-15T15:20:00+02:00", "time": "15:20"},
+            ],
+            selected_services=["Cortar"],
+            customer_name="Maria Garcia",
+            customer_id="cust-123",
+            notes="Sin preferencias",
+            confirmation_shown=True,
+        )
+
+        result = await mode._pre_tool_call("book", {"slot_index": 2})
+
+        # Not rejected — returns enriched args dict
+        assert not isinstance(result, ToolCallRejection)
+        assert result["stylist_id"] == "s1"
+        assert result["start_time"] == "2026-04-15T15:20:00+02:00"
+        assert result["customer_id"] == "cust-123"
+        assert result["services"] == ["Cortar"]
+        assert result["notes"] == "Sin preferencias"
+
+    @pytest.mark.asyncio
+    async def test_search_services_not_blocked_when_service_resolved(self):
+        """Verify services_locked removal: search_services is NOT blocked.
+
+        GIVEN service_id is set (services were resolved)
+        WHEN LLM calls search_services
+        THEN the call passes through (no SERVICES_ALREADY_RESOLVED rejection)
+        """
+        mode = _make_mode()
+        mode._ctx = BookingContext(
+            service_id="svc-cortar",
+            service_name="Cortar",
+            selected_services=["Cortar", "Peinado"],
+        )
+
+        result = await mode._pre_tool_call("search_services", {"query": "Peinado Largo"})
+
+        assert not isinstance(result, ToolCallRejection)
