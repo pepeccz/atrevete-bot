@@ -11,4 +11,4 @@ slot_diversification_strategy: "one_per_stylist"
 auto_search_extra_days: 3
 
 # When to force tool_choice='required': never_force | force_after_service_known | always_force
-tool_choice_policy: "never_force"
+tool_choice_policy: "force_after_service_known"

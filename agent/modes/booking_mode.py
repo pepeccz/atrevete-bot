@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -418,8 +418,23 @@ class BookingModeNode(BaseModeNode):
         if summary:
             parts.append(f"<conversation_summary>\n{summary}\n</conversation_summary>")
 
+        # Minimum valid date for appointments (3-day rule)
+        from agent.validators.transaction_validators import MINIMUM_DAYS
+
+        _DAY_NAMES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        _MONTH_NAMES = [
+            "enero", "febrero", "marzo", "abril", "mayo", "junio",
+            "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+        ]
+        min_date = (now + timedelta(days=MINIMUM_DAYS)).date()
+        min_day_name = _DAY_NAMES[min_date.weekday()]
+        min_date_label = f"{min_day_name} {min_date.day} de {_MONTH_NAMES[min_date.month - 1]}"
+
         # Booking context XML block
         parts.append("<booking_context>")
+        parts.append(
+            f"<min_valid_date>{min_date_label} ({min_date.isoformat()})</min_valid_date>"
+        )
 
         collected = self._build_collected_summary(mode_context)
         if collected:
