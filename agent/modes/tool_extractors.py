@@ -329,6 +329,27 @@ def extract_slot_fields(result: dict, ctx: BookingContext) -> None:
         slots = selected_stylist_slots
 
     if slots:
+        # Normalize day_name → day_label for consistent rendering
+        # Availability tools return "day_name" but dynamic context reads "day_label"
+        for slot in slots:
+            if "day_label" not in slot and "day_name" in slot:
+                date_str = slot.get("date", "")
+                day_name = slot["day_name"].capitalize()
+                if date_str:
+                    try:
+                        day_num = date_str.split("-")[2].lstrip("0")
+                        month_names = [
+                            "", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+                            "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+                        ]
+                        month_num = int(date_str.split("-")[1])
+                        month_name = month_names[month_num]
+                        slot["day_label"] = f"{day_name} {day_num} de {month_name}"
+                    except (IndexError, ValueError):
+                        slot["day_label"] = day_name
+                else:
+                    slot["day_label"] = day_name
+
         ctx.offered_slots = slots
         logger.info("extract_slot_fields: %d slots offered", len(slots))
 
@@ -410,14 +431,19 @@ def extract_customer_fields(result: dict, ctx: BookingContext) -> None:
         ctx.customer_id = str(customer_id)
 
     first_name = result.get("first_name")
+    last_name = result.get("last_name")
     if first_name:
-        ctx.customer_name = first_name
+        # Combine first + last name for display
+        if last_name and last_name.strip():
+            ctx.customer_name = f"{first_name} {last_name.strip()}"
+        else:
+            ctx.customer_name = first_name
 
     if customer_id or first_name:
         logger.info(
             "extract_customer_fields: customer_id=%s, name=%s",
             customer_id,
-            first_name,
+            ctx.customer_name,
         )
 
 

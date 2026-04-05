@@ -131,3 +131,95 @@ class TestResolvedAxesTracking:
         # Round-trip
         restored = BookingContext.from_mode_context(ctx.to_mode_context())
         assert restored.resolved_axes == {"hair_density": "normal"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# A2: day_name → day_label normalization in extract_slot_fields
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestSlotFieldDayLabel:
+    """extract_slot_fields must normalize day_name to day_label so
+    _build_dynamic_context and confirmation summary can read it."""
+
+    def test_day_name_normalized_to_day_label(self):
+        """Slots with day_name should get day_label populated."""
+        from agent.modes.tool_extractors import extract_slot_fields
+
+        result = {
+            "available_slots": [
+                {
+                    "time": "10:00",
+                    "date": "2026-04-08",
+                    "day_name": "miércoles",
+                    "stylist": "Pilar",
+                    "stylist_id": "sty-001",
+                    "full_datetime": "2026-04-08T10:00:00+02:00",
+                }
+            ]
+        }
+        ctx = BookingContext()
+        extract_slot_fields(result, ctx)
+
+        assert ctx.offered_slots is not None
+        assert len(ctx.offered_slots) == 1
+        slot = ctx.offered_slots[0]
+        assert slot.get("day_label") is not None
+        assert "miércoles" in slot["day_label"].lower() or "8" in slot["day_label"]
+
+    def test_day_label_preserved_if_already_present(self):
+        """If slot already has day_label, it should not be overwritten."""
+        from agent.modes.tool_extractors import extract_slot_fields
+
+        result = {
+            "available_slots": [
+                {
+                    "time": "10:00",
+                    "date": "2026-04-08",
+                    "day_label": "Miércoles 8 de abril",
+                    "stylist_id": "sty-001",
+                }
+            ]
+        }
+        ctx = BookingContext()
+        extract_slot_fields(result, ctx)
+
+        assert ctx.offered_slots[0]["day_label"] == "Miércoles 8 de abril"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# A6: last_name extraction in extract_customer_fields
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCustomerLastName:
+    """extract_customer_fields should extract last_name when available."""
+
+    def test_last_name_appended_to_customer_name(self):
+        from agent.modes.tool_extractors import extract_customer_fields
+
+        result = {
+            "id": "cust-001",
+            "first_name": "María",
+            "last_name": "Bellido",
+        }
+        ctx = BookingContext()
+        extract_customer_fields(result, ctx)
+
+        assert ctx.customer_id == "cust-001"
+        # full name should contain both
+        assert "María" in ctx.customer_name
+        assert "Bellido" in ctx.customer_name
+
+    def test_empty_last_name_keeps_first_name_only(self):
+        from agent.modes.tool_extractors import extract_customer_fields
+
+        result = {
+            "id": "cust-002",
+            "first_name": "Ana",
+            "last_name": "",
+        }
+        ctx = BookingContext()
+        extract_customer_fields(result, ctx)
+
+        assert ctx.customer_name == "Ana"

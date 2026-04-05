@@ -140,6 +140,58 @@ def _persist_slot(ctx: BookingContext, index: int) -> bool:
     return True
 
 
+def _resolve_stylist_from_message(user_message: str, ctx: BookingContext) -> bool:
+    """Deterministic stylist resolver — safety net for tool_skip on stylist selection.
+
+    Matches the user message against ctx.prefetched_stylists using:
+      1. Bare digit (1-N index)
+      2. Exact name match (case-insensitive)
+
+    On match: sets ctx.stylist_id, ctx.stylist_name.
+    Returns True if a stylist was resolved, False otherwise.
+    """
+    import re
+
+    if not ctx.prefetched_stylists or ctx.stylist_id:
+        return False
+
+    text = user_message.strip()
+    if not text:
+        return False
+
+    num_stylists = len(ctx.prefetched_stylists)
+
+    # Strategy 1: bare digit (1-N)
+    bare_digit = re.fullmatch(r"\d+", text)
+    if bare_digit:
+        idx = int(bare_digit.group())
+        if 1 <= idx <= num_stylists:
+            stylist = ctx.prefetched_stylists[idx - 1]
+            ctx.stylist_id = stylist["id"]
+            ctx.stylist_name = stylist["name"]
+            logger.info(
+                "_resolve_stylist_from_message: resolved stylist index=%d name=%s",
+                idx,
+                stylist["name"],
+            )
+            return True
+        return False
+
+    # Strategy 2: name match (case-insensitive)
+    text_lower = text.lower()
+    for stylist in ctx.prefetched_stylists:
+        if stylist["name"].lower() in text_lower:
+            ctx.stylist_id = stylist["id"]
+            ctx.stylist_name = stylist["name"]
+            logger.info(
+                "_resolve_stylist_from_message: resolved stylist by name=%s",
+                stylist["name"],
+            )
+            return True
+
+    return False
+
+
 async def _maybe_create_hold(ctx: BookingContext) -> None:
     """Programmatically create a HOLD when a slot has been selected but not yet held.
 
@@ -259,34 +311,8 @@ class BookingMode(BaseModeNode):
         return "BOOKING"
 
     def get_tools(self) -> list:
-        """Return booking tools, excluding failed tools via circuit breaker.
-
-        GAP-05: The circuit breaker reads self._ctx which is set in handle() BEFORE
-        get_tools() is called (line: self._ctx = ctx → self.get_tools()). This ordering
-        is correct. However, to be resilient if get_tools() is ever called before _ctx is
-        initialized (e.g. during testing or if handle() is refactored), we use getattr
-        with a None default and skip the circuit breaker when ctx is unavailable.
-        This prevents AttributeError and ensures all tools are returned in the safe
-        fallback case (better to allow book() than to crash the agent).
-        """
-        tools = _get_all_booking_tools()
-        ctx: BookingContext | None = getattr(self, "_ctx", None)
-        if ctx is not None:
-            book_failures = getattr(ctx, "book_failure_count", 0)
-            manage_failures = getattr(ctx, "manage_customer_failure_count", 0)
-            if book_failures >= 3:
-                logger.warning(
-                    "get_tools: book excluded — book_failure_count=%d",
-                    book_failures,
-                )
-                tools = [t for t in tools if t.name != "book"]
-            if manage_failures >= 3:
-                logger.warning(
-                    "get_tools: manage_customer excluded — failure_count=%d",
-                    manage_failures,
-                )
-                tools = [t for t in tools if t.name != "manage_customer"]
-        return tools
+        """Return all booking tools for the agentic loop."""
+        return _get_all_booking_tools()
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -370,10 +396,16 @@ class BookingMode(BaseModeNode):
         # 7. Apply typed tool results
         self._apply_tool_results(result, ctx)
 
-        # 7b. Post-loop slot resolver — safety net for tool_skip
-        #     When the LLM didn't call a tool that persists the slot,
-        #     match the user message against offered_slots deterministically.
+        # 7b. Post-loop resolvers — safety net for tool_skip
+        #     When the LLM didn't call a tool that persists user selections,
+        #     match the user message deterministically.
         user_msg = state.get("user_message") or ""
+
+        # Stylist resolver: bare digit or name match against prefetched_stylists
+        if ctx.prefetched_stylists and not ctx.stylist_id:
+            _resolve_stylist_from_message(user_msg, ctx)
+
+        # Slot resolver: bare digit or time match against offered_slots
         if ctx.offered_slots and ctx.selected_slot is None:
             if _resolve_slot_from_message(user_msg, ctx):
                 # Try to create hold now that slot is resolved
@@ -597,6 +629,8 @@ class BookingMode(BaseModeNode):
         """Build the final response text.
 
         F-8: code-render a structured confirmation block after successful booking.
+        Auto-detect confirmation summary: when all booking data is complete and the
+        LLM responds, mark confirmation_summary_sent so the next turn's gate works.
         Everything else: return LLM text as-is (via _sanitize_response).
         """
         response_text = result.response_text or ""
@@ -604,6 +638,22 @@ class BookingMode(BaseModeNode):
         # F-8: code-rendered confirmation after successful booking
         if getattr(ctx, "_booking_completed", False) and ctx.selected_slot:
             return self._render_booking_confirmation(ctx)
+
+        # Auto-detect confirmation summary: when all required data is present
+        # and the LLM generated a response, the response IS the summary.
+        # This covers both LLM-generated and _pre_tool_call-generated summaries.
+        if (
+            not ctx.confirmation_summary_sent
+            and not ctx._booking_completed
+            and ctx.service_id
+            and ctx.stylist_id
+            and ctx.selected_slot
+            and ctx.customer_name
+            and ctx.notes
+            and response_text.strip()
+        ):
+            ctx.confirmation_summary_sent = True
+            logger.info("_build_response: auto-set confirmation_summary_sent (all data complete)")
 
         return self._sanitize_response(response_text)
 
@@ -742,6 +792,31 @@ class BookingMode(BaseModeNode):
         parts.append("</booking_context>")
 
         return "\n".join(parts)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Mid-loop dynamic context refresh
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _refresh_dynamic_context(self, working_messages: list) -> None:
+        """Rebuild the dynamic context SystemMessage so the LLM sees fresh state.
+
+        Called by the agentic loop after each tool round. Replaces the
+        SystemMessage at _dynamic_context_index with an updated version
+        reflecting any ctx changes from tool results (e.g., service resolved,
+        customer name collected, slot selected).
+        """
+        from langchain_core.messages import SystemMessage
+
+        idx = getattr(self, "_dynamic_context_index", None)
+        ctx = getattr(self, "_ctx", None)
+        state = getattr(self, "_dynamic_context_state", None)
+        if idx is None or ctx is None or state is None:
+            return
+        if idx >= len(working_messages):
+            return
+
+        refreshed = self._build_dynamic_context(ctx, state)
+        working_messages[idx] = SystemMessage(content=refreshed)
 
     # ──────────────────────────────────────────────────────────────────────
     # Context helpers

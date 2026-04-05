@@ -612,3 +612,150 @@ class TestToolChoiceComputation:
         ctx.pending_clarifications = [{"axis": "hair_length"}]
         ctx.service_id = "svc-1"
         assert self._compute_tool_choice(ctx) is None
+
+
+# =============================================================================
+# _refresh_dynamic_context
+# =============================================================================
+
+
+class TestRefreshDynamicContext:
+    """_refresh_dynamic_context must update the SystemMessage at _dynamic_context_index."""
+
+    def test_refresh_updates_system_message(self):
+        """After ctx changes, _refresh_dynamic_context updates the SystemMessage in working_messages."""
+        from langchain_core.messages import SystemMessage
+
+        mode = make_booking_mode()
+        ctx = BookingContext(service_name="Corte", service_id="svc-1")
+        mode._ctx = ctx
+        mode._dynamic_context_state = make_state(mode_context=ctx.to_mode_context())
+
+        # Simulate working_messages with a stale dynamic context at index 2
+        working_messages = [
+            SystemMessage(content="identity"),
+            SystemMessage(content="booking mode"),
+            SystemMessage(content="STALE dynamic context"),
+        ]
+        mode._dynamic_context_index = 2
+
+        # Now update ctx (simulate tool result)
+        ctx.customer_name = "María"
+
+        mode._refresh_dynamic_context(working_messages)
+
+        # The SystemMessage at index 2 should now contain "María"
+        refreshed = working_messages[2].content
+        assert "María" in refreshed
+        assert "STALE" not in refreshed
+
+    def test_refresh_noop_without_index(self):
+        """If _dynamic_context_index is not set, refresh is a safe no-op."""
+        mode = make_booking_mode()
+        mode._ctx = BookingContext()
+        # Don't set _dynamic_context_index
+        working_messages = []
+        mode._refresh_dynamic_context(working_messages)  # Should not raise
+
+
+# =============================================================================
+# Confirmation summary detection — A5
+# =============================================================================
+
+
+class TestConfirmationSummaryAutoDetection:
+    """When all booking data is complete and LLM responds, confirmation_summary_sent
+    should be set True so the confirmation gate works on the next turn."""
+
+    def _make_complete_ctx(self):
+        return BookingContext(
+            service_id="svc-1",
+            service_name="Corte",
+            stylist_id="sty-1",
+            stylist_name="Pilar",
+            selected_slot={"time": "10:00", "date": "2026-04-10"},
+            customer_name="María",
+            notes="Sin preferencias",
+        )
+
+    def test_summary_sent_set_when_all_data_complete_and_no_tool_call(self):
+        """When _build_response sees all data complete, confirmation_summary_sent should be True."""
+        mode = make_booking_mode()
+        ctx = self._make_complete_ctx()
+        result = AgenticLoopResult(response_text="Te agendo el miércoles a las 10 con Pilar. ¿Confirmas?")
+
+        mode._build_response(result, ctx)
+
+        assert ctx.confirmation_summary_sent is True
+
+    def test_summary_sent_not_set_when_data_incomplete(self):
+        """When data is incomplete, confirmation_summary_sent stays False."""
+        mode = make_booking_mode()
+        ctx = BookingContext(service_id="svc-1", service_name="Corte")
+        result = AgenticLoopResult(response_text="¿Con qué estilista?")
+
+        mode._build_response(result, ctx)
+
+        assert ctx.confirmation_summary_sent is False
+
+
+# =============================================================================
+# Stylist resolver — A3
+# =============================================================================
+
+
+class TestResolveStylistFromMessage:
+    """Post-loop stylist resolver catches tool_skip on stylist selection."""
+
+    def test_bare_digit_resolves_stylist(self):
+        from agent.modes.booking_mode import _resolve_stylist_from_message
+
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"id": "sty-001", "name": "Ana"},
+                {"id": "sty-002", "name": "Marta"},
+                {"id": "sty-003", "name": "Pilar"},
+            ]
+        )
+        assert _resolve_stylist_from_message("3", ctx) is True
+        assert ctx.stylist_id == "sty-003"
+        assert ctx.stylist_name == "Pilar"
+
+    def test_out_of_range_returns_false(self):
+        from agent.modes.booking_mode import _resolve_stylist_from_message
+
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"id": "sty-001", "name": "Ana"},
+            ]
+        )
+        assert _resolve_stylist_from_message("5", ctx) is False
+        assert ctx.stylist_id is None
+
+    def test_already_set_is_noop(self):
+        from agent.modes.booking_mode import _resolve_stylist_from_message
+
+        ctx = BookingContext(
+            prefetched_stylists=[{"id": "sty-001", "name": "Ana"}],
+            stylist_id="existing",
+        )
+        assert _resolve_stylist_from_message("1", ctx) is False
+        assert ctx.stylist_id == "existing"
+
+    def test_name_match_resolves(self):
+        from agent.modes.booking_mode import _resolve_stylist_from_message
+
+        ctx = BookingContext(
+            prefetched_stylists=[
+                {"id": "sty-001", "name": "Ana"},
+                {"id": "sty-002", "name": "Pilar"},
+            ]
+        )
+        assert _resolve_stylist_from_message("Pilar", ctx) is True
+        assert ctx.stylist_id == "sty-002"
+
+    def test_no_prefetched_stylists_returns_false(self):
+        from agent.modes.booking_mode import _resolve_stylist_from_message
+
+        ctx = BookingContext()
+        assert _resolve_stylist_from_message("1", ctx) is False
