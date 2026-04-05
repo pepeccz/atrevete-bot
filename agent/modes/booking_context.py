@@ -69,6 +69,9 @@ class BookingContext:
     customer_name: str | None = None
     notes: str | None = None
 
+    # ── Disambiguation memory ──────────────────────────────────────────────
+    resolved_axes: dict[str, str] = field(default_factory=dict)
+
     # ── Booking hints (extracted from first user message) ────────────────────
     preferred_stylist_name: str | None = None
     preferred_date_hint: str | None = None
@@ -199,6 +202,27 @@ class BookingContext:
 
         if self.customer_name:
             lines.append(f"✅ Nombre: {self.customer_name}")
+
+        if self.resolved_axes:
+            axis_labels = {
+                "audience": "Público",
+                "hair_length": "Pelo",
+                "hair_density": "Densidad",
+            }
+            value_labels = {
+                "adult_female": "Mujer",
+                "adult_male": "Hombre",
+                "child_female": "Niña",
+                "child_male": "Niño",
+                "short_medium": "corto/medio",
+                "long": "largo",
+                "normal": "normal",
+                "extra": "extra (muy largo/denso)",
+            }
+            for axis, value in self.resolved_axes.items():
+                label = axis_labels.get(axis, axis)
+                val_label = value_labels.get(value, value)
+                lines.append(f"✅ {label}: {val_label}")
 
         if self.preferred_stylist_name and not self.stylist_id:
             lines.append(f"💡 Estilista preferida (sin confirmar): {self.preferred_stylist_name}")

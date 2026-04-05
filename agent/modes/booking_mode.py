@@ -65,6 +65,81 @@ def _get_all_booking_tools() -> list:
     ]
 
 
+def _resolve_slot_from_message(user_message: str, ctx: BookingContext) -> bool:
+    """Deterministic slot resolver — safety net for UUID injection.
+
+    Called after the agentic loop when the LLM didn't persist a slot selection.
+    Matches the user message against ctx.offered_slots using:
+      1. Bare digit (1-N index)
+      2. Time string ("a las HH:MM", "HH:MM", "las H")
+
+    On match: sets ctx.selected_slot, ctx.stylist_id, ctx.stylist_name.
+    Returns True if a slot was resolved, False otherwise.
+    """
+    import re
+
+    if not ctx.offered_slots or ctx.selected_slot is not None:
+        return False
+
+    text = user_message.strip()
+    if not text:
+        return False
+
+    num_slots = len(ctx.offered_slots)
+
+    # Strategy 1: bare digit (1-N)
+    bare_digit = re.fullmatch(r"\d+", text)
+    if bare_digit:
+        idx = int(bare_digit.group())
+        if 1 <= idx <= num_slots:
+            return _persist_slot(ctx, idx - 1)
+        return False
+
+    # Strategy 2: time string — extract HH:MM from message
+    time_match = re.search(r"(\d{1,2}):(\d{2})", text)
+    if time_match:
+        target_time = f"{int(time_match.group(1))}:{time_match.group(2)}"
+        for i, slot in enumerate(ctx.offered_slots):
+            slot_time = slot.get("time", "")
+            # Normalize: "10:00" → "10:00", compare both with and without leading zero
+            slot_hour_min = slot_time.lstrip("0") if slot_time.startswith("0") else slot_time
+            if target_time == slot_time or target_time == slot_hour_min:
+                return _persist_slot(ctx, i)
+        return False
+
+    # Strategy 3: "las N" / "a las N" (hour without minutes)
+    hour_match = re.search(r"(?:a\s+)?las\s+(\d{1,2})", text, re.IGNORECASE)
+    if hour_match:
+        target_hour = int(hour_match.group(1))
+        for i, slot in enumerate(ctx.offered_slots):
+            slot_time = slot.get("time", "")
+            try:
+                slot_hour = int(slot_time.split(":")[0])
+                if slot_hour == target_hour:
+                    return _persist_slot(ctx, i)
+            except (ValueError, IndexError):
+                continue
+
+    return False
+
+
+def _persist_slot(ctx: BookingContext, index: int) -> bool:
+    """Persist a matched slot into BookingContext."""
+    slot = ctx.offered_slots[index]
+    ctx.selected_slot = slot
+    if slot.get("stylist_id"):
+        ctx.stylist_id = slot["stylist_id"]
+    if slot.get("stylist_name"):
+        ctx.stylist_name = slot["stylist_name"]
+    logger.info(
+        "_resolve_slot_from_message: resolved slot index=%d time=%s stylist=%s",
+        index + 1,
+        slot.get("time"),
+        slot.get("stylist_name"),
+    )
+    return True
+
+
 async def _maybe_create_hold(ctx: BookingContext) -> None:
     """Programmatically create a HOLD when a slot has been selected but not yet held.
 
@@ -295,6 +370,15 @@ class BookingMode(BaseModeNode):
         # 7. Apply typed tool results
         self._apply_tool_results(result, ctx)
 
+        # 7b. Post-loop slot resolver — safety net for tool_skip
+        #     When the LLM didn't call a tool that persists the slot,
+        #     match the user message against offered_slots deterministically.
+        user_msg = state.get("user_message") or ""
+        if ctx.offered_slots and ctx.selected_slot is None:
+            if _resolve_slot_from_message(user_msg, ctx):
+                # Try to create hold now that slot is resolved
+                await _maybe_create_hold(ctx)
+
         # 8. Build response (F-8 override for confirmed bookings)
         response_text = self._build_response(result, ctx)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
@@ -351,7 +435,24 @@ class BookingMode(BaseModeNode):
                 )
 
         # Gate: search_services with stylist name → redirect to availability tools
+        # Also: auto-inject resolved axes so disambiguation doesn't re-ask
         if tool_name == "search_services":
+            if ctx and ctx.resolved_axes:
+                axis_param_map = {
+                    "audience": "audience",
+                    "hair_length": "hair_length",
+                    "hair_density": "hair_density",
+                }
+                for axis, value in ctx.resolved_axes.items():
+                    param = axis_param_map.get(axis)
+                    if param and not tool_args.get(param):
+                        tool_args[param] = value
+                        logger.debug(
+                            "_pre_tool_call: auto-injected %s=%s from resolved_axes",
+                            param,
+                            value,
+                        )
+
             if ctx and ctx.prefetched_stylists and not ctx.stylist_id:
                 query = (tool_args.get("query") or "").strip().lower()
                 for stylist in ctx.prefetched_stylists:

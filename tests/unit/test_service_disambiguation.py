@@ -403,6 +403,117 @@ class TestResolvedServiceDescription:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Indistinguishable candidates — must ask, never pick arbitrarily
+# ---------------------------------------------------------------------------
+
+# Two services in the same family, same hair_length, no other differentiating axis.
+# This is the exact scenario from production: Peinado Extra and Peinado Largo both
+# have hair_length=long and no further ask_if_missing axes.
+PEINADO_EXTRA = _make_service(
+    "Peinado Extra",
+    duration_minutes=55,
+    metadata_={
+        "family": "hairstyle",
+        "audience": None,
+        "disambiguation_tags": ["peinado extra"],
+        "ask_if_missing": [],
+        "variant": "extra",
+        "hair_length": "long",
+        "hair_density": None,
+        "combo_recommendations": [],
+    },
+)
+
+PEINADO_LARGO_V2 = _make_service(
+    "Peinado Largo",
+    duration_minutes=45,
+    metadata_={
+        "family": "hairstyle",
+        "audience": None,
+        "disambiguation_tags": ["peinado largo"],
+        "ask_if_missing": [],
+        "variant": "long",
+        "hair_length": "long",
+        "hair_density": None,
+        "combo_recommendations": [],
+    },
+)
+
+
+class TestIndistinguishableCandidates:
+    """When candidates are identical on all metadata axes, never pick arbitrarily."""
+
+    def test_indistinguishable_returns_clarification_not_resolved(self):
+        """Two services with same axes values must return ClarificationPayload, not ResolvedService."""
+        result = resolve_candidates(
+            [PEINADO_EXTRA, PEINADO_LARGO_V2],
+            hair_length="long",
+        )
+
+        assert isinstance(result, ClarificationPayload), (
+            f"Expected ClarificationPayload for indistinguishable candidates, got {type(result)}"
+        )
+
+    def test_indistinguishable_clarification_axis_is_service_variant(self):
+        """Clarification for indistinguishable candidates should use axis='service_variant'."""
+        result = resolve_candidates(
+            [PEINADO_EXTRA, PEINADO_LARGO_V2],
+            hair_length="long",
+        )
+
+        assert isinstance(result, ClarificationPayload)
+        assert result.axis == "service_variant"
+
+    def test_indistinguishable_options_list_actual_service_names(self):
+        """Each option must list the concrete service name so the user can choose."""
+        result = resolve_candidates(
+            [PEINADO_EXTRA, PEINADO_LARGO_V2],
+            hair_length="long",
+        )
+
+        assert isinstance(result, ClarificationPayload)
+        option_names = {opt["service_name"] for opt in result.options}
+        assert option_names == {"Peinado Extra", "Peinado Largo"}
+
+    def test_indistinguishable_options_have_all_required_fields(self):
+        """Options must have label, value, service_name, service_id, duration_minutes."""
+        result = resolve_candidates(
+            [PEINADO_EXTRA, PEINADO_LARGO_V2],
+            hair_length="long",
+        )
+
+        assert isinstance(result, ClarificationPayload)
+        for opt in result.options:
+            assert "label" in opt
+            assert "value" in opt
+            assert "service_name" in opt
+            assert "service_id" in opt
+            assert "duration_minutes" in opt
+
+    def test_three_indistinguishable_returns_clarification(self):
+        """Even 3+ indistinguishable candidates must return clarification."""
+        third = _make_service(
+            "Peinado Premium",
+            duration_minutes=60,
+            metadata_={
+                "family": "hairstyle",
+                "audience": None,
+                "ask_if_missing": [],
+                "hair_length": "long",
+                "hair_density": None,
+                "combo_recommendations": [],
+            },
+        )
+        result = resolve_candidates(
+            [PEINADO_EXTRA, PEINADO_LARGO_V2, third],
+            hair_length="long",
+        )
+
+        assert isinstance(result, ClarificationPayload)
+        assert len(result.options) == 3
+
+
 def test_audience_labels_are_colloquial():
     """Labels de audiencia deben ser coloquiales, no vocabulario técnico de peluquería."""
     labels = _AXIS_VALUE_LABELS["audience"]

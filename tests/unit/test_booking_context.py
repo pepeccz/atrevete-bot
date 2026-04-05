@@ -799,3 +799,56 @@ class TestHoldIdField:
         ctx = BookingContext(hold_id="hold-to-clear")
         ctx.reset_transient()
         assert ctx.hold_id is None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# resolved_axes — disambiguation axis memory
+# ═══════════════════════════════════════════════════════��═══════════════
+
+
+class TestResolvedAxes:
+    """resolved_axes tracks which disambiguation axes have been answered by the user.
+
+    This prevents the LLM from re-asking questions like hair_length when
+    the answer was already used to resolve a service.
+    """
+
+    def test_default_is_empty_dict(self):
+        ctx = BookingContext()
+        assert ctx.resolved_axes == {}
+
+    def test_can_set_axes(self):
+        ctx = BookingContext(resolved_axes={"audience": "adult_female", "hair_length": "short_medium"})
+        assert ctx.resolved_axes["audience"] == "adult_female"
+        assert ctx.resolved_axes["hair_length"] == "short_medium"
+
+    def test_serializes_in_to_mode_context(self):
+        ctx = BookingContext(resolved_axes={"hair_length": "long"})
+        result = ctx.to_mode_context()
+        assert "resolved_axes" in result
+        assert result["resolved_axes"] == {"hair_length": "long"}
+
+    def test_omitted_when_empty_in_to_mode_context(self):
+        ctx = BookingContext()
+        result = ctx.to_mode_context()
+        assert "resolved_axes" not in result
+
+    def test_round_trip(self):
+        ctx = BookingContext(resolved_axes={"audience": "adult_male", "hair_density": "normal"})
+        restored = BookingContext.from_mode_context(ctx.to_mode_context())
+        assert restored.resolved_axes == {"audience": "adult_male", "hair_density": "normal"}
+
+    def test_shown_in_collected_summary(self):
+        """Resolved axes must appear in collected_summary so the LLM sees them."""
+        ctx = BookingContext(
+            service_name="Peinado",
+            resolved_axes={"hair_length": "short_medium"},
+        )
+        summary = ctx.collected_summary()
+        assert "hair_length" in summary or "Pelo" in summary
+
+    def test_not_cleared_by_reset_transient(self):
+        """resolved_axes survives reset_transient — they're part of service identity."""
+        ctx = BookingContext(resolved_axes={"audience": "adult_female"})
+        ctx.reset_transient()
+        assert ctx.resolved_axes == {"audience": "adult_female"}

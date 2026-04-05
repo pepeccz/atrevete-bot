@@ -204,6 +204,36 @@ def _build_clarification(
     )
 
 
+def _build_variant_clarification(candidates: list[Service]) -> ClarificationPayload:
+    """Build a name-based clarification when candidates are indistinguishable on metadata axes.
+
+    Uses axis="service_variant" with each option labeled by service name.
+    This is the last-resort disambiguation — the user picks by name.
+    """
+    options: list[dict[str, Any]] = []
+    for svc in candidates:
+        meta = _meta(svc)
+        options.append(
+            {
+                "label": svc.name,
+                "value": svc.name,
+                "service_name": svc.name,
+                "service_id": str(svc.id),
+                "duration_minutes": svc.duration_minutes,
+                "category": svc.category.value,
+                "family": meta.get("family"),
+                "combo_recommendations": meta.get("combo_recommendations", []),
+                "description": svc.description,
+            }
+        )
+
+    return ClarificationPayload(
+        axis="service_variant",
+        question_hint="Hay varias opciones. ¿Cuál preferís?",
+        options=options,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -350,9 +380,13 @@ def resolve_candidates(
             return _build_clarification(fallback_axis, active)
 
     # -----------------------------------------------------------------------
-    # 7. All remaining candidates are identical on all axes — return best one
+    # 7. All remaining candidates differ only by name — ask user to choose
     # -----------------------------------------------------------------------
-    logger.info(
-        f"resolve_candidates: returning first of {len(active)} indistinguishable candidates"
-    )
+    if len(active) > 1:
+        logger.info(
+            f"resolve_candidates: {len(active)} indistinguishable candidates — "
+            "building service_variant clarification"
+        )
+        return _build_variant_clarification(active)
+
     return _to_resolved(active[0])

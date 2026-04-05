@@ -211,6 +211,15 @@ def extract_service_fields(result: dict, ctx: BookingContext) -> None:
         ctx.candidate_services = []
         # Extract service description for transparency
         _upsert_service_detail(ctx, svc)
+        # Track resolved disambiguation axes so they're never re-asked
+        resolved_axes = result.get("resolved_axes")
+        if resolved_axes and isinstance(resolved_axes, dict):
+            ctx.resolved_axes.update(resolved_axes)
+            logger.info(
+                "extract_service_fields: stored resolved_axes=%s",
+                resolved_axes,
+            )
+
         logger.info(
             "extract_service_fields: resolved service '%s' (id=%s)",
             svc.get("name"),

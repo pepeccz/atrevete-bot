@@ -602,7 +602,17 @@ async def search_services(
                 f"Resolved single service via metadata: '{disambiguation_result.name}' "
                 f"for query='{query}'"
             )
-            return {
+            # Collect which disambiguation axes were used to resolve this service
+            # so tool_extractors can store them in BookingContext.resolved_axes
+            resolved_axes: dict[str, str] = {}
+            if audience:
+                resolved_axes["audience"] = audience
+            if hair_length:
+                resolved_axes["hair_length"] = hair_length
+            if hair_density:
+                resolved_axes["hair_density"] = hair_density
+
+            result_dict: dict[str, Any] = {
                 "resolved_service": {
                     "id": str(disambiguation_result.id),
                     "name": disambiguation_result.name,
@@ -616,6 +626,9 @@ async def search_services(
                 "count": 1,
                 "query": query,
             }
+            if resolved_axes:
+                result_dict["resolved_axes"] = resolved_axes
+            return result_dict
 
         # Step 4b: Clarification needed from metadata resolver
         if isinstance(disambiguation_result, ClarificationPayload):
