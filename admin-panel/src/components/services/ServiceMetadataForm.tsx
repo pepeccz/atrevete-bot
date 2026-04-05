@@ -10,7 +10,7 @@ import {
 import { Label } from "@/components/ui/label";
 
 const AUDIENCE_OPTIONS = [
-  { value: "", label: "Sin especificar" },
+  { value: "__none__", label: "Sin especificar" },
   { value: "adult_female", label: "Señora" },
   { value: "adult_male", label: "Caballero" },
   { value: "child_female", label: "Niña" },
@@ -34,8 +34,8 @@ export function ServiceMetadataForm({
       <Label className="text-sm font-medium">Audiencia</Label>
       <Select
         disabled={disabled}
-        value={value ?? ""}
-        onValueChange={(v) => onChange(v === "" ? null : v)}
+        value={value ?? "__none__"}
+        onValueChange={(v) => onChange(v === "__none__" ? null : v)}
       >
         <SelectTrigger>
           <SelectValue placeholder="Sin especificar" />
