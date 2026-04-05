@@ -2,14 +2,13 @@
 General Mode — v6.0 Mode-Based Architecture.
 
 Handles informational queries: FAQs, service information, salon hours, policies.
-Uses only read-only tools (query_info, search_services) — no booking risk.
+Routes to BOOKING for service requests. Uses escalate as the only tool.
 
 This is the default mode after GREETING completes and whenever the user asks
 an informational question during an active BOOKING flow.
 """
 
 import logging
-from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -24,56 +23,23 @@ class GeneralMode(BaseModeNode):
     """
     Mode node for informational queries (FAQs, services, hours, policies).
 
-    Uses query_info and search_services tools — read-only, no booking mutations.
-    Always stays in GENERAL mode (mode transitions are handled by router_node).
+    Responds directly from LLM knowledge + system prompt — no data tools.
+    Routes the user to BOOKING mode for service/appointment requests.
+    Escalation is handled via the escalate_to_human tool.
     """
 
     @property
     def mode_name(self) -> str:
         return "GENERAL"
 
-    @staticmethod
-    def _extract_booking_handoff(tool_results: dict[str, Any]) -> dict[str, Any] | None:
-        raw = tool_results.get("search_services")
-        # Normalize: _run_agentic_loop stores results as lists (one entry per call)
-        if isinstance(raw, list):
-            if not raw:
-                return None
-            envelope = raw[-1]  # take the most recent call result
-        elif isinstance(raw, dict):
-            envelope = raw  # legacy/test shape
-        else:
-            return None
+    def get_tools(self):
+        from agent.tools.escalation_tools import escalate_to_human
 
-        if not isinstance(envelope, dict):
-            return None
-
-        if isinstance(envelope.get("resolved_service"), dict):
-            return {"resolved_service": dict(envelope["resolved_service"])}
-
-        if isinstance(envelope.get("clarification_needed"), dict):
-            clarification = envelope["clarification_needed"]
-            return {
-                "pending_clarifications": [
-                    {
-                        "axis": clarification.get("axis", ""),
-                        "question_hint": clarification.get("question_hint", ""),
-                        "options": clarification.get("options", []),
-                    }
-                ]
-            }
-
-        services = envelope.get("services")
-        if isinstance(services, list):
-            return {
-                "candidate_services": [service for service in services if isinstance(service, dict)]
-            }
-
-        return None
+        return [escalate_to_human]
 
     async def handle(self, state: ConversationState, intent: object) -> dict:
         """
-        Handle an informational query using read-only tools.
+        Handle an informational query.
 
         Args:
             state: Current conversation state
@@ -82,10 +48,6 @@ class GeneralMode(BaseModeNode):
         Returns:
             Partial state update dict with assistant response appended
         """
-        from agent.tools.escalation_tools import escalate_to_human
-        from agent.tools.info_tools import query_info
-        from agent.tools.search_services import search_services
-
         mode_context = state.get("mode_context") or {}
 
         langchain_messages: list[SystemMessage | HumanMessage | AIMessage]
@@ -121,10 +83,10 @@ class GeneralMode(BaseModeNode):
                 elif role == "assistant":
                     langchain_messages.append(AIMessage(content=content))
 
-        # Run agentic loop with read-only tools + escalation
+        # Run agentic loop with escalation tool only
         result = await self._run_agentic_loop(
             langchain_messages,
-            tools=[query_info, search_services, escalate_to_human],
+            tools=self.get_tools(),
         )
 
         self.logger.info(
@@ -140,10 +102,7 @@ class GeneralMode(BaseModeNode):
 
         updates = {
             **add_message(state, "assistant", final_response),
-            "mode_context": {
-                **mode_context,
-                "general_booking_handoff": self._extract_booking_handoff(result.tool_results),
-            },
+            "mode_context": mode_context,
             "last_node": "general",
             "user_message": None,
         }

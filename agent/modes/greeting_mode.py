@@ -26,7 +26,6 @@ import unicodedata
 from agent.modes.base import BaseModeNode
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
-from agent.tools.customer_tools import manage_customer
 from shared.audience_maps import AUDIENCE_HINT_MAP
 
 logger = logging.getLogger(__name__)
@@ -231,6 +230,9 @@ class GreetingMode(BaseModeNode):
     def mode_name(self) -> str:
         return "GREETING"
 
+    def get_tools(self):
+        return []
+
     @staticmethod
     def _extract_response_text(result: object | None) -> str:
         if result is None:
@@ -318,8 +320,8 @@ class GreetingMode(BaseModeNode):
             return updates
 
         # ── Branch 2: New customer ───────────────────────────────────────
-        # Create customer silently using pending_whatsapp_name (from Chatwoot sender.name)
-        # ADR-3: Soft-fail — customer creation failure does NOT escalate, just continues
+        # Customer get-or-create is now handled inside the book() tool.
+        # GREETING only collects the name hint for state — no DB writes here.
         pending_name = state.get("pending_whatsapp_name")
 
         # ── Fallback: extract name from message text when WhatsApp metadata is absent
@@ -332,29 +334,11 @@ class GreetingMode(BaseModeNode):
                 )
                 pending_name = extracted
 
-        existing_id = state.get("customer_id")
-
-        customer_id: str | None = existing_id or None
-        if not customer_id:
-            try:
-                customer_id = await self._create_customer(state, pending_name)
-            except Exception as exc:
-                self.logger.warning(
-                    "GreetingMode: customer creation failed (soft-fail, continuing): %s | phone=%s",
-                    exc,
-                    state.get("customer_phone"),
-                )
-                customer_id = None
-
         self.logger.info(
-            "GreetingMode: new customer | pending_name=%s | customer_id=%s | target_mode=%s",
+            "GreetingMode: new customer | pending_name=%s | target_mode=%s",
             pending_name,
-            customer_id,
             target_mode,
         )
-
-        # ADR-3: No more escalation on customer creation failure — just continue
-        # The user gets a warm greeting, and customer creation will be retried later.
 
         fallback_response = _WELCOME_NEW
         response = await self._render_layered_response(
@@ -377,8 +361,6 @@ class GreetingMode(BaseModeNode):
             **add_message(state, "assistant", final_response),
             "user_message": None,
         }
-        if customer_id:
-            updates["customer_id"] = customer_id
         if pending_name:
             updates["customer_name"] = pending_name
         if disclosure_sent:
@@ -466,52 +448,3 @@ class GreetingMode(BaseModeNode):
 
         return fallback_response
 
-    async def _create_customer(self, state: ConversationState, name: str | None) -> str | None:
-        """
-        Create a new customer record in the database.
-
-        Uses `name` (from Chatwoot sender.name) as first_name.
-        If name is None, creates customer without a name.
-
-        Returns the customer ID string if successful, or None on failure.
-        """
-        customer_phone = state.get("customer_phone", "")
-        if not customer_phone:
-            self.logger.warning("GreetingMode: no customer_phone in state — skipping DB creation")
-            return None
-
-        try:
-            data: dict = {}
-            if name:
-                data["first_name"] = name
-
-            result = await manage_customer.ainvoke(
-                {
-                    "action": "create",
-                    "phone": customer_phone,
-                    "data": data,
-                }
-            )
-
-            if isinstance(result, dict) and "id" in result and "error" not in result:
-                customer_id = str(result["id"])
-                self.logger.info(
-                    "GreetingMode: customer created | id=%s | name=%s | phone=%s",
-                    customer_id,
-                    name,
-                    customer_phone,
-                )
-                return customer_id
-            else:
-                self.logger.warning(
-                    "GreetingMode: manage_customer returned unexpected result: %s", result
-                )
-                return None
-
-        except Exception as exc:
-            self.logger.error(
-                "GreetingMode: customer creation failed | name=%s | error=%s",
-                name,
-                exc,
-            )
-            return None

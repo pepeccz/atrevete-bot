@@ -3,8 +3,6 @@ Unified audience maps for the Atrévete Bot.
 
 Single source of truth for audience/demographic hint maps used across:
 - agent/modes/greeting_mode.py   (AUDIENCE_HINT_MAP)
-- agent/modes/tool_extractors.py (AUDIENCE_HINT_MAP)
-- agent/tools/search_services.py  (AUDIENCE_KEYWORDS)
 
 Design decision: superset merge of all local maps that were previously
 duplicated in each consumer file (ADR: REQ-4).
@@ -45,17 +43,6 @@ AUDIENCE_HINT_MAP: dict[str, str] = {
     # baby
     "bebe": "baby",
 }
-
-# Maps audience axis values → lists of keyword strings used to match service names/descriptions
-# when metadata_.audience is absent/null (keyword fallback path).
-# Previously defined as _AUDIENCE_KEYWORDS in agent/tools/search_services.py.
-AUDIENCE_KEYWORDS: dict[str, list[str]] = {
-    "adult_female": ["dama", "mujer", "senora", "adulta", "femenino", "femenina"],
-    "adult_male": ["caballero", "hombre", "senor", "adulto", "masculino"],
-    "child_female": ["nina", "nena", "infantil femenino"],
-    "child_male": ["nino", "nene", "infantil masculino"],
-}
-
 
 def canonicalize_audience(raw: str) -> str:
     """Normalize an audience string to a canonical audience hint value.

@@ -10,6 +10,14 @@ Key changes from v3:
 - Uses holidays table instead of Google Calendar keyword detection
 - Google Calendar is now push-only (fire-and-forget after DB commit)
 
+v5.0 changes:
+- check_availability now accepts service_name (exact catalog name) instead of service_category
+- Resolves Service from name → extracts duration_minutes and category automatically
+- Accepts stylist_name instead of stylist_id — resolves Stylist from name
+- Validates category compatibility between service and stylist
+- AUTO-SEARCH: if no slots on requested date, searches next 3 open business days
+- find_next_available removed — merged into check_availability AUTO-SEARCH logic
+
 Performance improvement:
 - Before (Google Calendar): 2-5 seconds per availability check
 - After (PostgreSQL): <100ms per availability check
@@ -17,27 +25,39 @@ Performance improvement:
 
 import logging
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any
-from uuid import UUID
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 
 from agent.services.availability_service import (
     get_available_slots,
     is_holiday,
 )
-from agent.modes.booking_context import InterpretationReason
-from agent.tools.calendar_tools import (
-    get_stylists_by_category,
-)
 from agent.utils import parse_natural_date, MADRID_TZ
 from agent.utils.date_parser import DateParseError
 from agent.validators import validate_3_day_rule
 from agent.validators.transaction_validators import MINIMUM_DAYS
-from database.models import ServiceCategory
-from shared.business_hours_validator import get_next_open_date, is_date_closed
+from database.connection import get_async_session
+from database.models import Service, ServiceCategory, Stylist
+from shared.business_hours_validator import is_date_closed
 
 logger = logging.getLogger(__name__)
+
+
+class InterpretationReason(StrEnum):
+    """Canonical semantic reasons produced while interpreting availability results.
+
+    The values are shared by booking mode and availability tools so semantic
+    payloads stay stable across prompt rendering, transition decisions, and tests.
+    """
+
+    MINIMUM_DAYS_RULE = "minimum_days_rule"
+    NO_AVAILABILITY = "no_availability"
+    STYLIST_UNAVAILABLE = "stylist_unavailable"
+    SUCCESS = "success"
+
 
 SAME_DAY_BUFFER_HOURS = 1
 MAX_SLOTS_TO_PRESENT = 5
@@ -45,688 +65,396 @@ MAX_SLOTS_TO_PRESENT = 5
 # Spanish day names indexed by weekday() (Monday=0 … Sunday=6)
 _DAY_NAMES_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
-# Conservative service duration for informational availability checks
-# Used when exact service duration is unknown (conversational queries)
-# Set to 90 minutes to cover most common service combinations
-CONSERVATIVE_SERVICE_DURATION_MINUTES = 90
+# How many additional business days to auto-search when the requested date has no slots
+_AUTO_SEARCH_EXTRA_DAYS = 3
+
+
+async def _resolve_service_by_name(name: str) -> Service | None:
+    """Case-insensitive exact match on services WHERE is_active=true."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service).where(
+                func.lower(Service.name) == func.lower(name),
+                Service.is_active == True,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def _resolve_stylist_by_name(name: str) -> Stylist | None:
+    """Case-insensitive match on stylists WHERE is_active=true."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Stylist).where(
+                func.lower(Stylist.name) == func.lower(name),
+                Stylist.is_active == True,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def _get_active_stylists_for_category(category: ServiceCategory) -> list[Stylist]:
+    """Return all active stylists that can handle the given service category."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Stylist).where(
+                Stylist.is_active == True,
+                Stylist.category.in_([category, ServiceCategory.BOTH]),
+            )
+        )
+        return list(result.scalars().all())
 
 
 class CheckAvailabilitySchema(BaseModel):
     """Schema for check_availability tool parameters."""
 
-    service_category: str = Field(
-        description="Service category: 'Peluquería' or 'Estética' (or English: 'Hairdressing', 'Aesthetics')"
-    )
+    service_name: str = Field(description="Nombre exacto del servicio del catálogo")
     date: str = Field(
-        description=(
-            "Date in natural language or ISO format. Accepts:\n"
-            "- Natural Spanish: 'mañana', 'viernes', '8 de noviembre'\n"
-            "- ISO 8601: '2025-11-08'\n"
-            "- Day/month: '08/11', '8-11'\n"
-            "Preferí ISO (YYYY-MM-DD) calculado desde la fecha actual del sistema prompt. "
-            "Si no estás seguro del cálculo, pasá la frase original en español sin traducir al inglés."
-        )
+        description="Fecha en español natural ('mañana', 'viernes') o ISO ('2026-04-10')"
+    )
+    stylist_name: str | None = Field(
+        default=None, description="Nombre de la estilista preferida del catálogo"
     )
     time_range: str | None = Field(
         default=None,
-        description="Optional time range: 'morning', 'afternoon', or specific like '14:00-18:00'",
-    )
-    stylist_id: str | None = Field(
-        default=None, description="Optional preferred stylist UUID as string"
-    )
-    service_duration_minutes: int | None = Field(
-        default=None,
-        description=(
-            "Duration of the selected service in minutes. "
-            "Used to ensure proper slot spacing (e.g., 70-min service won't show 10:00 and 10:30). "
-            "If not provided, uses conservative 90-minute estimate."
-        ),
+        description="Filtro de horario: 'morning', 'afternoon', o rango como '14:00-18:00'",
     )
 
 
 @tool(args_schema=CheckAvailabilitySchema)
 async def check_availability(
-    service_category: str,
+    service_name: str,
     date: str,
+    stylist_name: str | None = None,
     time_range: str | None = None,
-    stylist_id: str | None = None,
-    service_duration_minutes: int | None = None,
 ) -> dict[str, Any]:
     """
-    Check availability across stylist calendars with natural date parsing.
+    Check availability for a service on a date, resolved from the service catalog.
 
     ONLY valid source for available appointment slots. You MUST NOT guess availability
     or invent time slots. ALWAYS call this tool when checking if a customer can book
     on a specific date.
 
-    This tool checks calendar availability for the requested date and returns available slots.
-    Accepts natural language Spanish dates like "mañana", "viernes", "8 de noviembre".
+    Resolves service_name to a catalog Service (duration + category), optionally
+    resolves stylist_name to a Stylist, validates category compatibility, then
+    queries the DB-first availability service.
+
+    AUTO-SEARCH: If no slots exist on the requested date, automatically searches
+    the next 3 open business days and returns those results with alternative_dates=True.
 
     Automatically validates:
-    - 3-day minimum notice requirement
-    - Holiday closures
+    - Service exists in catalog (SERVICE_NOT_FOUND)
+    - Stylist exists (STYLIST_NOT_FOUND) and matches service category (CATEGORY_MISMATCH)
+    - 3-day minimum notice requirement (date_too_soon=True)
+    - Holiday closures (holiday_detected=True)
     - Business hours constraints
 
-    Queries the DB-first availability service for the requested category and
-    returns available time slots prioritized by business rules.
-
-    Semantic fields are additive. When the requested date violates the 3-day
-    minimum notice rule, the payload keeps `date_too_soon=True` and also exposes
-    `date_requested`, `min_valid_date`, and `substitution_reason` so the booking
-    prompt can explain why the request was rejected.
-
     Args:
-        service_category: "Peluquería"/"Hairdressing" or "Estética"/"Aesthetics"
-        date: Date in natural Spanish or ISO format:
-            - Natural: "mañana", "viernes", "lunes", "8 de noviembre"
-            - ISO: "2025-11-08"
-            - Day/month: "08/11"
-        time_range: Optional time filter ("morning", "afternoon", or "14:00-18:00")
-        stylist_id: Optional preferred stylist UUID
+        service_name: Exact service name from the catalog
+        date: Date in natural Spanish ('mañana', 'viernes') or ISO ('2026-04-10')
+        stylist_name: Optional preferred stylist name from the catalog
+        time_range: Optional time filter ('morning', 'afternoon', or '14:00-18:00')
 
     Returns:
-        Dict with:
-            {
-                "available_slots": [
-                    {
-                        "time": "10:00",
-                        "end_time": "11:30",
-                        "stylist": "Marta",
-                        "stylist_id": "uuid",
-                        "date": "2025-11-08"
-                    }
-                ],
-                "is_same_day": bool,
-                "holiday_detected": bool,
-                "date_too_soon": bool,
-                "date_requested": str | None,
-                "min_valid_date": str | None,
-                "substitution_reason": str | None,
-                "error": str | None
+        {
+            "success": bool,
+            "service": {"name": str, "duration_minutes": int, "category": str},
+            "requested_date": str,          # ISO format
+            "available_slots": [
+                {
+                    "index": int,           # 1-based
+                    "time": "10:00",
+                    "end_time": "10:45",
+                    "stylist_name": "Marta",
+                    "stylist_id": "uuid",
+                    "date": "2026-04-10",
+                    "day_label": "jueves 10 de abril",
+                    "full_datetime": "2026-04-10T10:00:00+02:00"
+                }
+            ],
+            "alternative_dates": bool,      # True if slots are from later dates (auto-search)
+            "date_too_soon": bool,
+            "min_valid_date": str | None,   # ISO date if date_too_soon
+            "holiday_detected": bool,
+            "error_code": str | None,       # SERVICE_NOT_FOUND, STYLIST_NOT_FOUND,
+                                            # CATEGORY_MISMATCH, NO_SLOTS, DATE_CLOSED
+            "error_message": str | None
+        }
+    """
+    base_response: dict[str, Any] = {
+        "success": False,
+        "service": None,
+        "requested_date": None,
+        "available_slots": [],
+        "alternative_dates": False,
+        "date_too_soon": False,
+        "min_valid_date": None,
+        "holiday_detected": False,
+        "error_code": None,
+        "error_message": None,
+    }
+
+    try:
+        # ── 1. Resolve service ─────────────────────────────────────────────────
+        service = await _resolve_service_by_name(service_name)
+        if service is None:
+            logger.warning(f"Service not found: '{service_name}'")
+            return {
+                **base_response,
+                "error_code": "SERVICE_NOT_FOUND",
+                "error_message": (
+                    f"No encontré el servicio '{service_name}' en el catálogo. "
+                    "Verificá que el nombre sea exacto."
+                ),
             }
 
-    Examples:
-        Natural Spanish dates:
-        >>> await check_availability("Peluquería", "mañana")
-        {"available_slots": [...], "is_same_day": False, ...}
+        duration_minutes = service.duration_minutes
+        service_category = service.category
+        service_info = {
+            "name": service.name,
+            "duration_minutes": duration_minutes,
+            "category": service_category.value,
+        }
+        base_response["service"] = service_info
 
-        >>> await check_availability("Estética", "viernes", "afternoon")
-        {"available_slots": [...], ...}
+        # ── 2. Resolve stylist (optional) ──────────────────────────────────────
+        resolved_stylist: Stylist | None = None
+        if stylist_name:
+            resolved_stylist = await _resolve_stylist_by_name(stylist_name)
+            if resolved_stylist is None:
+                logger.warning(f"Stylist not found: '{stylist_name}'")
+                return {
+                    **base_response,
+                    "error_code": "STYLIST_NOT_FOUND",
+                    "error_message": (
+                        f"No encontré la estilista '{stylist_name}'. "
+                        "Verificá que el nombre sea exacto."
+                    ),
+                }
 
-        >>> await check_availability("Hairdressing", "8 de noviembre")
-        {"available_slots": [...], ...}
+            # Validate category compatibility
+            stylist_ok = (
+                resolved_stylist.category == service_category
+                or resolved_stylist.category == ServiceCategory.BOTH
+            )
+            if not stylist_ok:
+                logger.warning(
+                    f"Category mismatch: stylist '{resolved_stylist.name}' "
+                    f"({resolved_stylist.category.value}) cannot do "
+                    f"'{service.name}' ({service_category.value})"
+                )
+                return {
+                    **base_response,
+                    "error_code": "CATEGORY_MISMATCH",
+                    "error_message": (
+                        f"{resolved_stylist.name} no realiza servicios de "
+                        f"{service_category.value}. "
+                        "Elegí una estilista compatible o dejá el campo vacío."
+                    ),
+                }
 
-        ISO format:
-        >>> await check_availability("Aesthetics", "2025-11-15")
-        {"available_slots": [...], ...}
+        # ── 3. Build stylist list ──────────────────────────────────────────────
+        if resolved_stylist:
+            stylists = [resolved_stylist]
+        else:
+            stylists = await _get_active_stylists_for_category(service_category)
+            if not stylists:
+                logger.warning(f"No active stylists for category {service_category.value}")
+                return {
+                    **base_response,
+                    "error_code": "NO_SLOTS",
+                    "error_message": (
+                        f"No hay estilistas activas para {service_category.value} en este momento."
+                    ),
+                }
 
-    Note:
-        - Uses CONSERVATIVE_SERVICE_DURATION_MINUTES (90 min) for slot validation
-        - Validates 3-day rule before checking calendar (returns error if < 3 days)
-        - Checks holiday calendar before querying availability
-    """
-    try:
-        # Parse natural language date
+        # ── 4. Parse date ──────────────────────────────────────────────────────
         try:
             requested_date = parse_natural_date(date, timezone=MADRID_TZ)
             logger.info(f"Parsed date '{date}' → {requested_date.date()}")
         except DateParseError as e:
             logger.error(f"Failed to parse date '{date}': {e}")
             return {
-                "date_parse_error": True,
-                "hint": "Usá formato YYYY-MM-DD (ej: '2026-04-02') o una frase como 'próximo jueves'",
-                "error": str(e),
-                "available_slots": [],
-                "is_same_day": False,
-                "holiday_detected": False,
-                "date_too_soon": False,
+                **base_response,
+                "error_code": "DATE_CLOSED",
+                "error_message": (
+                    f"No pude interpretar la fecha '{date}'. "
+                    "Usá formato YYYY-MM-DD o una frase como 'próximo jueves'."
+                ),
             }
 
-        # Validate 3-day rule
+        base_response["requested_date"] = requested_date.date().isoformat()
+
+        # ── 5. Validate 3-day rule ─────────────────────────────────────────────
         validation = await validate_3_day_rule(requested_date)
         if not validation["valid"]:
             logger.warning(f"3-day rule violation for date {requested_date.date()}")
+            min_valid = (
+                datetime.now(MADRID_TZ) + timedelta(days=MINIMUM_DAYS)
+            ).date().isoformat()
             return {
-                "error": validation["error_message"],
-                "available_slots": [],
-                "is_same_day": False,
-                "holiday_detected": False,
+                **base_response,
                 "date_too_soon": True,
-                "days_until_appointment": validation["days_until_appointment"],
-                "date_requested": requested_date.date().isoformat(),
-                "min_valid_date": (datetime.now(MADRID_TZ) + timedelta(days=MINIMUM_DAYS))
-                .date()
-                .isoformat(),
-                "substitution_reason": InterpretationReason.MINIMUM_DAYS_RULE.value,
+                "min_valid_date": min_valid,
+                "error_code": "DATE_CLOSED",
+                "error_message": validation["error_message"],
             }
 
-        # Convert service_category string to enum
-        category_normalized = service_category.upper()
-        if category_normalized in ["PELUQUERÍA", "PELUQUERIA", "HAIRDRESSING"]:
-            category_enum = ServiceCategory.HAIRDRESSING
-        elif category_normalized in ["ESTÉTICA", "ESTETICA", "AESTHETICS"]:
-            category_enum = ServiceCategory.AESTHETICS
-        else:
-            logger.error(f"Invalid service category: {service_category}")
-            return {
-                "error": f"Categoría inválida: {service_category}. Usa 'Peluquería' o 'Estética'.",
-                "available_slots": [],
-                "is_same_day": False,
-                "holiday_detected": False,
-                "date_too_soon": False,
-            }
-
-        # Check for holidays using DB-first service (queries holidays table)
+        # ── 6. Check holiday on requested date ─────────────────────────────────
         holiday_name = await is_holiday(requested_date)
         if holiday_name:
             logger.info(f"Holiday detected on {requested_date.date()}: {holiday_name}")
             return {
-                "error": None,
-                "available_slots": [],
-                "is_same_day": False,
+                **base_response,
                 "holiday_detected": True,
-                "holiday_name": holiday_name,
-                "date_too_soon": False,
+                "error_code": "DATE_CLOSED",
+                "error_message": (
+                    f"El salón está cerrado el {requested_date.date().isoformat()} "
+                    f"por {holiday_name}."
+                ),
             }
 
-        # Get stylists for category
-        stylists = await get_stylists_by_category(category_enum)
-
-        if not stylists:
-            logger.warning(f"No stylists found for category {service_category}")
+        # ── 7. Check if date is a closed business day ──────────────────────────
+        if await is_date_closed(requested_date):
+            logger.info(f"Business closed on {requested_date.date()}")
+            day_label = _DAY_NAMES_ES[requested_date.weekday()]
             return {
-                "error": f"No hay estilistas disponibles para {service_category}",
-                "available_slots": [],
-                "is_same_day": False,
-                "holiday_detected": False,
-                "date_too_soon": False,
+                **base_response,
+                "error_code": "DATE_CLOSED",
+                "error_message": (
+                    f"El salón no abre los {day_label}s. "
+                    "Elegí otro día."
+                ),
             }
 
-        # Filter by preferred stylist if specified
-        if stylist_id:
-            try:
-                stylist_uuid = UUID(stylist_id)
-                stylists = [s for s in stylists if s.id == stylist_uuid]
-                if not stylists:
-                    logger.warning(f"Preferred stylist {stylist_id} not found or wrong category")
-            except ValueError:
-                logger.error(f"Invalid stylist_id format: {stylist_id}")
+        # ── 8. Query availability ──────────────────────────────────────────────
+        def _build_day_label(dt: datetime) -> str:
+            day_name = _DAY_NAMES_ES[dt.weekday()]
+            return f"{day_name} {dt.day} de {_MONTH_NAMES_ES[dt.month - 1]}"
 
-        # Check if same-day booking
-        current_date = datetime.now(MADRID_TZ).date()
-        is_same_day_booking = requested_date.date() == current_date
+        all_slots = await _collect_slots_for_date(
+            requested_date, stylists, duration_minutes, time_range
+        )
 
-        # Query availability for each stylist using DB-first service
-        all_slots = []
-        effective_duration = service_duration_minutes or CONSERVATIVE_SERVICE_DURATION_MINUTES
-
-        for stylist in stylists:
-            # Get available slots from DB (queries appointments + blocking_events)
-            available_slots = await get_available_slots(
-                stylist_id=stylist.id,
-                target_date=requested_date,
-                service_duration_minutes=effective_duration,
-                pack_slots=True,
+        # ── 9. AUTO-SEARCH: next 3 open days if empty ──────────────────────────
+        alternative_dates = False
+        if not all_slots:
+            logger.info(
+                f"No slots on {requested_date.date()}, auto-searching next "
+                f"{_AUTO_SEARCH_EXTRA_DAYS} open business days"
             )
+            search_from = requested_date + timedelta(days=1)
+            days_found = 0
 
-            # Convert to output format (slots already have correct string format from availability_service)
-            for slot in available_slots:
-                all_slots.append(
-                    {
-                        "time": slot["time"],  # Already "HH:MM" string
-                        "end_time": slot["end_time"],  # Already "HH:MM" string
-                        "stylist": stylist.name,
-                        "stylist_id": str(stylist.id),
-                        "date": requested_date.strftime("%Y-%m-%d"),
-                        "day_name": _DAY_NAMES_ES[requested_date.weekday()],
-                        "full_datetime": slot["full_datetime"],  # Already ISO string
-                    }
+            for _ in range(30):  # safety upper-bound
+                if days_found >= _AUTO_SEARCH_EXTRA_DAYS:
+                    break
+
+                # Skip closed days
+                if await is_date_closed(search_from):
+                    search_from += timedelta(days=1)
+                    continue
+
+                # Skip holidays
+                if await is_holiday(search_from):
+                    search_from += timedelta(days=1)
+                    continue
+
+                day_slots = await _collect_slots_for_date(
+                    search_from, stylists, duration_minutes, time_range
                 )
+                if day_slots:
+                    all_slots.extend(day_slots)
+                    days_found += 1
+                    alternative_dates = True
 
-        # Filter by time_range if specified
-        if time_range:
-            all_slots = _filter_slots_by_time_range(all_slots, time_range)
+                search_from += timedelta(days=1)
 
-        # Sort and limit slots
-        all_slots = _prioritize_and_limit_slots(all_slots, MAX_SLOTS_TO_PRESENT)
+        # ── 10. Return result ──────────────────────────────────────────────────
+        if not all_slots:
+            logger.info("No slots found even after auto-search")
+            return {
+                **base_response,
+                "error_code": "NO_SLOTS",
+                "error_message": (
+                    "No encontré disponibilidad en los próximos días. "
+                    "Intentá con otra fecha o estilista."
+                ),
+            }
+
+        # Sort by date then time, limit to MAX_SLOTS_TO_PRESENT
+        all_slots.sort(key=lambda s: (s["date"], s["time"]))
+        all_slots = all_slots[:MAX_SLOTS_TO_PRESENT]
+
+        # Add 1-based index
+        for idx, slot in enumerate(all_slots, start=1):
+            slot["index"] = idx
 
         logger.info(
-            f"Found {len(all_slots)} available slots for {service_category} on {requested_date.date()}"
+            f"Found {len(all_slots)} slots for '{service_name}' "
+            f"({'alternative dates' if alternative_dates else 'requested date'})"
         )
 
         return {
-            "error": None,
+            **base_response,
+            "success": True,
             "available_slots": all_slots,
-            "is_same_day": is_same_day_booking,
-            "holiday_detected": False,
-            "date_too_soon": False,
+            "alternative_dates": alternative_dates,
         }
 
     except Exception as e:
         logger.error(f"Error in check_availability: {e}", exc_info=True)
         return {
-            "error": f"Error checking availability: {str(e)}",
-            "available_slots": [],
-            "is_same_day": False,
-            "holiday_detected": False,
-            "date_too_soon": False,
+            **base_response,
+            "error_code": "NO_SLOTS",
+            "error_message": f"Error verificando disponibilidad: {str(e)}",
         }
 
 
-class FindNextAvailableSchema(BaseModel):
-    """Schema for find_next_available tool parameters."""
+# Spanish month names (1-indexed via month - 1)
+_MONTH_NAMES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
 
-    service_category: str = Field(
-        description="Service category: 'Peluquería' or 'Estética' (or English: 'Hairdressing', 'Aesthetics')"
+
+async def _collect_slots_for_date(
+    target_date: datetime,
+    stylists: list[Stylist],
+    duration_minutes: int,
+    time_range: str | None,
+) -> list[dict[str, Any]]:
+    """Query all stylists for available slots on target_date, apply time_range filter."""
+    day_label = (
+        f"{_DAY_NAMES_ES[target_date.weekday()]} "
+        f"{target_date.day} de "
+        f"{_MONTH_NAMES_ES[target_date.month - 1]}"
     )
-    time_range: str | None = Field(
-        default=None,
-        description="Optional time range: 'morning', 'afternoon', or specific like '14:00-18:00'",
-    )
-    stylist_id: str | None = Field(
-        default=None, description="Optional preferred stylist UUID as string"
-    )
-    max_days_to_search: int = Field(
-        default=10, description="Maximum number of days to search ahead (default: 10)"
-    )
-    start_date: str | None = Field(
-        default=None,
-        description=(
-            "Optional preferred start date in natural language or ISO format. "
-            "If specified, search starts from this date (respecting 3-day rule). "
-            "Accepts: 'mañana', 'viernes', '15 de diciembre', '2025-12-15'. "
-            "Preferí ISO (YYYY-MM-DD) calculado desde la fecha actual del sistema prompt. "
-            "Si no estás seguro del cálculo, pasá la frase original en español sin traducir al inglés."
-        ),
-    )
-    service_duration_minutes: int | None = Field(
-        default=None,
-        description=(
-            "Duration of the selected service in minutes. "
-            "Used to ensure proper slot spacing (e.g., 70-min service won't show 10:00 and 10:30). "
-            "If not provided, uses conservative 90-minute estimate."
-        ),
-    )
+    date_iso = target_date.strftime("%Y-%m-%d")
 
-
-@tool(args_schema=FindNextAvailableSchema)
-async def find_next_available(
-    service_category: str,
-    time_range: str | None = None,
-    stylist_id: str | None = None,
-    max_days_to_search: int = 10,
-    start_date: str | None = None,
-    service_duration_minutes: int | None = None,
-) -> dict[str, Any]:
-    """
-    Automatically search for next available slots across multiple dates.
-
-    ONLY valid source for available appointment slots. You MUST NOT guess availability
-    or invent time slots. ALWAYS call this tool when a customer needs flexible date
-    options or when check_availability returned empty.
-
-    This tool searches the next N days (default: 10) to find available appointment slots.
-    Unlike check_availability which checks a single date, this tool iterates through
-    multiple dates automatically and returns slots from the first 2-3 dates that have
-    availability.
-
-    **v4.2 Enhancement**: When stylist_id is provided, returns 4 options:
-    - Option 1: SOONEST slot with ANY stylist (marked with is_soonest_any=True)
-    - Options 2-4: Slots with the SELECTED stylist
-
-    This allows users to choose between fastest availability or preferred stylist.
-
-    WHEN TO USE:
-    - Customer asks for "próxima disponibilidad" / "next available"
-    - check_availability returned empty for a specific date
-    - Customer is flexible with dates
-    - You want to present multiple date options automatically
-
-    WHEN NOT TO USE:
-    - Customer has a specific date in mind (use check_availability instead)
-    - Customer is asking about availability on a particular day
-
-    Args:
-        service_category: "Peluquería"/"Hairdressing" or "Estética"/"Aesthetics"
-        time_range: Optional time filter ("morning", "afternoon", or "14:00-18:00")
-        stylist_id: Optional preferred stylist UUID
-        max_days_to_search: Maximum days to search ahead (default: 10)
-        start_date: Preferred natural-language or ISO date that anchors the search.
-            If it breaks the minimum-days rule, the search starts at the first
-            valid date and the response includes semantic substitution fields.
-        service_duration_minutes: Service duration for proper slot spacing (default: 90)
-
-    Returns:
-        Dict with:
-            {
-                "soonest_any": {  # v4.2: Slot más próximo con CUALQUIER estilista
-                    "time": "10:00",
-                    "date": "2025-11-08",
-                    "day_name": "viernes",
-                    "stylist": "Ana",
-                    "stylist_id": "uuid",
-                    "full_datetime": "2025-11-08T10:00:00+01:00",
-                    "is_soonest_any": True,
-                    "is_different_stylist": True  # True if different from selected stylist
-                },
-                "selected_stylist_slots": [  # v4.2: Slots del estilista elegido
-                    {
-                        "time": "11:00",
-                        "date": "2025-11-09",
-                        ...
-                    }
-                ],
-                "selected_stylist_name": str,
-                "available_stylists": [...],  # Legacy format for backwards compat
-                "total_slots_found": int,
-                "dates_searched": int,
-                "substitution_made": bool,
-                "date_requested": str,
-                "date_substituted": str,
-                "substitution_reason": str,
-                "min_valid_date": str,
-                "error": str | None
-            }
-
-    Example:
-        >>> await find_next_available("Peluquería", stylist_id="uuid-pilar")
-        {
-            "soonest_any": {"time": "10:00", "stylist": "Ana", "is_different_stylist": True, ...},
-            "selected_stylist_slots": [
-                {"time": "11:00", "stylist": "Pilar", ...},
-                {"time": "14:00", "stylist": "Pilar", ...},
-                {"time": "16:00", "stylist": "Pilar", ...}
-            ],
-            "selected_stylist_name": "Pilar",
-            ...
-        }
-
-        >>> await find_next_available("Peluquería", start_date="mañana")
-        {
-            "substitution_made": True,
-            "substitution_reason": "minimum_days_rule",
-            "date_requested": "2026-03-17",
-            "date_substituted": "2026-03-19",
-            "min_valid_date": "2026-03-19",
-            ...
-        }
-    """
-    try:
-        # Use service duration or default to conservative estimate
-        effective_duration = service_duration_minutes or CONSERVATIVE_SERVICE_DURATION_MINUTES
-
-        # Convert service_category string to enum
-        category_normalized = service_category.upper()
-        if category_normalized in ["PELUQUERÍA", "PELUQUERIA", "HAIRDRESSING"]:
-            category_enum = ServiceCategory.HAIRDRESSING
-        elif category_normalized in ["ESTÉTICA", "ESTETICA", "AESTHETICS"]:
-            category_enum = ServiceCategory.AESTHETICS
-        else:
-            logger.error(f"Invalid service category: {service_category}")
-            return {
-                "error": f"Categoría inválida: {service_category}. Usa 'Peluquería' o 'Estética'.",
-                "available_dates": [],
-                "total_slots_found": 0,
-                "dates_searched": 0,
-            }
-
-        # Get stylists for category
-        all_stylists = await get_stylists_by_category(category_enum)
-
-        if not all_stylists:
-            logger.warning(f"No stylists found for category {service_category}")
-            return {
-                "error": f"No hay estilistas disponibles para {service_category}",
-                "available_dates": [],
-                "total_slots_found": 0,
-                "dates_searched": 0,
-            }
-
-        # v4.2: If stylist_id provided, find soonest_any + selected_stylist_slots
-        selected_stylist = None
-        selected_stylist_uuid = None
-        if stylist_id:
-            try:
-                selected_stylist_uuid = UUID(stylist_id)
-                for s in all_stylists:
-                    if s.id == selected_stylist_uuid:
-                        selected_stylist = s
-                        break
-                if not selected_stylist:
-                    logger.warning(f"Preferred stylist {stylist_id} not found or wrong category")
-            except ValueError:
-                logger.error(f"Invalid stylist_id format: {stylist_id}")
-
-        # For searching, use selected stylist only if provided
-        stylists = [selected_stylist] if selected_stylist else all_stylists
-
-        # Spanish day names for formatting
-        day_names_es = _DAY_NAMES_ES
-
-        # Start searching from the earliest valid date
-        now = datetime.now(MADRID_TZ)
-        min_valid_date = now + timedelta(days=MINIMUM_DAYS)  # 3-day rule minimum
-
-        # If start_date is provided, parse and use it (respecting 3-day rule)
-        preferred_date: datetime | None = None
-        if start_date:
-            substitution_requested = False
-            try:
-                preferred_date = parse_natural_date(start_date, timezone=MADRID_TZ)
-                logger.info(f"Parsed preferred start_date '{start_date}' → {preferred_date.date()}")
-                # Use preferred date if it's after the 3-day minimum
-                if preferred_date >= min_valid_date:
-                    earliest_valid = preferred_date
-                else:
-                    # Preferred date is too soon, use minimum valid date
-                    logger.info(
-                        f"Preferred date {preferred_date.date()} is before 3-day minimum "
-                        f"{min_valid_date.date()}, using minimum"
-                    )
-                    earliest_valid = min_valid_date
-                    substitution_requested = True
-            except DateParseError as e:
-                logger.warning(f"Could not parse start_date '{start_date}': {e}")
-                return {
-                    "date_parse_error": True,
-                    "hint": "Usá formato YYYY-MM-DD (ej: '2026-04-02') o una frase como 'próximo jueves'",
-                    "error": str(e),
-                    "available_slots": [],
-                    "available_stylists": [],
-                    "soonest_any": None,
-                    "selected_stylist_slots": [],
-                    "total_slots_found": 0,
-                    "dates_searched": 0,
-                    "substitution_made": False,
-                }
-        else:
-            earliest_valid = min_valid_date
-            substitution_requested = False
-
-        # Check if earliest_valid date is a holiday
-        if isinstance(earliest_valid, datetime):
-            holiday_name = await is_holiday(earliest_valid.date())
-            if holiday_name:
-                logger.info(
-                    f"find_next_available: start date {earliest_valid.date()} is a holiday ({holiday_name}), "
-                    f"starting search from next day"
-                )
-                # Start from next day instead
-                earliest_valid = earliest_valid + timedelta(days=1)
-
-        # Skip closed days using database-driven validation
-        # If earliest_valid falls on closed day, find next open date
-        next_open = await get_next_open_date(earliest_valid, max_search_days=14)
-        if next_open is None:
-            logger.warning(
-                f"No open dates found within 14 days from {earliest_valid.date()}. "
-                f"Returning empty result."
-            )
-            return {
-                "available_stylists": [],
-                "dates_searched": 0,
-                "total_slots_found": 0,
-                "error": "No hay fechas disponibles en las próximas 2 semanas",
-            }
-        earliest_valid = next_open
-
-        search_start = earliest_valid.replace(hour=0, minute=0, second=0, microsecond=0)
-
-        # v4.3: soonest_any suppressed — caused LLM to auto-book a different stylist's slot
-        # when a specific stylist_id was provided (e.g., during reschedule flows).
-        # The "earliest with any stylist" suggestion was confusing and led to incorrect bookings.
-        soonest_any = None
-
-        # Collect ALL slots from selected stylist(s) across multiple dates (DB-first)
-        all_slots_by_stylist = {stylist.id: [] for stylist in stylists}
-        dates_searched = 0
-        MAX_SLOTS_PER_STYLIST = 5  # v4.2: Return up to 5 slots per stylist for options 2-4
-
-        # Iterate through days
-        for day_offset in range(max_days_to_search):
-            current_date = search_start + timedelta(days=day_offset)
-            dates_searched += 1
-
-            # Check if we have enough slots for all stylists (3 per stylist for v4.2)
-            if all(len(slots) >= MAX_SLOTS_PER_STYLIST for slots in all_slots_by_stylist.values()):
-                logger.info(
-                    f"Found {MAX_SLOTS_PER_STYLIST} slots for all stylists, stopping search"
-                )
-                break
-
-            # Skip closed days using database-driven validation
-            if await is_date_closed(current_date):
-                logger.info(
-                    f"Skipping closed day: {current_date.date()} "
-                    f"({day_names_es[current_date.weekday()]})"
-                )
-                continue
-
-            # Check for holidays using DB-first service (queries holidays table)
-            holiday_name = await is_holiday(current_date)
-            if holiday_name:
-                logger.info(f"Skipping holiday: {current_date.date()} ({holiday_name})")
-                continue
-
-            # Query availability for each stylist on this date using DB-first service
-            for stylist in stylists:
-                # Skip if we already have enough slots for this stylist
-                if len(all_slots_by_stylist[stylist.id]) >= MAX_SLOTS_PER_STYLIST:
-                    continue
-
-                # Get available slots from DB (queries appointments + blocking_events)
-                # v4.2: Use effective_duration for proper spacing (no overlapping options)
-                available_slots = await get_available_slots(
-                    stylist_id=stylist.id,
-                    target_date=current_date,
-                    service_duration_minutes=effective_duration,
-                    # slot_interval_minutes defaults to service duration for proper spacing
-                    pack_slots=True,  # Prioritize slots adjacent to appointments
-                )
-
-                # Convert to output format and add to results (slots already have correct string format)
-                for slot in available_slots:
-                    # Stop if we already have enough slots for this stylist
-                    if len(all_slots_by_stylist[stylist.id]) >= MAX_SLOTS_PER_STYLIST:
-                        break
-
-                    slot_data = {
-                        "time": slot["time"],  # Already "HH:MM" string
-                        "end_time": slot["end_time"],  # Already "HH:MM" string
-                        "date": current_date.strftime("%Y-%m-%d"),
-                        "day_name": day_names_es[current_date.weekday()],
-                        "stylist": stylist.name,
-                        "stylist_id": str(stylist.id),
-                        "full_datetime": slot["full_datetime"],  # Already ISO string
-                    }
-
-                    # Filter by time_range if specified
-                    if time_range:
-                        if not _slot_matches_time_range(slot_data, time_range):
-                            continue
-
-                    all_slots_by_stylist[stylist.id].append(slot_data)
-
-        # Format results by stylist (group slots by stylist, v4.2: 3 slots for selected stylist)
-        available_stylists = []
-        total_slots_found = 0
-        selected_stylist_slots = []
-
-        for stylist in stylists:
-            stylist_slots = all_slots_by_stylist[stylist.id]
-            if stylist_slots:
-                # v4.2: Use 3 slots for selected stylist (options 2-4)
-                truncated_slots = stylist_slots[:MAX_SLOTS_PER_STYLIST]
-
-                # Simplify slot output: keep essential fields for display and booking
-                simplified_slots = [
-                    {
-                        "time": slot["time"],
-                        "date": slot["date"],
-                        "day_name": slot["day_name"],
-                        "full_datetime": slot["full_datetime"],  # Keep for booking
-                        "stylist": slot["stylist"],  # Keep for display "(con Pilar)"
-                        "stylist_id": slot["stylist_id"],  # Keep for booking
-                    }
-                    for slot in truncated_slots
-                ]
-
-                available_stylists.append(
-                    {
-                        "stylist_name": stylist.name,
-                        "stylist_id": str(stylist.id),
-                        "slots": simplified_slots,
-                        "slots_shown": len(simplified_slots),
-                        "slots_total": len(stylist_slots),
-                    }
-                )
-                total_slots_found += len(stylist_slots)
-
-                # v4.2: Store selected stylist's slots separately
-                if selected_stylist and stylist.id == selected_stylist.id:
-                    selected_stylist_slots = simplified_slots
-
-                logger.info(
-                    f"Found {len(simplified_slots)}/{len(stylist_slots)} slots for {stylist.name}"
-                )
-
-        logger.info(
-            f"find_next_available completed: {total_slots_found} total slots across "
-            f"{len(available_stylists)} stylists (searched {dates_searched} days)"
+    slots: list[dict[str, Any]] = []
+    for stylist in stylists:
+        raw_slots = await get_available_slots(
+            stylist_id=stylist.id,
+            target_date=target_date,
+            service_duration_minutes=duration_minutes,
+            pack_slots=True,
         )
+        for slot in raw_slots:
+            slot_data = {
+                "time": slot["time"],
+                "end_time": slot["end_time"],
+                "stylist_name": stylist.name,
+                "stylist_id": str(stylist.id),
+                "date": date_iso,
+                "day_label": day_label,
+                "full_datetime": slot["full_datetime"],
+            }
+            if time_range and not _slot_matches_time_range(slot_data, time_range):
+                continue
+            slots.append(slot_data)
 
-        # v4.2: Build response with new fields
-        result = {
-            "error": None,
-            "available_stylists": available_stylists,  # Legacy format for backwards compat
-            "total_slots_found": total_slots_found,
-            "dates_searched": dates_searched,
-        }
-
-        # v4.2: Add soonest_any and selected_stylist fields when a stylist was selected
-        if selected_stylist:
-            result["soonest_any"] = soonest_any  # May be None if nothing found
-            result["selected_stylist_slots"] = selected_stylist_slots
-            result["selected_stylist_name"] = selected_stylist.name
-            result["selected_stylist_id"] = str(selected_stylist.id)
-
-        if start_date and substitution_requested and preferred_date is not None:
-            result["substitution_made"] = True
-            result["date_requested"] = preferred_date.date().isoformat()
-            result["date_substituted"] = min_valid_date.date().isoformat()
-            result["substitution_reason"] = InterpretationReason.MINIMUM_DAYS_RULE.value
-            result["min_valid_date"] = min_valid_date.date().isoformat()
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Error in find_next_available: {e}", exc_info=True)
-        return {
-            "error": f"Error searching availability: {str(e)}",
-            "available_stylists": [],
-            "total_slots_found": 0,
-            "dates_searched": 0,
-        }
+    return slots
 
 
 def _slot_matches_time_range(slot_data: dict, time_range: str) -> bool:

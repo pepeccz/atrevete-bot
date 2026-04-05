@@ -189,7 +189,6 @@ try:
         load_markdown,
         get_system_prompt,
         clear_prompt_cache,
-        build_step_context,
         build_layered_messages,
     )
 
@@ -207,7 +206,6 @@ __all__ = [
     "load_markdown",
     "get_system_prompt",
     "clear_prompt_cache",
-    "build_step_context",
     "build_layered_messages",
     "LOADER_AVAILABLE",
 ]

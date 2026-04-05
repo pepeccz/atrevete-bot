@@ -99,7 +99,11 @@ atrevete-bot/
 │   │   └── escalation_mode.py     # ESCALATION mode
 │   ├── routing/           # Intent router
 │   │   └── intent_router.py       # Keyword + LLM hybrid classifier
-│   ├── tools/             # 8 LangChain tools
+│   ├── tools/             # 4 LangChain tools
+│   │   ├── availability_tools.py  # check_availability
+│   │   ├── booking_tools.py       # book
+│   │   ├── manage_appointments_tool.py  # manage_appointments
+│   │   └── escalation_tools.py    # escalate
 │   ├── prompts/           # System prompts
 │   │   ├── shared/        # Core prompts (identity, rules, glossary)
 │   │   └── modes/         # Mode-specific overlays

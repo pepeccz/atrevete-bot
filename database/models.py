@@ -329,21 +329,11 @@ class Service(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    audience: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     # Disambiguation metadata (JSONB) — used by the service resolver to disambiguate
     # ambiguous service names without hardcoding families in prompts.
     # Default: {} (empty — all existing services are metadata-free until seeded).
-    # Schema (when populated):
-    #   {
-    #     "family": str,                  # e.g. "haircut", "highlights", "hairstyle"
-    #     "audience": str | null,         # e.g. "adult_male", "child_female"
-    #     "disambiguation_tags": [str],   # keywords that map a customer query to this service
-    #     "ask_if_missing": [str],        # dimensions the agent must clarify before booking
-    #     "variant": str | null,          # e.g. "extra", "express", "long"
-    #     "hair_length": str | null,      # e.g. "short", "long"
-    #     "hair_density": str | null,     # e.g. "normal", "extra"
-    #     "combo_recommendations": [str], # suggested add-on service names
-    #   }
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
 
     # Timestamps
@@ -367,12 +357,11 @@ class Service(Base):
             "category",
             postgresql_where=text("is_active = true"),
         ),
-        # GIN index for fuzzy search on name using pg_trgm
+        # Partial index on audience for active services
         Index(
-            "idx_services_name_trgm",
-            "name",
-            postgresql_using="gin",
-            postgresql_ops={"name": "gin_trgm_ops"},
+            "idx_services_audience",
+            "audience",
+            postgresql_where=text("is_active = true"),
         ),
     )
 

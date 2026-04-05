@@ -1,23 +1,25 @@
 """
-Booking Tool for v3.0 Architecture.
+Booking Tool for v4.0 Architecture (DB-First, simplified).
 
-This module contains only the book() tool which delegates to BookingTransaction.
-All helper functions (get_service_by_name, calculate_total, validate_service_combination)
-have been removed as they're now handled by:
-- service_resolver.py (service name resolution)
-- BookingTransaction (validation + atomic booking)
-- info_tools.py (service queries)
-
-The book() tool is the single entry point for creating appointments.
+Redesigned for T-06:
+- customer get-or-create by phone (no pre-registered customer_id required)
+- services validated by exact name match via _resolve_service_by_name
+- slot_index resolved to stylist_id + start_time by booking_mode._pre_tool_call hook
+- RapidFuzz / service_resolver / sentinel values all removed
 """
 
 import logging
 from datetime import datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from database.connection import get_async_session
+from database.models import Customer
 
 logger = logging.getLogger(__name__)
 
@@ -28,78 +30,105 @@ logger = logging.getLogger(__name__)
 
 
 class BookSchema(BaseModel):
-    """Schema for book tool parameters."""
+    """Schema for book tool parameters.
 
-    customer_id: str = Field(
-        description="Customer UUID as string (automatically registered in first interaction)"
+    NOTE: stylist_id and start_time are NOT declared here — they are injected
+    at runtime by booking_mode._pre_tool_call after resolving slot_index.
+    """
+
+    customer_phone: str = Field(description="Teléfono del cliente en formato E.164")
+    customer_first_name: str = Field(description="Nombre del cliente")
+    customer_last_name: str | None = Field(
+        default=None, description="Apellido del cliente (opcional)"
     )
-    first_name: str = Field(description="Customer's first name for this appointment (e.g., 'Pepe')")
-    last_name: str | None = Field(
-        default=None,
-        description="Customer's last name for this appointment (optional, e.g., 'Cabeza Cruz')",
+    services: list[str] = Field(description="Lista de nombres exactos de servicios del catálogo")
+    slot_index: int = Field(
+        description="Índice del slot elegido (1-based) del resultado de check_availability"
     )
-    notes: str | None = Field(
-        default=None,
-        description="Appointment-specific notes (allergies, preferences, special requests)",
-    )
-    services: list[str] = Field(
-        description="List of service names as strings (e.g., ['Corte de Caballero', 'Barba'])"
-    )
-    stylist_id: str = Field(
-        default="__RESOLVE_FROM_SLOT__",
-        description=(
-            "Stylist UUID as string. If slot_index is provided, this is auto-resolved "
-            "— you can omit it."
-        ),
-    )
-    start_time: str = Field(
-        default="__RESOLVE_FROM_SLOT__",
-        description=(
-            "Appointment start time in ISO 8601 format with timezone. "
-            "If slot_index is provided, this is auto-resolved — you can omit it."
-        ),
-    )
-    slot_index: int | None = Field(
-        default=None,
-        description=(
-            "REQUIRED when offered_slots are shown to the user. "
-            "1-based index of the chosen slot from '## Horarios ofrecidos'. "
-            "When provided, stylist_id and start_time are auto-resolved — you can omit them. "
-            "Example: user chose option 2 → slot_index=2"
-        ),
-    )
+    notes: str | None = Field(default=None, description="Notas de la cita (alergias, preferencias)")
     conversation_id: str | None = Field(
-        default=None,
-        description="Chatwoot conversation ID for this customer (from conversation state)",
+        default=None, description="ID de conversación de Chatwoot"
     )
 
-    audience: str | None = Field(
-        default=None,
-        description=(
-            "Optional audience hint to pass to service name resolution. "
-            "Examples: 'adult_female', 'adult_male', 'child_female', 'child_male'. "
-            "Injected automatically by _pre_tool_call when service_audience_hint is set."
-        ),
-    )
 
-    @field_validator("stylist_id", "customer_id")
-    @classmethod
-    def validate_uuid_format(cls, v: str, info) -> str:
-        """Reject empty strings and non-UUID values before they reach the DB.
+# ============================================================================
+# Customer Helper
+# ============================================================================
 
-        Exception: allow sentinel value '__RESOLVE_FROM_SLOT__' for stylist_id
-        when slot_index resolution is expected (resolved by _pre_tool_call hook).
-        """
-        if not v or not v.strip():
-            raise ValueError("UUID cannot be empty")
-        # Allow sentinel value — will be resolved by _pre_tool_call before execution
-        if v == "__RESOLVE_FROM_SLOT__":
-            return v
+
+async def _get_or_create_customer(
+    phone: str, first_name: str, last_name: str | None = None
+) -> Customer | None:
+    """
+    Normalize phone, lookup by phone, create if not found, update name if changed.
+
+    Returns Customer object on success, None on failure.
+    """
+    from agent.tools.customer_tools import normalize_phone
+
+    normalized = normalize_phone(phone)
+    if not normalized:
+        logger.warning(f"_get_or_create_customer: invalid phone '{phone}'")
+        return None
+
+    async with get_async_session() as session:
         try:
-            UUID(v)
-        except ValueError as err:
-            raise ValueError(f"Invalid UUID format: '{v}'") from err
-        return v
+            result = await session.execute(
+                select(Customer).where(Customer.phone == normalized)
+            )
+            customer = result.scalar_one_or_none()
+
+            if customer is None:
+                customer = Customer(
+                    id=uuid4(),
+                    phone=normalized,
+                    first_name=first_name,
+                    last_name=last_name,
+                )
+                session.add(customer)
+                await session.commit()
+                await session.refresh(customer)
+                logger.info(
+                    "Customer created",
+                    extra={"customer_id": str(customer.id), "phone": normalized},
+                )
+            else:
+                # Update name if it changed
+                name_changed = (
+                    customer.first_name != first_name
+                    or customer.last_name != last_name
+                )
+                if name_changed:
+                    customer.first_name = first_name
+                    customer.last_name = last_name
+                    await session.commit()
+                    await session.refresh(customer)
+                    logger.info(
+                        "Customer name updated",
+                        extra={"customer_id": str(customer.id)},
+                    )
+                else:
+                    logger.info(
+                        "Customer found (no changes)",
+                        extra={"customer_id": str(customer.id)},
+                    )
+
+            return customer
+
+        except IntegrityError as e:
+            await session.rollback()
+            # Race condition: another request created the customer concurrently
+            logger.warning(
+                f"_get_or_create_customer IntegrityError (concurrent create), retrying lookup: {e}"
+            )
+            result = await session.execute(
+                select(Customer).where(Customer.phone == normalized)
+            )
+            return result.scalar_one_or_none()
+
+        except Exception as e:
+            logger.error(f"_get_or_create_customer error: {e}", exc_info=True)
+            return None
 
 
 # ============================================================================
@@ -109,189 +138,215 @@ class BookSchema(BaseModel):
 
 @tool(args_schema=BookSchema)
 async def book(
-    customer_id: str,
-    first_name: str,
-    last_name: str | None = None,
-    notes: str | None = None,
+    customer_phone: str,
+    customer_first_name: str,
+    customer_last_name: str | None = None,
     services: list[str] | None = None,
-    stylist_id: str = "__RESOLVE_FROM_SLOT__",
-    start_time: str = "__RESOLVE_FROM_SLOT__",
-    slot_index: int | None = None,
+    slot_index: int = 0,
+    notes: str | None = None,
     conversation_id: str | None = None,
-    audience: str | None = None,
+    # Injected at runtime by booking_mode._pre_tool_call (not in schema):
+    stylist_id: str | None = None,
+    start_time: str | None = None,
 ) -> dict[str, Any]:
     """
     Create a new appointment booking (atomic transaction).
 
-    This is the single entry point for creating appointments in v3.0 architecture.
-    Delegates to BookingTransaction which handles:
-    - Validation (3-day rule, category consistency, slot availability)
-    - Calendar event creation (Google Calendar API)
-    - Database persistence (PostgreSQL with SERIALIZABLE isolation)
-    - Rollback on any failure (atomic operation)
+    Prerequisite: customer must have confirmed the booking summary.
+    The slot must have been selected via check_availability() first.
 
-    Prerequisites (must be completed before calling this tool):
-    1. Customer automatically registered in first interaction
-    2. Availability checked and slot selected via check_availability()
-    3. Customer name and notes collected from user
+    Resolves or creates the customer by phone, validates services against
+    the catalog by exact name, then delegates to BookingTransaction for
+    the atomic DB write + GCal push.
 
     Args:
-        customer_id: Customer UUID as string (from state, auto-registered)
-        first_name: Customer's first name for this appointment
-        last_name: Customer's last name (optional)
-        notes: Appointment-specific notes (allergies, preferences, etc.)
-        services: List of service names as strings (e.g., ["Corte de Caballero", "Barba"])
-        stylist_id: Stylist UUID as string
-        start_time: Appointment start time (ISO 8601 with timezone)
+        customer_phone: Customer phone in E.164 format
+        customer_first_name: Customer first name
+        customer_last_name: Customer last name (optional)
+        services: List of exact service names from the catalog
+        slot_index: 1-based index of the chosen slot from check_availability
+        notes: Appointment notes (allergies, preferences, etc.)
+        conversation_id: Chatwoot conversation ID
+        stylist_id: Injected by _pre_tool_call from resolved slot (not in schema)
+        start_time: Injected by _pre_tool_call from resolved slot (not in schema)
 
     Returns:
-        Dict with booking result. Structure:
-
         Success:
             {
                 "success": True,
                 "appointment_id": str,
-                "google_calendar_event_id": str,
+                "customer_id": str,
+                "customer_name": str,
+                "stylist_name": str,
                 "start_time": str,
                 "end_time": str,
                 "duration_minutes": int,
-                "customer_id": str,
-                "stylist_id": str,
-                "service_ids": list[str]
+                "services": [{"name": str, "duration_minutes": int}],
+                "google_calendar_event_id": str | None,
+                "error_code": None,
+                "error_message": None,
+                "_internal_flags": {"appointment_created": True}
             }
 
         Failure:
             {
                 "success": False,
-                "error_code": str,  # "CATEGORY_MISMATCH", "SLOT_TAKEN", "DATE_TOO_SOON", "AMBIGUOUS_SERVICE", etc.
-                "error_message": str,
-                "details": dict  # Additional error context
+                "error_code": str,
+                "error_message": str
             }
 
-        Ambiguous Service:
-            {
-                "success": False,
-                "error_code": "AMBIGUOUS_SERVICE",
-                "error_message": "El servicio '{query}' es ambiguo. Por favor, especifica cuál quieres.",
-                "details": {
-                    "query": str,
-                    "options": [
-                        {"id": str, "name": str, "duration_minutes": int, "category": str}
-                    ]
-                }
-            }
-
-    Example:
-        >>> # After customer identified and availability checked:
-        >>> result = await book(
-        ...     customer_id="550e8400-e29b-41d4-a716-446655440000",
-        ...     services=["Corte de Caballero", "Barba"],
-        ...     stylist_id="...",
-        ...     start_time="2025-11-08T10:00:00+01:00"
-        ... )
-        >>> if result["success"]:
-        ...     print(f"Booking created: {result['appointment_id']}")
-        ... else:
-        ...     print(f"Booking failed: {result['error_message']}")
-
-    Notes:
-        - Resolves service names to UUIDs internally using resolve_service_names()
-        - Returns ambiguity error if service names match multiple services
-        - Uses SERIALIZABLE transaction isolation to prevent race conditions
-        - Creates Google Calendar event before DB commit (rollback on failure)
-        - Validates business rules: 3-day rule, category consistency, slot availability
-        - All-or-nothing operation: either fully succeeds or fully rolls back
+    Error codes: SERVICE_NOT_FOUND, SLOT_TAKEN, INVALID_PHONE,
+                 DURATION_MISMATCH, CUSTOMER_CREATE_FAILED, EMPTY_SERVICES
     """
     try:
-        # Step 1: Resolve service names to UUIDs
-        from agent.utils.service_resolver import resolve_service_names
+        # ── 1. Validate services list ──────────────────────────────────────────
+        if not services:
+            logger.error("book(): services list is empty")
+            return {
+                "success": False,
+                "error_code": "EMPTY_SERVICES",
+                "error_message": "Debés indicar al menos un servicio.",
+                "error_details": {},
+            }
 
-        logger.info(f"Resolving service names: {services}", extra={"services": services})
+        # ── 2. Get-or-create customer ──────────────────────────────────────────
+        customer = await _get_or_create_customer(
+            phone=customer_phone,
+            first_name=customer_first_name,
+            last_name=customer_last_name,
+        )
+        if customer is None:
+            normalized_ok = True
+            from agent.tools.customer_tools import normalize_phone
+            if not normalize_phone(customer_phone):
+                normalized_ok = False
 
-        service_uuids, ambiguity_info = await resolve_service_names(services, audience=audience)
+            if not normalized_ok:
+                logger.error(f"book(): invalid phone '{customer_phone}'")
+                return {
+                    "success": False,
+                    "error_code": "INVALID_PHONE",
+                    "error_message": (
+                        f"El teléfono '{customer_phone}' no es válido. "
+                        "Usá formato E.164 (ej: +34612345678)."
+                    ),
+                    "error_details": {"phone": customer_phone},
+                }
 
-        # If ambiguity detected, return error with options for LLM to clarify
-        if ambiguity_info:
-            logger.warning(
-                f"Ambiguous service query in book(): '{ambiguity_info['query']}'",
-                extra={
-                    "query": ambiguity_info["query"],
-                    "options_count": len(ambiguity_info["options"]),
-                },
+            logger.error(f"book(): could not create/find customer for phone '{customer_phone}'")
+            return {
+                "success": False,
+                "error_code": "CUSTOMER_CREATE_FAILED",
+                "error_message": "No se pudo registrar al cliente. Intentá de nuevo.",
+                "error_details": {"phone": customer_phone},
+            }
+
+        # ── 3. Resolve services by exact name ──────────────────────────────────
+        from agent.tools.availability_tools import _resolve_service_by_name
+
+        resolved_services = []
+        for service_name in services:
+            svc = await _resolve_service_by_name(service_name)
+            if svc is None:
+                logger.warning(f"book(): service not found: '{service_name}'")
+                return {
+                    "success": False,
+                    "error_code": "SERVICE_NOT_FOUND",
+                    "error_message": (
+                        f"El servicio '{service_name}' no está en el catálogo. "
+                        "Verificá que el nombre sea exacto."
+                    ),
+                    "error_details": {"service_name": service_name},
+                }
+            resolved_services.append(svc)
+
+        service_ids = [svc.id for svc in resolved_services]
+        total_duration = sum(svc.duration_minutes for svc in resolved_services)
+
+        logger.info(
+            "Services resolved for booking",
+            extra={
+                "services": [svc.name for svc in resolved_services],
+                "total_duration": total_duration,
+            },
+        )
+
+        # ── 4. Validate injected slot data (from _pre_tool_call) ───────────────
+        if not stylist_id or not start_time:
+            logger.error(
+                "book(): stylist_id or start_time not injected by _pre_tool_call",
+                extra={"stylist_id": stylist_id, "start_time": start_time},
             )
             return {
                 "success": False,
-                "error_code": "AMBIGUOUS_SERVICE",
-                "error_message": f"El servicio '{ambiguity_info['query']}' es ambiguo. Por favor, especifica cuál quieres.",
-                "details": ambiguity_info,
+                "error_code": "SLOT_NOT_RESOLVED",
+                "error_message": (
+                    "No se pudo determinar el horario. "
+                    "Seleccioná un slot con check_availability primero."
+                ),
+                "error_details": {},
             }
 
-        # If no services resolved, return error
-        if not service_uuids:
-            logger.error(f"Could not resolve any service names: {services}")
-            return {
-                "success": False,
-                "error_code": "SERVICES_NOT_FOUND",
-                "error_message": f"No se encontraron los servicios solicitados: {', '.join(services)}",
-                "details": {"services": services},
-            }
-
-        logger.info(
-            f"Services resolved: {len(service_uuids)} UUIDs",
-            extra={"service_uuids": [str(uuid) for uuid in service_uuids]},
-        )
-
-        # Step 2: Parse customer and stylist UUIDs
         try:
-            customer_uuid = UUID(customer_id)
             stylist_uuid = UUID(stylist_id)
-        except ValueError as e:
-            logger.error(f"Invalid UUID format in book() parameters: {e}")
+        except (ValueError, TypeError) as e:
+            logger.error(f"book(): invalid stylist_id UUID '{stylist_id}': {e}")
             return {
                 "success": False,
-                "error_code": "INVALID_UUID",
-                "error_message": "ID inválido en los parámetros de reserva",
-                "details": {"error": str(e)},
+                "error_code": "SLOT_NOT_RESOLVED",
+                "error_message": "ID de estilista inválido.",
+                "error_details": {"stylist_id": stylist_id},
             }
 
-        # Step 3: Parse start time
         try:
             start_datetime = datetime.fromisoformat(start_time)
-        except ValueError as e:
-            logger.error(f"Invalid start_time format '{start_time}': {e}")
+        except (ValueError, TypeError) as e:
+            logger.error(f"book(): invalid start_time '{start_time}': {e}")
             return {
                 "success": False,
-                "error_code": "INVALID_DATETIME",
-                "error_message": "Formato de fecha/hora inválido",
-                "details": {"error": str(e)},
+                "error_code": "SLOT_NOT_RESOLVED",
+                "error_message": "Formato de fecha/hora inválido en el slot seleccionado.",
+                "error_details": {"start_time": start_time},
             }
 
         logger.info(
             "Booking requested",
             extra={
-                "customer_id": customer_id,
-                "first_name": first_name,
-                "last_name": last_name,
-                "services": services,
-                "service_count": len(service_uuids),
+                "customer_id": str(customer.id),
+                "customer_phone": customer_phone,
+                "customer_name": customer_first_name,
+                "services": [svc.name for svc in resolved_services],
+                "service_count": len(service_ids),
                 "stylist_id": stylist_id,
                 "start_time": start_time,
+                "total_duration": total_duration,
             },
         )
 
-        # Step 4: Execute BookingTransaction
+        # ── 5. Execute BookingTransaction ──────────────────────────────────────
         from agent.transactions.booking_transaction import BookingTransaction
 
         result = await BookingTransaction.execute(
-            customer_id=customer_uuid,
-            service_ids=service_uuids,
+            customer_id=customer.id,
+            service_ids=service_ids,
             stylist_id=stylist_uuid,
             start_time=start_datetime,
-            first_name=first_name,
-            last_name=last_name,
+            first_name=customer_first_name,
+            last_name=customer_last_name,
             notes=notes,
             conversation_id=conversation_id,
         )
+
+        # ── 6. Enrich success response with new schema fields ──────────────────
+        if result.get("success"):
+            services_detail = [
+                {"name": svc.name, "duration_minutes": svc.duration_minutes}
+                for svc in resolved_services
+            ]
+            result["services"] = services_detail
+            result["error_code"] = None
+            result["error_message"] = None
+            result["_internal_flags"] = {"appointment_created": True}
 
         return result
 
@@ -301,98 +356,5 @@ async def book(
             "success": False,
             "error_code": "BOOKING_ERROR",
             "error_message": "Error al procesar la reserva",
-            "details": {"error": str(e)},
+            "error_details": {"error": str(e)},
         }
-
-
-# ============================================================================
-# Helper Function for Service Name Resolution
-# ============================================================================
-
-
-async def get_service_by_name(service_name: str, fuzzy: bool = True, limit: int = 5) -> list[Any]:
-    """
-    Get services by name with fuzzy matching using RapidFuzz.
-
-    Used by service_resolver.py to resolve service names to UUIDs.
-    Uses the same fuzzy matching algorithm as search_services for consistency.
-
-    Args:
-        service_name: Service name to search for
-        fuzzy: If True, uses RapidFuzz for fuzzy matching; if False, exact match only
-        limit: Maximum number of results to return
-
-    Returns:
-        List of Service database models matching the query
-
-    Example:
-        >>> services = await get_service_by_name("corte peinado largo", fuzzy=True, limit=5)
-        >>> # Returns [Service(name="Corte + Peinado (Largo)"), ...] using RapidFuzz
-    """
-    from rapidfuzz import fuzz, process
-    from sqlalchemy import select
-
-    from database.connection import get_async_session
-    from database.models import Service
-
-    async with get_async_session() as session:
-        try:
-            if fuzzy:
-                # Load all active services for fuzzy matching
-                query = select(Service).where(Service.is_active)
-                result = await session.execute(query)
-                all_services = list(result.scalars().all())
-
-                if not all_services:
-                    logger.warning("No active services found in database")
-                    return []
-
-                # Use RapidFuzz for fuzzy matching (same as search_services)
-                choices_dict = {s.name: s for s in all_services}
-                matches = process.extract(
-                    service_name,
-                    choices_dict.keys(),
-                    scorer=fuzz.WRatio,
-                    score_cutoff=45,  # Same threshold as search_services
-                    limit=limit,
-                )
-
-                # Extract matched service objects
-                matched_services = [choices_dict[match[0]] for match in matches]
-
-                logger.info(
-                    f"Found {len(matched_services)} services matching '{service_name}' using RapidFuzz (fuzzy={fuzzy})"
-                )
-
-                return matched_services
-
-            else:
-                # Exact match (case-insensitive)
-                query = (
-                    select(Service)
-                    .where(Service.name.ilike(service_name))
-                    .where(Service.is_active)
-                    .limit(limit)
-                )
-
-                result = await session.execute(query)
-                services = list(result.scalars().all())
-
-                logger.info(
-                    f"Found {len(services)} services matching '{service_name}' (exact match)"
-                )
-
-                return services
-
-        except Exception as e:
-            logger.error(
-                f"Error in get_service_by_name('{service_name}', fuzzy={fuzzy}): {e}", exc_info=True
-            )
-            return []  # Return empty list on error, never None
-
-    # Edge case: If async for loop exits without returning (should never happen)
-    logger.warning(
-        f"get_service_by_name('{service_name}', fuzzy={fuzzy}) "
-        f"exited async loop without returning - returning empty list"
-    )
-    return []

@@ -13,7 +13,7 @@ from typing import Any, TypedDict
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
-from agent.prompts.loader import build_layered_messages, build_step_context, get_system_prompt
+from agent.prompts.loader import build_layered_messages, get_system_prompt
 from agent.state.schemas import ConversationState
 from shared.config import get_settings
 
@@ -141,64 +141,40 @@ class BaseModeNode(ABC):
         """
         return await get_system_prompt()
 
-    def _build_step_context(
-        self,
-        state: ConversationState,
-        mode_context: dict,
-        step_name: str | None = None,
-    ) -> str:
-        """
-        Build dynamic context with step info, collected data, and user message.
-
-        Creates context string with:
-        - Current step information
-        - Collected data so far (service, stylist, slot, name, notes)
-        - User message
-        - Conversation summary (if available)
-
-        Args:
-            state: Current conversation state
-            mode_context: Mode-specific context data
-            step_name: Optional step name for context
-
-        Returns:
-            str: Dynamic context string (~300 tokens)
-        """
-        step_info = {"step_name": step_name} if step_name else None
-        return build_step_context(state, mode_context, step_info)
-
     async def _build_layered_messages(
         self,
         state: ConversationState,
         mode_context: dict,
-        step_name: str | None = None,
+        step_name: str | None = None,  # kept for call-site compat; no longer used
         include_history: bool = True,
         history_limit: int = 6,
     ) -> list:
         """
         Build messages using the optimized layered prompt approach.
 
-        Uses cached system prompt + dynamic step context for ~25% token reduction.
+        Assembly:
+        1. SystemMessage: identity + critical_rules (cached)
+        2. SystemMessage: catalog (DB-driven, 5-min cache)
+        3. SystemMessage: mode overlay (cached)
+        4. Conversation history (optional)
+        5. SystemMessage: dynamic context (last, for recency attention)
 
         Args:
             state: Current conversation state
             mode_context: Mode-specific context data
-            step_name: Optional step name for context
+            step_name: Deprecated — accepted for call-site compat, not used
             include_history: Whether to include conversation history
             history_limit: Max number of history messages to include
 
         Returns:
             list: List of LangChain message objects
         """
-        step_info = {"step_name": step_name} if step_name else None
         messages, _ = await build_layered_messages(
             state,
             mode_context,
-            step_info,
             include_history,
             history_limit,
             mode_name=self.mode_name,
-            substep=step_name,
         )
         return messages
 

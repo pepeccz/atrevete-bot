@@ -91,3 +91,7 @@ async def escalate_to_human(
         "duplicate_prevented": result.duplicate_prevented,
         "steps_completed": result.steps_completed,
     }
+
+
+# Alias for simplified tool surface
+escalate = escalate_to_human

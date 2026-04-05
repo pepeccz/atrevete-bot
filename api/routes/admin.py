@@ -510,20 +510,9 @@ class CustomerResponse(BaseModel):
 
 
 class ServiceMetadata(BaseModel):
-    """Structured metadata for AI-driven service disambiguation."""
+    """Structured metadata for service configuration (disambiguation fields removed)."""
 
     model_config = ConfigDict(extra="forbid")
-
-    family: Literal["haircut", "highlights", "hairstyle", "perm", "color"] | None = None
-    audience: Literal["adult_female", "adult_male", "baby", "child_male", "child_female"] | None = (
-        None
-    )
-    disambiguation_tags: list[str] = []
-    ask_if_missing: list[Literal["hair_density", "hair_length"]] = []
-    variant: Literal["standard", "extra", "long"] | None = None
-    hair_length: Literal["short_medium", "long"] | None = None
-    hair_density: Literal["normal", "extra"] | None = None
-    combo_recommendations: list[str] = []
 
 
 def _serialize_metadata(metadata_: dict | None) -> dict:
@@ -543,6 +532,7 @@ class ServiceResponse(BaseModel):
     duration_minutes: int
     description: str | None
     is_active: bool
+    audience: str | None = None
     metadata: ServiceMetadata | None = None
     created_at: datetime
     updated_at: datetime
@@ -1405,6 +1395,12 @@ async def update_stylist(
 
         await publish_cache_invalidation("stylists", "update")
 
+        try:
+            from agent.prompts.catalog_builder import invalidate_catalog_cache
+            invalidate_catalog_cache()
+        except Exception:
+            pass
+
         return {
             "id": str(stylist.id),
             "name": stylist.name,
@@ -1834,6 +1830,7 @@ class CreateServiceRequest(BaseModel):
     duration_minutes: int = Field(default=30, ge=5, le=480)
     description: str | None = None
     is_active: bool = True
+    audience: str | None = None
     metadata: ServiceMetadata | None = None
 
 
@@ -1843,6 +1840,7 @@ class UpdateServiceRequest(BaseModel):
     duration_minutes: int | None = Field(None, ge=5, le=480)
     description: str | None = None
     is_active: bool | None = None
+    audience: str | None = None
     metadata: ServiceMetadata | None = None
 
 
@@ -1879,6 +1877,7 @@ async def list_services(
                     "duration_minutes": s.duration_minutes,
                     "description": s.description,
                     "is_active": s.is_active,
+                    "audience": s.audience,
                     "metadata": _serialize_metadata(s.metadata_),
                     "created_at": s.created_at.isoformat(),
                     "updated_at": s.updated_at.isoformat(),
@@ -1912,6 +1911,7 @@ async def get_service(
             "duration_minutes": service.duration_minutes,
             "description": service.description,
             "is_active": service.is_active,
+            "audience": service.audience,
             "metadata": _serialize_metadata(service.metadata_),
             "created_at": service.created_at.isoformat(),
             "updated_at": service.updated_at.isoformat(),
@@ -1942,11 +1942,18 @@ async def create_service(
             duration_minutes=request.duration_minutes,
             description=request.description,
             is_active=request.is_active,
+            audience=request.audience,
             metadata_=request.metadata.model_dump(exclude_none=False) if request.metadata else {},
         )
         session.add(service)
         await session.commit()
         await session.refresh(service)
+
+        try:
+            from agent.prompts.catalog_builder import invalidate_catalog_cache
+            invalidate_catalog_cache()
+        except Exception:
+            pass
 
         return {
             "id": str(service.id),
@@ -1955,6 +1962,7 @@ async def create_service(
             "duration_minutes": service.duration_minutes,
             "description": service.description,
             "is_active": service.is_active,
+            "audience": service.audience,
             "metadata": _serialize_metadata(service.metadata_),
             "created_at": service.created_at.isoformat(),
             "updated_at": service.updated_at.isoformat(),
@@ -1991,6 +1999,8 @@ async def update_service(
             service.description = request.description
         if request.is_active is not None:
             service.is_active = request.is_active
+        if "audience" in request.model_fields_set:
+            service.audience = request.audience
         # metadata: field present in request → update; field absent → no change
         # "metadata" in model_fields_set distinguishes explicit null from missing field
         if "metadata" in request.model_fields_set:
@@ -2004,6 +2014,12 @@ async def update_service(
         await session.commit()
         await session.refresh(service)
 
+        try:
+            from agent.prompts.catalog_builder import invalidate_catalog_cache
+            invalidate_catalog_cache()
+        except Exception:
+            pass
+
         return {
             "id": str(service.id),
             "name": service.name,
@@ -2011,6 +2027,7 @@ async def update_service(
             "duration_minutes": service.duration_minutes,
             "description": service.description,
             "is_active": service.is_active,
+            "audience": service.audience,
             "metadata": _serialize_metadata(service.metadata_),
             "created_at": service.created_at.isoformat(),
             "updated_at": service.updated_at.isoformat(),
@@ -2032,6 +2049,12 @@ async def delete_service(
 
         await session.delete(service)
         await session.commit()
+
+    try:
+        from agent.prompts.catalog_builder import invalidate_catalog_cache
+        invalidate_catalog_cache()
+    except Exception:
+        pass
 
 
 # =============================================================================

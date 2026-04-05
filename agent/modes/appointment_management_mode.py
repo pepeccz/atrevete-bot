@@ -141,7 +141,7 @@ class AppointmentManagementMode(BaseModeNode):
     Uses AppointmentContext as the data bag (same pattern as BookingContext).
 
     Safety gates:
-    - _pre_tool_call() blocks cancel_appointment/reschedule_appointment
+    - _pre_tool_call() blocks manage_appointments(cancel/reschedule)
       until pending_confirmation=True is set by pre-resolver.
     - 48h window violations trigger ESCALATION mode.
     - Successful actions trigger GENERAL mode.
@@ -152,23 +152,16 @@ class AppointmentManagementMode(BaseModeNode):
         return "APPOINTMENT_MANAGEMENT"
 
     def get_tools(self) -> list[StructuredTool]:
-        """Return all appointment management tools, injected with customer_phone.
+        """Return appointment management tools.
 
         Tools:
-        - list_customer_appointments (T2)
-        - cancel_appointment (T3)
-        - reschedule_appointment (T4)
-        - check_availability (availability_tools)
-        - find_next_available (availability_tools)
+        - manage_appointments (consolidated: list, cancel, reschedule)
+        - escalate_to_human (escalation)
         """
-        from agent.tools.appointment_management_tools import create_appointment_tools
-        from agent.tools.availability_tools import check_availability, find_next_available
+        from agent.tools.escalation_tools import escalate_to_human
+        from agent.tools.manage_appointments_tool import manage_appointments
 
-        state: ConversationState = getattr(self, "_current_state", {})
-        customer_phone: str = state.get("customer_phone") or ""
-
-        appointment_tools = create_appointment_tools(customer_phone)
-        return [*appointment_tools, check_availability, find_next_available]
+        return [manage_appointments, escalate_to_human]
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -379,11 +372,12 @@ class AppointmentManagementMode(BaseModeNode):
         tool_name: str,
         tool_args: dict[str, Any],
     ) -> dict[str, Any] | ToolCallRejection:
-        """Gate dangerous tools — block destructive operations without confirmation.
+        """Gate dangerous actions in manage_appointments — block destructive operations
+        without confirmation.
 
-        Gates:
-        - cancel_appointment: requires pending_confirmation=True AND type="cancel"
-        - reschedule_appointment: requires pending_confirmation=True AND type="reschedule"
+        Gates (applied when tool_name == "manage_appointments"):
+        - action=cancel: requires pending_confirmation=True AND type="cancel"
+        - action=reschedule: requires pending_confirmation=True AND type="reschedule"
           AND pending_new_slot is set
 
         Returns:
@@ -391,90 +385,96 @@ class AppointmentManagementMode(BaseModeNode):
         """
         ctx: AppointmentContext | None = getattr(self, "_ctx", None)
 
-        if tool_name == "cancel_appointment":
-            if ctx is None:
-                return ToolCallRejection(
-                    name="cancel_appointment",
-                    error_code="NO_CONTEXT",
-                    error_message="No hay contexto de cita disponible.",
-                )
-            if not ctx.pending_confirmation or ctx.pending_confirmation_type != "cancel":
-                logger.warning(
-                    "_pre_tool_call: cancel_appointment blocked — pending_confirmation=%s, type=%r",
-                    ctx.pending_confirmation,
-                    ctx.pending_confirmation_type,
-                )
-                return ToolCallRejection(
-                    name="cancel_appointment",
-                    error_code="CONFIRMATION_REQUIRED",
-                    error_message=(
-                        "Debes confirmar la cancelación antes de ejecutarla. "
-                        "Mostrá el resumen de la cita y pedí confirmación explícita al cliente."
-                    ),
-                )
+        if tool_name == "manage_appointments":
+            action = tool_args.get("action", "")
 
-            # Inject appointment_id from context (never trust LLM's value alone)
-            if ctx.selected_appointment_id:
-                tool_args["appointment_id"] = ctx.selected_appointment_id
-                logger.info(
-                    "_pre_tool_call: injected appointment_id=%s into cancel_appointment",
-                    ctx.selected_appointment_id,
-                )
-
-        elif tool_name == "reschedule_appointment":
-            if ctx is None:
-                return ToolCallRejection(
-                    name="reschedule_appointment",
-                    error_code="NO_CONTEXT",
-                    error_message="No hay contexto de cita disponible.",
-                )
-            if not ctx.pending_confirmation or ctx.pending_confirmation_type != "reschedule":
-                logger.warning(
-                    "_pre_tool_call: reschedule_appointment blocked — "
-                    "pending_confirmation=%s, type=%r",
-                    ctx.pending_confirmation,
-                    ctx.pending_confirmation_type,
-                )
-                return ToolCallRejection(
-                    name="reschedule_appointment",
-                    error_code="CONFIRMATION_REQUIRED",
-                    error_message=(
-                        "Debes confirmar el nuevo horario antes de reagendar. "
-                        "Mostrá el nuevo horario y pedí confirmación explícita al cliente."
-                    ),
-                )
-            if not ctx.pending_new_slot:
-                logger.warning(
-                    "_pre_tool_call: reschedule_appointment blocked — pending_new_slot is empty"
-                )
-                return ToolCallRejection(
-                    name="reschedule_appointment",
-                    error_code="NO_NEW_SLOT",
-                    error_message=(
-                        "No hay un nuevo horario seleccionado. "
-                        "Llamá check_availability o find_next_available primero, "
-                        "y esperá que el cliente elija un horario."
-                    ),
-                )
-
-            # Inject appointment_id from context
-            if ctx.selected_appointment_id:
-                tool_args["appointment_id"] = ctx.selected_appointment_id
-                logger.info(
-                    "_pre_tool_call: injected appointment_id=%s into reschedule_appointment",
-                    ctx.selected_appointment_id,
-                )
-            # Inject new_start_time from pending_new_slot if not already set
-            if not tool_args.get("new_start_time") and ctx.pending_new_slot:
-                new_dt = ctx.pending_new_slot.get("full_datetime") or ctx.pending_new_slot.get(
-                    "start_time"
-                )
-                if new_dt:
-                    tool_args["new_start_time"] = new_dt
-                    logger.info(
-                        "_pre_tool_call: injected new_start_time=%s from pending_new_slot",
-                        new_dt,
+            if action == "cancel":
+                if ctx is None:
+                    return ToolCallRejection(
+                        name="manage_appointments",
+                        error_code="NO_CONTEXT",
+                        error_message="No hay contexto de cita disponible.",
                     )
+                if not ctx.pending_confirmation or ctx.pending_confirmation_type != "cancel":
+                    logger.warning(
+                        "_pre_tool_call: manage_appointments(cancel) blocked — "
+                        "pending_confirmation=%s, type=%r",
+                        ctx.pending_confirmation,
+                        ctx.pending_confirmation_type,
+                    )
+                    return ToolCallRejection(
+                        name="manage_appointments",
+                        error_code="CONFIRMATION_REQUIRED",
+                        error_message=(
+                            "Debes confirmar la cancelación antes de ejecutarla. "
+                            "Mostrá el resumen de la cita y pedí confirmación explícita al cliente."
+                        ),
+                    )
+
+                # Inject appointment_id from context (never trust LLM's value alone)
+                if ctx.selected_appointment_id:
+                    tool_args["appointment_id"] = ctx.selected_appointment_id
+                    logger.info(
+                        "_pre_tool_call: injected appointment_id=%s into manage_appointments(cancel)",
+                        ctx.selected_appointment_id,
+                    )
+
+            elif action == "reschedule":
+                if ctx is None:
+                    return ToolCallRejection(
+                        name="manage_appointments",
+                        error_code="NO_CONTEXT",
+                        error_message="No hay contexto de cita disponible.",
+                    )
+                if not ctx.pending_confirmation or ctx.pending_confirmation_type != "reschedule":
+                    logger.warning(
+                        "_pre_tool_call: manage_appointments(reschedule) blocked — "
+                        "pending_confirmation=%s, type=%r",
+                        ctx.pending_confirmation,
+                        ctx.pending_confirmation_type,
+                    )
+                    return ToolCallRejection(
+                        name="manage_appointments",
+                        error_code="CONFIRMATION_REQUIRED",
+                        error_message=(
+                            "Debes confirmar el nuevo horario antes de reagendar. "
+                            "Mostrá el nuevo horario y pedí confirmación explícita al cliente."
+                        ),
+                    )
+                if not ctx.pending_new_slot:
+                    logger.warning(
+                        "_pre_tool_call: manage_appointments(reschedule) blocked — "
+                        "pending_new_slot is empty"
+                    )
+                    return ToolCallRejection(
+                        name="manage_appointments",
+                        error_code="NO_NEW_SLOT",
+                        error_message=(
+                            "No hay un nuevo horario seleccionado. "
+                            "Llamá check_availability o find_next_available primero, "
+                            "y esperá que el cliente elija un horario."
+                        ),
+                    )
+
+                # Inject appointment_id from context
+                if ctx.selected_appointment_id:
+                    tool_args["appointment_id"] = ctx.selected_appointment_id
+                    logger.info(
+                        "_pre_tool_call: injected appointment_id=%s into "
+                        "manage_appointments(reschedule)",
+                        ctx.selected_appointment_id,
+                    )
+                # Inject new_start_time from pending_new_slot if not already set
+                if not tool_args.get("new_start_time") and ctx.pending_new_slot:
+                    new_dt = ctx.pending_new_slot.get(
+                        "full_datetime"
+                    ) or ctx.pending_new_slot.get("start_time")
+                    if new_dt:
+                        tool_args["new_start_time"] = new_dt
+                        logger.info(
+                            "_pre_tool_call: injected new_start_time=%s from pending_new_slot",
+                            new_dt,
+                        )
 
         return tool_args
 
@@ -510,36 +510,18 @@ class AppointmentManagementMode(BaseModeNode):
         if not parsed:
             return result
 
-        if tool_name == "list_customer_appointments":
-            appointments = parsed.get("appointments", [])
-            if appointments:
-                ctx.appointments_list = appointments
-                logger.info(
-                    "_post_tool_result: list_customer_appointments — loaded %d appointments",
-                    len(appointments),
-                )
+        if tool_name == "manage_appointments":
+            action = tool_args.get("action", "")
 
-        elif tool_name in ("check_availability", "find_next_available"):
-            # Extract offered slots for reschedule flow
-            slots: list[dict] = []
-
-            # check_availability format
-            if "available_slots" in parsed:
-                slots = parsed.get("available_slots", [])
-
-            # find_next_available format (v4.2)
-            elif "available_stylists" in parsed:
-                for stylist_entry in parsed.get("available_stylists", []):
-                    slots.extend(stylist_entry.get("slots", []))
-                # v4.3: soonest_any no longer inserted — removed at source in availability_tools.py
-
-            if slots:
-                ctx.offered_slots = slots
-                logger.info(
-                    "_post_tool_result: %s — loaded %d offered slots",
-                    tool_name,
-                    len(slots),
-                )
+            # list action — extract appointments list
+            if action == "list":
+                appointments = parsed.get("appointments", [])
+                if appointments:
+                    ctx.appointments_list = appointments
+                    logger.info(
+                        "_post_tool_result: manage_appointments(list) — loaded %d appointments",
+                        len(appointments),
+                    )
 
         return result
 
@@ -555,8 +537,8 @@ class AppointmentManagementMode(BaseModeNode):
         """Apply all tool results accumulated from the agentic loop into ctx.
 
         Handles:
-        - cancel_appointment success/within_window
-        - reschedule_appointment success/within_window
+        - manage_appointments(cancel) success/within_window
+        - manage_appointments(reschedule) success/within_window
         """
         for tool_name, results_list in tool_results.items():
             for result in results_list:
@@ -572,40 +554,44 @@ class AppointmentManagementMode(BaseModeNode):
                 if not parsed:
                     continue
 
-                if tool_name == "cancel_appointment":
-                    if parsed.get("success"):
-                        ctx.action_completed = True
-                        logger.info(
-                            "_apply_tool_results: cancel_appointment success — action_completed=True"
-                        )
-                    elif parsed.get("within_window"):
-                        ctx._escalate_within_window = True
-                        ctx._escalation_tool = "cancel_appointment"
-                        hours = parsed.get("hours_until")
-                        ctx._escalation_hours = hours
-                        logger.info(
-                            "_apply_tool_results: cancel_appointment within_window "
-                            "(hours_until=%s) — escalation required",
-                            hours,
-                        )
+                if tool_name == "manage_appointments":
+                    action = parsed.get("action", ctx.action or "")
 
-                elif tool_name == "reschedule_appointment":
-                    if parsed.get("success"):
-                        ctx.action_completed = True
-                        logger.info(
-                            "_apply_tool_results: reschedule_appointment success — "
-                            "action_completed=True"
-                        )
-                    elif parsed.get("within_window"):
-                        ctx._escalate_within_window = True
-                        ctx._escalation_tool = "reschedule_appointment"
-                        hours = parsed.get("hours_until")
-                        ctx._escalation_hours = hours
-                        logger.info(
-                            "_apply_tool_results: reschedule_appointment within_window "
-                            "(hours_until=%s) — escalation required",
-                            hours,
-                        )
+                    if action == "cancel":
+                        if parsed.get("success"):
+                            ctx.action_completed = True
+                            logger.info(
+                                "_apply_tool_results: manage_appointments(cancel) success — "
+                                "action_completed=True"
+                            )
+                        elif parsed.get("within_window"):
+                            ctx._escalate_within_window = True
+                            ctx._escalation_tool = "cancel_appointment"
+                            hours = parsed.get("hours_until")
+                            ctx._escalation_hours = hours
+                            logger.info(
+                                "_apply_tool_results: manage_appointments(cancel) within_window "
+                                "(hours_until=%s) — escalation required",
+                                hours,
+                            )
+
+                    elif action == "reschedule":
+                        if parsed.get("success"):
+                            ctx.action_completed = True
+                            logger.info(
+                                "_apply_tool_results: manage_appointments(reschedule) success — "
+                                "action_completed=True"
+                            )
+                        elif parsed.get("within_window"):
+                            ctx._escalate_within_window = True
+                            ctx._escalation_tool = "reschedule_appointment"
+                            hours = parsed.get("hours_until")
+                            ctx._escalation_hours = hours
+                            logger.info(
+                                "_apply_tool_results: manage_appointments(reschedule) within_window "
+                                "(hours_until=%s) — escalation required",
+                                hours,
+                            )
 
     # ──────────────────────────────────────────────────────────────────────
     # Prompt Building
@@ -839,7 +825,7 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
         lines.append(
             "El cliente no ha indicado qué quiere hacer. "
             "Preguntá si quiere VER sus citas, CANCELAR una cita, o REAGENDAR una cita. "
-            "Una vez determinada la acción, llamá list_customer_appointments."
+            "Una vez determinada la acción, llamá manage_appointments con action='list'."
         )
         return "\n".join(lines)
 
@@ -847,7 +833,7 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
     if not ctx.appointments_list and not ctx.action_completed:
         lines.append(
             f"Acción detectada: {ctx.action}. "
-            "Llamá list_customer_appointments para cargar las citas del cliente."
+            "Llamá manage_appointments con action='list' para cargar las citas del cliente."
         )
         return "\n".join(lines)
 
@@ -877,7 +863,7 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
         if ctx.pending_confirmation and ctx.pending_confirmation_type == "cancel":
             lines.append(
                 "✅ CONFIRMACIÓN RECIBIDA para cancelación. "
-                "Llamá cancel_appointment ahora mismo con el appointment_id del contexto."
+                "Llamá manage_appointments con action='cancel' y el appointment_id del contexto."
             )
         else:
             snapshot = ctx.selected_appointment_snapshot
@@ -917,7 +903,7 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
         elif ctx.pending_confirmation and ctx.pending_confirmation_type == "reschedule":
             lines.append(
                 "✅ CONFIRMACIÓN RECIBIDA para reagendado. "
-                "Llamá reschedule_appointment ahora mismo con el appointment_id y new_start_time del contexto."
+                "Llamá manage_appointments con action='reschedule', appointment_id y new_start_time del contexto."
             )
         else:
             slot_time = ctx.pending_new_slot.get("time", "")

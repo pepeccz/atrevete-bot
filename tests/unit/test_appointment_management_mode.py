@@ -167,8 +167,60 @@ class TestQueryFlow:
 # =============================================================================
 
 
+# =============================================================================
+# T-39: Architecture guard — no individual tools or closure factory
+# =============================================================================
+
+
+class TestAppointmentManagementModeNoIndividualTools:
+    """T-39: Mode must NOT import individual appointment tools or closure factory."""
+
+    def test_no_individual_tools_in_source(self):
+        """list_customer_appointments, cancel_appointment, reschedule_appointment
+        must NOT be imported as tools in appointment_management_mode source."""
+        import inspect
+        from agent.modes import appointment_management_mode as _amm
+
+        src = inspect.getsource(_amm)
+        for tool_name in (
+            "list_customer_appointments",
+            "cancel_appointment",
+            "reschedule_appointment",
+        ):
+            assert tool_name not in src, (
+                f"{tool_name} found in appointment_management_mode source — "
+                "individual tools were consolidated into manage_appointments"
+            )
+
+    def test_no_closure_factory_in_source(self):
+        """create_appointment_tools must NOT appear in appointment_management_mode source."""
+        import inspect
+        from agent.modes import appointment_management_mode as _amm
+
+        src = inspect.getsource(_amm)
+        assert "create_appointment_tools" not in src, (
+            "create_appointment_tools found in appointment_management_mode source — "
+            "the closure factory was removed in favor of manage_appointments"
+        )
+
+    def test_get_tools_returns_manage_appointments(self):
+        """get_tools() must include manage_appointments (the consolidated tool)."""
+        mode = make_mode()
+        tools = mode.get_tools()
+        tool_names = [t.name for t in tools]
+        assert "manage_appointments" in tool_names, (
+            "manage_appointments not found in get_tools() — "
+            "it should be the single consolidated appointment management tool"
+        )
+
+
+# =============================================================================
+# 3. Cancel flow — happy path: gate allows manage_appointments(cancel)
+# =============================================================================
+
+
 class TestCancelGateHappyPath:
-    """_pre_tool_call allows cancel_appointment when pending_confirmation=True AND type='cancel'."""
+    """_pre_tool_call allows manage_appointments(action='cancel') when pending_confirmation=True."""
 
     @pytest.mark.asyncio
     async def test_cancel_allowed_with_pending_confirmation(self):
@@ -182,9 +234,9 @@ class TestCancelGateHappyPath:
             pending_confirmation_type="cancel",
             selected_appointment_id="appt-uuid-001",
         )
-        tool_args = {"appointment_id": "appt-uuid-001"}
+        tool_args = {"action": "cancel", "appointment_id": "appt-uuid-001"}
 
-        result = await mode._pre_tool_call("cancel_appointment", tool_args)
+        result = await mode._pre_tool_call("manage_appointments", tool_args)
 
         assert not isinstance(result, ToolCallRejection)
         assert isinstance(result, dict)
@@ -201,9 +253,9 @@ class TestCancelGateHappyPath:
             pending_confirmation_type="cancel",
             selected_appointment_id="real-appt-uuid",
         )
-        tool_args = {"appointment_id": "llm-hallucinated-uuid"}
+        tool_args = {"action": "cancel", "appointment_id": "llm-hallucinated-uuid"}
 
-        result = await mode._pre_tool_call("cancel_appointment", tool_args)
+        result = await mode._pre_tool_call("manage_appointments", tool_args)
 
         assert isinstance(result, dict)
         assert result["appointment_id"] == "real-appt-uuid"
@@ -215,7 +267,7 @@ class TestCancelGateHappyPath:
 
 
 class TestCancelGateBlocks:
-    """_pre_tool_call blocks cancel_appointment when pending_confirmation=False."""
+    """_pre_tool_call blocks manage_appointments(cancel) when pending_confirmation=False."""
 
     @pytest.mark.asyncio
     async def test_cancel_blocked_without_pending_confirmation(self):
@@ -228,13 +280,13 @@ class TestCancelGateBlocks:
             pending_confirmation=False,
             selected_appointment_id="appt-uuid-001",
         )
-        tool_args = {"appointment_id": "appt-uuid-001"}
+        tool_args = {"action": "cancel", "appointment_id": "appt-uuid-001"}
 
-        result = await mode._pre_tool_call("cancel_appointment", tool_args)
+        result = await mode._pre_tool_call("manage_appointments", tool_args)
 
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "CONFIRMATION_REQUIRED"
-        assert result.name == "cancel_appointment"
+        assert result.name == "manage_appointments"
 
     @pytest.mark.asyncio
     async def test_cancel_blocked_reason_contains_spanish_message(self):
@@ -246,9 +298,9 @@ class TestCancelGateBlocks:
             action="cancel",
             pending_confirmation=False,
         )
-        tool_args = {}
+        tool_args = {"action": "cancel"}
 
-        result = await mode._pre_tool_call("cancel_appointment", tool_args)
+        result = await mode._pre_tool_call("manage_appointments", tool_args)
 
         assert isinstance(result, ToolCallRejection)
         # The error message must contain a Spanish guidance phrase
@@ -259,12 +311,12 @@ class TestCancelGateBlocks:
 
     @pytest.mark.asyncio
     async def test_cancel_blocked_no_ctx(self):
-        """When _ctx is None (edge case), cancel_appointment is blocked with NO_CONTEXT."""
+        """When _ctx is None (edge case), manage_appointments(cancel) is blocked with NO_CONTEXT."""
         mode = make_mode()
         mode._ctx = None
-        tool_args = {"appointment_id": "appt-uuid-001"}
+        tool_args = {"action": "cancel", "appointment_id": "appt-uuid-001"}
 
-        result = await mode._pre_tool_call("cancel_appointment", tool_args)
+        result = await mode._pre_tool_call("manage_appointments", tool_args)
 
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "NO_CONTEXT"
@@ -277,15 +329,14 @@ class TestCancelGateBlocks:
 
 class TestRescheduleGateMismatch:
     """
-    _pre_tool_call blocks reschedule_appointment when pending_confirmation is True
-    but type is 'cancel' (mismatch).
+    _pre_tool_call blocks manage_appointments(reschedule) when pending_confirmation type mismatches.
     """
 
     @pytest.mark.asyncio
     async def test_reschedule_blocked_when_confirmation_type_is_cancel(self):
         """
         pending_confirmation=True but pending_confirmation_type='cancel' (mismatch)
-        → reschedule_appointment is blocked.
+        → manage_appointments(reschedule) is blocked.
         """
         mode = make_mode()
         mode._ctx = AppointmentContext(
@@ -295,9 +346,9 @@ class TestRescheduleGateMismatch:
             selected_appointment_id="appt-uuid-001",
             pending_new_slot={"full_datetime": "2026-04-01T10:00:00+01:00"},
         )
-        tool_args = {"appointment_id": "appt-uuid-001"}
+        tool_args = {"action": "reschedule", "appointment_id": "appt-uuid-001"}
 
-        result = await mode._pre_tool_call("reschedule_appointment", tool_args)
+        result = await mode._pre_tool_call("manage_appointments", tool_args)
 
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "CONFIRMATION_REQUIRED"
@@ -305,7 +356,7 @@ class TestRescheduleGateMismatch:
     @pytest.mark.asyncio
     async def test_reschedule_blocked_without_any_confirmation(self):
         """
-        pending_confirmation=False → reschedule blocked.
+        pending_confirmation=False → manage_appointments(reschedule) blocked.
         """
         mode = make_mode()
         mode._ctx = AppointmentContext(
@@ -314,9 +365,9 @@ class TestRescheduleGateMismatch:
             selected_appointment_id="appt-uuid-001",
             pending_new_slot={"full_datetime": "2026-04-01T10:00:00+01:00"},
         )
-        tool_args = {"appointment_id": "appt-uuid-001"}
+        tool_args = {"action": "reschedule", "appointment_id": "appt-uuid-001"}
 
-        result = await mode._pre_tool_call("reschedule_appointment", tool_args)
+        result = await mode._pre_tool_call("manage_appointments", tool_args)
 
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "CONFIRMATION_REQUIRED"
@@ -329,14 +380,14 @@ class TestRescheduleGateMismatch:
 
 class TestRescheduleGateNoSlot:
     """
-    _pre_tool_call blocks reschedule_appointment when pending_new_slot is empty.
+    _pre_tool_call blocks manage_appointments(reschedule) when pending_new_slot is empty.
     """
 
     @pytest.mark.asyncio
     async def test_reschedule_blocked_when_no_new_slot(self):
         """
         pending_confirmation=True + type='reschedule' but pending_new_slot={}
-        → reschedule blocked with NO_NEW_SLOT.
+        → manage_appointments(reschedule) blocked with NO_NEW_SLOT.
         """
         mode = make_mode()
         mode._ctx = AppointmentContext(
@@ -346,9 +397,9 @@ class TestRescheduleGateNoSlot:
             selected_appointment_id="appt-uuid-001",
             pending_new_slot={},  # empty slot
         )
-        tool_args = {"appointment_id": "appt-uuid-001"}
+        tool_args = {"action": "reschedule", "appointment_id": "appt-uuid-001"}
 
-        result = await mode._pre_tool_call("reschedule_appointment", tool_args)
+        result = await mode._pre_tool_call("manage_appointments", tool_args)
 
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "NO_NEW_SLOT"
@@ -357,7 +408,7 @@ class TestRescheduleGateNoSlot:
     async def test_reschedule_allowed_with_confirmation_and_slot(self):
         """
         pending_confirmation=True + type='reschedule' + pending_new_slot set
-        → reschedule is allowed.
+        → manage_appointments(reschedule) is allowed.
         """
         mode = make_mode()
         mode._ctx = AppointmentContext(
@@ -367,9 +418,9 @@ class TestRescheduleGateNoSlot:
             selected_appointment_id="appt-uuid-001",
             pending_new_slot={"full_datetime": "2026-04-01T10:00:00+01:00"},
         )
-        tool_args = {"appointment_id": "appt-uuid-001"}
+        tool_args = {"action": "reschedule", "appointment_id": "appt-uuid-001"}
 
-        result = await mode._pre_tool_call("reschedule_appointment", tool_args)
+        result = await mode._pre_tool_call("manage_appointments", tool_args)
 
         assert not isinstance(result, ToolCallRejection)
 
@@ -407,7 +458,7 @@ class TestWithinWindowEscalation:
         # Tool result: within_window=True
         loop_result = AgenticLoopResult(
             response_text="Tu cita está dentro de las 48 horas.",
-            tool_results={"cancel_appointment": [{"within_window": True, "hours_until": 20}]},
+            tool_results={"manage_appointments": [{"action": "cancel", "within_window": True, "hours_until": 20}]},
         )
 
         with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
@@ -443,7 +494,7 @@ class TestWithinWindowEscalation:
 
         loop_result = AgenticLoopResult(
             response_text="Dentro de 48h.",
-            tool_results={"reschedule_appointment": [{"within_window": True, "hours_until": 15}]},
+            tool_results={"manage_appointments": [{"action": "reschedule", "within_window": True, "hours_until": 15}]},
         )
 
         with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
@@ -484,7 +535,7 @@ class TestActionCompletion:
         loop_result = AgenticLoopResult(
             response_text="Tu cita fue cancelada exitosamente.",
             tool_results={
-                "cancel_appointment": [{"success": True, "appointment_id": "appt-uuid-001"}]
+                "manage_appointments": [{"action": "cancel", "success": True, "appointment_id": "appt-uuid-001"}]
             },
         )
 
@@ -518,7 +569,7 @@ class TestActionCompletion:
 
         loop_result = AgenticLoopResult(
             response_text="Tu cita fue reagendada exitosamente.",
-            tool_results={"reschedule_appointment": [{"success": True}]},
+            tool_results={"manage_appointments": [{"action": "reschedule", "success": True}]},
         )
 
         with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:

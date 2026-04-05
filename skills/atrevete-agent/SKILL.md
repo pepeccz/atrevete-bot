@@ -35,19 +35,18 @@ agent/
 │   └── intent_router.py       # Intent classifier (8 intents)
 ├── prompts/
 │   ├── loader.py              # Cached system prompt + dynamic context
+│   ├── catalog_builder.py     # Builds service catalog string injected into prompt
 │   ├── shared/                # Core prompts (identity, rules, glossary)
 │   └── modes/                 # Mode-specific overlays
 ├── state/
 │   ├── schemas.py             # ConversationState TypedDict
 │   ├── checkpointer.py        # Redis checkpointer
 │   └── helpers.py             # add_message() helper
-├── tools/                     # 8 LangChain tools
-│   ├── info_tools.py          # query_info (FAQs, services, policies)
-│   ├── search_services.py     # search_services (fuzzy search)
-│   ├── customer_tools.py      # manage_customer, get_customer_history
-│   ├── availability_tools.py  # check_availability, find_next_available
+├── tools/                     # 4 LangChain tools
+│   ├── availability_tools.py  # check_availability
 │   ├── booking_tools.py       # book (atomic transaction)
-│   └── escalation_tools.py    # escalate_to_human
+│   ├── manage_appointments_tool.py  # manage_appointments (view/cancel/reschedule)
+│   └── escalation_tools.py    # escalate
 ├── services/                  # Business logic
 │   ├── availability_service.py    # DB-first availability
 │   ├── gcal_push_service.py       # Fire-and-forget GCal push
@@ -66,9 +65,9 @@ START → preprocess_node → router_node → mode_dispatcher
 
 **4 Modes:**
 - **GREETING**: First contact, name extraction (fires ONCE per new customer)
-- **BOOKING**: Full multi-step appointment booking with 8 tools
-- **GENERAL**: FAQs, service info (read-only tools only)
-- **ESCALATION**: Human handoff via escalate_to_human
+- **BOOKING**: Multi-step appointment booking — `check_availability`, `book`, `manage_appointments`
+- **GENERAL**: FAQs, service info (catalog in prompt; read-only `manage_appointments` + `escalate`)
+- **ESCALATION**: Human handoff via `escalate`
 
 ## Routing Logic
 

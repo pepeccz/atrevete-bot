@@ -40,17 +40,14 @@ agent/
 ├── state/
 │   ├── schemas.py               # ConversationState TypedDict + reducers
 │   └── helpers.py               # add_message(), should_summarize(), etc.
-├── tools/                       # 8 LangChain tools
-│   ├── availability_tools.py
-│   ├── booking_tools.py
-│   ├── calendar_tools.py
-│   ├── customer_tools.py
-│   ├── escalation_tools.py
-│   ├── info_tools.py
-│   ├── notification_tools.py
-│   └── search_services.py
+├── tools/                       # 4 LangChain tools
+│   ├── availability_tools.py    # check_availability
+│   ├── booking_tools.py         # book (atomic transaction)
+│   ├── manage_appointments_tool.py  # manage_appointments (view/cancel/reschedule)
+│   └── escalation_tools.py     # escalate
 ├── prompts/
 │   ├── loader.py                # Dynamic prompt assembly
+│   ├── catalog_builder.py       # Builds service catalog string injected into prompt
 │   ├── shared/                  # Core prompts (identity, rules, glossary)
 │   └── modes/                   # Mode-specific prompt overlays
 ├── services/                    # Business logic
@@ -110,10 +107,10 @@ agent/
 
 | Mode | Purpose | Tools | Entry Condition |
 |------|---------|-------|-----------------|
-| **GREETING** | First contact + name collection | `manage_customer` | `is_first_interaction=True` or `customer_name=None` |
-| **BOOKING** | Multi-step appointment booking | 4 tools (availability, booking, etc.) | `intent=book` or already in BOOKING |
-| **GENERAL** | FAQs, business hours, services | 2 tools (query_info, search_services) | Default mode |
-| **ESCALATION** | Human handoff | 0 tools | `intent=escalate` or `error_count>=3` |
+| **GREETING** | First contact + name collection | `manage_customer` (customer_tools) | `is_first_interaction=True` or `customer_name=None` |
+| **BOOKING** | Multi-step appointment booking | `check_availability`, `book`, `manage_appointments` | `intent=book` or already in BOOKING |
+| **GENERAL** | FAQs, business hours, services (catalog in prompt) | `manage_appointments` (read), `escalate` | Default mode |
+| **ESCALATION** | Human handoff | `escalate` | `intent=escalate` or `error_count>=3` |
 
 ---
 

@@ -252,23 +252,12 @@ def _normalize_handoff_text(value: str) -> str:
     return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
-def _service_to_booking_context(service: dict[str, Any]) -> dict[str, Any]:
-    booking_context = {
-        "service_id": service.get("id"),
-        "service_name": service.get("name", ""),
-        "service_category": service.get("category") or None,
-        "service_duration_minutes": service.get("duration_minutes"),
-        "service_family": service.get("family"),
-    }
-
-    recommendations = [
-        str(item) for item in service.get("combo_recommendations", []) if str(item).strip()
-    ]
-    if recommendations:
-        booking_context["pending_recommendations"] = recommendations
-        booking_context["recommendations_shown"] = False
-
-    return booking_context
+def _preserve_mode_context(context: dict | None, target_mode: str) -> dict:
+    """Preserve mode context during mode transitions."""
+    ctx = dict(context) if context else {}
+    if target_mode == "ESCALATION":
+        ctx["awaiting_human"] = True
+    return ctx
 
 
 def _looks_like_service_confirmation(user_message: str) -> bool:
@@ -405,7 +394,8 @@ def _build_general_booking_handoff(state: ConversationState, user_message: str) 
 
     resolved_service = handoff.get("resolved_service")
     if isinstance(resolved_service, dict):
-        return _service_to_booking_context(resolved_service)
+        # Flat dict — LLM reads catalog from prompt, no BookingContext needed
+        return {k: v for k, v in resolved_service.items() if v is not None}
 
     # Support both plural (new) and singular (legacy) key
     pending_clarifications = handoff.get("pending_clarifications")
@@ -419,7 +409,7 @@ def _build_general_booking_handoff(state: ConversationState, user_message: str) 
     if isinstance(candidate_services, list):
         selected_service = _resolve_general_candidate_selection(user_message, candidate_services)
         if isinstance(selected_service, dict):
-            return _service_to_booking_context(selected_service)
+            return {k: v for k, v in selected_service.items() if v is not None}
 
     return {}
 
@@ -500,7 +490,6 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     9. intent=greet (not in BOOKING) → GREETING
     10. Default → GENERAL
     """
-    from agent.modes.booking_context import preserve_booking_context
     from agent.state.schemas import transition_mode
 
     conversation_id = state.get("conversation_id", "unknown")
@@ -626,7 +615,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         transition_update = transition_mode(state, "ESCALATION")
         if current_mode == "BOOKING":
             draft_contexts = dict(transition_update.get("draft_contexts") or {})
-            draft_contexts["BOOKING"] = preserve_booking_context(
+            draft_contexts["BOOKING"] = _preserve_mode_context(
                 state.get("mode_context") or {},
                 "ESCALATION",
             )
@@ -658,7 +647,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         # Truly unrelated → digress to GENERAL with preserved draft context
         transition_update = transition_mode(state, "GENERAL")
         draft_contexts = dict(transition_update.get("draft_contexts") or {})
-        draft_contexts["BOOKING"] = preserve_booking_context(
+        draft_contexts["BOOKING"] = _preserve_mode_context(
             state.get("mode_context") or {},
             "GENERAL",
         )
@@ -783,10 +772,8 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         )
         transition_update = transition_mode(state, "ESCALATION")
         if current_mode == "BOOKING":
-            from agent.modes.booking_context import preserve_booking_context
-
             draft_contexts = dict(transition_update.get("draft_contexts") or {})
-            draft_contexts["BOOKING"] = preserve_booking_context(
+            draft_contexts["BOOKING"] = _preserve_mode_context(
                 state.get("mode_context") or {},
                 "ESCALATION",
             )

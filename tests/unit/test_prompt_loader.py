@@ -1,19 +1,24 @@
 """
-Unit tests for prompt loader caching functionality.
+Unit tests for agent/prompts/loader.py.
 
-Tests the v6.0 optimized prompt system with caching support:
-- Cache hit/miss scenarios
-- TTL expiration
-- Thread safety with concurrent access
-- Cache invalidation
+Tests the v6.0 prompt loading system:
+- load_markdown: file loading
+- get_system_prompt + caching (TTL via _TtlCache)
+- clear_prompt_cache: invalidation
+- load_mode_overlay: per-mode dispatch
+- build_layered_messages: structure and content
+- _build_simple_dynamic_context: minimal context building
+
+T-41 architecture guards:
+- test_no_build_step_context: build_step_context removed from loader
+- test_catalog_integration: build_catalog_markdown called in build_layered_messages
 """
 
 import asyncio
 import sys
-from datetime import datetime, timedelta
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import mock_open, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -51,584 +56,182 @@ if "langchain_core.messages" not in sys.modules:
 if "langchain_core" not in sys.modules:
     sys.modules["langchain_core"] = ModuleType("langchain_core")
 
-# Now import the loader
+# Now import the loader — only what actually exists
 from agent.prompts.loader import (
-    CACHE_TTL_MINUTES,
-    _STEP_VISIBLE_FIELDS,
+    _TtlCache,
+    _base_prompt_cache,
+    _build_simple_dynamic_context,
+    _overlay_caches,
     build_layered_messages,
-    build_step_context,
     clear_prompt_cache,
     get_system_prompt,
     load_markdown,
     load_mode_overlay,
-    _prompt_cache,
 )
+
+
+# =============================================================================
+# T-41: Architecture guards
+# =============================================================================
+
+
+class TestPromptLoaderArchitectureGuards:
+    """T-41: Verify removed functions are gone and catalog integration is correct."""
+
+    def test_no_build_step_context(self):
+        """T-41: build_step_context must NOT exist in agent.prompts.loader.
+
+        This function was removed in the v6.0 architecture — each mode builds
+        its own dynamic context via _build_dynamic_context() (BookingMode,
+        AppointmentManagementMode) or uses _build_simple_dynamic_context().
+        """
+        import inspect
+        import agent.prompts.loader as _loader
+
+        assert not hasattr(_loader, "build_step_context"), (
+            "build_step_context found in agent.prompts.loader — "
+            "it was removed in v6.0; each mode builds its own dynamic context"
+        )
+
+    def test_catalog_integration(self):
+        """T-41: build_catalog_markdown must be called inside build_layered_messages.
+
+        The catalog (services, stylists, business hours) is injected as a
+        second SystemMessage in the layered prompt chain.
+        """
+        import inspect
+        import agent.prompts.loader as _loader
+
+        src = inspect.getsource(_loader.build_layered_messages)
+        assert "build_catalog_markdown" in src, (
+            "build_catalog_markdown not called in build_layered_messages — "
+            "catalog injection is required for the layered prompt chain"
+        )
+
+
+# =============================================================================
+# load_markdown tests
+# =============================================================================
 
 
 class TestLoadMarkdown:
     """Test cases for load_markdown function."""
 
     def test_load_markdown_success(self):
-        """Test successful loading of markdown file."""
+        """Successful loading of a shared markdown file."""
         content = load_markdown("identity.md", "shared")
 
-        # Should return non-empty content
         assert isinstance(content, str)
         assert len(content) > 0
-        assert "# Identidad" in content or "#" in content
+        assert "#" in content
 
     def test_load_markdown_file_not_found(self):
-        """Test handling of missing file."""
+        """Missing file returns empty string."""
         content = load_markdown("nonexistent.md", "shared")
 
-        # Should return empty string
         assert content == ""
 
     def test_load_markdown_invalid_subdir(self):
-        """Test handling of invalid subdirectory."""
+        """Invalid subdirectory returns empty string."""
         content = load_markdown("identity.md", "invalid_subdir")
 
-        # Should return empty string
         assert content == ""
 
     def test_load_markdown_different_files(self):
-        """Test loading different markdown files."""
+        """Loading different shared markdown files returns non-empty content."""
         identity = load_markdown("identity.md", "shared")
         critical_rules = load_markdown("critical_rules.md", "shared")
         glossary = load_markdown("glossary.md", "shared")
 
-        # All should be non-empty
         assert len(identity) > 100
         assert len(critical_rules) > 100
         assert len(glossary) > 100
 
-        # Should contain expected content
-        assert "#" in identity  # Markdown header
-        assert "#" in critical_rules  # Markdown header
-        assert "#" in glossary  # Markdown header
+
+# =============================================================================
+# get_system_prompt + caching tests
+# =============================================================================
 
 
 class TestPromptCacheHitMiss:
-    """Test cases for cache hit and miss scenarios."""
+    """Test cache hit/miss scenarios via get_system_prompt."""
 
     @pytest.fixture(autouse=True)
     def clear_cache_before_each(self):
-        """Clear cache before each test."""
         clear_prompt_cache()
         yield
         clear_prompt_cache()
 
     @pytest.mark.asyncio
     async def test_cache_miss_loads_from_disk(self):
-        """Test that first call loads from disk (cache miss)."""
-        # Cache is clear, should load from disk
+        """First call (cache miss) loads from disk and returns non-empty string."""
         prompt = await get_system_prompt()
 
         assert isinstance(prompt, str)
         assert len(prompt) > 1000
-        # Should contain content from all three files
-        assert "#" in prompt  # Markdown headers
+        assert "#" in prompt
 
     @pytest.mark.asyncio
-    async def test_cache_hit_uses_cached_data(self):
-        """Test that subsequent calls use cached data."""
-        # First call - cache miss
+    async def test_cache_hit_returns_same_content(self):
+        """Second call returns the same content as the first (cache hit)."""
         prompt1 = await get_system_prompt()
-
-        # Second call - should be cache hit
         prompt2 = await get_system_prompt()
 
-        # Should be identical
         assert prompt1 == prompt2
 
     @pytest.mark.asyncio
-    async def test_cache_contains_expected_parts(self):
-        """Test that cached prompt contains all expected sections."""
-        prompt = await get_system_prompt()
-
-        # Should contain separators between sections
-        assert "---" in prompt
-
-        # Should have substantial content
-        assert len(prompt) > 2000
-
-
-class TestPromptCacheTTL:
-    """Test cases for cache TTL (time-to-live) expiration."""
-
-    @pytest.fixture(autouse=True)
-    def clear_cache_before_each(self):
-        """Clear cache before each test."""
-        clear_prompt_cache()
-        yield
-        clear_prompt_cache()
-
-    @pytest.mark.asyncio
-    async def test_cache_expires_after_ttl(self):
-        """Test that cache expires after TTL period."""
-        # Set cache with expired timestamp
-        _prompt_cache["data"] = "cached content"
-        _prompt_cache["expires_at"] = datetime.now() - timedelta(minutes=1)
-
-        # Should reload from disk (cache expired)
-        prompt = await get_system_prompt()
-
-        # Should not be the expired cached content
-        assert prompt != "cached content"
-        assert len(prompt) > 1000  # Real content
-
-    @pytest.mark.asyncio
-    async def test_cache_valid_before_ttl(self):
-        """Test that cache is valid before TTL expires."""
-        # Set cache with future expiration
-        _prompt_cache["data"] = "cached content"
-        _prompt_cache["expires_at"] = datetime.now() + timedelta(minutes=CACHE_TTL_MINUTES)
-
-        # Should return cached data (not expired)
-        prompt = await get_system_prompt()
-
-        assert prompt == "cached content"
-
-    @pytest.mark.asyncio
-    async def test_cache_updates_expiration_on_load(self):
-        """Test that cache expiration is updated when loading from disk."""
-        # Load into cache
-        await get_system_prompt()
-
-        # Check that expiration is set correctly
-        expires_at = _prompt_cache["expires_at"]
-        assert expires_at is not None
-
-        # Should be approximately CACHE_TTL_MINUTES from now
-        expected_expiry = datetime.now() + timedelta(minutes=CACHE_TTL_MINUTES)
-        time_diff = abs((expires_at - expected_expiry).total_seconds())
-        assert time_diff < 5  # Within 5 seconds
-
-
-class TestPromptCacheThreadSafety:
-    """Test cases for thread-safe concurrent cache access."""
-
-    @pytest.fixture(autouse=True)
-    def clear_cache_before_each(self):
-        """Clear cache before each test."""
-        clear_prompt_cache()
-        yield
-        clear_prompt_cache()
-
-    @pytest.mark.asyncio
-    async def test_concurrent_cache_access(self):
-        """Test that concurrent access to cache is thread-safe."""
-        results = []
-
-        async def fetch_prompt():
-            prompt = await get_system_prompt()
-            results.append(prompt)
-
-        # Launch multiple concurrent requests
-        await asyncio.gather(
-            fetch_prompt(),
-            fetch_prompt(),
-            fetch_prompt(),
-            fetch_prompt(),
-            fetch_prompt(),
-        )
-
-        # All results should be identical
-        assert len(results) == 5
-        assert all(r == results[0] for r in results)
-
-    @pytest.mark.asyncio
-    async def test_concurrent_cache_miss_handling(self):
-        """Test that concurrent cache misses only load once."""
-        call_count = 0
-
-        original_load = load_markdown
-
-        def counting_load(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            return original_load(*args, **kwargs)
-
-        with patch("agent.prompts.loader.load_markdown", side_effect=counting_load):
-            # Launch multiple concurrent requests with clear cache
-            await asyncio.gather(
-                get_system_prompt(),
-                get_system_prompt(),
-                get_system_prompt(),
-            )
-
-        # Should have loaded only once (others used cache)
-        # Note: Due to async lock, only one should have loaded
-        assert call_count >= 3  # Each call loads 3 files
-
-    @pytest.mark.asyncio
-    async def test_cache_clear_during_concurrent_access(self):
-        """Test that cache clear is safe during concurrent access."""
-        results = []
-
-        async def fetch_and_clear():
-            prompt = await get_system_prompt()
-            results.append(prompt)
+    async def test_cached_prompt_avoids_reloading_markdown(self):
+        """After caching, load_markdown is not called again on second access."""
+        with patch(
+            "agent.prompts.loader.load_markdown",
+            side_effect=["id content", "rules content", "glossary content"],
+        ) as mocked_load:
             clear_prompt_cache()
+            first = await get_system_prompt()
+            second = await get_system_prompt()
 
-        # Mix of fetches and clears
-        tasks = [
-            get_system_prompt(),
-            fetch_and_clear(),
-            get_system_prompt(),
-        ]
-
-        await asyncio.gather(*tasks)
-
-        # All should complete without errors
-        assert len(results) >= 1
+        assert first == second
+        assert mocked_load.call_count == 3  # 3 files, only once
 
 
-class TestPromptCacheInvalidation:
-    """Test cases for cache invalidation."""
+# =============================================================================
+# clear_prompt_cache tests
+# =============================================================================
+
+
+class TestClearPromptCache:
+    """Test cache invalidation via clear_prompt_cache."""
 
     @pytest.fixture(autouse=True)
     def clear_cache_before_each(self):
-        """Clear cache before each test."""
         clear_prompt_cache()
         yield
         clear_prompt_cache()
 
     @pytest.mark.asyncio
-    async def test_clear_cache_removes_data(self):
-        """Test that clear_prompt_cache removes cached data."""
-        # Populate cache
+    async def test_clear_forces_reload(self):
+        """After clear, the next get_system_prompt loads from disk again."""
         await get_system_prompt()
 
-        # Verify cache has data
-        assert _prompt_cache["data"] is not None
-        assert _prompt_cache["expires_at"] is not None
-
-        # Clear cache
         clear_prompt_cache()
 
-        # Verify cache is empty
-        assert _prompt_cache["data"] is None
-        assert _prompt_cache["expires_at"] is None
-
-    @pytest.mark.asyncio
-    async def test_clear_cache_forces_reload(self):
-        """Test that clearing cache forces reload on next access."""
-        # Populate cache
-        prompt1 = await get_system_prompt()
-
-        # Clear cache
-        clear_prompt_cache()
-
-        # Next call should reload from disk
         with patch("agent.prompts.loader.load_markdown") as mock_load:
             mock_load.return_value = "reloaded content"
-            prompt2 = await get_system_prompt()
+            prompt = await get_system_prompt()
 
-        # Should have called load_markdown again
         assert mock_load.called
-        # Format includes separators with newlines: content\n\n---\n\ncontent\n\n---\n\ncontent
-        assert "reloaded content" in prompt2
-        assert "---" in prompt2
+        assert "reloaded content" in prompt
 
-    @pytest.mark.asyncio
-    async def test_multiple_clears_are_safe(self):
-        """Test that multiple consecutive clears don't cause errors."""
-        # Multiple clears should be safe
+    def test_multiple_clears_are_safe(self):
+        """Multiple consecutive clears do not raise errors."""
         clear_prompt_cache()
         clear_prompt_cache()
         clear_prompt_cache()
 
-        # Cache should still work after multiple clears
-        prompt = await get_system_prompt()
-        assert isinstance(prompt, str)
-        assert len(prompt) > 0
 
-
-class TestBuildStepContext:
-    """Test cases for build_step_context function."""
-
-    def test_build_step_context_basic(self):
-        """Test building context with minimal state."""
-        state = {"user_message": "Hello"}
-        mode_context = {}
-
-        context = build_step_context(state, mode_context)
-
-        assert isinstance(context, str)
-        assert "Hello" not in context
-        assert "Fecha y hora actual" in context
-
-    def test_build_step_context_with_customer(self):
-        """Test building context with customer info — name NOT injected (privacy)."""
-        state = {
-            "user_message": "I want to book",
-            "customer_name": "María",
-            "customer_phone": "+1234567890",
-        }
-        mode_context = {}
-
-        context = build_step_context(state, mode_context)
-
-        # Customer name should NOT appear in prompt context (customer-name-handling refactor)
-        assert "María" not in context
-        assert "+1234567890" in context
-
-    def test_build_step_context_with_collected_data(self):
-        """Test building context with collected booking data.
-
-        first_name is intentionally excluded from context (Rule #6 — NUNCA uses el nombre
-        del cliente en ninguna respuesta). All other booking fields must still be present.
-        """
-        state = {"user_message": "Yes, that's correct"}
-        mode_context = {
-            "service_name": "Corte Caballero",
-            "stylist_name": "Ana",
-            "slot_summary": "Viernes 10:00",
-            "first_name": "Juan",
-            "notes": "Alergia a productos X",
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "Corte Caballero" in context
-        assert "Ana" in context
-        assert "Viernes 10:00" in context
-        # first_name must NOT be injected — Rule #6 privacy enforcement
-        assert "Juan" not in context
-        assert "Nombre para la reserva" not in context
-        assert "Alergia a productos X" in context
-
-    def test_build_step_context_with_summary(self):
-        """Test building context with conversation summary."""
-        state = {
-            "user_message": "Confirm",
-            "conversation_summary": "Cliente quiere corte para mañana",
-        }
-        mode_context = {}
-
-        context = build_step_context(state, mode_context)
-
-        assert "Cliente quiere corte para mañana" in context
-
-    def test_build_step_context_with_step_info(self):
-        """Test building context with step information."""
-        state = {"user_message": "Yes"}
-        mode_context = {}
-        step_info = {"step_name": "service_selection"}
-
-        context = build_step_context(state, mode_context, step_info)
-
-        assert "service_selection" in context
-
-    def test_build_step_context_includes_semantic_fields_when_present(self):
-        state = {"user_message": "quiero turno pronto"}
-        mode_context = {
-            "stylist_name": "María",
-            "substitution_made": True,
-            "substitution_reason": "minimum_days_rule",
-            "date_requested": "2026-03-19",
-            "date_substituted": "2026-03-22",
-            "min_valid_date": "2026-03-22",
-            "no_slots_for_stylist": True,
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "Fecha solicitada ajustada" in context
-        assert "2026-03-19" in context
-        assert "2026-03-22" in context
-        assert "Sin disponibilidad para María en el rango solicitado" in context
-
-    # Task 5.7 — loader guidance: tool_error
-    def test_build_step_context_includes_prefetch_tool_error_guidance(self):
-        """When prefetch_error_type='tool_error', context must include 'error técnico' guidance."""
-        state = {"user_message": "quiero turno"}
-        mode_context = {
-            "service_name": "Cortar",
-            "prefetch_error": True,
-            "prefetch_error_type": "tool_error",
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "PREFETCH FALLIDO" in context
-        assert "error técnico" in context
-        assert "list_stylists" in context
-
-    # Task 5.7 — loader guidance: no_availability
-    def test_build_step_context_includes_prefetch_no_availability_guidance(self):
-        """When prefetch_error_type='no_availability', context must include 'SIN DISPONIBILIDAD'."""
-        state = {"user_message": "quiero turno"}
-        mode_context = {
-            "service_name": "Cortar",
-            "prefetch_error": True,
-            "prefetch_error_type": "no_availability",
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "SIN DISPONIBILIDAD" in context
-
-    # Task 5.7 — loader guidance: absent prefetch_error_type → no warning injected
-    def test_build_step_context_omits_prefetch_warning_when_no_error_type(self):
-        """When prefetch_error_type is absent, no prefetch warning should appear in context."""
-        state = {"user_message": "quiero turno"}
-        mode_context = {
-            "service_name": "Cortar",
-            "prefetched_stylists": [
-                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes a las 10:00"},
-            ],
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "PREFETCH FALLIDO" not in context
-        assert "SIN DISPONIBILIDAD" not in context
-        assert "Ana" in context
-
-    def test_build_step_context_omits_prefetch_warning_when_no_error(self):
-        """When prefetch_error is absent/False, no warning should appear."""
-        state = {"user_message": "quiero turno"}
-        mode_context = {
-            "service_name": "Cortar",
-            "prefetched_stylists": [
-                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes a las 10:00"},
-            ],
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "PREFETCH FALLIDO" not in context
-        assert "Ana" in context
-
-    def test_build_step_context_omits_semantic_fields_when_absent(self):
-        state = {"user_message": "quiero turno"}
-        mode_context = {"service_name": "Cortar"}
-
-        context = build_step_context(state, mode_context)
-
-        assert "Fecha solicitada ajustada" not in context
-        assert "Sin disponibilidad para" not in context
-
-    @pytest.mark.asyncio
-    async def test_build_layered_messages_renders_semantic_fields_in_dynamic_context(self):
-        state = {"user_message": "quiero turno"}
-        mode_context = {
-            "substitution_made": True,
-            "substitution_reason": "minimum_days_rule",
-            "date_requested": "2026-03-19",
-            "min_valid_date": "2026-03-22",
-        }
-
-        messages, dyn_idx = await build_layered_messages(state, mode_context, include_history=False)
-
-        assert "Fecha solicitada ajustada" in messages[dyn_idx].content
-        assert "2026-03-19" in messages[dyn_idx].content
-        assert "2026-03-22" in messages[dyn_idx].content
-
-    def test_build_step_context_does_not_duplicate_user_message(self):
-        state = {"user_message": "Necesito una cita"}
-        mode_context = {"service_name": "Corte"}
-
-        context = build_step_context(state, mode_context)
-
-        assert "Mensaje del cliente:" not in context
-        assert "Necesito una cita" not in context
-
-    @pytest.mark.asyncio
-    async def test_build_layered_messages_keeps_user_message_only_in_history(self):
-        state = {
-            "user_message": "Necesito una cita",
-            "messages": [{"role": "user", "content": "Necesito una cita"}],
-        }
-        mode_context = {"service_name": "Corte"}
-
-        messages, dyn_idx = await build_layered_messages(state, mode_context, include_history=True)
-
-        # Dynamic context (last SystemMessage) must not contain the user message
-        assert "Mensaje del cliente:" not in messages[dyn_idx].content
-        assert "Necesito una cita" not in messages[dyn_idx].content
-        # With new order [system, history..., dynamic], the last history msg is before dynamic
-        # The user message appears in history (before the dynamic context)
-        assert any(
-            hasattr(msg, "content") and msg.content == "Necesito una cita" for msg in messages
-        )
-
-
-class TestBuildLayeredMessages:
-    """Test cases for build_layered_messages function."""
-
-    @pytest.mark.asyncio
-    async def test_build_layered_messages_structure(self):
-        """Test that layered messages have correct structure."""
-        state = {"user_message": "Hello"}
-        mode_context = {}
-
-        messages, dyn_idx = await build_layered_messages(state, mode_context)
-
-        # Should have at least 2 messages (System + System context)
-        assert len(messages) >= 2
-
-        # First should be SystemMessage (cached system prompt)
-        from langchain_core.messages import SystemMessage
-
-        assert isinstance(messages[0], SystemMessage)
-
-        # Last should be SystemMessage (dynamic context — NOT HumanMessage,
-        # to prevent the LLM from echoing internal context back to the user)
-        assert isinstance(messages[-1], SystemMessage)
-        assert dyn_idx == len(messages) - 1
-
-    @pytest.mark.asyncio
-    async def test_build_layered_messages_with_history(self):
-        """Test building messages with conversation history."""
-        state = {
-            "messages": [
-                {"role": "user", "content": "Hi"},
-                {"role": "assistant", "content": "Hello!"},
-                {"role": "user", "content": "I want to book"},
-            ]
-        }
-        mode_context = {}
-
-        messages, dyn_idx = await build_layered_messages(state, mode_context, history_limit=2)
-
-        # Should have system + 2 history messages + dynamic context
-        assert len(messages) == 4
-        # Dynamic context is the last message
-        assert dyn_idx == len(messages) - 1
-
-    @pytest.mark.asyncio
-    async def test_build_layered_messages_without_history(self):
-        """Test building messages without history."""
-        state = {
-            "messages": [
-                {"role": "user", "content": "Hi"},
-                {"role": "assistant", "content": "Hello!"},
-            ]
-        }
-        mode_context = {}
-
-        messages, dyn_idx = await build_layered_messages(state, mode_context, include_history=False)
-
-        # Should have only system + dynamic context
-        assert len(messages) == 2
-        assert dyn_idx == 1
-
-    @pytest.mark.asyncio
-    async def test_build_layered_messages_content(self):
-        """Test that messages contain expected content."""
-        state = {"user_message": "Book appointment"}
-        mode_context = {"service_name": "Corte"}
-
-        messages, dyn_idx = await build_layered_messages(state, mode_context)
-
-        # System message should have identity content
-        assert "Maite" in messages[0].content or "#" in messages[0].content
-
-        # Dynamic context (last SystemMessage) should have step context data
-        assert "Corte" in messages[dyn_idx].content
+# =============================================================================
+# load_mode_overlay tests
+# =============================================================================
 
 
 class TestLoadModeOverlay:
@@ -655,365 +258,238 @@ class TestLoadModeOverlay:
         assert result == ""
         mock_logger.warning.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_load_mode_overlay_none_returns_empty(self):
+        """None mode_name returns empty string without error."""
+        result = await load_mode_overlay(None, {})
 
-class TestPromptCacheIntegration:
-    """Integration tests for prompt caching functionality."""
+        assert result == ""
 
-    @pytest.fixture(autouse=True)
-    def clear_cache_before_each(self):
-        """Clear cache before each test."""
-        clear_prompt_cache()
-        yield
-        clear_prompt_cache()
+
+# =============================================================================
+# build_layered_messages tests
+# =============================================================================
+
+
+class TestBuildLayeredMessages:
+    """Test the structure and content of build_layered_messages output."""
 
     @pytest.mark.asyncio
-    async def test_full_prompt_loading_workflow(self):
-        """Test the complete prompt loading workflow."""
-        # Clear cache to ensure fresh start
-        clear_prompt_cache()
+    async def test_build_layered_messages_structure(self):
+        """Messages have at least [SystemMessage, ..., SystemMessage(dynamic)]."""
+        state = {"user_message": "Hello"}
+        mode_context = {}
 
-        # Load system prompt (should cache)
-        system_prompt = await get_system_prompt()
-        assert len(system_prompt) > 2000
+        with patch(
+            "agent.prompts.catalog_builder.build_catalog_markdown",
+            new_callable=AsyncMock,
+            return_value="# Catálogo de prueba",
+        ):
+            messages, dyn_idx = await build_layered_messages(state, mode_context)
 
-        # Build layered messages (should use cached system prompt)
-        state = {"user_message": "Test message"}
-        mode_context = {"service_name": "Corte"}
-
-        messages, dyn_idx = await build_layered_messages(state, mode_context)
-
-        # Verify structure
         assert len(messages) >= 2
-        assert system_prompt in messages[0].content or messages[0].content == system_prompt
+
+        from langchain_core.messages import SystemMessage
+
+        assert isinstance(messages[0], SystemMessage)
+        assert isinstance(messages[-1], SystemMessage)
         assert dyn_idx == len(messages) - 1
 
     @pytest.mark.asyncio
-    async def test_cache_performance_improvement(self):
-        """Test that caching improves performance."""
-        import time
-
-        # First call - cache miss (slower)
-        start = time.time()
-        await get_system_prompt()
-        miss_time = time.time() - start
-
-        # Second call - cache hit (faster)
-        start = time.time()
-        await get_system_prompt()
-        hit_time = time.time() - start
-
-        # Cache hit should be significantly faster
-        # (Allowing for test variability)
-        assert hit_time < miss_time * 2  # Hit should be at most 2x slower than miss
-
-    @pytest.mark.asyncio
-    async def test_cached_system_prompt_avoids_reloading_markdown_files(self):
-        with patch(
-            "agent.prompts.loader.load_markdown", side_effect=["id", "rules", "glossary"]
-        ) as mocked_load:
-            clear_prompt_cache()
-            first = await get_system_prompt()
-            second = await get_system_prompt()
-
-        assert first == second
-        assert mocked_load.call_count == 3
-
-
-class TestPromptCacheEdgeCases:
-    """Edge case tests for prompt caching."""
-
-    @pytest.fixture(autouse=True)
-    def clear_cache_before_each(self):
-        """Clear cache before each test."""
-        clear_prompt_cache()
-        yield
-        clear_prompt_cache()
-
-    @pytest.mark.asyncio
-    async def test_empty_state_handling(self):
-        """Test handling of empty state dict."""
-        state = {}
+    async def test_build_layered_messages_without_history(self):
+        """Without history: only system + catalog (+ optional overlay) + dynamic."""
+        state = {
+            "messages": [
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello!"},
+            ]
+        }
         mode_context = {}
 
-        context = build_step_context(state, mode_context)
+        with patch(
+            "agent.prompts.catalog_builder.build_catalog_markdown",
+            new_callable=AsyncMock,
+            return_value="# Catálogo",
+        ):
+            messages, dyn_idx = await build_layered_messages(
+                state, mode_context, include_history=False
+            )
+
+        # No history messages — only system blocks + dynamic
+        assert dyn_idx == len(messages) - 1
+        from langchain_core.messages import HumanMessage
+
+        assert not any(isinstance(m, HumanMessage) for m in messages)
+
+    @pytest.mark.asyncio
+    async def test_build_layered_messages_with_history_included(self):
+        """With history: history messages appear between overlays and dynamic context."""
+        state = {
+            "messages": [
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello!"},
+                {"role": "user", "content": "I want to book"},
+            ]
+        }
+        mode_context = {}
+
+        with patch(
+            "agent.prompts.catalog_builder.build_catalog_markdown",
+            new_callable=AsyncMock,
+            return_value="# Catálogo",
+        ):
+            messages, dyn_idx = await build_layered_messages(
+                state, mode_context, include_history=True, history_limit=3
+            )
+
+        from langchain_core.messages import HumanMessage
+
+        human_messages = [m for m in messages if isinstance(m, HumanMessage)]
+        assert len(human_messages) > 0
+        assert dyn_idx == len(messages) - 1
+
+    @pytest.mark.asyncio
+    async def test_dynamic_context_override_used_when_provided(self):
+        """When dynamic_context_override is given, it replaces the default context."""
+        state = {"user_message": "test"}
+        mode_context = {}
+        override_text = "OVERRIDE CONTEXT — injected by BookingMode"
+
+        with patch(
+            "agent.prompts.catalog_builder.build_catalog_markdown",
+            new_callable=AsyncMock,
+            return_value="# Catálogo",
+        ):
+            messages, dyn_idx = await build_layered_messages(
+                state,
+                mode_context,
+                dynamic_context_override=override_text,
+                include_history=False,
+            )
+
+        assert messages[dyn_idx].content == override_text
+
+    @pytest.mark.asyncio
+    async def test_build_layered_messages_calls_catalog(self):
+        """build_layered_messages must call build_catalog_markdown (T-41 integration)."""
+        state = {"user_message": "test"}
+        mode_context = {}
+
+        with patch(
+            "agent.prompts.catalog_builder.build_catalog_markdown",
+            new_callable=AsyncMock,
+            return_value="# Catálogo mock",
+        ) as mock_catalog:
+            await build_layered_messages(state, mode_context)
+
+        mock_catalog.assert_called_once()
+
+
+# =============================================================================
+# _build_simple_dynamic_context tests
+# =============================================================================
+
+
+class TestBuildSimpleDynamicContext:
+    """Test the minimal dynamic context builder."""
+
+    def test_includes_datetime(self):
+        """Output always includes current date and time."""
+        state = {"user_message": "Hello"}
+        mode_context = {}
+
+        context = _build_simple_dynamic_context(state, mode_context)
+
+        assert "Fecha y hora actual" in context
+
+    def test_includes_phone_when_present(self):
+        """Customer phone is included when present in state."""
+        state = {"customer_phone": "+34612345678"}
+        mode_context = {}
+
+        context = _build_simple_dynamic_context(state, mode_context)
+
+        assert "+34612345678" in context
+
+    def test_includes_conversation_summary(self):
+        """Conversation summary is included when present."""
+        state = {
+            "user_message": "Confirm",
+            "conversation_summary": "Cliente quiere corte para mañana",
+        }
+        mode_context = {}
+
+        context = _build_simple_dynamic_context(state, mode_context)
+
+        assert "Cliente quiere corte para mañana" in context
+
+    def test_empty_state_does_not_raise(self):
+        """Empty state is handled gracefully."""
+        context = _build_simple_dynamic_context({}, {})
 
         assert isinstance(context, str)
         assert "Fecha y hora actual" in context
 
-    @pytest.mark.asyncio
-    async def test_none_values_in_state(self):
-        """Test handling of None values in state."""
-        state = {
-            "customer_name": None,
-            "customer_phone": None,
-            "user_message": None,
-        }
-        mode_context = {}
+    def test_none_values_handled_gracefully(self):
+        """None values in state don't raise exceptions."""
+        state = {"customer_phone": None, "conversation_summary": None}
 
-        context = build_step_context(state, mode_context)
+        context = _build_simple_dynamic_context(state, {})
 
-        # Should handle None values gracefully
         assert isinstance(context, str)
 
-    @pytest.mark.asyncio
-    async def test_corrupted_cache_recovery(self):
-        """Test recovery from corrupted cache data."""
-        # Set corrupted cache data
-        _prompt_cache["data"] = None
-        _prompt_cache["expires_at"] = datetime.now() + timedelta(minutes=10)
 
-        # Should handle gracefully and reload
-        prompt = await get_system_prompt()
-        assert isinstance(prompt, str)
-        assert len(prompt) > 1000
+# =============================================================================
+# _TtlCache tests
+# =============================================================================
+
+
+class TestTtlCache:
+    """Unit tests for the _TtlCache helper."""
 
     @pytest.mark.asyncio
-    async def test_very_short_ttl(self):
-        """Test with very short TTL."""
-        # Set cache that expires immediately
-        _prompt_cache["data"] = "old content"
-        _prompt_cache["expires_at"] = datetime.now()
+    async def test_cache_miss_calls_loader(self):
+        """First access calls the loader function."""
+        cache = _TtlCache(ttl_minutes=10)
+        call_count = 0
 
-        # Small delay to ensure expiration
-        await asyncio.sleep(0.01)
+        def loader():
+            nonlocal call_count
+            call_count += 1
+            return "loaded value"
 
-        # Should reload
-        prompt = await get_system_prompt()
-        assert prompt != "old content"
+        result = await cache.get_or_load(loader)
 
+        assert result == "loaded value"
+        assert call_count == 1
 
-# =============================================================================
-# T3.6: build_step_context must NOT inject first_name (Rule #6 privacy fix)
-# T3.7: confirmation.md must NOT contain the name-permission line
-# =============================================================================
+    @pytest.mark.asyncio
+    async def test_cache_hit_does_not_call_loader_again(self):
+        """Second access uses cache, loader called only once."""
+        cache = _TtlCache(ttl_minutes=10)
+        call_count = 0
 
+        def loader():
+            nonlocal call_count
+            call_count += 1
+            return "cached value"
 
-class TestFirstNameFilteringRule6:
-    """T3.6 — Verify first_name is never injected into build_step_context output."""
+        await cache.get_or_load(loader)
+        result = await cache.get_or_load(loader)
 
-    def test_build_step_context_does_not_inject_first_name(self):
-        """T3.6: even when mode_context has first_name set, it must not appear in output."""
-        state = {"user_message": "sí, confirmo"}
-        mode_context = {"first_name": "María"}
+        assert result == "cached value"
+        assert call_count == 1
 
-        context = build_step_context(state, mode_context)
+    def test_invalidate_clears_cache(self):
+        """After invalidate(), is_valid() returns False."""
+        cache = _TtlCache(ttl_minutes=10)
+        cache._data = "some data"
+        from datetime import datetime, timedelta
 
-        assert "María" not in context
-        assert "Nombre para la reserva" not in context
+        cache._expires_at = datetime.now() + timedelta(minutes=5)
 
-    def test_build_step_context_other_fields_unaffected_when_first_name_absent(self):
-        """T3.6 scenario 2: when first_name is not set, function behaves normally."""
-        state = {"user_message": "sí, confirmo"}
-        mode_context = {"slot_summary": "Viernes 10:00", "service_name": "Corte"}
+        assert cache.is_valid()
 
-        context = build_step_context(state, mode_context)
+        cache.invalidate()
 
-        assert "Viernes 10:00" in context
-        assert "Corte" in context
-
-    def test_build_step_context_first_name_with_other_fields_filters_only_name(self):
-        """T3.6 scenario 3: other fields still injected even when first_name present."""
-        state = {"user_message": "dale"}
-        mode_context = {
-            "first_name": "Carlos",
-            "stylist_name": "Laura",
-            "service_name": "Tinte",
-            "slot_summary": "Lunes 14:00",
-        }
-
-        context = build_step_context(state, mode_context)
-
-        # first_name filtered out
-        assert "Carlos" not in context
-        assert "Nombre para la reserva" not in context
-        # Other fields still present
-        assert "Laura" in context
-        assert "Tinte" in context
-        assert "Lunes 14:00" in context
-
-
-class TestBookingMdNoNamePermission:
-    """T3.7 — booking.md must not contain the removed name-permission line.
-
-    Redirected from the non-existent booking/confirmation.md to the actual
-    prompt file: agent/prompts/modes/booking.md (GAP 4 fix).
-    """
-
-    def test_booking_md_does_not_contain_name_permission_line(self):
-        """T3.7: The line 'Puedes usar el nombre de la clienta' must be absent."""
-        from pathlib import Path
-
-        booking_path = (
-            Path(__file__).parent.parent.parent / "agent" / "prompts" / "modes" / "booking.md"
-        )
-        content = booking_path.read_text(encoding="utf-8")
-
-        assert "Puedes usar el nombre de la clienta" not in content
-
-    def test_booking_md_retains_core_instructions(self):
-        """T3.7 scenario 2: booking.md must contain core booking mode instructions."""
-        from pathlib import Path
-
-        booking_path = (
-            Path(__file__).parent.parent.parent / "agent" / "prompts" / "modes" / "booking.md"
-        )
-        content = booking_path.read_text(encoding="utf-8")
-
-        # booking.md must contain core booking mode identifier
-        assert "Modo RESERVA" in content
-
-
-# =============================================================================
-# T-5: Per-step data scoping — _STEP_VISIBLE_FIELDS filtering
-# =============================================================================
-
-
-class TestStepVisibleFieldsScoping:
-    """T-5.4 — Verify per-step data scoping filters mode_context correctly."""
-
-    def test_service_selection_does_not_see_prefetched_stylists(self):
-        """service_selection step must NOT leak prefetched_stylists into context."""
-        state = {"user_message": "quiero un corte"}
-        mode_context = {
-            "booking_step": "service_selection",
-            "service_name": "Corte",
-            "prefetched_stylists": [
-                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes 10:00"},
-            ],
-            "soonest_any_slot": "Lunes 10:00",
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "Corte" in context
-        assert "Ana" not in context
-        assert "Estilistas disponibles" not in context
-        assert "Cualquier profesional" not in context
-
-    def test_stylist_selection_does_see_prefetched_stylists(self):
-        """stylist_selection step MUST see prefetched_stylists."""
-        state = {"user_message": "quien me puede atender?"}
-        mode_context = {
-            "booking_step": "stylist_selection",
-            "service_name": "Corte",
-            "prefetched_stylists": [
-                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes 10:00"},
-            ],
-            "soonest_any_slot": "Lunes 10:00",
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "Ana" in context
-        assert "Estilistas disponibles" in context
-        assert "Cualquier profesional" in context
-
-    def test_unknown_substep_sees_all_fields_fallback(self):
-        """Unknown booking_step must fall back to showing all fields (no filtering)."""
-        state = {"user_message": "hola"}
-        mode_context = {
-            "booking_step": "unknown_step_xyz",
-            "service_name": "Corte",
-            "prefetched_stylists": [
-                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes 10:00"},
-            ],
-            "stylist_name": "Ana",
-            "slot_summary": "Lunes 10:00",
-            "notes": "Nota de prueba",
-        }
-
-        context = build_step_context(state, mode_context)
-
-        # All fields should be visible in fallback
-        assert "Corte" in context
-        assert "Ana" in context
-        assert "Lunes 10:00" in context
-        assert "Nota de prueba" in context
-
-    def test_empty_booking_step_sees_all_fields_fallback(self):
-        """Empty/absent booking_step must fall back to showing all fields."""
-        state = {"user_message": "hola"}
-        mode_context = {
-            "service_name": "Corte",
-            "prefetched_stylists": [
-                {"name": "Ana", "id": "sty-1", "next_slot_summary": "Lunes 10:00"},
-            ],
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "Corte" in context
-        assert "Ana" in context
-
-    def test_all_defined_substeps_have_entries_in_map(self):
-        """Every substep in _BOOKING_SUBSTEP_FILE_MAP must have a _STEP_VISIBLE_FIELDS entry."""
-        from agent.prompts.loader import _BOOKING_SUBSTEP_FILE_MAP
-
-        for substep in _BOOKING_SUBSTEP_FILE_MAP:
-            assert substep in _STEP_VISIBLE_FIELDS, (
-                f"Substep '{substep}' is in _BOOKING_SUBSTEP_FILE_MAP "
-                f"but missing from _STEP_VISIBLE_FIELDS"
-            )
-
-    def test_slot_selection_does_not_see_candidate_services(self):
-        """slot_selection step must NOT leak candidate_services."""
-        state = {"user_message": "dame turno"}
-        mode_context = {
-            "booking_step": "slot_selection",
-            "service_name": "Corte",
-            "stylist_name": "Ana",
-            "candidate_services": [{"name": "Tinte"}, {"name": "Mechas"}],
-            "offered_slots": ["Lunes 10:00", "Martes 11:00"],
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "Corte" in context
-        assert "Ana" in context
-        assert "Servicios candidatos" not in context
-
-    def test_confirmation_sees_notes_but_not_prefetched_stylists(self):
-        """confirmation step must see notes but NOT prefetched_stylists."""
-        state = {"user_message": "confirmo"}
-        mode_context = {
-            "booking_step": "confirmation",
-            "service_name": "Corte",
-            "stylist_name": "Ana",
-            "slot_summary": "Lunes 10:00",
-            "notes": "Sin alergias",
-            "prefetched_stylists": [
-                {"name": "Laura", "id": "sty-2", "next_slot_summary": "Martes 09:00"},
-            ],
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "Corte" in context
-        assert "Ana" in context
-        assert "Lunes 10:00" in context
-        assert "Sin alergias" in context
-        assert "Laura" not in context
-        assert "Estilistas disponibles" not in context
-
-    def test_customer_name_step_minimal_context(self):
-        """customer_name step should only see minimal fields."""
-        state = {"user_message": "me llamo Maria"}
-        mode_context = {
-            "booking_step": "customer_name",
-            "service_name": "Corte",
-            "stylist_name": "Ana",
-            "slot_summary": "Lunes 10:00",
-            "notes": "Nota previa",
-            "prefetched_stylists": [
-                {"name": "Laura", "id": "sty-2", "next_slot_summary": "Martes 09:00"},
-            ],
-        }
-
-        context = build_step_context(state, mode_context)
-
-        assert "Corte" in context
-        assert "Ana" in context
-        # slot_summary and notes are NOT in customer_name's visible fields
-        assert "Lunes 10:00" not in context
-        assert "Nota previa" not in context
-        assert "Laura" not in context
+        assert not cache.is_valid()

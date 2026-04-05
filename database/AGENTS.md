@@ -55,7 +55,7 @@ database/
 |-------|-------|---------|------------|
 | `Stylist` | `stylists` | Salon professionals | `name`, `google_calendar_id`, `category`, `color` |
 | `Customer` | `customers` | Salon customers | `phone` (E.164), `first_name`, `preferred_stylist_id` |
-| `Service` | `services` | Salon services | `name`, `duration_minutes`, `category` |
+| `Service` | `services` | Salon services | `name`, `duration_minutes`, `category`, `audience` |
 | `Appointment` | `appointments` | Booking transactions | `customer_id`, `stylist_id`, `start_time`, `status` |
 | `Policy` | `policies` | Business rules/FAQs | `key`, `value` (JSONB) |
 | `BusinessHours` | `business_hours` | Operating schedule | `day_of_week`, `start_hour`, `end_hour` |
@@ -287,6 +287,20 @@ def downgrade() -> None:
 
 ---
 
+## Service Model: `audience` Field
+
+The `Service` model has a top-level `audience` column:
+
+```python
+audience: Mapped[str | None] = mapped_column(String(30), nullable=True)
+```
+
+Used to segment services by target audience (e.g. `"damas"`, `"caballeros"`, `"niños"`). The service catalog is injected directly into the booking prompt via `catalog_builder.py` — no fuzzy search tool needed.
+
+**Note**: The `idx_services_name_trgm` GIN trigram index was dropped when `search_services` tool was removed. Service lookup is now catalog-in-prompt.
+
+---
+
 ## Indexes and Constraints
 
 ### Partial Indexes
@@ -312,20 +326,6 @@ from sqlalchemy import CheckConstraint
 class Service(Base):
     __table_args__ = (
         CheckConstraint("duration_minutes > 0", name="check_duration_positive"),
-    )
-```
-
-### GIN Index for Fuzzy Search
-
-```python
-class Service(Base):
-    __table_args__ = (
-        Index(
-            "idx_services_name_trgm",
-            "name",
-            postgresql_using="gin",
-            postgresql_ops={"name": "gin_trgm_ops"},
-        ),
     )
 ```
 

@@ -1,280 +1,60 @@
-from __future__ import annotations
+"""
+Tests for availability_tools module — verifies simplified v5.0 schema.
 
-from datetime import datetime, timedelta
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+Checks:
+- CheckAvailabilitySchema has the new fields (service_name, date, stylist_name, time_range)
+- find_next_available was removed (merged into check_availability AUTO-SEARCH logic)
+- Old schema fields (service_category, service_duration_minutes) are gone
+"""
+
+import inspect
 
 import pytest
 
-from agent.modes.booking_context import InterpretationReason
-from agent.tools import availability_tools as availability_tools_module
-from agent.utils.date_parser import DateParseError
+from agent.tools.availability_tools import CheckAvailabilitySchema
 
 
-def _make_stylist(name: str = "Ana") -> SimpleNamespace:
-    return SimpleNamespace(id=uuid4(), name=name)
+def test_schema_has_service_name():
+    """CheckAvailabilitySchema has service_name field."""
+    fields = CheckAvailabilitySchema.model_fields
+    assert "service_name" in fields, "service_name field is missing from CheckAvailabilitySchema"
 
 
-@pytest.mark.asyncio
-async def test_find_next_available_returns_semantic_fields_when_date_is_substituted():
-    preferred_date = datetime.now(availability_tools_module.MADRID_TZ) + timedelta(days=1)
-    min_valid_before = (
-        (
-            datetime.now(availability_tools_module.MADRID_TZ)
-            + timedelta(days=availability_tools_module.MINIMUM_DAYS)
-        )
-        .date()
-        .isoformat()
-    )
-    min_valid_after = (
-        (
-            datetime.now(availability_tools_module.MADRID_TZ)
-            + timedelta(days=availability_tools_module.MINIMUM_DAYS)
-        )
-        .date()
-        .isoformat()
-    )
-    stylist = _make_stylist()
-
-    with (
-        patch.object(
-            availability_tools_module,
-            "parse_natural_date",
-            return_value=preferred_date,
-        ),
-        patch.object(
-            availability_tools_module,
-            "get_stylists_by_category",
-            new=AsyncMock(return_value=[stylist]),
-        ),
-        patch.object(
-            availability_tools_module,
-            "get_next_open_date",
-            new=AsyncMock(side_effect=lambda value, max_search_days=14: value),
-        ),
-        patch.object(
-            availability_tools_module,
-            "is_date_closed",
-            new=AsyncMock(return_value=False),
-        ),
-        patch.object(
-            availability_tools_module,
-            "is_holiday",
-            new=AsyncMock(return_value=None),
-        ),
-        patch.object(
-            availability_tools_module,
-            "get_available_slots",
-            new=AsyncMock(
-                return_value=[
-                    {
-                        "time": "10:00",
-                        "end_time": "11:00",
-                        "full_datetime": "2026-03-22T10:00:00+01:00",
-                    }
-                ]
-            ),
-        ),
-    ):
-        result = await availability_tools_module.find_next_available.ainvoke(
-            {
-                "service_category": "Peluquería",
-                "start_date": "mañana",
-                "max_days_to_search": 1,
-            }
-        )
-
-    assert result["substitution_made"] is True
-    assert result["date_requested"] == preferred_date.date().isoformat()
-    assert result["date_substituted"] == result["min_valid_date"]
-    assert result["substitution_reason"] == InterpretationReason.MINIMUM_DAYS_RULE.value
-    assert result["min_valid_date"] in {min_valid_before, min_valid_after}
+def test_schema_has_date():
+    """CheckAvailabilitySchema has date field."""
+    fields = CheckAvailabilitySchema.model_fields
+    assert "date" in fields, "date field is missing from CheckAvailabilitySchema"
 
 
-@pytest.mark.asyncio
-async def test_find_next_available_omits_semantic_fields_when_no_substitution_occurs():
-    preferred_date = datetime.now(availability_tools_module.MADRID_TZ) + timedelta(days=7)
-    stylist = _make_stylist()
-
-    with (
-        patch.object(
-            availability_tools_module,
-            "parse_natural_date",
-            return_value=preferred_date,
-        ),
-        patch.object(
-            availability_tools_module,
-            "get_stylists_by_category",
-            new=AsyncMock(return_value=[stylist]),
-        ),
-        patch.object(
-            availability_tools_module,
-            "get_next_open_date",
-            new=AsyncMock(side_effect=lambda value, max_search_days=14: value),
-        ),
-        patch.object(
-            availability_tools_module,
-            "is_date_closed",
-            new=AsyncMock(return_value=False),
-        ),
-        patch.object(
-            availability_tools_module,
-            "is_holiday",
-            new=AsyncMock(return_value=None),
-        ),
-        patch.object(
-            availability_tools_module,
-            "get_available_slots",
-            new=AsyncMock(
-                return_value=[
-                    {
-                        "time": "10:00",
-                        "end_time": "11:00",
-                        "full_datetime": preferred_date.isoformat(),
-                    }
-                ]
-            ),
-        ),
-    ):
-        result = await availability_tools_module.find_next_available.ainvoke(
-            {
-                "service_category": "Peluquería",
-                "start_date": "2026-03-30",
-                "max_days_to_search": 1,
-            }
-        )
-
-    assert "substitution_made" not in result
-    assert "date_requested" not in result
-    assert "date_substituted" not in result
-    assert "substitution_reason" not in result
-    assert "min_valid_date" not in result
+def test_schema_has_stylist_name():
+    """CheckAvailabilitySchema has stylist_name field (replaces stylist_id)."""
+    fields = CheckAvailabilitySchema.model_fields
+    assert "stylist_name" in fields, "stylist_name field is missing from CheckAvailabilitySchema"
 
 
-@pytest.mark.asyncio
-async def test_check_availability_returns_semantic_fields_when_date_is_too_soon():
-    requested_date = datetime.now(availability_tools_module.MADRID_TZ) + timedelta(days=1)
-    min_valid_before = (
-        (
-            datetime.now(availability_tools_module.MADRID_TZ)
-            + timedelta(days=availability_tools_module.MINIMUM_DAYS)
-        )
-        .date()
-        .isoformat()
-    )
-    min_valid_after = (
-        (
-            datetime.now(availability_tools_module.MADRID_TZ)
-            + timedelta(days=availability_tools_module.MINIMUM_DAYS)
-        )
-        .date()
-        .isoformat()
+def test_schema_has_time_range():
+    """CheckAvailabilitySchema has time_range field."""
+    fields = CheckAvailabilitySchema.model_fields
+    assert "time_range" in fields, "time_range field is missing from CheckAvailabilitySchema"
+
+
+def test_no_find_next_available():
+    """find_next_available was removed — merged into check_availability AUTO-SEARCH."""
+    import agent.tools.availability_tools as module
+
+    assert not hasattr(module, "find_next_available"), (
+        "find_next_available should not exist — it was merged into check_availability AUTO-SEARCH"
     )
 
-    with (
-        patch.object(
-            availability_tools_module,
-            "parse_natural_date",
-            return_value=requested_date,
-        ),
-        patch.object(
-            availability_tools_module,
-            "validate_3_day_rule",
-            new=AsyncMock(
-                return_value={
-                    "valid": False,
-                    "error_message": "Muy pronto",
-                    "days_until_appointment": 1,
-                }
-            ),
-        ),
-    ):
-        result = await availability_tools_module.check_availability.ainvoke(
-            {"service_category": "Peluquería", "date": "mañana"}
-        )
 
-    assert result["date_too_soon"] is True
-    assert result["date_requested"] == requested_date.date().isoformat()
-    assert result["min_valid_date"] in {min_valid_before, min_valid_after}
-    assert result["substitution_reason"] == InterpretationReason.MINIMUM_DAYS_RULE.value
+def test_no_old_schema_fields():
+    """Old fields service_category and service_duration_minutes are gone from schema."""
+    import agent.tools.availability_tools as module
 
-
-@pytest.mark.asyncio
-async def test_check_availability_omits_semantic_fields_for_valid_date():
-    requested_date = datetime.now(availability_tools_module.MADRID_TZ) + timedelta(days=7)
-    stylist = _make_stylist()
-
-    with (
-        patch.object(
-            availability_tools_module,
-            "parse_natural_date",
-            return_value=requested_date,
-        ),
-        patch.object(
-            availability_tools_module,
-            "validate_3_day_rule",
-            new=AsyncMock(return_value={"valid": True}),
-        ),
-        patch.object(
-            availability_tools_module,
-            "is_holiday",
-            new=AsyncMock(return_value=None),
-        ),
-        patch.object(
-            availability_tools_module,
-            "get_stylists_by_category",
-            new=AsyncMock(return_value=[stylist]),
-        ),
-        patch.object(
-            availability_tools_module,
-            "get_available_slots",
-            new=AsyncMock(
-                return_value=[
-                    {
-                        "time": "11:00",
-                        "end_time": "12:30",
-                        "full_datetime": requested_date.isoformat(),
-                    }
-                ]
-            ),
-        ),
-    ):
-        result = await availability_tools_module.check_availability.ainvoke(
-            {"service_category": "Peluquería", "date": "2026-03-30"}
-        )
-
-    assert result["date_too_soon"] is False
-    assert result["available_slots"]
-    assert "date_requested" not in result
-    assert "min_valid_date" not in result
-
-
-@pytest.mark.asyncio
-async def test_find_next_available_date_parse_error():
-    """When start_date is unparseable, returns structured date_parse_error envelope."""
-    with (
-        patch.object(
-            availability_tools_module,
-            "parse_natural_date",
-            side_effect=DateParseError("garble xyz"),
-        ),
-        patch.object(
-            availability_tools_module,
-            "get_stylists_by_category",
-            new=AsyncMock(return_value=[_make_stylist()]),
-        ),
-    ):
-        result = await availability_tools_module.find_next_available.ainvoke(
-            {
-                "service_category": "Peluquería",
-                "start_date": "garble xyz",
-                "max_days_to_search": 1,
-            }
-        )
-
-    assert result["date_parse_error"] is True
-    assert "hint" in result
-    assert "garble xyz" in result.get("error", "")
-    assert result.get("available_stylists", []) == []
-    assert result.get("total_slots_found", 0) == 0
+    source = inspect.getsource(module)
+    assert "service_category" not in CheckAvailabilitySchema.model_fields, (
+        "service_category should not be a schema field in the simplified architecture"
+    )
+    assert "service_duration_minutes" not in CheckAvailabilitySchema.model_fields, (
+        "service_duration_minutes should not be a schema field — duration is resolved internally"
+    )

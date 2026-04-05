@@ -110,6 +110,35 @@ class TestExtractBookingHandoffShape:
         assert len(result["candidate_services"]) == 2
 
 
+# =============================================================================
+# T-38: Architecture guard — no search_services or query_info in GeneralMode
+# =============================================================================
+
+
+class TestGeneralModeNoDataTools:
+    """T-38: GeneralMode must NOT reference search_services or query_info tools."""
+
+    def test_no_search_services_in_general_mode(self):
+        """search_services must not appear in general_mode source (tool removed)."""
+        import inspect
+        from agent.modes import general_mode as _gm
+
+        src = inspect.getsource(_gm)
+        assert "search_services" not in src, (
+            "search_services found in general_mode source — this tool was removed from GENERAL mode"
+        )
+
+    def test_no_query_info_in_general_mode(self):
+        """query_info must not appear in general_mode source (tool removed)."""
+        import inspect
+        from agent.modes import general_mode as _gm
+
+        src = inspect.getsource(_gm)
+        assert "query_info" not in src, (
+            "query_info found in general_mode source — this tool was removed from GENERAL mode"
+        )
+
+
 class TestGeneralModeEscalateTool:
     """T-11: GeneralMode.get_tools() includes escalate_to_human."""
 

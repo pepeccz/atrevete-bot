@@ -93,10 +93,10 @@ Booking (write):
 
 | Mode | Purpose | Tools Available |
 |------|---------|-----------------|
-| **GREETING** | First contact, name collection | `manage_customer` |
-| **BOOKING** | Full multi-step booking flow | All 8 tools |
-| **GENERAL** | FAQs, service info, policies | `query_info`, `search_services` (read-only) |
-| **ESCALATION** | Human handoff | `escalate_to_human` |
+| **GREETING** | First contact, name collection | `manage_customer` (customer_tools) |
+| **BOOKING** | Multi-step appointment booking | `check_availability`, `book`, `manage_appointments` |
+| **GENERAL** | FAQs, service info (catalog in prompt) | `manage_appointments` (read), `escalate` |
+| **ESCALATION** | Human handoff | `escalate` |
 
 **Routing Logic**:
 1. `escalation_triggered=True` → ESCALATION

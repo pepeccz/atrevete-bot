@@ -4,8 +4,12 @@ Test suite for loader.py assembly order and dynamic context handling.
 Verifies:
 - build_layered_messages returns tuple[list, int]
 - Dynamic context is the last SystemMessage
-- dynamic_context_override parameter replaces default build_step_context
+- dynamic_context_override parameter replaces default _build_simple_dynamic_context
+- build_step_context and _STEP_VISIBLE_FIELDS are gone (simplified architecture)
+- catalog_builder is importable (catalog now in prompt, not per-tool)
 """
+
+import inspect
 
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -143,3 +147,43 @@ async def test_message_order_shared_mode_dynamic_history():
             # Dynamic context is LAST for maximum recency per lost-in-the-middle research
             assert index == len(messages) - 1  # Dynamic IS the last message
             assert isinstance(messages[index], SystemMessage)  # Last message is dynamic context
+
+
+# ============================================================================
+# T-37: Architecture validation tests — simplified loader
+# ============================================================================
+
+
+def test_no_build_step_context():
+    """build_step_context is gone — replaced by _build_simple_dynamic_context."""
+    import agent.prompts.loader as loader_module
+
+    assert not hasattr(loader_module, "build_step_context"), (
+        "build_step_context should be removed — use _build_simple_dynamic_context instead"
+    )
+    source = inspect.getsource(loader_module)
+    assert "build_step_context" not in source, (
+        "build_step_context string should not appear in loader.py source"
+    )
+
+
+def test_no_step_visible_fields():
+    """_STEP_VISIBLE_FIELDS is gone — step-driven context was removed."""
+    import agent.prompts.loader as loader_module
+
+    assert not hasattr(loader_module, "_STEP_VISIBLE_FIELDS"), (
+        "_STEP_VISIBLE_FIELDS should be removed — step visibility is no longer tracked"
+    )
+    source = inspect.getsource(loader_module)
+    assert "_STEP_VISIBLE_FIELDS" not in source, (
+        "_STEP_VISIBLE_FIELDS string should not appear in loader.py source"
+    )
+
+
+def test_catalog_builder_importable():
+    """build_catalog_markdown is importable — catalog is now injected into prompt."""
+    from agent.prompts.catalog_builder import build_catalog_markdown
+
+    assert callable(build_catalog_markdown), (
+        "build_catalog_markdown must be a callable — it builds the service catalog for the prompt"
+    )

@@ -2,7 +2,7 @@
 Unit tests for shared/audience_maps.py — REQ-4: Unified Audience Maps.
 
 Verifies:
-- AUDIENCE_HINT_MAP and AUDIENCE_KEYWORDS are importable from shared.audience_maps
+- AUDIENCE_HINT_MAP is importable from shared.audience_maps
 - No local _AUDIENCE_HINT_MAP definitions remain in agent/ files
 - All expected entries are present (superset of all previously-local maps)
 """
@@ -12,7 +12,47 @@ from __future__ import annotations
 import ast
 import os
 
-from shared.audience_maps import AUDIENCE_HINT_MAP, AUDIENCE_KEYWORDS, canonicalize_audience
+from shared.audience_maps import AUDIENCE_HINT_MAP, canonicalize_audience
+
+
+# =============================================================================
+# T-42: Architecture guards
+# =============================================================================
+
+
+class TestAudienceMapsArchitectureGuards:
+    """T-42: Verify the audience maps module has the correct public API."""
+
+    def test_no_audience_keywords_importable(self):
+        """T-42: AUDIENCE_KEYWORDS must NOT be importable from shared.audience_maps.
+
+        The old AUDIENCE_KEYWORDS dict was replaced by AUDIENCE_HINT_MAP.
+        Any import attempt must raise ImportError or AttributeError.
+        """
+        import importlib
+
+        module = importlib.import_module("shared.audience_maps")
+        assert not hasattr(module, "AUDIENCE_KEYWORDS"), (
+            "AUDIENCE_KEYWORDS found in shared.audience_maps — "
+            "this was replaced by AUDIENCE_HINT_MAP in the architecture refactor"
+        )
+
+    def test_audience_hint_map_exists(self):
+        """T-42: AUDIENCE_HINT_MAP must be importable from shared.audience_maps."""
+        from shared.audience_maps import AUDIENCE_HINT_MAP as _ahm  # noqa: F401
+
+        assert _ahm is not None
+
+    def test_canonicalize_audience_exists(self):
+        """T-42: canonicalize_audience must be importable from shared.audience_maps."""
+        from shared.audience_maps import canonicalize_audience as _ca  # noqa: F401
+
+        assert callable(_ca)
+
+
+# =============================================================================
+# Import test
+# =============================================================================
 
 
 class TestAudienceMapsImport:
@@ -20,9 +60,6 @@ class TestAudienceMapsImport:
 
     def test_audience_hint_map_is_dict(self):
         assert isinstance(AUDIENCE_HINT_MAP, dict)
-
-    def test_audience_keywords_is_dict(self):
-        assert isinstance(AUDIENCE_KEYWORDS, dict)
 
     def test_audience_hint_map_has_adult_male_entries(self):
         """All expected adult_male tokens present."""
@@ -99,20 +136,6 @@ class TestAudienceMapsImport:
                 token in AUDIENCE_HINT_MAP
             ), f"Token '{token}' from tool_extractors not found in shared AUDIENCE_HINT_MAP"
 
-    def test_audience_keywords_has_adult_female_keywords(self):
-        """adult_female keyword list must include core terms."""
-        female_kws = AUDIENCE_KEYWORDS.get("adult_female", [])
-        for kw in ("dama", "mujer", "senora", "adulta"):
-            assert (
-                kw in female_kws
-            ), f"Keyword '{kw}' missing from AUDIENCE_KEYWORDS['adult_female']"
-
-    def test_audience_keywords_has_adult_male_keywords(self):
-        male_kws = AUDIENCE_KEYWORDS.get("adult_male", [])
-        for kw in ("caballero", "hombre", "senor", "adulto"):
-            assert kw in male_kws, f"Keyword '{kw}' missing from AUDIENCE_KEYWORDS['adult_male']"
-
-
 class TestNoDuplicateLocalMaps:
     """REQ-4 Scenario: no local _AUDIENCE_HINT_MAP definitions remain in agent/ files."""
 
@@ -146,34 +169,9 @@ class TestNoDuplicateLocalMaps:
             "Should import from shared.audience_maps."
         )
 
-    def test_tool_extractors_has_no_local_audience_hint_map(self):
-        filepath = os.path.join(self._agent_root(), "modes", "tool_extractors.py")
-        lines = self._find_local_map_definitions(filepath, "_AUDIENCE_HINT_MAP")
-        assert lines == [], (
-            f"tool_extractors.py still defines _AUDIENCE_HINT_MAP at lines {lines}. "
-            "Should import from shared.audience_maps."
-        )
-
-    def test_search_services_has_no_local_audience_keywords_dict(self):
-        filepath = os.path.join(self._agent_root(), "tools", "search_services.py")
-        lines = self._find_local_map_definitions(filepath, "_AUDIENCE_KEYWORDS")
-        assert lines == [], (
-            f"search_services.py still defines _AUDIENCE_KEYWORDS at lines {lines}. "
-            "Should import from shared.audience_maps."
-        )
-
-    def test_shared_audience_maps_imports_work_from_agent_tools(self):
-        """search_services.py must import AUDIENCE_KEYWORDS from shared.audience_maps."""
-        filepath = os.path.join(self._agent_root(), "tools", "search_services.py")
-        with open(filepath) as fh:
-            source = fh.read()
-        assert (
-            "from shared.audience_maps import" in source
-        ), "search_services.py does not import from shared.audience_maps"
-
     def test_shared_audience_maps_imports_work_from_agent_modes(self):
-        """tool_extractors.py and greeting_mode.py must import from shared.audience_maps."""
-        for filename in ("greeting_mode.py", "tool_extractors.py"):
+        """greeting_mode.py must import from shared.audience_maps."""
+        for filename in ("greeting_mode.py",):
             filepath = os.path.join(self._agent_root(), "modes", filename)
             with open(filepath) as fh:
                 source = fh.read()

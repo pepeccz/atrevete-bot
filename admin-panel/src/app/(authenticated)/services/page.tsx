@@ -53,7 +53,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import api, { ApiRequestError } from "@/lib/api";
-import type { Service, ServiceCategory, ServiceMetadata } from "@/lib/types";
+import type { Service, ServiceCategory } from "@/lib/types";
 import { ServiceMetadataForm } from "@/components/services/ServiceMetadataForm";
 
 // Category badge
@@ -80,7 +80,7 @@ interface ServiceFormData {
   duration_minutes: number;
   description: string;
   is_active: boolean;
-  metadata: ServiceMetadata | null;
+  audience: string | null;
 }
 
 function ServiceModal({
@@ -102,7 +102,7 @@ function ServiceModal({
     duration_minutes: 30,
     description: "",
     is_active: true,
-    metadata: null,
+    audience: null,
   });
 
   useEffect(() => {
@@ -114,7 +114,7 @@ function ServiceModal({
         duration_minutes: service.duration_minutes,
         description: service.description || "",
         is_active: service.is_active,
-        metadata: service.metadata ?? null,
+        audience: service.audience ?? null,
       });
     } else {
       setFormData({
@@ -123,7 +123,7 @@ function ServiceModal({
         duration_minutes: 30,
         description: "",
         is_active: true,
-        metadata: null,
+        audience: null,
       });
     }
   }, [service, open]);
@@ -145,7 +145,7 @@ function ServiceModal({
           duration_minutes: formData.duration_minutes,
           description: formData.description || null,
           is_active: formData.is_active,
-          metadata: formData.metadata,
+          audience: formData.audience,
         });
         toast.success("Servicio actualizado correctamente");
       } else {
@@ -155,7 +155,7 @@ function ServiceModal({
           duration_minutes: formData.duration_minutes,
           description: formData.description || null,
           is_active: formData.is_active,
-          metadata: formData.metadata,
+          audience: formData.audience,
         });
         toast.success("Servicio creado correctamente");
       }
@@ -292,16 +292,13 @@ function ServiceModal({
                 </Label>
               </div>
 
-              {/* Only show metadata form when editing an existing service */}
-              {service && (
-                <ServiceMetadataForm
-                  value={formData.metadata}
-                  onChange={(metadata) =>
-                    setFormData((prev) => ({ ...prev, metadata }))
-                  }
-                  disabled={loading}
-                />
-              )}
+              <ServiceMetadataForm
+                value={formData.audience}
+                onChange={(audience) =>
+                  setFormData((prev) => ({ ...prev, audience }))
+                }
+                disabled={loading}
+              />
 
               {formError && (
                 <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive whitespace-pre-line">
