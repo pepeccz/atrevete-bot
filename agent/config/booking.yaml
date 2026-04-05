@@ -1,0 +1,14 @@
+# Booking flow configuration — hot-reloadable (1-min TTL cache)
+# All keys are optional. Missing keys use defaults.
+
+# Maximum slots returned to the LLM after diversification (1-20, default: 5)
+max_slots_to_present: 5
+
+# Slot diversification strategy: one_per_stylist | time_spread | none
+slot_diversification_strategy: "one_per_stylist"
+
+# Extra business days to auto-search when requested date has no availability (0-14, default: 3)
+auto_search_extra_days: 3
+
+# When to force tool_choice='required': never_force | force_after_service_known | always_force
+tool_choice_policy: "never_force"

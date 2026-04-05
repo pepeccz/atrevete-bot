@@ -31,6 +31,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
+from agent.config import get_booking_config
 from agent.services.availability_service import (
     get_available_slots,
     is_holiday,
@@ -337,17 +338,18 @@ async def check_availability(
         )
 
         # ── 9. AUTO-SEARCH: next 3 open days if empty ──────────────────────────
+        config = await get_booking_config()
         alternative_dates = False
         if not all_slots:
             logger.info(
                 f"No slots on {requested_date.date()}, auto-searching next "
-                f"{_AUTO_SEARCH_EXTRA_DAYS} open business days"
+                f"{config.auto_search_extra_days} open business days"
             )
             search_from = requested_date + timedelta(days=1)
             days_found = 0
 
             for _ in range(30):  # safety upper-bound
-                if days_found >= _AUTO_SEARCH_EXTRA_DAYS:
+                if days_found >= config.auto_search_extra_days:
                     break
 
                 # Skip closed days
@@ -382,9 +384,12 @@ async def check_availability(
                 ),
             }
 
-        # Sort by date then time, limit to MAX_SLOTS_TO_PRESENT
-        all_slots.sort(key=lambda s: (s["date"], s["time"]))
-        all_slots = all_slots[:MAX_SLOTS_TO_PRESENT]
+        # Diversify and limit slots using config
+        all_slots = diversify_slots(
+            all_slots,
+            strategy=config.slot_diversification_strategy.value,
+            max_slots=config.max_slots_to_present,
+        )
 
         # Add 1-based index
         for idx, slot in enumerate(all_slots, start=1):
@@ -455,6 +460,210 @@ async def _collect_slots_for_date(
             slots.append(slot_data)
 
     return slots
+
+
+def diversify_slots(
+    slots: list[dict[str, Any]],
+    strategy: str = "one_per_stylist",
+    max_slots: int = 5,
+) -> list[dict[str, Any]]:
+    """
+    Select and diversify slots for presentation using the given strategy.
+
+    This is a PURE function — no I/O, no async, no side effects.
+
+    Each slot dict must contain at minimum: date (str), time (str),
+    stylist_name (str), stylist_id (str).
+
+    Strategies:
+        "one_per_stylist" (default):
+            Pick the earliest slot per stylist, then round-robin fill remaining
+            capacity from leftover slots ordered by stylist earliest time.
+
+        "time_spread":
+            Pick one slot per 1-hour time bucket (earliest in bucket, prefer
+            stylist diversity). Fill remaining from largest buckets first.
+
+        "none":
+            Sort by (date, time), return [:max_slots].
+
+        Unknown strategy:
+            Logs a WARNING and falls back to "none" behaviour. Never raises.
+
+    Args:
+        slots: List of slot dicts.
+        strategy: Diversification strategy name.
+        max_slots: Maximum number of slots to return.
+
+    Returns:
+        Sorted (date, time) list of at most max_slots slots.
+    """
+    if not slots:
+        return []
+
+    if strategy == "one_per_stylist":
+        return _diversify_one_per_stylist(slots, max_slots)
+    elif strategy == "time_spread":
+        return _diversify_time_spread(slots, max_slots)
+    elif strategy == "none":
+        return _diversify_none(slots, max_slots)
+    else:
+        logger.warning(
+            f"diversify_slots: unknown strategy '{strategy}', falling back to 'none'"
+        )
+        return _diversify_none(slots, max_slots)
+
+
+def _sort_key(slot: dict[str, Any]) -> tuple[str, str]:
+    """Sort key: (date, time) ascending."""
+    return (slot["date"], slot["time"])
+
+
+def _diversify_none(slots: list[dict[str, Any]], max_slots: int) -> list[dict[str, Any]]:
+    """Sort by (date, time) and cap at max_slots."""
+    return sorted(slots, key=_sort_key)[:max_slots]
+
+
+def _diversify_one_per_stylist(
+    slots: list[dict[str, Any]], max_slots: int
+) -> list[dict[str, Any]]:
+    """
+    Round-robin strategy: one earliest slot per stylist, then fill from leftovers.
+
+    Algorithm:
+    1. Group all slots by stylist_name.
+    2. Sort each group by (date, time) ascending.
+    3. Pick the first (earliest) slot from each group → result.
+    4. While len(result) < max_slots and there are remaining slots:
+       - Cycle through stylists ordered by their earliest remaining time.
+       - Take the next earliest slot per stylist in round-robin order.
+    5. Sort result by (date, time) and return [:max_slots].
+    """
+    # Group by stylist
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for slot in slots:
+        name = slot["stylist_name"]
+        groups.setdefault(name, []).append(slot)
+
+    # Sort each group by (date, time)
+    for name in groups:
+        groups[name].sort(key=_sort_key)
+
+    # Pointers into each group (index of next slot to consume)
+    pointers: dict[str, int] = {name: 0 for name in groups}
+
+    result: list[dict[str, Any]] = []
+
+    # Pick first slot per stylist
+    for name in groups:
+        if len(result) >= max_slots:
+            break
+        result.append(groups[name][0])
+        pointers[name] = 1
+
+    # Round-robin fill from remaining slots
+    while len(result) < max_slots:
+        # Build list of stylists that still have slots, ordered by their next earliest slot
+        available = [
+            name
+            for name in groups
+            if pointers[name] < len(groups[name])
+        ]
+        if not available:
+            break
+        # Sort by next earliest slot for consistent ordering
+        available.sort(key=lambda n: _sort_key(groups[n][pointers[n]]))
+
+        added_this_round = False
+        for name in available:
+            if len(result) >= max_slots:
+                break
+            idx = pointers[name]
+            if idx < len(groups[name]):
+                result.append(groups[name][idx])
+                pointers[name] += 1
+                added_this_round = True
+
+        if not added_this_round:
+            break
+
+    return sorted(result, key=_sort_key)[:max_slots]
+
+
+def _diversify_time_spread(
+    slots: list[dict[str, Any]], max_slots: int
+) -> list[dict[str, Any]]:
+    """
+    Time-spread strategy: one slot per 1-hour bucket, then fill from largest buckets.
+
+    Algorithm:
+    1. Bucket slots by hour (slot["time"][:2], e.g. "10", "11").
+    2. Within each bucket sort by (date, time); prefer different stylists when picking.
+    3. Pick one slot per bucket → result.
+    4. While len(result) < max_slots:
+       - Fill from remaining slots in buckets, largest bucket first (most remaining).
+    5. Sort result by (date, time) and return [:max_slots].
+    """
+    # Group slots into 1-hour buckets
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for slot in slots:
+        hour = slot["time"][:2]
+        buckets.setdefault(hour, []).append(slot)
+
+    # Sort each bucket by (date, time)
+    for hour in buckets:
+        buckets[hour].sort(key=_sort_key)
+
+    # Pointers into each bucket
+    pointers: dict[str, int] = {hour: 0 for hour in buckets}
+
+    result: list[dict[str, Any]] = []
+    seen_stylists: set[str] = set()
+
+    # Pick one slot per bucket (prefer diversity of stylists)
+    for hour in sorted(buckets.keys()):
+        if len(result) >= max_slots:
+            break
+        bucket = buckets[hour]
+        # Try to pick a stylist not yet represented
+        picked = None
+        for slot in bucket:
+            if slot["stylist_name"] not in seen_stylists:
+                picked = slot
+                pointers[hour] = bucket.index(slot) + 1
+                break
+        if picked is None:
+            # All stylists already seen — just pick earliest
+            picked = bucket[0]
+            pointers[hour] = 1
+        result.append(picked)
+        seen_stylists.add(picked["stylist_name"])
+
+    # Fill remaining from buckets with most leftover slots first
+    while len(result) < max_slots:
+        # Find buckets that still have slots
+        available_buckets = [
+            hour for hour in buckets if pointers[hour] < len(buckets[hour])
+        ]
+        if not available_buckets:
+            break
+        # Sort by remaining count descending, then hour ascending for stability
+        available_buckets.sort(
+            key=lambda h: (-len(buckets[h]) + pointers[h], h)
+        )
+        added_this_round = False
+        for hour in available_buckets:
+            if len(result) >= max_slots:
+                break
+            idx = pointers[hour]
+            if idx < len(buckets[hour]):
+                result.append(buckets[hour][idx])
+                pointers[hour] += 1
+                added_this_round = True
+        if not added_this_round:
+            break
+
+    return sorted(result, key=_sort_key)[:max_slots]
 
 
 def _slot_matches_time_range(slot_data: dict, time_range: str) -> bool:

@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from agent.config import get_booking_config, ToolChoicePolicy
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
 from agent.state.helpers import add_message
@@ -99,15 +100,17 @@ class BookingModeNode(BaseModeNode):
         # 2. Cross-mode customer handoff
         self._resolve_customer_from_state(state, mode_context)
 
-        # 3. tool_choice: force tool use ONLY on blank-slate turns.
+        # 3. tool_choice: config-driven policy (default: never force)
+        config = await get_booking_config()
         tool_choice: str | None = None
-        if (
-            not mode_context.get("last_service")
-            and not mode_context.get("offered_slots")
-            and not mode_context.get("confirmation_shown")
-        ):
+        if config.tool_choice_policy == ToolChoicePolicy.ALWAYS_FORCE:
             tool_choice = "required"
-            logger.info("BookingModeNode: tool_choice='required' (blank slate)")
+            logger.info("BookingModeNode: tool_choice='required' (always_force policy)")
+        elif config.tool_choice_policy == ToolChoicePolicy.FORCE_AFTER_SERVICE:
+            if mode_context.get("last_service") and not mode_context.get("offered_slots"):
+                tool_choice = "required"
+                logger.info("BookingModeNode: tool_choice='required' (service known, no slots yet)")
+        # else: NEVER_FORCE — tool_choice stays None (LLM decides freely)
 
         # Store for _pre_tool_call / _post_tool_result / _refresh_dynamic_context access
         self._mode_context = mode_context
