@@ -14,10 +14,22 @@ import pytest
 from agent.tools.availability_tools import CheckAvailabilitySchema
 
 
-def test_schema_has_service_name():
-    """CheckAvailabilitySchema has service_name field."""
+def test_schema_has_service_names():
+    """CheckAvailabilitySchema has service_names field (list[str])."""
     fields = CheckAvailabilitySchema.model_fields
-    assert "service_name" in fields, "service_name field is missing from CheckAvailabilitySchema"
+    assert "service_names" in fields, "service_names field is missing from CheckAvailabilitySchema"
+
+
+def test_schema_service_names_is_list():
+    """service_names field accepts a list of strings."""
+    schema = CheckAvailabilitySchema(service_names=["Cortar", "Cultura de Color"], date="2026-04-10")
+    assert schema.service_names == ["Cortar", "Cultura de Color"]
+
+
+def test_schema_service_names_single():
+    """service_names field works with a single service (list of 1)."""
+    schema = CheckAvailabilitySchema(service_names=["Cortar"], date="2026-04-10")
+    assert schema.service_names == ["Cortar"]
 
 
 def test_schema_has_date():

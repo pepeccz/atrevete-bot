@@ -91,7 +91,7 @@ class BookingModeNode(BaseModeNode):
             not mode_context.get("confirmation_shown")
             and mode_context.get("confirmation_summary_sent")
             and "confirm" in intent_str
-            and mode_context.get("last_service")
+            and mode_context.get("last_services")
             and mode_context.get("last_stylist")
             and mode_context.get("offered_slots")
         ):
@@ -107,7 +107,7 @@ class BookingModeNode(BaseModeNode):
             tool_choice = "required"
             logger.info("BookingModeNode: tool_choice='required' (always_force policy)")
         elif config.tool_choice_policy == ToolChoicePolicy.FORCE_AFTER_SERVICE:
-            if mode_context.get("last_service") and not mode_context.get("offered_slots"):
+            if mode_context.get("last_services") and not mode_context.get("offered_slots"):
                 tool_choice = "required"
                 logger.info("BookingModeNode: tool_choice='required' (service known, no slots yet)")
         # else: NEVER_FORCE — tool_choice stays None (LLM decides freely)
@@ -211,12 +211,12 @@ class BookingModeNode(BaseModeNode):
             # Step B: confirmation gate
             if not mode_context.get("confirmation_shown"):
                 selected_slot = mode_context.get("selected_slot")
-                last_service = mode_context.get("last_service")
+                last_services = mode_context.get("last_services")
                 last_stylist = mode_context.get("last_stylist")
                 customer_name = mode_context.get("customer_name")
 
                 if (
-                    last_service
+                    last_services
                     and last_stylist
                     and selected_slot
                     and customer_name
@@ -251,8 +251,8 @@ class BookingModeNode(BaseModeNode):
                     )
 
             # Step C: inject services from mode_context if LLM didn't provide them
-            if not tool_args.get("services") and mode_context.get("last_service"):
-                tool_args["services"] = [mode_context["last_service"]]
+            if not tool_args.get("services") and mode_context.get("last_services"):
+                tool_args["services"] = mode_context["last_services"]
 
             return tool_args
 
@@ -291,10 +291,14 @@ class BookingModeNode(BaseModeNode):
                     "_post_tool_result[check_availability]: stored %d offered_slots",
                     len(slots),
                 )
-            # Capture service name from args
-            service_name = tool_args.get("service_name")
-            if service_name and not mode_context.get("last_service"):
-                mode_context["last_service"] = service_name
+            # Capture service names from args (list)
+            svc_names = tool_args.get("service_names") or []
+            if svc_names and not mode_context.get("last_services"):
+                mode_context["last_services"] = svc_names
+            # Capture total duration from result
+            total_dur = result_dict.get("total_duration_minutes")
+            if total_dur:
+                mode_context["last_total_duration_minutes"] = total_dur
             # Capture stylist name from args
             stylist_name = tool_args.get("stylist_name")
             if stylist_name and not mode_context.get("last_stylist"):
@@ -329,7 +333,7 @@ class BookingModeNode(BaseModeNode):
         if (
             not mode_context.get("confirmation_summary_sent")
             and not mode_context.get("_booking_completed")
-            and mode_context.get("last_service")
+            and mode_context.get("last_services")
             and mode_context.get("last_stylist")
             and mode_context.get("selected_slot")
             and mode_context.get("customer_name")
@@ -346,8 +350,9 @@ class BookingModeNode(BaseModeNode):
         day = slot.get("day_label", "?")
         time_ = slot.get("time", "?")
         stylist = mode_context.get("last_stylist") or "?"
-        service = mode_context.get("last_service") or "?"
-        return f"Te agendo el *{day} a las {time_}* con *{stylist}* para *{service}*. ¿Lo confirmo?"
+        last_services = mode_context.get("last_services") or ["?"]
+        service_label = " + ".join(last_services)
+        return f"Te agendo el *{day} a las {time_}* con *{stylist}* para *{service_label}*. ¿Lo confirmo?"
 
     def _render_booking_confirmation(self, mode_context: dict) -> str:
         """Code-render the post-booking confirmation block (F-8 path)."""
@@ -355,12 +360,13 @@ class BookingModeNode(BaseModeNode):
         day = slot.get("day_label", "?")
         time_ = slot.get("time", "?")
         stylist = mode_context.get("last_stylist") or "?"
-        service = mode_context.get("last_service") or "?"
+        last_services = mode_context.get("last_services") or ["?"]
+        service_label = " + ".join(last_services)
         return (
             f"✅ ¡Reserva confirmada!\n\n"
             f"📅 {day} a las {time_}\n"
             f"💇 {stylist}\n"
-            f"✨ {service}\n\n"
+            f"✨ {service_label}\n\n"
             f"Te esperamos 🌸"
         )
 
@@ -479,9 +485,15 @@ class BookingModeNode(BaseModeNode):
         """Build collected_data summary from flat mode_context dict."""
         lines: list[str] = []
 
-        last_service = mode_context.get("last_service")
-        if last_service:
-            lines.append(f"✅ Servicio: {last_service}")
+        last_services = mode_context.get("last_services") or []
+        if last_services:
+            total_dur = mode_context.get("last_total_duration_minutes")
+            if len(last_services) == 1:
+                dur_str = f" ({total_dur}min)" if total_dur else ""
+                lines.append(f"✅ Servicio: {last_services[0]}{dur_str}")
+            else:
+                dur_str = f" ({total_dur}min total)" if total_dur else ""
+                lines.append(f"✅ Servicios: {', '.join(last_services)}{dur_str}")
 
         last_stylist = mode_context.get("last_stylist")
         if last_stylist:
@@ -511,11 +523,11 @@ class BookingModeNode(BaseModeNode):
         """Build missing_data summary from flat mode_context dict."""
         missing: list[str] = []
 
-        last_service = mode_context.get("last_service")
-        if not last_service:
+        last_services = mode_context.get("last_services") or []
+        if not last_services:
             missing.append("❌ Servicio: pendiente")
 
-        if last_service and not mode_context.get("last_stylist"):
+        if last_services and not mode_context.get("last_stylist"):
             missing.append("❌ Estilista: pendiente")
 
         selected_slot = mode_context.get("selected_slot")
@@ -526,7 +538,7 @@ class BookingModeNode(BaseModeNode):
             else:
                 missing.append("❌ Fecha/hora: pendiente")
 
-        service_known = bool(last_service)
+        service_known = bool(last_services)
         if (
             not mode_context.get("customer_name")
             and service_known

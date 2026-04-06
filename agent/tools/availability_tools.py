@@ -109,7 +109,9 @@ async def _get_active_stylists_for_category(category: ServiceCategory) -> list[S
 class CheckAvailabilitySchema(BaseModel):
     """Schema for check_availability tool parameters."""
 
-    service_name: str = Field(description="Nombre exacto del servicio del catálogo")
+    service_names: list[str] = Field(
+        description="Lista de nombres exactos de servicios del catálogo (uno o varios)"
+    )
     date: str = Field(
         description="Fecha en español natural ('mañana', 'viernes') o ISO ('2026-04-10')"
     )
@@ -124,34 +126,25 @@ class CheckAvailabilitySchema(BaseModel):
 
 @tool(args_schema=CheckAvailabilitySchema)
 async def check_availability(
-    service_name: str,
+    service_names: list[str],
     date: str,
     stylist_name: str | None = None,
     time_range: str | None = None,
 ) -> dict[str, Any]:
     """
-    Check availability for a service on a date, resolved from the service catalog.
+    Check availability for one or more services on a date.
 
-    ONLY valid source for available appointment slots. You MUST NOT guess availability
-    or invent time slots. ALWAYS call this tool when checking if a customer can book
-    on a specific date.
+    Resolves each service from the catalog, sums durations, validates all share
+    the same category, then queries the DB-first availability service.
 
-    Resolves service_name to a catalog Service (duration + category), optionally
-    resolves stylist_name to a Stylist, validates category compatibility, then
-    queries the DB-first availability service.
+    For multi-service bookings (e.g., "corte y color"), pass ALL service names
+    as a list. The tool sums durations and searches for slots that fit the total.
 
     AUTO-SEARCH: If no slots exist on the requested date, automatically searches
-    the next 3 open business days and returns those results with alternative_dates=True.
-
-    Automatically validates:
-    - Service exists in catalog (SERVICE_NOT_FOUND)
-    - Stylist exists (STYLIST_NOT_FOUND) and matches service category (CATEGORY_MISMATCH)
-    - 3-day minimum notice requirement (date_too_soon=True)
-    - Holiday closures (holiday_detected=True)
-    - Business hours constraints
+    the next open business days.
 
     Args:
-        service_name: Exact service name from the catalog
+        service_names: List of exact service names from the catalog
         date: Date in natural Spanish ('mañana', 'viernes') or ISO ('2026-04-10')
         stylist_name: Optional preferred stylist name from the catalog
         time_range: Optional time filter ('morning', 'afternoon', or '14:00-18:00')
@@ -160,31 +153,23 @@ async def check_availability(
         {
             "success": bool,
             "service": {"name": str, "duration_minutes": int, "category": str},
-            "requested_date": str,          # ISO format
-            "available_slots": [
-                {
-                    "index": int,           # 1-based
-                    "time": "10:00",
-                    "end_time": "10:45",
-                    "stylist_name": "Marta",
-                    "stylist_id": "uuid",
-                    "date": "2026-04-10",
-                    "day_label": "jueves 10 de abril",
-                    "full_datetime": "2026-04-10T10:00:00+02:00"
-                }
-            ],
-            "alternative_dates": bool,      # True if slots are from later dates (auto-search)
+            "services": [{"name": str, "duration_minutes": int, "category": str}, ...],
+            "total_duration_minutes": int,
+            "requested_date": str,
+            "available_slots": [...],
+            "alternative_dates": bool,
             "date_too_soon": bool,
-            "min_valid_date": str | None,   # ISO date if date_too_soon
+            "min_valid_date": str | None,
             "holiday_detected": bool,
-            "error_code": str | None,       # SERVICE_NOT_FOUND, STYLIST_NOT_FOUND,
-                                            # CATEGORY_MISMATCH, NO_SLOTS, DATE_CLOSED
+            "error_code": str | None,
             "error_message": str | None
         }
     """
     base_response: dict[str, Any] = {
         "success": False,
         "service": None,
+        "services": [],
+        "total_duration_minutes": 0,
         "requested_date": None,
         "available_slots": [],
         "alternative_dates": False,
@@ -196,27 +181,47 @@ async def check_availability(
     }
 
     try:
-        # ── 1. Resolve service ─────────────────────────────────────────────────
-        service = await _resolve_service_by_name(service_name)
-        if service is None:
-            logger.warning(f"Service not found: '{service_name}'")
+        # ── 1. Resolve all services ───────────────────────────────────────────
+        resolved_services: list[Service] = []
+        for svc_name in service_names:
+            service = await _resolve_service_by_name(svc_name)
+            if service is None:
+                logger.warning(f"Service not found: '{svc_name}'")
+                return {
+                    **base_response,
+                    "error_code": "SERVICE_NOT_FOUND",
+                    "error_message": (
+                        f"No encontré el servicio '{svc_name}' en el catálogo. "
+                        "Verifica que el nombre sea exacto."
+                    ),
+                }
+            resolved_services.append(service)
+
+        # Validate all services share the same category
+        categories = {svc.category for svc in resolved_services}
+        if len(categories) > 1:
+            cat_labels = ", ".join(c.value for c in categories)
+            logger.warning(f"Category mismatch in multi-service: {cat_labels}")
             return {
                 **base_response,
-                "error_code": "SERVICE_NOT_FOUND",
+                "error_code": "CATEGORY_MISMATCH",
                 "error_message": (
-                    f"No encontré el servicio '{service_name}' en el catálogo. "
-                    "Verifica que el nombre sea exacto."
+                    f"No se pueden combinar servicios de categorías distintas ({cat_labels}) "
+                    "en la misma cita. Ofrece dos citas separadas."
                 ),
             }
 
-        duration_minutes = service.duration_minutes
-        service_category = service.category
-        service_info = {
-            "name": service.name,
-            "duration_minutes": duration_minutes,
-            "category": service_category.value,
-        }
-        base_response["service"] = service_info
+        # Sum durations and build service info
+        duration_minutes = sum(svc.duration_minutes for svc in resolved_services)
+        service_category = resolved_services[0].category
+        services_info = [
+            {"name": svc.name, "duration_minutes": svc.duration_minutes, "category": svc.category.value}
+            for svc in resolved_services
+        ]
+        # Backwards compat: "service" points to first
+        base_response["service"] = services_info[0]
+        base_response["services"] = services_info
+        base_response["total_duration_minutes"] = duration_minutes
 
         # ── 2. Resolve stylist (optional) ──────────────────────────────────────
         resolved_stylist: Stylist | None = None
@@ -396,7 +401,7 @@ async def check_availability(
             slot["index"] = idx
 
         logger.info(
-            f"Found {len(all_slots)} slots for '{service_name}' "
+            f"Found {len(all_slots)} slots for {service_names} ({duration_minutes}min) "
             f"({'alternative dates' if alternative_dates else 'requested date'})"
         )
 
