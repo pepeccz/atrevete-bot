@@ -436,6 +436,21 @@ class BookingModeNode(BaseModeNode):
             f"<min_valid_date>{min_date_label} ({min_date.isoformat()})</min_valid_date>"
         )
 
+        # Audience hint from greeting handoff
+        audience_hint = mode_context.get("service_audience_hint")
+        if audience_hint:
+            _HINT_LABELS = {
+                "adult_male": "Caballero",
+                "adult_female": "Señora",
+                "child_male": "Niño",
+                "child_female": "Niña",
+                "baby": "Bebé",
+            }
+            hint_label = _HINT_LABELS.get(audience_hint, audience_hint)
+            parts.append(
+                f"<audience_hint>El cliente indicó que la cita es para: {hint_label}</audience_hint>"
+            )
+
         collected = self._build_collected_summary(mode_context)
         if collected:
             parts.append(f"<collected_data>\n{collected}\n</collected_data>")
@@ -566,6 +581,12 @@ class BookingModeNode(BaseModeNode):
             state_id = state.get("customer_id")
             if state_id:
                 mode_context["customer_id"] = str(state_id)
+
+        # Propagate service_audience_hint from greeting handoff (safety net)
+        if not mode_context.get("service_audience_hint"):
+            state_hint = (state.get("mode_context") or {}).get("service_audience_hint")
+            if state_hint:
+                mode_context["service_audience_hint"] = state_hint
 
 
 # Backward-compat alias — conversation_flow.py imports BookingMode by name
