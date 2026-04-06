@@ -460,7 +460,7 @@ class BaseModeNode(ABC):
 
             while iterations < MAX_TOOL_ROUNDS:
                 if active_tools:
-                    bind_kwargs: dict[str, Any] = {"strict": True}
+                    bind_kwargs: dict[str, Any] = {}
                     # Only force tool_choice on first iteration; after tool results
                     # the LLM needs freedom to respond with text
                     if tool_choice is not None and iterations == 0:
