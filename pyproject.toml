@@ -114,6 +114,7 @@ filterwarnings = [
     "ignore::PendingDeprecationWarning",
     "ignore::ResourceWarning",
     "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore::UserWarning",
 ]
 markers = [
     "unit: Unit tests",

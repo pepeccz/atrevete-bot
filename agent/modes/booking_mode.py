@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -22,6 +23,7 @@ from zoneinfo import ZoneInfo
 from agent.config import get_booking_config, ToolChoicePolicy
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
+from agent.routing.intent_router import IntentResult
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
 
@@ -32,6 +34,21 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 _HISTORY_LIMIT = 8
+
+# ============================================================================
+# Module-level helpers
+# ============================================================================
+
+_AFFIRMATIVE_PATTERN = re.compile(
+    r"^(?:s[ií]|ok|dale|vale|claro|perfecto|confirmo|correcto|exacto|"
+    r"de acuerdo|acepto|listo|hecho|va|venga)$",
+    re.IGNORECASE,
+)
+
+
+def _is_spanish_affirmative(text: str) -> bool:
+    """Return True if text is a bare Spanish affirmative (e.g. 'sí', 'dale', 'ok')."""
+    return bool(_AFFIRMATIVE_PATTERN.match(text.strip()))
 
 
 # ============================================================================
@@ -86,16 +103,21 @@ class BookingModeNode(BaseModeNode):
             }
 
         # 1. Confirmation gate: if user just confirmed, unlock book()
-        intent_str = str(intent) if intent else ""
+        _is_confirm = (
+            isinstance(intent, IntentResult) and intent.is_confirmation()
+        ) or _is_spanish_affirmative(state.get("user_message", "") or "")
         if (
             not mode_context.get("confirmation_shown")
             and mode_context.get("confirmation_summary_sent")
-            and "confirm" in intent_str
+            and _is_confirm
             and mode_context.get("last_services")
             and mode_context.get("last_stylist")
             and mode_context.get("offered_slots")
         ):
             mode_context["confirmation_shown"] = True
+
+        # 1b. Resolve pending selection: map numbered/text user reply → last_services/last_stylist
+        self._resolve_pending_selection(state, mode_context)
 
         # 2. Cross-mode customer handoff
         self._resolve_customer_from_state(state, mode_context)
@@ -126,6 +148,8 @@ class BookingModeNode(BaseModeNode):
 
         # 6. Build response (F-8 override for confirmed bookings)
         response_text = self._build_response(result, mode_context)
+        # 6b. Detect numbered lists in LLM response and store as pending options
+        self._set_pending_options(mode_context, response_text)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
 
         updates: dict[str, Any] = {
@@ -206,6 +230,18 @@ class BookingModeNode(BaseModeNode):
                         name="book",
                         error_code="INVALID_SLOT_INDEX",
                         error_message="slot_index debe ser un número entero.",
+                    )
+
+            # Step A.2: customer_name extraction from tool args
+            if not mode_context.get("customer_name"):
+                first = (tool_args.get("customer_first_name") or "").strip()
+                if first:
+                    last = (tool_args.get("customer_last_name") or "").strip()
+                    full_name = f"{first} {last}" if last else first
+                    mode_context["customer_name"] = full_name
+                    logger.info(
+                        "_pre_tool_call: extracted customer_name=%s from book() args",
+                        full_name,
                     )
 
             # Step B: confirmation gate
@@ -548,6 +584,122 @@ class BookingModeNode(BaseModeNode):
             missing.append("❌ Nombre: pendiente")
 
         return "\n".join(missing)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Pending selection helpers (Tasks 2.1 / 2.2)
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _resolve_pending_selection(
+        self, state: ConversationState, mode_context: dict
+    ) -> None:
+        """Resolve the user's numbered or text selection against pending options.
+
+        Mutates mode_context in-place:
+        - If pending_service_options is set, tries to match user_message as
+          1-indexed number or case-insensitive name → sets last_services, clears pending.
+        - If pending_stylist_options is set (and last_stylist not yet resolved),
+          applies the same resolution → sets last_stylist, clears pending.
+
+        Called at the top of handle(), BEFORE the agentic loop, so that the LLM
+        sees pre-resolved service/stylist data in the dynamic context.
+        """
+        user_message = (state.get("user_message") or "").strip()
+        if not user_message:
+            return
+
+        # Service resolution
+        pending_services: list[str] | None = mode_context.get("pending_service_options")
+        if pending_services:
+            matched = self._match_option(user_message, pending_services)
+            if matched is not None:
+                mode_context["last_services"] = [matched]
+                mode_context.pop("pending_service_options", None)
+                logger.info(
+                    "_resolve_pending_selection: service resolved to %r from user_message=%r",
+                    matched,
+                    user_message,
+                )
+
+        # Stylist resolution (only when last_stylist not yet set)
+        pending_stylists: list[str] | None = mode_context.get("pending_stylist_options")
+        if pending_stylists and not mode_context.get("last_stylist"):
+            matched = self._match_option(user_message, pending_stylists)
+            if matched is not None:
+                mode_context["last_stylist"] = matched
+                mode_context.pop("pending_stylist_options", None)
+                logger.info(
+                    "_resolve_pending_selection: stylist resolved to %r from user_message=%r",
+                    matched,
+                    user_message,
+                )
+
+    @staticmethod
+    def _match_option(user_message: str, options: list[str]) -> str | None:
+        """Try to match user_message against a list of options.
+
+        Matching strategy (in order):
+        1. Bare integer (1-indexed) → return options[idx - 1]
+        2. Case-insensitive exact string match → return matching option
+        3. No match → return None
+        """
+        # Try integer index (1-based)
+        try:
+            idx = int(user_message.strip())
+            if 1 <= idx <= len(options):
+                return options[idx - 1]
+        except (ValueError, TypeError):
+            pass
+
+        # Try case-insensitive exact match
+        user_lower = user_message.strip().lower()
+        for option in options:
+            if option.lower() == user_lower:
+                return option
+
+        return None
+
+    def _set_pending_options(self, mode_context: dict, response_text: str) -> None:
+        """Detect numbered lists in the LLM response and store as pending options.
+
+        Parses numbered-list items (e.g. "1. Mechas balayage") from response_text.
+        Emojis at the end of item names are stripped for clean matching.
+
+        - If last_services is NOT yet set → stores items as pending_service_options
+        - If last_services IS set but last_stylist is NOT → stores as pending_stylist_options
+        - If both are already set → no-op
+
+        Called after _build_response(), before building the updates dict.
+        """
+        # Both already resolved → nothing to do
+        if mode_context.get("last_services") and mode_context.get("last_stylist"):
+            return
+
+        # Extract numbered-list items, stripping trailing emojis
+        items = re.findall(
+            r"^\d+\.\s*(.+?)(?:\s*[✅📅👌👍🌸😊✨💇‍♀️💅🏼])*\s*$",
+            response_text,
+            re.MULTILINE,
+        )
+        # Also strip trailing emoji characters not covered by the above pattern
+        _EMOJI_TAIL_RE = re.compile(
+            r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U0001F900-\U0001F9FF\s]+$"
+        )
+        items = [_EMOJI_TAIL_RE.sub("", item).strip() for item in items]
+        items = [item for item in items if item]  # Remove empty strings
+
+        if not items:
+            return
+
+        if not mode_context.get("last_services"):
+            mode_context["pending_service_options"] = items
+            logger.info(
+                "_set_pending_options: stored %d pending_service_options", len(items)
+            )
+        elif not mode_context.get("last_stylist"):
+            mode_context["pending_stylist_options"] = items
+            logger.info(
+                "_set_pending_options: stored %d pending_stylist_options", len(items)
+            )
 
     # ──────────────────────────────────────────────────────────────────────
     # Mid-loop dynamic context refresh
