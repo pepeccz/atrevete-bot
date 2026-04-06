@@ -84,7 +84,7 @@ async def confirmation_reply_node(state: ConversationState) -> dict[str, Any]:
             exc,
         )
         response_text = (
-            "Hubo un problema procesando tu respuesta. Por favor, intentá de nuevo o escribí "
+            "Hubo un problema procesando tu respuesta. Por favor, inténtalo de nuevo o escribe"
             "'ayuda'."
         )
         state_updates = {}

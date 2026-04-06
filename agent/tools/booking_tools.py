@@ -228,7 +228,7 @@ async def book(
                     "error_code": "INVALID_PHONE",
                     "error_message": (
                         f"El teléfono '{customer_phone}' no es válido. "
-                        "Usá formato E.164 (ej: +34612345678)."
+                        "Usa formato E.164 (ej: +34612345678)."
                     ),
                     "error_details": {"phone": customer_phone},
                 }
@@ -237,7 +237,7 @@ async def book(
             return {
                 "success": False,
                 "error_code": "CUSTOMER_CREATE_FAILED",
-                "error_message": "No se pudo registrar al cliente. Intentá de nuevo.",
+                "error_message": "No se pudo registrar al cliente. Inténtalo de nuevo.",
                 "error_details": {"phone": customer_phone},
             }
 
@@ -254,7 +254,7 @@ async def book(
                     "error_code": "SERVICE_NOT_FOUND",
                     "error_message": (
                         f"El servicio '{service_name}' no está en el catálogo. "
-                        "Verificá que el nombre sea exacto."
+                        "Verifica que el nombre sea exacto."
                     ),
                     "error_details": {"service_name": service_name},
                 }

@@ -454,7 +454,7 @@ class BookingModeNode(BaseModeNode):
             parts.append(f"<offered_slots>\n{slot_lines}\n</offered_slots>")
 
         if mode_context.get("confirmation_shown"):
-            parts.append("✅ CONFIRMACIÓN RECIBIDA — podés llamar book() ahora.")
+            parts.append("✅ CONFIRMACIÓN RECIBIDA — puedes llamar book() ahora.")
 
         parts.append("</booking_context>")
 

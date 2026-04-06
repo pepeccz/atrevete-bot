@@ -92,7 +92,7 @@ async def _list_customer_appointments(limit: int, customer_phone: str) -> dict[s
                 "success": True,
                 "appointments": [],
                 "count": 0,
-                "message": "No tenés citas programadas. ¿Querés reservar una?",
+                "message": "No tienes citas programadas. ¿Quieres reservar una?",
             }
 
         appointments = await _get_upcoming_appointments(customer.id, limit)
@@ -102,7 +102,7 @@ async def _list_customer_appointments(limit: int, customer_phone: str) -> dict[s
                 "success": True,
                 "appointments": [],
                 "count": 0,
-                "message": "No tenés citas próximas. ¿Querés reservar una?",
+                "message": "No tienes citas próximas. ¿Quieres reservar una?",
             }
 
         now = datetime.now(MADRID_TZ)
@@ -155,7 +155,7 @@ async def _list_customer_appointments(limit: int, customer_phone: str) -> dict[s
             "success": False,
             "appointments": [],
             "count": 0,
-            "message": "No pude consultar tus citas en este momento. Intentá de nuevo.",
+            "message": "No pude consultar tus citas en este momento. Inténtalo de nuevo.",
         }
 
 
@@ -230,7 +230,7 @@ async def _cancel_appointment(
             "appointment_id": appointment_id,
             "within_window": False,
             "hours_until": None,
-            "message": "Ocurrió un error al cancelar la cita. Por favor, intentá de nuevo.",
+            "message": "Ocurrió un error al cancelar la cita. Por favor, inténtalo de nuevo.",
         }
 
 
@@ -397,7 +397,7 @@ async def _reschedule_appointment(
             "new_start_time": parsed_dt.isoformat(),
             "within_window": False,
             "slot_taken": False,
-            "message": "Ocurrió un error al reprogramar la cita. Por favor, intentá de nuevo.",
+            "message": "Ocurrió un error al reprogramar la cita. Por favor, inténtalo de nuevo.",
         }
 
 

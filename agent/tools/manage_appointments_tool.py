@@ -127,7 +127,7 @@ async def _list_appointments(customer_phone: str) -> dict[str, Any]:
                 "error_code": None,
                 "appointments": [],
                 "count": 0,
-                "message": "No tenés citas programadas. ¿Querés reservar una?",
+                "message": "No tienes citas programadas. ¿Quieres reservar una?",
             }
 
         appointments = await _get_upcoming_appointments(customer.id, limit=5)
@@ -138,7 +138,7 @@ async def _list_appointments(customer_phone: str) -> dict[str, Any]:
                 "error_code": None,
                 "appointments": [],
                 "count": 0,
-                "message": "No tenés citas próximas. ¿Querés reservar una?",
+                "message": "No tienes citas próximas. ¿Quieres reservar una?",
             }
 
         now = datetime.now(MADRID_TZ)
@@ -196,7 +196,7 @@ async def _list_appointments(customer_phone: str) -> dict[str, Any]:
             "error_code": "INTERNAL_ERROR",
             "appointments": [],
             "count": 0,
-            "message": "No pude consultar tus citas en este momento. Intentá de nuevo.",
+            "message": "No pude consultar tus citas en este momento. Inténtalo de nuevo.",
         }
 
 
@@ -321,7 +321,7 @@ async def _cancel_appointment(
             "appointment_id": appointment_id,
             "within_window": False,
             "hours_until": None,
-            "message": "Ocurrió un error al cancelar la cita. Por favor, intentá de nuevo.",
+            "message": "Ocurrió un error al cancelar la cita. Por favor, inténtalo de nuevo.",
         }
 
 
@@ -463,7 +463,7 @@ async def _reschedule_appointment(
                     "slot_taken": False,
                     "message": (
                         f"La hora '{new_time}' no tiene un formato válido. "
-                        "Usá el formato HH:MM (ej. '10:00' o '16:30')."
+                        "Usa el formato HH:MM (ej. '10:00' o '16:30')."
                     ),
                 }
         else:
@@ -478,7 +478,7 @@ async def _reschedule_appointment(
                     "new_start_time": None,
                     "within_window": False,
                     "slot_taken": False,
-                    "message": "No se encontró la cita. Por favor, intentá de nuevo.",
+                    "message": "No se encontró la cita. Por favor, inténtalo de nuevo.",
                 }
 
             slots = await get_available_slots(
@@ -504,7 +504,7 @@ async def _reschedule_appointment(
                     "slot_taken": False,
                     "message": (
                         f"No hay horarios disponibles el {date_display}. "
-                        "¿Querés intentar con otra fecha?"
+                        "¿Quieres intentar con otra fecha?"
                     ),
                 }
 
@@ -583,7 +583,7 @@ async def _reschedule_appointment(
             "new_start_time": None,
             "within_window": False,
             "slot_taken": False,
-            "message": "Ocurrió un error al reagendar la cita. Por favor, intentá de nuevo.",
+            "message": "Ocurrió un error al reagendar la cita. Por favor, inténtalo de nuevo.",
         }
 
 

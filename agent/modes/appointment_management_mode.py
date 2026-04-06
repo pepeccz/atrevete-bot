@@ -889,7 +889,7 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
             if stylist_id_hint:
                 stylist_hint = (
                     f" La cita original era con {stylist_name} (stylist_id: {stylist_id_hint}). "
-                    "Si el cliente no indica otra preferencia, usá ese stylist_id en find_next_available."
+                    "Si el cliente no indica otra preferencia, usa ese stylist_id en find_next_available."
                 )
             lines.append(
                 "Llamá check_availability o find_next_available para buscar horarios disponibles "

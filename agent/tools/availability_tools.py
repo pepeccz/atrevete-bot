@@ -205,7 +205,7 @@ async def check_availability(
                 "error_code": "SERVICE_NOT_FOUND",
                 "error_message": (
                     f"No encontré el servicio '{service_name}' en el catálogo. "
-                    "Verificá que el nombre sea exacto."
+                    "Verifica que el nombre sea exacto."
                 ),
             }
 
@@ -229,7 +229,7 @@ async def check_availability(
                     "error_code": "STYLIST_NOT_FOUND",
                     "error_message": (
                         f"No encontré la estilista '{stylist_name}'. "
-                        "Verificá que el nombre sea exacto."
+                        "Verifica que el nombre sea exacto."
                     ),
                 }
 
@@ -250,7 +250,7 @@ async def check_availability(
                     "error_message": (
                         f"{resolved_stylist.name} no realiza servicios de "
                         f"{service_category.value}. "
-                        "Elegí una estilista compatible o dejá el campo vacío."
+                        "Elige una estilista compatible o deja el campo vacío."
                     ),
                 }
 
@@ -280,7 +280,7 @@ async def check_availability(
                 "error_code": "DATE_CLOSED",
                 "error_message": (
                     f"No pude interpretar la fecha '{date}'. "
-                    "Usá formato YYYY-MM-DD o una frase como 'próximo jueves'."
+                    "Usa formato YYYY-MM-DD o una frase como 'próximo jueves'."
                 ),
             }
 
@@ -324,7 +324,7 @@ async def check_availability(
                 "error_code": "DATE_CLOSED",
                 "error_message": (
                     f"El salón no abre los {day_label}s. "
-                    "Elegí otro día."
+                    "Elige otro día."
                 ),
             }
 
@@ -380,7 +380,7 @@ async def check_availability(
                 "error_code": "NO_SLOTS",
                 "error_message": (
                     "No encontré disponibilidad en los próximos días. "
-                    "Intentá con otra fecha o estilista."
+                    "Intenta con otra fecha o estilista."
                 ),
             }
 
