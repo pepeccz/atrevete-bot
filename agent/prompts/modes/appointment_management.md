@@ -7,7 +7,7 @@
 ### Flujo
 1. Identifica qué quiere hacer el cliente: ver sus citas, cancelar o reagendar
 2. Llama `manage_appointments(action="list", customer_phone=...)` para ver sus citas
-3. Si quiere cancelar o reagendar, presenta la lista y pide que elija cuál
+3. Si quiere cancelar o reagendar, presenta la lista y pide que elija cuál. El cliente puede elegir con número, nombre de estilista, fecha o descripción natural (ej: "la del viernes", "la de Ana", "la primera").
 4. Muestra resumen de la acción y pide confirmación explícita
 5. Ejecuta la acción
 

@@ -315,11 +315,40 @@ def _resolve_general_candidate_selection(
     return None
 
 
-def _extract_booking_hints(user_message: str) -> dict[str, str | None]:
+async def _get_catalog_stylist_names() -> list[str]:
+    """Return a sorted list of active stylist names from the catalog cache.
+
+    Uses the same 5-minute TTL cache as catalog_builder to avoid extra DB queries.
+    Falls back to an empty list on any error — never raises.
+    """
+    try:
+        from sqlalchemy import select as sa_select
+
+        from database.connection import get_async_session
+        from database.models import Stylist
+
+        async with get_async_session() as session:
+            result = await session.execute(
+                sa_select(Stylist.name).where(Stylist.is_active == True).order_by(Stylist.name)
+            )
+            names = [row[0] for row in result.all()]
+        # Longest names first so "Ana Maria" is matched before "Ana"
+        names.sort(key=lambda n: len(n), reverse=True)
+        return names
+    except Exception as exc:
+        logger.warning("_get_catalog_stylist_names: failed to load stylists: %s", exc)
+        return []
+
+
+async def _extract_booking_hints(user_message: str) -> dict[str, str | None]:
     """Extract preferred stylist and date hints from user message.
 
     Used when first entering BOOKING mode to capture upfront preferences
     ("con Pilar", "el viernes") so the LLM can skip asking for them again.
+
+    WS-6: Stylist names are now loaded dynamically from the DB/cache instead
+    of from a hardcoded KNOWN_STYLISTS list, so newly added stylists are
+    captured automatically.
 
     Returns dict with keys: preferred_stylist_name, preferred_date_hint.
     Both may be None. Never raises — robustness guaranteed.
@@ -332,12 +361,11 @@ def _extract_booking_hints(user_message: str) -> dict[str, str | None]:
     try:
         msg_lower = user_message.lower()
 
-        # Stylist detection — static list (ordered longest-first to avoid "ana" matching "ana maria")
-        # Use word-boundary regex to avoid matching "ana" inside "semana", "mañana", etc.
-        KNOWN_STYLISTS = ["ana maria", "ana", "marta", "victor", "pilar", "harolyn"]
+        # Stylist detection — dynamic list from catalog (longest-first to avoid prefix clashes)
+        stylist_names = await _get_catalog_stylist_names()
         preferred_stylist = None
-        for name in KNOWN_STYLISTS:
-            if re.search(r"\b" + re.escape(name) + r"\b", msg_lower):
+        for name in stylist_names:
+            if re.search(r"\b" + re.escape(name.lower()) + r"\b", msg_lower):
                 preferred_stylist = name.title()
                 break
 
@@ -676,7 +704,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             conversation_id,
         )
         _general_handoff = _build_general_booking_handoff(state, user_message)
-        _booking_hints = _extract_booking_hints(user_message) if user_message else {}
+        _booking_hints = await _extract_booking_hints(user_message) if user_message else {}
         _booking_ctx = {**_general_handoff, **_booking_hints, **intent_data}
         # Populate booking_context field with handoff hints extracted from the message
         _initial_booking_ctx: dict[str, Any] = {}
@@ -708,7 +736,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             general_booking_handoff = _build_general_booking_handoff(state, user_message)
 
         # Extract contextual hints from user message (preferred stylist/date mentioned upfront)
-        booking_hints = _extract_booking_hints(user_message) if user_message else {}
+        booking_hints = await _extract_booking_hints(user_message) if user_message else {}
         booking_context_for_mode = {
             **general_booking_handoff,
             **booking_hints,

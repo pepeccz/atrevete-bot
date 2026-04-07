@@ -266,10 +266,14 @@ class AppointmentManagementMode(BaseModeNode):
         ctx: AppointmentContext,
         user_message: str,
     ) -> None:
-        """If appointments_list is loaded and user replied with a number, select it.
+        """Resolve user's appointment selection using natural language.
 
-        Supports 1-based index: "1" → appointments_list[0].
-        Only runs when selected_appointment_id is not yet set.
+        Strategies (via FuzzyResolver + custom appointment matching):
+        1. Bare digit (1-indexed): "1" → appointments_list[0]
+        2. Ordinal: "la primera" → appointments_list[0]
+        3. Date reference: "la del viernes" → match by day_of_week/date
+        4. Stylist reference: "la de Ana" → match by stylist_name
+        5. Time reference: "la de las 10" → match by start_time hour
         """
         if ctx.selected_appointment_id:
             return  # Already selected
@@ -277,30 +281,86 @@ class AppointmentManagementMode(BaseModeNode):
         if not ctx.appointments_list:
             return  # Nothing to select from
 
-        msg_stripped = user_message.strip() if user_message else ""
+        from agent.utils.fuzzy_resolver import resolve_from_options, resolve_ordinal
 
-        # Match a leading digit (1–20)
-        match = re.match(r"^(\d{1,2})(?:\D|$)", msg_stripped)
-        if not match:
+        msg = (user_message or "").strip()
+        if not msg:
             return
 
-        index_1based = int(match.group(1))
-        index_0based = index_1based - 1
+        appointments = ctx.appointments_list
+        selected = None
 
-        if 0 <= index_0based < len(ctx.appointments_list):
-            selected = ctx.appointments_list[index_0based]
+        # Strategy 1: Bare digit (1-indexed)
+        try:
+            digit = int(msg)
+            if 1 <= digit <= len(appointments):
+                selected = appointments[digit - 1]
+        except (ValueError, TypeError):
+            pass
+
+        # Strategy 2: Ordinal
+        if not selected:
+            ordinal_idx = resolve_ordinal(msg, len(appointments))
+            if ordinal_idx is not None:
+                selected = appointments[ordinal_idx]
+
+        # Strategy 3: Date/day reference ("la del viernes", "la del 14")
+        if not selected:
+            _DAYS = {
+                "lunes": 0,
+                "martes": 1,
+                "miércoles": 2,
+                "miercoles": 2,
+                "jueves": 3,
+                "viernes": 4,
+                "sábado": 5,
+                "sabado": 5,
+                "domingo": 6,
+            }
+            msg_lower = msg.lower()
+            for day_name, day_num in _DAYS.items():
+                if day_name in msg_lower:
+                    for appt in appointments:
+                        appt_date = appt.get("date", "") or appt.get("start_time", "")
+                        if day_name in appt_date.lower() if isinstance(appt_date, str) else False:
+                            selected = appt
+                            break
+                    break
+
+        # Strategy 4: Stylist reference ("la de Ana", "con Pilar")
+        if not selected:
+            stylist_names = [
+                a.get("stylist_name", "") for a in appointments if a.get("stylist_name")
+            ]
+            if stylist_names:
+                match = resolve_from_options(msg, stylist_names)
+                if match and match.confidence >= 0.75:
+                    for appt in appointments:
+                        if appt.get("stylist_name") == match.value:
+                            selected = appt
+                            break
+
+        # Strategy 5: Time reference ("la de las 10", "la de las 16:30")
+        if not selected:
+            time_match = re.search(r"(\d{1,2})[:h.]?(\d{2})?", msg)
+            if time_match:
+                hour = int(time_match.group(1))
+                minute = int(time_match.group(2) or 0)
+                target = f"{hour:02d}:{minute:02d}"
+                for appt in appointments:
+                    appt_time = appt.get("time", "") or ""
+                    start_time = appt.get("start_time", "") or ""
+                    if target in appt_time or target in start_time:
+                        selected = appt
+                        break
+
+        if selected:
             ctx.selected_appointment_id = selected.get("id", "")
             ctx.selected_appointment_snapshot = dict(selected)
             logger.info(
-                "_resolve_appointment_selection: selected index=%d id=%s",
-                index_1based,
+                "_resolve_appointment_selection: resolved id=%s from '%s'",
                 ctx.selected_appointment_id,
-            )
-        else:
-            logger.warning(
-                "_resolve_appointment_selection: index=%d out of range (list len=%d)",
-                index_1based,
-                len(ctx.appointments_list),
+                msg,
             )
 
     def _resolve_confirmation_state(
@@ -843,7 +903,9 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
         else:
             lines.append(
                 f"Hay {len(ctx.appointments_list)} citas. "
-                "Mostrá la lista numerada y pedí al cliente que elija con un número (1, 2, 3...)."
+                "Mostrá la lista y pedí al cliente que elija la cita. "
+                "El cliente puede elegir por número (1, 2...), nombre de estilista, "
+                "fecha, hora u ordinal (la primera, la segunda, etc.)."
             )
         return "\n".join(lines)
 
@@ -896,7 +958,8 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
         elif not ctx.pending_new_slot:
             lines.append(
                 f"Hay {len(ctx.offered_slots)} horario(s) disponible(s). "
-                "Mostrá la lista numerada y pedí al cliente que elija uno."
+                "Mostrá la lista y pedí al cliente que elija un horario. "
+                "Puede responder con número, hora, ordinal o nombre de estilista."
             )
         elif ctx.pending_confirmation and ctx.pending_confirmation_type == "reschedule":
             lines.append(

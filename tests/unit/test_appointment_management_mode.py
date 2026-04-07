@@ -458,7 +458,11 @@ class TestWithinWindowEscalation:
         # Tool result: within_window=True
         loop_result = AgenticLoopResult(
             response_text="Tu cita está dentro de las 48 horas.",
-            tool_results={"manage_appointments": [{"action": "cancel", "within_window": True, "hours_until": 20}]},
+            tool_results={
+                "manage_appointments": [
+                    {"action": "cancel", "within_window": True, "hours_until": 20}
+                ]
+            },
         )
 
         with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
@@ -494,7 +498,11 @@ class TestWithinWindowEscalation:
 
         loop_result = AgenticLoopResult(
             response_text="Dentro de 48h.",
-            tool_results={"manage_appointments": [{"action": "reschedule", "within_window": True, "hours_until": 15}]},
+            tool_results={
+                "manage_appointments": [
+                    {"action": "reschedule", "within_window": True, "hours_until": 15}
+                ]
+            },
         )
 
         with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
@@ -535,7 +543,9 @@ class TestActionCompletion:
         loop_result = AgenticLoopResult(
             response_text="Tu cita fue cancelada exitosamente.",
             tool_results={
-                "manage_appointments": [{"action": "cancel", "success": True, "appointment_id": "appt-uuid-001"}]
+                "manage_appointments": [
+                    {"action": "cancel", "success": True, "appointment_id": "appt-uuid-001"}
+                ]
             },
         )
 
@@ -875,3 +885,114 @@ class TestActionResolution:
         mode._resolve_action_from_intent(ctx, intent, "quiero cancelar mi turno")
 
         assert ctx.action == "cancel"
+
+
+# =============================================================================
+# 13. Natural language appointment selection (WS-3)
+# =============================================================================
+
+
+class TestAppointmentNaturalSelection:
+    """WS-3: Natural language appointment selection via _resolve_appointment_selection."""
+
+    def _make_ctx_with_appointments(self) -> AppointmentContext:
+        ctx = AppointmentContext()
+        ctx.appointments_list = [
+            {
+                "id": "aaa",
+                "stylist_name": "Ana",
+                "date": "viernes 11",
+                "time": "10:00",
+                "start_time": "2026-04-11T10:00",
+            },
+            {
+                "id": "bbb",
+                "stylist_name": "Pilar",
+                "date": "lunes 14",
+                "time": "16:30",
+                "start_time": "2026-04-14T16:30",
+            },
+        ]
+        return ctx
+
+    def test_digit_selection(self):
+        """Backward compat: '1' selects appointments[0]."""
+        mode = make_mode()
+        ctx = self._make_ctx_with_appointments()
+
+        mode._resolve_appointment_selection(ctx, "1")
+
+        assert ctx.selected_appointment_id == "aaa"
+
+    def test_ordinal_la_primera(self):
+        """'la primera' → appointments[0] (first appointment)."""
+        mode = make_mode()
+        ctx = self._make_ctx_with_appointments()
+
+        mode._resolve_appointment_selection(ctx, "la primera")
+
+        assert ctx.selected_appointment_id == "aaa"
+
+    def test_ordinal_la_segunda(self):
+        """'la segunda' → appointments[1]."""
+        mode = make_mode()
+        ctx = self._make_ctx_with_appointments()
+
+        mode._resolve_appointment_selection(ctx, "la segunda")
+
+        assert ctx.selected_appointment_id == "bbb"
+
+    def test_stylist_reference(self):
+        """'la de Pilar' → appointment bbb (by stylist name)."""
+        mode = make_mode()
+        ctx = self._make_ctx_with_appointments()
+
+        mode._resolve_appointment_selection(ctx, "la de Pilar")
+
+        assert ctx.selected_appointment_id == "bbb"
+
+    def test_stylist_reference_con_prefix(self):
+        """'con Ana' → appointment aaa (preposition stripped)."""
+        mode = make_mode()
+        ctx = self._make_ctx_with_appointments()
+
+        mode._resolve_appointment_selection(ctx, "con Ana")
+
+        assert ctx.selected_appointment_id == "aaa"
+
+    def test_time_reference(self):
+        """'la de las 16:30' → appointment bbb (by time)."""
+        mode = make_mode()
+        ctx = self._make_ctx_with_appointments()
+
+        mode._resolve_appointment_selection(ctx, "la de las 16:30")
+
+        assert ctx.selected_appointment_id == "bbb"
+
+    def test_time_reference_hour_only(self):
+        """'la de las 10' → appointment aaa (by hour)."""
+        mode = make_mode()
+        ctx = self._make_ctx_with_appointments()
+
+        mode._resolve_appointment_selection(ctx, "la de las 10")
+
+        assert ctx.selected_appointment_id == "aaa"
+
+    def test_no_selection_on_empty_message(self):
+        """Empty message → no selection made."""
+        mode = make_mode()
+        ctx = self._make_ctx_with_appointments()
+
+        mode._resolve_appointment_selection(ctx, "")
+
+        assert ctx.selected_appointment_id == ""
+
+    def test_snapshot_populated_on_selection(self):
+        """When appointment is selected, selected_appointment_snapshot is also populated."""
+        mode = make_mode()
+        ctx = self._make_ctx_with_appointments()
+
+        mode._resolve_appointment_selection(ctx, "2")
+
+        assert ctx.selected_appointment_snapshot.get("id") == "bbb"
+        assert ctx.selected_appointment_snapshot.get("stylist_name") == "Pilar"

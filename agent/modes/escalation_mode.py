@@ -9,6 +9,11 @@ Handles human handoff when:
 v6.1: Replaced one-shot handoff with a deterministic 3-step intake FSM that
 collects issue summary and contact preference before calling the escalation tool.
 
+v6.2: Added explicit-human-request fast-path (WS-4).
+When the user explicitly asks for a human ("pasame con una persona", "quiero un humano",
+etc.) on fresh ESCALATION entry, the FSM is skipped entirely and escalation is
+performed immediately without running ACKNOWLEDGE or DESCRIBE steps.
+
 FSM steps (stored in mode_context["escalation_step"]):
   ACKNOWLEDGE → DESCRIBE → CONTACT → DONE
 
@@ -17,6 +22,7 @@ Once triggered, stays in ESCALATION for remaining messages.
 """
 
 import logging
+import re
 
 from agent.modes.base import BaseModeNode
 from agent.state.helpers import add_message
@@ -29,6 +35,45 @@ _STEP_ACKNOWLEDGE = "ACKNOWLEDGE"
 _STEP_DESCRIBE = "DESCRIBE"
 _STEP_CONTACT = "CONTACT"
 _STEP_DONE = "DONE"
+
+# ── WS-4: Explicit human-request patterns ───────────────────────────────────────
+# Matches when the user explicitly wants to speak with a human agent.
+# These phrases skip the intake FSM entirely and escalate immediately.
+_EXPLICIT_HUMAN_PATTERN = re.compile(
+    r"(?:"
+    r"pas[aá]me?\s+con\s+(?:una?\s+)?(?:persona|humano|alguien|operador|agente)"
+    r"|quiero\s+(?:hablar\s+con\s+)?(?:una?\s+)?(?:persona|humano|alguien|operador|agente\s+real)"
+    r"|hablar\s+con\s+(?:una?\s+)?(?:persona|humano|alguien|operador|agente\s+real)"
+    r"|(?:una?\s+)?persona\s+real"
+    r"|(?:una?\s+)?humano\s+(?:real|de\s+verdad|por\s+favor)?"
+    r"|atenci[oó]n\s+humana"
+    r"|pon[eé]me?\s+con\s+(?:una?\s+)?(?:persona|humano|alguien)"
+    r"|comun[ií]c[aá]me?\s+con\s+(?:una?\s+)?(?:persona|humano|alguien)"
+    r")",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def _is_explicit_human_request(text: str) -> bool:
+    """Return True if the user is explicitly requesting to speak with a human.
+
+    This is distinct from frustration signals or urgency: the user is making
+    a direct, unambiguous request for human contact.
+
+    Examples that return True:
+      "Pasame con una persona"
+      "quiero hablar con un humano"
+      "hablar con alguien"
+      "atención humana"
+      "comunícame con una persona"
+
+    Examples that return False (use FSM instead):
+      "esto no funciona" (frustration — no explicit human request)
+      "no me ayudas" (frustration)
+      "es urgente" (urgency — handled by UP-1 fast-path)
+    """
+    return bool(_EXPLICIT_HUMAN_PATTERN.search(text.strip()))
+
 
 # ── Urgency signals — UP-1 ──────────────────────────────────────────────────────
 _URGENCY_SIGNALS: frozenset[str] = frozenset(
@@ -169,13 +214,69 @@ class EscalationMode(BaseModeNode):
             return updates
 
         # ── Recover last user message ──────────────────────────────────────────
-        # Must be done early — needed by urgency fast-path (UP-1) and FSM steps.
+        # Must be done early — needed by WS-4/UP-1 fast-paths and FSM steps.
         messages = state.get("messages", [])
         user_text = ""
         for msg in reversed(messages):
             if msg.get("role") == "user":
                 user_text = msg.get("content", "").strip()
                 break
+
+        # WS-4 — Fast path for explicit human-contact requests on fresh ESCALATION entry.
+        # Guards: no step set yet (fresh entry) AND escalation not already triggered.
+        # Skips ACKNOWLEDGE + DESCRIBE entirely — jumps directly to perform_escalation.
+        if (
+            not ctx.get("escalation_step")
+            and not state.get("escalation_triggered")
+            and _is_explicit_human_request(user_text)
+        ):
+            self.logger.info(
+                "EscalationMode: explicit-human fast-path | conversation=%s | text=%r",
+                conversation_id,
+                user_text[:60],
+            )
+            response_text = _ESCALATION_FALLBACK
+            try:
+                esc_result = await perform_escalation(
+                    conversation_id=str(state.get("conversation_id", "")),
+                    customer_phone=state.get("customer_phone") or "",
+                    reason="manual_request",
+                    source="manual",
+                    is_technical_error=False,
+                    issue_summary=user_text,
+                    contact_preference=None,
+                    conversation_context=state.get("messages", [])[-5:],
+                    customer_id=str(state.get("customer_id", ""))
+                    if state.get("customer_id")
+                    else None,
+                )
+                response_text = _ESCALATION_SUCCESS
+                self.logger.info(
+                    "EscalationMode: explicit-human escalation completed | conversation=%s | "
+                    "steps_completed=%s",
+                    conversation_id,
+                    esc_result.steps_completed,
+                )
+            except Exception as exc:
+                self.logger.error(
+                    "EscalationMode: explicit-human perform_escalation failed | "
+                    "conversation=%s | error=%s",
+                    conversation_id,
+                    exc,
+                )
+            ctx["escalation_step"] = _STEP_DONE
+            ctx["issue_summary"] = user_text
+            final_response, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+            updates = {
+                **add_message(state, "assistant", final_response),
+                "escalation_triggered": True,
+                "mode_context": ctx,
+                "last_node": "escalation",
+                "user_message": None,
+            }
+            if disclosure_sent:
+                updates["ai_disclosure_sent"] = True
+            return updates
 
         # UP-1 — Fast path for urgency signals on fresh ESCALATION entry.
         # Guards: no step set yet (fresh entry) AND escalation not already triggered (done).

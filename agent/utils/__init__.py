@@ -3,6 +3,7 @@ Utility functions for v3.0 architecture.
 
 This module contains shared utilities used by tools and transaction handlers:
 - date_parser: Natural language date parsing for Spanish
+- fuzzy_resolver: Deterministic strategy-chain fuzzy option resolution
 """
 
 from agent.utils.date_parser import (
@@ -13,6 +14,13 @@ from agent.utils.date_parser import (
     DateParseError,
     MADRID_TZ,
 )
+from agent.utils.fuzzy_resolver import (
+    Match,
+    normalize_spanish,
+    resolve_from_options,
+    resolve_time_slot,
+    resolve_ordinal,
+)
 
 __all__ = [
     # Date parsing
@@ -22,4 +30,10 @@ __all__ = [
     "format_date_es",
     "DateParseError",
     "MADRID_TZ",
+    # Fuzzy resolution
+    "Match",
+    "normalize_spanish",
+    "resolve_from_options",
+    "resolve_time_slot",
+    "resolve_ordinal",
 ]

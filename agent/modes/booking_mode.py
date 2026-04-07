@@ -298,7 +298,7 @@ class BookingModeNode(BaseModeNode):
                     error_message=(
                         "Antes de buscar disponibilidad, preguntá al cliente "
                         "qué estilista prefiere (o si le da igual). "
-                        "Mostrá la lista numerada del Paso 2."
+                        "El cliente puede responder con el nombre, un número o 'sin preferencia'."
                     ),
                 )
             return tool_args
@@ -596,7 +596,7 @@ class BookingModeNode(BaseModeNode):
         # Current booking step and next action hint
         _STEP_ACTIONS = {
             "service_selection": "Identificar el servicio del catálogo",
-            "stylist_selection": "Preguntar preferencia de estilista (lista numerada)",
+            "stylist_selection": "Preguntar preferencia de estilista (número, nombre o 'sin preferencia')",
             "datetime_selection": "Buscar disponibilidad con check_availability",
             "name_collection": "Pedir nombre del cliente",
             "notes_collection": "Preguntar si hay algo que tener en cuenta para la cita",
@@ -882,26 +882,20 @@ class BookingModeNode(BaseModeNode):
     def _match_option(user_message: str, options: list[str]) -> str | None:
         """Try to match user_message against a list of options.
 
-        Matching strategy (in order):
-        1. Bare integer (1-indexed) → return options[idx - 1]
-        2. Case-insensitive exact string match → return matching option
-        3. No match → return None
+        Strategy chain (first match wins):
+        1. Bare digit (1-indexed) / Spanish ordinal → index into options list
+        2. FuzzyResolver: exact → normalized/contains → prefix → fuzzy (≥0.75)
         """
-        # Try integer index (1-based)
-        try:
-            idx = int(user_message.strip())
-            if 1 <= idx <= len(options):
-                return options[idx - 1]
-        except (ValueError, TypeError):
-            pass
+        from agent.utils.fuzzy_resolver import resolve_from_options, resolve_ordinal
 
-        # Try case-insensitive exact match
-        user_lower = user_message.strip().lower()
-        for option in options:
-            if option.lower() == user_lower:
-                return option
+        # Strategy 1: digit or ordinal → 0-based index into options list
+        idx = resolve_ordinal(user_message.strip(), len(options))
+        if idx is not None:
+            return options[idx]
 
-        return None
+        # Strategy 2: fuzzy text matching (exact / normalized / prefix / fuzzy)
+        match = resolve_from_options(user_message, options)
+        return match.value if match else None
 
     def _set_pending_options(self, mode_context: dict, response_text: str) -> None:
         """Detect numbered lists in the LLM response and store as pending options.

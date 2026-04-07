@@ -71,27 +71,94 @@ _AUTO_SEARCH_EXTRA_DAYS = 3
 
 
 async def _resolve_service_by_name(name: str) -> Service | None:
-    """Case-insensitive exact match on services WHERE is_active=true."""
+    """Case-insensitive match on services WHERE is_active=true.
+
+    Resolution order:
+    1. Exact case-insensitive DB match (fast path — single query).
+    2. Fuzzy fallback: loads all active service names and runs
+       resolve_from_options() with confidence threshold 0.80.
+       Logs the fuzzy resolution for audit.
+    """
     async with get_async_session() as session:
+        # 1. Exact match
         result = await session.execute(
             select(Service).where(
                 func.lower(Service.name) == func.lower(name),
                 Service.is_active == True,
             )
         )
-        return result.scalar_one_or_none()
+        service = result.scalar_one_or_none()
+        if service is not None:
+            return service
+
+        # 2. Fuzzy fallback — load all active services
+        all_result = await session.execute(select(Service).where(Service.is_active == True))
+        all_services = list(all_result.scalars().all())
+
+    if not all_services:
+        return None
+
+    from agent.utils.fuzzy_resolver import resolve_from_options
+
+    service_names = [s.name for s in all_services]
+    match = resolve_from_options(name, service_names, threshold=0.80)
+    if match is not None:
+        logger.info(
+            "_resolve_service_by_name: fuzzy match '%s' → '%s' (confidence=%.2f, strategy=%s)",
+            name,
+            match.value,
+            match.confidence,
+            match.strategy,
+        )
+        # Return the Service object for the matched name
+        return next((s for s in all_services if s.name == match.value), None)
+
+    return None
 
 
 async def _resolve_stylist_by_name(name: str) -> Stylist | None:
-    """Case-insensitive match on stylists WHERE is_active=true."""
+    """Case-insensitive match on stylists WHERE is_active=true.
+
+    Resolution order:
+    1. Exact case-insensitive DB match (fast path — single query).
+    2. Fuzzy fallback: loads all active stylist names and runs
+       resolve_from_options() with confidence threshold 0.80.
+       Logs the fuzzy resolution for audit.
+    """
     async with get_async_session() as session:
+        # 1. Exact match
         result = await session.execute(
             select(Stylist).where(
                 func.lower(Stylist.name) == func.lower(name),
                 Stylist.is_active == True,
             )
         )
-        return result.scalar_one_or_none()
+        stylist = result.scalar_one_or_none()
+        if stylist is not None:
+            return stylist
+
+        # 2. Fuzzy fallback — load all active stylists
+        all_result = await session.execute(select(Stylist).where(Stylist.is_active == True))
+        all_stylists = list(all_result.scalars().all())
+
+    if not all_stylists:
+        return None
+
+    from agent.utils.fuzzy_resolver import resolve_from_options
+
+    stylist_names = [s.name for s in all_stylists]
+    match = resolve_from_options(name, stylist_names, threshold=0.80)
+    if match is not None:
+        logger.info(
+            "_resolve_stylist_by_name: fuzzy match '%s' → '%s' (confidence=%.2f, strategy=%s)",
+            name,
+            match.value,
+            match.confidence,
+            match.strategy,
+        )
+        return next((s for s in all_stylists if s.name == match.value), None)
+
+    return None
 
 
 async def _get_active_stylists_for_category(category: ServiceCategory) -> list[Stylist]:

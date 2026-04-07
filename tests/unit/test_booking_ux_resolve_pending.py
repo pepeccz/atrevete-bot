@@ -473,3 +473,53 @@ def test_slot_time_match_y_media() -> None:
     }
     node._resolve_pending_selection(state, ctx)
     assert ctx["selected_slot"]["time"] == "09:30"
+
+
+# ===========================================================================
+# (g) Fuzzy service/stylist matching via _match_option (WS-2)
+# ===========================================================================
+
+
+def test_match_option_fuzzy_partial() -> None:
+    """'balayage' matches 'Mechas balayage' by substring."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    result = node._match_option("balayage", ["Mechas balayage", "Tinte raíz", "Cortar"])
+    assert result == "Mechas balayage"
+
+
+def test_match_option_with_article() -> None:
+    """'las balayage' matches 'Mechas balayage' after stripping article."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    result = node._match_option("las balayage", ["Mechas balayage", "Tinte raíz"])
+    assert result == "Mechas balayage"
+
+
+def test_match_option_digit_backward_compat() -> None:
+    """'2' still works as 1-indexed selection."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    result = node._match_option("2", ["Ana", "Pilar", "Victor"])
+    assert result == "Pilar"
+
+
+def test_match_option_exact_still_works() -> None:
+    """Exact match still works."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    result = node._match_option("Ana", ["Ana", "Pilar", "Victor"])
+    assert result == "Ana"
+
+
+def test_match_option_con_prefix() -> None:
+    """'con Ana' should match 'Ana' (articles/prepositions stripped)."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    result = node._match_option("con Ana", ["Ana", "Pilar", "Victor"])
+    assert result == "Ana"

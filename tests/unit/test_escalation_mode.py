@@ -160,15 +160,16 @@ class TestEscalationFSMTransitions:
     async def test_fresh_entry_starts_at_acknowledge(self):
         """First time in ESCALATION (previous_mode != ESCALATION) → ACKNOWLEDGE step.
 
-        Uses a non-urgent message so the UP-1 fast-path does NOT trigger.
+        Uses a non-urgent, non-explicit-human message so neither WS-4 nor UP-1 fast-paths trigger.
         For the urgency fast-path behavior, see TestUrgencyFastPath.
+        For the WS-4 explicit fast-path behavior, see test_ws4_escalation_fast_path.py.
         """
         mode = _make_escalation_mode()
         state = _make_state(
             current_mode="BOOKING",  # transitioning FROM booking
             escalation_triggered=False,
             escalation_step=None,
-            user_message="quisiera hablar con alguien del equipo",  # non-urgent
+            user_message="tengo un problema con mi cita",  # frustration, no explicit human request
         )
 
         result = await mode.handle(state, intent=None)
@@ -268,13 +269,20 @@ class TestUrgencyFastPath:
 
     @pytest.mark.asyncio
     async def test_urgency_fast_path_jumps_to_contact(self):
-        """Fresh ESCALATION entry with urgency signal → bot asks for contact preference."""
+        """Fresh ESCALATION entry with urgency signal → bot asks for contact preference.
+
+        Uses a pure urgency signal ("es URGENTE", "AHORA MISMO") WITHOUT explicit human
+        request phrases ("hablar con alguien") so only the UP-1 urgency fast-path fires.
+        WS-4 explicit fast-path fires for "hablar con alguien"; UP-1 fires for "urgente".
+        Both skip ACKNOWLEDGE but: UP-1 → CONTACT (ask preference); WS-4 → DONE (immediate).
+        This test validates UP-1 (urgency → CONTACT step, not yet DONE).
+        """
         mode = EscalationMode(tools=[], llm_client=_make_mock_llm())
         state = _make_state(
             current_mode="BOOKING",  # transitioning FROM booking (fresh entry)
             escalation_triggered=False,
             escalation_step=None,
-            user_message="Es URGENTE necesito hablar con alguien AHORA MISMO",
+            user_message="Es URGENTE necesito ayuda AHORA MISMO",  # urgency, no explicit human req
         )
 
         result = await mode.handle(state, intent=None)
@@ -316,13 +324,14 @@ class TestUrgencyFastPath:
 
     @pytest.mark.asyncio
     async def test_no_urgency_fresh_entry_starts_acknowledge(self):
-        """Fresh entry WITHOUT urgency signal still follows normal ACKNOWLEDGE path."""
+        """Fresh entry WITHOUT urgency signal and WITHOUT explicit human request → ACKNOWLEDGE path."""
         mode = EscalationMode(tools=[], llm_client=_make_mock_llm())
         state = _make_state(
             current_mode="BOOKING",
             escalation_triggered=False,
             escalation_step=None,
-            user_message="quisiera hablar con alguien del salón",
+            # Pure frustration: no urgency signal, no explicit human request phrase
+            user_message="no me funciona el sistema",
         )
 
         result = await mode.handle(state, intent=None)
