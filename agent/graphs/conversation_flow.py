@@ -559,9 +559,10 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     # are classified as "confirm" instead of falling to the LLM as "reject".
     intent_router = _get_intent_router()
     _mode_context = state.get("mode_context") or {}
+    _booking_ctx = state.get("booking_context") or {}
     # Derive booking_step for intent classifier bare-digit shortcut
     _booking_step = None
-    if _mode_context.get("offered_slots") and not _mode_context.get("selected_slot"):
+    if _booking_ctx.get("offered_slots") and not _booking_ctx.get("selected_slot"):
         _booking_step = "slot_selection"
     try:
         from agent.routing.intent_router import IntentResult
@@ -610,10 +611,11 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     # Rule 4: REMOVED — customer_name gate removed (scope-realignment refactor).
     # Booking intent now routes directly to BOOKING regardless of customer_name.
     # Compute _has_active_booking for Rule 6 (BOOKING inertia) below.
+    # Reads from booking_context (single source of truth for booking data).
     _has_active_booking = bool(
-        _mode_context.get("service_id")
-        or _mode_context.get("offered_slots")
-        or _mode_context.get("selected_slot")
+        _booking_ctx.get("last_services")
+        or _booking_ctx.get("offered_slots")
+        or _booking_ctx.get("selected_slot")
     )
 
     # Rule 5: Escalation intent

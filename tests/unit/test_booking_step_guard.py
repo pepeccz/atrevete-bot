@@ -220,19 +220,6 @@ def test_sin_preferencia_case_insensitive(booking_node: BookingModeNode):
     assert mode_context.get("last_stylist") == "Sin preferencia"
 
 
-def test_numbered_sin_preferencia_sets_flag(booking_node: BookingModeNode):
-    """When user picks a numbered option that resolves to 'Sin preferencia', flag is set."""
-    mode_context: dict = {
-        "last_services": ["Cortar"],
-        "pending_stylist_options": ["Ana", "Victor", "Marta", "Sin preferencia"],
-    }
-    state = _make_state("4")  # picks "Sin preferencia" by number
-    booking_node._resolve_pending_selection(state, mode_context)
-    assert mode_context.get("last_stylist") == "Sin preferencia"
-    assert mode_context.get("no_preference_stylist") is True
-    assert "pending_stylist_options" not in mode_context
-
-
 def test_unrecognized_phrase_no_flag(booking_node: BookingModeNode):
     """A message that doesn't match any pattern does NOT set the flag."""
     mode_context: dict = {"last_services": ["Cortar"]}

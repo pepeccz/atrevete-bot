@@ -67,10 +67,6 @@ class BookingContext(TypedDict, total=False):
     preferred_stylist_name: str | None  # from router handoff hints
     preferred_date_hint: str | None
 
-    # Pending resolution (numbered-list selections)
-    pending_service_options: list[str] | None
-    pending_stylist_options: list[str] | None
-
     # Extra
     notes: str | None
     notes_asked: bool  # True after the notes question has been presented to the user

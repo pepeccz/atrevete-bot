@@ -229,8 +229,6 @@ class BookingModeNode(BaseModeNode):
 
         # 6. Build response (F-8 override for confirmed bookings)
         response_text = self._build_response(result, booking_context)
-        # 6b. Detect numbered lists in LLM response and store as pending options
-        self._set_pending_options(booking_context, response_text)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
 
         # Build routing mode_context update — only routing metadata, no booking data
@@ -719,28 +717,27 @@ class BookingModeNode(BaseModeNode):
     # ──────────────────────────────────────────────────────────────────────
 
     def _resolve_pending_selection(self, state: ConversationState, mode_context: dict) -> None:
-        """Resolve the user's numbered or text selection against pending options.
+        """Resolve deterministic state-machine transitions from user input.
 
-        Mutates mode_context in-place:
-        - If pending_service_options is set, tries to match user_message as
-          1-indexed number or case-insensitive name → sets last_services, clears pending.
-        - If pending_stylist_options is set (and last_stylist not yet resolved),
-          applies the same resolution → sets last_stylist, clears pending.
+        Handles only what the LLM cannot do deterministically:
+        - "Sin preferencia" detection → sets no_preference_stylist flag
+        - Notes skip detection → marks notes_asked at notes_collection step
+        - Slot acceptance: digit/time/ordinal/affirmative against offered_slots
 
-        Called at the top of handle(), BEFORE the agentic loop, so that the LLM
-        sees pre-resolved service/stylist data in the dynamic context.
+        Service and stylist selection from numbered lists is handled by the LLM,
+        which can read its own conversation history.
+
+        Called at the top of handle(), BEFORE the agentic loop.
         """
         user_message = get_last_user_message(state).strip()
         if not user_message:
             return
 
-        # "Sin preferencia" recognition: detect no-preference phrases BEFORE
-        # attempting numbered/text option matching so the flag is always set
-        # even when no pending_stylist_options list is present.
+        # "Sin preferencia" recognition: detect no-preference phrases and set the flag
+        # so the LLM sees it in dynamic context without needing to re-parse.
         if _NO_PREFERENCE_PATTERNS.search(user_message) and not mode_context.get("last_stylist"):
             mode_context["no_preference_stylist"] = True
             mode_context["last_stylist"] = "Sin preferencia"
-            mode_context.pop("pending_stylist_options", None)
             logger.info("_resolve_pending_selection: no-preference detected from %r", user_message)
             return  # No further resolution needed for stylists
 
@@ -759,35 +756,6 @@ class BookingModeNode(BaseModeNode):
                 "_resolve_pending_selection: notes skipped (negative response: %r)", user_message
             )
             return
-
-        # Service resolution
-        pending_services: list[str] | None = mode_context.get("pending_service_options")
-        if pending_services:
-            matched = self._match_option(user_message, pending_services)
-            if matched is not None:
-                mode_context["last_services"] = [matched]
-                mode_context.pop("pending_service_options", None)
-                logger.info(
-                    "_resolve_pending_selection: service resolved to %r from user_message=%r",
-                    matched,
-                    user_message,
-                )
-
-        # Stylist resolution (only when last_stylist not yet set)
-        pending_stylists: list[str] | None = mode_context.get("pending_stylist_options")
-        if pending_stylists and not mode_context.get("last_stylist"):
-            matched = self._match_option(user_message, pending_stylists)
-            if matched is not None:
-                mode_context["last_stylist"] = matched
-                mode_context.pop("pending_stylist_options", None)
-                # If the resolved option is "Sin preferencia", also set the flag
-                if _NO_PREFERENCE_PATTERNS.search(matched):
-                    mode_context["no_preference_stylist"] = True
-                logger.info(
-                    "_resolve_pending_selection: stylist resolved to %r from user_message=%r",
-                    matched,
-                    user_message,
-                )
 
         # Slot acceptance transition: offered_slots + digit/time/ordinal/affirmative → selected_slot
         # Covers the deterministic state transition:
@@ -877,64 +845,6 @@ class BookingModeNode(BaseModeNode):
                     "_resolve_pending_selection: selected_slot=%r, booking_step→confirmation",
                     slot_resolved,
                 )
-
-    @staticmethod
-    def _match_option(user_message: str, options: list[str]) -> str | None:
-        """Try to match user_message against a list of options.
-
-        Strategy chain (first match wins):
-        1. Bare digit (1-indexed) / Spanish ordinal → index into options list
-        2. FuzzyResolver: exact → normalized/contains → prefix → fuzzy (≥0.75)
-        """
-        from agent.utils.fuzzy_resolver import resolve_from_options, resolve_ordinal
-
-        # Strategy 1: digit or ordinal → 0-based index into options list
-        idx = resolve_ordinal(user_message.strip(), len(options))
-        if idx is not None:
-            return options[idx]
-
-        # Strategy 2: fuzzy text matching (exact / normalized / prefix / fuzzy)
-        match = resolve_from_options(user_message, options)
-        return match.value if match else None
-
-    def _set_pending_options(self, mode_context: dict, response_text: str) -> None:
-        """Detect numbered lists in the LLM response and store as pending options.
-
-        Parses numbered-list items (e.g. "1. Mechas balayage") from response_text.
-        Emojis at the end of item names are stripped for clean matching.
-
-        - If last_services is NOT yet set → stores items as pending_service_options
-        - If last_services IS set but last_stylist is NOT → stores as pending_stylist_options
-        - If both are already set → no-op
-
-        Called after _build_response(), before building the updates dict.
-        """
-        # Both already resolved → nothing to do
-        if mode_context.get("last_services") and mode_context.get("last_stylist"):
-            return
-
-        # Extract numbered-list items, stripping trailing emojis
-        items = re.findall(
-            r"^\d+\.\s*(.+?)(?:\s*[✅📅👌👍🌸😊✨💇‍♀️💅🏼])*\s*$",
-            response_text,
-            re.MULTILINE,
-        )
-        # Also strip trailing emoji characters not covered by the above pattern
-        _EMOJI_TAIL_RE = re.compile(
-            r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U0001F900-\U0001F9FF\s]+$"
-        )
-        items = [_EMOJI_TAIL_RE.sub("", item).strip() for item in items]
-        items = [item for item in items if item]  # Remove empty strings
-
-        if not items:
-            return
-
-        if not mode_context.get("last_services"):
-            mode_context["pending_service_options"] = items
-            logger.info("_set_pending_options: stored %d pending_service_options", len(items))
-        elif not mode_context.get("last_stylist"):
-            mode_context["pending_stylist_options"] = items
-            logger.info("_set_pending_options: stored %d pending_stylist_options", len(items))
 
     # ──────────────────────────────────────────────────────────────────────
     # Mid-loop dynamic context refresh

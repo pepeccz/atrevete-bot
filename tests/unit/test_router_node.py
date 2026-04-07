@@ -792,8 +792,11 @@ class TestBookingDigressions:
 
     @pytest.mark.asyncio
     async def test_ask_info_digression_preserves_booking_draft(self):
-        """Phase 2 (booking-flow-resilience): with active booking_step, unrelated
-        ask_info stays in BOOKING via inertia guard. Only exit phrases leave."""
+        """Phase 2 (booking-flow-resilience): with active booking_context data, unrelated
+        ask_info stays in BOOKING via inertia guard. Only exit phrases leave.
+
+        WS-2: booking data now read from booking_context, not mode_context.
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -802,17 +805,12 @@ class TestBookingDigressions:
             is_first_interaction=False,
             user_message="que productos usan para el alisado",
         )
-        state["mode_context"] = {
+        # WS-2: active booking data lives in booking_context, not mode_context
+        state["booking_context"] = {
             "booking_step": "slot_selection",
-            "service_id": "svc-1",
-            "service_name": "Cortar",
-            "stylist_id": "sty-1",
-            "stylist_name": "Maria",
+            "last_services": ["Cortar"],
+            "last_stylist": "Maria",
             "selected_slot": {"start_time": "2026-03-20T10:00:00+01:00"},
-            "slot_summary": "20/03 10:00",
-            "notes": None,
-            "pending_cancel_context": None,
-            "candidate_services": [{"id": "svc-1", "name": "Cortar"}],
         }
 
         with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
@@ -1214,7 +1212,10 @@ class TestRule6BookingRelatedGuard:
 
     @pytest.mark.asyncio
     async def test_rule6_unrelated_ask_info_with_active_booking_stays_via_inertia(self):
-        """Phase 2: ask_info about unrelated topic + active booking_step → stays BOOKING."""
+        """Phase 2: ask_info about unrelated topic + active booking data → stays BOOKING.
+
+        WS-2: _has_active_booking reads from booking_context, not mode_context.
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -1223,12 +1224,10 @@ class TestRule6BookingRelatedGuard:
             is_first_interaction=False,
             user_message="¿Dónde estáis ubicados?",
         )
-        state["mode_context"] = {
-            "booking_step": "slot_selection",
-            "service_id": "svc-1",
-            "service_name": "Cortar",
-            "stylist_id": "sty-1",
-            "stylist_name": "Maria",
+        # WS-2: active booking data lives in booking_context
+        state["booking_context"] = {
+            "last_services": ["Cortar"],
+            "last_stylist": "Maria",
         }
 
         with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
@@ -1241,7 +1240,10 @@ class TestRule6BookingRelatedGuard:
 
     @pytest.mark.asyncio
     async def test_rule6_product_question_with_active_booking_stays_via_inertia(self):
-        """Phase 2: ask_info about products + active booking_step → stays BOOKING."""
+        """Phase 2: ask_info about products + active booking data → stays BOOKING.
+
+        WS-2: _has_active_booking reads from booking_context, not mode_context.
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -1250,32 +1252,9 @@ class TestRule6BookingRelatedGuard:
             is_first_interaction=False,
             user_message="que productos usan para el alisado",
         )
-        state["mode_context"] = {
-            "booking_step": "slot_selection",
-            "service_id": "svc-1",
-        }
-
-        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
-            mock_get_router.return_value = _make_mock_router("ask_info")
-            result = await router_node(state)
-
-        # Booking inertia keeps user in BOOKING
-        returned_mode = result.get("current_mode")
-        assert returned_mode is None or returned_mode == "BOOKING"
-
-    @pytest.mark.asyncio
-    async def test_rule6_teneis_parking_with_active_booking_stays_via_inertia(self):
-        """Phase 2: ask_info about parking + active booking_step → stays BOOKING."""
-        from agent.graphs.conversation_flow import router_node
-
-        state = _make_state(
-            current_mode="BOOKING",
-            customer_name="Pedro",
-            is_first_interaction=False,
-            user_message="¿Tenéis parking?",
-        )
-        state["mode_context"] = {
-            "booking_step": "service_selection",
+        # WS-2: active booking data lives in booking_context
+        state["booking_context"] = {
+            "last_services": ["Cortar"],
         }
 
         with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:

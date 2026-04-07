@@ -942,42 +942,6 @@ class TestAppointmentNaturalSelection:
 
         assert ctx.selected_appointment_id == "bbb"
 
-    def test_stylist_reference(self):
-        """'la de Pilar' → appointment bbb (by stylist name)."""
-        mode = make_mode()
-        ctx = self._make_ctx_with_appointments()
-
-        mode._resolve_appointment_selection(ctx, "la de Pilar")
-
-        assert ctx.selected_appointment_id == "bbb"
-
-    def test_stylist_reference_con_prefix(self):
-        """'con Ana' → appointment aaa (preposition stripped)."""
-        mode = make_mode()
-        ctx = self._make_ctx_with_appointments()
-
-        mode._resolve_appointment_selection(ctx, "con Ana")
-
-        assert ctx.selected_appointment_id == "aaa"
-
-    def test_time_reference(self):
-        """'la de las 16:30' → appointment bbb (by time)."""
-        mode = make_mode()
-        ctx = self._make_ctx_with_appointments()
-
-        mode._resolve_appointment_selection(ctx, "la de las 16:30")
-
-        assert ctx.selected_appointment_id == "bbb"
-
-    def test_time_reference_hour_only(self):
-        """'la de las 10' → appointment aaa (by hour)."""
-        mode = make_mode()
-        ctx = self._make_ctx_with_appointments()
-
-        mode._resolve_appointment_selection(ctx, "la de las 10")
-
-        assert ctx.selected_appointment_id == "aaa"
-
     def test_no_selection_on_empty_message(self):
         """Empty message → no selection made."""
         mode = make_mode()

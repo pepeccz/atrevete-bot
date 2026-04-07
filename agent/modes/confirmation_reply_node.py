@@ -6,17 +6,10 @@ from uuid import UUID
 
 from agent.fsm.models import IntentType
 from agent.services.confirmation_service import handle_confirmation_response
-from agent.state.helpers import add_message
+from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState
 
 logger = logging.getLogger(__name__)
-
-
-def _get_last_user_message(state: ConversationState) -> str:
-    for message in reversed(state.get("messages", [])):
-        if message.get("role") == "user":
-            return str(message.get("content", ""))
-    return ""
 
 
 def _extract_response_text(result: Any, intent: str) -> tuple[str, dict[str, Any]]:
@@ -72,7 +65,7 @@ async def confirmation_reply_node(state: ConversationState) -> dict[str, Any]:
         result = await handle_confirmation_response(
             customer_phone=state.get("customer_phone", ""),
             intent_type=intent_type,
-            message_text=_get_last_user_message(state),
+            message_text=get_last_user_message(state),
         )
         response_text, state_updates = _extract_response_text(result, intent)
     except Exception as exc:

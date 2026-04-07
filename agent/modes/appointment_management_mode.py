@@ -17,7 +17,6 @@ Core principle: Python only does:
 
 import json
 import logging
-import re
 import unicodedata
 from datetime import datetime
 from typing import Any
@@ -28,7 +27,7 @@ from langchain_core.tools import StructuredTool
 from agent.modes.appointment_context import AppointmentContext
 from agent.modes.base import BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
-from agent.state.helpers import add_message
+from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
 
 logger = logging.getLogger(__name__)
@@ -185,7 +184,7 @@ class AppointmentManagementMode(BaseModeNode):
         ctx = AppointmentContext.from_mode_context(mode_context)
 
         # 1. Pre-resolvers (deterministic)
-        user_message = self._get_last_user_message(state)
+        user_message = get_last_user_message(state)
         self._resolve_action_from_intent(ctx, intent, user_message)
         self._resolve_appointment_selection(ctx, user_message)
         self._resolve_confirmation_state(ctx, user_message)
@@ -266,14 +265,14 @@ class AppointmentManagementMode(BaseModeNode):
         ctx: AppointmentContext,
         user_message: str,
     ) -> None:
-        """Resolve user's appointment selection using natural language.
+        """Resolve user's appointment selection — digit and ordinal only.
 
-        Strategies (via FuzzyResolver + custom appointment matching):
+        Strategies (deterministic state-machine convenience):
         1. Bare digit (1-indexed): "1" → appointments_list[0]
         2. Ordinal: "la primera" → appointments_list[0]
-        3. Date reference: "la del viernes" → match by day_of_week/date
-        4. Stylist reference: "la de Ana" → match by stylist_name
-        5. Time reference: "la de las 10" → match by start_time hour
+
+        Natural language selection ("la de Ana", "la del viernes") is handled
+        by the LLM since appointments are available in the prompt context.
         """
         if ctx.selected_appointment_id:
             return  # Already selected
@@ -281,7 +280,7 @@ class AppointmentManagementMode(BaseModeNode):
         if not ctx.appointments_list:
             return  # Nothing to select from
 
-        from agent.utils.fuzzy_resolver import resolve_from_options, resolve_ordinal
+        from agent.utils.fuzzy_resolver import resolve_ordinal
 
         msg = (user_message or "").strip()
         if not msg:
@@ -298,61 +297,11 @@ class AppointmentManagementMode(BaseModeNode):
         except (ValueError, TypeError):
             pass
 
-        # Strategy 2: Ordinal
+        # Strategy 2: Ordinal ("la primera", "la segunda", etc.)
         if not selected:
             ordinal_idx = resolve_ordinal(msg, len(appointments))
             if ordinal_idx is not None:
                 selected = appointments[ordinal_idx]
-
-        # Strategy 3: Date/day reference ("la del viernes", "la del 14")
-        if not selected:
-            _DAYS = {
-                "lunes": 0,
-                "martes": 1,
-                "miércoles": 2,
-                "miercoles": 2,
-                "jueves": 3,
-                "viernes": 4,
-                "sábado": 5,
-                "sabado": 5,
-                "domingo": 6,
-            }
-            msg_lower = msg.lower()
-            for day_name, day_num in _DAYS.items():
-                if day_name in msg_lower:
-                    for appt in appointments:
-                        appt_date = appt.get("date", "") or appt.get("start_time", "")
-                        if day_name in appt_date.lower() if isinstance(appt_date, str) else False:
-                            selected = appt
-                            break
-                    break
-
-        # Strategy 4: Stylist reference ("la de Ana", "con Pilar")
-        if not selected:
-            stylist_names = [
-                a.get("stylist_name", "") for a in appointments if a.get("stylist_name")
-            ]
-            if stylist_names:
-                match = resolve_from_options(msg, stylist_names)
-                if match and match.confidence >= 0.75:
-                    for appt in appointments:
-                        if appt.get("stylist_name") == match.value:
-                            selected = appt
-                            break
-
-        # Strategy 5: Time reference ("la de las 10", "la de las 16:30")
-        if not selected:
-            time_match = re.search(r"(\d{1,2})[:h.]?(\d{2})?", msg)
-            if time_match:
-                hour = int(time_match.group(1))
-                minute = int(time_match.group(2) or 0)
-                target = f"{hour:02d}:{minute:02d}"
-                for appt in appointments:
-                    appt_time = appt.get("time", "") or ""
-                    start_time = appt.get("start_time", "") or ""
-                    if target in appt_time or target in start_time:
-                        selected = appt
-                        break
 
         if selected:
             ctx.selected_appointment_id = selected.get("id", "")
@@ -855,14 +804,6 @@ class AppointmentManagementMode(BaseModeNode):
             return str(intent.get("intent", ""))
         if isinstance(intent, str):
             return intent
-        return ""
-
-    @staticmethod
-    def _get_last_user_message(state: ConversationState) -> str:
-        """Extract the last user message content from state messages."""
-        for msg in reversed(state.get("messages", [])):
-            if msg.get("role") == "user":
-                return msg.get("content", "")
         return ""
 
 
