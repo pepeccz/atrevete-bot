@@ -6,7 +6,7 @@ description: >
 license: MIT
 metadata:
   author: atrevete-bot
-  version: "1.0"
+  version: "2.0"
   scope: [root, agent]
   auto_invoke:
     - "Working on agent/"
@@ -18,287 +18,751 @@ metadata:
     - "Creating agent tools"
 ---
 
-## Agent Architecture (v6.0 Mode-Based)
+## 1. Architecture Overview
+
+### Directory Layout
 
 ```
 agent/
-├── main.py                    # Entry point: Redis Streams consumer
+├── main.py                              # Redis Streams consumer entry point
 ├── graphs/
-│   └── conversation_flow.py   # StateGraph: 7 nodes, mode-based routing
+│   └── conversation_flow.py            # StateGraph factory (v6.0)
 ├── modes/
-│   ├── base.py                # BaseModeNode abstract class
-│   ├── greeting_mode.py       # GREETING: name collection, customer creation
-│   ├── booking_mode.py        # BOOKING: multi-step booking flow
-│   ├── general_mode.py        # GENERAL: FAQ/info queries
-│   └── escalation_mode.py     # ESCALATION: human handoff
+│   ├── base.py                          # BaseModeNode abstract class + agentic loop
+│   ├── greeting_mode.py                 # GREETING: welcome + menu, no name collection
+│   ├── booking_mode.py                  # BOOKING: LLM-driven multi-step booking
+│   ├── general_mode.py                  # GENERAL: FAQ/info queries
+│   ├── escalation_mode.py               # ESCALATION: deterministic FSM handoff
+│   ├── appointment_management_mode.py   # APPOINTMENT_MANAGEMENT: list/cancel/reschedule
+│   ├── confirmation_reply_node.py       # CONFIRMATION_REPLY: WhatsApp template responses
+│   └── appointment_context.py          # AppointmentContext TypedDict
 ├── routing/
-│   └── intent_router.py       # Intent classifier (8 intents)
+│   └── intent_router.py                 # Keyword + LLM hybrid classifier (10 intents)
 ├── prompts/
-│   ├── loader.py              # Cached system prompt + dynamic context
-│   ├── catalog_builder.py     # Builds service catalog string injected into prompt
-│   ├── shared/                # Core prompts (identity, rules, glossary)
-│   └── modes/                 # Mode-specific overlays
+│   ├── loader.py                        # Layered prompt assembly + TTL cache
+│   ├── catalog_builder.py               # DB-driven service catalog (5-min cache)
+│   ├── shared/
+│   │   ├── identity.md                  # Bot persona + first-turn disclosure
+│   │   └── critical_rules.md            # Hard constraints
+│   └── modes/
+│       ├── greeting.md                  # GREETING overlay
+│       ├── booking.md                   # BOOKING overlay
+│       ├── general.md                   # GENERAL overlay
+│       ├── escalation.md                # ESCALATION overlay (reference only — mode is deterministic)
+│       └── appointment_management.md    # APPOINTMENT_MANAGEMENT overlay
 ├── state/
-│   ├── schemas.py             # ConversationState TypedDict
-│   ├── checkpointer.py        # Redis checkpointer
-│   └── helpers.py             # add_message() helper
-├── tools/                     # 4 LangChain tools
-│   ├── availability_tools.py  # check_availability
-│   ├── booking_tools.py       # book (atomic transaction)
-│   ├── manage_appointments_tool.py  # manage_appointments (view/cancel/reschedule)
-│   └── escalation_tools.py    # escalate
-├── services/                  # Business logic
-│   ├── availability_service.py    # DB-first availability
-│   ├── gcal_push_service.py       # Fire-and-forget GCal push
-│   └── stylist_cache.py           # In-memory stylist caching
+│   ├── schemas.py                       # ConversationState + BookingContext + reducers
+│   ├── checkpointer.py                  # Redis checkpointer
+│   └── helpers.py                       # add_message(), get_last_user_message()
+├── tools/
+│   ├── availability_tools.py            # check_availability
+│   ├── booking_tools.py                 # book (atomic transaction)
+│   ├── manage_appointments_tool.py      # manage_appointments
+│   ├── escalation_tools.py              # escalate_to_human
+│   └── customer_tools.py                # manage_customer
+├── utils/
+│   └── fuzzy_resolver.py                # FuzzyResolver for DB name matching
+├── services/
+│   ├── availability_service.py          # DB-first availability
+│   ├── gcal_push_service.py             # Fire-and-forget Google Calendar push
+│   └── escalation_service.py            # Escalation business logic
 └── workers/
-    └── conversation_archiver.py   # Archive to PostgreSQL
+    ├── conversation_archiver.py         # Archive to PostgreSQL
+    └── confirmation_worker.py           # WhatsApp confirmation template worker
 ```
 
-## Mode-Based Flow
+---
+
+## 2. Graph Topology
+
+### Pipeline
 
 ```
-START → preprocess_node → router_node → mode_dispatcher
-    → [greeting_node | general_node | booking_node | escalation_node]
-    → summarize_node → END
+START → preprocess → router → mode_dispatcher → [mode node] → summarize → END
 ```
 
-**4 Modes:**
-- **GREETING**: First contact, name extraction (fires ONCE per new customer)
-- **BOOKING**: Multi-step appointment booking — `check_availability`, `book`, `manage_appointments`
-- **GENERAL**: FAQs, service info (catalog in prompt; read-only `manage_appointments` + `escalate`)
-- **ESCALATION**: Human handoff via `escalate`
+### Nodes
 
-## Routing Logic
+| Node | Type | Purpose |
+|------|------|---------|
+| `preprocess` | async fn | Adds user message to history, clears `user_message`, detects first interaction, checks customer in DB |
+| `router` | async fn | Classifies intent, applies routing rules, sets `current_mode` |
+| `greeting` | async fn | Delegates to `GreetingMode.handle()` |
+| `booking` | async fn | Delegates to `BookingModeNode.handle()` |
+| `general` | async fn | Delegates to `GeneralMode.handle()` |
+| `escalation` | async fn | Delegates to `EscalationMode.handle()` |
+| `appointment_management` | async fn | Delegates to `AppointmentManagementMode.handle()` |
+| `confirmation_reply` | async fn | Handles WhatsApp confirmation template replies |
+| `summarize` | async fn | Compresses old messages; clears `user_message` |
+
+### Edges
 
 ```python
-# Router priority (intent_router.py)
-1. escalation_triggered=True → ESCALATION
-2. error_count >= 3 → ESCALATION (auto)
-3. is_first_interaction=True OR customer_name is None → GREETING
-4. intent == escalate → ESCALATION
-5. Currently in BOOKING and not cancel/reject → stay BOOKING
-6. intent == book → BOOKING
-7. intent == greet and not in BOOKING → GREETING
-8. Everything else → GENERAL
+graph.set_entry_point("preprocess")
+graph.add_edge("preprocess", "router")
+graph.add_conditional_edges("router", mode_dispatcher, {
+    "greeting": "greeting",
+    "general": "general",
+    "booking": "booking",
+    "escalation": "escalation",
+    "confirmation_reply": "confirmation_reply",
+    "appointment_management": "appointment_management",
+})
+# All modes → summarize → END
+for node in ["greeting","general","booking","escalation","appointment_management","confirmation_reply"]:
+    graph.add_edge(node, "summarize")
+graph.add_edge("summarize", END)
 ```
 
-## State Schema (CRITICAL RULES)
+### `mode_dispatcher` (conditional edge function)
 
 ```python
-from typing import Annotated
-import operator
-
-# CORRECT: Annotated wiring — reducer IS called
-mode_history: Annotated[list[str], operator.add]
-mode_context: Annotated[dict, merge_dicts]
-
-# WRONG: Bare type — reducer NEVER called
-mode_history: list[str]  # DON'T DO THIS
-mode_context: dict        # DON'T DO THIS
+def mode_dispatcher(state: ConversationState) -> str:
+    mode_to_node = {
+        "GREETING": "greeting",
+        "GENERAL": "general",
+        "BOOKING": "booking",
+        "ESCALATION": "escalation",
+        "CONFIRMATION_REPLY": "confirmation_reply",
+        "APPOINTMENT_MANAGEMENT": "appointment_management",
+    }
+    return mode_to_node.get(state.get("current_mode") or "GENERAL", "general")
 ```
 
-### State Update Patterns
+### `preprocess` behaviour (critical)
 
-**CORRECT: Partial dict return — only what changes**
+- Reads `state["user_message"]` (the transient incoming message field)
+- Calls `add_message(state, "user", user_message)` to persist it to `messages`
+- Sets `user_message = None` immediately — all downstream nodes MUST use `get_last_user_message()`
+- Detects `is_first_interaction` (True when `messages` was empty before this turn)
+- Checks customer in DB and sets `customer_id` / `customer_name` if found
+- Checks for pending appointment confirmation templates
+
+---
+
+## 3. Router Priorities
+
+Rules applied in priority order inside `router_node`:
+
+| # | Condition | Result |
+|---|-----------|--------|
+| 1 | `escalation_triggered=True` | → ESCALATION |
+| 2 | `error_count >= 3` | → ESCALATION (auto) |
+| 2.5 | `pending_confirmation_appointment_id` AND intent in `{confirm,reject,cancel}` | → CONFIRMATION_REPLY |
+| 3 | `intent == escalate` | → ESCALATION (+ save BOOKING draft if in BOOKING) |
+| 4 | `current_mode == BOOKING AND intent == ask_info` | Stay BOOKING if booking-related query or active booking with no exit phrase; else → GENERAL (save draft) |
+| 5 | `current_mode == BOOKING AND intent not in {cancel,reject,ask_info}` | Stay BOOKING (inertia) |
+| 5.5 | `current_mode == ESCALATION AND intent not in {book}` | Stay ESCALATION (inertia) |
+| 5.8 | `current_mode == APPOINTMENT_MANAGEMENT AND intent not in {book,greet}` | Stay APPOINTMENT_MANAGEMENT |
+| 6 | `intent in {reschedule, check_appointments}` | → APPOINTMENT_MANAGEMENT |
+| 7 | `current_mode == GENERAL AND has_general_booking_handoff AND intent in {confirm,ambiguous}` | → BOOKING (Rule 7.9 service handoff) |
+| 8 | `intent == book` | → BOOKING (restores BOOKING draft from `draft_contexts` if available) |
+| 8.5 | `intent == cancel AND current_mode not in {BOOKING,CONFIRMATION_REPLY}` | → APPOINTMENT_MANAGEMENT |
+| 9 | `intent == greet AND is_first_interaction` | → GREETING |
+| 9.5 | `intent in {ask_info,ambiguous} AND _is_explicit_handoff(message)` | → ESCALATION (explicit override) |
+| 10 | Default | → GENERAL |
+
+---
+
+## 4. State Management
+
+### `ConversationState` Key Fields
+
 ```python
-async def summarize_node(state: ConversationState) -> dict:
-    return {"conversation_summary": new_summary, "user_message": None}
+class ConversationState(TypedDict, total=False):
+    # Core
+    conversation_id: str
+    customer_phone: str
+    messages: Annotated[list[dict[str, Any]], operator_add]   # FIFO, max 10 in window
+    user_message: str | None                                   # cleared by preprocess
+
+    # Mode routing
+    current_mode: str                                          # GREETING/BOOKING/GENERAL/ESCALATION/...
+    previous_mode: str | None
+    mode_context: Annotated[dict[str, Any], merge_dicts]      # routing metadata ONLY
+    mode_history: Annotated[list[str], append_unique_list]
+    draft_contexts: Annotated[dict[str, Any], merge_dicts]    # saved contexts for resumption
+
+    # Durable booking state (replace-reducer — no zombie keys)
+    booking_context: Annotated[BookingContext | None, replace_booking_context]
+
+    # Tracking
+    is_first_interaction: bool
+    ai_disclosure_sent: bool
+    escalation_triggered: bool
+    error_count: int
+    pending_confirmation_appointment_id: str | None
 ```
 
-**WRONG: Full state spread — causes message doubling**
+### `BookingContext` — Typed Booking State
+
 ```python
-async def summarize_node(state: ConversationState) -> dict:
-    return {**state, "conversation_summary": new_summary}  # DON'T
+class BookingContext(TypedDict, total=False):
+    booking_step: str                         # service_selection|stylist_selection|datetime_selection|name_collection|notes_collection|confirmation
+    last_services: list[str]                  # e.g. ["CORTE LARGO"]
+    last_total_duration_minutes: int | None
+    last_stylist: str | None                  # e.g. "Pilar" or "Sin preferencia"
+    no_preference_stylist: bool
+    offered_slots: list[dict[str, Any]]       # from check_availability
+    selected_slot: dict[str, Any] | None
+    customer_name: str | None
+    customer_id: str | None
+    confirmation_summary_sent: bool
+    confirmation_shown: bool
+    _booking_completed: bool
+    preferred_stylist_name: str | None        # upfront hint from router
+    preferred_date_hint: str | None
+    pending_service_options: list[str] | None
+    pending_stylist_options: list[str] | None
+    notes: str | None
+    notes_asked: bool
 ```
 
-### Mode Context with Reset
+### Reducers
+
+| Field | Reducer | Behaviour |
+|-------|---------|-----------|
+| `messages` | `operator_add` | Appends new messages list, FIFO windowing in summarize |
+| `mode_context` | `merge_dicts` | Shallow merge; `{"__reset__": True, ...}` clears all stale keys |
+| `draft_contexts` | `merge_dicts` | Shallow merge of draft dict |
+| `mode_history` | `append_unique_list` | Appends, skips consecutive duplicates |
+| `booking_context` | `replace_booking_context` | **Full replace** — update replaces entire dict; falsy update → keep current |
+
+### `transition_mode()` — The ONLY correct way to change modes
 
 ```python
 from agent.state.schemas import transition_mode
 
-# Transition to new mode with reset
+# Returns partial state dict with:
+# - current_mode = new_mode
+# - mode_context = {"__reset__": True, ...context_update}  ← clears stale data
+# - mode_history = [..., old_mode]
+# - draft_contexts = {old_mode: old_mode_context, ...}
 updates = transition_mode(state, "BOOKING", context_update={"intent": "book"})
-# mode_context will have {"__reset__": True, "intent": "book"}
 ```
 
-## Mode Node Pattern
+**NEVER** write `{"current_mode": "BOOKING"}` directly — stale `mode_context` leaks across modes.
+
+### `add_message()` — The ONLY correct way to add messages
+
+```python
+from agent.state.helpers import add_message
+
+# Returns partial state update — pass directly into return dict
+return {
+    **add_message(state, "assistant", response_text),
+    "booking_context": new_booking_context,
+    "last_node": "booking",
+    "user_message": None,
+}
+```
+
+### `get_last_user_message()` — Canonical current-turn reader
+
+```python
+from agent.state.helpers import get_last_user_message
+
+user_message = get_last_user_message(state)  # reads reversed(messages) for last role=user
+```
+
+**`state["user_message"]` is cleared by `preprocess`. NEVER read it in mode nodes.**
+
+---
+
+## 5. Mode Patterns
+
+### Mode Summary Table
+
+| Mode | Type | Tools | Prompt overlay | Entry condition |
+|------|------|-------|----------------|-----------------|
+| GREETING | LLM-driven | none | `greeting.md` | `intent=greet` AND `is_first_interaction=True` |
+| BOOKING | LLM-driven | `check_availability`, `book`, `escalate_to_human` | `booking.md` | `intent=book` or BOOKING inertia |
+| GENERAL | LLM-driven | `manage_appointments` (read), `escalate_to_human` | `general.md` | Default fallback |
+| ESCALATION | Deterministic FSM | `escalate_to_human` | `escalation.md` (reference only) | `intent=escalate` or `error_count>=3` |
+| APPOINTMENT_MANAGEMENT | LLM-driven | `manage_appointments` | `appointment_management.md` | `intent=reschedule` or `intent=check_appointments` |
+| CONFIRMATION_REPLY | Deterministic | none | none | `pending_confirmation_appointment_id` + confirm/reject intent |
+
+---
+
+### GREETING Mode
+
+**Purpose**: First-contact welcome + menu. Pure response, no side effects.
+
+**Key behaviours**:
+- Renders a static welcome message (new vs returning customer variant)
+- Prepends the mandatory EU AI Act disclosure via `_maybe_prepend_intro()` on first turn
+- Detects booking-content tokens in the greeting message to set `service_audience_hint`
+- Transitions to BOOKING if `last_intent == "book"`, else GENERAL
+- **NO name collection** — does not ask for the customer's name
+- **NO DB writes** — no customer creation
+
+```python
+# After greeting, always transitions out
+target_mode = "BOOKING" if last_intent == "book" else "GENERAL"
+return {
+    **add_message(state, "assistant", welcome_text),
+    **transition_mode(state, target_mode, context_update={...}),
+    "ai_disclosure_sent": True,
+    "last_node": "greeting",
+    "user_message": None,
+}
+```
+
+---
+
+### BOOKING Mode (`BookingModeNode`)
+
+**Purpose**: Multi-step appointment booking — fully LLM-driven except for data-integrity gates.
+
+**Python's responsibilities** (everything else is LLM):
+- `_compute_step(ctx)` — idempotent, re-evaluates booking step from `booking_context` fields
+- `_resolve_pending_selection()` — maps digit/ordinal/time/affirmative to slot/service/stylist
+- `_pre_tool_call()` — confirmation gate + slot_index→UUID injection + stylist guard
+- `_post_tool_result()` — extracts tool output into `booking_context` mid-loop
+- `_refresh_dynamic_context()` — rebuilds dynamic SystemMessage after each tool round
+- `_build_response()` — code-renders F-8 booking confirmation block
+
+**Booking steps** (computed by `_compute_step`):
+
+```
+service_selection → stylist_selection → datetime_selection → name_collection → notes_collection → confirmation
+```
+
+**State contract**:
+- `booking_context` — all booking-specific data (full replace via `replace_booking_context`)
+- `mode_context` — routing metadata ONLY (`last_intent`, `last_intent_confidence`, `awaiting_human`)
+
+**Slot acceptance** (deterministic, before LLM sees the turn):
+- Bare digit `"2"` → `offered_slots[1]`
+- Time expression `"a las 11"`, `"11:00"`, `"a las 9 y media"` → matched slot
+- Ordinal `"la primera"`, `"el último"` → matched slot
+- Spanish affirmative `"sí"`, `"dale"` → first slot (only when exactly 1 offered)
+
+**`_pre_tool_call` gates**:
+
+| Tool | Gate | Rejection code |
+|------|------|---------------|
+| `check_availability` | stylist must be resolved | `STYLIST_NOT_RESOLVED` |
+| `book` | slot_index→UUID resolution | `INVALID_SLOT_INDEX` |
+| `book` | confirmation gate (all data + confirmation_shown) | `CONFIRMATION_NOT_SHOWN` |
+
+**`_post_tool_result` extractions**:
+
+| Tool | Extracted into `booking_context` |
+|------|----------------------------------|
+| `check_availability` | `offered_slots`, `last_services`, `last_total_duration_minutes`, `last_stylist` |
+| `book` | `_booking_completed = True` |
+
+**After completed booking**: transitions to GENERAL via `transition_mode(state, "GENERAL")` — `booking_context` persists independently via its own field.
+
+---
+
+### GENERAL Mode
+
+**Purpose**: FAQ, service info, business hours. Catalog injected in prompt. Can hand off to BOOKING.
+
+**Key behaviours**:
+- Reads catalog from prompt (not from tools)
+- Can detect booking intent and set `general_booking_handoff` in `mode_context`
+- If `general_booking_handoff` is set, router Rule 7.9 transitions to BOOKING on next confirmation
+- Calls `_maybe_escalate()` after `handle()` in the graph node wrapper
+
+---
+
+### ESCALATION Mode
+
+**Purpose**: Human handoff. **Deterministic FSM — does NOT use the LLM**.
+
+**FSM steps** (stored in `mode_context["escalation_step"]`):
+
+```
+→ ACKNOWLEDGE → DESCRIBE → CONTACT → DONE
+```
+
+| Step | Bot action | Collects |
+|------|-----------|----------|
+| ACKNOWLEDGE | Empathy message + asks for issue description | — |
+| DESCRIBE | Stores `issue_summary`, asks for contact preference | `issue_summary` |
+| CONTACT | Normalises preference, calls `escalate_to_human`, confirms | `contact_preference` |
+| DONE | Returns waiting message for all subsequent turns | — |
+
+**Fast-paths** (skip intake FSM):
+- **Explicit human request** (`"pasame con una persona"`, `"quiero hablar con un humano"`) → escalate immediately
+- **Technical auto-escalation** (`error_count >= 3`) → escalate immediately with `reason="technical_error"`
+- **Already escalated** (`escalation_step == DONE`) → return `_ALREADY_ESCALATED` response
+
+Note: `escalation.md` overlay is loaded by the prompt system but **not used** — the mode is 100% deterministic Python code.
+
+---
+
+### APPOINTMENT_MANAGEMENT Mode
+
+**Purpose**: List, cancel, and reschedule appointments. LLM-driven with pre-resolvers and safety gates.
+
+**Key behaviours**:
+- Pre-resolvers: detect action (list/cancel/reschedule), resolve `selected_appointment_id` from user digit input, detect confirmation
+- `_pre_tool_call` safety gates: block cancel/reschedule without `pending_confirmation`
+- 48-hour policy enforced in tool (cannot cancel within 48h of appointment)
+- Natural language selection: user can say "la primera", "la de Pilar", "el martes"
+
+---
+
+### CONFIRMATION_REPLY Node
+
+**Purpose**: Handle WhatsApp appointment confirmation template responses (confirm/reject/cancel).
+
+**Behaviour**: Deterministic — reads `pending_confirmation_appointment_id` from state, calls `handle_confirmation_response()` service, sends appropriate reply.
+
+---
+
+## 6. BaseModeNode Pattern
+
+All modes extend `BaseModeNode` and implement `handle(state, intent) → dict`:
 
 ```python
 from agent.modes.base import BaseModeNode, AgenticLoopResult
 from agent.state.schemas import ConversationState
 
-class BookingMode(BaseModeNode):
+class MyMode(BaseModeNode):
     @property
     def mode_name(self) -> str:
-        return "BOOKING"
-    
+        return "MY_MODE"
+
     async def handle(self, state: ConversationState, intent: Any) -> dict:
-        # 1. Build messages
+        mode_context = state.get("mode_context") or {}
+
+        # 1. Build layered messages
         messages = await self._build_layered_messages(
-            state, mode_context, step_name="booking"
+            state, mode_context, include_history=True, history_limit=6
         )
-        
-        # 2. Run agentic loop with tools
+
+        # 2. Run agentic loop (up to MAX_TOOL_ROUNDS=6 iterations)
         result = await self._run_agentic_loop(messages, tools=self.tools)
-        
-        # 3. Return partial state update
-        return {
-            "messages": [{"role": "assistant", "content": result.response_text, "timestamp": now()}],
-            "mode_context": {"booking_step": next_step},
-            "last_node": "booking_node",
+
+        # 3. Handle first-turn disclosure
+        response_text, disclosure_sent = self._maybe_prepend_intro(result.response_text, state)
+
+        # 4. Return partial state update
+        updates = {
+            **add_message(state, "assistant", response_text),
+            "mode_context": {"last_intent": mode_context.get("last_intent")},
+            "last_node": "my_mode",
+            "user_message": None,
         }
+        if disclosure_sent:
+            updates["ai_disclosure_sent"] = True
+        return updates
 ```
 
-## Tool Definition
+### BaseModeNode hooks
+
+| Hook | Called when | Override for |
+|------|------------|--------------|
+| `_pre_tool_call(tool_name, tool_args)` | Before each tool execution | Argument injection, gates (return `ToolCallRejection` to block) |
+| `_post_tool_result(tool_name, tool_args, result)` | After each tool execution | Extract tool output into mode/booking context mid-loop |
+| `_refresh_dynamic_context(working_messages)` | After each tool round | Rebuild the dynamic context SystemMessage with fresh state |
+
+### Testing instantiation
+
+```python
+# CORRECT: pass tools=[] for unit tests
+mode = BookingModeNode(tools=[])
+mode = EscalationMode(tools=[], llm_client=None)
+```
+
+---
+
+## 7. Tool Patterns
+
+### Available Tools
+
+| Tool | Module | Mode(s) | Purpose |
+|------|--------|---------|---------|
+| `check_availability` | `availability_tools.py` | BOOKING | Query available slots for date/stylist/service |
+| `book` | `booking_tools.py` | BOOKING | Create appointment (atomic DB + GCal push) |
+| `manage_appointments` | `manage_appointments_tool.py` | GENERAL, APPOINTMENT_MANAGEMENT | List/cancel/reschedule appointments |
+| `escalate_to_human` | `escalation_tools.py` | BOOKING, GENERAL, ESCALATION | Trigger human handoff in Chatwoot |
+| `manage_customer` | `customer_tools.py` | (internal) | Create/update customer records |
+
+### FuzzyResolver (tool-level name matching)
+
+```python
+from agent.utils.fuzzy_resolver import resolve_from_options, resolve_ordinal
+
+# Resolve ordinal: "la segunda" → index 1
+idx = resolve_ordinal(user_message, len(options))
+if idx is not None:
+    return options[idx]
+
+# Resolve text: exact → normalized/contains → prefix → fuzzy (≥0.75 threshold)
+match = resolve_from_options(user_message, options)
+return match.value if match else None
+```
+
+### Tool Definition Pattern
 
 ```python
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 class CheckAvailabilityInput(BaseModel):
-    date: str = Field(description="Date to check (YYYY-MM-DD)")
-    stylist_id: str | None = Field(None, description="Specific stylist or any")
-    service_duration: int = Field(60, description="Service duration in minutes")
+    service_names: list[str] = Field(description="List of service names from the catalog")
+    stylist_name: str | None = Field(None, description="Stylist name or None for any")
+    date_hint: str | None = Field(None, description="Spanish date expression, e.g. 'el viernes'")
 
-async def check_availability(date: str, stylist_id: str | None, service_duration: int):
-    """Check availability for a specific date."""
-    # Implementation
-    return {"available_slots": [...]}
-
-check_availability_tool = StructuredTool.from_function(
+check_availability = StructuredTool.from_function(
     name="check_availability",
-    description="Check stylist availability for a date",
+    description="Check available appointment slots for given services and optional stylist",
     args_schema=CheckAvailabilityInput,
-    coroutine=check_availability,
+    coroutine=_check_availability_impl,
 )
 ```
 
-## Message Format
+---
 
-**CRITICAL: Always use add_message() helper**
+## 8. Prompt System
 
-```python
-from agent.state.helpers import add_message
+### Layered Assembly (per turn)
 
-# CORRECT: Returns properly formatted message
-return add_message(state, "assistant", "Response text")
-# Returns: {"messages": [{"role": "assistant", "content": "...", "timestamp": "..."}]}
-
-# Message format (role is "user" or "assistant", NEVER "human" or "ai")
-{
-    "role": "user" | "assistant",
-    "content": str,
-    "timestamp": str  # ISO 8601 Europe/Madrid
-}
+```
+1. SystemMessage: identity.md + critical_rules.md    ← cached 10 min
+2. SystemMessage: catalog (service/stylist data)      ← cached 5 min (catalog_builder.py)
+3. SystemMessage: mode overlay (booking.md, etc.)     ← cached 10 min per mode
+4. HumanMessage + AIMessage pairs: conversation history (last 6-8 messages)
+5. SystemMessage: dynamic context (current step, collected/missing data, offered slots)  ← built fresh every turn
 ```
 
-## Prompt System (v6.1)
+### Calling `build_layered_messages`
 
 ```python
-from agent.prompts.loader import get_system_prompt, build_layered_messages
+from agent.prompts.loader import build_layered_messages
 
-# 1. Load cached system prompt (~2,200 tokens)
-system_prompt = await get_system_prompt()
-# Loads: shared/identity.md + shared/critical_rules.md + shared/glossary.md
-
-# 2. Build dynamic context (~300 tokens)
-context = build_step_context(state, mode_context, step_info)
-
-# 3. Layered messages (optimized for caching)
-messages = await build_layered_messages(state, mode_context, step_info)
-# Returns: [SystemMessage, HumanMessage(context), ...history]
+messages, dynamic_context_index = await build_layered_messages(
+    state=state,
+    mode_context=mode_context,          # or booking_context for BOOKING
+    mode_name="BOOKING",
+    dynamic_context_override=my_xml,    # optional — BOOKING builds its own
+    include_history=True,
+    history_limit=8,
+)
 ```
 
-## Redis Checkpointer
+### Dynamic context (BOOKING example)
+
+```xml
+Fecha y hora actual: martes 07 de abril de 2026, 14:30 (Europa/Madrid)
+Teléfono del cliente: +34612345678
+<booking_context>
+  <min_valid_date>jueves 09 de abril (2026-04-09)</min_valid_date>
+  <current_step>stylist_selection</current_step>
+  <next_action>Preguntar preferencia de estilista</next_action>
+  <collected_data>
+    ✅ Servicio: CORTE LARGO (45min)
+  </collected_data>
+  <missing_data>
+    ❌ Estilista: pendiente
+    ❌ Fecha/hora: pendiente
+    ❌ Nombre: pendiente
+  </missing_data>
+</booking_context>
+```
+
+### Prompt files
+
+| File | Cached | Purpose |
+|------|--------|---------|
+| `shared/identity.md` | Yes (10 min, base cache) | Bot persona, EU AI Act disclosure text, name |
+| `shared/critical_rules.md` | Yes (10 min, base cache) | Hard constraints (booking rules, tone, language) |
+| `modes/greeting.md` | Yes (10 min, per-mode cache) | GREETING overlay |
+| `modes/booking.md` | Yes (10 min, per-mode cache) | BOOKING flow instructions |
+| `modes/general.md` | Yes (10 min, per-mode cache) | GENERAL FAQ instructions |
+| `modes/escalation.md` | Yes (10 min, per-mode cache) | Reference only (mode is deterministic) |
+| `modes/appointment_management.md` | Yes (10 min, per-mode cache) | APPT_MGMT overlay |
+
+---
+
+## 9. Intent Router
+
+### `IntentResult` dataclass
 
 ```python
-from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
-
-checkpointer = get_redis_checkpointer()
-await initialize_redis_indexes(checkpointer)
-
-# Requires Redis Stack (RedisSearch + RedisJSON modules)
+@dataclass
+class IntentResult:
+    intent: str        # greet|book|ask_info|confirm|reject|cancel|escalate|retry|reschedule|check_appointments|ambiguous
+    confidence: float  # 0.0-1.0 (1.0 = keyword hit, <0.8 = LLM inferred)
+    raw_input: str
+    mode_hint: str | None
 ```
 
-## Critical Anti-Patterns
+### Classification flow
 
-### ❌ NEVER Mutate State Directly
+1. **Keyword fast-path**: Check message against `KEYWORD_MAP` (10 intents). Threshold: `0.80`. If hit → return immediately, skip LLM.
+2. **LLM fallback**: Send message + current_mode to GPT-4.1-mini for classification. Returns structured JSON.
+3. **Bare-digit shortcut**: If `booking_step == "slot_selection"` and message is a bare digit → classify as `"confirm"` without LLM.
+
+---
+
+## 10. Anti-Patterns
+
+### ❌ NEVER read `user_message` in mode nodes
+
+```python
+# WRONG — cleared by preprocess before modes run
+user_msg = state.get("user_message")
+
+# CORRECT
+from agent.state.helpers import get_last_user_message
+user_msg = get_last_user_message(state)
+```
+
+### ❌ NEVER use `{**state}` spread in node returns
+
+```python
+# WRONG — operator.add fields (messages) get doubled
+return {**state, "last_node": "booking"}
+
+# CORRECT — return only what changed
+return {"last_node": "booking"}
+```
+
+### ❌ NEVER store booking data in `mode_context`
+
+```python
+# WRONG — mode_context uses merge_dicts (cannot delete keys = zombie data)
+return {"mode_context": {"last_services": ["CORTE"], "booking_step": "stylist_selection"}}
+
+# CORRECT — booking data goes into booking_context (replace reducer = clean state)
+return {"booking_context": updated_booking_ctx, "mode_context": routing_only_ctx}
+```
+
+### ❌ NEVER bypass `transition_mode()` for mode changes
+
+```python
+# WRONG — stale mode_context leaks into new mode
+return {"current_mode": "GENERAL"}
+
+# CORRECT
+return {**transition_mode(state, "GENERAL"), "last_node": "booking"}
+```
+
+### ❌ NEVER mutate state directly
+
 ```python
 # WRONG
-state["messages"].append({"role": "assistant", "content": "Hi"})
-return state
+state["messages"].append(new_msg)
+state["booking_context"]["last_stylist"] = "Pilar"
+
+# CORRECT — return partial update
+return add_message(state, "assistant", text)
 ```
 
-### ✅ Return New Dict
+### ❌ NEVER duplicate `get_last_user_message()` logic locally
+
 ```python
+# WRONG — local re-implementation
+for msg in reversed(state.get("messages", [])):
+    if msg["role"] == "user":
+        return msg["content"]
+
 # CORRECT
-return {
-    "messages": state["messages"] + [{"role": "assistant", "content": "Hi"}],
-}
+from agent.state.helpers import get_last_user_message
+return get_last_user_message(state)
 ```
 
-### ❌ NEVER Use {**state} Spread
+---
+
+## 11. Testing Patterns
+
+### Mode instantiation
+
 ```python
-# WRONG — causes operator.add fields to double
-return {**state, "last_node": "booking_node"}
+# CORRECT: tools=[] for unit tests (no actual tool calls)
+mode = BookingModeNode(tools=[])
+mode = EscalationMode(tools=[], llm_client=None)
 ```
 
-### ✅ Return Partial Dict Only
-```python
-# CORRECT
-return {"last_node": "booking_node"}
-```
-
-### ❌ NEVER Clear user_message Early
-```python
-# WRONG — downstream nodes need it
-async def preprocess_node(state):
-    return {"user_message": None}  # Too early!
-```
-
-### ✅ Clear Only in summarize_node (END)
-```python
-# CORRECT
-async def summarize_node(state):
-    return {"user_message": None}  # End of pipeline
-```
-
-## Testing
+### State factory helper
 
 ```python
-import pytest
-from agent.modes.greeting_mode import GreetingMode
-
-@pytest.mark.asyncio
-async def test_greeting_mode():
-    mode = GreetingMode(tools=[])
-    state = {
+def _make_state(messages: list[dict], booking_ctx: dict | None = None, mode_ctx: dict | None = None) -> dict:
+    return {
         "conversation_id": "test-001",
-        "current_mode": "GREETING",
-        "user_message": "Hola, soy Juan",
-        "messages": [],
-        "customer_name": None,
+        "customer_phone": "+34612345678",
+        "messages": messages,
+        "user_message": None,           # ALWAYS None — preprocess has already run
+        "current_mode": "BOOKING",
+        "mode_context": mode_ctx or {},
+        "booking_context": booking_ctx or {},
+        "mode_history": [],
+        "draft_contexts": {},
+        "is_first_interaction": False,
+        "ai_disclosure_sent": True,
+        "escalation_triggered": False,
+        "error_count": 0,
     }
-    
-    result = await mode.handle(state, intent=None)
-    
-    assert "messages" in result
-    assert result["last_node"] == "greeting_node"
 ```
 
-## Environment Variables
+### Test pattern: booking context separate from mode context
+
+```python
+state = _make_state(
+    messages=[{"role": "user", "content": "Quiero reservar un corte", "timestamp": "..."}],
+    booking_ctx={"last_services": ["CORTE LARGO"], "booking_step": "stylist_selection"},
+    mode_ctx={"last_intent": "book", "last_intent_confidence": 0.9},
+)
+```
+
+### Static analysis: zero `user_message` reads in mode files
+
+```python
+def test_no_user_message_reads_in_modes():
+    """Modes must never read state['user_message'] — it's cleared by preprocess."""
+    import ast, glob
+    for path in glob.glob("agent/modes/*.py"):
+        tree = ast.parse(open(path).read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript):
+                if (isinstance(node.value, ast.Name) and node.value.id == "state"
+                        and isinstance(node.slice, ast.Constant) and node.slice.value == "user_message"):
+                    assert False, f"{path}: direct state['user_message'] read — use get_last_user_message()"
+```
+
+---
+
+## 12. Environment Variables
 
 ```python
 from shared.config import get_settings
 
 settings = get_settings()
-llm_model = settings.LLM_MODEL  # openai/gpt-4o-mini
-resilience_enabled = settings.RESILIENCE_ENABLED  # True
-use_optimized = settings.USE_OPTIMIZED_PROMPTS  # True
+settings.LLM_MODEL                # "openai/gpt-4.1-mini"
+settings.OPENROUTER_API_KEY       # OpenRouter API key
+settings.USE_OPTIMIZED_PROMPTS    # True (layered prompt system)
+settings.RESILIENCE_ENABLED       # True
 ```
 
 ---
 
-**Version**: 1.0 (Mode-based v6.0 architecture)
-**Last Updated**: March 2026
+## 13. LLM Client
+
+```python
+from langchain_openai import ChatOpenAI
+from shared.config import get_settings
+
+settings = get_settings()
+llm = ChatOpenAI(
+    model=settings.LLM_MODEL,
+    base_url="https://openrouter.ai/api/v1",
+    api_key=settings.OPENROUTER_API_KEY,
+    temperature=0.3,
+    request_timeout=30.0,
+    max_retries=2,
+)
+```
+
+Tests mock via `patch("agent.graphs.conversation_flow._get_llm_client")`.
+
+---
+
+**Version**: 2.0 (Mode-based v6.0 — 6 modes, BookingContext, replace-reducer)
+**Last Updated**: April 2026
