@@ -303,6 +303,47 @@ class BaseModeNode(ABC):
         return "".join(deduped).strip()
 
     @staticmethod
+    def _dedup_paragraphs(text: str) -> str:
+        """Remove consecutive duplicate paragraphs (split on \\n\\n, exact strip-match).
+
+        Algorithm:
+        1. Split on ``\\n\\n`` boundaries.
+        2. Strip each paragraph before comparison.
+        3. Skip a paragraph if its stripped form equals the previous kept paragraph.
+        4. Rejoin with ``\\n\\n``.
+        5. If nothing was removed, return the original text to avoid whitespace mutations.
+
+        Non-consecutive identical paragraphs (A → B → A) are preserved.
+        Comparison is case-sensitive.
+
+        Args:
+            text: Raw response text (possibly with repeated paragraphs).
+
+        Returns:
+            Text with consecutive duplicate paragraphs collapsed to one occurrence.
+        """
+        paragraphs = text.split("\n\n")
+
+        if len(paragraphs) <= 1:
+            return text
+
+        deduped: list[str] = []
+        prev_stripped: str | None = None
+
+        for para in paragraphs:
+            stripped = para.strip()
+            if stripped == prev_stripped:
+                continue  # consecutive duplicate — skip
+            deduped.append(para)
+            prev_stripped = stripped
+
+        if len(deduped) == len(paragraphs):
+            # Nothing was removed — return original to avoid whitespace mutations
+            return text
+
+        return "\n\n".join(deduped)
+
+    @staticmethod
     def _sanitize_response(text: str) -> str:
         """
         Strip action narration from LLM output before user delivery.
@@ -631,6 +672,7 @@ class BaseModeNode(ABC):
                 response_text = str(content)
             response_text = self._sanitize_response(response_text)
             response_text = self._dedup_response(response_text)
+            response_text = self._dedup_paragraphs(response_text)
 
             # R3: Tool-skip telemetry — warn if loop exited without any tool calls
             # but tools were available (indicates LLM skipped available tools)
@@ -682,6 +724,7 @@ class BaseModeNode(ABC):
                     recovery_text = str(recovery_content)
                 response_text = self._sanitize_response(recovery_text)
                 response_text = self._dedup_response(response_text)
+                response_text = self._dedup_paragraphs(response_text)
 
             return AgenticLoopResult(
                 response_text=response_text,

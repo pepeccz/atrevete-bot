@@ -66,6 +66,10 @@ Si el cliente pide varios servicios con audiencias incompatibles (ej: "Cortar" q
   ```
 - Si el cliente ya indicó estilista, salta este paso
 
+> ⚠️ **Regla obligatoria**: NO llames `check_availability` hasta resolver el estilista. El sistema rechazará la llamada si no hay estilista elegido o "Sin preferencia". Frases reconocidas: "sin preferencia", "me da igual", "cualquiera", "no tengo preferencia", "da lo mismo", "no me importa", "la que sea", "el que sea".
+>
+> **Excepción (Atajo)**: si el cliente da toda la info de golpe (servicio + estilista + fecha), puedes saltar pasos ya resueltos.
+
 **Paso 3 — Fecha y hora**
 - Llama `check_availability` con el servicio + `min_valid_date` del contexto dinámico + estilista (si eligió una)
 - Presenta TODOS los huecos disponibles como lista numerada:

@@ -45,6 +45,12 @@ _AFFIRMATIVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_NO_PREFERENCE_PATTERNS = re.compile(
+    r"(?:sin\s+preferencia|me\s+da\s+igual|cualquiera|no\s+tengo\s+preferencia|"
+    r"da\s+lo\s+mismo|no\s+me\s+importa|la\s+que\s+sea|el\s+que\s+sea)",
+    re.IGNORECASE,
+)
+
 
 def _is_spanish_affirmative(text: str) -> bool:
     """Return True if text is a bare Spanish affirmative (e.g. 'sí', 'dale', 'ok')."""
@@ -76,6 +82,34 @@ class BookingModeNode(BaseModeNode):
         from agent.tools.escalation_tools import escalate_to_human
 
         return [check_availability, book, escalate_to_human]
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Booking step computation — pure function, idempotent
+    # ──────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _compute_booking_step(mode_context: dict) -> str:
+        """Return current booking step based on mode_context fields. Pure function.
+
+        Idempotent: re-evaluates from the current state of mode_context fields.
+        Steps progress from service_selection → stylist_selection → datetime_selection
+        → name_collection → confirmation.
+
+        Args:
+            mode_context: Flat dict with booking state fields.
+
+        Returns:
+            String literal representing the current booking step.
+        """
+        if not mode_context.get("last_services"):
+            return "service_selection"
+        if not mode_context.get("last_stylist") and not mode_context.get("no_preference_stylist"):
+            return "stylist_selection"
+        if not mode_context.get("selected_slot"):
+            return "datetime_selection"
+        if not mode_context.get("customer_name"):
+            return "name_collection"
+        return "confirmation"
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -118,6 +152,9 @@ class BookingModeNode(BaseModeNode):
 
         # 1b. Resolve pending selection: map numbered/text user reply → last_services/last_stylist
         self._resolve_pending_selection(state, mode_context)
+
+        # 1c. Compute booking step (idempotent — re-evaluated each turn after resolution)
+        mode_context["booking_step"] = self._compute_booking_step(mode_context)
 
         # 2. Cross-mode customer handoff
         self._resolve_customer_from_state(state, mode_context)
@@ -193,10 +230,23 @@ class BookingModeNode(BaseModeNode):
         """
         mode_context: dict = getattr(self, "_mode_context", {})
 
-        # ── check_availability: clear stale slot state ─────────────────────────
+        # ── check_availability: clear stale slot state + stylist guard ───────────
         if tool_name == "check_availability":
             mode_context["offered_slots"] = []
             mode_context.pop("selected_slot", None)
+            # Guard: stylist must be resolved before availability check
+            if not mode_context.get("last_stylist") and not mode_context.get(
+                "no_preference_stylist"
+            ):
+                return ToolCallRejection(
+                    name="check_availability",
+                    error_code="STYLIST_NOT_RESOLVED",
+                    error_message=(
+                        "Antes de buscar disponibilidad, preguntá al cliente "
+                        "qué estilista prefiere (o si le da igual). "
+                        "Mostrá la lista numerada del Paso 2."
+                    ),
+                )
             return tool_args
 
         # ── book(): slot resolution → confirmation gate → injection ───────────
@@ -211,7 +261,9 @@ class BookingModeNode(BaseModeNode):
                     if 1 <= idx <= len(offered_slots):
                         slot = offered_slots[idx - 1]
                         tool_args["stylist_id"] = slot.get("stylist_id")
-                        tool_args["start_time"] = slot.get("start_time") or slot.get("full_datetime")
+                        tool_args["start_time"] = slot.get("start_time") or slot.get(
+                            "full_datetime"
+                        )
                         mode_context["selected_slot"] = slot
                         # Update last_stylist from slot if not already set
                         if not mode_context.get("last_stylist") and slot.get("stylist_name"):
@@ -465,8 +517,18 @@ class BookingModeNode(BaseModeNode):
 
         _DAY_NAMES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
         _MONTH_NAMES = [
-            "enero", "febrero", "marzo", "abril", "mayo", "junio",
-            "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+            "enero",
+            "febrero",
+            "marzo",
+            "abril",
+            "mayo",
+            "junio",
+            "julio",
+            "agosto",
+            "septiembre",
+            "octubre",
+            "noviembre",
+            "diciembre",
         ]
         min_date = (now + timedelta(days=MINIMUM_DAYS)).date()
         min_day_name = _DAY_NAMES[min_date.weekday()]
@@ -474,9 +536,20 @@ class BookingModeNode(BaseModeNode):
 
         # Booking context XML block
         parts.append("<booking_context>")
-        parts.append(
-            f"<min_valid_date>{min_date_label} ({min_date.isoformat()})</min_valid_date>"
-        )
+        parts.append(f"<min_valid_date>{min_date_label} ({min_date.isoformat()})</min_valid_date>")
+
+        # Current booking step and next action hint
+        _STEP_ACTIONS = {
+            "service_selection": "Identificar el servicio del catálogo",
+            "stylist_selection": "Preguntar preferencia de estilista (lista numerada)",
+            "datetime_selection": "Buscar disponibilidad con check_availability",
+            "name_collection": "Pedir nombre del cliente",
+            "confirmation": "Mostrar resumen y pedir confirmación",
+        }
+        step = mode_context.get("booking_step", "service_selection")
+        next_action = _STEP_ACTIONS.get(step, "")
+        parts.append(f"<current_step>{step}</current_step>")
+        parts.append(f"<next_action>{next_action}</next_action>")
 
         # Audience hint from greeting handoff
         audience_hint = mode_context.get("service_audience_hint")
@@ -589,9 +662,7 @@ class BookingModeNode(BaseModeNode):
     # Pending selection helpers (Tasks 2.1 / 2.2)
     # ──────────────────────────────────────────────────────────────────────
 
-    def _resolve_pending_selection(
-        self, state: ConversationState, mode_context: dict
-    ) -> None:
+    def _resolve_pending_selection(self, state: ConversationState, mode_context: dict) -> None:
         """Resolve the user's numbered or text selection against pending options.
 
         Mutates mode_context in-place:
@@ -606,6 +677,16 @@ class BookingModeNode(BaseModeNode):
         user_message = (state.get("user_message") or "").strip()
         if not user_message:
             return
+
+        # "Sin preferencia" recognition: detect no-preference phrases BEFORE
+        # attempting numbered/text option matching so the flag is always set
+        # even when no pending_stylist_options list is present.
+        if _NO_PREFERENCE_PATTERNS.search(user_message) and not mode_context.get("last_stylist"):
+            mode_context["no_preference_stylist"] = True
+            mode_context["last_stylist"] = "Sin preferencia"
+            mode_context.pop("pending_stylist_options", None)
+            logger.info("_resolve_pending_selection: no-preference detected from %r", user_message)
+            return  # No further resolution needed for stylists
 
         # Service resolution
         pending_services: list[str] | None = mode_context.get("pending_service_options")
@@ -627,6 +708,9 @@ class BookingModeNode(BaseModeNode):
             if matched is not None:
                 mode_context["last_stylist"] = matched
                 mode_context.pop("pending_stylist_options", None)
+                # If the resolved option is "Sin preferencia", also set the flag
+                if _NO_PREFERENCE_PATTERNS.search(matched):
+                    mode_context["no_preference_stylist"] = True
                 logger.info(
                     "_resolve_pending_selection: stylist resolved to %r from user_message=%r",
                     matched,
@@ -692,14 +776,10 @@ class BookingModeNode(BaseModeNode):
 
         if not mode_context.get("last_services"):
             mode_context["pending_service_options"] = items
-            logger.info(
-                "_set_pending_options: stored %d pending_service_options", len(items)
-            )
+            logger.info("_set_pending_options: stored %d pending_service_options", len(items))
         elif not mode_context.get("last_stylist"):
             mode_context["pending_stylist_options"] = items
-            logger.info(
-                "_set_pending_options: stored %d pending_stylist_options", len(items)
-            )
+            logger.info("_set_pending_options: stored %d pending_stylist_options", len(items))
 
     # ──────────────────────────────────────────────────────────────────────
     # Mid-loop dynamic context refresh
