@@ -195,7 +195,11 @@ async def load_mode_overlay(
 
 
 def _build_simple_dynamic_context(state: dict, mode_context: dict | None = None) -> str:
-    """Build minimal dynamic context: datetime, customer phone, summary."""
+    """Build minimal dynamic context: datetime, customer phone, summary.
+
+    Customer names are intentionally NOT included here — the LLM reads them
+    from conversation history and tool results.
+    """
     import pytz
 
     parts = []

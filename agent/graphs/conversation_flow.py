@@ -700,10 +700,21 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         _general_handoff = _build_general_booking_handoff(state, user_message)
         _booking_hints = _extract_booking_hints(user_message) if user_message else {}
         _booking_ctx = {**_general_handoff, **_booking_hints, **intent_data}
-        return {
+        # Populate booking_context field with handoff hints extracted from the message
+        _initial_booking_ctx: dict[str, Any] = {}
+        if _booking_hints.get("preferred_stylist_name"):
+            _initial_booking_ctx["preferred_stylist_name"] = _booking_hints[
+                "preferred_stylist_name"
+            ]
+        if _booking_hints.get("preferred_date_hint"):
+            _initial_booking_ctx["preferred_date_hint"] = _booking_hints["preferred_date_hint"]
+        result: dict[str, Any] = {
             **transition_mode(state, "BOOKING", context_update=_booking_ctx),
             "last_node": "router",
         }
+        if _initial_booking_ctx:
+            result["booking_context"] = _initial_booking_ctx
+        return result
 
     # Rule 8: Book intent → BOOKING
     if intent_result.intent == "book":
@@ -720,16 +731,28 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
 
         # Extract contextual hints from user message (preferred stylist/date mentioned upfront)
         booking_hints = _extract_booking_hints(user_message) if user_message else {}
-        booking_context = {
+        booking_context_for_mode = {
             **general_booking_handoff,
             **booking_hints,
             **restored_booking_draft,
             **intent_data,
         }
-        return {
-            **transition_mode(state, "BOOKING", context_update=booking_context),
+        # Populate booking_context state field with durable handoff hints
+        initial_booking_ctx: dict[str, Any] = {}
+        if booking_hints.get("preferred_stylist_name"):
+            initial_booking_ctx["preferred_stylist_name"] = booking_hints["preferred_stylist_name"]
+        if booking_hints.get("preferred_date_hint"):
+            initial_booking_ctx["preferred_date_hint"] = booking_hints["preferred_date_hint"]
+        # Restore prior booking draft (e.g. after a GENERAL digression)
+        if restored_booking_draft:
+            initial_booking_ctx = {**restored_booking_draft, **initial_booking_ctx}
+        transition_result: dict[str, Any] = {
+            **transition_mode(state, "BOOKING", context_update=booking_context_for_mode),
             "last_node": "router",
         }
+        if initial_booking_ctx:
+            transition_result["booking_context"] = initial_booking_ctx
+        return transition_result
 
     # Rule 2.8: cancel outside BOOKING/CONFIRMATION_REPLY → APPOINTMENT_MANAGEMENT
     if intent_result.intent == "cancel" and current_mode not in ("BOOKING", "CONFIRMATION_REPLY"):

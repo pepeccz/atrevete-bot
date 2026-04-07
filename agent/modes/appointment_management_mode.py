@@ -466,9 +466,9 @@ class AppointmentManagementMode(BaseModeNode):
                     )
                 # Inject new_start_time from pending_new_slot if not already set
                 if not tool_args.get("new_start_time") and ctx.pending_new_slot:
-                    new_dt = ctx.pending_new_slot.get(
-                        "full_datetime"
-                    ) or ctx.pending_new_slot.get("start_time")
+                    new_dt = ctx.pending_new_slot.get("full_datetime") or ctx.pending_new_slot.get(
+                        "start_time"
+                    )
                     if new_dt:
                         tool_args["new_start_time"] = new_dt
                         logger.info(
@@ -566,7 +566,7 @@ class AppointmentManagementMode(BaseModeNode):
                             )
                         elif parsed.get("within_window"):
                             ctx._escalate_within_window = True
-                            ctx._escalation_tool = "cancel_appointment"
+                            ctx._escalation_tool = "cancel"
                             hours = parsed.get("hours_until")
                             ctx._escalation_hours = hours
                             logger.info(
@@ -584,7 +584,7 @@ class AppointmentManagementMode(BaseModeNode):
                             )
                         elif parsed.get("within_window"):
                             ctx._escalate_within_window = True
-                            ctx._escalation_tool = "reschedule_appointment"
+                            ctx._escalation_tool = "reschedule"
                             hours = parsed.get("hours_until")
                             ctx._escalation_hours = hours
                             logger.info(
@@ -707,9 +707,7 @@ class AppointmentManagementMode(BaseModeNode):
             date_display = snapshot.get("date_display", "próxima")
             time_display = snapshot.get("time_display", "")
             action_word = (
-                "cancelar"
-                if getattr(ctx, "_escalation_tool", "") == "cancel_appointment"
-                else "reagendar"
+                "cancelar" if getattr(ctx, "_escalation_tool", "") == "cancel" else "reagendar"
             )
             escalation_response = (
                 f"Tu cita del {date_display}"

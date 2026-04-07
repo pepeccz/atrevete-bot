@@ -16,14 +16,12 @@ def _get_last_user_message(state: ConversationState) -> str:
     for message in reversed(state.get("messages", [])):
         if message.get("role") == "user":
             return str(message.get("content", ""))
-    return state.get("user_message") or ""
+    return ""
 
 
 def _extract_response_text(result: Any, intent: str) -> tuple[str, dict[str, Any]]:
     confirm_fallback = "¡Perfecto! Tu cita ha sido confirmada. ¡Te esperamos!"
-    decline_fallback = (
-        "Entendido, hemos anotado tu respuesta. Si necesitás algo más, avisame."
-    )
+    decline_fallback = "Entendido, hemos anotado tu respuesta. Si necesitás algo más, avisame."
     default_fallback = confirm_fallback if intent == "confirm" else decline_fallback
 
     if isinstance(result, str):
@@ -83,10 +81,7 @@ async def confirmation_reply_node(state: ConversationState) -> dict[str, Any]:
             conversation_id,
             exc,
         )
-        response_text = (
-            "Hubo un problema procesando tu respuesta. Por favor, inténtalo de nuevo o escribe"
-            "'ayuda'."
-        )
+        response_text = "Hubo un problema procesando tu respuesta. Por favor, intentá de nuevo o escribí 'ayuda'."
         state_updates = {}
 
     return {

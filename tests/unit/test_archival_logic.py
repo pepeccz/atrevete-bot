@@ -28,52 +28,69 @@ from database.models import MessageRole
 # ============================================================================
 
 
+def _make_mock_redis_with_keys(keys_and_ttls: list[tuple[str, int]]) -> MagicMock:
+    """Build a mock Redis client for find_expired_checkpoints tests.
+
+    The implementation uses scan_iter(match="checkpoint:*") and then ttl(key)
+    per key. Keys must follow the "checkpoint:{thread_id}:..." format.
+
+    Args:
+        keys_and_ttls: list of (key_string, ttl_seconds) tuples.
+                       ttl_seconds is the remaining TTL for the key.
+    """
+    mock_redis = MagicMock()
+    encoded_keys = [k.encode("utf-8") for k, _ in keys_and_ttls]
+    mock_redis.scan_iter.return_value = iter(encoded_keys)
+
+    ttl_map = {k.encode("utf-8"): ttl for k, ttl in keys_and_ttls}
+
+    def _ttl(key):
+        return ttl_map.get(key, -2)
+
+    mock_redis.ttl.side_effect = _ttl
+    return mock_redis
+
+
 @pytest.mark.asyncio
 async def test_checkpoint_age_calculation_with_various_ages():
     """
     Test that find_expired_checkpoints correctly identifies checkpoints by age.
 
     Tests checkpoints:
-        - 24h old (should be marked for archival)
-        - 23.5h old (should be marked for archival)
-        - 1h old (should NOT be marked for archival)
+        - 24h old (should be marked for archival) → TTL ≈ 0s
+        - 23.5h old (should be marked for archival) → TTL ≈ 1800s
+        - 1h old (should NOT be marked for archival) → TTL ≈ 82800s
+
+    Key format: checkpoint:{thread_id}:__empty__:{uuid}
+    Age formula: checkpoint_time = now - (86400 - ttl)
     """
-    # Mock Redis client
-    mock_redis = MagicMock()
+    # 24h old → TTL = 86400 - 24*3600 = 0
+    key_24h = "checkpoint:conv-24h:__empty__:abc1"
+    ttl_24h = 86400 - 24 * 3600  # 0s remaining
 
-    # Create mock checkpoint keys with different timestamps
-    now = datetime.now(TIMEZONE)
+    # 23.5h old → TTL = 86400 - 23.5*3600 = 1800
+    key_23_5h = "checkpoint:conv-23.5h:__empty__:abc2"
+    ttl_23_5h = 86400 - int(23.5 * 3600)  # 1800s remaining
 
-    # 24h old (expired)
-    ts_24h = int((now - timedelta(hours=24)).timestamp())
-    key_24h = f"langgraph:checkpoint:conv-24h:{ts_24h}"
+    # 1h old → TTL = 86400 - 1*3600 = 82800
+    key_1h = "checkpoint:conv-1h:__empty__:abc3"
+    ttl_1h = 86400 - 1 * 3600  # 82800s remaining
 
-    # 23.5h old (expired)
-    ts_23_5h = int((now - timedelta(hours=23.5)).timestamp())
-    key_23_5h = f"langgraph:checkpoint:conv-23.5h:{ts_23_5h}"
+    mock_redis = _make_mock_redis_with_keys(
+        [
+            (key_24h, ttl_24h),
+            (key_23_5h, ttl_23_5h),
+            (key_1h, ttl_1h),
+        ]
+    )
 
-    # 1h old (NOT expired)
-    ts_1h = int((now - timedelta(hours=1)).timestamp())
-    key_1h = f"langgraph:checkpoint:conv-1h:{ts_1h}"
-
-    # Mock keys() to return test keys
-    mock_redis.keys.return_value = [
-        key_24h.encode('utf-8'),
-        key_23_5h.encode('utf-8'),
-        key_1h.encode('utf-8'),
-    ]
-
-    # Find expired checkpoints
     expired_keys = await find_expired_checkpoints(mock_redis)
-
-    # Extract conversation IDs
     expired_conv_ids = [conv_id for _, conv_id, _ in expired_keys]
 
-    # Assert: 24h and 23.5h checkpoints marked for archival
+    # 24h and 23.5h checkpoints must be marked for archival
     assert "conv-24h" in expired_conv_ids
     assert "conv-23.5h" in expired_conv_ids
-
-    # Assert: 1h checkpoint NOT marked for archival
+    # 1h checkpoint must NOT be marked for archival
     assert "conv-1h" not in expired_conv_ids
 
 
@@ -82,21 +99,15 @@ async def test_find_expired_checkpoints_with_exact_cutoff_boundary():
     """
     Test checkpoint at exact CUTOFF_HOURS boundary.
 
-    Checkpoint at exactly 23 hours should be marked for archival.
+    Checkpoint at exactly CUTOFF_HOURS old should be marked for archival.
     """
-    mock_redis = MagicMock()
+    key_exact = "checkpoint:conv-exact:__empty__:abc4"
+    ttl_exact = 86400 - CUTOFF_HOURS * 3600  # TTL at exactly cutoff boundary
 
-    now = datetime.now(TIMEZONE)
-
-    # Exactly 23h old (at cutoff boundary)
-    ts_exact = int((now - timedelta(hours=CUTOFF_HOURS)).timestamp())
-    key_exact = f"langgraph:checkpoint:conv-exact:{ts_exact}"
-
-    mock_redis.keys.return_value = [key_exact.encode('utf-8')]
+    mock_redis = _make_mock_redis_with_keys([(key_exact, ttl_exact)])
 
     expired_keys = await find_expired_checkpoints(mock_redis)
 
-    # Should be marked for archival (>= cutoff)
     assert len(expired_keys) == 1
     assert expired_keys[0][1] == "conv-exact"
 
@@ -106,19 +117,13 @@ async def test_find_expired_checkpoints_returns_empty_list_when_none_expired():
     """
     Test that find_expired_checkpoints returns empty list when no checkpoints are expired.
     """
-    mock_redis = MagicMock()
+    key_recent = "checkpoint:conv-recent:__empty__:abc5"
+    ttl_recent = 86400 - 1 * 3600  # 1h old → not expired
 
-    now = datetime.now(TIMEZONE)
-
-    # Create only recent checkpoints (< 23h old)
-    ts_recent = int((now - timedelta(hours=1)).timestamp())
-    key_recent = f"langgraph:checkpoint:conv-recent:{ts_recent}"
-
-    mock_redis.keys.return_value = [key_recent.encode('utf-8')]
+    mock_redis = _make_mock_redis_with_keys([(key_recent, ttl_recent)])
 
     expired_keys = await find_expired_checkpoints(mock_redis)
 
-    # Should return empty list
     assert len(expired_keys) == 0
 
 
@@ -140,7 +145,7 @@ async def test_redis_key_pattern_parsing_standard_format():
     timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=24)).timestamp())
     key = f"langgraph:checkpoint:thread-123:{timestamp}"
 
-    mock_redis.keys.return_value = [key.encode('utf-8')]
+    mock_redis.keys.return_value = [key.encode("utf-8")]
 
     expired_keys = await find_expired_checkpoints(mock_redis)
 
@@ -167,7 +172,7 @@ async def test_redis_key_pattern_parsing_with_complex_thread_id():
     timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=24)).timestamp())
     key = f"langgraph:checkpoint:wa-msg-123:user-456:{timestamp}"
 
-    mock_redis.keys.return_value = [key.encode('utf-8')]
+    mock_redis.keys.return_value = [key.encode("utf-8")]
 
     expired_keys = await find_expired_checkpoints(mock_redis)
 
@@ -197,9 +202,9 @@ async def test_redis_key_pattern_parsing_skips_malformed_keys():
     invalid_key_2 = "langgraph:checkpoint:thread:NOT_A_NUMBER"  # Non-numeric timestamp
 
     mock_redis.keys.return_value = [
-        valid_key.encode('utf-8'),
-        invalid_key_1.encode('utf-8'),
-        invalid_key_2.encode('utf-8'),
+        valid_key.encode("utf-8"),
+        invalid_key_1.encode("utf-8"),
+        invalid_key_2.encode("utf-8"),
     ]
 
     # Mock TTL for invalid_key_2 (since timestamp parsing will fail)
@@ -230,7 +235,11 @@ async def test_retrieve_and_parse_checkpoint_with_json_format():
     state = {
         "conversation_id": "test-conv",
         "messages": [
-            {"role": "user", "content": "Test message", "timestamp": datetime.now(TIMEZONE).isoformat()}
+            {
+                "role": "user",
+                "content": "Test message",
+                "timestamp": datetime.now(TIMEZONE).isoformat(),
+            }
         ],
     }
 
@@ -244,9 +253,9 @@ async def test_retrieve_and_parse_checkpoint_with_json_format():
 
     # Verify parsing
     assert parsed_state is not None
-    assert parsed_state['conversation_id'] == "test-conv"
-    assert len(parsed_state['messages']) == 1
-    assert parsed_state['messages'][0]['content'] == "Test message"
+    assert parsed_state["conversation_id"] == "test-conv"
+    assert len(parsed_state["messages"]) == 1
+    assert parsed_state["messages"][0]["content"] == "Test message"
 
 
 @pytest.mark.asyncio
@@ -262,7 +271,11 @@ async def test_retrieve_and_parse_checkpoint_with_pickle_format():
     state = {
         "conversation_id": "test-conv-pickle",
         "messages": [
-            {"role": "assistant", "content": "Pickle test", "timestamp": datetime.now(TIMEZONE).isoformat()}
+            {
+                "role": "assistant",
+                "content": "Pickle test",
+                "timestamp": datetime.now(TIMEZONE).isoformat(),
+            }
         ],
     }
 
@@ -276,9 +289,9 @@ async def test_retrieve_and_parse_checkpoint_with_pickle_format():
 
     # Verify parsing
     assert parsed_state is not None
-    assert parsed_state['conversation_id'] == "test-conv-pickle"
-    assert len(parsed_state['messages']) == 1
-    assert parsed_state['messages'][0]['content'] == "Pickle test"
+    assert parsed_state["conversation_id"] == "test-conv-pickle"
+    assert len(parsed_state["messages"]) == 1
+    assert parsed_state["messages"][0]["content"] == "Pickle test"
 
 
 @pytest.mark.asyncio

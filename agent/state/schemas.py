@@ -13,10 +13,93 @@ Evolution: v6.0 adds current_mode, mode_context, mode_history for mode-based rou
 FIX-005: merge_dicts supports __reset__ sentinel to clear stale booking data on mode transitions.
 """
 
-from datetime import datetime
 from operator import add as operator_add
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, TypedDict
 from uuid import UUID
+
+
+# ============================================================================
+# BookingContext — Typed dict for durable booking state (Phase 1 / AD-2)
+# ============================================================================
+
+
+class BookingContext(TypedDict, total=False):
+    """
+    Typed container for all booking-flow state.
+
+    Replaces the usage of booking-related keys inside mode_context, which used
+    a merge_dicts reducer that could not delete keys. BookingContext uses a
+    full-replace reducer (replace_booking_context), so writing a new
+    BookingContext atomically replaces the old one — no stale keys survive.
+
+    All fields are optional (total=False) because the context is built
+    incrementally as the booking flow progresses.
+    """
+
+    # Booking step FSM
+    booking_step: (
+        str  # service_selection|stylist_selection|datetime_selection|name_collection|confirmation
+    )
+
+    # Service data
+    last_services: list[str]  # e.g. ["CORTE LARGO"]
+    last_total_duration_minutes: int | None
+
+    # Stylist data
+    last_stylist: str | None  # e.g. "Pilar"
+    no_preference_stylist: bool
+
+    # Slot data
+    offered_slots: list[dict[str, Any]]  # from check_availability
+    selected_slot: dict[str, Any] | None  # user-confirmed slot
+
+    # Customer data
+    customer_name: str | None
+    customer_id: str | None
+
+    # Confirmation flow
+    confirmation_summary_sent: bool
+    confirmation_shown: bool
+    _booking_completed: bool
+
+    # Handoff hints (from router / greeting mode)
+    service_audience_hint: str | None
+    preferred_stylist_name: str | None  # from router handoff hints
+    preferred_date_hint: str | None
+
+    # Pending resolution (numbered-list selections)
+    pending_service_options: list[str] | None
+    pending_stylist_options: list[str] | None
+
+    # Extra
+    notes: str | None
+
+
+def replace_booking_context(
+    current: dict[str, Any] | None, update: dict[str, Any] | None
+) -> dict[str, Any]:
+    """
+    Full-replace reducer for booking_context.
+
+    Unlike merge_dicts, this reducer REPLACES the entire booking_context on
+    every update. This ensures deleted keys (e.g. offered_slots after a slot
+    is selected) actually disappear from state instead of persisting as zombies.
+
+    Semantics:
+    - update is truthy (non-empty dict) → return dict(update) [full replace]
+    - update is falsy (None or {}) → return current or {} [no-op / keep current]
+
+    Args:
+        current: The previous BookingContext value from the checkpoint
+        update: The new BookingContext value returned by a node
+
+    Returns:
+        The resolved BookingContext dict
+    """
+    if update:
+        return dict(update)
+    return current or {}
+
 
 # ============================================================================
 # Type alias for Any (needed by reducer functions)
@@ -272,7 +355,9 @@ class ConversationState(TypedDict, total=False):
     # Tool Execution Tracking (5 fields) - v3.2 enhanced state detection
     # ============================================================================
     customer_data_collected: bool  # True after manage_customer returns customer_id
-    service_selected: list[str] | None  # List of service names selected by user (supports multi-service booking)
+    service_selected: (
+        list[str] | None
+    )  # List of service names selected by user (supports multi-service booking)
     slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
     booking_confirmed: bool  # True after user confirms booking summary
     appointment_created: bool  # True after book() successfully creates appointment
@@ -301,8 +386,12 @@ class ConversationState(TypedDict, total=False):
     customer_needs_name: bool  # True if WhatsApp name is not readable (numbers/emojis)
     customer_first_name: str | None  # Current customer first_name from database
     name_confirmation_pending: bool  # v6.1: True while waiting for user to confirm/provide name
-    pending_intent: str | None  # v6.1: Stores user message if they express intent before confirming name
-    pending_whatsapp_name: str | None  # v6.2: WhatsApp name stored for customer creation after name confirmation
+    pending_intent: (
+        str | None
+    )  # v6.1: Stores user message if they express intent before confirming name
+    pending_whatsapp_name: (
+        str | None
+    )  # v6.2: WhatsApp name stored for customer creation after name confirmation
 
     # ============================================================================
     # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
@@ -311,11 +400,13 @@ class ConversationState(TypedDict, total=False):
     pending_cancellation_id: str | None  # UUID of appointment selected for cancellation
     cancellation_appointments: list[dict[str, Any]] | None  # Appointments shown for selection
 
-# ============================================================================
+    # ============================================================================
     # Booking State Flags (5 fields) - created by book tool result
     # ============================================================================
     customer_data_collected: bool  # True after manage_customer returns customer_id
-    service_selected: list[str] | None  # List of service names selected by user (supports multi-service booking)
+    service_selected: (
+        list[str] | None
+    )  # List of service names selected by user (supports multi-service booking)
     slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
     booking_confirmed: bool  # True after user confirms booking summary
     appointment_created: bool  # True after book() successfully creates appointment
@@ -325,7 +416,9 @@ class ConversationState(TypedDict, total=False):
     # ============================================================================
     pending_decline_appointment_id: str | None  # UUID of appointment pending decline confirmation
     pending_decline_initiated_at: str | None  # ISO 8601 timestamp when decline was initiated
-    pending_confirmation_appointment_id: str | None  # UUID string of appointment awaiting confirm/decline reply
+    pending_confirmation_appointment_id: (
+        str | None
+    )  # UUID string of appointment awaiting confirm/decline reply
 
     # ============================================================================
     # v6.0 Mode-Based Architecture Fields
@@ -334,9 +427,23 @@ class ConversationState(TypedDict, total=False):
     # ============================================================================
     current_mode: str  # Active mode: GREETING / BOOKING / GENERAL / ESCALATION
     previous_mode: str | None  # Previous mode (for back-tracking and debugging)
-    mode_context: Annotated[dict[str, Any], merge_dicts]  # Mode-specific transient data (booking_step, last_intent, etc.)
-    mode_history: Annotated[list[str], append_unique_list]  # Ordered list of mode transitions (for debugging)
-    draft_contexts: Annotated[dict[str, Any], merge_dicts]  # Saved mode contexts keyed by mode name (for resumption)
+    mode_context: Annotated[
+        dict[str, Any], merge_dicts
+    ]  # Mode-specific transient data (booking_step, last_intent, etc.)
+    mode_history: Annotated[
+        list[str], append_unique_list
+    ]  # Ordered list of mode transitions (for debugging)
+    draft_contexts: Annotated[
+        dict[str, Any], merge_dicts
+    ]  # Saved mode contexts keyed by mode name (for resumption)
+
+    # ============================================================================
+    # v6.1 Booking Context — typed, durable booking state (Phase 1 + Phase 2)
+    # Uses replace_booking_context reducer: full-replace, no stale key zombies.
+    # All booking keys (last_services, last_stylist, offered_slots, etc.) live
+    # here instead of mode_context. mode_context retains only routing metadata.
+    # ============================================================================
+    booking_context: Annotated[BookingContext | None, replace_booking_context]
 
     # ============================================================================
     # Resilience Layer Fields (v5.1)
@@ -430,6 +537,8 @@ def create_initial_state(
         "mode_context": {},
         "mode_history": [],
         "draft_contexts": {},
+        # v6.1 booking context (typed, replace-reducer — no stale key zombies)
+        "booking_context": {},
         # Resilience layer
         "retry_state": None,
         "fallback_metrics": None,

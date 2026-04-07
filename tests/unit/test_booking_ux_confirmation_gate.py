@@ -24,7 +24,15 @@ from agent.routing.intent_router import IntentResult
 
 
 def _base_mode_context() -> dict:
-    """Returns a mode_context that satisfies all gate conditions except confirmation_shown."""
+    """Returns routing-only mode_context (last_intent etc.)."""
+    return {
+        "last_intent": "confirm",
+        "last_intent_confidence": 0.9,
+    }
+
+
+def _base_booking_context() -> dict:
+    """Returns a booking_context that satisfies all gate conditions except confirmation_shown."""
     return {
         "confirmation_shown": False,
         "confirmation_summary_sent": True,
@@ -34,13 +42,20 @@ def _base_mode_context() -> dict:
     }
 
 
-def _make_state(user_message: str, mode_context: dict) -> dict:
-    """Minimal ConversationState for testing."""
+def _make_state(user_message: str, mode_context: dict, booking_context: dict | None = None) -> dict:
+    """Minimal ConversationState for testing.
+
+    Uses messages list (canonical channel) so get_last_user_message() works.
+    The user_message field is cleared by preprocess_node before modes run.
+    booking_context holds ALL booking data (Phase 2 migration).
+    """
+    messages = [{"role": "user", "content": user_message}] if user_message else []
     return {
-        "user_message": user_message,
+        "user_message": None,  # preprocess_node clears this before modes run
         "mode_context": mode_context,
-        "messages": [],
-        "total_message_count": 0,
+        "booking_context": booking_context or {},
+        "messages": messages,
+        "total_message_count": len(messages),
     }
 
 
@@ -68,13 +83,15 @@ async def test_intent_result_confirm_sets_confirmation_shown() -> None:
     """Spec (a): IntentResult(intent='confirm') triggers confirmation gate."""
     node = _booking_node_with_mocked_loop()
     mode_context = _base_mode_context()
-    state = _make_state("Sí", mode_context)
+    booking_context = _base_booking_context()
+    state = _make_state("Sí", mode_context, booking_context)
 
     intent = IntentResult(intent="confirm", confidence=0.9, raw_input="Sí")
 
     await node.handle(state, intent)  # type: ignore[arg-type]
 
-    assert node._mode_context.get("confirmation_shown") is True
+    # Phase 2: booking data lives in _booking_context
+    assert node._booking_context.get("confirmation_shown") is True
 
 
 @pytest.mark.asyncio
@@ -82,13 +99,14 @@ async def test_intent_result_non_confirm_does_not_set() -> None:
     """IntentResult(intent='book') does NOT trigger the confirmation gate."""
     node = _booking_node_with_mocked_loop()
     mode_context = _base_mode_context()
-    state = _make_state("quiero reservar", mode_context)
+    booking_context = _base_booking_context()
+    state = _make_state("quiero reservar", mode_context, booking_context)
 
     intent = IntentResult(intent="book", confidence=0.9, raw_input="quiero reservar")
 
     await node.handle(state, intent)  # type: ignore[arg-type]
 
-    assert not node._mode_context.get("confirmation_shown")
+    assert not node._booking_context.get("confirmation_shown")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -101,7 +119,8 @@ async def test_plain_string_confirm_does_not_set_no_error() -> None:
     """Spec (b): plain string 'confirm' as intent → no AttributeError and gate stays False."""
     node = _booking_node_with_mocked_loop()
     mode_context = _base_mode_context()
-    state = _make_state("confirm", mode_context)
+    booking_context = _base_booking_context()
+    state = _make_state("confirm", mode_context, booking_context)
 
     # This is a plain string, not an IntentResult
     intent = "confirm"
@@ -110,7 +129,7 @@ async def test_plain_string_confirm_does_not_set_no_error() -> None:
     await node.handle(state, intent)  # type: ignore[arg-type]
 
     # "confirm" as user_message does NOT match _is_spanish_affirmative
-    assert not node._mode_context.get("confirmation_shown")
+    assert not node._booking_context.get("confirmation_shown")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -123,11 +142,12 @@ async def test_none_intent_with_dale_sets_via_affirmative_fallback() -> None:
     """Spec (c): intent=None but user says 'dale' → _is_spanish_affirmative fallback."""
     node = _booking_node_with_mocked_loop()
     mode_context = _base_mode_context()
-    state = _make_state("dale", mode_context)
+    booking_context = _base_booking_context()
+    state = _make_state("dale", mode_context, booking_context)
 
     await node.handle(state, None)
 
-    assert node._mode_context.get("confirmation_shown") is True
+    assert node._booking_context.get("confirmation_shown") is True
 
 
 @pytest.mark.asyncio
@@ -135,11 +155,12 @@ async def test_none_intent_with_si_sets_via_affirmative_fallback() -> None:
     """Spec (c): 'sí' with None intent also triggers the gate."""
     node = _booking_node_with_mocked_loop()
     mode_context = _base_mode_context()
-    state = _make_state("sí", mode_context)
+    booking_context = _base_booking_context()
+    state = _make_state("sí", mode_context, booking_context)
 
     await node.handle(state, None)
 
-    assert node._mode_context.get("confirmation_shown") is True
+    assert node._booking_context.get("confirmation_shown") is True
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -152,11 +173,12 @@ async def test_none_intent_with_no_does_not_set() -> None:
     """Spec (d): 'no' with None intent → gate stays False."""
     node = _booking_node_with_mocked_loop()
     mode_context = _base_mode_context()
-    state = _make_state("no", mode_context)
+    booking_context = _base_booking_context()
+    state = _make_state("no", mode_context, booking_context)
 
     await node.handle(state, None)
 
-    assert not node._mode_context.get("confirmation_shown")
+    assert not node._booking_context.get("confirmation_shown")
 
 
 @pytest.mark.asyncio
@@ -164,8 +186,9 @@ async def test_none_intent_with_maybe_does_not_set() -> None:
     """'quizás' is not affirmative → gate stays False."""
     node = _booking_node_with_mocked_loop()
     mode_context = _base_mode_context()
-    state = _make_state("quizás", mode_context)
+    booking_context = _base_booking_context()
+    state = _make_state("quizás", mode_context, booking_context)
 
     await node.handle(state, None)
 
-    assert not node._mode_context.get("confirmation_shown")
+    assert not node._booking_context.get("confirmation_shown")

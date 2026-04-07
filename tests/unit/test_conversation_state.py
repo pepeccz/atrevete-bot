@@ -20,6 +20,7 @@ from agent.state.schemas import (
     create_initial_state,
     merge_dicts,
     preserve_if_none,
+    replace_booking_context,
     transition_mode,
 )
 
@@ -412,7 +413,9 @@ class TestTransitionMode:
 
     def test_mode_context_set_when_context_update_provided(self):
         state = self._make_state(current_mode="GREETING")
-        update = transition_mode(state, "BOOKING", context_update={"booking_step": "service_selection"})
+        update = transition_mode(
+            state, "BOOKING", context_update={"booking_step": "service_selection"}
+        )
         # Raw value has __reset__ + the new context; reducer will strip sentinel
         assert update["mode_context"].get("__reset__") is True
         assert update["mode_context"].get("booking_step") == "service_selection"
@@ -420,7 +423,9 @@ class TestTransitionMode:
     def test_mode_context_new_data_survives_reducer(self):
         """After reducer: new context data is present, sentinel and old data removed."""
         state = self._make_state(current_mode="GREETING")
-        update = transition_mode(state, "BOOKING", context_update={"booking_step": "service_selection"})
+        update = transition_mode(
+            state, "BOOKING", context_update={"booking_step": "service_selection"}
+        )
         result = merge_dicts({}, update["mode_context"])
         assert result == {"booking_step": "service_selection"}
         assert "__reset__" not in result
@@ -503,3 +508,69 @@ class TestTransitionMode:
         # Only new data survives
         assert merged_context2 == {"intent": "book"}
         assert "__reset__" not in merged_context2
+
+
+# =============================================================================
+# replace_booking_context reducer (Task 4.2 — agent-state-architecture-fix)
+# =============================================================================
+
+
+class TestReplaceBookingContext:
+    """Tests for the replace_booking_context full-replace reducer."""
+
+    def test_replace_booking_context_full_replace(self):
+        """Non-empty update completely replaces current — no key merging."""
+        current = {"last_services": ["Cortar"], "last_stylist": "Ana"}
+        update = {"last_services": ["Peinado"]}
+        result = replace_booking_context(current, update)
+        assert result == {"last_services": ["Peinado"]}
+        assert "last_stylist" not in result  # key is GONE, not merged
+
+    def test_replace_booking_context_empty_update_keeps_current(self):
+        """Empty dict update → keep current unchanged (no-op)."""
+        current = {"last_services": ["Cortar"]}
+        result = replace_booking_context(current, {})
+        assert result == current
+
+    def test_replace_booking_context_none_update_keeps_current(self):
+        """None update → keep current unchanged (no-op)."""
+        current = {"last_services": ["Cortar"]}
+        result = replace_booking_context(current, None)
+        assert result == current
+
+    def test_replace_booking_context_both_none(self):
+        """Both current and update are None → returns empty dict."""
+        result = replace_booking_context(None, None)
+        assert result == {}
+
+    def test_replace_booking_context_none_current_with_update(self):
+        """None current + non-empty update → returns update."""
+        update = {"last_services": ["Tinte"], "last_stylist": "Pilar"}
+        result = replace_booking_context(None, update)
+        assert result == {"last_services": ["Tinte"], "last_stylist": "Pilar"}
+
+    def test_replace_booking_context_does_not_mutate_update(self):
+        """The returned dict is a copy, not the same object as update."""
+        current = {"last_services": ["Cortar"]}
+        update = {"last_services": ["Tinte"]}
+        result = replace_booking_context(current, update)
+        # Mutating result must not affect the original update
+        result["extra_key"] = "injected"
+        assert "extra_key" not in update
+
+    def test_replace_booking_context_stale_slot_removed(self):
+        """Key that existed in current but not in update is gone after replace."""
+        current = {
+            "last_services": ["Cortar"],
+            "offered_slots": [{"stylist_name": "Ana", "start_time": "2026-04-14T10:00"}],
+            "selected_slot": {"stylist_name": "Ana", "start_time": "2026-04-14T10:00"},
+        }
+        # New context after slot was selected — offered_slots intentionally omitted
+        update = {
+            "last_services": ["Cortar"],
+            "last_stylist": "Ana",
+            "selected_slot": {"stylist_name": "Ana", "start_time": "2026-04-14T10:00"},
+        }
+        result = replace_booking_context(current, update)
+        assert "offered_slots" not in result
+        assert result["selected_slot"] is not None

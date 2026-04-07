@@ -2,15 +2,153 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Iterable
+from uuid import UUID
 
 import redis.asyncio as redis
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+if TYPE_CHECKING:
+    from tests.e2e.harness.run_models import QARunIdentity
 
 # Safety guard: only allow DB cleanup for QA test phone numbers.
 # This prevents accidental deletion of real customer data.
 _QA_PHONE_PREFIX = "+34999"
+
+
+class ProtectedDataError(RuntimeError):
+    """Raised when a cleanup operation would touch non-test data."""
+
+
+def is_test_phone(phone: str) -> bool:
+    """Return True only if phone starts with the QA test prefix (+34999)."""
+    return phone.startswith(_QA_PHONE_PREFIX)
+
+
+def is_test_conversation(conversation_id: str, run_identity: "QARunIdentity") -> bool:
+    """Return True only if conversation_id matches the run identity."""
+    return conversation_id == run_identity.conversation_id
+
+
+async def safe_delete_customer(session: AsyncSession, phone: str) -> int:
+    """Delete a test customer by phone. Raises ProtectedDataError for non-test phones."""
+    if not is_test_phone(phone):
+        raise ProtectedDataError(
+            f"Refusing to delete non-test data: phone={phone!r} "
+            f"(must start with {_QA_PHONE_PREFIX!r})"
+        )
+    result = await session.execute(
+        text("DELETE FROM customers WHERE phone = :phone"),
+        {"phone": phone},
+    )
+    return result.rowcount
+
+
+async def safe_delete_appointments(session: AsyncSession, phone: str) -> int:
+    """Delete all appointments for a test customer by phone.
+
+    Raises ProtectedDataError for non-test phones.
+    """
+    if not is_test_phone(phone):
+        raise ProtectedDataError(
+            f"Refusing to delete non-test data: phone={phone!r} "
+            f"(must start with {_QA_PHONE_PREFIX!r})"
+        )
+    result = await session.execute(
+        text(
+            "DELETE FROM appointments WHERE customer_id = "
+            "(SELECT id FROM customers WHERE phone = :phone LIMIT 1)"
+        ),
+        {"phone": phone},
+    )
+    return result.rowcount
+
+
+async def safe_delete_conversation(
+    session: AsyncSession, conversation_id: str, run_identity: "QARunIdentity"
+) -> int:
+    """Delete conversation history for a test conversation.
+
+    Raises ProtectedDataError if conversation_id doesn't match the run identity.
+    """
+    if not is_test_conversation(conversation_id, run_identity):
+        raise ProtectedDataError(
+            f"Refusing to delete non-test data: conversation_id={conversation_id!r} "
+            f"does not match run identity {run_identity.conversation_id!r}"
+        )
+    result = await session.execute(
+        text("DELETE FROM conversation_history WHERE conversation_id = :cid"),
+        {"cid": conversation_id},
+    )
+    return result.rowcount
+
+
+class AsyncDatabaseCleaner:
+    """Async database cleaner for QA test cleanup and verification."""
+
+    def __init__(self, db_url: str, run_identity: "QARunIdentity"):
+        self._db_url = db_url
+        self._run_identity = run_identity
+        self._engine: Any = None
+
+    @asynccontextmanager
+    async def _session_context(self):
+        """Context manager that yields a database session."""
+        if self._engine is None:
+            self._engine = create_async_engine(self._db_url, echo=False)
+        async with AsyncSession(self._engine) as session:
+            yield session
+
+    async def verify_appointment(
+        self,
+        phone: str,
+        service_name: str,
+        stylist_name: str,
+        start_datetime: datetime,
+    ) -> dict[str, Any] | None:
+        """Verify an appointment exists and return normalized row or None."""
+        from database.models import Appointment, Customer, Service, Stylist
+
+        stmt = (
+            select(Appointment, Customer, Service, Stylist)
+            .join(Customer, Appointment.customer_id == Customer.id)
+            .join(Stylist, Appointment.stylist_id == Stylist.id)
+            .join(Service, Service.id.in_(Appointment.service_ids))
+            .where(Customer.phone == phone)
+            .where(Service.name == service_name)
+            .where(Stylist.name == stylist_name)
+            .limit(1)
+        )
+
+        async with self._session_context() as session:
+            result = await session.execute(stmt)
+            row = result.scalar_one_or_none()
+
+        if row is None:
+            return None
+
+        appointment, customer, service, stylist = row
+        return {
+            "appointment_id": appointment.id,
+            "customer_id": appointment.customer_id,
+            "customer_phone": customer.phone,
+            "service_name": service.name,
+            "stylist_name": stylist.name,
+            "start_datetime": appointment.start_time,
+            "created_at": appointment.created_at,
+            "status": appointment.status.value
+            if hasattr(appointment.status, "value")
+            else str(appointment.status),
+        }
+
+    async def close(self) -> None:
+        """Close the database engine."""
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
 
 
 class StateResetHarness:

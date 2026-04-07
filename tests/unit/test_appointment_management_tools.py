@@ -32,7 +32,8 @@ class TestManageAppointmentsImportable:
         from agent.tools.manage_appointments_tool import manage_appointments
 
         assert manage_appointments is not None
-        assert callable(manage_appointments)
+        # StructuredTool instances expose invoke()/ainvoke() rather than __call__
+        assert hasattr(manage_appointments, "invoke") or callable(manage_appointments)
 
     def test_manage_appointments_schema_has_action(self):
         """ManageAppointmentsSchema must have an 'action' field."""

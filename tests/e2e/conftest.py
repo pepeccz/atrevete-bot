@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import time
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -12,6 +15,7 @@ import redis.asyncio as redis
 from shared.config import get_settings
 from tests.e2e.harness.context_manager import QATestingContext, TestingContextManager
 from tests.e2e.harness.redis_harness import RedisTestHarness
+from tests.e2e.harness.run_models import QARunIdentity
 from tests.e2e.harness.state_reset import StateResetHarness
 
 
@@ -66,6 +70,41 @@ async def state_reset(redis_client: redis.Redis) -> AsyncGenerator[StateResetHar
 def testing_context() -> QATestingContext:
     manager = TestingContextManager(root_path=Path.cwd())
     return manager.load_context()
+
+
+def _make_run_identity(request: pytest.FixtureRequest) -> QARunIdentity:
+    """Generate a unique QARunIdentity from a pytest request (or duck-typed request).
+
+    The conversation_id and customer_phone are derived from the test node name
+    so each test gets a stable, isolated identity. Phone numbers always start
+    with '+34999' (the QA test prefix).
+    """
+    test_name = request.node.name
+    # Create a short deterministic suffix from the test name
+    suffix = hashlib.md5(test_name.encode()).hexdigest()[:8]
+    # Map suffix to digits for the phone (need 7 digits after '+34999')
+    phone_digits = str(int(suffix, 16) % 10_000_000).zfill(7)
+    customer_phone = f"+34999{phone_digits}"
+    conversation_id = f"qa-{test_name[:32].replace(' ', '-').lower()}"
+    sender_name = f"QA-{suffix}"
+    return QARunIdentity(
+        conversation_id=conversation_id,
+        customer_phone=customer_phone,
+        sender_name=sender_name,
+        run_started_at=datetime.now(UTC),
+    )
+
+
+@pytest.fixture
+def qa_run_identity(request: pytest.FixtureRequest) -> QARunIdentity:
+    """Pytest fixture that generates a unique QARunIdentity per test node."""
+    return _make_run_identity(request)
+
+
+# Expose the underlying factory so tests can call it directly without pytest:
+#   identity_factory = getattr(qa_run_identity, "__wrapped__")
+#   identity = identity_factory(_DummyRequest("my-test"))
+qa_run_identity.__wrapped__ = _make_run_identity  # type: ignore[attr-defined]
 
 
 @pytest_asyncio.fixture(autouse=True)

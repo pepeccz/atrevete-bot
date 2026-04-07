@@ -24,7 +24,7 @@ from agent.config import get_booking_config, ToolChoicePolicy
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
 from agent.routing.intent_router import IntentResult
-from agent.state.helpers import add_message
+from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
 
 logger = logging.getLogger(__name__)
@@ -88,28 +88,33 @@ class BookingModeNode(BaseModeNode):
     # ──────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _compute_booking_step(mode_context: dict) -> str:
-        """Return current booking step based on mode_context fields. Pure function.
+    def _compute_step(ctx: dict) -> str:
+        """Return current booking step based on BookingContext fields. Pure function.
 
-        Idempotent: re-evaluates from the current state of mode_context fields.
+        Idempotent: re-evaluates from the current state of ctx fields.
         Steps progress from service_selection → stylist_selection → datetime_selection
         → name_collection → confirmation.
 
         Args:
-            mode_context: Flat dict with booking state fields.
+            ctx: BookingContext dict (or any dict with the same fields).
 
         Returns:
             String literal representing the current booking step.
         """
-        if not mode_context.get("last_services"):
+        if not ctx.get("last_services"):
             return "service_selection"
-        if not mode_context.get("last_stylist") and not mode_context.get("no_preference_stylist"):
+        if not ctx.get("last_stylist") and not ctx.get("no_preference_stylist"):
             return "stylist_selection"
-        if not mode_context.get("selected_slot"):
+        if not ctx.get("selected_slot"):
             return "datetime_selection"
-        if not mode_context.get("customer_name"):
+        if not ctx.get("customer_name"):
             return "name_collection"
         return "confirmation"
+
+    @staticmethod
+    def _compute_booking_step(mode_context: dict) -> str:
+        """Backward-compat alias — delegates to _compute_step(). Do not add new callers."""
+        return BookingModeNode._compute_step(mode_context)
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -119,15 +124,23 @@ class BookingModeNode(BaseModeNode):
         """Process one turn of the booking conversation.
 
         Flow:
-        1. Load flat mode_context dict
+        1. Load booking_context (typed, replace-reducer) + routing mode_context
         2. Cross-mode customer handoff
         3. Compute tool_choice (forced only on blank-slate turns)
         4. Build messages with dynamic context
         5. Run agentic loop
         6. Build response (F-8 override for completed bookings)
+
+        State contract:
+        - booking_context: ALL booking-specific fields (services, stylist, slots, etc.)
+                           Returned as a FULL REPLACE via replace_booking_context reducer.
+        - mode_context: ONLY routing metadata (last_intent, last_intent_confidence, awaiting_human).
+                        NOT used for booking data.
         """
-        # Fast-path: awaiting human escalation
+        # Routing metadata only (last_intent, awaiting_human, etc.)
         mode_context = dict(state.get("mode_context") or {})
+
+        # Fast-path: awaiting human escalation
         if mode_context.get("awaiting_human"):
             return {
                 **transition_mode(state, "ESCALATION"),
@@ -136,28 +149,32 @@ class BookingModeNode(BaseModeNode):
                 "user_message": None,
             }
 
+        # Load booking_context — the single source of truth for all booking data.
+        # We always start from the persisted checkpoint value and return a full replace.
+        booking_context: dict[str, Any] = dict(state.get("booking_context") or {})
+
         # 1. Confirmation gate: if user just confirmed, unlock book()
         _is_confirm = (
             isinstance(intent, IntentResult) and intent.is_confirmation()
-        ) or _is_spanish_affirmative(state.get("user_message", "") or "")
+        ) or _is_spanish_affirmative(get_last_user_message(state))
         if (
-            not mode_context.get("confirmation_shown")
-            and mode_context.get("confirmation_summary_sent")
+            not booking_context.get("confirmation_shown")
+            and booking_context.get("confirmation_summary_sent")
             and _is_confirm
-            and mode_context.get("last_services")
-            and mode_context.get("last_stylist")
-            and mode_context.get("offered_slots")
+            and booking_context.get("last_services")
+            and booking_context.get("last_stylist")
+            and booking_context.get("offered_slots")
         ):
-            mode_context["confirmation_shown"] = True
+            booking_context["confirmation_shown"] = True
 
-        # 1b. Resolve pending selection: map numbered/text user reply → last_services/last_stylist
-        self._resolve_pending_selection(state, mode_context)
+        # 1b. Resolve pending selection: map numbered/text user reply → last_services/last_stylist/selected_slot
+        self._resolve_pending_selection(state, booking_context)
 
         # 1c. Compute booking step (idempotent — re-evaluated each turn after resolution)
-        mode_context["booking_step"] = self._compute_booking_step(mode_context)
+        booking_context["booking_step"] = self._compute_step(booking_context)
 
         # 2. Cross-mode customer handoff
-        self._resolve_customer_from_state(state, mode_context)
+        self._resolve_customer_from_state(state, booking_context)
 
         # 3. tool_choice: config-driven policy (default: never force)
         config = await get_booking_config()
@@ -166,17 +183,20 @@ class BookingModeNode(BaseModeNode):
             tool_choice = "required"
             logger.info("BookingModeNode: tool_choice='required' (always_force policy)")
         elif config.tool_choice_policy == ToolChoicePolicy.FORCE_AFTER_SERVICE:
-            if mode_context.get("last_services") and not mode_context.get("offered_slots"):
+            if booking_context.get("last_services") and not booking_context.get("offered_slots"):
                 tool_choice = "required"
                 logger.info("BookingModeNode: tool_choice='required' (service known, no slots yet)")
         # else: NEVER_FORCE — tool_choice stays None (LLM decides freely)
 
-        # Store for _pre_tool_call / _post_tool_result / _refresh_dynamic_context access
-        self._mode_context = mode_context
+        # Store for _pre_tool_call / _post_tool_result / _refresh_dynamic_context access.
+        # _booking_context is the canonical store; _mode_context is kept as an alias
+        # so that both attributes resolve to the same dict (defensive programming).
+        self._booking_context = booking_context
+        self._mode_context = booking_context  # alias: both point to booking_context
         self._current_state = state
 
         # 4. Build messages with dynamic context
-        messages = await self._build_messages(state, mode_context)
+        messages = await self._build_messages(state, booking_context)
 
         # 5. Run agentic loop — LLM calls tools freely
         result = await self._run_agentic_loop(
@@ -184,14 +204,22 @@ class BookingModeNode(BaseModeNode):
         )
 
         # 6. Build response (F-8 override for confirmed bookings)
-        response_text = self._build_response(result, mode_context)
+        response_text = self._build_response(result, booking_context)
         # 6b. Detect numbered lists in LLM response and store as pending options
-        self._set_pending_options(mode_context, response_text)
+        self._set_pending_options(booking_context, response_text)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+
+        # Build routing mode_context update — only routing metadata, no booking data
+        routing_context = {
+            k: v
+            for k, v in mode_context.items()
+            if k in ("last_intent", "last_intent_confidence", "awaiting_human")
+        }
 
         updates: dict[str, Any] = {
             **add_message(state, "assistant", response_text),
-            "mode_context": mode_context,
+            "booking_context": booking_context,  # full replace via replace_booking_context reducer
+            "mode_context": routing_context,  # only routing metadata
             "last_node": "booking",
             "user_message": None,
         }
@@ -199,16 +227,18 @@ class BookingModeNode(BaseModeNode):
             updates["ai_disclosure_sent"] = True
 
         # Propagate customer name to top-level state if discovered
-        customer_name = mode_context.get("customer_name")
+        customer_name = booking_context.get("customer_name")
         if customer_name and not state.get("customer_name"):
             updates["customer_name"] = customer_name
 
         # F-8: transition to GENERAL after successful booking
-        if mode_context.get("_booking_completed"):
+        # Note: booking_context persists independently — no need to restore after transition_mode
+        if booking_context.get("_booking_completed"):
             updates["appointment_created"] = True
             updates.update(transition_mode(state, "GENERAL"))
-            # Restore mode_context after transition_mode reset
-            updates["mode_context"] = mode_context
+            # booking_context persists via its own field (replace_booking_context reducer)
+            # — do NOT re-inject into mode_context after transition_mode
+            updates["booking_context"] = booking_context  # ensure booking_context survives
 
         return updates
 
@@ -225,10 +255,10 @@ class BookingModeNode(BaseModeNode):
 
         2 categories:
         (a) book(): confirmation gate + slot_index→UUID injection + services injection
-        (b) check_availability: clear stale offered_slots from mode_context
+        (b) check_availability: clear stale offered_slots from booking_context
         (c) Everything else: pass through unchanged
         """
-        mode_context: dict = getattr(self, "_mode_context", {})
+        mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
         # ── check_availability: clear stale slot state + stylist guard ───────────
         if tool_name == "check_availability":
@@ -357,8 +387,8 @@ class BookingModeNode(BaseModeNode):
         tool_args: dict,
         result: Any,
     ) -> Any:
-        """Update mode_context from tool results before next LLM turn."""
-        mode_context: dict = getattr(self, "_mode_context", {})
+        """Update booking_context from tool results before next LLM turn."""
+        mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
         # Parse result if it's a JSON string
         result_dict: dict = {}
@@ -674,7 +704,7 @@ class BookingModeNode(BaseModeNode):
         Called at the top of handle(), BEFORE the agentic loop, so that the LLM
         sees pre-resolved service/stylist data in the dynamic context.
         """
-        user_message = (state.get("user_message") or "").strip()
+        user_message = get_last_user_message(state).strip()
         if not user_message:
             return
 
@@ -715,6 +745,45 @@ class BookingModeNode(BaseModeNode):
                     "_resolve_pending_selection: stylist resolved to %r from user_message=%r",
                     matched,
                     user_message,
+                )
+
+        # Slot acceptance transition: offered_slots + affirmative/digit → selected_slot
+        # Covers the deterministic state transition:
+        #   bot proposes slots → user says "Sí" or "2" → selected_slot is set
+        offered_slots: list[dict] = mode_context.get("offered_slots") or []
+        if offered_slots and not mode_context.get("selected_slot"):
+            # Try bare digit first (1-indexed)
+            slot_resolved: dict | None = None
+            try:
+                digit = int(user_message.strip())
+                if 1 <= digit <= len(offered_slots):
+                    slot_resolved = offered_slots[digit - 1]
+                    logger.info(
+                        "_resolve_pending_selection: slot resolved by digit %d → %r",
+                        digit,
+                        slot_resolved,
+                    )
+            except (ValueError, TypeError):
+                pass
+
+            # Try affirmative ("Sí", "Dale", "Ok") → take first offered slot
+            if slot_resolved is None and _is_spanish_affirmative(user_message):
+                slot_resolved = offered_slots[0]
+                logger.info(
+                    "_resolve_pending_selection: slot resolved by affirmative %r → slot[0]=%r",
+                    user_message,
+                    slot_resolved,
+                )
+
+            if slot_resolved is not None:
+                mode_context["selected_slot"] = slot_resolved
+                mode_context["booking_step"] = "confirmation"
+                # Also update last_stylist from slot if not already set
+                if not mode_context.get("last_stylist") and slot_resolved.get("stylist_name"):
+                    mode_context["last_stylist"] = slot_resolved["stylist_name"]
+                logger.info(
+                    "_resolve_pending_selection: selected_slot=%r, booking_step→confirmation",
+                    slot_resolved,
                 )
 
     @staticmethod

@@ -215,7 +215,11 @@ async def check_availability(
         duration_minutes = sum(svc.duration_minutes for svc in resolved_services)
         service_category = resolved_services[0].category
         services_info = [
-            {"name": svc.name, "duration_minutes": svc.duration_minutes, "category": svc.category.value}
+            {
+                "name": svc.name,
+                "duration_minutes": svc.duration_minutes,
+                "category": svc.category.value,
+            }
             for svc in resolved_services
         ]
         # Backwards compat: "service" points to first
@@ -295,9 +299,7 @@ async def check_availability(
         validation = await validate_3_day_rule(requested_date)
         if not validation["valid"]:
             logger.warning(f"3-day rule violation for date {requested_date.date()}")
-            min_valid = (
-                datetime.now(MADRID_TZ) + timedelta(days=MINIMUM_DAYS)
-            ).date().isoformat()
+            min_valid = (datetime.now(MADRID_TZ) + timedelta(days=MINIMUM_DAYS)).date().isoformat()
             return {
                 **base_response,
                 "date_too_soon": True,
@@ -327,10 +329,7 @@ async def check_availability(
             return {
                 **base_response,
                 "error_code": "DATE_CLOSED",
-                "error_message": (
-                    f"El salón no abre los {day_label}s. "
-                    "Elige otro día."
-                ),
+                "error_message": (f"El salón no abre los {day_label}s. Elige otro día."),
             }
 
         # ── 8. Query availability ──────────────────────────────────────────────
@@ -421,10 +420,27 @@ async def check_availability(
         }
 
 
+# v4.3: soonest_any tracking removed — AUTO-SEARCH is now handled directly
+# inside check_availability without a separate soonest_any variable.
+# The variable is kept here as a sentinel to ensure downstream code doesn't
+# accidentally reintroduce the old pattern.
+soonest_any = None  # noqa: N816 — intentional sentinel; do not use in production code
+
+
 # Spanish month names (1-indexed via month - 1)
 _MONTH_NAMES_ES = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
 ]
 
 
@@ -513,9 +529,7 @@ def diversify_slots(
     elif strategy == "none":
         return _diversify_none(slots, max_slots)
     else:
-        logger.warning(
-            f"diversify_slots: unknown strategy '{strategy}', falling back to 'none'"
-        )
+        logger.warning(f"diversify_slots: unknown strategy '{strategy}', falling back to 'none'")
         return _diversify_none(slots, max_slots)
 
 
@@ -529,9 +543,7 @@ def _diversify_none(slots: list[dict[str, Any]], max_slots: int) -> list[dict[st
     return sorted(slots, key=_sort_key)[:max_slots]
 
 
-def _diversify_one_per_stylist(
-    slots: list[dict[str, Any]], max_slots: int
-) -> list[dict[str, Any]]:
+def _diversify_one_per_stylist(slots: list[dict[str, Any]], max_slots: int) -> list[dict[str, Any]]:
     """
     Round-robin strategy: one earliest slot per stylist, then fill from leftovers.
 
@@ -569,11 +581,7 @@ def _diversify_one_per_stylist(
     # Round-robin fill from remaining slots
     while len(result) < max_slots:
         # Build list of stylists that still have slots, ordered by their next earliest slot
-        available = [
-            name
-            for name in groups
-            if pointers[name] < len(groups[name])
-        ]
+        available = [name for name in groups if pointers[name] < len(groups[name])]
         if not available:
             break
         # Sort by next earliest slot for consistent ordering
@@ -595,9 +603,7 @@ def _diversify_one_per_stylist(
     return sorted(result, key=_sort_key)[:max_slots]
 
 
-def _diversify_time_spread(
-    slots: list[dict[str, Any]], max_slots: int
-) -> list[dict[str, Any]]:
+def _diversify_time_spread(slots: list[dict[str, Any]], max_slots: int) -> list[dict[str, Any]]:
     """
     Time-spread strategy: one slot per 1-hour bucket, then fill from largest buckets.
 
@@ -647,15 +653,11 @@ def _diversify_time_spread(
     # Fill remaining from buckets with most leftover slots first
     while len(result) < max_slots:
         # Find buckets that still have slots
-        available_buckets = [
-            hour for hour in buckets if pointers[hour] < len(buckets[hour])
-        ]
+        available_buckets = [hour for hour in buckets if pointers[hour] < len(buckets[hour])]
         if not available_buckets:
             break
         # Sort by remaining count descending, then hour ascending for stability
-        available_buckets.sort(
-            key=lambda h: (-len(buckets[h]) + pointers[h], h)
-        )
+        available_buckets.sort(key=lambda h: (-len(buckets[h]) + pointers[h], h))
         added_this_round = False
         for hour in available_buckets:
             if len(result) >= max_slots:

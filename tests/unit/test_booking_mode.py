@@ -19,14 +19,15 @@ def test_importable():
     assert BookingModeNode is not None
 
 
-def test_no_booking_context():
-    """BookingContext is not used in booking_mode — replaced by flat dict mode_context."""
+def test_booking_context_state_field_used():
+    """booking_context state field is used in handle() — replaces flat dict mode_context for booking data."""
     import agent.modes.booking_mode as module
 
     source = inspect.getsource(module)
-    assert "BookingContext" not in source, (
-        "BookingContext should be removed — mode_context is now a plain dict"
-    )
+    # Phase 1+2: booking_context is now the canonical store for booking data
+    assert "booking_context" in source, "booking_context state field should be used in booking_mode"
+    # The handle() method must load from state["booking_context"]
+    assert 'state.get("booking_context")' in source, "handle() must load booking_context from state"
 
 
 def test_no_old_tools():
@@ -49,7 +50,7 @@ def test_mode_name_is_booking():
     """BookingModeNode.mode_name returns 'BOOKING'."""
     from agent.modes.booking_mode import BookingModeNode
 
-    node = BookingModeNode()
+    node = BookingModeNode(tools=[])
     assert node.mode_name == "BOOKING"
 
 
@@ -63,7 +64,7 @@ def booking_node():
     """Create a BookingModeNode with a mutable _mode_context for testing."""
     from agent.modes.booking_mode import BookingModeNode
 
-    node = BookingModeNode()
+    node = BookingModeNode(tools=[])
     node._mode_context = {}
     return node
 
@@ -134,6 +135,29 @@ async def test_pre_tool_call_rejects_empty_name(booking_node):
     await booking_node._pre_tool_call("book", tool_args)
 
     assert booking_node._mode_context.get("customer_name") is None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Static analysis: no state.get("user_message") reads in agent/modes/
+# (Task 4.6 — agent-state-architecture-fix)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_no_user_message_reads_in_modes():
+    """Verify zero state.get('user_message') reads in agent/modes/ (excluding writes)."""
+    import re
+    from pathlib import Path
+
+    modes_dir = Path("agent/modes")
+    violations = []
+    for py_file in modes_dir.glob("*.py"):
+        content = py_file.read_text()
+        for i, line in enumerate(content.splitlines(), 1):
+            if 'state.get("user_message")' in line or "state.get('user_message')" in line:
+                # Exclude write assignments like "user_message": None
+                if '"user_message": None' not in line and "'user_message': None" not in line:
+                    violations.append(f"{py_file.name}:{i}: {line.strip()}")
+    assert violations == [], f"Found user_message reads in modes: {violations}"
 
 
 @pytest.mark.asyncio

@@ -23,8 +23,13 @@ def booking_node():
 
 
 def _make_state(user_message: str) -> dict:
-    """Minimal ConversationState-compatible dict for testing."""
-    return {"user_message": user_message}
+    """Minimal ConversationState-compatible dict for testing.
+
+    Uses messages list (canonical channel) so get_last_user_message() works.
+    The old user_message field is cleared by preprocess_node before modes run.
+    """
+    messages = [{"role": "user", "content": user_message}] if user_message else []
+    return {"messages": messages, "user_message": None}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -194,3 +199,81 @@ def test_stylist_not_resolved_when_already_set(booking_node) -> None:
     assert mode_context["last_stylist"] == "Ana"
     # pending_stylist_options should remain (no resolution attempted)
     assert "pending_stylist_options" in mode_context
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# (e) Slot acceptance transition (Task 4.3 — agent-state-architecture-fix)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_slot_acceptance_affirmative(booking_node) -> None:
+    """offered_slots + 'Sí' → selected_slot = offered_slots[0], booking_step = confirmation."""
+    state = _make_state("Sí")
+    mode_context: dict = {
+        "offered_slots": [{"stylist_name": "Pilar", "start_time": "2026-04-14T16:00"}],
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+    }
+    booking_node._resolve_pending_selection(state, mode_context)
+    assert mode_context["selected_slot"] == {
+        "stylist_name": "Pilar",
+        "start_time": "2026-04-14T16:00",
+    }
+    assert mode_context["booking_step"] == "confirmation"
+
+
+def test_slot_acceptance_digit(booking_node) -> None:
+    """offered_slots + '2' → selected_slot = offered_slots[1]."""
+    state = _make_state("2")
+    mode_context: dict = {
+        "offered_slots": [
+            {"stylist_name": "Ana", "start_time": "2026-04-14T10:00"},
+            {"stylist_name": "Pilar", "start_time": "2026-04-14T16:00"},
+        ],
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+    }
+    booking_node._resolve_pending_selection(state, mode_context)
+    assert mode_context["selected_slot"] == {
+        "stylist_name": "Pilar",
+        "start_time": "2026-04-14T16:00",
+    }
+
+
+def test_slot_no_acceptance_without_offered_slots(booking_node) -> None:
+    """No offered_slots + 'Sí' → no selected_slot set."""
+    state = _make_state("Sí")
+    mode_context: dict = {"last_services": ["Cortar"]}
+    booking_node._resolve_pending_selection(state, mode_context)
+    assert "selected_slot" not in mode_context
+
+
+def test_slot_acceptance_sets_last_stylist_from_slot(booking_node) -> None:
+    """When last_stylist is not set, slot acceptance sets it from slot.stylist_name."""
+    state = _make_state("Sí")
+    mode_context: dict = {
+        "offered_slots": [{"stylist_name": "Marta", "start_time": "2026-04-15T11:00"}],
+        "last_services": ["Peinado"],
+        # last_stylist intentionally absent
+    }
+    booking_node._resolve_pending_selection(state, mode_context)
+    assert mode_context["selected_slot"] == {
+        "stylist_name": "Marta",
+        "start_time": "2026-04-15T11:00",
+    }
+    assert mode_context["last_stylist"] == "Marta"
+
+
+def test_slot_not_overwritten_when_already_selected(booking_node) -> None:
+    """If selected_slot already exists, offered_slots + 'Sí' → no overwrite."""
+    existing_slot = {"stylist_name": "Ana", "start_time": "2026-04-14T10:00"}
+    state = _make_state("Sí")
+    mode_context: dict = {
+        "offered_slots": [{"stylist_name": "Pilar", "start_time": "2026-04-14T16:00"}],
+        "last_services": ["Cortar"],
+        "last_stylist": "Ana",
+        "selected_slot": existing_slot,
+    }
+    booking_node._resolve_pending_selection(state, mode_context)
+    # The existing slot must NOT be replaced
+    assert mode_context["selected_slot"] == existing_slot

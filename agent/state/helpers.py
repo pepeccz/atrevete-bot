@@ -23,9 +23,7 @@ MAX_MESSAGE_LENGTH = 2000
 
 
 def add_message(
-    state: ConversationState,
-    role: Literal["user", "assistant"],
-    content: str
+    state: ConversationState, role: Literal["user", "assistant"], content: str
 ) -> ConversationState:
     """
     Add a message to the conversation state with FIFO windowing and length limits.
@@ -63,16 +61,16 @@ def add_message(
             )
             # Preserve beginning and end of message
             truncated_content = (
-                content[:800] +
-                f"\n\n[... {len(content) - 1600} caracteres omitidos ...]\n\n" +
-                content[-800:]
+                content[:800]
+                + f"\n\n[... {len(content) - 1600} caracteres omitidos ...]\n\n"
+                + content[-800:]
             )
 
         # Create new message dict with timestamp
         new_message = {
             "role": role,
             "content": truncated_content,
-            "timestamp": datetime.now(ZoneInfo("Europe/Madrid")).isoformat()
+            "timestamp": datetime.now(ZoneInfo("Europe/Madrid")).isoformat(),
         }
 
         # Track total message count (includes messages removed by windowing)
@@ -93,13 +91,42 @@ def add_message(
         return {
             "messages": [new_message],
             "total_message_count": total_count,
-            "updated_at": datetime.now(ZoneInfo("Europe/Madrid")).isoformat()
+            "updated_at": datetime.now(ZoneInfo("Europe/Madrid")).isoformat(),
         }
 
     except Exception as e:
         # Graceful degradation: return empty partial update on error
         logger.error(f"Error adding message: {e}", exc_info=True)
         return {}
+
+
+def get_last_user_message(state: ConversationState) -> str:
+    """
+    Extract the last user message content from the messages list.
+
+    Iterates reversed(state["messages"]) to find the first message with
+    role == "user" and returns its content. Returns "" on empty messages
+    or if no user message is found.
+
+    This is the CANONICAL way to read the current user turn. Mode nodes
+    MUST use this helper instead of state.get("user_message") — the
+    user_message field is cleared by preprocess_node before modes run.
+
+    Args:
+        state: Current conversation state
+
+    Returns:
+        Content of the last user message, or "" if none found.
+
+    Example:
+        >>> state = {"messages": [{"role": "user", "content": "Hola"}, {"role": "assistant", "content": "..."}]}
+        >>> get_last_user_message(state)
+        'Hola'
+    """
+    for msg in reversed(state.get("messages", [])):
+        if msg.get("role") == "user":
+            return str(msg.get("content", ""))
+    return ""
 
 
 def should_summarize(state: ConversationState) -> bool:
@@ -144,7 +171,7 @@ def should_summarize(state: ConversationState) -> bool:
     # Trigger summarization when count is 19, 29, 39, etc.
     # This anticipates the assistant response that will make it 20, 30, 40...
     # The +1 accounts for the upcoming assistant message
-    should_trigger = ((total_message_count + 1) % 10 == 0 and total_message_count >= 19)
+    should_trigger = (total_message_count + 1) % 10 == 0 and total_message_count >= 19
 
     if should_trigger:
         conversation_id = state.get("conversation_id", "unknown")
@@ -267,7 +294,9 @@ def check_token_overflow(state: ConversationState) -> dict[str, bool | str]:
     return {"overflow": True, "action": "escalate"}
 
 
-def format_llm_messages_with_summary(state: ConversationState, user_prompt: str) -> list[dict[str, str]]:
+def format_llm_messages_with_summary(
+    state: ConversationState, user_prompt: str
+) -> list[dict[str, str]]:
     """
     Format messages for LLM invocation, including conversation summary if present.
 

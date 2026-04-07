@@ -84,8 +84,7 @@ async def test_service_error_returns_fallback_and_clears_flag() -> None:
         result = await confirmation_reply_node(state)
 
     assert result["messages"][0]["content"] == (
-        "Hubo un problema procesando tu respuesta. Por favor, intentá de nuevo o escribí "
-        "'ayuda'."
+        "Hubo un problema procesando tu respuesta. Por favor, intentá de nuevo o escribí 'ayuda'."
     )
     assert result["pending_confirmation_appointment_id"] is None
 
@@ -122,9 +121,10 @@ async def test_unknown_intent_defaults_to_decline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_uses_user_message_fallback_and_string_service_response() -> None:
+async def test_messages_list_used_and_string_service_response() -> None:
+    """message_text is read from messages list (canonical channel). Empty messages → empty string."""
     state = _make_state(intent="confirm", message_text="Si")
-    state["messages"] = []
+    # messages list has the user message (not cleared)
     state["customer_id"] = str(uuid4())
 
     with patch(
@@ -134,6 +134,7 @@ async def test_uses_user_message_fallback_and_string_service_response() -> None:
         result = await confirmation_reply_node(state)
 
     assert result["messages"][0]["content"] == "Confirmada por texto plano"
+    # message_text comes from messages list, not user_message field
     assert mock_service.await_args.kwargs["message_text"] == "Si"
 
 
@@ -163,4 +164,6 @@ async def test_dataclass_without_response_text_uses_confirm_fallback() -> None:
     ):
         result = await confirmation_reply_node(state)
 
-    assert result["messages"][0]["content"] == "¡Perfecto! Tu cita ha sido confirmada. ¡Te esperamos!"
+    assert (
+        result["messages"][0]["content"] == "¡Perfecto! Tu cita ha sido confirmada. ¡Te esperamos!"
+    )

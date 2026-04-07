@@ -27,8 +27,13 @@ def booking_node() -> BookingModeNode:
 
 
 def _make_state(user_message: str = "") -> dict:
-    """Minimal ConversationState-compatible dict for testing."""
-    return {"user_message": user_message}
+    """Minimal ConversationState-compatible dict for testing.
+
+    Uses messages list (canonical channel) so get_last_user_message() works.
+    The user_message field is cleared by preprocess_node before modes run.
+    """
+    messages = [{"role": "user", "content": user_message}] if user_message else []
+    return {"messages": messages, "user_message": None}
 
 
 # ===========================================================================
