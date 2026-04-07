@@ -67,9 +67,7 @@ class MessageBatcher:
             f"persistence={persistence_status}"
         )
 
-    def set_callback(
-        self, callback: Callable[[str, list[dict]], Coroutine]
-    ) -> None:
+    def set_callback(self, callback: Callable[[str, list[dict]], Coroutine]) -> None:
         """
         Set the callback to invoke when a batch expires.
 
@@ -78,9 +76,7 @@ class MessageBatcher:
         """
         self._callback = callback
 
-    async def add_message(
-        self, conversation_id: str, message_data: dict
-    ) -> None:
+    async def add_message(self, conversation_id: str, message_data: dict) -> None:
         """
         Add a message to the batch for this conversation.
 
@@ -98,11 +94,24 @@ class MessageBatcher:
             return
 
         async with self.locks[conversation_id]:
+            # Layer 1: Intra-batch content dedup — skip if last message has identical text
+            batch = self.batches[conversation_id]
+            incoming_text = message_data.get("message_text", "")
+            if batch and batch[-1].get("message_text", "") == incoming_text:
+                logger.warning(
+                    "Duplicate message skipped | conversation_id=%s | text=%.80s",
+                    conversation_id,
+                    incoming_text,
+                )
+                return
+
             # Add message to batch with timestamp
-            self.batches[conversation_id].append({
-                **message_data,
-                "received_at": datetime.now(UTC).isoformat(),
-            })
+            self.batches[conversation_id].append(
+                {
+                    **message_data,
+                    "received_at": datetime.now(UTC).isoformat(),
+                }
+            )
 
             batch_size = len(self.batches[conversation_id])
             logger.info(
@@ -115,9 +124,7 @@ class MessageBatcher:
 
             # Start timer if this is the first message in batch
             if conversation_id not in self.timers:
-                timer = asyncio.create_task(
-                    self._wait_and_process(conversation_id)
-                )
+                timer = asyncio.create_task(self._wait_and_process(conversation_id))
                 self.timers[conversation_id] = timer
                 logger.debug(
                     f"Timer started | conversation_id={conversation_id} | "
@@ -160,9 +167,7 @@ class MessageBatcher:
                         # It will be recovered on next startup
 
         except asyncio.CancelledError:
-            logger.debug(
-                f"Timer cancelled | conversation_id={conversation_id}"
-            )
+            logger.debug(f"Timer cancelled | conversation_id={conversation_id}")
             raise
 
     async def flush_all(self) -> None:
@@ -172,9 +177,7 @@ class MessageBatcher:
         Call this during graceful shutdown to process any remaining messages
         without waiting for their timers to expire.
         """
-        logger.info(
-            f"Flushing all batches | pending_conversations={len(self.batches)}"
-        )
+        logger.info(f"Flushing all batches | pending_conversations={len(self.batches)}")
 
         # Cancel all timers
         for conversation_id, timer in list(self.timers.items()):
@@ -256,9 +259,7 @@ class MessageBatcher:
         key = f"{BATCH_KEY_PREFIX}{conversation_id}"
         try:
             await self._redis.delete(key)
-            logger.debug(
-                f"Persisted batch cleared | conversation_id={conversation_id}"
-            )
+            logger.debug(f"Persisted batch cleared | conversation_id={conversation_id}")
         except Exception as e:
             # Log but don't fail
             logger.warning(

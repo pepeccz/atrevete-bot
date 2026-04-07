@@ -261,6 +261,48 @@ class BaseModeNode(ABC):
             self.logger.debug("Token tracking failed: %s", e)
 
     @staticmethod
+    def _dedup_response(text: str) -> str:
+        """Collapse adjacent identical numbered-list blocks in LLM output.
+
+        Splits the response at positions where a new numbered list starts
+        (a line beginning with "1." after optional whitespace). If two
+        consecutive blocks are identical after stripping whitespace, the
+        second occurrence is removed.
+
+        This defends against doubled LLM responses caused by duplicate
+        webhook messages that slipped through earlier dedup layers.
+
+        Args:
+            text: Raw response text from the LLM.
+
+        Returns:
+            Text with consecutive duplicate numbered-list blocks removed.
+            Single lists and non-list text are returned unchanged.
+        """
+        # Split at block boundaries: a newline followed by "1." at line start
+        # We keep the delimiter with each block by using a lookahead split
+        import re as _re
+
+        parts = _re.split(r"(?=(?:^|\n)1\.)", text)
+        # Filter empty parts that result from split
+        blocks = [p for p in parts if p.strip()]
+
+        if len(blocks) <= 1:
+            return text
+
+        # Collapse consecutive identical blocks
+        deduped: list[str] = [blocks[0]]
+        for block in blocks[1:]:
+            if block.strip() != deduped[-1].strip():
+                deduped.append(block)
+
+        if len(deduped) == len(blocks):
+            # Nothing removed — return original to avoid whitespace mutations
+            return text
+
+        return "".join(deduped).strip()
+
+    @staticmethod
     def _sanitize_response(text: str) -> str:
         """
         Strip action narration from LLM output before user delivery.
@@ -574,8 +616,21 @@ class BaseModeNode(ABC):
                 )
 
             content = response.content if hasattr(response, "content") else response
-            response_text: str = content if isinstance(content, str) else str(content)
+            if isinstance(content, str):
+                response_text: str = content
+            elif isinstance(content, list):
+                # LangChain Responses API: content is a list of typed blocks
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif isinstance(block, str):
+                        text_parts.append(block)
+                response_text = "\n".join(text_parts)
+            else:
+                response_text = str(content)
             response_text = self._sanitize_response(response_text)
+            response_text = self._dedup_response(response_text)
 
             # R3: Tool-skip telemetry — warn if loop exited without any tool calls
             # but tools were available (indicates LLM skipped available tools)
@@ -613,12 +668,20 @@ class BaseModeNode(ABC):
                     if hasattr(recovery_response, "content")
                     else recovery_response
                 )
-                recovery_text = (
-                    recovery_content
-                    if isinstance(recovery_content, str)
-                    else str(recovery_content)
-                )
+                if isinstance(recovery_content, str):
+                    recovery_text = recovery_content
+                elif isinstance(recovery_content, list):
+                    recovery_parts = []
+                    for block in recovery_content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            recovery_parts.append(block.get("text", ""))
+                        elif isinstance(block, str):
+                            recovery_parts.append(block)
+                    recovery_text = "\n".join(recovery_parts)
+                else:
+                    recovery_text = str(recovery_content)
                 response_text = self._sanitize_response(recovery_text)
+                response_text = self._dedup_response(response_text)
 
             return AgenticLoopResult(
                 response_text=response_text,
