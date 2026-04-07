@@ -45,6 +45,28 @@ _AFFIRMATIVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Matches time expressions: "a las 11", "las 9:00", "a las 9 y media", "11:00", "a las 11:40"
+_TIME_PATTERN = re.compile(
+    r"(?:a\s+)?las?\s+(\d{1,2})(?::(\d{2})|\s+y\s+media)?|^(\d{1,2}):(\d{2})$",
+    re.IGNORECASE,
+)
+
+# Matches ordinal expressions: "la primera", "la segunda", "el último", etc.
+_ORDINAL_PATTERN = re.compile(
+    r"(?:la|el)\s+(primer[ao]?|segund[ao]|tercer[ao]?|cuart[ao]|quint[ao]|últim[ao])",
+    re.IGNORECASE,
+)
+
+# Maps ordinal stem (first 5 chars lowercased) → 0-based index (-1 means last)
+_ORDINAL_STEM_MAP: dict[str, int] = {
+    "prime": 0,
+    "segun": 1,
+    "terce": 2,
+    "cuart": 3,
+    "quint": 4,
+    "últim": -1,
+}
+
 _NO_PREFERENCE_PATTERNS = re.compile(
     r"(?:sin\s+preferencia|me\s+da\s+igual|cualquiera|no\s+tengo\s+preferencia|"
     r"da\s+lo\s+mismo|no\s+me\s+importa|la\s+que\s+sea|el\s+que\s+sea)",
@@ -767,13 +789,15 @@ class BookingModeNode(BaseModeNode):
                     user_message,
                 )
 
-        # Slot acceptance transition: offered_slots + affirmative/digit → selected_slot
+        # Slot acceptance transition: offered_slots + digit/time/ordinal/affirmative → selected_slot
         # Covers the deterministic state transition:
-        #   bot proposes slots → user says "Sí" or "2" → selected_slot is set
+        #   bot proposes slots → user says "2", "a las 11", "la primera", "Sí" → selected_slot set
         offered_slots: list[dict] = mode_context.get("offered_slots") or []
         if offered_slots and not mode_context.get("selected_slot"):
-            # Try bare digit first (1-indexed)
             slot_resolved: dict | None = None
+            msg_lower = user_message.strip().lower()
+
+            # 1. Try bare digit (1-indexed)
             try:
                 digit = int(user_message.strip())
                 if 1 <= digit <= len(offered_slots):
@@ -786,8 +810,56 @@ class BookingModeNode(BaseModeNode):
             except (ValueError, TypeError):
                 pass
 
-            # Try affirmative ("Sí", "Dale", "Ok") → take first offered slot
-            if slot_resolved is None and _is_spanish_affirmative(user_message):
+            # 2. Try time pattern ("a las 11", "las 9:00", "11:00", "a las 9 y media")
+            if slot_resolved is None:
+                time_match = _TIME_PATTERN.search(user_message)
+                if time_match:
+                    # Group layout: (1,2) from "las N[:MM]", (3,4) from "^HH:MM$"
+                    raw_hour = time_match.group(1) or time_match.group(3)
+                    raw_minute = time_match.group(2) or time_match.group(4)
+                    if raw_hour is not None:
+                        hour = int(raw_hour)
+                        if raw_minute is not None:
+                            minute = int(raw_minute)
+                        elif "media" in msg_lower:
+                            minute = 30
+                        else:
+                            minute = 0
+                        target_time = f"{hour:02d}:{minute:02d}"
+                        matches = [s for s in offered_slots if s.get("time", "") == target_time]
+                        if len(matches) == 1:
+                            slot_resolved = matches[0]
+                            logger.info(
+                                "_resolve_pending_selection: slot resolved by time %r → %r",
+                                target_time,
+                                slot_resolved,
+                            )
+                        # 0 matches or ambiguous → fall through (LLM handles it)
+
+            # 3. Try ordinal ("la primera", "el último", "la segunda", etc.)
+            if slot_resolved is None:
+                ordinal_match = _ORDINAL_PATTERN.search(user_message)
+                if ordinal_match:
+                    stem = ordinal_match.group(1)[:5].lower()
+                    idx = _ORDINAL_STEM_MAP.get(stem)
+                    if idx is not None:
+                        # Normalize -1 to actual last index
+                        resolved_idx = idx if idx >= 0 else len(offered_slots) + idx
+                        if 0 <= resolved_idx < len(offered_slots):
+                            slot_resolved = offered_slots[resolved_idx]
+                            logger.info(
+                                "_resolve_pending_selection: slot resolved by ordinal %r (idx=%d) → %r",
+                                ordinal_match.group(1),
+                                resolved_idx,
+                                slot_resolved,
+                            )
+
+            # 4. Try affirmative ("Sí", "Dale", "Ok") → only when exactly one slot offered
+            if (
+                slot_resolved is None
+                and len(offered_slots) == 1
+                and _is_spanish_affirmative(user_message)
+            ):
                 slot_resolved = offered_slots[0]
                 logger.info(
                     "_resolve_pending_selection: slot resolved by affirmative %r → slot[0]=%r",

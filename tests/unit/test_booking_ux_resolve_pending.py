@@ -339,3 +339,137 @@ def test_resolve_pending_selection_notes_skip_only_at_notes_step(booking_node) -
     booking_node._resolve_pending_selection(state, mode_context)
     # notes_asked should NOT be set when step is not notes_collection
     assert "notes_asked" not in mode_context
+
+
+# ===========================================================================
+# (f) Time-pattern and ordinal slot matching (llm-slot-autonomy)
+# ===========================================================================
+
+
+def test_slot_time_match_a_las_11() -> None:
+    """'A las 11 está bien' matches slot with time='11:00'."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    state = _make_state("A las 11 está bien")
+    ctx: dict = {
+        "offered_slots": [
+            {"time": "09:00", "stylist_name": "Pilar"},
+            {"time": "09:40", "stylist_name": "Pilar"},
+            {"time": "11:00", "stylist_name": "Pilar"},
+        ],
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+    }
+    node._resolve_pending_selection(state, ctx)
+    assert ctx["selected_slot"]["time"] == "11:00"
+
+
+def test_slot_ordinal_la_primera() -> None:
+    """'La primera' matches offered_slots[0]."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    state = _make_state("La primera")
+    ctx: dict = {
+        "offered_slots": [
+            {"time": "09:00", "stylist_name": "Pilar"},
+            {"time": "11:00", "stylist_name": "Pilar"},
+        ],
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+    }
+    node._resolve_pending_selection(state, ctx)
+    assert ctx["selected_slot"]["time"] == "09:00"
+
+
+def test_slot_time_match_9_40() -> None:
+    """'Las 9:40' matches slot with time='09:40'."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    state = _make_state("Las 9:40")
+    ctx: dict = {
+        "offered_slots": [
+            {"time": "09:00", "stylist_name": "Pilar"},
+            {"time": "09:40", "stylist_name": "Pilar"},
+        ],
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+    }
+    node._resolve_pending_selection(state, ctx)
+    assert ctx["selected_slot"]["time"] == "09:40"
+
+
+def test_slot_digit_still_works() -> None:
+    """Backward compat: bare digit still selects slot."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    state = _make_state("2")
+    ctx: dict = {
+        "offered_slots": [
+            {"time": "09:00", "stylist_name": "Pilar"},
+            {"time": "09:40", "stylist_name": "Pilar"},
+        ],
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+    }
+    node._resolve_pending_selection(state, ctx)
+    assert ctx["selected_slot"]["time"] == "09:40"
+
+
+def test_slot_time_no_match_returns_none() -> None:
+    """Time token that matches zero slots → no resolution (LLM handles)."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    state = _make_state("A las 8")
+    ctx: dict = {
+        "offered_slots": [
+            {"time": "09:00", "stylist_name": "Pilar"},
+            {"time": "11:00", "stylist_name": "Pilar"},
+        ],
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+    }
+    node._resolve_pending_selection(state, ctx)
+    assert "selected_slot" not in ctx
+
+
+def test_slot_affirmative_multiple_slots_no_resolution() -> None:
+    """'Sí' with multiple slots → no resolution (per spec: affirmative only for 1 slot)."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    state = _make_state("Sí")
+    ctx: dict = {
+        "offered_slots": [
+            {"time": "09:00", "stylist_name": "Pilar"},
+            {"time": "11:00", "stylist_name": "Pilar"},
+            {"time": "11:40", "stylist_name": "Ana"},
+        ],
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+    }
+    node._resolve_pending_selection(state, ctx)
+    assert "selected_slot" not in ctx
+
+
+def test_slot_time_match_y_media() -> None:
+    """'A las 9 y media' matches slot with time='09:30'."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    state = _make_state("A las 9 y media")
+    ctx: dict = {
+        "offered_slots": [
+            {"time": "09:00", "stylist_name": "Pilar"},
+            {"time": "09:30", "stylist_name": "Pilar"},
+            {"time": "10:00", "stylist_name": "Pilar"},
+        ],
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+    }
+    node._resolve_pending_selection(state, ctx)
+    assert ctx["selected_slot"]["time"] == "09:30"
