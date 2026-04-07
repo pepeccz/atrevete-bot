@@ -80,15 +80,42 @@ def test_compute_step_slot_selected():
 
 
 def test_compute_step_name_known():
-    """All fields set → confirmation."""
+    """All fields set including notes_asked → confirmation."""
     ctx = {
         "last_services": ["Cortar"],
         "last_stylist": "Ana",
         "selected_slot": {"day_label": "Lunes", "time": "10:00"},
         "customer_name": "María García",
+        "notes_asked": True,
     }
     result = BookingModeNode._compute_booking_step(ctx)
     assert result == "confirmation"
+
+
+def test_compute_step_notes_not_asked():
+    """All fields set but notes_asked=False → notes_collection."""
+    ctx = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Ana",
+        "selected_slot": {"day_label": "Lunes", "time": "10:00"},
+        "customer_name": "María García",
+        "notes_asked": False,
+    }
+    result = BookingModeNode._compute_booking_step(ctx)
+    assert result == "notes_collection"
+
+
+def test_compute_step_notes_asked_missing_key():
+    """notes_asked not present → notes_collection (falsy check)."""
+    ctx = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Ana",
+        "selected_slot": {"day_label": "Lunes", "time": "10:00"},
+        "customer_name": "María García",
+        # notes_asked absent → falsy
+    }
+    result = BookingModeNode._compute_booking_step(ctx)
+    assert result == "notes_collection"
 
 
 # ===========================================================================

@@ -277,3 +277,65 @@ def test_slot_not_overwritten_when_already_selected(booking_node) -> None:
     booking_node._resolve_pending_selection(state, mode_context)
     # The existing slot must NOT be replaced
     assert mode_context["selected_slot"] == existing_slot
+
+
+# ===========================================================================
+# Notes skip logic (scope-realignment task 7.8)
+# ===========================================================================
+
+
+def test_resolve_pending_selection_skips_notes_on_no(booking_node) -> None:
+    """'no' response at notes_collection → notes_asked=True, notes=None."""
+    state = _make_state("no")
+    mode_context: dict = {
+        "booking_step": "notes_collection",
+        "last_services": ["Cortar"],
+        "last_stylist": "Ana",
+        "selected_slot": {"day_label": "Lunes", "time": "10:00"},
+        "customer_name": "María",
+    }
+    booking_node._resolve_pending_selection(state, mode_context)
+    assert mode_context["notes_asked"] is True
+    assert mode_context.get("notes") is None
+
+
+def test_resolve_pending_selection_skips_notes_on_nada(booking_node) -> None:
+    """'nada' response at notes_collection → notes_asked=True, notes=None."""
+    state = _make_state("nada")
+    mode_context: dict = {
+        "booking_step": "notes_collection",
+        "last_services": ["Cortar"],
+        "last_stylist": "Ana",
+        "selected_slot": {"day_label": "Lunes", "time": "10:00"},
+        "customer_name": "María",
+    }
+    booking_node._resolve_pending_selection(state, mode_context)
+    assert mode_context["notes_asked"] is True
+    assert mode_context.get("notes") is None
+
+
+def test_resolve_pending_selection_skips_notes_on_ninguna(booking_node) -> None:
+    """'ninguna' response at notes_collection → notes_asked=True, notes=None."""
+    state = _make_state("ninguna")
+    mode_context: dict = {
+        "booking_step": "notes_collection",
+        "last_services": ["Cortar"],
+        "last_stylist": "Ana",
+        "selected_slot": {"day_label": "Lunes", "time": "10:00"},
+        "customer_name": "María",
+    }
+    booking_node._resolve_pending_selection(state, mode_context)
+    assert mode_context["notes_asked"] is True
+    assert mode_context.get("notes") is None
+
+
+def test_resolve_pending_selection_notes_skip_only_at_notes_step(booking_node) -> None:
+    """'no' at service_selection step → does NOT set notes_asked."""
+    state = _make_state("no")
+    mode_context: dict = {
+        "booking_step": "service_selection",
+        "last_services": [],
+    }
+    booking_node._resolve_pending_selection(state, mode_context)
+    # notes_asked should NOT be set when step is not notes_collection
+    assert "notes_asked" not in mode_context

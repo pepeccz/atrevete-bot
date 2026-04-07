@@ -183,6 +183,7 @@ async def test_pre_tool_call_name_extraction_triggers_confirmation_summary(booki
                 "stylist_name": "Pilar",
             }
         ],
+        "notes_asked": True,
     }
     tool_args = {
         "customer_first_name": "María",

@@ -480,15 +480,13 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     1. escalation_triggered=True → ESCALATION
     2. error_count >= 3 → ESCALATION (auto-escalation)
     2.5 pending confirmation reply + intent in {confirm, reject, cancel} → CONFIRMATION_REPLY
-    3. pending GREETING subflow → GREETING with classified intent
-    4. customer_name is None + intent in {greet, ambiguous} → GREETING
-    5. intent=escalate → ESCALATION
-    6. current_mode=BOOKING and intent ask_info → GENERAL with preserved draft
-    7. current_mode=BOOKING and intent not cancel/reject/ask_info → stay BOOKING
-    7.5 current_mode=ESCALATION and intent not book → stay ESCALATION (inertia)
-    8. intent=book → BOOKING
-    9. intent=greet (not in BOOKING) → GREETING
-    10. Default → GENERAL
+    3. intent=escalate → ESCALATION
+    4. current_mode=BOOKING and intent ask_info → GENERAL with preserved draft
+    5. current_mode=BOOKING and intent not cancel/reject/ask_info → stay BOOKING
+    5.5 current_mode=ESCALATION and intent not book → stay ESCALATION (inertia)
+    6. intent=book → BOOKING
+    7. intent=greet and is_first_interaction → GREETING
+    8. Default → GENERAL
     """
     from agent.state.schemas import transition_mode
 
@@ -581,34 +579,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     # Rule 3: REMOVED — greeting subflow no longer has pending steps
     # (name confirmation was removed in customer-name-handling refactor)
 
-    # Rule 4: Unknown customers only go through GREETING on their FIRST
-    # interaction. The is_first_interaction guard prevents re-entry loops
-    # when customer_name is None on subsequent turns.
-    # Booking inertia (T-2.3): also skip if booking_step is active — prevents
-    # bouncing back to GREETING mid-booking when customer_name is None.
+    # Rule 4: REMOVED — customer_name gate removed (scope-realignment refactor).
+    # Booking intent now routes directly to BOOKING regardless of customer_name.
+    # Compute _has_active_booking for Rule 6 (BOOKING inertia) below.
     _has_active_booking = bool(
         _mode_context.get("service_id")
         or _mode_context.get("offered_slots")
         or _mode_context.get("selected_slot")
     )
-    if (
-        not customer_name
-        and is_first_interaction
-        and current_mode != "BOOKING"
-        and not _has_active_booking
-        and intent_result.intent in ("greet", "ambiguous")
-    ):
-        greeting_context = {
-            **(state.get("mode_context") or {}),
-            **intent_data,
-            "is_first_interaction": is_first_interaction,
-            "turn_count": turn_count,
-        }
-        return {
-            "current_mode": "GREETING",
-            "mode_context": greeting_context,
-            "last_node": "router",
-        }
 
     # Rule 5: Escalation intent
     if intent_result.intent == "escalate":
@@ -762,14 +740,12 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
-    # Rule 9: Greet intent → GREETING (only if name unknown AND first interaction)
-    # BUG-NEW-3 FIX: is_first_interaction guard prevents anonymous returning users
-    # from getting stuck in GREETING→GENERAL loop on subsequent turns.
+    # Rule 9: Greet intent → GREETING (first interaction only)
+    # is_first_interaction guard prevents re-entry loops on subsequent turns.
     if (
         intent_result.intent == "greet"
         and current_mode not in ("BOOKING",)
-        and not customer_name
-        and is_first_interaction  # Only re-enter GREETING on genuine first turns
+        and is_first_interaction  # Only enter GREETING on genuine first turns
     ):
         return {
             "current_mode": "GREETING",

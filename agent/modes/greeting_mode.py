@@ -1,26 +1,24 @@
 """
-Greeting Mode — v6.0 Mode-Based Architecture (customer-name-handling refactor).
+Greeting Mode — v6.0 Mode-Based Architecture (scope-realignment refactor).
 
-Handles lightweight first contact for low-intent greetings. This mode NEVER
-mentions the customer's name in responses. Customer creation uses
-`pending_whatsapp_name` (from Chatwoot sender.name) as the PRIMARY source,
-with a regex fallback that extracts the name from message text when WhatsApp
-metadata is unavailable.
+Pure welcome + menu presenter. This mode NEVER asks for the customer's name,
+performs no customer lookup or creation, and never uses any name in responses.
 
 Flow:
-1. If customer already exists (returning): warm name-free greeting → target mode
-2. If new customer: create customer silently with sender_name → warm greeting → target mode
+1. Extract any booking-content hints from the greeting message.
+2. Determine target mode: BOOKING if booking content detected, else GENERAL.
+3. Render a static (or layered) welcome message.
+4. Transition to the target mode.
 
 Target mode after greeting is determined by `last_intent` in mode_context:
 - "book" → BOOKING (user greeted AND wants to book)
 - "ask_info" → GENERAL (user greeted AND has a question)
 - anything else → GENERAL (default)
 
-NO name in any response.
+NO name in any response. NO DB writes. NO customer creation.
 """
 
 import logging
-import re
 import unicodedata
 
 from agent.modes.base import BaseModeNode
@@ -81,59 +79,6 @@ _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset(
         "peluqueria",
     }
 )
-
-
-# ── Name extraction fallback (when pending_whatsapp_name is unavailable) ───────
-# Patterns match common Spanish self-introduction phrases.
-# WhatsApp metadata (pending_whatsapp_name) ALWAYS takes priority over these.
-NAME_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(
-        r"(?:me llamo|mi nombre es)\s+" r"([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+)?)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:^|\.\s+)[Ss]oy\s+" r"([A-ZÁÉÍÓÚÑa-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]+)?)",
-    ),
-]
-
-_FALSE_POSITIVE_NAMES: frozenset[str] = frozenset(
-    {
-        "nueva",
-        "nuevo",
-        "cliente",
-        "clienta",
-        "de",
-        "la",
-        "el",
-        "un",
-        "una",
-    }
-)
-
-
-def _extract_name_from_message(text: str | None) -> str | None:
-    """
-    Try to extract a customer name from the user's message text.
-
-    Matches patterns like "me llamo María", "soy Juan", "mi nombre es Ana López".
-    Returns the name in title case, or None if no valid name is found.
-
-    This is a FALLBACK — only called when pending_whatsapp_name is unavailable.
-    """
-    if not text:
-        return None
-
-    for pattern in NAME_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            candidate = match.group(1).strip()
-            # Filter false positives: single-word matches that are common words
-            tokens = candidate.lower().split()
-            if all(t in _FALSE_POSITIVE_NAMES for t in tokens):
-                continue
-            return candidate.title()
-
-    return None
 
 
 def _normalize_text(text: str | None) -> str:
@@ -231,9 +176,12 @@ class GreetingMode(BaseModeNode):
     Mode node for first-contact greetings.
 
     Responsibilities:
-    - Send a warm welcome on genuine greeting turns (WITHOUT using customer name)
-    - Create customer record silently using sender_name from Chatwoot
-    - Transition to the appropriate mode based on detected intent
+    - Send a warm welcome on genuine greeting turns (name-free)
+    - Detect booking-intent content in the greeting and carry it over
+    - Transition to the appropriate mode based on detected intent (BOOKING or GENERAL)
+
+    NO customer creation. NO name collection. NO DB writes.
+    Customer creation happens atomically inside book() when the user confirms.
     """
 
     @property
@@ -256,13 +204,13 @@ class GreetingMode(BaseModeNode):
 
         Two branches, both name-free:
         1. Returning customer (customer_name exists) → warm greeting → target mode
-        2. New customer → create customer silently (soft-fail) → warm greeting → target mode
+        2. New customer → warm greeting → target mode (NO DB writes)
 
-        ADR-3: Customer creation failure is a soft-fail (continues in GREETING, no escalation).
         ADR-4: Booking content in greeting message is detected and carried over to the
                transition mode_context via _build_booking_handoff_context().
 
         NEVER mentions the customer's name in any response.
+        NEVER creates a customer record — that happens inside book().
 
         Args:
             state: Current conversation state
@@ -330,23 +278,10 @@ class GreetingMode(BaseModeNode):
             return updates
 
         # ── Branch 2: New customer ───────────────────────────────────────
-        # Customer get-or-create is now handled inside the book() tool.
-        # GREETING only collects the name hint for state — no DB writes here.
-        pending_name = state.get("pending_whatsapp_name")
-
-        # ── Fallback: extract name from message text when WhatsApp metadata is absent
-        if not pending_name:
-            extracted = _extract_name_from_message(last_user_message)
-            if extracted:
-                self.logger.info(
-                    "GreetingMode: extracted name from message text (fallback): %s",
-                    extracted,
-                )
-                pending_name = extracted
-
+        # Customer creation happens inside book() tool. GREETING does nothing
+        # to the DB — just render a welcome and transition to target mode.
         self.logger.info(
-            "GreetingMode: new customer | pending_name=%s | target_mode=%s",
-            pending_name,
+            "GreetingMode: new customer | target_mode=%s",
             target_mode,
         )
 
@@ -371,47 +306,11 @@ class GreetingMode(BaseModeNode):
             **add_message(state, "assistant", final_response),
             "user_message": None,
         }
-        if pending_name:
-            updates["customer_name"] = pending_name
         if disclosure_sent:
             updates["ai_disclosure_sent"] = True
         return updates
 
     # ── Private helpers ───────────────────────────────────────────────────────
-
-    def _contains_customer_name_token(
-        self,
-        response_text: str,
-        customer_name: str,
-    ) -> bool:
-        """
-        Returns True if any meaningful token from customer_name appears as a
-        word-boundary match (case+accent insensitive) in response_text.
-
-        Tokens shorter than 3 chars (prepositions, articles) are skipped
-        to avoid false positives on common words.
-
-        Accent normalization: NFD decomposition drops combining marks so
-        "María" matches "Maria" and vice-versa.
-        """
-
-        def _nfd_lower(text: str) -> str:
-            return "".join(
-                c
-                for c in unicodedata.normalize("NFD", text.lower())
-                if unicodedata.category(c) != "Mn"
-            )
-
-        normalized_response = _nfd_lower(response_text)
-        tokens = re.split(r"\W+", customer_name)
-        for token in tokens:
-            if len(token) < 3:
-                continue
-            normalized_token = _nfd_lower(token)
-            pattern = rf"\b{re.escape(normalized_token)}\b"
-            if re.search(pattern, normalized_response):
-                return True
-        return False
 
     async def _render_layered_response(
         self,
@@ -433,28 +332,4 @@ class GreetingMode(BaseModeNode):
             include_history=include_history,
         )
         response_text = self._extract_response_text(await self._call_llm(messages))
-
-        # Validate: response must NOT contain the customer's name (token-based)
-        customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
-        if response_text and customer_name:
-            if self._contains_customer_name_token(response_text, customer_name):
-                self.logger.warning(
-                    "customer_name_leak_detected",
-                    extra={
-                        "token": customer_name,
-                        "mode": "GREETING",
-                        "response_preview": response_text[:80],
-                    },
-                )
-                return "Perfecto, ¿me puedes confirmar tu nombre completo?"
-
-        if response_text:
-            # Also reject responses that ask for name
-            lower = response_text.lower()
-            if any(token in lower for token in ("nombre", "llamo", "llamas", "llamarte")):
-                self.logger.warning("GreetingMode: LLM asked for name in response, using fallback")
-                return fallback_response
-            return response_text
-
-        return fallback_response
-
+        return response_text if response_text else fallback_response

@@ -73,6 +73,7 @@ class BookingContext(TypedDict, total=False):
 
     # Extra
     notes: str | None
+    notes_asked: bool  # True after the notes question has been presented to the user
 
 
 def replace_booking_context(
@@ -307,13 +308,11 @@ class ConversationState(TypedDict, total=False):
         created_at: Conversation start (Europe/Madrid)
         updated_at: Last modification (Europe/Madrid)
 
-        # First Interaction Detection (6 fields) - v3.3 customer greeting, v6.1 name confirmation, v6.2 deferred customer creation
+        # First Interaction Detection (4 fields) - v3.3 customer greeting, v6.2 deferred customer creation
         is_first_interaction: True if customer's first message ever (messages empty)
-        customer_needs_name: True if WhatsApp name contains numbers/emojis
         customer_first_name: Current first_name from database Customer record
-        name_confirmation_pending: v6.1 True while waiting for name confirmation
-        pending_intent: v6.1 Stores user message if they express intent before confirming name
-        pending_whatsapp_name: v6.2 WhatsApp name stored for customer creation after name confirmation
+        pending_whatsapp_name: v6.2 WhatsApp display name for pass-through (not used for creation)
+        ai_disclosure_sent: True after the first-turn AI disclosure has been delivered
 
         # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
         cancellation_in_progress: True when in cancellation flow
@@ -379,19 +378,14 @@ class ConversationState(TypedDict, total=False):
     updated_at: str
 
     # ============================================================================
-    # First Interaction Detection (7 fields) - v3.3 customer greeting, v6.1 name confirmation, v6.2 deferred customer creation
+    # First Interaction Detection (4 fields) - v3.3 customer greeting, v6.2 deferred customer creation
     # ============================================================================
     is_first_interaction: bool  # True if this is the customer's first message ever
     ai_disclosure_sent: bool  # True after the first-turn AI disclosure has been delivered
-    customer_needs_name: bool  # True if WhatsApp name is not readable (numbers/emojis)
     customer_first_name: str | None  # Current customer first_name from database
-    name_confirmation_pending: bool  # v6.1: True while waiting for user to confirm/provide name
-    pending_intent: (
-        str | None
-    )  # v6.1: Stores user message if they express intent before confirming name
     pending_whatsapp_name: (
         str | None
-    )  # v6.2: WhatsApp name stored for customer creation after name confirmation
+    )  # v6.2: WhatsApp display name for pass-through to booking flow
 
     # ============================================================================
     # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
@@ -518,10 +512,7 @@ def create_initial_state(
         # First interaction
         "is_first_interaction": True,
         "ai_disclosure_sent": False,
-        "customer_needs_name": False,
         "customer_first_name": customer_name,
-        "name_confirmation_pending": False,
-        "pending_intent": None,
         "pending_whatsapp_name": None,
         # Cancellation flow
         "cancellation_in_progress": False,

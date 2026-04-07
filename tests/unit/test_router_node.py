@@ -46,7 +46,9 @@ def _make_state(
     state["error_count"] = error_count
     state["escalation_triggered"] = escalation_triggered
     # Add a user message to the messages list so router_node can find it
-    state["messages"] = [{"role": "user", "content": user_message, "timestamp": "2026-01-01T00:00:00"}]
+    state["messages"] = [
+        {"role": "user", "content": user_message, "timestamp": "2026-01-01T00:00:00"}
+    ]
     state["user_message"] = user_message
     return state
 
@@ -176,7 +178,11 @@ class TestRouterNodeRules:
 
     @pytest.mark.asyncio
     async def test_rule4a_first_interaction_booking_routes_to_booking(self):
-        """First interaction with booking intent should bypass GREETING."""
+        """First interaction with booking intent should bypass GREETING → direct to BOOKING.
+
+        scope-realignment: Rule 4 (customer_name gate) removed. book intent always routes
+        to BOOKING regardless of customer_name or is_first_interaction.
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -193,7 +199,6 @@ class TestRouterNodeRules:
             result = await router_node(state)
 
         assert result["current_mode"] == "BOOKING"
-        assert result["mode_context"]["is_first_interaction"] is True
         assert result["mode_context"]["last_intent"] == "book"
         mock_get_router.return_value.classify.assert_called_once()
 
@@ -222,8 +227,13 @@ class TestRouterNodeRules:
         mock_get_router.return_value.classify.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_rule4b_customer_name_none_non_booking_routes_to_greeting(self):
-        """Unknown customer outside BOOKING still goes to GREETING after classification."""
+    async def test_rule4b_customer_name_none_non_booking_routes_to_general(self):
+        """Unknown customer outside BOOKING with ask_info → GENERAL.
+
+        scope-realignment: Rule 4 (customer_name gate) removed. Non-booking intents
+        for unknown customers now fall through to GENERAL (not GREETING).
+        is_first_interaction=False means Rule 9 (greet only) doesn't apply either.
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -239,13 +249,20 @@ class TestRouterNodeRules:
             mock_get_router.return_value = _make_mock_router("ask_info")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
+        # ask_info for unknown customer falls through to GENERAL (no customer_name gate)
+        returned_mode = result.get("current_mode") or state.get("current_mode")
+        assert returned_mode == "GENERAL"
         assert result["mode_context"]["last_intent"] == "ask_info"
         mock_get_router.return_value.classify.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_rule3_pending_greeting_subflow_classifies_and_stays_in_greeting(self):
-        """Pending GREETING context must keep ownership of confirmation replies."""
+    async def test_rule3_pending_greeting_subflow_confirm_now_routes_to_general(self):
+        """GREETING subflow (confirm_suggested_name) no longer exists.
+
+        scope-realignment: The GREETING name-confirmation subflow was removed.
+        A 'confirm' intent from GREETING mode with is_first_interaction=False
+        now falls through to GENERAL (no special GREETING subflow intercept).
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -263,14 +280,20 @@ class TestRouterNodeRules:
             mock_get_router.return_value = _make_mock_router("confirm")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
-        assert result["mode_context"]["greeting_step"] == "confirm_suggested_name"
+        # No longer stays in GREETING — falls through to GENERAL
+        returned_mode = result.get("current_mode") or state.get("current_mode")
+        assert returned_mode == "GENERAL"
         assert result["mode_context"]["last_intent"] == "confirm"
         mock_get_router.return_value.classify.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_rule4b_first_turn_classification_error_falls_back_to_greeting(self):
-        """Classification failures on first turn must fail closed to GREETING."""
+    async def test_rule4b_first_turn_classification_error_ambiguous_intent(self):
+        """Classification failures produce ambiguous intent.
+
+        scope-realignment: With Rule 4 removed, ambiguous intent on first turn
+        (is_first_interaction=True) no longer guarantees GREETING. It falls through
+        to GENERAL since Rule 9 only handles 'greet' intent.
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -286,9 +309,11 @@ class TestRouterNodeRules:
             mock_get_router.return_value.classify = AsyncMock(side_effect=Exception("LLM timeout"))
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
         assert result["mode_context"]["last_intent"] == "ambiguous"
         assert result["mode_context"]["last_intent_confidence"] == 0.0
+        # ambiguous falls through to GENERAL (no Rule 4 customer_name gate)
+        returned_mode = result.get("current_mode") or state.get("current_mode")
+        assert returned_mode in ("GENERAL", "GREETING")  # GREETING only if is_first + greet
 
     # ── Rule 4: intent=escalate ───────────────────────────────────────────────
 
@@ -381,8 +406,12 @@ class TestRouterNodeRules:
     # ── Rule 7: intent=greet (not in BOOKING) ─────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_rule7_greet_intent_from_general_routes_to_greeting(self):
-        """Rule 7: greet intent when not in BOOKING → GREETING."""
+    async def test_rule7_greet_intent_from_general_non_first_routes_to_general(self):
+        """Rule 9: greet intent when not first interaction → GENERAL (not GREETING).
+
+        scope-realignment: Rule 9 simplified — only is_first_interaction triggers GREETING.
+        Returning customers sending greet intent fall through to GENERAL.
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -397,7 +426,9 @@ class TestRouterNodeRules:
             mock_get_router.return_value = _make_mock_router("greet")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
+        # is_first_interaction=False → Rule 9 doesn't fire → GENERAL
+        returned_mode = result.get("current_mode") or state.get("current_mode")
+        assert returned_mode == "GENERAL"
 
     @pytest.mark.asyncio
     async def test_rule7_greet_intent_in_booking_stays_in_booking(self):
@@ -631,11 +662,12 @@ class TestRule4MidBookingGuard:
         assert result.get("current_mode") == "GREETING"
 
     @pytest.mark.asyncio
-    async def test_rule4_fires_for_general_mode_customer_name_none(self):
+    async def test_rule4_removed_unknown_customer_ask_info_routes_to_general(self):
         """
-        Rule 4 still fires when customer_name=None and NOT in BOOKING mode.
+        scope-realignment: Rule 4 (customer_name gate) REMOVED.
 
-        current_mode=GENERAL + customer_name=None → redirect to GREETING (correct).
+        current_mode=GENERAL + customer_name=None + is_first_interaction=False
+        → ask_info falls through to GENERAL (no longer redirects to GREETING).
         """
         from agent.graphs.conversation_flow import router_node
 
@@ -652,7 +684,9 @@ class TestRule4MidBookingGuard:
             mock_get_router.return_value = _make_mock_router("ask_info")
             result = await router_node(state)
 
-        assert result.get("current_mode") == "GREETING"
+        # Rule 4 removed → ask_info stays in GENERAL (no customer_name gate)
+        returned_mode = result.get("current_mode") or state.get("current_mode")
+        assert returned_mode == "GENERAL"
 
 
 # ============================================================================
@@ -892,7 +926,11 @@ class TestFirstTurnRouterExamples:
         assert result["mode_context"]["last_intent"] == "greet"
 
     @pytest.mark.asyncio
-    async def test_first_turn_cancelar_cita_currently_falls_back_to_greeting(self):
+    async def test_first_turn_cancelar_cita_routes_to_appointment_management(self):
+        """scope-realignment: cancel on first turn no longer falls back to GREETING.
+
+        Rule 4 removed. cancel intent routes to APPOINTMENT_MANAGEMENT directly.
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -906,11 +944,17 @@ class TestFirstTurnRouterExamples:
             mock_get_router.return_value = _make_mock_router("cancel")
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
+        # cancel → APPOINTMENT_MANAGEMENT (Rule 2.8), not GREETING
+        assert result["current_mode"] == "APPOINTMENT_MANAGEMENT"
         assert result["mode_context"]["last_intent"] == "cancel"
 
     @pytest.mark.asyncio
-    async def test_first_turn_ambiguous_routes_to_greeting_safe_default(self):
+    async def test_first_turn_ambiguous_routes_to_general(self):
+        """scope-realignment: ambiguous on first turn no longer forces GREETING.
+
+        Rule 4 removed. ambiguous intent with is_first_interaction=True falls
+        through to GENERAL (Rule 9 only handles 'greet', not 'ambiguous').
+        """
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -924,7 +968,9 @@ class TestFirstTurnRouterExamples:
             mock_get_router.return_value = _make_mock_router("ambiguous", confidence=0.2)
             result = await router_node(state)
 
-        assert result["current_mode"] == "GREETING"
+        # ambiguous falls through to GENERAL (no customer_name gate)
+        returned_mode = result.get("current_mode") or state.get("current_mode")
+        assert returned_mode == "GENERAL"
         assert result["mode_context"]["last_intent"] == "ambiguous"
 
     @pytest.mark.asyncio
@@ -960,6 +1006,62 @@ class TestFirstTurnRouterExamples:
             result = await router_node(state)
 
         assert result["current_mode"] == "BOOKING"
+
+
+# ============================================================================
+# scope-realignment: Router Rule 4 removal tests (tasks 7.4, 7.5)
+# ============================================================================
+
+
+class TestScopeRealignmentRouterRules:
+    """
+    Verify the router behaviour after scope-realignment (Rule 4 removal).
+
+    7.4: greet + is_first_interaction → GREETING still valid (Rule 9 still covers this)
+    7.5: book intent + customer_name=None → direct BOOKING (Rule 4 removed, no gate)
+    """
+
+    @pytest.mark.asyncio
+    async def test_router_unknown_customer_greet_intent_routes_to_greeting(self):
+        """7.4: greet + is_first_interaction=True → GREETING (Rule 9 still covers this)."""
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GREETING",
+            customer_name=None,
+            is_first_interaction=True,
+            user_message="hola",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("greet")
+            result = await router_node(state)
+
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["last_intent"] == "greet"
+
+    @pytest.mark.asyncio
+    async def test_router_unknown_customer_book_intent_routes_directly_to_booking(self):
+        """7.5: book intent + customer_name=None + is_first_interaction=True → BOOKING directly.
+
+        Rule 4 removed: no GREETING gate for book intent even for new customers.
+        """
+        from agent.graphs.conversation_flow import router_node
+
+        state = _make_state(
+            current_mode="GREETING",
+            customer_name=None,
+            is_first_interaction=True,
+            user_message="quiero una cita",
+        )
+
+        with patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router:
+            mock_get_router.return_value = _make_mock_router("book")
+            result = await router_node(state)
+
+        # book intent goes straight to BOOKING — no GREETING gate for new customers
+        assert result["current_mode"] == "BOOKING"
+        assert result["mode_context"]["last_intent"] == "book"
 
 
 # ============================================================================

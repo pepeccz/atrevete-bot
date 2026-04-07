@@ -93,7 +93,7 @@ class BookingModeNode(BaseModeNode):
 
         Idempotent: re-evaluates from the current state of ctx fields.
         Steps progress from service_selection → stylist_selection → datetime_selection
-        → name_collection → confirmation.
+        → name_collection → notes_collection → confirmation.
 
         Args:
             ctx: BookingContext dict (or any dict with the same fields).
@@ -109,6 +109,8 @@ class BookingModeNode(BaseModeNode):
             return "datetime_selection"
         if not ctx.get("customer_name"):
             return "name_collection"
+        if not ctx.get("notes_asked"):
+            return "notes_collection"
         return "confirmation"
 
     @staticmethod
@@ -338,6 +340,7 @@ class BookingModeNode(BaseModeNode):
                     and last_stylist
                     and selected_slot
                     and customer_name
+                    and mode_context.get("notes_asked")
                     and not mode_context.get("confirmation_summary_sent")
                 ):
                     summary = self._build_confirmation_summary(mode_context)
@@ -574,6 +577,7 @@ class BookingModeNode(BaseModeNode):
             "stylist_selection": "Preguntar preferencia de estilista (lista numerada)",
             "datetime_selection": "Buscar disponibilidad con check_availability",
             "name_collection": "Pedir nombre del cliente",
+            "notes_collection": "Preguntar si hay algo que tener en cuenta para la cita",
             "confirmation": "Mostrar resumen y pedir confirmación",
         }
         step = mode_context.get("booking_step", "service_selection")
@@ -717,6 +721,22 @@ class BookingModeNode(BaseModeNode):
             mode_context.pop("pending_stylist_options", None)
             logger.info("_resolve_pending_selection: no-preference detected from %r", user_message)
             return  # No further resolution needed for stylists
+
+        # Notes skip logic: detect negative responses at the notes_collection step
+        # "no", "nada", "ninguna", "sin notas" → mark step done, notes stays None
+        _NOTES_SKIP_PATTERNS = re.compile(
+            r"^(?:no|nada|ninguna|sin\s+notas?|no\s+hay\s+nada|no\s+tengo\s+nada)$",
+            re.IGNORECASE,
+        )
+        if mode_context.get("booking_step") == "notes_collection" and _NOTES_SKIP_PATTERNS.match(
+            user_message.strip()
+        ):
+            mode_context["notes_asked"] = True
+            mode_context["notes"] = None
+            logger.info(
+                "_resolve_pending_selection: notes skipped (negative response: %r)", user_message
+            )
+            return
 
         # Service resolution
         pending_services: list[str] | None = mode_context.get("pending_service_options")
