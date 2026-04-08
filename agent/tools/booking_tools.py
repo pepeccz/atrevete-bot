@@ -32,8 +32,9 @@ logger = logging.getLogger(__name__)
 class BookSchema(BaseModel):
     """Schema for book tool parameters.
 
-    NOTE: stylist_id and start_time are NOT declared here — they are injected
-    at runtime by booking_mode._pre_tool_call after resolving slot_index.
+    stylist_id and start_time are injected by booking_mode._pre_tool_call
+    after resolving slot_index. They must be in the schema so LangChain
+    passes them through to the function (Pydantic strips unknown fields).
     """
 
     customer_phone: str = Field(description="Teléfono del cliente en formato E.164")
@@ -43,12 +44,16 @@ class BookSchema(BaseModel):
     )
     services: list[str] = Field(description="Lista de nombres exactos de servicios del catálogo")
     slot_index: int = Field(
-        description="Índice del slot elegido (1-based) del resultado de check_availability"
+        default=0,
+        description="Índice del slot elegido (1-based) del resultado de check_availability",
     )
     notes: str | None = Field(default=None, description="Notas de la cita (alergias, preferencias)")
     conversation_id: str | None = Field(
         default=None, description="ID de conversación de Chatwoot"
     )
+    # Injected by _pre_tool_call — not for LLM use
+    stylist_id: str | None = Field(default=None, description="(interno) ID de estilista")
+    start_time: str | None = Field(default=None, description="(interno) Hora de inicio ISO")
 
 
 # ============================================================================

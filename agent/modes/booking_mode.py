@@ -329,15 +329,6 @@ class BookingModeNode(BaseModeNode):
             # Step A.1b: fallback — inject from selected_slot if slot_index was absent
             if not tool_args.get("stylist_id") or not tool_args.get("start_time"):
                 selected = mode_context.get("selected_slot")
-                logger.info(
-                    "_pre_tool_call[book] A.1b: stylist_id=%s, start_time=%s, "
-                    "selected_slot=%s, slot_index=%s, offered_slots_len=%d",
-                    tool_args.get("stylist_id"),
-                    tool_args.get("start_time"),
-                    bool(selected),
-                    slot_index,
-                    len(offered_slots),
-                )
                 if selected:
                     tool_args.setdefault("stylist_id", selected.get("stylist_id"))
                     tool_args.setdefault(
