@@ -375,48 +375,42 @@ async def check_availability(
                 "error_message": validation["error_message"],
             }
 
-        # ── 6. Check holiday on requested date ─────────────────────────────────
+        # ── 6-7. Check holiday / closed day → skip to auto-search ─────────────
+        date_is_closed = False
         holiday_name = await is_holiday(requested_date)
         if holiday_name:
-            logger.info(f"Holiday detected on {requested_date.date()}: {holiday_name}")
-            return {
-                **base_response,
-                "holiday_detected": True,
-                "error_code": "DATE_CLOSED",
-                "error_message": (
-                    f"El salón está cerrado el {requested_date.date().isoformat()} "
-                    f"por {holiday_name}."
-                ),
-            }
+            logger.info(
+                f"Holiday on {requested_date.date()}: {holiday_name} — skipping to auto-search"
+            )
+            base_response["holiday_detected"] = True
+            date_is_closed = True
+        elif await is_date_closed(requested_date):
+            logger.info(
+                f"Business closed on {requested_date.date()} — skipping to auto-search"
+            )
+            date_is_closed = True
 
-        # ── 7. Check if date is a closed business day ──────────────────────────
-        if await is_date_closed(requested_date):
-            logger.info(f"Business closed on {requested_date.date()}")
-            day_label = _DAY_NAMES_ES[requested_date.weekday()]
-            return {
-                **base_response,
-                "error_code": "DATE_CLOSED",
-                "error_message": (f"El salón no abre los {day_label}s. Elige otro día."),
-            }
-
-        # ── 8. Query availability ──────────────────────────────────────────────
+        # ── 8. Query availability (skip if date is closed) ────────────────────
         def _build_day_label(dt: datetime) -> str:
             day_name = _DAY_NAMES_ES[dt.weekday()]
             return f"{day_name} {dt.day} de {_MONTH_NAMES_ES[dt.month - 1]}"
 
-        all_slots = await _collect_slots_for_date(
-            requested_date, stylists, duration_minutes, time_range
-        )
+        all_slots: list[dict[str, Any]] = []
+        if not date_is_closed:
+            all_slots = await _collect_slots_for_date(
+                requested_date, stylists, duration_minutes, time_range
+            )
 
-        # ── 9. AUTO-SEARCH: next 3 open days if empty ──────────────────────────
+        # ── 9. AUTO-SEARCH: next open days if empty or date was closed ─────────
         config = await get_booking_config()
         alternative_dates = False
         if not all_slots:
+            reason = "date closed" if date_is_closed else "no slots"
             logger.info(
-                f"No slots on {requested_date.date()}, auto-searching next "
+                f"{reason} on {requested_date.date()}, auto-searching next "
                 f"{config.auto_search_extra_days} open business days"
             )
-            search_from = requested_date + timedelta(days=1)
+            search_from = requested_date if date_is_closed else requested_date + timedelta(days=1)
             days_found = 0
 
             for _ in range(30):  # safety upper-bound
