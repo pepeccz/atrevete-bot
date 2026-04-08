@@ -170,7 +170,6 @@ async def test_pre_tool_call_other_tools_unaffected(booking_node: BookingModeNod
     booking_node._mode_context = {
         "last_services": ["Cortar"],
         # No last_stylist, no no_preference_stylist
-        "confirmation_shown": True,
     }
     # book() has its own gates (confirmation) — here we only check it is NOT
     # rejected for STYLIST_NOT_RESOLVED

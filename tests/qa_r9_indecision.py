@@ -111,7 +111,6 @@ SCRIPT = [
     {
         "turn": 9,
         "message": "Sí, confirmo",
-        "condition": "confirmation_shown",
         "milestone": "confirmation_done",
     },
 ]

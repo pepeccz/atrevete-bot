@@ -23,7 +23,6 @@ from zoneinfo import ZoneInfo
 from agent.config import get_booking_config, ToolChoicePolicy
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
-from agent.routing.intent_router import IntentResult
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
 
@@ -178,21 +177,7 @@ class BookingModeNode(BaseModeNode):
         # We always start from the persisted checkpoint value and return a full replace.
         booking_context: dict[str, Any] = dict(state.get("booking_context") or {})
 
-        # 1. Confirmation gate: if user just confirmed, unlock book()
-        _is_confirm = (
-            isinstance(intent, IntentResult) and intent.is_confirmation()
-        ) or _is_spanish_affirmative(get_last_user_message(state))
-        if (
-            not booking_context.get("confirmation_shown")
-            and booking_context.get("confirmation_summary_sent")
-            and _is_confirm
-            and booking_context.get("last_services")
-            and booking_context.get("last_stylist")
-            and booking_context.get("offered_slots")
-        ):
-            booking_context["confirmation_shown"] = True
-
-        # 1b. Resolve pending selection: map numbered/text user reply → last_services/last_stylist/selected_slot
+        # 1. Resolve pending selection: map numbered/text user reply → last_services/last_stylist/selected_slot
         self._resolve_pending_selection(state, booking_context)
 
         # 1c. Compute booking step (idempotent — re-evaluated each turn after resolution)
@@ -277,16 +262,14 @@ class BookingModeNode(BaseModeNode):
         """Intercept tool calls before execution.
 
         2 categories:
-        (a) book(): confirmation gate + slot_index→UUID injection + services injection
-        (b) check_availability: clear stale offered_slots from booking_context
+        (a) book(): slot_index→UUID injection + services injection
+        (b) check_availability: stylist guard
         (c) Everything else: pass through unchanged
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
-        # ── check_availability: clear stale slot state + stylist guard ───────────
+        # ── check_availability: stylist guard ───────────
         if tool_name == "check_availability":
-            mode_context["offered_slots"] = []
-            mode_context.pop("selected_slot", None)
             # Accept stylist_name from tool_args — LLM resolved it from conversation.
             # This prevents STYLIST_NOT_RESOLVED deadlock when the LLM provides the
             # stylist directly in args before last_stylist is set in mode_context.
@@ -355,49 +338,6 @@ class BookingModeNode(BaseModeNode):
                         full_name,
                     )
 
-            # Step B: confirmation gate
-            if not mode_context.get("confirmation_shown"):
-                selected_slot = mode_context.get("selected_slot")
-                last_services = mode_context.get("last_services")
-                last_stylist = mode_context.get("last_stylist")
-                customer_name = mode_context.get("customer_name")
-
-                if (
-                    last_services
-                    and last_stylist
-                    and selected_slot
-                    and customer_name
-                    and mode_context.get("notes_asked")
-                    and not mode_context.get("confirmation_summary_sent")
-                ):
-                    summary = self._build_confirmation_summary(mode_context)
-                    mode_context["confirmation_summary_sent"] = True
-                    return ToolCallRejection(
-                        name="book",
-                        error_code="CONFIRMATION_NOT_SHOWN",
-                        error_message=(
-                            "Mostrá este resumen al usuario y esperá su confirmación:\n\n"
-                            f"{summary}\n\nNO llames book() hasta recibir confirmación."
-                        ),
-                    )
-                elif mode_context.get("confirmation_summary_sent"):
-                    return ToolCallRejection(
-                        name="book",
-                        error_code="CONFIRMATION_NOT_SHOWN",
-                        error_message="Esperá la confirmación del usuario antes de llamar book().",
-                    )
-                else:
-                    missing = self._build_missing_summary(mode_context)
-                    return ToolCallRejection(
-                        name="book",
-                        error_code="CONFIRMATION_NOT_SHOWN",
-                        error_message=(
-                            "Todavía falta info:\n"
-                            f"{missing}\n\n"
-                            "Recogé los datos que faltan antes de confirmar."
-                        ),
-                    )
-
             # Step C: inject services from mode_context if LLM didn't provide them
             if not tool_args.get("services") and mode_context.get("last_services"):
                 tool_args["services"] = mode_context["last_services"]
@@ -434,9 +374,12 @@ class BookingModeNode(BaseModeNode):
             # Store offered slots from availability result
             slots = result_dict.get("available_slots") or result_dict.get("slots") or []
             if slots:
+                # Clear stale slot state ONLY when new slots arrive successfully.
+                # Previously in _pre_tool_call — eager wipe caused SLOT_NOT_RESOLVED.
+                mode_context.pop("selected_slot", None)
                 mode_context["offered_slots"] = slots
                 logger.info(
-                    "_post_tool_result[check_availability]: stored %d offered_slots",
+                    "_post_tool_result[check_availability]: cleared stale state, stored %d offered_slots",
                     len(slots),
                 )
             # Capture service names from args (list)
@@ -476,31 +419,7 @@ class BookingModeNode(BaseModeNode):
         if mode_context.get("_booking_completed") and mode_context.get("selected_slot"):
             return self._render_booking_confirmation(mode_context)
 
-        # Auto-detect confirmation summary: when all required data is present
-        # and the LLM generated a response, the response IS the summary.
-        if (
-            not mode_context.get("confirmation_summary_sent")
-            and not mode_context.get("_booking_completed")
-            and mode_context.get("last_services")
-            and mode_context.get("last_stylist")
-            and mode_context.get("selected_slot")
-            and mode_context.get("customer_name")
-            and response_text.strip()
-        ):
-            mode_context["confirmation_summary_sent"] = True
-            logger.info("_build_response: auto-set confirmation_summary_sent (all data complete)")
-
         return self._sanitize_response(response_text)
-
-    def _build_confirmation_summary(self, mode_context: dict) -> str:
-        """Build a short confirmation summary for the user to review before booking."""
-        slot = mode_context.get("selected_slot") or {}
-        day = slot.get("day_label", "?")
-        time_ = slot.get("time", "?")
-        stylist = mode_context.get("last_stylist") or "?"
-        last_services = mode_context.get("last_services") or ["?"]
-        service_label = " + ".join(last_services)
-        return f"Te agendo el *{day} a las {time_}* con *{stylist}* para *{service_label}*. ¿Lo confirmo?"
 
     def _render_booking_confirmation(self, mode_context: dict) -> str:
         """Code-render the post-booking confirmation block (F-8 path)."""
@@ -643,9 +562,6 @@ class BookingModeNode(BaseModeNode):
                 for i, s in enumerate(offered_slots)
             )
             parts.append(f"<offered_slots>\n{slot_lines}\n</offered_slots>")
-
-        if mode_context.get("confirmation_shown"):
-            parts.append("✅ CONFIRMACIÓN RECIBIDA — puedes llamar book() ahora.")
 
         parts.append("</booking_context>")
 

@@ -161,19 +161,12 @@ def test_no_user_message_reads_in_modes():
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_call_name_extraction_triggers_confirmation_summary(booking_node):
-    """Spec scenario 5: name extraction + complete data → ToolCallRejection with summary."""
-    from agent.modes.base import ToolCallRejection
-
+async def test_pre_tool_call_name_extraction_and_slot_injection(booking_node):
+    """Spec scenario 5: name extraction + slot_index resolution → tool_args updated, no gate."""
     booking_node._mode_context = {
         "last_services": ["Cortar"],
         "last_stylist": "Pilar",
-        "selected_slot": {
-            "day_label": "Viernes 10",
-            "time": "10:20",
-            "stylist_id": "abc-123",
-            "start_time": "2026-04-10T10:20:00",
-        },
+        "selected_slot": None,
         "offered_slots": [
             {
                 "day_label": "Viernes 10",
@@ -197,7 +190,78 @@ async def test_pre_tool_call_name_extraction_triggers_confirmation_summary(booki
 
     # Name should be extracted
     assert booking_node._mode_context["customer_name"] == "María García"
-    # Gate should reject with confirmation summary
-    assert isinstance(result, ToolCallRejection)
-    assert result.error_code == "CONFIRMATION_NOT_SHOWN"
-    assert "María García" in result.error_message or "Cortar" in result.error_message
+    # Slot should be resolved — no confirmation gate, call proceeds through
+    assert result["stylist_id"] == "abc-123"
+    assert result["start_time"] == "2026-04-10T10:20:00"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# offered_slots lifecycle: _pre_tool_call does NOT wipe, _post_tool_result
+# clears stale state ONLY when new slots arrive successfully (R-MOD-1)
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_check_availability_does_not_wipe_slots(booking_node):
+    """check_availability call must NOT eagerly wipe offered_slots from booking_context."""
+    original_slots = [{"stylist_id": "uuid-1", "start_time": "2026-04-15T10:00"}]
+    booking_node._booking_context = {
+        "offered_slots": original_slots,
+        "last_stylist": "Pilar",
+    }
+    booking_node._mode_context = booking_node._booking_context
+
+    await booking_node._pre_tool_call("check_availability", {"service_names": ["CORTE LARGO"], "stylist_name": "Pilar"})
+
+    assert booking_node._booking_context["offered_slots"] == original_slots
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_check_availability_clears_and_updates_slots(booking_node):
+    """_post_tool_result clears stale selected_slot and updates offered_slots when new slots arrive."""
+    import json
+
+    old_slots = [{"stylist_id": "old", "start_time": "old"}]
+    booking_node._booking_context = {
+        "offered_slots": old_slots,
+        "selected_slot": {"stylist_id": "old"},
+        "last_stylist": "Pilar",
+    }
+    booking_node._mode_context = booking_node._booking_context
+
+    new_slots = [
+        {"stylist_id": "uuid-2", "start_time": "2026-04-16T11:00"},
+        {"stylist_id": "uuid-3", "start_time": "2026-04-17T09:00"},
+    ]
+    await booking_node._post_tool_result(
+        "check_availability",
+        {"stylist_name": "Pilar"},
+        json.dumps({"available_slots": new_slots}),
+    )
+
+    assert booking_node._booking_context["offered_slots"] == new_slots
+    assert booking_node._booking_context.get("selected_slot") is None
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_check_availability_empty_result_preserves_slots(booking_node):
+    """_post_tool_result must NOT clear offered_slots or selected_slot when result is empty."""
+    import json
+
+    original_slots = [{"stylist_id": "uuid-1", "start_time": "2026-04-15T10:00"}]
+    original_slot = {"stylist_id": "uuid-1"}
+    booking_node._booking_context = {
+        "offered_slots": original_slots,
+        "selected_slot": original_slot,
+        "last_stylist": "Pilar",
+    }
+    booking_node._mode_context = booking_node._booking_context
+
+    await booking_node._post_tool_result(
+        "check_availability",
+        {"stylist_name": "Pilar"},
+        json.dumps({"available_slots": []}),
+    )
+
+    assert booking_node._booking_context["offered_slots"] == original_slots
+    assert booking_node._booking_context["selected_slot"] == original_slot
