@@ -784,8 +784,7 @@ def extract_tool_trace_from_turns(turns: list[dict]) -> list[str]:
     tools: list[str] = []
     milestones_seen = {t.get("milestone_reached") for t in turns}
 
-    if "service_resolved" in milestones_seen and "search_services" not in tools:
-        tools.append("search_services")
+    # search_services was removed — service resolution is catalog-in-prompt
     if "slot_resolved" in milestones_seen and "check_availability" not in tools:
         tools.append("check_availability")
     if "booking_completed" in milestones_seen and "book_appointment" not in tools:

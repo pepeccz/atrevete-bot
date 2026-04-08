@@ -97,6 +97,24 @@ async def seed_stylists() -> None:
                     session.add(stylist)
                     print(f"✓ Created stylist: {stylist_data['name']} ({category_value})")
 
+        # Deactivation pass: set is_active=False for any stylist whose slug is NOT
+        # in the canonical seed list. This cleans up stale entries (e.g. "Ana", "Ana María")
+        # without deleting rows (safe for FK references in appointments).
+        canonical_slugs = {s["slug"] for s in STYLISTS_DATA}
+        stale_result = await session.execute(
+            select(Stylist).where(
+                Stylist.slug.notin_(canonical_slugs),
+                Stylist.is_active.is_(True),
+            )
+        )
+        stale_stylists = stale_result.scalars().all()
+        for stale in stale_stylists:
+            stale.is_active = False
+            print(f"⚠ Deactivated stale stylist: {stale.name} (slug={stale.slug!r})")
+
+        if not stale_stylists:
+            print("✓ No stale stylists to deactivate.")
+
         await session.commit()
         print(f"\n✓ Seeding complete! Total stylists in seed data: {len(STYLISTS_DATA)}")
 

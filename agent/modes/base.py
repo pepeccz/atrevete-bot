@@ -562,21 +562,32 @@ class BaseModeNode(ABC):
                 for tool_call in response.tool_calls:
                     tool_name = tool_call.get("name", "")
                     tool_args = tool_call.get("args", {})
+                    # Preserve original args before the hook can overwrite them.
+                    # _post_tool_result always receives the original dict so it can
+                    # safely call .get() regardless of what _pre_tool_call returned.
+                    original_tool_args = dict(tool_args)
 
                     # Pre-tool-call hook: allows subclasses to transform args
                     # or reject the call entirely via ToolCallRejection
+                    effective_args = original_tool_args
                     try:
-                        tool_args = await self._pre_tool_call(tool_name, tool_args)
+                        effective_args = await self._pre_tool_call(tool_name, tool_args)
                     except Exception as exc:
                         self.logger.warning(
                             "_pre_tool_call failed for %s: %s — using original args",
                             tool_name,
                             exc,
                         )
+                        effective_args = original_tool_args
 
-                    # Check if _pre_tool_call rejected the call
-                    if isinstance(tool_args, ToolCallRejection):
-                        rejection = tool_args
+                    # Check if _pre_tool_call rejected the call.
+                    # post_args: the args dict to pass to _post_tool_result.
+                    #   - Rejection path: original_tool_args (ToolCallRejection is not a dict)
+                    #   - Success path: effective_args (enriched/transformed by hook)
+                    #   - Exception path: original_tool_args (set above in except block)
+                    if isinstance(effective_args, ToolCallRejection):
+                        rejection = effective_args
+                        post_args = original_tool_args
                         result = {
                             "rejected": True,
                             "error_code": rejection.error_code,
@@ -590,6 +601,8 @@ class BaseModeNode(ABC):
                             rejection.error_message,
                         )
                     else:
+                        post_args = effective_args
+                        tool_args = effective_args
                         # R3: Dedup guard — skip execution if identical call was
                         # already made in this agentic loop invocation.
                         dedup_args = (
@@ -614,10 +627,11 @@ class BaseModeNode(ABC):
                         else:
                             result = {"error": f"Unknown tool: {tool_name}"}
 
-                    # Post-tool-call hook: allows subclasses to process results
-                    # mid-loop (e.g. extract customer name before LLM response)
+                    # Post-tool-call hook: receives post_args (see above for logic).
+                    # In the rejection path, post_args = original_tool_args to prevent
+                    # AttributeError when _post_tool_result calls .get() on the object.
                     try:
-                        result = await self._post_tool_result(tool_name, tool_args, result)
+                        result = await self._post_tool_result(tool_name, post_args, result)
                     except Exception as exc:
                         self.logger.warning(
                             "_post_tool_result failed for %s: %s — using original result",

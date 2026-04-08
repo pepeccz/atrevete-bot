@@ -15,14 +15,16 @@ from typing import Any
 import redis.asyncio as redis
 
 # ── constants ──────────────────────────────────────────────────────────────
-REDIS_URL = "redis://:9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda@localhost:6379/0"
+REDIS_URL = (
+    "redis://:9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda@localhost:6379/0"
+)
 INCOMING_STREAM = "incoming_messages_stream"
 OUTGOING_CHANNEL = "outgoing_messages"
 CONVERSATION_ID = f"qa-returning-{uuid.uuid4().hex[:12]}"
 CUSTOMER_PHONE = "+34999" + str(abs(hash(CONVERSATION_ID)))[:6]
 SENDER_NAME = "Carlos"
 MAX_TURNS = 12
-BATCH_WINDOW = 4.0   # seconds to wait for multi-part bot replies
+BATCH_WINDOW = 4.0  # seconds to wait for multi-part bot replies
 TURN_TIMEOUT = 60.0  # seconds per turn
 
 # ── persona (Carlos) ───────────────────────────────────────────────────────
@@ -42,13 +44,19 @@ PERSONA = {
 }
 
 MILESTONES = [
-    {"id": "greeting_done",              "desc": "Bot greeted, user expressed booking intent"},
-    {"id": "returning_context_captured", "desc": "Prior salon familiarity/account context acknowledged"},
-    {"id": "service_resolved",           "desc": "Corte caballero confirmed without unnecessary explanation"},
-    {"id": "stylist_locked",             "desc": "Luciana confirmed or explicit fallback discussed"},
-    {"id": "slot_resolved",              "desc": "A concrete slot this week is chosen"},
-    {"id": "confirmation_done",          "desc": "Client confirmed the selected appointment"},
-    {"id": "booking_completed",          "desc": "Appointment persisted in DB for requested stylist"},  # [COMPLETION]
+    {"id": "greeting_done", "desc": "Bot greeted, user expressed booking intent"},
+    {
+        "id": "returning_context_captured",
+        "desc": "Prior salon familiarity/account context acknowledged",
+    },
+    {"id": "service_resolved", "desc": "Corte caballero confirmed without unnecessary explanation"},
+    {"id": "stylist_locked", "desc": "Luciana confirmed or explicit fallback discussed"},
+    {"id": "slot_resolved", "desc": "A concrete slot this week is chosen"},
+    {"id": "confirmation_done", "desc": "Client confirmed the selected appointment"},
+    {
+        "id": "booking_completed",
+        "desc": "Appointment persisted in DB for requested stylist",
+    },  # [COMPLETION]
 ]
 COMPLETION_MILESTONE = "booking_completed"
 
@@ -56,6 +64,7 @@ COMPLETION_MILESTONE = "booking_completed"
 # ──────────────────────────────────────────────────────────────────────────
 # Redis helpers
 # ──────────────────────────────────────────────────────────────────────────
+
 
 async def subscribe_and_flush(r: redis.Redis, pubsub: Any) -> None:
     """Subscribe to outgoing_messages and drain stale messages."""
@@ -131,6 +140,7 @@ async def capture_response(pubsub: Any) -> str | None:
 # LLM-as-persona: reason about bot reply and generate next message
 # ──────────────────────────────────────────────────────────────────────────
 
+
 def persona_reason(
     turn_number: int,
     bot_reply: str,
@@ -151,40 +161,80 @@ def persona_reason(
     milestone = last_milestone  # default: carry forward
 
     # booking_completed: bot confirmed the booking is done
-    booking_kws = ["reservado", "agendado", "quedo agendado", "quedó agendado",
-                   "turno queda", "te espera", "nos vemos", "¡listo", "confirmado y agendado",
-                   "✅", "turno confirmado"]
+    booking_kws = [
+        "reservado",
+        "agendado",
+        "quedo agendado",
+        "quedó agendado",
+        "turno queda",
+        "te espera",
+        "nos vemos",
+        "¡listo",
+        "confirmado y agendado",
+        "✅",
+        "turno confirmado",
+    ]
     if any(kw in lower for kw in booking_kws):
         milestone = "booking_completed"
 
     # confirmation_done: bot asks to confirm summary
-    elif any(kw in lower for kw in ["confirm", "¿confirmas", "¿te confirmo", "resumen", "reservo para"]):
+    elif any(
+        kw in lower for kw in ["confirm", "¿confirmas", "¿te confirmo", "resumen", "reservo para"]
+    ):
         if last_milestone not in ("booking_completed",):
             milestone = "confirmation_done"
 
     # slot_resolved: bot offered/confirmed a slot
-    elif any(kw in lower for kw in ["lunes", "martes", "miércoles", "miercoles", "jueves", "viernes", "sábado",
-                                     "disponible", "horario", "turno disponible", "09:", "10:", "11:",
-                                     "tengo disponible", "tenemos disponible"]):
+    elif any(
+        kw in lower
+        for kw in [
+            "lunes",
+            "martes",
+            "miércoles",
+            "miercoles",
+            "jueves",
+            "viernes",
+            "sábado",
+            "disponible",
+            "horario",
+            "turno disponible",
+            "09:",
+            "10:",
+            "11:",
+            "tengo disponible",
+            "tenemos disponible",
+        ]
+    ):
         if last_milestone not in ("booking_completed", "confirmation_done"):
             milestone = "slot_resolved"
 
     # stylist_locked: Luciana explicitly mentioned or stylist question asked
     # NOTE: "barba" add-on offer after stylist confirmation stays at stylist_locked until add-on handled
-    elif "luciana" in lower or any(kw in lower for kw in ["estilista", "preferís", "preferi", "¿con quién"]):
+    elif "luciana" in lower or any(
+        kw in lower for kw in ["estilista", "preferís", "preferi", "¿con quién"]
+    ):
         if last_milestone not in ("booking_completed", "confirmation_done", "slot_resolved"):
             milestone = "stylist_locked"
     # After stylist locked, if bot offers add-ons (Barba), still stylist_locked — need to decline
-    elif last_milestone == "stylist_locked" and any(kw in lower for kw in ["barba", "añadir", "adicional", "quieres añadir"]):
+    elif last_milestone == "stylist_locked" and any(
+        kw in lower for kw in ["barba", "añadir", "adicional", "quieres añadir"]
+    ):
         milestone = "stylist_locked"  # stay — need to decline
 
     # service_resolved: service confirmed (corte caballero, barba add-on offered)
     elif any(kw in lower for kw in ["corte caballero", "elegido", "40 min", "barba", "servicio"]):
-        if last_milestone not in ("booking_completed", "confirmation_done", "slot_resolved", "stylist_locked"):
+        if last_milestone not in (
+            "booking_completed",
+            "confirmation_done",
+            "slot_resolved",
+            "stylist_locked",
+        ):
             milestone = "service_resolved"
 
     # returning_context_captured / greeting_done: bot greeted
-    elif any(kw in lower for kw in ["hola", "bienvenid", "¡claro", "te ayudo", "qué servicio", "¿qué"]):
+    elif any(
+        kw in lower for kw in ["hola", "bienvenid", "¡claro", "te ayudo", "qué servicio", "¿qué"]
+    ):
         if last_milestone in (None,):
             milestone = "greeting_done"
         elif last_milestone == "greeting_done":
@@ -194,48 +244,69 @@ def persona_reason(
     bugs: list[dict] = []
 
     # redundant_question: bot asks service type AGAIN after I already said caballero
-    service_variant_question = any(kw in lower for kw in ["¿el corte es para", "caballero, dama", "para caballero"])
+    service_variant_question = any(
+        kw in lower for kw in ["¿el corte es para", "caballero, dama", "para caballero"]
+    )
     if turn_number > 2 and service_variant_question:
-        bugs.append({
-            "category": "redundant_question",
-            "evidence": f"Turn {turn_number}: Bot re-asked service variant after user already confirmed 'caballero'",
-            "turns": [2, turn_number],
-        })
+        bugs.append(
+            {
+                "category": "redundant_question",
+                "evidence": f"Turn {turn_number}: Bot re-asked service variant after user already confirmed 'caballero'",
+                "turns": [2, turn_number],
+            }
+        )
 
     # ignored_preference: bot lists stylists but Luciana is not included
     lists_stylists = "estilista" in lower or "profesional" in lower
     if turn_number >= 2 and lists_stylists and "luciana" not in lower:
-        bugs.append({
-            "category": "ignored_preference",
-            "evidence": f"Turn {turn_number}: Bot listed stylists without Luciana",
-            "turns": [1, turn_number],
-        })
+        bugs.append(
+            {
+                "category": "ignored_preference",
+                "evidence": f"Turn {turn_number}: Bot listed stylists without Luciana",
+                "turns": [1, turn_number],
+            }
+        )
 
     # context_loss: bot asks my name after I already interacted
-    if turn_number > 2 and any(kw in lower for kw in ["cómo te llamas", "tu nombre", "cuál es tu nombre"]):
-        bugs.append({
-            "category": "context_loss",
-            "evidence": f"Turn {turn_number}: Bot asked for customer name despite ongoing conversation",
-            "turns": [1, turn_number],
-        })
+    if turn_number > 2 and any(
+        kw in lower for kw in ["cómo te llamas", "tu nombre", "cuál es tu nombre"]
+    ):
+        bugs.append(
+            {
+                "category": "context_loss",
+                "evidence": f"Turn {turn_number}: Bot asked for customer name despite ongoing conversation",
+                "turns": [1, turn_number],
+            }
+        )
 
     # wrong_language
     english_kws = ["hello", "please select", "choose", "enter your", "your booking"]
     if any(kw in lower for kw in english_kws):
-        bugs.append({
-            "category": "wrong_language",
-            "evidence": f"Turn {turn_number}: Bot responded in English: '{bot_reply[:80]}'",
-            "turns": [turn_number],
-        })
+        bugs.append(
+            {
+                "category": "wrong_language",
+                "evidence": f"Turn {turn_number}: Bot responded in English: '{bot_reply[:80]}'",
+                "turns": [turn_number],
+            }
+        )
 
     # Unexpected escalation at non-escalation flow
-    if turn_number > 1 and any(kw in lower for kw in ["dificultades tecnicas", "dificultades técnicas",
-                                                        "paso con un companero", "te paso con"]):
-        bugs.append({
-            "category": "hallucination",
-            "evidence": f"Turn {turn_number}: Bot unexpectedly escalated with technical error during booking flow",
-            "turns": [turn_number],
-        })
+    if turn_number > 1 and any(
+        kw in lower
+        for kw in [
+            "dificultades tecnicas",
+            "dificultades técnicas",
+            "paso con un companero",
+            "te paso con",
+        ]
+    ):
+        bugs.append(
+            {
+                "category": "hallucination",
+                "evidence": f"Turn {turn_number}: Bot unexpectedly escalated with technical error during booking flow",
+                "turns": [turn_number],
+            }
+        )
 
     # ── reply generation ───────────────────────────────────────────────
     should_stop = False
@@ -268,7 +339,8 @@ def persona_reason(
         for line in lines:
             # Match numbered items like "1. Pilar - martes..." or "1) ..."
             import re as _re
-            m = _re.match(r'^(\d+)[.)]\s+(.+)', line)
+
+            m = _re.match(r"^(\d+)[.)]\s+(.+)", line)
             if m:
                 num = int(m.group(1))
                 text = m.group(2).strip().rstrip("*")
@@ -284,7 +356,9 @@ def persona_reason(
 
     elif milestone == "stylist_locked":
         # Check if bot is asking about add-ons — answer NO first
-        barba_offered = any(kw in lower for kw in ["barba", "añadir", "adicional", "quieres añadir"])
+        barba_offered = any(
+            kw in lower for kw in ["barba", "añadir", "adicional", "quieres añadir"]
+        )
         if barba_offered:
             reply = "No, solo el corte, gracias."
         elif "¿con quién" in lower or "estilista" in lower or "preferi" in lower:
@@ -298,7 +372,9 @@ def persona_reason(
         # Bot confirmed corte caballero and may be offering add-ons (barba etc.)
         # As Carlos: decline add-ons, specify stylist + time
         # NOTE: If bot is re-asking variant (bug), still answer simply
-        variant_question_again = any(kw in lower for kw in ["el corte es para", "caballero, dama", "para caballero o dama"])
+        variant_question_again = any(
+            kw in lower for kw in ["el corte es para", "caballero, dama", "para caballero o dama"]
+        )
         barba_offered = "barba" in lower or "añadir" in lower or "adicional" in lower
         if variant_question_again:
             # Answer the bug directly — just the variant word
@@ -312,8 +388,12 @@ def persona_reason(
 
     elif milestone in ("returning_context_captured", "greeting_done"):
         # Bot asked what service or variant — answer directly and simply
-        variant_question = any(kw in lower for kw in ["caballero", "dama", "niño", "bebé", "el corte es para"])
-        service_question = any(kw in lower for kw in ["qué servicio", "cuál servicio", "te gustaría", "agendar"])
+        variant_question = any(
+            kw in lower for kw in ["caballero", "dama", "niño", "bebé", "el corte es para"]
+        )
+        service_question = any(
+            kw in lower for kw in ["qué servicio", "cuál servicio", "te gustaría", "agendar"]
+        )
 
         if variant_question:
             # Bot is asking the variant (caballero/dama/niño/etc.) — single word answer
@@ -326,7 +406,9 @@ def persona_reason(
     else:
         # Unknown / unexpected state — provide targeted answer
         lower_check = lower
-        if any(kw in lower_check for kw in ["caballero", "dama", "niño", "bebé", "el corte es para"]):
+        if any(
+            kw in lower_check for kw in ["caballero", "dama", "niño", "bebé", "el corte es para"]
+        ):
             reply = "Caballero"
         elif any(kw in lower_check for kw in ["qué servicio", "te gustaría", "agendar"]):
             reply = "Corte caballero"
@@ -346,6 +428,7 @@ def persona_reason(
 # ──────────────────────────────────────────────────────────────────────────
 # DB verification
 # ──────────────────────────────────────────────────────────────────────────
+
 
 async def verify_appointment_in_db(run_started_at: datetime, phone: str) -> dict[str, Any]:
     try:
@@ -395,7 +478,11 @@ async def verify_appointment_in_db(run_started_at: datetime, phone: str) -> dict
                 }
                 for r in rows
             ]
-            return {"found": True, "details": f"Found {len(rows)} appointment(s)", "rows": formatted}
+            return {
+                "found": True,
+                "details": f"Found {len(rows)} appointment(s)",
+                "rows": formatted,
+            }
     except Exception as exc:
         return {"found": False, "details": f"DB error: {exc}", "rows": []}
 
@@ -403,6 +490,7 @@ async def verify_appointment_in_db(run_started_at: datetime, phone: str) -> dict
 # ──────────────────────────────────────────────────────────────────────────
 # State reset
 # ──────────────────────────────────────────────────────────────────────────
+
 
 async def reset_state(r: redis.Redis) -> None:
     patterns = [
@@ -422,6 +510,7 @@ async def reset_state(r: redis.Redis) -> None:
 # ──────────────────────────────────────────────────────────────────────────
 # Main runner
 # ──────────────────────────────────────────────────────────────────────────
+
 
 async def run() -> dict[str, Any]:
     run_started_at = datetime.now(UTC)
@@ -468,14 +557,16 @@ async def run() -> dict[str, Any]:
 
             if bot_reply is None:
                 print(f"[QA T{turn_number}] ⚠ TIMEOUT")
-                turns.append({
-                    "turn_number": turn_number,
-                    "user_message": current_message,
-                    "agent_response": None,
-                    "milestone_reached": last_milestone,
-                    "bugs": [],
-                    "timed_out": True,
-                })
+                turns.append(
+                    {
+                        "turn_number": turn_number,
+                        "user_message": current_message,
+                        "agent_response": None,
+                        "milestone_reached": last_milestone,
+                        "bugs": [],
+                        "timed_out": True,
+                    }
+                )
                 if turn_number == 1:
                     current_message = "Hola? Siguen ahí?"
                     continue
@@ -503,21 +594,25 @@ async def run() -> dict[str, Any]:
             should_stop = reasoning["should_stop"]
             flow_status = reasoning["flow_status"]
 
-            print(f"[QA T{turn_number}] Milestone: {milestone} | Bugs: {len(bugs)} | Reply: '{reply}'")
+            print(
+                f"[QA T{turn_number}] Milestone: {milestone} | Bugs: {len(bugs)} | Reply: '{reply}'"
+            )
             if bugs:
                 for bug in bugs:
                     print(f"[QA T{turn_number}] 🐛 {bug['category']}: {bug['evidence']}")
 
             # Step 6: record
-            turns.append({
-                "turn_number": turn_number,
-                "user_message": current_message,
-                "agent_response": bot_reply,
-                "milestone_reached": milestone,
-                "bugs": bugs,
-                "latency_ms": latency_ms,
-                "timed_out": False,
-            })
+            turns.append(
+                {
+                    "turn_number": turn_number,
+                    "user_message": current_message,
+                    "agent_response": bot_reply,
+                    "milestone_reached": milestone,
+                    "bugs": bugs,
+                    "latency_ms": latency_ms,
+                    "timed_out": False,
+                }
+            )
             all_bugs.extend(bugs)
 
             # Dead loop detection
@@ -564,10 +659,22 @@ async def run() -> dict[str, Any]:
     # Tool trace inferred from conversation
     all_replies = " ".join(t.get("agent_response", "") or "" for t in turns).lower()
     observed_tools: list[str] = []
-    if any(kw in all_replies for kw in ["corte caballero", "40 min", "servicio", "elegido"]):
-        observed_tools.append("search_services")
-    if any(kw in all_replies for kw in ["disponible", "horario", "lunes", "martes", "miércoles",
-                                          "jueves", "viernes", "09:", "10:", "11:"]):
+    # search_services removed — service catalog is in-prompt via catalog_builder.py
+    if any(
+        kw in all_replies
+        for kw in [
+            "disponible",
+            "horario",
+            "lunes",
+            "martes",
+            "miércoles",
+            "jueves",
+            "viernes",
+            "09:",
+            "10:",
+            "11:",
+        ]
+    ):
         observed_tools.append("check_availability")
     if any(kw in all_replies for kw in ["reservado", "agendado", "confirmado", "quedo", "✅"]):
         observed_tools.append("book_appointment")
@@ -575,6 +682,7 @@ async def run() -> dict[str, Any]:
     # Bugs summary
     if all_bugs:
         from collections import Counter
+
         counts = Counter(b["category"] for b in all_bugs)
         bugs_summary = "; ".join(f"{cat}×{n}" for cat, n in counts.items())
     else:
@@ -599,6 +707,7 @@ async def run() -> dict[str, Any]:
 
 if __name__ == "__main__":
     import json as _json
+
     result = asyncio.run(run())
     print("\n" + "=" * 70)
     print("QA FINAL RESULT:")

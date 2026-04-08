@@ -17,97 +17,8 @@ def _make_mock_llm(response_text: str = "Te recomiendo Corte Caballero") -> Asyn
     return mock
 
 
-# =============================================================================
-# T-11: _extract_booking_handoff shape normalization (F-1 + F-3)
-# =============================================================================
-
-
-class TestExtractBookingHandoffShape:
-    """T-11: _extract_booking_handoff handles dict and list envelopes."""
-
-    def _mode(self) -> GeneralMode:
-        return GeneralMode(tools=[], llm_client=_make_mock_llm())
-
-    def test_dict_shape_still_works(self):
-        """_extract_booking_handoff with dict envelope returns correctly (legacy shape)."""
-        mode = self._mode()
-        tool_results = {
-            "search_services": {
-                "resolved_service": {
-                    "id": "svc-001",
-                    "name": "Corte de Dama",
-                }
-            }
-        }
-        result = mode._extract_booking_handoff(tool_results)
-        assert result is not None
-        assert result["resolved_service"]["id"] == "svc-001"
-
-    def test_list_shape_normalized(self):
-        """_extract_booking_handoff with list envelope takes the last item."""
-        mode = self._mode()
-        tool_results = {
-            "search_services": [
-                # First call — old result
-                {"resolved_service": {"id": "svc-old", "name": "Old Service"}},
-                # Second call — most recent, should be taken
-                {"resolved_service": {"id": "svc-new", "name": "Corte de Dama"}},
-            ]
-        }
-        result = mode._extract_booking_handoff(tool_results)
-        assert result is not None
-        assert result["resolved_service"]["id"] == "svc-new"
-
-    def test_empty_list_returns_none(self):
-        """_extract_booking_handoff with [] (empty list) returns None."""
-        mode = self._mode()
-        tool_results = {"search_services": []}
-        result = mode._extract_booking_handoff(tool_results)
-        assert result is None
-
-    def test_none_returns_none(self):
-        """_extract_booking_handoff with missing key returns None."""
-        mode = self._mode()
-        tool_results = {}  # no 'search_services' key
-        result = mode._extract_booking_handoff(tool_results)
-        assert result is None
-
-    def test_list_with_clarification_needed(self):
-        """List envelope with clarification_needed is normalized correctly."""
-        mode = self._mode()
-        tool_results = {
-            "search_services": [
-                {
-                    "clarification_needed": {
-                        "axis": "audience",
-                        "question_hint": "¿Para quién?",
-                        "options": [{"value": "adult_female", "label": "Dama"}],
-                    }
-                }
-            ]
-        }
-        result = mode._extract_booking_handoff(tool_results)
-        assert result is not None
-        assert "pending_clarifications" in result
-        assert result["pending_clarifications"][0]["axis"] == "audience"
-
-    def test_list_with_services_shape(self):
-        """List envelope with services list is normalized correctly."""
-        mode = self._mode()
-        tool_results = {
-            "search_services": [
-                {
-                    "services": [
-                        {"id": "svc-001", "name": "Corte de Dama"},
-                        {"id": "svc-002", "name": "Tinte Raíz"},
-                    ]
-                }
-            ]
-        }
-        result = mode._extract_booking_handoff(tool_results)
-        assert result is not None
-        assert "candidate_services" in result
-        assert len(result["candidate_services"]) == 2
+# (search_services-based _extract_booking_handoff tests removed — tool was deleted
+# in catalog-in-prompt architecture. See design: AD-3 / Domain E.)
 
 
 # =============================================================================
@@ -175,38 +86,5 @@ class TestGeneralModeEscalateTool:
         assert "escalate_to_human" in tool_names
 
 
-@pytest.mark.asyncio
-async def test_general_mode_persists_booking_handoff_from_search_services() -> None:
-    state = create_initial_state("conv-general-handoff", "+34610000001")
-    state["current_mode"] = "GENERAL"
-    state["customer_name"] = "Luis"
-    state["messages"] = [{"role": "user", "content": "qué me recomendás para caballero"}]
-    state["mode_context"] = {"last_intent": "ask_info", "last_intent_confidence": 0.9}
-
-    mode = GeneralMode(tools=[], llm_client=_make_mock_llm())
-
-    with (
-        patch.object(mode, "_use_optimized_prompts", return_value=False),
-        patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop,
-    ):
-        mock_loop.return_value = AgenticLoopResult(
-            response_text="Te recomiendo Corte Caballero.",
-            tool_results={
-                "search_services": {
-                    "resolved_service": {
-                        "id": "svc-caballero",
-                        "name": "Corte Caballero",
-                        "category": "Peluquería",
-                        "duration_minutes": 30,
-                        "family": "haircut",
-                    }
-                }
-            },
-            tool_events=[],
-        )
-
-        result = await mode.handle(state, intent=None)
-
-    handoff = result["mode_context"]["general_booking_handoff"]
-    assert handoff["resolved_service"]["id"] == "svc-caballero"
-    assert handoff["resolved_service"]["name"] == "Corte Caballero"
+# (test_general_mode_persists_booking_handoff_from_search_services removed —
+# search_services tool no longer exists; catalog is in-prompt via catalog_builder.py)

@@ -126,8 +126,8 @@ async def get_system_prompt() -> str:
     - shared/identity.md
     - shared/critical_rules.md
 
-    Note: shared/glossary.md is NOT included — the service catalog is served
-    dynamically by the search_services and query_info tools.
+    Note: shared/glossary.md is NOT included — the service catalog is injected
+    dynamically via catalog_builder.py into the mode-specific prompt context.
 
     Cached for 10 minutes with async lock for thread safety.
 

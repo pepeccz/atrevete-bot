@@ -63,11 +63,11 @@ class RunTerminated(Exception):
 # Tool trace validation
 # =============================================================================
 
-_BOOKING_FLOW_TOOLS = ["search_services", "check_availability", "book_appointment"]
+_BOOKING_FLOW_TOOLS = ["check_availability", "book_appointment"]
 
 # Map canonical tool aliases to a canonical name for validation
+# Note: search_services was removed in catalog-in-prompt architecture (Domain E)
 _CANONICAL_TOOL = {
-    "search_services": "search_services",
     "find_next_available": "check_availability",
     "check_availability": "check_availability",
     "book": "book_appointment",

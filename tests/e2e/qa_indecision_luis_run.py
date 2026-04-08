@@ -87,6 +87,7 @@ def build_postgres_url(settings) -> str:
 # - what Luis has decided
 # This prevents sending the same message twice.
 
+
 class LuisState:
     def __init__(self):
         self.gave_name = False
@@ -118,84 +119,164 @@ def detect_milestone(agent_response: str, current_best: str | None) -> str | Non
 
     # booking_completed: explicit booking confirmation
     booking_done_phrases = [
-        "turno confirmado", "reserva confirmada", "agendé tu turno",
-        "te esperamos", "quedó agendado", "quedó reservado", "quedaste anotado",
-        "agendamos", "reservamos tu turno", "¡listo! tu turno",
-        "tu turno está", "tu reserva quedó"
+        "turno confirmado",
+        "reserva confirmada",
+        "agendé tu turno",
+        "te esperamos",
+        "quedó agendado",
+        "quedó reservado",
+        "quedaste anotado",
+        "agendamos",
+        "reservamos tu turno",
+        "¡listo! tu turno",
+        "tu turno está",
+        "tu reserva quedó",
     ]
     if any(phrase in r for phrase in booking_done_phrases):
         detected = "booking_completed"
 
     # confirmation_done: bot asking to confirm
-    elif any(phrase in r for phrase in [
-        "¿confirmás", "¿confirmas", "¿lo confirmo", "¿lo reservo",
-        "¿procedo con", "confirmar el turno", "¿querés que reserve",
-        "¿te confirmo el turno", "¿reservo el turno"
-    ]):
+    elif any(
+        phrase in r
+        for phrase in [
+            "¿confirmás",
+            "¿confirmas",
+            "¿lo confirmo",
+            "¿lo reservo",
+            "¿procedo con",
+            "confirmar el turno",
+            "¿querés que reserve",
+            "¿te confirmo el turno",
+            "¿reservo el turno",
+        ]
+    ):
         detected = "confirmation_done"
 
     # slot_resolved: bot is showing available time slots
-    elif any(phrase in r for phrase in [
-        "disponible el viernes", "el viernes a las", "tenemos el viernes",
-        "turno el viernes", "podría ser el viernes",
-        "disponible a las", "a las 14:", "a las 15:", "a las 16:", "a las 17:", "a las 18:",
-        "tenemos disponibles para", "estos horarios",
-        "¿cuál de estos horarios", "¿te viene bien alguno"
-    ]):
+    elif any(
+        phrase in r
+        for phrase in [
+            "disponible el viernes",
+            "el viernes a las",
+            "tenemos el viernes",
+            "turno el viernes",
+            "podría ser el viernes",
+            "disponible a las",
+            "a las 14:",
+            "a las 15:",
+            "a las 16:",
+            "a las 17:",
+            "a las 18:",
+            "tenemos disponibles para",
+            "estos horarios",
+            "¿cuál de estos horarios",
+            "¿te viene bien alguno",
+        ]
+    ):
         detected = "slot_resolved"
 
     # addons_handled: bot explicitly offered add-ons alongside chosen service
-    elif any(phrase in r for phrase in [
-        "¿querés agregar", "¿te gustaría sumar", "podemos agregar",
-        "adicionalmente", "también podemos incluir",
-        "combinar con", "combinarlo con barba", "le sumamos"
-    ]) and current_best in ["service_resolved", "recommendation_given", "addons_handled"]:
+    elif any(
+        phrase in r
+        for phrase in [
+            "¿querés agregar",
+            "¿te gustaría sumar",
+            "podemos agregar",
+            "adicionalmente",
+            "también podemos incluir",
+            "combinar con",
+            "combinarlo con barba",
+            "le sumamos",
+        ]
+    ) and current_best in ["service_resolved", "recommendation_given", "addons_handled"]:
         detected = "addons_handled"
 
     # service_resolved: bot confirmed the service we chose or is asking for when
-    elif any(phrase in r for phrase in [
-        "el corte caballero", "un corte caballero",
-        "anotamos el corte", "reservar el corte",
-        "el servicio elegido", "elegiste el corte",
-        "has elegido", "perfecto! has elegido",
-        "tu servicio será", "el servicio es",
-        "para tu corte", "para el corte",
-        # Bot asking when — implies service is resolved
-        "¿para cuándo", "¿cuándo querés", "¿qué día",
-        "¿cuándo te gustaría", "cuándo te gustaría",
-        "buscar disponibilidad", "buscamos un turno",
-        "tengo alguna fecha", "tienes alguna fecha",
-        "fecha o día de la semana"
-    ]) and current_best in [
-        None, "greeting_done", "discovery_started", "recommendation_given"
-    ]:
+    elif any(
+        phrase in r
+        for phrase in [
+            "el corte caballero",
+            "un corte caballero",
+            "anotamos el corte",
+            "reservar el corte",
+            "el servicio elegido",
+            "elegiste el corte",
+            "has elegido",
+            "perfecto! has elegido",
+            "tu servicio será",
+            "el servicio es",
+            "para tu corte",
+            "para el corte",
+            # Bot asking when — implies service is resolved
+            "¿para cuándo",
+            "¿cuándo querés",
+            "¿qué día",
+            "¿cuándo te gustaría",
+            "cuándo te gustaría",
+            "buscar disponibilidad",
+            "buscamos un turno",
+            "tengo alguna fecha",
+            "tienes alguna fecha",
+            "fecha o día de la semana",
+        ]
+    ) and current_best in [None, "greeting_done", "discovery_started", "recommendation_given"]:
         detected = "service_resolved"
 
     # recommendation_given: bot recommended something specific
-    elif any(phrase in r for phrase in [
-        "te recomiendo", "recomendamos", "quedaría perfecto",
-        "ideal para vos", "lo más popular", "lo más pedido",
-        "el más solicitado", "el servicio más pedido",
-        "corte caballero. dura", "el corte caballero",
-        "lo combinan con", "para un look completo",
-        "es el más solicitado"
-    ]):
+    elif any(
+        phrase in r
+        for phrase in [
+            "te recomiendo",
+            "recomendamos",
+            "quedaría perfecto",
+            "ideal para vos",
+            "lo más popular",
+            "lo más pedido",
+            "el más solicitado",
+            "el servicio más pedido",
+            "corte caballero. dura",
+            "el corte caballero",
+            "lo combinan con",
+            "para un look completo",
+            "es el más solicitado",
+        ]
+    ):
         detected = "recommendation_given"
 
     # discovery_started: bot asked about style/preferences/goals
-    elif any(phrase in r for phrase in [
-        "¿qué tipo de", "¿tenés alguna preferencia", "contame un poco",
-        "¿cómo tenés el cabello", "¿qué estilo", "¿buscás algo",
-        "¿te gustaría algo de", "peluquería o estética",
-        "¿qué te gustaría lograr", "cuéntame qué"
-    ]) and current_best in [None, "greeting_done"]:
+    elif any(
+        phrase in r
+        for phrase in [
+            "¿qué tipo de",
+            "¿tenés alguna preferencia",
+            "contame un poco",
+            "¿cómo tenés el cabello",
+            "¿qué estilo",
+            "¿buscás algo",
+            "¿te gustaría algo de",
+            "peluquería o estética",
+            "¿qué te gustaría lograr",
+            "cuéntame qué",
+        ]
+    ) and current_best in [None, "greeting_done"]:
         detected = "discovery_started"
 
     # greeting_done: bot introduced itself
-    elif any(phrase in r for phrase in [
-        "hola", "bienvenido", "bienvenida", "soy maite",
-        "asistenta virtual", "claro que sí", "en qué te ayudo"
-    ]) and current_best is None:
+    elif (
+        any(
+            phrase in r
+            for phrase in [
+                "hola",
+                "bienvenido",
+                "bienvenida",
+                "soy maite",
+                "asistenta virtual",
+                "claro que sí",
+                "en qué te ayudo",
+            ]
+        )
+        and current_best is None
+    ):
         detected = "greeting_done"
 
     # Never regress milestone
@@ -231,7 +312,16 @@ def generate_luis_reply(
         return "Ya te dije, me llamo Luis."
 
     # ── If bot asks caballero/dama/niño clarification (again) ─────────────
-    if any(kw in r for kw in ["caballero, dama", "caballero o dama", "para caballero, dama", "dama, niño", "niña o bebé"]):
+    if any(
+        kw in r
+        for kw in [
+            "caballero, dama",
+            "caballero o dama",
+            "para caballero, dama",
+            "dama, niño",
+            "niña o bebé",
+        ]
+    ):
         # Try different phrasings to unlock the bot's state parser
         caballero_responses = [
             "caballero",
@@ -286,11 +376,17 @@ def generate_luis_reply(
             return "Dale, sí, lo agrego. ¿Y para cuándo están disponibles? Prefiero el viernes."
 
     # ── If bot says no availability for Friday → accept alternative ─────────
-    if any(kw in r for kw in [
-        "no tengo disponibilidad", "no hay disponibilidad",
-        "sin disponibilidad", "no hay turnos", "busco otras opciones",
-        "¿te gustaría que busque otras"
-    ]):
+    if any(
+        kw in r
+        for kw in [
+            "no tengo disponibilidad",
+            "no hay disponibilidad",
+            "sin disponibilidad",
+            "no hay turnos",
+            "busco otras opciones",
+            "¿te gustaría que busque otras",
+        ]
+    ):
         return "Dale, sí, busquen para otro día de la semana entonces."
 
     # ── If bot is asking when / date / slot ───────────────────────────────
@@ -316,10 +412,18 @@ def generate_luis_reply(
             return "¿El viernes a la tarde no tienen nada disponible?"
 
     # ── If bot is asking stylist preference ───────────────────────────────
-    if any(kw in r for kw in [
-        "estilista", "profesional", "preferís alguna", "alguna de",
-        "con qué estilista", "qué estilista", "¿con qué"
-    ]):
+    if any(
+        kw in r
+        for kw in [
+            "estilista",
+            "profesional",
+            "preferís alguna",
+            "alguna de",
+            "con qué estilista",
+            "qué estilista",
+            "¿con qué",
+        ]
+    ):
         return "No tengo preferencia de estilista, cualquiera que esté disponible."
 
     # ── confirmation_done: bot asks to confirm ────────────────────────────
@@ -358,11 +462,13 @@ def detect_bugs(
     # redundant_question: asked for name again
     if turn_number >= 3 and state.gave_name:
         if any(kw in r for kw in ["cómo te llamás", "tu nombre", "nombre"]):
-            bugs.append({
-                "category": "redundant_question",
-                "evidence": f"Bot re-asked for name on turn {turn_number} after Luis provided it",
-                "turns": [turn_number]
-            })
+            bugs.append(
+                {
+                    "category": "redundant_question",
+                    "evidence": f"Bot re-asked for name on turn {turn_number} after Luis provided it",
+                    "turns": [turn_number],
+                }
+            )
 
     # redundant_question: asked caballero/dama after Luis specified caballero multiple times
     # Luis mentioned "caballero" in initial messages
@@ -370,63 +476,83 @@ def detect_bugs(
     if (
         turn_number >= 3
         and "caballero" in user_msgs_text.lower()
-        and any(kw in r for kw in ["caballero, dama", "para caballero o", "caballero o dama", "dama, niño"])
+        and any(
+            kw in r
+            for kw in ["caballero, dama", "para caballero o", "caballero o dama", "dama, niño"]
+        )
     ):
-        bugs.append({
-            "category": "redundant_question",
-            "evidence": f"Bot re-asked caballero/dama on turn {turn_number} after Luis specified 'caballero' multiple times",
-            "turns": [turn_number]
-        })
+        bugs.append(
+            {
+                "category": "redundant_question",
+                "evidence": f"Bot re-asked caballero/dama on turn {turn_number} after Luis specified 'caballero' multiple times",
+                "turns": [turn_number],
+            }
+        )
 
     # ignored_preference: bot says no availability for Friday entirely
-    if state.asked_for_friday and any(kw in r for kw in [
-        "no tengo disponibilidad para ese día",
-        "no hay disponibilidad para ese día",
-        "no tenemos disponibilidad para ese",
-    ]):
-        bugs.append({
-            "category": "ignored_preference",
-            "evidence": f"Bot rejected Friday entirely on turn {turn_number} without offering Friday alternatives",
-            "turns": [turn_number]
-        })
+    if state.asked_for_friday and any(
+        kw in r
+        for kw in [
+            "no tengo disponibilidad para ese día",
+            "no hay disponibilidad para ese día",
+            "no tenemos disponibilidad para ese",
+        ]
+    ):
+        bugs.append(
+            {
+                "category": "ignored_preference",
+                "evidence": f"Bot rejected Friday entirely on turn {turn_number} without offering Friday alternatives",
+                "turns": [turn_number],
+            }
+        )
 
     # ignored_preference: Luis mentioned Friday but bot only offers other days
     if state.asked_for_friday and turn_number >= 3:
         has_friday = "viernes" in r
         has_other_days = any(d in r for d in ["lunes", "martes", "miércoles", "jueves"])
         if not has_friday and has_other_days:
-            bugs.append({
-                "category": "ignored_preference",
-                "evidence": f"Luis specified viernes but bot only offered other days on turn {turn_number}",
-                "turns": [turn_number]
-            })
+            bugs.append(
+                {
+                    "category": "ignored_preference",
+                    "evidence": f"Luis specified viernes but bot only offered other days on turn {turn_number}",
+                    "turns": [turn_number],
+                }
+            )
 
     # wrong_language
     english_kws = ["hello", "please", "thank you", "appointment", "available"]
     if any(kw in r for kw in english_kws):
-        bugs.append({
-            "category": "wrong_language",
-            "evidence": f"English detected in bot response on turn {turn_number}",
-            "turns": [turn_number]
-        })
+        bugs.append(
+            {
+                "category": "wrong_language",
+                "evidence": f"English detected in bot response on turn {turn_number}",
+                "turns": [turn_number],
+            }
+        )
 
     # hallucination: services that don't exist in a barbershop/salon
     suspicious_services = ["manicure", "pedicure", "tatuaje", "color fantasía", "extensiones"]
     found_suspicious = [s for s in suspicious_services if s in r]
     if found_suspicious:
-        bugs.append({
-            "category": "hallucination",
-            "evidence": f"Bot mentioned suspicious service(s): {found_suspicious} on turn {turn_number}",
-            "turns": [turn_number]
-        })
+        bugs.append(
+            {
+                "category": "hallucination",
+                "evidence": f"Bot mentioned suspicious service(s): {found_suspicious} on turn {turn_number}",
+                "turns": [turn_number],
+            }
+        )
 
     # context_loss: if we already chose a service and bot asks again
-    if state.said_wants_corte and any(kw in r for kw in ["¿qué servicio", "que servicio", "elegir un servicio"]):
-        bugs.append({
-            "category": "context_loss",
-            "evidence": f"Bot asked for service choice again on turn {turn_number} after Luis already chose corte",
-            "turns": [turn_number]
-        })
+    if state.said_wants_corte and any(
+        kw in r for kw in ["¿qué servicio", "que servicio", "elegir un servicio"]
+    ):
+        bugs.append(
+            {
+                "category": "context_loss",
+                "evidence": f"Bot asked for service choice again on turn {turn_number} after Luis already chose corte",
+                "turns": [turn_number],
+            }
+        )
 
     return bugs
 
@@ -452,12 +578,12 @@ async def run_qa_indecision() -> dict:
     conversation_id = str(uuid.uuid4())
     run_start = datetime.now(UTC)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"QA Flow: indecision — Luis (indecisive client)")
     print(f"conversation_id: {conversation_id}")
     print(f"Started: {run_start.isoformat()}")
     print(f"Max turns: {MAX_TURNS}")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     # CRITICAL: Subscribe BEFORE injecting
     pubsub = r.pubsub()
@@ -552,15 +678,17 @@ async def run_qa_indecision() -> dict:
         # ── Timeout handling ─────────────────────────────────────────────
         if timed_out:
             prior_timeouts = sum(1 for t in turns_result[-2:] if t.get("timed_out"))
-            turns_result.append({
-                "turn_number": turn_number + 1,
-                "user_message": current_message,
-                "agent_response": "[TIMEOUT]",
-                "milestone_reached": current_milestone,
-                "bugs": [],
-                "timed_out": True,
-                "latency_ms": latency_ms,
-            })
+            turns_result.append(
+                {
+                    "turn_number": turn_number + 1,
+                    "user_message": current_message,
+                    "agent_response": "[TIMEOUT]",
+                    "milestone_reached": current_milestone,
+                    "bugs": [],
+                    "timed_out": True,
+                    "latency_ms": latency_ms,
+                }
+            )
             if prior_timeouts >= 1:
                 outcome = "timeout"
                 termination_reason = "Bot unresponsive for 2 consecutive turns"
@@ -602,17 +730,21 @@ async def run_qa_indecision() -> dict:
             conversation_history = conversation_history[-6:]
 
         # ── Record turn ──────────────────────────────────────────────────
-        turns_result.append({
-            "turn_number": turn_number + 1,
-            "user_message": current_message,
-            "agent_response": agent_response,
-            "milestone_reached": current_milestone,
-            "bugs": bugs,
-            "timed_out": False,
-            "latency_ms": latency_ms,
-        })
+        turns_result.append(
+            {
+                "turn_number": turn_number + 1,
+                "user_message": current_message,
+                "agent_response": agent_response,
+                "milestone_reached": current_milestone,
+                "bugs": bugs,
+                "timed_out": False,
+                "latency_ms": latency_ms,
+            }
+        )
 
-        print(f"  📍 Current milestone: {current_milestone} (same for {consecutive_same_milestone} turns)")
+        print(
+            f"  📍 Current milestone: {current_milestone} (same for {consecutive_same_milestone} turns)"
+        )
 
         # ── Check completion ─────────────────────────────────────────────
         if current_milestone == "booking_completed":
@@ -625,23 +757,32 @@ async def run_qa_indecision() -> dict:
         if current_milestone is None:
             dead_loop_threshold = 6
         elif current_milestone in [
-            "greeting_done", "discovery_started", "recommendation_given", "service_resolved"
+            "greeting_done",
+            "discovery_started",
+            "recommendation_given",
+            "service_resolved",
         ]:
             dead_loop_threshold = 5  # Allow extra retries for bot clarification loops
         else:
             dead_loop_threshold = 3
         if consecutive_same_milestone >= dead_loop_threshold:
             outcome = "dead_loop"
-            termination_reason = f"Stuck at milestone '{current_milestone}' for {consecutive_same_milestone}+ turns"
+            termination_reason = (
+                f"Stuck at milestone '{current_milestone}' for {consecutive_same_milestone}+ turns"
+            )
             break
 
         # ── Escalation check (real human handoff, not just keyword) ─────────
         # "persona" appears in "personalizado", "personalizada" — must be exact
         escalation_phrases = [
-            "derivar a un humano", "contactar con el equipo",
-            "te va a llamar", "te llamará un asesor",
-            "hablar con una persona del equipo", "atención humana",
-            "transferir tu consulta", "escalamos"
+            "derivar a un humano",
+            "contactar con el equipo",
+            "te va a llamar",
+            "te llamará un asesor",
+            "hablar con una persona del equipo",
+            "atención humana",
+            "transferir tu consulta",
+            "escalamos",
         ]
         if any(phrase in r_lower for phrase in escalation_phrases):
             outcome = "escalated"
@@ -658,10 +799,10 @@ async def run_qa_indecision() -> dict:
         outcome = "timeout"
         termination_reason = f"max_turns ({MAX_TURNS}) exceeded"
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"LOOP ENDED: outcome={outcome}, milestone={current_milestone}")
     print(f"Reason: {termination_reason}")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     # ── DB Verification ────────────────────────────────────────────────────
     db_verification = {"found": False, "details": "not checked (flow did not complete)"}
@@ -692,10 +833,18 @@ async def run_qa_indecision() -> dict:
 
                 final_state["appointment_created"] = bool(raw.get("appointment_created"))
                 final_state["customer_id"] = str(raw.get("customer_id", "")) or None
-                final_state["customer_name"] = raw.get("customer_first_name") or raw.get("customer_name")
-                final_state["service_name"] = raw.get("service_name") or str(raw.get("service_id", "")) or None
-                final_state["stylist_name"] = raw.get("stylist_name") or str(raw.get("stylist_id", "")) or None
-                final_state["slot_datetime"] = str(raw.get("appointment_datetime") or raw.get("selected_slot") or "") or None
+                final_state["customer_name"] = raw.get("customer_first_name") or raw.get(
+                    "customer_name"
+                )
+                final_state["service_name"] = (
+                    raw.get("service_name") or str(raw.get("service_id", "")) or None
+                )
+                final_state["stylist_name"] = (
+                    raw.get("stylist_name") or str(raw.get("stylist_id", "")) or None
+                )
+                final_state["slot_datetime"] = (
+                    str(raw.get("appointment_datetime") or raw.get("selected_slot") or "") or None
+                )
                 final_state["current_mode"] = raw.get("current_mode")
 
                 for k, v in final_state.items():
@@ -775,18 +924,14 @@ async def run_qa_indecision() -> dict:
         cats: dict[str, list[str]] = {}
         for bug in all_bugs:
             cats.setdefault(bug["category"], []).append(bug["evidence"])
-        bugs_summary = " | ".join(
-            f"{cat} ({len(evs)}): {evs[0][:80]}" for cat, evs in cats.items()
-        )
+        bugs_summary = " | ".join(f"{cat} ({len(evs)}): {evs[0][:80]}" for cat, evs in cats.items())
     else:
         bugs_summary = "No semantic bugs detected"
 
     # ── Tool chain evidence ────────────────────────────────────────────────
     all_responses = " ".join(t.get("agent_response", "") for t in turns_result).lower()
     tool_chain_evidence = list(tool_trace)  # from raw payloads
-    if any(kw in all_responses for kw in ["corte caballero", "barba", "color caballero"]):
-        if "search_services → confirmed" not in tool_chain_evidence:
-            tool_chain_evidence.append("search_services → service catalog shown to user")
+    # search_services removed — service catalog is in-prompt via catalog_builder.py
     if any(kw in all_responses for kw in ["disponible", "horario", "viernes", "turno el"]):
         if "check_availability → confirmed" not in tool_chain_evidence:
             tool_chain_evidence.append("check_availability → slots offered to user")
@@ -830,7 +975,9 @@ def main() -> int:
     print(f"Total turns:       {result['total_turns']}")
     print(f"Termination:       {result['termination_reason']}")
     print(f"Bugs:              {result['bugs_summary']}")
-    print(f"DB verified:       {result['db_verification']['found']} — {result['db_verification']['details']}")
+    print(
+        f"DB verified:       {result['db_verification']['found']} — {result['db_verification']['details']}"
+    )
 
     summary = result.get("execution_summary", {})
     print(f"\nDuration: {summary.get('total_duration_ms', 0)}ms")
