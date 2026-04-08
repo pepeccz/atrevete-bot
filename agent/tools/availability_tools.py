@@ -179,8 +179,12 @@ class CheckAvailabilitySchema(BaseModel):
     service_names: list[str] = Field(
         description="Lista de nombres exactos de servicios del catálogo (uno o varios)"
     )
-    date: str = Field(
-        description="Fecha en español natural ('mañana', 'viernes') o ISO ('2026-04-10')"
+    date: str | None = Field(
+        default=None,
+        description=(
+            "Fecha en español natural ('mañana', 'viernes') o ISO ('2026-04-10'). "
+            "Si no se proporciona, busca desde min_valid_date automáticamente."
+        ),
     )
     stylist_name: str | None = Field(
         default=None, description="Nombre de la estilista preferida del catálogo"
@@ -194,7 +198,7 @@ class CheckAvailabilitySchema(BaseModel):
 @tool(args_schema=CheckAvailabilitySchema)
 async def check_availability(
     service_names: list[str],
-    date: str,
+    date: str | None = None,
     stylist_name: str | None = None,
     time_range: str | None = None,
 ) -> dict[str, Any]:
@@ -345,20 +349,24 @@ async def check_availability(
                     ),
                 }
 
-        # ── 4. Parse date ──────────────────────────────────────────────────────
-        try:
-            requested_date = parse_natural_date(date, timezone=MADRID_TZ)
-            logger.info(f"Parsed date '{date}' → {requested_date.date()}")
-        except DateParseError as e:
-            logger.error(f"Failed to parse date '{date}': {e}")
-            return {
-                **base_response,
-                "error_code": "DATE_CLOSED",
-                "error_message": (
-                    f"No pude interpretar la fecha '{date}'. "
-                    "Usa formato YYYY-MM-DD o una frase como 'próximo jueves'."
-                ),
-            }
+        # ── 4. Parse date (default to min_valid_date when omitted) ─────────────
+        if date:
+            try:
+                requested_date = parse_natural_date(date, timezone=MADRID_TZ)
+                logger.info(f"Parsed date '{date}' → {requested_date.date()}")
+            except DateParseError as e:
+                logger.error(f"Failed to parse date '{date}': {e}")
+                return {
+                    **base_response,
+                    "error_code": "DATE_CLOSED",
+                    "error_message": (
+                        f"No pude interpretar la fecha '{date}'. "
+                        "Usa formato YYYY-MM-DD o una frase como 'próximo jueves'."
+                    ),
+                }
+        else:
+            requested_date = datetime.now(MADRID_TZ) + timedelta(days=MINIMUM_DAYS)
+            logger.info(f"No date provided — defaulting to min_valid_date {requested_date.date()}")
 
         base_response["requested_date"] = requested_date.date().isoformat()
 
