@@ -40,7 +40,7 @@ def test_agent_main_uses_authoritative_graph_factory():
     source = Path("agent/main.py").read_text(encoding="utf-8")
 
     assert "from agent.graphs.conversation_flow import create_graph" in source
-    assert "graph = create_graph(checkpointer=checkpointer)" in source
+    assert "graph = create_graph(checkpointer=checkpointer, store=store)" in source
 
 
 @pytest.mark.asyncio
@@ -57,6 +57,8 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
     fake_checkpointer_module = SimpleNamespace(
         get_redis_checkpointer=MagicMock(return_value="checkpoint"),
         initialize_redis_indexes=AsyncMock(),
+        get_redis_store=MagicMock(return_value=None),
+        initialize_redis_store=AsyncMock(),
     )
     fake_langfuse_client = MagicMock()
     fake_langfuse_client.flush = MagicMock()
@@ -87,7 +89,7 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
         ):
             await agent_main.subscribe_to_incoming_messages()
 
-    mock_create_graph.assert_called_once_with(checkpointer="checkpoint")
+    mock_create_graph.assert_called_once_with(checkpointer="checkpoint", store=None)
 
     invoked_state = fake_graph.ainvoke.await_args.args[0]
     invoked_config = fake_graph.ainvoke.await_args.kwargs["config"]

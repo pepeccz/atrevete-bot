@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from agent.config import get_booking_config, ToolChoicePolicy
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
+from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
 
@@ -410,6 +411,39 @@ class BookingModeNode(BaseModeNode):
                 mode_context["_booking_completed"] = True
                 logger.info("_post_tool_result[book]: booking completed successfully")
 
+                # Write cross-conversation memories — set _booking_completed BEFORE this
+                # block so that write failures never affect the flag.
+                customer_phone = getattr(self, "_current_state", {}).get("customer_phone")
+                if customer_phone:
+                    try:
+                        selected_slot = mode_context.get("selected_slot") or {}
+                        booking_data = {
+                            "service_names": mode_context.get("last_services") or [],
+                            "stylist_name": mode_context.get("last_stylist"),
+                            "stylist_id": selected_slot.get("stylist_id"),
+                            "no_preference_stylist": mode_context.get(
+                                "no_preference_stylist", False
+                            ),
+                            "start_time": selected_slot.get("start_time"),
+                            "notes": mode_context.get("notes"),
+                        }
+                        existing_prefs = getattr(self, "_current_state", {}).get(
+                            "customer_memories"
+                        )
+                        await write_customer_memories(customer_phone, booking_data, existing_prefs)
+                        logger.info(
+                            "_post_tool_result[book]: customer memories written for %s",
+                            customer_phone,
+                        )
+                    except Exception as mem_exc:
+                        logger.warning(
+                            "_post_tool_result[book]: customer memory write failed: %s", mem_exc
+                        )
+                else:
+                    logger.debug(
+                        "_post_tool_result[book]: no customer_phone, skipping memory write"
+                    )
+
         return result
 
     # ──────────────────────────────────────────────────────────────────────
@@ -573,6 +607,13 @@ class BookingModeNode(BaseModeNode):
             parts.append(f"<offered_slots>\n{slot_lines}\n</offered_slots>")
 
         parts.append("</booking_context>")
+
+        # Cross-conversation customer memories (injected when present)
+        customer_memories = state.get("customer_memories")
+        if customer_memories and isinstance(customer_memories, dict):
+            from agent.prompts.loader import _build_customer_memory_context
+
+            parts.append(_build_customer_memory_context(customer_memories))
 
         return "\n".join(parts)
 

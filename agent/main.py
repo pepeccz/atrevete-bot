@@ -12,7 +12,12 @@ from datetime import UTC, datetime
 
 from agent.batching.message_batcher import MessageBatcher
 from agent.graphs.conversation_flow import create_graph
-from agent.state.checkpointer import get_redis_checkpointer, initialize_redis_indexes
+from agent.state.checkpointer import (
+    get_redis_checkpointer,
+    get_redis_store,
+    initialize_redis_indexes,
+    initialize_redis_store,
+)
 from agent.utils.monitoring import get_langfuse_handler, get_langfuse_client
 from shared.config import get_settings
 from shared.logging_config import configure_logging
@@ -93,7 +98,19 @@ async def subscribe_to_incoming_messages():
         logger.error(f"Failed to initialize Redis indexes: {e}")
         raise
 
-    graph = create_graph(checkpointer=checkpointer)
+    # Initialize Redis Store for cross-conversation customer memory
+    logger.info("Initializing Redis Store for customer memory...")
+    store = get_redis_store()
+    try:
+        await initialize_redis_store(store)
+        logger.info("Redis Store initialized successfully")
+    except Exception as e:
+        logger.error(
+            "Failed to initialize Redis Store: %s — continuing without Store", e
+        )
+        store = None  # Graceful degradation: graph works without Store
+
+    graph = create_graph(checkpointer=checkpointer, store=store)
     logger.info("Authoritative v6 conversation graph created successfully")
 
     # Initialize message batcher with configurable window and Redis for crash recovery

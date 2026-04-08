@@ -265,3 +265,205 @@ async def test_post_tool_result_check_availability_empty_result_preserves_slots(
 
     assert booking_node._booking_context["offered_slots"] == original_slots
     assert booking_node._booking_context["selected_slot"] == original_slot
+
+
+# ──────────────────────────────────────────────────────────────────────
+# TASK-5: Write path — _post_tool_result calls write_customer_memories
+#         on successful book() result.
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def booking_node_with_state():
+    """BookingModeNode with _current_state and _booking_context pre-set."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    node._booking_context = {
+        "last_services": ["CORTE LARGO"],
+        "last_stylist": "Pilar",
+        "selected_slot": {
+            "stylist_id": "stylist-uuid-123",
+            "start_time": "2026-04-15T10:00:00+02:00",
+            "day_label": "Martes 15",
+            "time": "10:00",
+        },
+        "no_preference_stylist": False,
+        "notes": "alergia al amoniaco",
+    }
+    node._mode_context = node._booking_context
+    node._current_state = {
+        "customer_phone": "+34612345678",
+        "customer_memories": {"visit_count": 2, "preferred_stylist_name": "Pilar"},
+    }
+    return node
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_book_ok_calls_write(booking_node_with_state):
+    """book() returns status=ok → write_customer_memories awaited with correct args."""
+    import json
+    from unittest.mock import AsyncMock, patch
+
+    with patch(
+        "agent.modes.booking_mode.write_customer_memories",
+        new=AsyncMock(),
+    ) as mock_write:
+        await booking_node_with_state._post_tool_result(
+            "book",
+            {},
+            json.dumps({"status": "ok", "appointment_id": "appt-uuid"}),
+        )
+
+    mock_write.assert_awaited_once()
+    call_phone, call_booking_data, call_existing_prefs = mock_write.call_args.args
+    assert call_phone == "+34612345678"
+    assert call_existing_prefs == {"visit_count": 2, "preferred_stylist_name": "Pilar"}
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_book_ok_booking_data_fields(booking_node_with_state):
+    """Booking data passed to write contains correct fields from booking_context."""
+    import json
+    from unittest.mock import AsyncMock, patch
+
+    with patch(
+        "agent.modes.booking_mode.write_customer_memories",
+        new=AsyncMock(),
+    ) as mock_write:
+        await booking_node_with_state._post_tool_result(
+            "book",
+            {},
+            json.dumps({"status": "ok", "appointment_id": "appt-uuid"}),
+        )
+
+    _, call_booking_data, _ = mock_write.call_args.args
+    assert call_booking_data["service_names"] == ["CORTE LARGO"]
+    assert call_booking_data["stylist_id"] == "stylist-uuid-123"
+    assert call_booking_data["start_time"] == "2026-04-15T10:00:00+02:00"
+    assert call_booking_data["no_preference_stylist"] is False
+    assert call_booking_data["notes"] == "alergia al amoniaco"
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_book_failure_no_write(booking_node_with_state):
+    """book() returns status=error → write_customer_memories NOT called."""
+    import json
+    from unittest.mock import AsyncMock, patch
+
+    with patch(
+        "agent.modes.booking_mode.write_customer_memories",
+        new=AsyncMock(),
+    ) as mock_write:
+        await booking_node_with_state._post_tool_result(
+            "book",
+            {},
+            json.dumps({"status": "error", "message": "slot taken"}),
+        )
+
+    mock_write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_book_write_exception_booking_completed_still_true(
+    booking_node_with_state,
+):
+    """write_customer_memories raises → _booking_completed is still True, no re-raise."""
+    import json
+    from unittest.mock import AsyncMock, patch
+
+    with patch(
+        "agent.modes.booking_mode.write_customer_memories",
+        new=AsyncMock(side_effect=RuntimeError("Store down")),
+    ):
+        # Must not raise
+        await booking_node_with_state._post_tool_result(
+            "book",
+            {},
+            json.dumps({"status": "ok", "appointment_id": "appt-uuid"}),
+        )
+
+    assert booking_node_with_state._booking_context["_booking_completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_book_no_phone_skips_write():
+    """customer_phone is None → write_customer_memories NOT called."""
+    import json
+    from unittest.mock import AsyncMock, patch
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    node._booking_context = {
+        "last_services": ["CORTE"],
+        "selected_slot": {"stylist_id": "uuid", "start_time": "2026-04-15T10:00:00"},
+    }
+    node._mode_context = node._booking_context
+    node._current_state = {"customer_phone": None}
+
+    with patch(
+        "agent.modes.booking_mode.write_customer_memories",
+        new=AsyncMock(),
+    ) as mock_write:
+        await node._post_tool_result(
+            "book",
+            {},
+            json.dumps({"status": "ok", "appointment_id": "appt-uuid"}),
+        )
+
+    mock_write.assert_not_awaited()
+    # booking_completed should still be True even without phone
+    assert node._booking_context["_booking_completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_book_passes_existing_prefs_from_state(booking_node_with_state):
+    """existing_prefs comes from _current_state['customer_memories']."""
+    import json
+    from unittest.mock import AsyncMock, patch
+
+    existing = {"visit_count": 5, "preferred_stylist_name": "Maria"}
+    booking_node_with_state._current_state["customer_memories"] = existing
+
+    with patch(
+        "agent.modes.booking_mode.write_customer_memories",
+        new=AsyncMock(),
+    ) as mock_write:
+        await booking_node_with_state._post_tool_result(
+            "book",
+            {},
+            json.dumps({"status": "ok", "appointment_id": "appt-uuid"}),
+        )
+
+    _, _, call_existing_prefs = mock_write.call_args.args
+    assert call_existing_prefs == existing
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_book_first_time_existing_prefs_none():
+    """_current_state has no customer_memories → existing_prefs=None passed."""
+    import json
+    from unittest.mock import AsyncMock, patch
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    node._booking_context = {
+        "last_services": ["CORTE"],
+        "selected_slot": {"stylist_id": "uuid", "start_time": "2026-04-15T10:00:00"},
+    }
+    node._mode_context = node._booking_context
+    # No customer_memories key at all
+    node._current_state = {"customer_phone": "+34699000000"}
+
+    with patch(
+        "agent.modes.booking_mode.write_customer_memories",
+        new=AsyncMock(),
+    ) as mock_write:
+        await node._post_tool_result(
+            "book",
+            {},
+            json.dumps({"status": "ok", "appointment_id": "appt-uuid"}),
+        )
+
+    _, _, call_existing_prefs = mock_write.call_args.args
+    assert call_existing_prefs is None

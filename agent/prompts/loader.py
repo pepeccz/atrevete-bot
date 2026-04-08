@@ -194,8 +194,61 @@ async def load_mode_overlay(
 # ============================================================================
 
 
+def _build_customer_memory_context(memories: dict[str, Any]) -> str:
+    """Format customer memories as a Spanish-language section for prompt injection.
+
+    Pure sync function — no I/O. Only called when memories is a non-empty dict.
+    Per spec AC-8.6:
+    - Always: visit_count
+    - Stylist line: shown only when visit_count >= 2 AND preferred_stylist_name set
+      (replaced by "Sin preferencia" when no_preference_stylist=True)
+    - Services: last service (with date), frecuentes if > 1
+    - Day/time: only when typical_day_of_week present
+    - Notes: only when non-empty
+
+    Args:
+        memories: Customer preferences dict from Store/PG.
+
+    Returns:
+        Formatted markdown section string.
+    """
+    lines: list[str] = []
+
+    visit_count = memories.get("visit_count", 0)
+    lines.append(f"- Visitas anteriores: {visit_count}")
+
+    no_pref = memories.get("no_preference_stylist", False)
+    preferred_stylist = memories.get("preferred_stylist_name")
+    if no_pref:
+        lines.append("- Sin preferencia de estilista")
+    elif visit_count >= 2 and preferred_stylist:
+        lines.append(f"- Estilista habitual: {preferred_stylist}")
+
+    typical_services = memories.get("typical_services") or []
+    last_visit_date = memories.get("last_visit_date")
+
+    if typical_services:
+        date_suffix = f" ({last_visit_date})" if last_visit_date else ""
+        lines.append(f"- Último servicio: {typical_services[0]}{date_suffix}")
+        if len(typical_services) > 1:
+            lines.append(f"- Servicios frecuentes: {', '.join(typical_services)}")
+
+    day = memories.get("typical_day_of_week")
+    time_of_day = memories.get("typical_time_of_day")
+    if day:
+        time_label = {"morning": "mañana", "afternoon": "tarde"}.get(time_of_day or "", "")
+        day_str = f"{day} por la {time_label}" if time_label else day
+        lines.append(f"- Día habitual: {day_str}")
+
+    notes = memories.get("notes")
+    if notes:
+        lines.append(f"- Notas: {notes}")
+
+    return "## Historial del cliente\n" + "\n".join(lines)
+
+
 def _build_simple_dynamic_context(state: dict, mode_context: dict | None = None) -> str:
-    """Build minimal dynamic context: datetime, customer phone, summary.
+    """Build minimal dynamic context: datetime, customer phone, summary, customer memories.
 
     Customer names are intentionally NOT included here — the LLM reads them
     from conversation history and tool results.
@@ -217,6 +270,11 @@ def _build_simple_dynamic_context(state: dict, mode_context: dict | None = None)
     summary = state.get("conversation_summary", "")
     if summary:
         parts.append(f"Resumen de la conversación:\n{summary}")
+
+    # Cross-conversation customer memories (injected when present)
+    customer_memories = state.get("customer_memories")
+    if customer_memories and isinstance(customer_memories, dict):
+        parts.append(_build_customer_memory_context(customer_memories))
 
     return "\n\n".join(parts)
 
@@ -301,6 +359,7 @@ __all__ = [
     "clear_prompt_cache",
     "load_mode_overlay",
     "build_layered_messages",
+    "_build_customer_memory_context",
     "_build_simple_dynamic_context",
     "_TtlCache",
 ]

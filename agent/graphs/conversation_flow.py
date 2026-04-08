@@ -19,6 +19,7 @@ from sqlalchemy import select
 
 from agent.nodes.summarization import summarize_conversation
 from agent.prompts import load_maite_system_prompt
+from agent.services.customer_memory_service import read_customer_memories
 from agent.state.schemas import ConversationState
 from agent.state.helpers import add_message, should_summarize
 from database.connection import get_async_session
@@ -859,11 +860,29 @@ async def preprocess_node_v6(state: ConversationState) -> dict[str, Any]:
                     customer.id,
                     customer.first_name,
                 )
+                # Load cross-conversation memories (Store API / PG fallback)
+                try:
+                    memories = await read_customer_memories(customer_phone)
+                    updates["customer_memories"] = memories
+                    if memories:
+                        logger.info(
+                            "preprocess_node_v6: loaded customer memories | phone=%s | visit_count=%s",
+                            customer_phone,
+                            memories.get("visit_count"),
+                        )
+                except Exception as mem_exc:
+                    logger.warning(
+                        "preprocess_node_v6: customer memory read failed | phone=%s | error=%s",
+                        customer_phone,
+                        mem_exc,
+                    )
+                    updates["customer_memories"] = None
             else:
                 raw_display_name = state.get("pending_whatsapp_name") or state.get("customer_name")
                 updates["customer_name"] = None
                 updates["customer_id"] = None
                 updates["pending_whatsapp_name"] = raw_display_name
+                updates["customer_memories"] = None
         except Exception as e:
             logger.error(
                 "preprocess_node_v6: customer check failed | conversation_id=%s | error=%s",
@@ -894,7 +913,7 @@ async def preprocess_node_v6(state: ConversationState) -> dict[str, Any]:
     return updates
 
 
-def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
+def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateGraph":
     """
     Create the authoritative v6 mode-based StateGraph.
 
@@ -902,6 +921,8 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
 
     Args:
         checkpointer: LangGraph checkpoint saver (AsyncRedisSaver in production, None in tests)
+        store: LangGraph Store (AsyncRedisStore in production, None/InMemoryStore in tests).
+               When provided, enables cross-conversation customer memory via get_store().
 
     Returns:
         Compiled StateGraph
@@ -1026,7 +1047,7 @@ def create_graph(checkpointer: Any = None) -> "CompiledStateGraph":
     graph.add_edge("confirmation_reply", "summarize")
     graph.add_edge("summarize", END)
 
-    compiled = graph.compile(checkpointer=checkpointer)
+    compiled = graph.compile(checkpointer=checkpointer, store=store)
     logger.info("authoritative v6 mode-based graph compiled successfully")
     return compiled
 

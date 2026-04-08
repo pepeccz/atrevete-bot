@@ -433,6 +433,11 @@ class ConversationState(TypedDict, total=False):
     booking_context: Annotated[BookingContext | None, replace_booking_context]
 
     # ============================================================================
+    # v6.3 Cross-Conversation Customer Memory (Store API)
+    # ============================================================================
+    customer_memories: dict[str, Any] | None  # Preferences from Store/PG, loaded in preprocess
+
+    # ============================================================================
     # Resilience Layer Fields (v5.1)
     # ============================================================================
     retry_state: dict[str, Any] | None  # Retry state for resilience layer
@@ -526,6 +531,8 @@ def create_initial_state(
         # Resilience layer
         "retry_state": None,
         "fallback_metrics": None,
+        # Cross-conversation memory (v6.3 Store API)
+        "customer_memories": None,
         # Deprecated (kept for backward compat)
         "customer_id": customer_id,
         "customer_name": customer_name,
