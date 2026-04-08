@@ -1,22 +1,20 @@
 """
 FSM data models for booking flow.
 
-This module defines the core data structures used by the BookingFSM:
-- IntentType: Enum of recognized intent types
+This module defines the core data structures used by the v5.0 BookingFSM (now removed)
+and the remaining types still referenced by active code:
+- IntentType: Enum of recognized intent types (used in routing + services)
 - Intent: Structured representation of user intent
 - FSMResult: Result of FSM transition operations
 - CollectedData: TypedDict for accumulated booking data
-- FSMAction: Prescriptive action specification (v5.0 architecture)
-- ToolCall: Tool call specification for FSMAction
-- ActionType: Types of actions FSM can prescribe
+
+Note: ActionType, FSMAction, ToolCall (fsm_action.py) were deleted in
+prompt-restructure-eliminate-search-services — they had no active importers.
 """
 
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, TypedDict
-
-# Import FSMAction system (v5.0 prescriptive architecture)
-from agent.fsm.fsm_action import ActionType, FSMAction, ToolCall
 
 
 class IntentType(str, Enum):
@@ -28,10 +26,14 @@ class IntentType(str, Enum):
     CONFIRM_SERVICES = "confirm_services"
     SELECT_STYLIST = "select_stylist"
     SELECT_SLOT = "select_slot"
-    CONFIRM_STYLIST_CHANGE = "confirm_stylist_change"  # v4.2: Confirm when choosing different stylist
+    CONFIRM_STYLIST_CHANGE = (
+        "confirm_stylist_change"  # v4.2: Confirm when choosing different stylist
+    )
     PROVIDE_CUSTOMER_DATA = "provide_customer_data"
     USE_CUSTOMER_NAME = "use_customer_name"  # v6.0: User wants to use their name
-    PROVIDE_THIRD_PARTY_BOOKING = "provide_third_party_booking"  # v6.0: Booking for someone else without name
+    PROVIDE_THIRD_PARTY_BOOKING = (
+        "provide_third_party_booking"  # v6.0: Booking for someone else without name
+    )
     CONFIRM_NAME = "confirm_name"  # v6.0: User confirms shown name
     CORRECT_NAME = "correct_name"  # v6.0: User corrects their name
     PROVIDE_NAME = "provide_name"  # v6.1: User provides name ("me llamo X", "soy X")
@@ -178,7 +180,7 @@ class ResponseGuidance:
         must_ask: Question the LLM MUST ask the user (e.g., "¿Con quién te gustaría la cita?")
         forbidden: Elements the LLM MUST NOT mention (e.g., ["horarios", "confirmación"])
         context_hint: Brief context hint for the LLM about current state
-        required_tool_call: Tool that MUST be called before confirming selection (e.g., "search_services")
+        required_tool_call: Tool that MUST be called before confirming selection (e.g., "check_availability")
 
     Example:
         >>> guidance = ResponseGuidance(
@@ -186,7 +188,7 @@ class ResponseGuidance:
         ...     must_ask="¿Con quién te gustaría la cita?",
         ...     forbidden=["horarios específicos", "datos del cliente"],
         ...     context_hint="Usuario debe elegir estilista. NO mostrar horarios aún.",
-        ...     required_tool_call="search_services"
+        ...     required_tool_call="check_availability"
         ... )
     """
 

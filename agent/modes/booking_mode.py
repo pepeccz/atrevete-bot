@@ -286,6 +286,12 @@ class BookingModeNode(BaseModeNode):
         if tool_name == "check_availability":
             mode_context["offered_slots"] = []
             mode_context.pop("selected_slot", None)
+            # Accept stylist_name from tool_args — LLM resolved it from conversation.
+            # This prevents STYLIST_NOT_RESOLVED deadlock when the LLM provides the
+            # stylist directly in args before last_stylist is set in mode_context.
+            stylist_from_args = tool_args.get("stylist_name")
+            if stylist_from_args and not mode_context.get("last_stylist"):
+                mode_context["last_stylist"] = stylist_from_args
             # Guard: stylist must be resolved before availability check
             if not mode_context.get("last_stylist") and not mode_context.get(
                 "no_preference_stylist"

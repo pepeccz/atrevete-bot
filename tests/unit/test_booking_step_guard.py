@@ -182,6 +182,83 @@ async def test_pre_tool_call_other_tools_unaffected(booking_node: BookingModeNod
 
 
 # ===========================================================================
+# Batch 1 — STYLIST_NOT_RESOLVED deadlock fix (stylist_name from tool_args)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_allows_stylist_name_in_args(booking_node: BookingModeNode):
+    """LLM provides stylist_name in tool_args → guard passes even with empty mode_context.
+
+    Spec: Domain A — Scenario: LLM provides stylist_name in args — guard passes.
+    """
+    tool_args = {"service_names": ["Cortar"], "stylist_name": "Victor"}
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        # last_stylist NOT set, no_preference_stylist NOT set
+    }
+    result = await booking_node._pre_tool_call("check_availability", tool_args)
+    assert not isinstance(result, ToolCallRejection), (
+        "Guard must NOT reject when LLM provides stylist_name in tool_args"
+    )
+    assert isinstance(result, dict)
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_sets_last_stylist_from_args(booking_node: BookingModeNode):
+    """stylist_name from tool_args is promoted to mode_context['last_stylist'].
+
+    Spec: Domain A — _pre_tool_call must propagate stylist from args to context.
+    """
+    tool_args = {"service_names": ["Cortar"], "stylist_name": "Marta"}
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+    }
+    await booking_node._pre_tool_call("check_availability", tool_args)
+    assert booking_node._mode_context.get("last_stylist") == "Marta", (
+        "last_stylist must be set from tool_args when previously absent"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_empty_stylist_name_in_args_rejects(booking_node: BookingModeNode):
+    """Empty string stylist_name in tool_args is treated as absent → guard rejects.
+
+    Spec: Domain A — Edge case: LLM passes stylist_name='' → guard rejects.
+    """
+    tool_args = {"service_names": ["Cortar"], "stylist_name": ""}
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        # No last_stylist, no no_preference_stylist
+    }
+    result = await booking_node._pre_tool_call("check_availability", tool_args)
+    assert isinstance(result, ToolCallRejection), (
+        "Empty string stylist_name must be treated as absent — guard must reject"
+    )
+    assert result.error_code == "STYLIST_NOT_RESOLVED"
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_does_not_overwrite_existing_last_stylist(
+    booking_node: BookingModeNode,
+):
+    """If last_stylist already set, tool_args stylist_name does NOT overwrite it.
+
+    Spec: Domain A — Scenario: last_stylist already set — guard passes (regression).
+    """
+    tool_args = {"service_names": ["Cortar"], "stylist_name": "Pilar"}
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Harolyn",  # already set — must NOT be overwritten
+    }
+    result = await booking_node._pre_tool_call("check_availability", tool_args)
+    assert not isinstance(result, ToolCallRejection)
+    assert booking_node._mode_context.get("last_stylist") == "Harolyn", (
+        "Existing last_stylist must NOT be overwritten by tool_args stylist_name"
+    )
+
+
+# ===========================================================================
 # Phase 2.3 — "Sin preferencia" recognition tests (RED → GREEN in Phase 2.5)
 # ===========================================================================
 

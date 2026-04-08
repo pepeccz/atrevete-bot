@@ -230,3 +230,142 @@ class TestDedupGuard:
         # Both calls executed (different args = different dedup keys)
         assert call_count == 2
         assert len(result.tool_results["check_availability"]) == 2
+
+
+# =============================================================================
+# Batch 2 — ToolCallRejection type bug: original_tool_args preserved
+# =============================================================================
+
+
+class TestOriginalToolArgsPreservation:
+    """Spec Domain B: original tool_args must reach _post_tool_result regardless
+    of what _pre_tool_call returns (ToolCallRejection, enriched dict, or exception)."""
+
+    @pytest.mark.asyncio
+    async def test_post_tool_result_receives_original_args_when_rejection(self):
+        """When _pre_tool_call returns ToolCallRejection, _post_tool_result gets original dict.
+
+        Spec: Domain B — Scenario: _pre_tool_call returns ToolCallRejection.
+        """
+        from agent.modes.base import ToolCallRejection
+
+        captured_post_args = {}
+
+        class _RejectorMode(_DummyMode):
+            async def _pre_tool_call(self, tool_name, tool_args):
+                return ToolCallRejection(
+                    name=tool_name,
+                    error_code="TEST_REJECT",
+                    error_message="test rejection",
+                )
+
+            async def _post_tool_result(self, tool_name, tool_args, result):
+                captured_post_args["args"] = dict(tool_args)
+                return result
+
+        llm = MagicMock()
+        llm_with_tools = MagicMock()
+        llm.bind_tools.return_value = llm_with_tools
+        llm_with_tools.ainvoke = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[{"id": "tc-1", "name": "book", "args": {"slot_index": 2}}]
+                ),
+                _make_response(content="La llamada fue rechazada."),
+            ]
+        )
+
+        mode = _RejectorMode(tools=[], llm_client=llm)
+        await mode._run_agentic_loop(
+            messages=[SimpleNamespace(content="confirmar")],
+            tools=[_make_tool("book")],
+        )
+
+        assert captured_post_args.get("args") == {"slot_index": 2}, (
+            "_post_tool_result must receive original tool_args dict, not ToolCallRejection"
+        )
+
+    @pytest.mark.asyncio
+    async def test_post_tool_result_receives_enriched_args_on_success(self):
+        """When _pre_tool_call returns enriched dict, _post_tool_result gets enriched dict.
+
+        Spec: Domain B — Scenario: _pre_tool_call returns transformed dict.
+        """
+        captured_post_args = {}
+
+        class _EnricherMode(_DummyMode):
+            async def _pre_tool_call(self, tool_name, tool_args):
+                enriched = dict(tool_args)
+                enriched["slot_id"] = "uuid-abc-123"
+                return enriched
+
+            async def _post_tool_result(self, tool_name, tool_args, result):
+                captured_post_args["args"] = dict(tool_args)
+                return result
+
+        llm = MagicMock()
+        llm_with_tools = MagicMock()
+        llm.bind_tools.return_value = llm_with_tools
+        llm_with_tools.ainvoke = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[{"id": "tc-1", "name": "book", "args": {"slot_index": 1}}]
+                ),
+                _make_response(content="Cita reservada."),
+            ]
+        )
+
+        mode = _EnricherMode(tools=[], llm_client=llm)
+        await mode._run_agentic_loop(
+            messages=[SimpleNamespace(content="confirmar")],
+            tools=[_make_tool("book")],
+        )
+
+        # _post_tool_result should get the enriched dict (with slot_id)
+        assert captured_post_args.get("args", {}).get("slot_id") == "uuid-abc-123", (
+            "_post_tool_result must receive enriched dict when _pre_tool_call transforms args"
+        )
+
+    @pytest.mark.asyncio
+    async def test_post_tool_result_receives_original_args_on_exception(self):
+        """When _pre_tool_call raises exception, _post_tool_result gets original dict.
+
+        Spec: Domain B — Scenario: _pre_tool_call raises exception.
+        """
+        captured_post_args = {}
+
+        class _RaiserMode(_DummyMode):
+            async def _pre_tool_call(self, tool_name, tool_args):
+                raise RuntimeError("unexpected hook failure")
+
+            async def _post_tool_result(self, tool_name, tool_args, result):
+                captured_post_args["args"] = dict(tool_args)
+                return result
+
+        llm = MagicMock()
+        llm_with_tools = MagicMock()
+        llm.bind_tools.return_value = llm_with_tools
+        llm_with_tools.ainvoke = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[{"id": "tc-1", "name": "check_availability", "args": {"x": 42}}]
+                ),
+                _make_response(content="Algo salió mal."),
+            ]
+        )
+
+        mode = _RaiserMode(tools=[], llm_client=llm)
+        mode.logger = MagicMock()
+        await mode._run_agentic_loop(
+            messages=[SimpleNamespace(content="hola")],
+            tools=[_make_tool("check_availability")],
+        )
+
+        assert captured_post_args.get("args") == {"x": 42}, (
+            "_post_tool_result must receive original dict when _pre_tool_call raises"
+        )
+        # Warning log must be emitted
+        warning_calls = [
+            c for c in mode.logger.warning.call_args_list if "_pre_tool_call failed" in str(c)
+        ]
+        assert len(warning_calls) == 1, "A warning must be logged when _pre_tool_call raises"

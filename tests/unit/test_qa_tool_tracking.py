@@ -23,17 +23,17 @@ async def test_checkpoint_adapter_collects_turn_specific_evidence() -> None:
             "qa_tool_trace": [
                 {
                     "turn_index": 1,
-                    "tool_name": "search_services",
-                    "arguments": {"query": "corte"},
-                    "result": {"count": 1},
+                    "tool_name": "check_availability",
+                    "arguments": {"service_names": ["Cortar"], "stylist_name": "Marta"},
+                    "result": {"slots": []},
                     "source": "checkpoint",
                     "timestamp": "2026-03-19T12:00:00+00:00",
                 },
                 {
                     "turn_index": 2,
-                    "tool_name": "check_availability",
-                    "arguments": {"date": "2026-03-25"},
-                    "result": {"available_slots": []},
+                    "tool_name": "book",
+                    "arguments": {"slot_index": 1},
+                    "result": {"success": True},
                     "source": "checkpoint",
                     "timestamp": "2026-03-19T12:01:00+00:00",
                 },
@@ -44,8 +44,8 @@ async def test_checkpoint_adapter_collects_turn_specific_evidence() -> None:
     adapter = CheckpointToolEvidenceAdapter(harness)
     evidence = await adapter.collect("qa-conversation", 1)
 
-    assert [entry.tool_name for entry in evidence] == ["search_services"]
-    assert evidence[0].arguments == {"query": "corte"}
+    assert [entry.tool_name for entry in evidence] == ["check_availability"]
+    assert evidence[0].arguments == {"service_names": ["Cortar"], "stylist_name": "Marta"}
     assert evidence[0].source == "checkpoint"
 
 
@@ -58,9 +58,9 @@ async def test_stream_adapter_collects_turn_specific_evidence() -> None:
                 b"1742385600000-0",
                 {
                     b"turn_index": b"1",
-                    b"tool_name": b"search_services",
-                    b"args": b'{"query": "corte"}',
-                    b"result": b'{"count": 1}',
+                    b"tool_name": b"check_availability",
+                    b"args": b'{"service_names": ["Cortar"]}',
+                    b"result": b'{"slots": []}',
                     b"source": b"stream",
                 },
             ),
@@ -81,23 +81,74 @@ async def test_stream_adapter_collects_turn_specific_evidence() -> None:
     adapter = StreamToolEvidenceAdapter(harness)
     evidence = await adapter.collect("qa-conversation", 1)
 
-    assert [entry.tool_name for entry in evidence] == ["search_services"]
-    assert evidence[0].arguments == {"query": "corte"}
-    assert evidence[0].result == {"count": 1}
+    assert [entry.tool_name for entry in evidence] == ["check_availability"]
+    assert evidence[0].arguments == {"service_names": ["Cortar"]}
+    assert evidence[0].result == {"slots": []}
     assert evidence[0].source == "stream"
     assert evidence[0].timestamp == datetime.fromtimestamp(1742385600, tz=UTC)
 
 
 def test_validate_all_tools_present() -> None:
     evidence = [
-        ToolCallEvidence("search_services", {"query": "corte"}, {}, "checkpoint", datetime.now(UTC)),
-        ToolCallEvidence("find_next_available", {}, {}, "checkpoint", datetime.now(UTC)),
+        ToolCallEvidence(
+            "check_availability",
+            {"service_names": ["Cortar"], "stylist_name": "Marta"},
+            {},
+            "checkpoint",
+            datetime.now(UTC),
+        ),
         ToolCallEvidence("book", {}, {"success": True}, "checkpoint", datetime.now(UTC)),
     ]
 
     report = validate_tool_trace(evidence, flow_type="booking")
 
     assert report.all_required_present is True
+    assert report.missing_tools == []
+    assert report.out_of_order == []
+    assert report.found_tools == [
+        "check_availability",
+        "book_appointment",
+    ]
+
+
+def test_validate_missing_tool() -> None:
+    evidence = [
+        ToolCallEvidence("check_availability", {}, {}, "checkpoint", datetime.now(UTC)),
+        # book is absent → book_appointment missing
+    ]
+
+    report = validate_tool_trace(evidence, flow_type="booking")
+
+    assert report.all_required_present is False
+    assert report.missing_tools == ["book_appointment"]
+    assert report.out_of_order == []
+
+
+def test_validate_out_of_order() -> None:
+    evidence = [
+        ToolCallEvidence(
+            "book_appointment", {}, {"success": True}, "checkpoint", datetime.now(UTC)
+        ),
+        ToolCallEvidence("check_availability", {}, {}, "checkpoint", datetime.now(UTC)),
+    ]
+
+    report = validate_tool_trace(evidence, flow_type="booking")
+
+    assert report.all_required_present is False
+    assert report.missing_tools == []
+    assert report.out_of_order == [
+        "check_availability",
+        "book_appointment",
+    ]
+
+
+def test_validate_non_booking_flow_skips() -> None:
+    evidence = [ToolCallEvidence("escalate_to_human", {}, {}, "checkpoint", datetime.now(UTC))]
+
+    report = validate_tool_trace(evidence, flow_type="escalation")
+
+    assert report.all_required_present is True
+    assert report.found_tools == []
     assert report.missing_tools == []
     assert report.out_of_order == []
     assert report.found_tools == [
@@ -124,7 +175,9 @@ def test_validate_out_of_order() -> None:
     evidence = [
         ToolCallEvidence("check_availability", {}, {}, "checkpoint", datetime.now(UTC)),
         ToolCallEvidence("search_services", {}, {}, "checkpoint", datetime.now(UTC)),
-        ToolCallEvidence("book_appointment", {}, {"success": True}, "checkpoint", datetime.now(UTC)),
+        ToolCallEvidence(
+            "book_appointment", {}, {"success": True}, "checkpoint", datetime.now(UTC)
+        ),
     ]
 
     report = validate_tool_trace(evidence, flow_type="booking")
@@ -179,9 +232,9 @@ async def test_execute_turn_adds_tool_evidence_to_response() -> None:
     harness.collect_tool_evidence = AsyncMock(
         return_value=[
             ToolCallEvidence(
-                tool_name="search_services",
-                arguments={"query": "corte"},
-                result={"count": 1},
+                tool_name="check_availability",
+                arguments={"service_names": ["Cortar"], "stylist_name": "Marta"},
+                result={"slots": []},
                 source="checkpoint",
                 timestamp=datetime.now(UTC),
             )
@@ -192,9 +245,9 @@ async def test_execute_turn_adds_tool_evidence_to_response() -> None:
 
     assert result["tool_evidence"] == [
         {
-            "tool_name": "search_services",
-            "arguments": {"query": "corte"},
-            "result": {"count": 1},
+            "tool_name": "check_availability",
+            "arguments": {"service_names": ["Cortar"], "stylist_name": "Marta"},
+            "result": {"slots": []},
             "source": "checkpoint",
             "timestamp": result["tool_evidence"][0]["timestamp"],
         }

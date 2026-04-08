@@ -20,7 +20,7 @@ FILES_TO_FIX = [
     "agent/tools/calendar_tools.py",
     "agent/tools/customer_tools.py",
     "agent/tools/info_tools.py",
-    "agent/tools/search_services.py",
+    # "agent/tools/search_services.py",  # removed — catalog-in-prompt architecture
     "agent/transactions/booking_transaction.py",
     "agent/validators/transaction_validators.py",
     "agent/workers/conversation_archiver.py",
@@ -42,24 +42,24 @@ def fix_async_session_usage(content: str) -> tuple[str, int]:
     num_replacements = 0
 
     # Replace 'async for session in get_async_session():' with 'async with get_async_session() as session:'
-    pattern = r'async for session in get_async_session\(\):'
-    replacement = 'async with get_async_session() as session:'
+    pattern = r"async for session in get_async_session\(\):"
+    replacement = "async with get_async_session() as session:"
 
     fixed_content, count = re.subn(pattern, replacement, content)
     num_replacements += count
 
     # Remove 'finally:\n        break  # Exit async for loop' patterns
     # This pattern matches the workaround that was added
-    finally_pattern = r'\n        finally:\n            break  # Exit async for loop.*?\n'
-    fixed_content = re.sub(finally_pattern, '\n', fixed_content)
+    finally_pattern = r"\n        finally:\n            break  # Exit async for loop.*?\n"
+    fixed_content = re.sub(finally_pattern, "\n", fixed_content)
 
     # Also remove simpler finally/break patterns
-    finally_pattern2 = r'\n        finally:\n            break\n'
-    fixed_content = re.sub(finally_pattern2, '\n', fixed_content)
+    finally_pattern2 = r"\n        finally:\n            break\n"
+    fixed_content = re.sub(finally_pattern2, "\n", fixed_content)
 
     # Remove the "edge case" error handling that's no longer needed
-    edge_case_pattern = r'\n    # Edge case: If async for loop exits without returning.*?\n    logger\.error\(\n.*?\n    \)\n    raise RuntimeError\(.*?\)\n'
-    fixed_content = re.sub(edge_case_pattern, '', fixed_content, flags=re.DOTALL)
+    edge_case_pattern = r"\n    # Edge case: If async for loop exits without returning.*?\n    logger\.error\(\n.*?\n    \)\n    raise RuntimeError\(.*?\)\n"
+    fixed_content = re.sub(edge_case_pattern, "", fixed_content, flags=re.DOTALL)
 
     return fixed_content, num_replacements
 
@@ -75,7 +75,7 @@ def main():
             continue
 
         # Read original content
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             original_content = f.read()
 
         # Fix content
@@ -83,7 +83,7 @@ def main():
 
         if num_replacements > 0:
             # Write fixed content
-            with open(path, 'w', encoding='utf-8') as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(fixed_content)
 
             print(f"✅ Fixed {file_path}: {num_replacements} replacements")

@@ -74,8 +74,8 @@ class TestBookingModePrompt:
         """Test that booking prompt references available tools."""
         content = load_markdown("booking.md", "modes")
 
-        # Should reference tools
-        assert "search_services" in content or "book" in content or "find_next_available" in content
+        # Should reference current active tools (search_services was removed)
+        assert "check_availability" in content or "book" in content
 
 
 class TestGeneralModePrompt:
@@ -254,29 +254,25 @@ class TestPromptToolReferences:
     """Test cases for tool references in prompts."""
 
     def test_booking_prompt_references_all_tools(self):
-        """Test that booking prompt references booking-relevant tools."""
+        """Test that booking prompt references booking-relevant tools (current architecture)."""
         content = load_markdown("booking.md", "modes")
 
-        # These are the tools actually referenced in the current booking.md
+        # Current active tools in booking.md (search_services/find_next_available removed)
         tools = [
-            "search_services",
-            "find_next_available",
             "check_availability",
-            "manage_customer",
             "book",
+            "escalate",
         ]
 
         for tool in tools:
             assert tool in content, f"Tool {tool} not referenced in booking.md"
 
-    def test_general_prompt_references_read_only_tools(self):
-        """Test that general prompt only references read-only tools."""
+    def test_general_prompt_references_escalate_tool(self):
+        """Test that general prompt references escalate tool."""
         content = load_markdown("general.md", "modes")
 
-        # Should have read-only tools
-        assert "query_info" in content
-        assert "search_services" in content
-        assert "escalate_to_human" in content
+        # escalate is the only active tool in GENERAL mode besides manage_appointments
+        assert "escalate" in content
 
 
 class TestPromptFileLoadingEdgeCases:
