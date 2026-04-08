@@ -326,6 +326,15 @@ class BookingModeNode(BaseModeNode):
                         error_message="slot_index debe ser un número entero.",
                     )
 
+            # Step A.1b: fallback — inject from selected_slot if slot_index was absent
+            if not tool_args.get("stylist_id") or not tool_args.get("start_time"):
+                selected = mode_context.get("selected_slot")
+                if selected:
+                    tool_args.setdefault("stylist_id", selected.get("stylist_id"))
+                    tool_args.setdefault(
+                        "start_time", selected.get("start_time") or selected.get("full_datetime")
+                    )
+
             # Step A.2: customer_name extraction from tool args
             if not mode_context.get("customer_name"):
                 first = (tool_args.get("customer_first_name") or "").strip()
