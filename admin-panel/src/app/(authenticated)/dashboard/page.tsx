@@ -16,11 +16,49 @@ import { es } from "date-fns/locale";
 import api from "@/lib/api";
 import type { Notification, NotificationsListResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { AppointmentTrendChart } from "@/components/charts/appointments-trend-chart";
-import { TopServicesChart } from "@/components/charts/top-services-chart";
-import { HoursWorkedChart } from "@/components/charts/hours-worked-chart";
-import { CustomerGrowthChart } from "@/components/charts/customer-growth-chart";
-import { StylistPerformanceChart } from "@/components/charts/stylist-performance-chart";
+import dynamic from "next/dynamic";
+import { StatCardSkeleton, ChartSkeleton } from "@/components/shared/loading-skeleton";
+
+// Recharts does not support SSR — lazy load all chart components to reduce initial bundle
+const AppointmentTrendChart = dynamic(
+  () =>
+    import("@/components/charts/appointments-trend-chart").then(
+      (m) => m.AppointmentTrendChart
+    ),
+  { ssr: false, loading: () => <ChartSkeleton title="Tendencia de Citas" /> }
+);
+
+const TopServicesChart = dynamic(
+  () =>
+    import("@/components/charts/top-services-chart").then(
+      (m) => m.TopServicesChart
+    ),
+  { ssr: false, loading: () => <ChartSkeleton title="Servicios Populares" /> }
+);
+
+const HoursWorkedChart = dynamic(
+  () =>
+    import("@/components/charts/hours-worked-chart").then(
+      (m) => m.HoursWorkedChart
+    ),
+  { ssr: false, loading: () => <ChartSkeleton title="Horas Trabajadas" /> }
+);
+
+const CustomerGrowthChart = dynamic(
+  () =>
+    import("@/components/charts/customer-growth-chart").then(
+      (m) => m.CustomerGrowthChart
+    ),
+  { ssr: false, loading: () => <ChartSkeleton title="Crecimiento de Clientes" /> }
+);
+
+const StylistPerformanceChart = dynamic(
+  () =>
+    import("@/components/charts/stylist-performance-chart").then(
+      (m) => m.StylistPerformanceChart
+    ),
+  { ssr: false, loading: () => <ChartSkeleton title="Rendimiento por Estilista" /> }
+);
 
 interface KPIs {
   appointments_this_month: number;
@@ -177,37 +215,44 @@ export default function DashboardPage() {
         description="Vista general del salon"
       />
 
-      <div className="flex-1 space-y-6 p-6">
+      <div className="flex-1 space-y-6 p-4 md:p-6">
         {/* KPI Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <KPICard
-            title="Citas este mes"
-            value={isLoading ? "..." : kpis?.appointments_this_month ?? 0}
-            description="Total de citas agendadas"
-            icon={Calendar}
-          />
-          <KPICard
-            title="Clientes totales"
-            value={isLoading ? "..." : kpis?.total_customers ?? 0}
-            description="Clientes registrados"
-            icon={Users}
-          />
-          <KPICard
-            title="Duracion promedio"
-            value={
-              isLoading
-                ? "..."
-                : `${kpis?.avg_appointment_duration ?? 0} min`
-            }
-            description="Tiempo promedio por cita"
-            icon={Clock}
-          />
-          <KPICard
-            title="Horas reservadas"
-            value={isLoading ? "..." : kpis?.total_hours_booked ?? 0}
-            description="Horas totales este mes"
-            icon={TrendingUp}
-          />
+          {isLoading ? (
+            <>
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+            </>
+          ) : (
+            <>
+              <KPICard
+                title="Citas este mes"
+                value={kpis?.appointments_this_month ?? 0}
+                description="Total de citas agendadas"
+                icon={Calendar}
+              />
+              <KPICard
+                title="Clientes totales"
+                value={kpis?.total_customers ?? 0}
+                description="Clientes registrados"
+                icon={Users}
+              />
+              <KPICard
+                title="Duración promedio"
+                value={`${kpis?.avg_appointment_duration ?? 0} min`}
+                description="Tiempo promedio por cita"
+                icon={Clock}
+              />
+              <KPICard
+                title="Horas reservadas"
+                value={kpis?.total_hours_booked ?? 0}
+                description="Horas totales este mes"
+                icon={TrendingUp}
+              />
+            </>
+          )}
         </div>
 
         {/* Notifications Widget */}
@@ -280,24 +325,8 @@ export default function DashboardPage() {
         <div className="grid gap-4 md:grid-cols-2">
           {isLoading ? (
             <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Tendencia de Citas</CardTitle>
-                  <CardDescription>Cargando...</CardDescription>
-                </CardHeader>
-                <CardContent className="h-[300px] flex items-center justify-center">
-                  <div className="text-muted-foreground">Cargando datos...</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Servicios Populares</CardTitle>
-                  <CardDescription>Cargando...</CardDescription>
-                </CardHeader>
-                <CardContent className="h-[300px] flex items-center justify-center">
-                  <div className="text-muted-foreground">Cargando datos...</div>
-                </CardContent>
-              </Card>
+              <ChartSkeleton title="Tendencia de Citas" />
+              <ChartSkeleton title="Servicios Populares" />
             </>
           ) : (
             <>
@@ -311,24 +340,8 @@ export default function DashboardPage() {
         <div className="grid gap-4 md:grid-cols-2">
           {isLoading ? (
             <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Horas Trabajadas</CardTitle>
-                  <CardDescription>Cargando...</CardDescription>
-                </CardHeader>
-                <CardContent className="h-[300px] flex items-center justify-center">
-                  <div className="text-muted-foreground">Cargando datos...</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Crecimiento de Clientes</CardTitle>
-                  <CardDescription>Cargando...</CardDescription>
-                </CardHeader>
-                <CardContent className="h-[300px] flex items-center justify-center">
-                  <div className="text-muted-foreground">Cargando datos...</div>
-                </CardContent>
-              </Card>
+              <ChartSkeleton title="Horas Trabajadas" />
+              <ChartSkeleton title="Crecimiento de Clientes" />
             </>
           ) : (
             <>

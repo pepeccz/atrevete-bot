@@ -4,7 +4,8 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
+    /* ── Base shadcn tokens ──────────────────────────────────────────────── */
+    --background: 40 20% 98%;       /* warm off-white — salon feel */
     --foreground: 240 10% 3.9%;
     --card: 0 0% 100%;
     --card-foreground: 240 10% 3.9%;
@@ -32,9 +33,26 @@
     --sidebar-accent-foreground: 45 62% 30%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 45 62% 55%;
+
+    /* ── Semantic surface tokens (AD10) ─────────────────────────────────── */
+    --surface: 40 20% 98%;          /* warm page background */
+    --surface-elevated: 0 0% 100%;  /* cards, dialogs — pure white */
+    --surface-hover: 40 15% 96%;    /* hover state on surface */
+    --surface-muted: 40 10% 94%;    /* subtle muted surface */
+
+    /* ── Semantic status tokens ─────────────────────────────────────────── */
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 98%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 10%;
+    --info: 210 80% 50%;
+    --info-foreground: 0 0% 98%;
+    --danger: 0 84.2% 60.2%;
+    --danger-foreground: 0 0% 98%;
   }
 
   .dark {
+    /* ── Base shadcn tokens (dark) ──────────────────────────────────────── */
     --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
     --card: 240 10% 3.9%;
@@ -62,6 +80,22 @@
     --sidebar-accent-foreground: 45 62% 70%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 45 62% 50%;
+
+    /* ── Semantic surface tokens — dark overrides ───────────────────────── */
+    --surface: 240 10% 3.9%;
+    --surface-elevated: 240 8% 7%;
+    --surface-hover: 240 7% 10%;
+    --surface-muted: 240 6% 12%;
+
+    /* ── Semantic status tokens — dark overrides ────────────────────────── */
+    --success: 142 60% 45%;
+    --success-foreground: 0 0% 98%;
+    --warning: 38 85% 55%;
+    --warning-foreground: 0 0% 10%;
+    --info: 210 70% 60%;
+    --info-foreground: 0 0% 98%;
+    --danger: 0 62.8% 50%;
+    --danger-foreground: 0 0% 98%;
   }
 }
 
@@ -71,6 +105,9 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  h1, h2, h3 {
+    @apply font-heading;
   }
 }
 

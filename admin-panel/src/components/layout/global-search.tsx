@@ -10,25 +10,16 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import api from "@/lib/api";
 import type { GlobalSearchResponse, SearchResultItem } from "@/lib/types";
-
-// Debounce hook
-function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value);
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [value, delay]);
-
-  return debouncedValue;
-}
+import { useDebounce } from "@/hooks/use-debounce";
+import { useMediaQuery } from "@/hooks/use-media-query";
+import { useSidebar } from "@/contexts/sidebar-context";
 
 const typeIcons = {
   customer: User,
@@ -79,15 +70,108 @@ function SearchResultGroup({
   );
 }
 
+/** Contenido de resultados de búsqueda compartido entre desktop y móvil */
+function SearchResults({
+  query,
+  results,
+  loading,
+  onSelect,
+}: {
+  query: string;
+  results: GlobalSearchResponse | null;
+  loading: boolean;
+  onSelect: (item: SearchResultItem) => void;
+}) {
+  const hasResults = results && results.total > 0;
+
+  if (loading) {
+    return (
+      <div className="p-4 text-center text-sm text-muted-foreground">
+        Buscando...
+      </div>
+    );
+  }
+
+  if (!loading && query.length >= 2 && !hasResults) {
+    return (
+      <div className="p-4 text-center text-sm text-muted-foreground">
+        No se encontraron resultados para &quot;{query}&quot;
+      </div>
+    );
+  }
+
+  if (!loading && hasResults) {
+    return (
+      <ScrollArea className="max-h-96">
+        <div className="p-2">
+          <SearchResultGroup
+            type="customer"
+            items={results.customers}
+            onSelect={onSelect}
+          />
+          <SearchResultGroup
+            type="appointment"
+            items={results.appointments}
+            onSelect={onSelect}
+          />
+          <SearchResultGroup
+            type="service"
+            items={results.services}
+            onSelect={onSelect}
+          />
+          <SearchResultGroup
+            type="stylist"
+            items={results.stylists}
+            onSelect={onSelect}
+          />
+        </div>
+      </ScrollArea>
+    );
+  }
+
+  return (
+    <div className="p-4 text-center text-sm text-muted-foreground">
+      Escribe al menos 2 caracteres para buscar
+    </div>
+  );
+}
+
 export function GlobalSearch() {
-  const [open, setOpen] = useState(false);
+  const [desktopOpen, setDesktopOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GlobalSearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const mobileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const router = useRouter();
 
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const { isMobileSearchOpen, closeMobileSearch } = useSidebar();
+
   const debouncedQuery = useDebounce(query, 300);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
+  // Reset query when mobile dialog closes
+  useEffect(() => {
+    if (!isMobileSearchOpen) {
+      setQuery("");
+      setResults(null);
+    }
+  }, [isMobileSearchOpen]);
+
+  // Focus mobile input when dialog opens
+  useEffect(() => {
+    if (isMobileSearchOpen) {
+      setTimeout(() => mobileInputRef.current?.focus(), 100);
+    }
+  }, [isMobileSearchOpen]);
 
   useEffect(() => {
     if (debouncedQuery.length < 2) {
@@ -95,16 +179,30 @@ export function GlobalSearch() {
       return;
     }
 
+    // Cancel any in-flight request before starting a new one
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     const search = async () => {
       setLoading(true);
       try {
-        const data = await api.globalSearch(debouncedQuery);
-        setResults(data);
+        const data = await api.globalSearch(debouncedQuery, controller.signal);
+        // Only update state if this request was not aborted
+        if (!controller.signal.aborted) {
+          setResults(data);
+        }
       } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          // Petición cancelada — no hacer nada
+          return;
+        }
         console.error("Search error:", error);
         setResults(null);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     };
 
@@ -113,31 +211,63 @@ export function GlobalSearch() {
 
   const handleSelect = useCallback(
     (item: SearchResultItem) => {
-      setOpen(false);
+      setDesktopOpen(false);
+      closeMobileSearch();
       setQuery("");
       router.push(item.url);
     },
-    [router]
+    [router, closeMobileSearch]
   );
 
-  // Keyboard shortcut (Ctrl+K / Cmd+K)
+  // Keyboard shortcut (Ctrl+K / Cmd+K) — solo en escritorio
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        setOpen(true);
-        setTimeout(() => inputRef.current?.focus(), 0);
+        if (!isMobile) {
+          setDesktopOpen(true);
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isMobile]);
 
-  const hasResults = results && results.total > 0;
+  // ----- Móvil: Dialog a pantalla completa (AD9) -----
+  if (isMobile) {
+    return (
+      <Dialog open={isMobileSearchOpen} onOpenChange={(open) => !open && closeMobileSearch()}>
+        <DialogContent className="fixed inset-0 h-full max-w-full translate-x-0 translate-y-0 left-0 top-0 rounded-none flex flex-col p-0">
+          <DialogTitle className="sr-only">Buscar</DialogTitle>
+          <div className="flex items-center gap-2 p-4 border-b">
+            <Search className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+            <Input
+              ref={mobileInputRef}
+              type="search"
+              placeholder="Buscar clientes, citas, servicios..."
+              className="flex-1 border-0 shadow-none focus-visible:ring-0 text-base"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <SearchResults
+              query={query}
+              results={results}
+              loading={loading}
+              onSelect={handleSelect}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
+  // ----- Escritorio: Popover existente -----
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={desktopOpen} onOpenChange={setDesktopOpen}>
       <PopoverTrigger asChild>
         <div className="relative hidden md:block">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -148,7 +278,7 @@ export function GlobalSearch() {
             className="w-64 pl-8"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setOpen(true)}
+            onFocus={() => setDesktopOpen(true)}
           />
         </div>
       </PopoverTrigger>
@@ -157,50 +287,12 @@ export function GlobalSearch() {
         align="start"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        {loading && (
-          <div className="p-4 text-center text-sm text-muted-foreground">
-            Buscando...
-          </div>
-        )}
-
-        {!loading && query.length >= 2 && !hasResults && (
-          <div className="p-4 text-center text-sm text-muted-foreground">
-            No se encontraron resultados para &quot;{query}&quot;
-          </div>
-        )}
-
-        {!loading && hasResults && (
-          <ScrollArea className="max-h-96">
-            <div className="p-2">
-              <SearchResultGroup
-                type="customer"
-                items={results.customers}
-                onSelect={handleSelect}
-              />
-              <SearchResultGroup
-                type="appointment"
-                items={results.appointments}
-                onSelect={handleSelect}
-              />
-              <SearchResultGroup
-                type="service"
-                items={results.services}
-                onSelect={handleSelect}
-              />
-              <SearchResultGroup
-                type="stylist"
-                items={results.stylists}
-                onSelect={handleSelect}
-              />
-            </div>
-          </ScrollArea>
-        )}
-
-        {query.length < 2 && (
-          <div className="p-4 text-center text-sm text-muted-foreground">
-            Escribe al menos 2 caracteres para buscar
-          </div>
-        )}
+        <SearchResults
+          query={query}
+          results={results}
+          loading={loading}
+          onSelect={handleSelect}
+        />
       </PopoverContent>
     </Popover>
   );

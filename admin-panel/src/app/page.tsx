@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth-context";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Home() {
   const router = useRouter();
@@ -20,7 +21,10 @@ export default function Home() {
 
   return (
     <div className="flex h-screen items-center justify-center">
-      <div className="animate-pulse text-muted-foreground">Cargando...</div>
+      <div className="flex flex-col items-center gap-4">
+        <Skeleton className="h-10 w-10 rounded-full" />
+        <Skeleton className="h-3 w-24" />
+      </div>
     </div>
   );
 }

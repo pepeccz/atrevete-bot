@@ -5,8 +5,8 @@ import { format } from "date-fns";
 import { Calendar, Search, Scissors, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DatePicker } from "@/components/shared/date-picker";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -146,27 +146,37 @@ export function AvailabilityPicker({
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Fecha inicio</Label>
-          <Input
-            type="date"
-            value={startDate}
-            onChange={(e) => {
-              setStartDate(e.target.value);
-              // Auto-set end date if not set or invalid
-              if (!endDate || endDate < e.target.value) {
-                setEndDate(e.target.value);
+          <DatePicker
+            value={startDate ? new Date(startDate + "T00:00:00") : undefined}
+            onChange={(date) => {
+              if (date) {
+                const iso = date.toISOString().split("T")[0];
+                setStartDate(iso);
+                if (!endDate || endDate < iso) {
+                  setEndDate(iso);
+                }
+              } else {
+                setStartDate("");
               }
             }}
-            min={today}
+            placeholder="Fecha inicio"
+            minDate={new Date(today)}
           />
         </div>
         <div className="space-y-2">
           <Label>Fecha fin</Label>
-          <Input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            min={startDate || today}
-            max={maxEndDate}
+          <DatePicker
+            value={endDate ? new Date(endDate + "T00:00:00") : undefined}
+            onChange={(date) => {
+              if (date) {
+                setEndDate(date.toISOString().split("T")[0]);
+              } else {
+                setEndDate("");
+              }
+            }}
+            placeholder="Fecha fin"
+            minDate={startDate ? new Date(startDate + "T00:00:00") : new Date(today)}
+            maxDate={maxEndDate ? new Date(maxEndDate + "T00:00:00") : undefined}
           />
         </div>
       </div>
@@ -184,9 +194,9 @@ export function AvailabilityPicker({
               <SelectItem key={stylist.id} value={stylist.id}>
                 {stylist.name} (
                 {stylist.category === "HAIRDRESSING"
-                  ? "Peluqueria"
+                  ? "Peluquería"
                   : stylist.category === "AESTHETICS"
-                    ? "Estetica"
+                    ? "Estética"
                     : "Ambas"}
                 )
               </SelectItem>
@@ -197,7 +207,7 @@ export function AvailabilityPicker({
 
       {/* Duration info */}
       <div className="text-sm text-muted-foreground">
-        Duracion total: {totalDuration} minutos
+        Duración total: {totalDuration} minutos
       </div>
 
       {/* Search button */}

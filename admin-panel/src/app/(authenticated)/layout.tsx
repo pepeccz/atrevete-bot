@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth-context";
 import { Sidebar } from "@/components/layout/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function AuthenticatedLayout({
   children,
@@ -27,7 +28,10 @@ export default function AuthenticatedLayout({
   if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">Cargando...</div>
+        <div className="flex flex-col items-center gap-4">
+          <Skeleton className="h-10 w-10 rounded-full" />
+          <Skeleton className="h-3 w-28" />
+        </div>
       </div>
     );
   }

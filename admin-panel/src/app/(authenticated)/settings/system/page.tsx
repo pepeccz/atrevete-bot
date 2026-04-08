@@ -344,7 +344,7 @@ export default function SystemSettingsPage() {
           title="Configuración del Sistema"
           description="Cargando ajustes..."
         />
-        <div className="flex-1 p-6 flex items-center justify-center">
+        <div className="flex-1 p-4 md:p-6 flex items-center justify-center">
           <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       </div>
@@ -413,7 +413,7 @@ export default function SystemSettingsPage() {
         }
       />
 
-      <div className="flex-1 p-6">
+      <div className="flex-1 p-4 md:p-6">
         <Accordion type="multiple" defaultValue={["confirmation"]} className="space-y-4">
           {CATEGORY_ORDER.map((category) => {
             const categorySettings = settings[category] || [];

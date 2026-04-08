@@ -222,10 +222,10 @@ export default function BusinessHoursPage() {
     <div className="flex flex-col">
       <Header
         title="Horarios"
-        description="Configuracion de horarios de apertura del salon"
+        description="Configuración de horarios de apertura del salón"
       />
 
-      <div className="flex-1 p-6">
+      <div className="flex-1 p-4 md:p-6">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">

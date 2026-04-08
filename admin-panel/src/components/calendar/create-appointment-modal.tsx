@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DatePicker } from "@/components/shared/date-picker";
 import {
   Select,
   SelectContent,
@@ -267,11 +268,12 @@ export function CreateAppointmentModal({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="date">Fecha *</Label>
-              <Input
-                id="date"
-                type="date"
-                value={selectedDate?.toISOString().split("T")[0] || ""}
-                readOnly
+              <DatePicker
+                value={selectedDate ?? undefined}
+                onChange={() => {
+                  // Read-only: date is set by calendar click
+                }}
+                disabled
               />
             </div>
             <div className="space-y-2">

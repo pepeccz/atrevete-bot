@@ -10,7 +10,13 @@ import React, {
 
 interface SidebarContextType {
   isCollapsed: boolean;
+  isMobileOpen: boolean;
+  isMobileSearchOpen: boolean;
   toggle: () => void;
+  toggleMobile: () => void;
+  closeMobile: () => void;
+  toggleMobileSearch: () => void;
+  closeMobileSearch: () => void;
   collapse: () => void;
   expand: () => void;
 }
@@ -21,6 +27,8 @@ const STORAGE_KEY = "sidebar_collapsed";
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
 
   // Load from localStorage on mount
@@ -43,6 +51,22 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     setIsCollapsed((prev) => !prev);
   }, []);
 
+  const toggleMobile = useCallback(() => {
+    setIsMobileOpen((prev) => !prev);
+  }, []);
+
+  const closeMobile = useCallback(() => {
+    setIsMobileOpen(false);
+  }, []);
+
+  const toggleMobileSearch = useCallback(() => {
+    setIsMobileSearchOpen((prev) => !prev);
+  }, []);
+
+  const closeMobileSearch = useCallback(() => {
+    setIsMobileSearchOpen(false);
+  }, []);
+
   const collapse = useCallback(() => {
     setIsCollapsed(true);
   }, []);
@@ -55,7 +79,13 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     <SidebarContext.Provider
       value={{
         isCollapsed,
+        isMobileOpen,
+        isMobileSearchOpen,
         toggle,
+        toggleMobile,
+        closeMobile,
+        toggleMobileSearch,
+        closeMobileSearch,
         collapse,
         expand,
       }}
