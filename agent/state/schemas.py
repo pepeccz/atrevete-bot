@@ -57,9 +57,6 @@ class BookingContext(TypedDict, total=False):
     customer_name: str | None
     customer_id: str | None
 
-    # Confirmation flow
-    confirmation_summary_sent: bool
-    confirmation_shown: bool
     _booking_completed: bool
 
     # Handoff hints (from router / greeting mode)
