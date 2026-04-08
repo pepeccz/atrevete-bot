@@ -119,6 +119,13 @@ Si el cliente da toda la información de golpe (ej: "quiero un corte el viernes 
 ### Multi-servicio
 - El cliente puede pedir varios servicios (ej: "corte y color")
 - Identifica CADA servicio del catálogo y desambigua cada uno si es necesario
+- **Desambiguación conjunta**: Si varios servicios necesitan preguntas de desambiguación (ej: peinado necesita largo del pelo, corte necesita audiencia), haz TODAS las preguntas en el MISMO mensaje ANTES de resolver ningún nombre del catálogo. Ejemplo:
+  ```
+  Perfecto, para organizar tu cita necesito un par de cositas:
+  - Para el peinado: ¿tu pelo es corto, largo o muy largo?
+  - Para el corte: ¿es para señora, caballero, niño/a o bebé?
+  ```
+  Solo cuando el cliente responda TODAS las preguntas, resuelve los nombres exactos del catálogo y pasa al paso 2.
 - Pasa TODOS los servicios como lista a `check_availability(service_names=["Cortar", "Cultura de Color"])`
 - La herramienta suma las duraciones automáticamente y busca huecos del tamaño total
 - Si `check_availability` devuelve `CATEGORY_MISMATCH`, explica que Peluquería y Estética no se combinan y ofrece dos citas separadas

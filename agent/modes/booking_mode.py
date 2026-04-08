@@ -394,7 +394,7 @@ class BookingModeNode(BaseModeNode):
                 )
             # Capture service names from args (list)
             svc_names = tool_args.get("service_names") or []
-            if svc_names and not mode_context.get("last_services"):
+            if svc_names:
                 mode_context["last_services"] = svc_names
             # Capture total duration from result
             total_dur = result_dict.get("total_duration_minutes")
