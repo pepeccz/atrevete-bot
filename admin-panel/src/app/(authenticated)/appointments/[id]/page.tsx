@@ -17,7 +17,9 @@ import {
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
+import { DatePicker } from "@/components/shared/date-picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageSkeleton } from "@/components/shared/loading-skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -44,30 +46,9 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import type { Stylist, AppointmentStatus, ServiceCategory } from "@/lib/types";
 import { RescheduleModal } from "@/components/appointments/reschedule-modal";
+import { StatusBadge } from "@/components/shared/status-badge";
 
-// Status badge component
-function StatusBadge({ status }: { status: AppointmentStatus }) {
-  const variants: Record<
-    AppointmentStatus,
-    "default" | "success" | "warning" | "destructive" | "secondary"
-  > = {
-    pending: "warning",
-    confirmed: "success",
-    completed: "secondary",
-    cancelled: "destructive",
-    no_show: "destructive",
-  };
-
-  const labels: Record<AppointmentStatus, string> = {
-    pending: "Pendiente",
-    confirmed: "Confirmada",
-    completed: "Completada",
-    cancelled: "Cancelada",
-    no_show: "No asistio",
-  };
-
-  return <Badge variant={variants[status]}>{labels[status]}</Badge>;
-}
+// StatusBadge imported from @/components/shared/status-badge
 
 interface AppointmentDetail {
   id: string;
@@ -212,13 +193,8 @@ export default function AppointmentDetailPage() {
   if (isLoading) {
     return (
       <div className="flex flex-col min-h-screen">
-        <Header title="Cargando cita..." />
-        <main className="flex-1 p-6 flex items-center justify-center">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            <span>Cargando...</span>
-          </div>
-        </main>
+        <Header title="Cita" />
+        <PageSkeleton sections={2} />
       </div>
     );
   }
@@ -227,7 +203,7 @@ export default function AppointmentDetailPage() {
     return (
       <div className="flex flex-col min-h-screen">
         <Header title="Cita no encontrada" />
-        <main className="flex-1 p-6 flex items-center justify-center">
+        <main className="flex-1 p-4 md:p-6 flex items-center justify-center">
           <div className="text-center">
             <p className="text-muted-foreground mb-4">No se encontro la cita</p>
             <Button onClick={() => router.push("/appointments")}>
@@ -243,7 +219,7 @@ export default function AppointmentDetailPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header title="Editar Cita" />
-      <main className="flex-1 p-6">
+      <main className="flex-1 p-4 md:p-6">
         <div className="max-w-2xl mx-auto space-y-6">
           {/* Back button */}
           <Button
@@ -295,7 +271,7 @@ export default function AppointmentDetailPage() {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Duracion total: {appointment.duration_minutes} minutos
+                  Duración total: {appointment.duration_minutes} minutos
                 </p>
               </div>
 
@@ -323,11 +299,16 @@ export default function AppointmentDetailPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="date">Fecha</Label>
-                  <Input
-                    id="date"
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
+                  <DatePicker
+                    value={selectedDate ? new Date(selectedDate + "T00:00:00") : undefined}
+                    onChange={(date) => {
+                      if (date) {
+                        setSelectedDate(date.toISOString().split("T")[0]);
+                      } else {
+                        setSelectedDate("");
+                      }
+                    }}
+                    placeholder="Seleccioná fecha"
                   />
                 </div>
                 <div className="space-y-2">
@@ -356,7 +337,7 @@ export default function AppointmentDetailPage() {
                     <SelectItem value="confirmed">Confirmada</SelectItem>
                     <SelectItem value="completed">Completada</SelectItem>
                     <SelectItem value="cancelled">Cancelada</SelectItem>
-                    <SelectItem value="no_show">No asistio</SelectItem>
+                    <SelectItem value="no_show">No asistió</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -459,7 +440,7 @@ export default function AppointmentDetailPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Eliminar esta cita?</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta accion no se puede deshacer. La cita sera eliminada permanentemente.
+              Esta acción no se puede deshacer. La cita será eliminada permanentemente.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

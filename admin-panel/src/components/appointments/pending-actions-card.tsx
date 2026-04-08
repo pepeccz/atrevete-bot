@@ -81,7 +81,7 @@ export function PendingActionsCard() {
       </CardHeader>
       <CardContent>
         <p className="text-sm text-orange-600 mb-4">
-          Estas citas ya pasaron y requieren que indiques si se completaron o si el cliente no asistio.
+          Estas citas ya pasaron y requieren que indiques si se completaron o si el cliente no asistió.
         </p>
         <div className="space-y-3">
           {appointments.map((appt) => (
@@ -139,7 +139,7 @@ export function PendingActionsCard() {
                   ) : (
                     <>
                       <X className="h-4 w-4 mr-1" />
-                      No asistio
+                      No asistió
                     </>
                   )}
                 </Button>

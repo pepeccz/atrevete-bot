@@ -103,7 +103,7 @@ export default function UsagePage() {
           title="Consumo de Tokens"
           description="Seguimiento del consumo de tokens del modelo de IA"
         />
-        <div className="flex-1 p-6 space-y-6">
+        <div className="flex-1 p-4 md:p-6 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {[...Array(4)].map((_, i) => (
               <Card key={i}>
@@ -136,7 +136,7 @@ export default function UsagePage() {
           title="Consumo de Tokens"
           description="Seguimiento del consumo de tokens del modelo de IA"
         />
-        <div className="flex-1 p-6">
+        <div className="flex-1 p-4 md:p-6">
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12">
               <p className="text-destructive">{error}</p>
@@ -164,7 +164,7 @@ export default function UsagePage() {
         description="Seguimiento del consumo de tokens del modelo de IA"
       />
 
-      <div className="flex-1 p-6 space-y-6">
+      <div className="flex-1 p-4 md:p-6 space-y-6">
         {/* Current Month Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {/* Total Cost */}

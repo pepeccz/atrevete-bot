@@ -17,6 +17,7 @@ import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, ArrowUp
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -25,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { SearchX } from "lucide-react"
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
@@ -167,17 +169,15 @@ export function DataTable<TData, TValue>({
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center"
-                >
-                  <div className="flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
-                    <span className="ml-2">Cargando...</span>
-                  </div>
-                </TableCell>
-              </TableRow>
+              Array.from({ length: pageSize > 5 ? 5 : pageSize }).map((_, i) => (
+                <TableRow key={`skeleton-${i}`}>
+                  {columns.map((_, j) => (
+                    <TableCell key={`skeleton-cell-${j}`} className="py-3">
+                      <Skeleton className="h-4 w-full" style={{ opacity: 1 - j * 0.05 }} />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
             ) : table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
                 <TableRow
@@ -196,11 +196,16 @@ export function DataTable<TData, TValue>({
               ))
             ) : (
               <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center"
-                >
-                  No hay resultados.
+                <TableCell colSpan={columns.length} className="p-0">
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground">
+                      <SearchX className="h-6 w-6" strokeWidth={1.5} />
+                    </div>
+                    <p className="text-sm font-medium text-foreground">Sin resultados</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      No se encontraron registros para los filtros actuales.
+                    </p>
+                  </div>
                 </TableCell>
               </TableRow>
             )}

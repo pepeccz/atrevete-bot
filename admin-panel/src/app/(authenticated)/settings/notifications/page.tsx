@@ -10,6 +10,7 @@ import {
   Star,
   Trash2,
   RefreshCw,
+  BellOff,
 } from "lucide-react";
 import {
   flexRender,
@@ -45,10 +46,28 @@ import type {
   NotificationStatsResponse,
   NotificationsPaginatedResponse,
 } from "@/lib/types";
-import { NotificationsByCategoryChart } from "@/components/charts/notifications-by-category-chart";
-import { NotificationsTrendChart } from "@/components/charts/notifications-trend-chart";
+import dynamic from "next/dynamic";
 import { NotificationsFilters } from "@/components/notifications/notifications-filters";
 import { getNotificationColumns } from "@/components/notifications/notifications-columns";
+import { TableSkeleton, ChartSkeleton } from "@/components/shared/loading-skeleton";
+import { EmptyState } from "@/components/shared/empty-state";
+
+// Recharts does not support SSR — lazy load chart components to reduce initial bundle
+const NotificationsByCategoryChart = dynamic(
+  () =>
+    import("@/components/charts/notifications-by-category-chart").then(
+      (m) => m.NotificationsByCategoryChart
+    ),
+  { ssr: false, loading: () => <ChartSkeleton title="Por categoría" /> }
+);
+
+const NotificationsTrendChart = dynamic(
+  () =>
+    import("@/components/charts/notifications-trend-chart").then(
+      (m) => m.NotificationsTrendChart
+    ),
+  { ssr: false, loading: () => <ChartSkeleton title="Tendencia" /> }
+);
 
 export default function NotificationsPage() {
   const router = useRouter();
@@ -266,7 +285,7 @@ export default function NotificationsPage() {
         description="Historial completo, estadisticas y gestion de notificaciones"
       />
 
-      <div className="flex-1 p-6 space-y-6">
+      <div className="flex-1 p-4 md:p-6 space-y-6">
         {/* Stats Cards */}
         <div className="grid gap-4 md:grid-cols-3">
           <Card>
@@ -367,6 +386,9 @@ export default function NotificationsPage() {
         )}
 
         {/* Table */}
+        {loading ? (
+          <TableSkeleton rows={8} columns={6} />
+        ) : (
         <Card>
           <CardContent className="p-0">
             <Table>
@@ -387,13 +409,7 @@ export default function NotificationsPage() {
                 ))}
               </TableHeader>
               <TableBody>
-                {loading ? (
-                  <TableRow>
-                    <TableCell colSpan={columns.length} className="text-center py-10">
-                      Cargando...
-                    </TableCell>
-                  </TableRow>
-                ) : table.getRowModel().rows?.length ? (
+                {table.getRowModel().rows?.length ? (
                   table.getRowModel().rows.map((row) => (
                     <TableRow
                       key={row.id}
@@ -411,8 +427,12 @@ export default function NotificationsPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={columns.length} className="text-center py-10">
-                      No hay notificaciones
+                    <TableCell colSpan={columns.length} className="p-0">
+                      <EmptyState
+                        icon={BellOff}
+                        title="No hay notificaciones"
+                        description="Las notificaciones de citas y eventos aparecerán aquí."
+                      />
                     </TableCell>
                   </TableRow>
                 )}
@@ -420,6 +440,7 @@ export default function NotificationsPage() {
             </Table>
           </CardContent>
         </Card>
+        )}
 
         {/* Pagination */}
         {data && data.total > 0 && (
@@ -454,9 +475,9 @@ export default function NotificationsPage() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar notificacion</AlertDialogTitle>
+            <AlertDialogTitle>Eliminar notificación</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta accion no se puede deshacer. La notificacion sera eliminada permanentemente.
+              Esta acción no se puede deshacer. La notificación será eliminada permanentemente.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

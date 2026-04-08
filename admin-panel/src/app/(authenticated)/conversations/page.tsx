@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { ColumnDef } from "@tanstack/react-table";
-import { format } from "date-fns";
-import { es } from "date-fns/locale";
+
 import { MessageSquare, User, Clock, Eye, Trash2 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
+import { formatDate } from "@/components/shared/format-utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -47,15 +47,7 @@ function getConversationCustomerName(
   return conversation.customer_name;
 }
 
-// Format date for display
-function formatDate(dateString: string | null): string {
-  if (!dateString) return "-";
-  try {
-    return format(new Date(dateString), "dd/MM/yyyy HH:mm", { locale: es });
-  } catch {
-    return dateString;
-  }
-}
+// formatDate imported from shared format-utils (see import above)
 
 // Message bubble component
 function MessageBubble({
@@ -179,9 +171,10 @@ export default function ConversationsPage() {
     useState<ConversationHistory | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Create customer map for display
-  const customerMap = Object.fromEntries(
-    customers.map((c) => [c.id, c])
+  // Create customer map for display — memoized so columns dep is stable
+  const customerMap = useMemo(
+    () => Object.fromEntries(customers.map((c) => [c.id, c])),
+    [customers]
   );
 
   const loadData = useCallback(async () => {
@@ -206,7 +199,7 @@ export default function ConversationsPage() {
     loadData();
   }, [loadData]);
 
-  const handleViewConversation = async (conversation: ConversationHistory) => {
+  const handleViewConversation = useCallback(async (conversation: ConversationHistory) => {
     // The list endpoint does not return messages — fetch full detail first
     setLoadingDetail(true);
     try {
@@ -219,12 +212,12 @@ export default function ConversationsPage() {
     } finally {
       setLoadingDetail(false);
     }
-  };
+  }, []);
 
-  const handleDeleteClick = (conversation: ConversationHistory) => {
+  const handleDeleteClick = useCallback((conversation: ConversationHistory) => {
     setConversationToDelete(conversation);
     setDeleteDialogOpen(true);
-  };
+  }, []);
 
   const handleDelete = async () => {
     if (!conversationToDelete) return;
@@ -252,85 +245,88 @@ export default function ConversationsPage() {
     }
   };
 
-  const columns: ColumnDef<ConversationHistory>[] = [
-    {
-      accessorKey: "customer_id",
-      header: () => (
-        <div className="flex items-center">
-          <User className="mr-2 h-4 w-4" />
-          Cliente
-        </div>
-      ),
-      cell: ({ row }) => {
-        return getConversationCustomerName(row.original, customerMap) || "Desconocido";
-      },
-    },
-    {
-      accessorKey: "started_at",
-      header: ({ column }) => (
-        <SortableHeader column={column}>
-          <Clock className="mr-2 h-4 w-4" />
-          Inicio
-        </SortableHeader>
-      ),
-      cell: ({ row }) => formatDate(row.getValue("started_at")),
-    },
-    {
-      accessorKey: "ended_at",
-      header: ({ column }) => (
-        <SortableHeader column={column}>Fin</SortableHeader>
-      ),
-      cell: ({ row }) => formatDate(row.getValue("ended_at")),
-    },
-    {
-      accessorKey: "message_count",
-      header: () => (
-        <div className="flex items-center">
-          <MessageSquare className="mr-2 h-4 w-4" />
-          Mensajes
-        </div>
-      ),
-      cell: ({ row }) => (
-        <Badge variant="secondary">{row.getValue("message_count")}</Badge>
-      ),
-    },
-    {
-      accessorKey: "summary",
-      header: "Resumen",
-      cell: ({ row }) => {
-        const summary = row.getValue("summary") as string | null;
-        if (!summary) return "-";
-        return summary.length > 50 ? summary.substring(0, 50) + "..." : summary;
-      },
-    },
-    {
-      id: "actions",
-      cell: ({ row }) => {
-        const conversation = row.original;
-        return (
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleViewConversation(conversation)}
-              disabled={loadingDetail}
-            >
-              <Eye className="mr-2 h-4 w-4" />
-              {loadingDetail ? "Cargando..." : "Ver"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-              onClick={() => handleDeleteClick(conversation)}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+  const columns = useMemo<ColumnDef<ConversationHistory>[]>(
+    () => [
+      {
+        accessorKey: "customer_id",
+        header: () => (
+          <div className="flex items-center">
+            <User className="mr-2 h-4 w-4" />
+            Cliente
           </div>
-        );
+        ),
+        cell: ({ row }) => {
+          return getConversationCustomerName(row.original, customerMap) || "Desconocido";
+        },
       },
-    },
-  ];
+      {
+        accessorKey: "started_at",
+        header: ({ column }) => (
+          <SortableHeader column={column}>
+            <Clock className="mr-2 h-4 w-4" />
+            Inicio
+          </SortableHeader>
+        ),
+        cell: ({ row }) => formatDate(row.getValue("started_at")),
+      },
+      {
+        accessorKey: "ended_at",
+        header: ({ column }) => (
+          <SortableHeader column={column}>Fin</SortableHeader>
+        ),
+        cell: ({ row }) => formatDate(row.getValue("ended_at")),
+      },
+      {
+        accessorKey: "message_count",
+        header: () => (
+          <div className="flex items-center">
+            <MessageSquare className="mr-2 h-4 w-4" />
+            Mensajes
+          </div>
+        ),
+        cell: ({ row }) => (
+          <Badge variant="secondary">{row.getValue("message_count")}</Badge>
+        ),
+      },
+      {
+        accessorKey: "summary",
+        header: "Resumen",
+        cell: ({ row }) => {
+          const summary = row.getValue("summary") as string | null;
+          if (!summary) return "-";
+          return summary.length > 50 ? summary.substring(0, 50) + "..." : summary;
+        },
+      },
+      {
+        id: "actions",
+        cell: ({ row }) => {
+          const conversation = row.original;
+          return (
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleViewConversation(conversation)}
+                disabled={loadingDetail}
+              >
+                <Eye className="mr-2 h-4 w-4" />
+                {loadingDetail ? "Cargando..." : "Ver"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={() => handleDeleteClick(conversation)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          );
+        },
+      },
+    ],
+    [customerMap, handleViewConversation, handleDeleteClick, loadingDetail]
+  );
 
   const selectedCustomer =
     selectedConversation?.customer_id
@@ -347,7 +343,7 @@ export default function ConversationsPage() {
         description="Historial de conversaciones con el bot (solo lectura)"
       />
 
-      <div className="flex-1 p-6 space-y-6">
+      <div className="flex-1 p-4 md:p-6 space-y-6">
         {/* Tabla de conversaciones */}
         <Card>
           <CardContent className="pt-6">
@@ -373,9 +369,9 @@ export default function ConversationsPage() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar conversacion</AlertDialogTitle>
+            <AlertDialogTitle>Eliminar conversación</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta accion no se puede deshacer. La conversacion sera eliminada
+              Esta acción no se puede deshacer. La conversación será eliminada
               permanentemente junto con todos sus mensajes y el checkpoint de
               Redis asociado.
             </AlertDialogDescription>

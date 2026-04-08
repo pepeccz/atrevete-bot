@@ -262,8 +262,17 @@ export function NotificationCenter() {
 
         <ScrollArea className="max-h-96">
           {loading && !data && (
-            <div className="p-4 text-center text-sm text-muted-foreground">
-              Cargando...
+            <div className="flex flex-col gap-2 p-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex items-start gap-3 p-2">
+                  <div className="h-8 w-8 rounded-full bg-muted animate-pulse flex-shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3 bg-muted animate-pulse rounded w-3/4" />
+                    <div className="h-2.5 bg-muted animate-pulse rounded w-full" />
+                    <div className="h-2 bg-muted animate-pulse rounded w-1/3" />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 

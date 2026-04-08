@@ -17,17 +17,17 @@ export default function Error({
   }, [error]);
 
   return (
-    <div className="flex items-center justify-center min-h-[400px] p-6">
+    <div className="flex items-center justify-center min-h-[400px] p-4 md:p-6">
       <Card className="max-w-md">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-destructive">
             <AlertTriangle className="h-5 w-5" />
-            Algo salio mal
+            Algo salió mal
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Ha ocurrido un error inesperado. Puedes intentar recargar la pagina.
+            Ha ocurrido un error inesperado. Puedes intentar recargar la página.
           </p>
           {error.digest && (
             <p className="text-xs text-muted-foreground font-mono">

@@ -767,9 +767,12 @@ class ApiClient {
   // Global Search
   async globalSearch(
     query: string,
+    signal?: AbortSignal,
     limit: number = 5
   ): Promise<GlobalSearchResponse> {
-    return this.request(`/api/admin/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+    return this.request(`/api/admin/search?q=${encodeURIComponent(query)}&limit=${limit}`, {
+      signal,
+    });
   }
 
   // Notifications

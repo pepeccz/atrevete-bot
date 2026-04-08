@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { useAuth } from "@/contexts/auth-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +30,7 @@ export default function LoginPage() {
     try {
       await login(username, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al iniciar sesion");
+      setError(err instanceof Error ? err.message : "Error al iniciar sesión");
     } finally {
       setIsLoading(false);
     }
@@ -40,10 +41,12 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center">
-            <img
+            <Image
               src="/logo.png"
               alt="Atrévete Peluquería"
-              className="h-16 w-16 object-contain"
+              width={64}
+              height={64}
+              className="object-contain"
             />
           </div>
           <CardTitle className="text-2xl font-bold">Atrevete Admin</CardTitle>
@@ -73,7 +76,7 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password">Contrasena</Label>
+              <Label htmlFor="password">Contraseña</Label>
               <Input
                 id="password"
                 type="password"
@@ -89,10 +92,10 @@ export default function LoginPage() {
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Iniciando sesion...
+                  Iniciando sesión...
                 </>
               ) : (
-                "Iniciar Sesion"
+                "Iniciar Sesión"
               )}
             </Button>
           </form>

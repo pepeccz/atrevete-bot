@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { AlertTriangle, RefreshCw, CheckCircle2, Clock, Zap } from "lucide-react";
 import { ColumnDef } from "@tanstack/react-table";
 import { format, formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 
 import { api } from "@/lib/api";
+import { Header } from "@/components/layout/header";
+import { toast } from "sonner";
 import {
   Escalation,
   EscalationStats,
@@ -125,6 +127,7 @@ export default function EscalationsPage() {
       setStats(statsData);
     } catch (err) {
       console.error("Failed to fetch escalations:", err);
+      toast.error("Error al cargar las escalaciones");
     } finally {
       setIsLoading(false);
     }
@@ -149,103 +152,105 @@ export default function EscalationsPage() {
       setStats(statsData);
     } catch (err) {
       console.error("Failed to resolve escalation:", err);
+      toast.error("Error al escalar la conversación");
     } finally {
       setResolving(false);
     }
   };
 
-  const columns: ColumnDef<Escalation>[] = [
-    {
-      accessorKey: "status",
-      header: "Estado",
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
-    },
-    {
-      accessorKey: "source",
-      header: "Tipo",
-      cell: ({ row }) => (
-        <SourceBadge
-          source={row.original.source}
-          isTechnical={row.original.is_technical_error}
-        />
-      ),
-    },
-    {
-      id: "customer",
-      header: "Cliente",
-      cell: ({ row }) =>
-        row.original.customer_name ?? row.original.customer_phone,
-    },
-    {
-      accessorKey: "reason",
-      header: "Motivo",
-      cell: ({ row }) => truncate(row.original.reason, 50),
-    },
-    {
-      accessorKey: "issue_summary",
-      header: "Resumen",
-      cell: ({ row }) => truncate(row.original.issue_summary, 50),
-    },
-    {
-      accessorKey: "contact_preference",
-      header: "Contacto",
-      cell: ({ row }) => row.original.contact_preference ?? "—",
-    },
-    {
-      accessorKey: "triggered_at",
-      header: "Fecha",
-      cell: ({ row }) => relativeTime(row.original.triggered_at),
-    },
-    {
-      id: "actions",
-      header: "Acciones",
-      cell: ({ row }) => (
-        <div className="flex gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setSelectedEscalation(row.original);
-              setDetailOpen(true);
-            }}
-          >
-            Ver
-          </Button>
-          {row.original.status === "triggered" && (
+  const columns = useMemo<ColumnDef<Escalation>[]>(
+    () => [
+      {
+        accessorKey: "status",
+        header: "Estado",
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      },
+      {
+        accessorKey: "source",
+        header: "Tipo",
+        cell: ({ row }) => (
+          <SourceBadge
+            source={row.original.source}
+            isTechnical={row.original.is_technical_error}
+          />
+        ),
+      },
+      {
+        id: "customer",
+        header: "Cliente",
+        cell: ({ row }) =>
+          row.original.customer_name ?? row.original.customer_phone,
+      },
+      {
+        accessorKey: "reason",
+        header: "Motivo",
+        cell: ({ row }) => truncate(row.original.reason, 50),
+      },
+      {
+        accessorKey: "issue_summary",
+        header: "Resumen",
+        cell: ({ row }) => truncate(row.original.issue_summary, 50),
+      },
+      {
+        accessorKey: "contact_preference",
+        header: "Contacto",
+        cell: ({ row }) => row.original.contact_preference ?? "—",
+      },
+      {
+        accessorKey: "triggered_at",
+        header: "Fecha",
+        cell: ({ row }) => relativeTime(row.original.triggered_at),
+      },
+      {
+        id: "actions",
+        header: "Acciones",
+        cell: ({ row }) => (
+          <div className="flex gap-2">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => {
-                setResolveTarget(row.original);
-                setResolveOpen(true);
+                setSelectedEscalation(row.original);
+                setDetailOpen(true);
               }}
             >
-              Resolver
+              Ver
             </Button>
-          )}
-        </div>
-      ),
-    },
-  ];
+            {row.original.status === "triggered" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setResolveTarget(row.original);
+                  setResolveOpen(true);
+                }}
+              >
+                Resolver
+              </Button>
+            )}
+          </div>
+        ),
+      },
+    ],
+    // State setters (setSelectedEscalation, setDetailOpen, etc.) are stable references
+    // truncate and relativeTime are module-level functions — no deps needed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <AlertTriangle className="h-6 w-6 text-orange-500" />
-            Escalaciones
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Conversaciones derivadas a atención humana
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={fetchEscalations} disabled={isLoading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-          Actualizar
-        </Button>
-      </div>
+    <div className="flex flex-col">
+      <Header
+        title="Escalaciones"
+        description="Conversaciones derivadas a atención humana"
+        action={
+          <Button variant="outline" size="sm" onClick={fetchEscalations} disabled={isLoading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
+            Actualizar
+          </Button>
+        }
+      />
+      <div className="flex flex-col gap-6 p-4 md:p-6">
 
       {/* KPI Cards */}
       {stats && (
@@ -462,6 +467,7 @@ export default function EscalationsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </div>
     </div>
   );
 }

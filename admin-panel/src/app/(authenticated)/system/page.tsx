@@ -189,7 +189,7 @@ export default function SystemPage() {
 
     const token = api.getToken();
     if (!token) {
-      toast.error("No hay sesion activa. Por favor, inicia sesion de nuevo.");
+      toast.error("No hay sesión activa. Por favor, iniciá sesión de nuevo.");
       return;
     }
 
@@ -280,7 +280,7 @@ export default function SystemPage() {
         toast.error(result.message);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error ejecutando accion");
+      toast.error(err instanceof Error ? err.message : "Error ejecutando acción");
     } finally {
       setActionInProgress(null);
     }
@@ -310,7 +310,7 @@ export default function SystemPage() {
         }
       />
 
-      <div className="flex-1 space-y-6 p-6">
+      <div className="flex-1 space-y-6 p-4 md:p-6">
         {/* Health Status Cards */}
         <div className="grid gap-4 md:grid-cols-3">
           <Card>

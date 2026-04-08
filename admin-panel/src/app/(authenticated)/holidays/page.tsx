@@ -1,12 +1,22 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Calendar, Plus, Trash2, CalendarX } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { DatePicker } from "@/components/shared/date-picker";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +45,7 @@ import {
 import { toast } from "sonner";
 import api from "@/lib/api";
 import type { Holiday } from "@/lib/types";
+import { HolidayFormSchema, type HolidayFormValues } from "./holiday-form.schema";
 
 export default function HolidaysPage() {
   const [holidays, setHolidays] = useState<Holiday[]>([]);
@@ -46,9 +57,10 @@ export default function HolidaysPage() {
   // Create holiday dialog state
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
-  const [newHoliday, setNewHoliday] = useState({
-    date: "",
-    name: "",
+
+  const holidayForm = useForm<HolidayFormValues>({
+    resolver: zodResolver(HolidayFormSchema),
+    defaultValues: { date: "", name: "" },
   });
 
   // Delete holiday dialog state
@@ -74,23 +86,18 @@ export default function HolidaysPage() {
     loadHolidays();
   }, [loadHolidays]);
 
-  // Create holiday handler
-  const handleCreate = async () => {
-    if (!newHoliday.date || !newHoliday.name.trim()) {
-      toast.error("Por favor completa todos los campos");
-      return;
-    }
-
+  // Create holiday handler (react-hook-form submit)
+  const handleCreate = async (values: HolidayFormValues) => {
     setCreateLoading(true);
     try {
       await api.createHoliday({
-        date: newHoliday.date,
-        name: newHoliday.name.trim(),
+        date: values.date,
+        name: values.name.trim(),
         is_all_day: true,
       });
       toast.success("Festivo creado exitosamente");
       setCreateDialogOpen(false);
-      setNewHoliday({ date: "", name: "" });
+      holidayForm.reset();
       await loadHolidays();
     } catch (error) {
       toast.error(
@@ -100,6 +107,11 @@ export default function HolidaysPage() {
     } finally {
       setCreateLoading(false);
     }
+  };
+
+  const handleOpenCreateDialog = () => {
+    holidayForm.reset();
+    setCreateDialogOpen(true);
   };
 
   // Delete holiday handler
@@ -149,7 +161,7 @@ export default function HolidaysPage() {
         description="Gestiona los días festivos y cierres especiales del salón"
       />
 
-      <div className="flex-1 p-6">
+      <div className="flex-1 p-4 md:p-6">
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -173,7 +185,7 @@ export default function HolidaysPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button onClick={() => setCreateDialogOpen(true)}>
+                <Button onClick={handleOpenCreateDialog}>
                   <Plus className="mr-2 h-4 w-4" />
                   Agregar Festivo
                 </Button>
@@ -195,7 +207,7 @@ export default function HolidaysPage() {
                 <Button
                   variant="outline"
                   className="mt-4"
-                  onClick={() => setCreateDialogOpen(true)}
+                  onClick={handleOpenCreateDialog}
                 >
                   <Plus className="mr-2 h-4 w-4" />
                   Agregar el primer festivo
@@ -239,53 +251,83 @@ export default function HolidaysPage() {
       </div>
 
       {/* Create Holiday Dialog */}
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+      <Dialog open={createDialogOpen} onOpenChange={(open) => {
+        if (!open) holidayForm.reset();
+        setCreateDialogOpen(open);
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Agregar Festivo</DialogTitle>
             <DialogDescription>
-              Configura un día festivo donde el salón permanecerá cerrado
+              Configurá un día festivo donde el salón permanecerá cerrado
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="holiday-date">Fecha</Label>
-              <Input
-                id="holiday-date"
-                type="date"
-                value={newHoliday.date}
-                onChange={(e) =>
-                  setNewHoliday((prev) => ({ ...prev, date: e.target.value }))
-                }
+          <Form {...holidayForm}>
+            <form onSubmit={holidayForm.handleSubmit(handleCreate)} className="space-y-4 py-4">
+              <FormField
+                control={holidayForm.control}
+                name="date"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Fecha</FormLabel>
+                    <FormControl>
+                      <DatePicker
+                        value={field.value ? new Date(field.value + "T00:00:00") : undefined}
+                        onChange={(date) => {
+                          if (date) {
+                            // Store as YYYY-MM-DD string (what the API expects)
+                            const year = date.getFullYear();
+                            const month = String(date.getMonth() + 1).padStart(2, "0");
+                            const day = String(date.getDate()).padStart(2, "0");
+                            field.onChange(`${year}-${month}-${day}`);
+                          } else {
+                            field.onChange("");
+                          }
+                        }}
+                        placeholder="Seleccioná la fecha del festivo"
+                        minDate={new Date()}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="holiday-name">Nombre del Festivo</Label>
-              <Input
-                id="holiday-name"
-                placeholder="Ej: Navidad, Año Nuevo, etc."
-                value={newHoliday.name}
-                onChange={(e) =>
-                  setNewHoliday((prev) => ({ ...prev, name: e.target.value }))
-                }
-                maxLength={200}
+
+              <FormField
+                control={holidayForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nombre del Festivo</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Ej: Navidad, Año Nuevo, etc."
+                        maxLength={200}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setCreateDialogOpen(false);
-                setNewHoliday({ date: "", name: "" });
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button onClick={handleCreate} disabled={createLoading}>
-              {createLoading ? "Creando..." : "Crear Festivo"}
-            </Button>
-          </DialogFooter>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setCreateDialogOpen(false);
+                    holidayForm.reset();
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={createLoading}>
+                  {createLoading ? "Creando..." : "Crear Festivo"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
         </DialogContent>
       </Dialog>
 
