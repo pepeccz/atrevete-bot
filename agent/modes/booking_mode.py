@@ -69,7 +69,8 @@ _ORDINAL_STEM_MAP: dict[str, int] = {
 
 _NO_PREFERENCE_PATTERNS = re.compile(
     r"(?:sin\s+preferencia|me\s+da\s+igual|cualquiera|no\s+tengo\s+preferencia|"
-    r"da\s+lo\s+mismo|no\s+me\s+importa|la\s+que\s+sea|el\s+que\s+sea)",
+    r"da\s+lo\s+mismo|no\s+me\s+importa|la\s+que\s+sea|el\s+que\s+sea|"
+    r"la\s+primera\s+disponible)",
     re.IGNORECASE,
 )
 
