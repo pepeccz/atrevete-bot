@@ -9,7 +9,7 @@ compatibility imports use the same architecture.
 """
 
 import logging
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -501,25 +501,119 @@ async def _maybe_escalate(node_result: dict, state: ConversationState) -> dict:
     return node_result
 
 
+# ============================================================================
+# Transition Table — declarative routing (replaces cascading if/elif)
+# ============================================================================
+
+# A target is either a mode name (str) or a callable resolver.
+# Resolvers receive (state, intent_result) and return a mode name.
+TransitionTarget = str | Callable[..., str]
+
+
+def _resolve_booking_ask_info(state: ConversationState, intent_result: Any) -> str:
+    """Resolve BOOKING + ask_info: stay in BOOKING if query is booking-related."""
+    user_message = _get_last_user_msg_text(state)
+    if _is_booking_related_query(user_message):
+        return "BOOKING"
+    booking_ctx = state.get("booking_context") or {}
+    has_active = bool(
+        booking_ctx.get("last_services")
+        or booking_ctx.get("offered_slots")
+        or booking_ctx.get("selected_slot")
+    )
+    if has_active and not _wants_to_exit_booking(user_message):
+        return "BOOKING"
+    return "GENERAL"
+
+
+def _resolve_general_confirm(state: ConversationState, intent_result: Any) -> str:
+    """Resolve GENERAL + confirm: transition to BOOKING if handoff data exists."""
+    mode_context = state.get("mode_context") or {}
+    if _should_transition_general_to_booking(mode_context, intent_result.intent):
+        return "BOOKING"
+    return "GENERAL"
+
+
+def _get_last_user_msg_text(state: ConversationState) -> str:
+    """Extract the last user message text from state messages."""
+    for msg in reversed(state.get("messages", [])):
+        if msg.get("role") == "user":
+            return msg.get("content", "")
+    return ""
+
+
+TRANSITION_TABLE: dict[tuple[str, str], TransitionTarget] = {
+    # BOOKING mode transitions
+    ("BOOKING", "reschedule"): "APPOINTMENT_MANAGEMENT",
+    ("BOOKING", "check_appointments"): "APPOINTMENT_MANAGEMENT",
+    ("BOOKING", "escalate"): "ESCALATION",
+    ("BOOKING", "ask_info"): _resolve_booking_ask_info,
+    ("BOOKING", "cancel"): "BOOKING",
+    ("BOOKING", "reject"): "BOOKING",
+    ("BOOKING", "DEFAULT"): "BOOKING",
+    # ESCALATION mode transitions
+    ("ESCALATION", "book"): "BOOKING",
+    ("ESCALATION", "DEFAULT"): "ESCALATION",
+    # APPOINTMENT_MANAGEMENT mode transitions
+    ("APPOINTMENT_MANAGEMENT", "book"): "BOOKING",
+    ("APPOINTMENT_MANAGEMENT", "DEFAULT"): "APPOINTMENT_MANAGEMENT",
+    # GENERAL mode transitions
+    ("GENERAL", "book"): "BOOKING",
+    ("GENERAL", "reschedule"): "APPOINTMENT_MANAGEMENT",
+    ("GENERAL", "check_appointments"): "APPOINTMENT_MANAGEMENT",
+    ("GENERAL", "cancel"): "APPOINTMENT_MANAGEMENT",
+    ("GENERAL", "escalate"): "ESCALATION",
+    ("GENERAL", "confirm"): _resolve_general_confirm,
+    ("GENERAL", "DEFAULT"): "GENERAL",
+    # GREETING mode transitions
+    ("GREETING", "book"): "BOOKING",
+    ("GREETING", "cancel"): "APPOINTMENT_MANAGEMENT",
+    ("GREETING", "reschedule"): "APPOINTMENT_MANAGEMENT",
+    ("GREETING", "check_appointments"): "APPOINTMENT_MANAGEMENT",
+    ("GREETING", "escalate"): "ESCALATION",
+    ("GREETING", "DEFAULT"): "GENERAL",
+}
+
+
+def _lookup_transition(current_mode: str, intent: str) -> TransitionTarget:
+    """Look up the transition target for a (mode, intent) pair.
+
+    Falls back to (mode, "DEFAULT"), then to "GENERAL" as ultimate fallback.
+    """
+    target = TRANSITION_TABLE.get((current_mode, intent))
+    if target is not None:
+        return target
+    target = TRANSITION_TABLE.get((current_mode, "DEFAULT"))
+    if target is not None:
+        return target
+    return "GENERAL"
+
+
+# ============================================================================
+# router_node — v7.0 transition-table based
+# ============================================================================
+
+
 async def router_node(state: ConversationState) -> dict[str, Any]:
     """
-    v6.0 router_node: Classify intent and determine which mode to activate.
+    v7.0 router_node: Classify intent and determine which mode to activate.
 
-    Routing rules (priority order):
-    1. escalation_triggered=True → ESCALATION
-    2. error_count >= 3 → ESCALATION (auto-escalation)
-    2.5 pending confirmation reply + intent in {confirm, reject, cancel} → CONFIRMATION_REPLY
-    3. intent=escalate → ESCALATION
-    4. current_mode=BOOKING and intent ask_info → GENERAL with preserved draft
-    5. current_mode=BOOKING and intent not cancel/reject/ask_info → stay BOOKING
-    5.5 current_mode=ESCALATION and intent not book → stay ESCALATION (inertia)
-    6. intent=book → BOOKING
-    7. intent=greet and is_first_interaction → GREETING
-    7.95 is_first_interaction + intent=book → GREETING (with booking_hints forwarded)
-    8. intent=book → BOOKING
-    9. Default → GENERAL
+    Uses a declarative TRANSITION_TABLE for mode resolution with hard gates
+    for escalation, confirmation replies, and first-interaction greeting.
+
+    Routing steps:
+    1. Hard gate: escalation_triggered → ESCALATION
+    2. Hard gate: error_count >= 3 → ESCALATION
+    3. Classify intent (keyword + LLM hybrid)
+    4. Hard gate: pending_confirmation + confirm/reject/cancel → CONFIRMATION_REPLY
+    5. Pre-table: first_interaction + book → GREETING (with booking hints)
+    6. Table lookup → resolve callables
+    7. Post-table override: explicit handoff → ESCALATION
+    8. Same mode → return {mode_context: intent_data}
+    9. Different mode → transition_mode() + side effects
     """
     from agent.state.schemas import transition_mode
+    from agent.routing.intent_router import _is_explicit_handoff
 
     conversation_id = state.get("conversation_id", "unknown")
     current_mode = state.get("current_mode") or "GREETING"
@@ -529,13 +623,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     escalation_triggered = state.get("escalation_triggered", False)
 
     # Find last user message
-    messages = state.get("messages", [])
-    turn_count = len(messages)
-    user_message = ""
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            user_message = msg.get("content", "")
-            break
+    user_message = _get_last_user_msg_text(state)
 
     logger.info(
         "router_node | conversation_id=%s | current_mode=%s | is_first=%s | "
@@ -547,23 +635,19 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         error_count,
     )
 
-    # Rule 1: Already escalated
+    # ── Hard gate 1: Already escalated ──
     if escalation_triggered:
         return {"current_mode": "ESCALATION", "last_node": "router"}
 
-    # Rule 2: Auto-escalation threshold
+    # ── Hard gate 2: Auto-escalation threshold ──
     if error_count >= AUTO_ESCALATION_THRESHOLD:
         logger.warning("router_node: auto-escalation (error_count=%d)", error_count)
         return {"current_mode": "ESCALATION", "last_node": "router"}
 
-    # Classify intent (keyword + LLM hybrid) before confirmation/greeting rules
-    # so both subflows can use the same classified result.
-    # Pass booking_step from mode_context so bare digit replies in slot_selection
-    # are classified as "confirm" instead of falling to the LLM as "reject".
+    # ── Step 3: Classify intent ──
     intent_router = _get_intent_router()
     _mode_context = state.get("mode_context") or {}
     _booking_ctx = state.get("booking_context") or {}
-    # Derive booking_step for intent classifier bare-digit shortcut
     _booking_step = None
     if _booking_ctx.get("offered_slots") and not _booking_ctx.get("selected_slot"):
         _booking_step = "slot_selection"
@@ -595,7 +679,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         "last_intent_confidence": intent_result.confidence,
     }
 
-    # Rule 2.5: Customer replying to a pending appointment confirmation template
+    # ── Hard gate 3: Pending appointment confirmation reply ──
     pending_confirmation_id = state.get("pending_confirmation_appointment_id")
     if pending_confirmation_id and intent_result.intent in ("confirm", "reject", "cancel"):
         return {
@@ -608,129 +692,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
-    # Rule 3: REMOVED — greeting subflow no longer has pending steps
-    # (name confirmation was removed in customer-name-handling refactor)
-
-    # Rule 4: REMOVED — customer_name gate removed (scope-realignment refactor).
-    # Booking intent now routes directly to BOOKING regardless of customer_name.
-    # Compute _has_active_booking for Rule 6 (BOOKING inertia) below.
-    # Reads from booking_context (single source of truth for booking data).
-    _has_active_booking = bool(
-        _booking_ctx.get("last_services")
-        or _booking_ctx.get("offered_slots")
-        or _booking_ctx.get("selected_slot")
-    )
-
-    # Rule 5: Escalation intent
-    if intent_result.intent == "escalate":
-        transition_update = transition_mode(state, "ESCALATION")
-        if current_mode == "BOOKING":
-            draft_contexts = dict(transition_update.get("draft_contexts") or {})
-            draft_contexts["BOOKING"] = _preserve_mode_context(
-                state.get("mode_context") or {},
-                "ESCALATION",
-            )
-            transition_update["draft_contexts"] = draft_contexts
-        return {
-            **transition_update,
-            "mode_context": {**intent_data},
-            "last_node": "router",
-        }
-
-    # Rule 6: BOOKING digressions → GENERAL (only for truly unrelated queries)
-    if current_mode == "BOOKING" and intent_result.intent == "ask_info":
-        if _is_booking_related_query(user_message):
-            # Stay in BOOKING — the question is about the current booking flow
-            logger.info(
-                "router_node: ask_info in BOOKING kept in BOOKING (booking-related query) | message=%r",
-                user_message[:80],
-            )
-            return {"mode_context": {**intent_data}, "last_node": "router"}
-        # Booking inertia: if booking data is being collected and the user hasn't
-        # explicitly asked to leave, keep them in BOOKING to avoid accidental
-        # digressions (T-2.3).
-        if _has_active_booking and not _wants_to_exit_booking(user_message):
-            logger.info(
-                "router_node: ask_info in active BOOKING kept via inertia | message=%r",
-                user_message[:80],
-            )
-            return {"mode_context": {**intent_data}, "last_node": "router"}
-        # Truly unrelated → digress to GENERAL with preserved draft context
-        transition_update = transition_mode(state, "GENERAL")
-        draft_contexts = dict(transition_update.get("draft_contexts") or {})
-        draft_contexts["BOOKING"] = _preserve_mode_context(
-            state.get("mode_context") or {},
-            "GENERAL",
-        )
-        return {
-            **transition_update,
-            "draft_contexts": draft_contexts,
-            "mode_context": {**intent_data},
-            "last_node": "router",
-        }
-
-    # Rule 7: Stay in BOOKING unless cancel/reject or GENERAL digression
-    if current_mode == "BOOKING" and intent_result.intent not in ("cancel", "reject", "ask_info"):
-        return {"mode_context": {**intent_data}, "last_node": "router"}
-
-    # Rule 7.5: Stay in ESCALATION unless the user starts a new topic (book)
-    # Mirrors Rule 7 (BOOKING inertia). The escalation FSM collects issue
-    # summary and contact preference; responses like "Por WhatsApp" are
-    # classified as confirm/ambiguous by the router but must NOT eject the
-    # user from the intake flow.
-    if current_mode == "ESCALATION" and intent_result.intent not in ("book",):
-        return {"mode_context": {**intent_data}, "last_node": "router"}
-
-    # Rule 7.8: Stay in APPOINTMENT_MANAGEMENT while a flow is active.
-    # Mirrors Rule 7.5 (ESCALATION inertia). Responses like "1", "sí", "el martes"
-    # may be classified as confirm/ambiguous by the router but must NOT eject
-    # the user from the appointment management flow. Allow "book" and "greet"
-    # to exit (user wants to start a new booking or restart from scratch).
-    if current_mode == "APPOINTMENT_MANAGEMENT" and intent_result.intent not in ("book", "greet"):
-        return {"mode_context": {**intent_data}, "last_node": "router"}
-
-    # Rule 2.7: reschedule/check_appointments → APPOINTMENT_MANAGEMENT
-    if intent_result.intent in ("reschedule", "check_appointments"):
-        return {
-            "current_mode": "APPOINTMENT_MANAGEMENT",
-            "mode_context": {**intent_data},
-            "last_node": "router",
-        }
-
-    # Rule 7.9: GENERAL with resolved/candidate services + user confirmation → BOOKING
-    # Handles: user confirms after GeneralMode resolved a service, avoiding the
-    # infinite GENERAL loop (confirm/ambiguous had no GENERAL→BOOKING path before).
-    if current_mode == "GENERAL" and _should_transition_general_to_booking(
-        _mode_context, intent_result.intent
-    ):
-        logger.info(
-            "router_node: Rule 7.9 GENERAL→BOOKING | intent=%s | conversation_id=%s",
-            intent_result.intent,
-            conversation_id,
-        )
-        _general_handoff = _build_general_booking_handoff(state, user_message)
-        _booking_hints = await _extract_booking_hints(user_message) if user_message else {}
-        _booking_ctx = {**_general_handoff, **_booking_hints, **intent_data}
-        # Populate booking_context field with handoff hints extracted from the message
-        _initial_booking_ctx: dict[str, Any] = {}
-        if _booking_hints.get("preferred_stylist_name"):
-            _initial_booking_ctx["preferred_stylist_name"] = _booking_hints[
-                "preferred_stylist_name"
-            ]
-        if _booking_hints.get("preferred_date_hint"):
-            _initial_booking_ctx["preferred_date_hint"] = _booking_hints["preferred_date_hint"]
-        result: dict[str, Any] = {
-            **transition_mode(state, "BOOKING", context_update=_booking_ctx),
-            "last_node": "router",
-        }
-        if _initial_booking_ctx:
-            result["booking_context"] = _initial_booking_ctx
-        return result
-
-    # Rule 7.95: First interaction with booking intent → GREETING first
-    # The AI disclosure + short greeting must be delivered before booking questions.
-    # Booking hints (preferred stylist, date) are extracted and forwarded so BOOKING
-    # can skip already-resolved steps on the next turn.
+    # ── Pre-table: first interaction + book → GREETING with booking hints ──
     if is_first_interaction and intent_result.intent == "book":
         booking_hints_first = await _extract_booking_hints(user_message) if user_message else {}
         return {
@@ -742,58 +704,12 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
-    # Rule 8: Book intent → BOOKING
-    if intent_result.intent == "book":
-        # BUG-1C FIX: if already in BOOKING, skip transition_mode (which sends __reset__)
-        # to avoid wiping mode_context mid-flow. Use the same no-reset return shape as Rule 6.
-        if current_mode == "BOOKING":
-            return {"mode_context": {**intent_data}, "last_node": "router"}
-
-        draft_contexts = state.get("draft_contexts") or {}
-        restored_booking_draft = draft_contexts.get("BOOKING") or {}
-        general_booking_handoff = {}
-        if current_mode == "GENERAL" and not restored_booking_draft:
-            general_booking_handoff = _build_general_booking_handoff(state, user_message)
-
-        # Extract contextual hints from user message (preferred stylist/date mentioned upfront)
-        booking_hints = await _extract_booking_hints(user_message) if user_message else {}
-        booking_context_for_mode = {
-            **general_booking_handoff,
-            **booking_hints,
-            **restored_booking_draft,
-            **intent_data,
-        }
-        # Populate booking_context state field with durable handoff hints
-        initial_booking_ctx: dict[str, Any] = {}
-        if booking_hints.get("preferred_stylist_name"):
-            initial_booking_ctx["preferred_stylist_name"] = booking_hints["preferred_stylist_name"]
-        if booking_hints.get("preferred_date_hint"):
-            initial_booking_ctx["preferred_date_hint"] = booking_hints["preferred_date_hint"]
-        # Restore prior booking draft (e.g. after a GENERAL digression)
-        if restored_booking_draft:
-            initial_booking_ctx = {**restored_booking_draft, **initial_booking_ctx}
-        transition_result: dict[str, Any] = {
-            **transition_mode(state, "BOOKING", context_update=booking_context_for_mode),
-            "last_node": "router",
-        }
-        if initial_booking_ctx:
-            transition_result["booking_context"] = initial_booking_ctx
-        return transition_result
-
-    # Rule 2.8: cancel outside BOOKING/CONFIRMATION_REPLY → APPOINTMENT_MANAGEMENT
-    if intent_result.intent == "cancel" and current_mode not in ("BOOKING", "CONFIRMATION_REPLY"):
-        return {
-            "current_mode": "APPOINTMENT_MANAGEMENT",
-            "mode_context": {**intent_data},
-            "last_node": "router",
-        }
-
-    # Rule 9: Greet intent → GREETING (first interaction only)
-    # is_first_interaction guard prevents re-entry loops on subsequent turns.
+    # ── Pre-table: first interaction + greet → GREETING ──
+    # Guard: don't eject from BOOKING (the table handles BOOKING inertia)
     if (
-        intent_result.intent == "greet"
+        is_first_interaction
+        and intent_result.intent == "greet"
         and current_mode not in ("BOOKING",)
-        and is_first_interaction  # Only enter GREETING on genuine first turns
     ):
         return {
             "current_mode": "GREETING",
@@ -801,13 +717,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
-    # Rule 9.5: Explicit-handoff override (T2.2)
-    # If the intent fell through to ask_info/ambiguous but the user explicitly
-    # asked for a human, force ESCALATION before the GENERAL fallback.
-    # This catches phrases that score 0.70 in _keyword_matches() and miss the
-    # 0.80 fast-path threshold.
-    from agent.routing.intent_router import _is_explicit_handoff
+    # ── Step 6: Table lookup ──
+    target = _lookup_transition(current_mode, intent_result.intent)
 
+    # ── Step 7: Resolve callables ──
+    if callable(target):
+        target = target(state, intent_result)
+
+    # ── Post-table override: explicit handoff → ESCALATION ──
     if (
         intent_result.intent in ("ask_info", "ambiguous")
         and current_mode != "ESCALATION"
@@ -817,33 +734,82 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "router_node: explicit-handoff override → ESCALATION | message=%r",
             user_message[:80],
         )
-        transition_update = transition_mode(state, "ESCALATION")
-        if current_mode == "BOOKING":
-            draft_contexts = dict(transition_update.get("draft_contexts") or {})
-            draft_contexts["BOOKING"] = _preserve_mode_context(
-                state.get("mode_context") or {},
-                "ESCALATION",
-            )
-            transition_update["draft_contexts"] = draft_contexts
+        target = "ESCALATION"
+
+    # ── Step 8: Same mode → no transition, just update intent data ──
+    if target == current_mode:
+        return {"mode_context": {**intent_data}, "last_node": "router"}
+
+    # ── Step 9: Different mode → transition with side effects ──
+    logger.info(
+        "router_node: transition %s → %s | intent=%s | conversation_id=%s",
+        current_mode,
+        target,
+        intent_result.intent,
+        conversation_id,
+    )
+
+    # Side effect: LEAVING BOOKING → save draft
+    if current_mode == "BOOKING" and target != "BOOKING":
+        transition_update = transition_mode(state, target)
+        draft_contexts = dict(transition_update.get("draft_contexts") or {})
+        draft_contexts["BOOKING"] = _preserve_mode_context(
+            state.get("mode_context") or {},
+            target,
+        )
         return {
             **transition_update,
+            "draft_contexts": draft_contexts,
             "mode_context": {**intent_data},
             "last_node": "router",
         }
 
-    # Rule 10: Default → GENERAL
-    target_mode = "GENERAL"
-    if current_mode == "BOOKING" and intent_result.intent in ("cancel", "reject"):
-        target_mode = "BOOKING"
+    # Side effect: ENTERING BOOKING (from another mode)
+    if target == "BOOKING":
+        draft_contexts = state.get("draft_contexts") or {}
+        restored_booking_draft = draft_contexts.get("BOOKING") or {}
+        general_booking_handoff = {}
 
-    if target_mode != current_mode:
-        return {
-            **transition_mode(state, target_mode),
-            "mode_context": {**intent_data},
-            "last_node": "router",
+        # Build handoff from GENERAL if applicable
+        if current_mode == "GENERAL":
+            if _should_transition_general_to_booking(_mode_context, intent_result.intent):
+                general_booking_handoff = _build_general_booking_handoff(state, user_message)
+            elif not restored_booking_draft:
+                general_booking_handoff = _build_general_booking_handoff(state, user_message)
+
+        booking_hints = await _extract_booking_hints(user_message) if user_message else {}
+        booking_context_for_mode = {
+            **general_booking_handoff,
+            **booking_hints,
+            **restored_booking_draft,
+            **intent_data,
         }
 
-    return {"mode_context": {**intent_data}, "last_node": "router"}
+        # Populate booking_context state field with durable handoff hints
+        initial_booking_ctx: dict[str, Any] = {}
+        if booking_hints.get("preferred_stylist_name"):
+            initial_booking_ctx["preferred_stylist_name"] = booking_hints[
+                "preferred_stylist_name"
+            ]
+        if booking_hints.get("preferred_date_hint"):
+            initial_booking_ctx["preferred_date_hint"] = booking_hints["preferred_date_hint"]
+        if restored_booking_draft:
+            initial_booking_ctx = {**restored_booking_draft, **initial_booking_ctx}
+
+        transition_result: dict[str, Any] = {
+            **transition_mode(state, "BOOKING", context_update=booking_context_for_mode),
+            "last_node": "router",
+        }
+        if initial_booking_ctx:
+            transition_result["booking_context"] = initial_booking_ctx
+        return transition_result
+
+    # Generic transition (no special side effects)
+    return {
+        **transition_mode(state, target),
+        "mode_context": {**intent_data},
+        "last_node": "router",
+    }
 
 
 async def preprocess_node_v6(state: ConversationState) -> dict[str, Any]:

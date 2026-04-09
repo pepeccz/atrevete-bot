@@ -430,6 +430,24 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
             raw_input=text,
             mode_hint=None,
         )
+
+    # APPOINTMENT_MANAGEMENT bare-digit shortcut: "1", "2 martes", etc. → confirm
+    # so the appointment management flow handles selection instead of misrouting.
+    if (
+        _ctx.get("current_mode") == "APPOINTMENT_MANAGEMENT"
+        and re.match(r"^\d+(\s+\w+)?$", text_normalized)
+    ):
+        logger.debug(
+            "classify_by_keywords: APPOINTMENT_MANAGEMENT bare-digit shortcut | text=%r → confirm(0.95)",
+            text,
+        )
+        return IntentResult(
+            intent="confirm",
+            confidence=0.95,
+            raw_input=text,
+            mode_hint=None,
+        )
+
     best_intent: str | None = None
     best_confidence: float = 0.0
     best_kw_len: int = 0  # length of best-matching keyword (longer = more specific)
@@ -537,7 +555,11 @@ la ACCIÓN, NO como greet. Ejemplo: "Hola, quiero cortarme el pelo" → book.
 
 REGLA DE CONTEXTO: Si el current_mode es BOOKING, las preguntas sobre \
 estilistas, disponibilidad, horarios o el servicio seleccionado son parte \
-de la reserva. Clasifica como "book", NO como "ask_info"."""
+de la reserva. Clasifica como "book", NO como "ask_info".
+
+REGLA DE CONTEXTO: Si el current_mode es APPOINTMENT_MANAGEMENT, los números, \
+ordinales, afirmaciones ("sí", "ok", "dale"), y horarios son parte del flujo \
+de gestión de cita. Clasifica como "confirm", NO como "book"."""
 
 
 class IntentRouter:

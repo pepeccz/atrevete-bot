@@ -29,13 +29,15 @@ def _make_router(intent: str) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_router_unknown_customer_booking_intent_routes_to_booking() -> None:
+async def test_router_unknown_customer_booking_intent_routes_to_greeting() -> None:
+    """First interaction + book → GREETING (AI disclosure before booking)."""
     state = _make_state(customer_name=None, customer_id=None)
 
     with patch("agent.graphs.conversation_flow._get_intent_router", return_value=_make_router("book")):
         result = await router_node(state)
 
-    assert result["current_mode"] == "BOOKING"
+    assert result["current_mode"] == "GREETING"
+    assert result["mode_context"]["last_intent"] == "book"
 
 
 @pytest.mark.asyncio

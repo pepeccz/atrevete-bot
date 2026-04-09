@@ -177,11 +177,11 @@ class TestRouterNodeRules:
     # ── Rule 4a/4b: first turn / unknown customer ─────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_rule4a_first_interaction_booking_routes_to_booking(self):
-        """First interaction with booking intent should bypass GREETING → direct to BOOKING.
+    async def test_rule4a_first_interaction_booking_routes_to_greeting(self):
+        """First interaction with booking intent → GREETING first (AI disclosure).
 
-        scope-realignment: Rule 4 (customer_name gate) removed. book intent always routes
-        to BOOKING regardless of customer_name or is_first_interaction.
+        The AI disclosure greeting must be delivered before booking questions.
+        Booking hints are forwarded so BOOKING can skip resolved steps on the next turn.
         """
         from agent.graphs.conversation_flow import router_node
 
@@ -198,8 +198,9 @@ class TestRouterNodeRules:
             mock_get_router.return_value = _make_mock_router("book")
             result = await router_node(state)
 
-        assert result["current_mode"] == "BOOKING"
+        assert result["current_mode"] == "GREETING"
         assert result["mode_context"]["last_intent"] == "book"
+        assert "booking_hints" in result["mode_context"]
         mock_get_router.return_value.classify.assert_called_once()
 
     # ── Rule 4b: first turn / unknown customer fallback to GREETING ───────────
@@ -879,9 +880,10 @@ class TestBookingDigressions:
             result = await router_node(state)
 
         assert result["current_mode"] == "BOOKING"
-        assert result["mode_context"]["service_id"] == "svc-caballero"
-        assert result["mode_context"]["service_name"] == "Corte Caballero"
-        assert result["mode_context"]["service_duration_minutes"] == 30
+        # _build_general_booking_handoff returns the resolved_service dict with raw keys
+        assert result["mode_context"]["id"] == "svc-caballero"
+        assert result["mode_context"]["name"] == "Corte Caballero"
+        assert result["mode_context"]["duration_minutes"] == 30
         assert result["mode_context"]["last_intent"] == "book"
 
 
@@ -889,7 +891,8 @@ class TestFirstTurnRouterExamples:
     """Concrete first-turn routing examples for the routing fix."""
 
     @pytest.mark.asyncio
-    async def test_first_turn_quiero_agendar_routes_to_booking(self):
+    async def test_first_turn_quiero_agendar_routes_to_greeting(self):
+        """First interaction + book → GREETING (AI disclosure first)."""
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -903,7 +906,8 @@ class TestFirstTurnRouterExamples:
             mock_get_router.return_value = _make_mock_router("book")
             result = await router_node(state)
 
-        assert result["current_mode"] == "BOOKING"
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["last_intent"] == "book"
 
     @pytest.mark.asyncio
     async def test_first_turn_hola_routes_to_greeting(self):
@@ -972,7 +976,8 @@ class TestFirstTurnRouterExamples:
         assert result["mode_context"]["last_intent"] == "ambiguous"
 
     @pytest.mark.asyncio
-    async def test_first_turn_quiero_reservar_routes_to_booking(self):
+    async def test_first_turn_quiero_reservar_routes_to_greeting(self):
+        """First interaction + book → GREETING (AI disclosure first)."""
         from agent.graphs.conversation_flow import router_node
 
         state = _make_state(
@@ -986,7 +991,8 @@ class TestFirstTurnRouterExamples:
             mock_get_router.return_value = _make_mock_router("book")
             result = await router_node(state)
 
-        assert result["current_mode"] == "BOOKING"
+        assert result["current_mode"] == "GREETING"
+        assert result["mode_context"]["last_intent"] == "book"
 
     @pytest.mark.asyncio
     async def test_returning_customer_agendar_routes_to_booking(self):
@@ -1039,10 +1045,11 @@ class TestScopeRealignmentRouterRules:
         assert result["mode_context"]["last_intent"] == "greet"
 
     @pytest.mark.asyncio
-    async def test_router_unknown_customer_book_intent_routes_directly_to_booking(self):
-        """7.5: book intent + customer_name=None + is_first_interaction=True → BOOKING directly.
+    async def test_router_unknown_customer_book_intent_routes_to_greeting_first(self):
+        """7.5: book intent + is_first_interaction=True → GREETING first (AI disclosure).
 
-        Rule 4 removed: no GREETING gate for book intent even for new customers.
+        Pre-table rule: first interaction + book → GREETING with booking hints forwarded
+        so BOOKING can skip resolved steps on the next turn.
         """
         from agent.graphs.conversation_flow import router_node
 
@@ -1057,9 +1064,10 @@ class TestScopeRealignmentRouterRules:
             mock_get_router.return_value = _make_mock_router("book")
             result = await router_node(state)
 
-        # book intent goes straight to BOOKING — no GREETING gate for new customers
-        assert result["current_mode"] == "BOOKING"
+        # First interaction + book → GREETING (AI disclosure first)
+        assert result["current_mode"] == "GREETING"
         assert result["mode_context"]["last_intent"] == "book"
+        assert "booking_hints" in result["mode_context"]
 
 
 # ============================================================================
