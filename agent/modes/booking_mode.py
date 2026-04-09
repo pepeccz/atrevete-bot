@@ -5,7 +5,7 @@ Booking Mode — Simplified LLM-Driven Booking Architecture.
   - UUID injection (slot_index → stylist_id/start_time)
   - mode_context update from tool results
 
-Tool surface: check_availability, book, escalate_to_human (3 tools).
+Tool surface: check_availability, book (2 tools).
 The service catalog is in the prompt — no separate catalog lookup needed.
 The LLM guides the booking flow; Python enforces data-integrity gates only.
 """
@@ -98,12 +98,11 @@ class BookingModeNode(BaseModeNode):
         return "BOOKING"
 
     def get_tools(self) -> list:
-        """Return the 3 booking tools for the agentic loop."""
+        """Return the 2 booking tools for the agentic loop."""
         from agent.tools.availability_tools import check_availability
         from agent.tools.booking_tools import book
-        from agent.tools.escalation_tools import escalate_to_human
 
-        return [check_availability, book, escalate_to_human]
+        return [check_availability, book]
 
     # ──────────────────────────────────────────────────────────────────────
     # Booking step computation — pure function, idempotent

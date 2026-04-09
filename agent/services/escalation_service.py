@@ -395,6 +395,22 @@ async def perform_escalation(
         logger.warning(f"[escalation] S5 DB record failed: {e}")
         result.steps_failed.append("db_record")
 
+    # ── S6 — Admin notification (best-effort) ────────────────────────────
+    try:
+        notification_id = await create_escalation_notification(
+            reason=reason,
+            customer_phone=customer_phone,
+            conversation_id=conversation_id,
+            conversation_context=conversation_context,
+        )
+        if notification_id is not None:
+            result.steps_completed.append("admin_notification")
+        else:
+            result.steps_failed.append("admin_notification")
+    except Exception as e:
+        logger.warning("[escalation] S6 admin notification failed: %s", e)
+        result.steps_failed.append("admin_notification")
+
     logger.info(
         f"[escalation] Completed | conversation_id={conversation_id} | "
         f"success={result.success} | steps_completed={result.steps_completed} | "

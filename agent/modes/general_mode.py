@@ -25,7 +25,7 @@ class GeneralMode(BaseModeNode):
 
     Responds directly from LLM knowledge + system prompt — no data tools.
     Routes the user to BOOKING mode for service/appointment requests.
-    Escalation is handled via the escalate_to_human tool.
+    Escalation is handled via the ESCALATION mode transition.
     """
 
     @property
@@ -33,9 +33,7 @@ class GeneralMode(BaseModeNode):
         return "GENERAL"
 
     def get_tools(self):
-        from agent.tools.escalation_tools import escalate_to_human
-
-        return [escalate_to_human]
+        return []
 
     async def handle(self, state: ConversationState, intent: object) -> dict:
         """
@@ -108,8 +106,4 @@ class GeneralMode(BaseModeNode):
         }
         if disclosure_sent:
             updates["ai_disclosure_sent"] = True
-        # Propagate escalation if escalate_to_human was called
-        if result.tool_results.get("escalate_to_human"):
-            updates["escalation_triggered"] = True
-
         return updates

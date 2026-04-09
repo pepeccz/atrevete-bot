@@ -552,6 +552,9 @@ TRANSITION_TABLE: dict[tuple[str, str], TransitionTarget] = {
     ("BOOKING", "reject"): "BOOKING",
     ("BOOKING", "DEFAULT"): "BOOKING",
     # ESCALATION mode transitions
+    ("ESCALATION", "ask_info"): "GENERAL",
+    ("ESCALATION", "greet"): "GREETING",
+    ("ESCALATION", "check_appointments"): "APPOINTMENT_MANAGEMENT",
     ("ESCALATION", "book"): "BOOKING",
     ("ESCALATION", "DEFAULT"): "ESCALATION",
     # APPOINTMENT_MANAGEMENT mode transitions
@@ -637,7 +640,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
 
     # ── Hard gate 1: Already escalated ──
     if escalation_triggered:
-        return {"current_mode": "ESCALATION", "last_node": "router"}
+        mode_ctx = state.get("mode_context", {})
+        escalation_done = (
+            current_mode == "ESCALATION"
+            and mode_ctx.get("escalation_step") == "DONE"
+        )
+        if not escalation_done:
+            return {"current_mode": "ESCALATION", "last_node": "router"}
+        # Escalation complete — fall through to table lookup for normal routing
 
     # ── Hard gate 2: Auto-escalation threshold ──
     if error_count >= AUTO_ESCALATION_THRESHOLD:

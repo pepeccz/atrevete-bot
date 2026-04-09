@@ -50,40 +50,16 @@ class TestGeneralModeNoDataTools:
         )
 
 
-class TestGeneralModeEscalateTool:
-    """T-11: GeneralMode.get_tools() includes escalate_to_human."""
+class TestGeneralModeNoEscalateTool:
+    """GeneralMode.get_tools() no longer includes escalate_to_human (removed in escalation-lifecycle-completion)."""
 
-    def test_escalate_to_human_in_tools(self):
-        """GeneralMode.handle() runs the loop with escalate_to_human in tools."""
-        # We test this by verifying that GeneralMode always passes escalate_to_human
-        # to _run_agentic_loop. We capture the tools argument via a mock.
-        import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
-
+    def test_no_escalate_to_human_in_tools(self):
+        """GeneralMode.get_tools() returns empty list — escalation is router-driven."""
         mode = GeneralMode(tools=[], llm_client=_make_mock_llm())
-        state = create_initial_state("conv-esc", "+34610000001")
-        state["current_mode"] = "GENERAL"
-        state["messages"] = [{"role": "user", "content": "necesito ayuda"}]
-        state["mode_context"] = {}
-
-        captured_tools = []
-
-        async def _capture_loop(messages, tools=None):
-            captured_tools.extend(tools or [])
-            return AgenticLoopResult(
-                response_text="Te paso con alguien.",
-                tool_results={},
-                tool_events=[],
-            )
-
-        with (
-            patch.object(mode, "_use_optimized_prompts", return_value=False),
-            patch.object(mode, "_run_agentic_loop", side_effect=_capture_loop),
-        ):
-            asyncio.get_event_loop().run_until_complete(mode.handle(state, intent=None))
-
-        tool_names = [t.name for t in captured_tools]
-        assert "escalate_to_human" in tool_names
+        tools = mode.get_tools()
+        tool_names = [t.name for t in tools]
+        assert "escalate_to_human" not in tool_names
+        assert tools == []
 
 
 # (test_general_mode_persists_booking_handoff_from_search_services removed —

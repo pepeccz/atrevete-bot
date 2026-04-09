@@ -155,12 +155,10 @@ class AppointmentManagementMode(BaseModeNode):
 
         Tools:
         - manage_appointments (consolidated: list, cancel, reschedule)
-        - escalate_to_human (escalation)
         """
-        from agent.tools.escalation_tools import escalate_to_human
         from agent.tools.manage_appointments_tool import manage_appointments
 
-        return [manage_appointments, escalate_to_human]
+        return [manage_appointments]
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
