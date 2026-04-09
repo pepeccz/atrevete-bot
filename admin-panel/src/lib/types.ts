@@ -91,6 +91,45 @@ export interface Customer {
   created_at: string;
 }
 
+export interface CustomerMemories {
+  preferred_stylist_name?: string | null;
+  preferred_stylist_id?: string | null;
+  no_preference_stylist?: boolean | null;
+  typical_services?: string[] | null;
+  typical_day_of_week?: string | null;
+  typical_time_of_day?: string | null;
+  notes?: string | null;
+  visit_count?: number | null;
+  last_visit_date?: string | null;
+  last_stylist_name?: string | null;
+}
+
+export interface CustomerDetail extends Customer {
+  preferred_stylist_name: string | null;
+  memories: CustomerMemories | null;
+}
+
+export interface CustomerAppointment {
+  id: string;
+  start_time: string;
+  duration_minutes: number;
+  status: AppointmentStatus;
+  stylist_name: string;
+  service_names: string[];
+  first_name: string;
+  last_name: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface CustomerAppointmentsPage {
+  items: CustomerAppointment[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
 export interface Service {
   id: string;
   name: string;

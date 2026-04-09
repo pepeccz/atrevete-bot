@@ -509,6 +509,61 @@ class CustomerResponse(BaseModel):
         from_attributes = True
 
 
+class CustomerDetailResponse(BaseModel):
+    """Enriched customer detail response — includes preferred_stylist_name, memories, chatwoot_id."""
+
+    id: str
+    phone: str
+    first_name: str
+    last_name: str | None
+    total_spent: str
+    last_service_date: datetime | None
+    preferred_stylist_id: str | None
+    preferred_stylist_name: str | None
+    notes: str | None
+    chatwoot_conversation_id: str | None
+    memories: dict | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CustomerAppointmentResponse(BaseModel):
+    """Single appointment entry returned by GET /customers/{id}/appointments."""
+
+    id: str
+    start_time: datetime
+    duration_minutes: int
+    status: str
+    stylist_name: str
+    service_names: list[str]
+    first_name: str
+    last_name: str | None
+    notes: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UpdateMemoriesRequest(BaseModel):
+    """10 known memory keys. Extra keys are rejected."""
+
+    preferred_stylist_name: str | None = None
+    preferred_stylist_id: str | None = None
+    no_preference_stylist: bool | None = None
+    typical_services: list[str] | None = None
+    typical_day_of_week: str | None = None
+    typical_time_of_day: str | None = None
+    notes: str | None = None
+    visit_count: int | None = None
+    last_visit_date: str | None = None
+    last_stylist_name: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ServiceMetadata(BaseModel):
     """Structured metadata for service configuration (disambiguation fields removed)."""
 
@@ -1680,14 +1735,18 @@ async def list_customers(
         }
 
 
-@router.get("/customers/{customer_id}")
+@router.get("/customers/{customer_id}", response_model=CustomerDetailResponse)
 async def get_customer(
     customer_id: UUID,
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
-    """Get a single customer by ID."""
+    """Get a single customer by ID — enriched with preferred_stylist_name, memories, chatwoot_id."""
     async with get_async_session() as session:
-        result = await session.execute(select(Customer).where(Customer.id == customer_id))
+        result = await session.execute(
+            select(Customer)
+            .options(selectinload(Customer.preferred_stylist))
+            .where(Customer.id == customer_id)
+        )
         customer = result.scalar_one_or_none()
 
         if not customer:
@@ -1705,9 +1764,125 @@ async def get_customer(
             "preferred_stylist_id": (
                 str(customer.preferred_stylist_id) if customer.preferred_stylist_id else None
             ),
+            "preferred_stylist_name": (
+                customer.preferred_stylist.name if customer.preferred_stylist else None
+            ),
             "notes": customer.notes,
+            "chatwoot_conversation_id": customer.chatwoot_conversation_id,
+            "memories": customer.metadata_.get("memories") if customer.metadata_ else None,
             "created_at": customer.created_at.isoformat(),
         }
+
+
+@router.get("/customers/{customer_id}/appointments")
+async def get_customer_appointments(
+    customer_id: UUID,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    page: int = 1,
+    page_size: int = 20,
+):
+    """List appointments for a customer, ordered most-recent-first, paginated."""
+    async with get_async_session() as session:
+        # Verify customer exists
+        customer_check = await session.execute(
+            select(Customer.id).where(Customer.id == customer_id)
+        )
+        if not customer_check.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        # Total count for pagination
+        count_query = (
+            select(func.count())
+            .select_from(Appointment)
+            .where(Appointment.customer_id == customer_id)
+        )
+        total = (await session.execute(count_query)).scalar() or 0
+
+        # Query appointments with stylist join
+        appt_query = (
+            select(Appointment)
+            .options(selectinload(Appointment.stylist))
+            .where(Appointment.customer_id == customer_id)
+            .order_by(Appointment.start_time.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size + 1)
+        )
+        appt_result = await session.execute(appt_query)
+        appointments = appt_result.scalars().all()
+
+        has_more = len(appointments) > page_size
+        items = appointments[:page_size]
+
+        # Collect all service_ids for batch lookup
+        all_service_ids: set = set()
+        for appt in items:
+            all_service_ids.update(appt.service_ids or [])
+
+        # Batch load service names in a single query
+        services_map: dict[str, str] = {}
+        if all_service_ids:
+            svc_result = await session.execute(
+                select(Service.id, Service.name).where(Service.id.in_(all_service_ids))
+            )
+            services_map = {str(row.id): row.name for row in svc_result.all()}
+
+        return {
+            "items": [
+                {
+                    "id": str(a.id),
+                    "start_time": a.start_time.astimezone(MADRID_TZ).isoformat(),
+                    "duration_minutes": a.duration_minutes,
+                    "status": a.status.value,
+                    "stylist_name": a.stylist.name,
+                    "service_names": [
+                        services_map.get(str(sid), "Servicio desconocido")
+                        for sid in (a.service_ids or [])
+                    ],
+                    "first_name": a.first_name,
+                    "last_name": a.last_name,
+                    "notes": a.notes,
+                    "created_at": a.created_at.isoformat(),
+                }
+                for a in items
+            ],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_more": has_more,
+        }
+
+
+@router.put("/customers/{customer_id}/memories")
+async def update_customer_memories(
+    customer_id: UUID,
+    request: UpdateMemoriesRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Update customer bot memories via JSONB merge. Empty body {} clears all memories."""
+    from sqlalchemy import update as sa_update
+
+    async with get_async_session() as session:
+        customer_check = await session.execute(
+            select(Customer.id).where(Customer.id == customer_id)
+        )
+        if not customer_check.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        # Build memories dict — only include keys explicitly set (including None values)
+        memories = request.model_dump()
+
+        # JSONB merge: preserves other metadata_ keys (e.g. whatsapp_name, store_api_version)
+        stmt = (
+            sa_update(Customer)
+            .where(Customer.id == customer_id)
+            .values(metadata_=Customer.metadata_.op("||")({"memories": memories}))
+            .returning(Customer.metadata_)
+        )
+        result = await session.execute(stmt)
+        updated_metadata = result.scalar_one()
+        await session.commit()
+
+        return {"memories": updated_metadata.get("memories", {})}
 
 
 @router.post("/customers", status_code=status.HTTP_201_CREATED)

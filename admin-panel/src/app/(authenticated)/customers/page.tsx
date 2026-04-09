@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ColumnDef } from "@tanstack/react-table";
 
+import Link from "next/link";
 import {
   MoreHorizontal,
   Plus,
@@ -13,6 +14,7 @@ import {
   Calendar,
   Edit,
   Users,
+  Eye,
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
@@ -354,6 +356,12 @@ export default function CustomersPage() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  <DropdownMenuItem asChild>
+                    <Link href={`/customers/${customer.id}`} className="flex items-center gap-2">
+                      <Eye className="h-4 w-4" />
+                      Ver detalle
+                    </Link>
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => {
                       setCustomerToDelete(customer.id);

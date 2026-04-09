@@ -27,6 +27,9 @@ import type {
   Escalation,
   EscalationQueryParams,
   EscalationStats,
+  CustomerDetail,
+  CustomerAppointmentsPage,
+  CustomerMemories,
 } from "./types";
 
 const API_BASE_URL =
@@ -1051,6 +1054,38 @@ class ApiClient {
 
   async getEscalationStats(): Promise<EscalationStats> {
     return this.request("/api/admin/escalations/stats");
+  }
+
+  // Customer detail endpoints
+  async getCustomerDetail(id: string): Promise<CustomerDetail> {
+    return this.request<CustomerDetail>(`/api/admin/customers/${id}`);
+  }
+
+  async getCustomerAppointments(
+    id: string,
+    page: number = 1,
+    pageSize: number = 20
+  ): Promise<CustomerAppointmentsPage> {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      page_size: pageSize.toString(),
+    });
+    return this.request<CustomerAppointmentsPage>(
+      `/api/admin/customers/${id}/appointments?${params}`
+    );
+  }
+
+  async updateCustomerMemories(
+    id: string,
+    memories: Partial<CustomerMemories>
+  ): Promise<{ memories: CustomerMemories }> {
+    return this.request<{ memories: CustomerMemories }>(
+      `/api/admin/customers/${id}/memories`,
+      {
+        method: "PUT",
+        body: JSON.stringify(memories),
+      }
+    );
   }
 }
 
