@@ -8,7 +8,7 @@ import {
   Phone,
   User,
   Calendar,
-  CreditCard,
+  BarChart3,
   MessageSquare,
   Info,
   CalendarOff,
@@ -338,54 +338,26 @@ export default function CustomerDetailPage() {
                       )}
                     </p>
                   </div>
-                  {customer.preferred_stylist_id && (
-                    <div>
-                      <p className="text-xs text-muted-foreground">
-                        ID Estilista
-                      </p>
-                      <p className="text-xs font-mono text-muted-foreground break-all">
-                        {customer.preferred_stylist_id}
-                      </p>
-                    </div>
-                  )}
-                  {customer.chatwoot_conversation_id && (
-                    <div>
-                      <p className="text-xs text-muted-foreground">
-                        Conversación Chatwoot
-                      </p>
-                      <p className="text-sm">
-                        {customer.chatwoot_conversation_id}
-                      </p>
-                    </div>
-                  )}
                 </CardContent>
               </Card>
 
-              {/* Métricas */}
+              {/* Actividad */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
-                    <CreditCard className="h-4 w-4" />
-                    Métricas
+                    <BarChart3 className="h-4 w-4" />
+                    Actividad
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div>
                     <p className="text-xs text-muted-foreground">
-                      Total gastado
-                    </p>
-                    <p className="text-sm font-medium">
-                      ${customer.total_spent}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">
                       Última visita
                     </p>
-                    <p className="text-sm">
+                    <p className="text-sm font-medium">
                       {customer.last_service_date
                         ? formatDate(customer.last_service_date, false)
-                        : "-"}
+                        : "Sin visitas"}
                     </p>
                   </div>
                   <div>

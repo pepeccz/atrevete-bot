@@ -14,7 +14,6 @@ import {
   Calendar,
   Edit,
   Users,
-  Eye,
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
@@ -306,7 +305,15 @@ export default function CustomersPage() {
         ),
         cell: ({ row }) => {
           const customer = row.original;
-          return `${customer.first_name} ${customer.last_name || ""}`.trim();
+          const name = `${customer.first_name} ${customer.last_name || ""}`.trim();
+          return (
+            <Link
+              href={`/customers/${customer.id}`}
+              className="font-medium text-primary hover:underline"
+            >
+              {name}
+            </Link>
+          );
         },
       },
       {
@@ -356,12 +363,6 @@ export default function CustomersPage() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem asChild>
-                    <Link href={`/customers/${customer.id}`} className="flex items-center gap-2">
-                      <Eye className="h-4 w-4" />
-                      Ver detalle
-                    </Link>
-                  </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => {
                       setCustomerToDelete(customer.id);
