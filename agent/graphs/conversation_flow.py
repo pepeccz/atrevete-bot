@@ -515,7 +515,9 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     5.5 current_mode=ESCALATION and intent not book → stay ESCALATION (inertia)
     6. intent=book → BOOKING
     7. intent=greet and is_first_interaction → GREETING
-    8. Default → GENERAL
+    7.95 is_first_interaction + intent=book → GREETING (with booking_hints forwarded)
+    8. intent=book → BOOKING
+    9. Default → GENERAL
     """
     from agent.state.schemas import transition_mode
 
@@ -724,6 +726,21 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         if _initial_booking_ctx:
             result["booking_context"] = _initial_booking_ctx
         return result
+
+    # Rule 7.95: First interaction with booking intent → GREETING first
+    # The AI disclosure + short greeting must be delivered before booking questions.
+    # Booking hints (preferred stylist, date) are extracted and forwarded so BOOKING
+    # can skip already-resolved steps on the next turn.
+    if is_first_interaction and intent_result.intent == "book":
+        booking_hints_first = await _extract_booking_hints(user_message) if user_message else {}
+        return {
+            "current_mode": "GREETING",
+            "mode_context": {
+                **intent_data,
+                "booking_hints": booking_hints_first,
+            },
+            "last_node": "router",
+        }
 
     # Rule 8: Book intent → BOOKING
     if intent_result.intent == "book":

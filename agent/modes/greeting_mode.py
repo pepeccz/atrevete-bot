@@ -268,6 +268,13 @@ class GreetingMode(BaseModeNode):
                 new_mode_ctx = {**transition_update.get("mode_context", {}), **booking_handoff}
                 transition_update["mode_context"] = new_mode_ctx
 
+            # P4: Forward booking_hints from router (first-interaction booking) to BOOKING mode
+            booking_hints_from_router = mode_context.get("booking_hints")
+            if booking_hints_from_router and target_mode == "BOOKING":
+                new_mode_ctx = {**transition_update.get("mode_context", {})}
+                new_mode_ctx.update(booking_hints_from_router)
+                transition_update["mode_context"] = new_mode_ctx
+
             updates = {
                 **transition_update,
                 **add_message(state, "assistant", final_response),
@@ -299,6 +306,13 @@ class GreetingMode(BaseModeNode):
         # ADR-4: Inject booking handoff context into the new mode_context
         if has_booking_content and booking_handoff:
             new_mode_ctx = {**transition_update.get("mode_context", {}), **booking_handoff}
+            transition_update["mode_context"] = new_mode_ctx
+
+        # P4: Forward booking_hints from router (first-interaction booking) to BOOKING mode
+        booking_hints_from_router = mode_context.get("booking_hints")
+        if booking_hints_from_router and target_mode == "BOOKING":
+            new_mode_ctx = {**transition_update.get("mode_context", {})}
+            new_mode_ctx.update(booking_hints_from_router)
             transition_update["mode_context"] = new_mode_ctx
 
         updates = {

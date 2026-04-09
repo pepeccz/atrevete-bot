@@ -467,3 +467,422 @@ async def test_post_tool_result_book_first_time_existing_prefs_none():
 
     _, _, call_existing_prefs = mock_write.call_args.args
     assert call_existing_prefs is None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# TASK-1: F-8 removal — _build_response always returns sanitized LLM text
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_build_response_returns_llm_text_always():
+    """_build_response returns _sanitize_response(result.response_text) regardless of _booking_completed."""
+    from agent.modes.booking_mode import BookingModeNode
+    from agent.modes.base import AgenticLoopResult
+
+    node = BookingModeNode(tools=[])
+    llm_text = "¡Listo! Tu cita está confirmada. Aquí tu enlace de calendario."
+    result = AgenticLoopResult(response_text=llm_text)
+
+    # When _booking_completed is True AND selected_slot is set — no F-8 override
+    mode_context = {
+        "_booking_completed": True,
+        "selected_slot": {"day_label": "Viernes 10", "time": "10:20"},
+        "last_stylist": "Pilar",
+        "last_services": ["Cortar"],
+    }
+    response = node._build_response(result, mode_context)
+    assert response == llm_text
+
+
+def test_build_response_empty_llm_text():
+    """_build_response with empty response_text returns empty string."""
+    from agent.modes.booking_mode import BookingModeNode
+    from agent.modes.base import AgenticLoopResult
+
+    node = BookingModeNode(tools=[])
+    result = AgenticLoopResult(response_text="")
+    response = node._build_response(result, {"_booking_completed": True})
+    assert response == ""
+
+
+def test_render_booking_confirmation_method_removed():
+    """_render_booking_confirmation method must no longer exist (F-8 deleted)."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    assert not hasattr(node, "_render_booking_confirmation"), (
+        "_render_booking_confirmation was deleted in F-8 removal — must not be present"
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# TASK-2: Confirmation gate — book() rejected when step != confirmation
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_confirmation_gate_rejects_at_name_collection():
+    """book() at name_collection step → ToolCallRejection(CONFIRMATION_REQUIRED)."""
+    from agent.modes.booking_mode import BookingModeNode
+    from agent.modes.base import ToolCallRejection
+
+    node = BookingModeNode(tools=[])
+    # Set up: service + stylist + slot resolved, but NO customer_name
+    node._booking_context = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+        "selected_slot": {"stylist_id": "abc", "start_time": "2026-04-10T10:00:00"},
+        "customer_name": None,  # Missing — step = name_collection
+    }
+    node._mode_context = node._booking_context
+
+    result = await node._pre_tool_call("book", {"customer_first_name": "", "services": ["Cortar"]})
+
+    assert isinstance(result, ToolCallRejection)
+    assert result.error_code == "CONFIRMATION_REQUIRED"
+    assert "name_collection" in result.error_message
+
+
+@pytest.mark.asyncio
+async def test_confirmation_gate_rejects_at_notes_collection():
+    """book() at notes_collection step → ToolCallRejection(CONFIRMATION_REQUIRED)."""
+    from agent.modes.booking_mode import BookingModeNode
+    from agent.modes.base import ToolCallRejection
+
+    node = BookingModeNode(tools=[])
+    node._booking_context = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+        "selected_slot": {"stylist_id": "abc", "start_time": "2026-04-10T10:00:00"},
+        "customer_name": "Pablo",
+        "notes_asked": False,  # Step = notes_collection
+    }
+    node._mode_context = node._booking_context
+
+    result = await node._pre_tool_call("book", {"services": ["Cortar"]})
+
+    assert isinstance(result, ToolCallRejection)
+    assert result.error_code == "CONFIRMATION_REQUIRED"
+    assert "notes_collection" in result.error_message
+
+
+@pytest.mark.asyncio
+async def test_confirmation_gate_passes_at_confirmation_step():
+    """book() at confirmation step → NOT rejected (returns dict, not ToolCallRejection)."""
+    from agent.modes.booking_mode import BookingModeNode
+    from agent.modes.base import ToolCallRejection
+
+    node = BookingModeNode(tools=[])
+    node._booking_context = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+        "selected_slot": {
+            "stylist_id": "abc-123",
+            "start_time": "2026-04-10T10:00:00",
+            "stylist_name": "Pilar",
+        },
+        "customer_name": "Pablo",
+        "notes_asked": True,
+    }
+    node._mode_context = node._booking_context
+
+    result = await node._pre_tool_call("book", {"services": ["Cortar"]})
+
+    assert not isinstance(result, ToolCallRejection), (
+        f"Expected dict (pass-through), got ToolCallRejection: {result}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirmation_gate_persists_slot_on_rejection():
+    """Slot resolved in Step A BEFORE gate fires — selected_slot persists even on rejection."""
+    from agent.modes.booking_mode import BookingModeNode
+    from agent.modes.base import ToolCallRejection
+
+    node = BookingModeNode(tools=[])
+    node._booking_context = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Pilar",
+        "selected_slot": None,
+        "offered_slots": [
+            {
+                "stylist_id": "abc-123",
+                "start_time": "2026-04-10T10:00:00",
+                "stylist_name": "Pilar",
+            }
+        ],
+        "customer_name": None,  # Will be extracted from args → triggers name_collection → rejected
+    }
+    node._mode_context = node._booking_context
+
+    result = await node._pre_tool_call(
+        "book",
+        {
+            "slot_index": 1,
+            "customer_first_name": "Pablo",  # Extracted in Step A.2
+            "services": ["Cortar"],
+        },
+    )
+
+    # Gate should reject (name_collection → confirmation not reached because name IS extracted
+    # BUT notes_asked is not set, so step = notes_collection)
+    assert isinstance(result, ToolCallRejection)
+    assert result.error_code == "CONFIRMATION_REQUIRED"
+    # selected_slot MUST be persisted (Step A ran before gate)
+    assert node._booking_context["selected_slot"] is not None
+    assert node._booking_context["selected_slot"]["stylist_id"] == "abc-123"
+    # customer_name MUST be persisted (Step A.2 ran before gate)
+    assert node._booking_context["customer_name"] == "Pablo"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# TASK-3: Stylist list in dynamic context at stylist_selection step
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_build_dynamic_context_includes_available_stylists_at_stylist_selection():
+    """_build_dynamic_context includes <available_stylists> at stylist_selection step."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    # Simulate pre-loaded cache
+    node._cached_stylists_by_category = {
+        "HAIRDRESSING": ["Marta", "Victor", "Pilar"],
+        "AESTHETICS": ["Ana"],
+    }
+
+    mode_context = {
+        "last_services": ["Cortar"],
+        "last_service_category": "HAIRDRESSING",
+        "booking_step": "stylist_selection",
+    }
+    state: dict = {"customer_phone": "", "messages": []}
+
+    context = node._build_dynamic_context(mode_context, state)  # type: ignore[arg-type]
+
+    assert "<available_stylists>" in context
+    assert "1. Marta" in context
+    assert "2. Victor" in context
+    assert "3. Pilar" in context
+    assert "la primera disponible" in context
+    # Ana (AESTHETICS) should NOT appear
+    assert "Ana" not in context
+
+
+def test_build_dynamic_context_excludes_available_stylists_at_other_steps():
+    """_build_dynamic_context does NOT include <available_stylists> at non-stylist_selection steps."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    node._cached_stylists_by_category = {"HAIRDRESSING": ["Marta", "Victor"]}
+
+    for step in ("service_selection", "datetime_selection", "name_collection", "confirmation"):
+        mode_context = {
+            "booking_step": step,
+            "last_services": ["Cortar"],
+            "last_service_category": "HAIRDRESSING",
+            "last_stylist": "Marta",
+            "selected_slot": {"stylist_id": "x"},
+            "customer_name": "Pablo",
+            "notes_asked": True,
+        }
+        context = node._build_dynamic_context(mode_context, {"customer_phone": "", "messages": []})  # type: ignore[arg-type]
+        assert "<available_stylists>" not in context, (
+            f"<available_stylists> should not appear at step '{step}'"
+        )
+
+
+def test_get_stylists_for_services_falls_back_to_all_when_category_unknown():
+    """_get_stylists_for_services falls back to all stylists when category is not in cache."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    node._cached_stylists_by_category = {
+        "HAIRDRESSING": ["Marta", "Victor"],
+        "AESTHETICS": ["Ana"],
+    }
+    mode_context = {"last_service_category": "UNKNOWN_CAT"}
+    names = node._get_stylists_for_services(mode_context)
+    # Should return union of all categories, sorted
+    assert sorted(names) == ["Ana", "Marta", "Victor"]
+
+
+def test_get_stylists_for_services_no_cache_returns_empty():
+    """_get_stylists_for_services returns [] when cache is empty (e.g. DB down at startup)."""
+    from agent.modes.booking_mode import BookingModeNode
+
+    node = BookingModeNode(tools=[])
+    node._cached_stylists_by_category = {}
+    names = node._get_stylists_for_services({"last_service_category": "HAIRDRESSING"})
+    assert names == []
+
+
+# ──────────────────────────────────────────────────────────────────────
+# TASK-4: Router first-interaction fix
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_router_first_interaction_book_routes_to_greeting():
+    """is_first_interaction=True + intent=book → router routes to GREETING with booking_hints."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    state = {
+        "conversation_id": "test-conv",
+        "current_mode": "GREETING",
+        "is_first_interaction": True,
+        "customer_name": None,
+        "error_count": 0,
+        "escalation_triggered": False,
+        "messages": [{"role": "user", "content": "quiero un corte con Marta"}],
+        "booking_context": {},
+        "mode_context": {},
+        "draft_contexts": {},
+        "pending_confirmation_appointment_id": None,
+    }
+
+    mock_intent = MagicMock()
+    mock_intent.intent = "book"
+    mock_intent.confidence = 0.95
+
+    mock_router = MagicMock()
+    mock_router.classify = AsyncMock(return_value=mock_intent)
+
+    with (
+        patch("agent.graphs.conversation_flow._get_intent_router", return_value=mock_router),
+        patch(
+            "agent.graphs.conversation_flow._extract_booking_hints",
+            new=AsyncMock(
+                return_value={"preferred_stylist_name": "Marta", "preferred_date_hint": None}
+            ),
+        ),
+    ):
+        from agent.graphs.conversation_flow import router_node
+
+        result = await router_node(state)
+
+    assert result["current_mode"] == "GREETING", (
+        f"Expected GREETING but got {result.get('current_mode')}"
+    )
+    assert "booking_hints" in result.get("mode_context", {}), (
+        "booking_hints must be in mode_context"
+    )
+    assert result["mode_context"]["booking_hints"]["preferred_stylist_name"] == "Marta"
+
+
+@pytest.mark.asyncio
+async def test_router_first_interaction_escalate_skips_greeting():
+    """is_first_interaction=True + intent=escalate → ESCALATION, NOT GREETING."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    state = {
+        "conversation_id": "test-conv",
+        "current_mode": "GREETING",
+        "is_first_interaction": True,
+        "customer_name": None,
+        "error_count": 0,
+        "escalation_triggered": False,
+        "messages": [{"role": "user", "content": "necesito hablar con una persona"}],
+        "booking_context": {},
+        "mode_context": {},
+        "draft_contexts": {},
+        "pending_confirmation_appointment_id": None,
+    }
+
+    mock_intent = MagicMock()
+    mock_intent.intent = "escalate"
+    mock_intent.confidence = 0.9
+
+    mock_router = MagicMock()
+    mock_router.classify = AsyncMock(return_value=mock_intent)
+
+    with patch("agent.graphs.conversation_flow._get_intent_router", return_value=mock_router):
+        from agent.graphs.conversation_flow import router_node
+
+        result = await router_node(state)
+
+    assert result["current_mode"] == "ESCALATION"
+
+
+@pytest.mark.asyncio
+async def test_router_non_first_interaction_book_routes_to_booking():
+    """is_first_interaction=False + intent=book → BOOKING (Rule 8 unchanged)."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    state = {
+        "conversation_id": "test-conv",
+        "current_mode": "GENERAL",
+        "is_first_interaction": False,
+        "customer_name": "Pablo",
+        "error_count": 0,
+        "escalation_triggered": False,
+        "messages": [{"role": "user", "content": "quiero reservar"}],
+        "booking_context": {},
+        "mode_context": {},
+        "draft_contexts": {},
+        "pending_confirmation_appointment_id": None,
+    }
+
+    mock_intent = MagicMock()
+    mock_intent.intent = "book"
+    mock_intent.confidence = 0.95
+
+    mock_router = MagicMock()
+    mock_router.classify = AsyncMock(return_value=mock_intent)
+
+    with (
+        patch("agent.graphs.conversation_flow._get_intent_router", return_value=mock_router),
+        patch(
+            "agent.graphs.conversation_flow._extract_booking_hints",
+            new=AsyncMock(
+                return_value={"preferred_stylist_name": None, "preferred_date_hint": None}
+            ),
+        ),
+    ):
+        from agent.graphs.conversation_flow import router_node
+
+        result = await router_node(state)
+
+    assert result["current_mode"] == "BOOKING"
+
+
+@pytest.mark.asyncio
+async def test_greeting_mode_forwards_booking_hints_to_booking():
+    """GreetingMode.handle with booking_hints in mode_context → hints forwarded in transition."""
+    from unittest.mock import AsyncMock, patch
+    from agent.modes.greeting_mode import GreetingMode
+
+    # Simulate state where router put booking_hints in mode_context
+    state = {
+        "conversation_id": "test-conv",
+        "customer_name": None,
+        "is_first_interaction": True,
+        "ai_disclosure_sent": False,
+        "messages": [{"role": "user", "content": "quiero un corte con Marta"}],
+        "mode_context": {
+            "last_intent": "book",
+            "booking_hints": {
+                "preferred_stylist_name": "Marta",
+                "preferred_date_hint": None,
+            },
+        },
+        "current_mode": "GREETING",
+        "booking_context": {},
+    }
+
+    node = GreetingMode(tools=[])
+
+    # Patch _render_layered_response to avoid LLM call
+    with patch.object(
+        node,
+        "_render_layered_response",
+        new=AsyncMock(return_value="¡Hola! ¿Qué necesitas?"),
+    ):
+        result = await node.handle(state, None)
+
+    # target_mode should be BOOKING (last_intent="book")
+    # mode_context in result should carry preferred_stylist_name
+    mode_ctx = result.get("mode_context") or {}
+    assert mode_ctx.get("preferred_stylist_name") == "Marta", (
+        f"booking_hints not forwarded to transition mode_context: {mode_ctx}"
+    )

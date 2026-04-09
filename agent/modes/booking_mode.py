@@ -3,7 +3,6 @@ Booking Mode — Simplified LLM-Driven Booking Architecture.
 
 ~380 lines. Python retains ONLY what the LLM cannot do:
   - UUID injection (slot_index → stylist_id/start_time)
-  - Code-rendered confirmations (F-8 path)
   - mode_context update from tool results
 
 Tool surface: check_availability, book, escalate_to_human (3 tools).
@@ -90,7 +89,7 @@ class BookingModeNode(BaseModeNode):
 
     Python retains only what the LLM cannot do:
     - UUID injection (slot_index → stylist_id/start_time)
-    - Code-rendered confirmations (F-8 path)
+    - Confirmation gate (book() rejected unless step == confirmation)
     - mode_context updates from tool results
     """
 
@@ -154,7 +153,7 @@ class BookingModeNode(BaseModeNode):
         3. Compute tool_choice (forced only on blank-slate turns)
         4. Build messages with dynamic context
         5. Run agentic loop
-        6. Build response (F-8 override for completed bookings)
+        6. Build response (LLM-generated text only — no code override)
 
         State contract:
         - booking_context: ALL booking-specific fields (services, stylist, slots, etc.)
@@ -178,11 +177,25 @@ class BookingModeNode(BaseModeNode):
         # We always start from the persisted checkpoint value and return a full replace.
         booking_context: dict[str, Any] = dict(state.get("booking_context") or {})
 
+        # P4: Absorb booking hints forwarded from GREETING (first-interaction handoff)
+        _hints = mode_context.pop("booking_hints", None) or {}
+        if _hints.get("preferred_stylist_name") and not booking_context.get("preferred_stylist_name"):
+            booking_context["preferred_stylist_name"] = _hints["preferred_stylist_name"]
+        if _hints.get("preferred_date_hint") and not booking_context.get("preferred_date_hint"):
+            booking_context["preferred_date_hint"] = _hints["preferred_date_hint"]
+
         # 1. Resolve pending selection: map numbered/text user reply → last_services/last_stylist/selected_slot
         self._resolve_pending_selection(state, booking_context)
 
         # 1c. Compute booking step (idempotent — re-evaluated each turn after resolution)
         booking_context["booking_step"] = self._compute_step(booking_context)
+
+        # 1b. Pre-load stylist names by category for dynamic context (P3 — stylist list)
+        self._cached_stylists_by_category = await self._load_stylists_by_category()
+
+        # 1c. Resolve service category if services are known but category is not yet cached
+        if booking_context.get("last_services") and not booking_context.get("last_service_category"):
+            await self._resolve_service_category(booking_context)
 
         # 2. Cross-mode customer handoff
         self._resolve_customer_from_state(state, booking_context)
@@ -214,7 +227,7 @@ class BookingModeNode(BaseModeNode):
             messages, tools=self.get_tools(), tool_choice=tool_choice
         )
 
-        # 6. Build response (F-8 override for confirmed bookings)
+        # 6. Build response (LLM-generated text via _sanitize_response)
         response_text = self._build_response(result, booking_context)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
 
@@ -240,7 +253,7 @@ class BookingModeNode(BaseModeNode):
         if customer_name and not state.get("customer_name"):
             updates["customer_name"] = customer_name
 
-        # F-8: transition to GENERAL after successful booking
+        # Transition to GENERAL after successful booking
         # Note: booking_context persists independently — no need to restore after transition_mode
         if booking_context.get("_booking_completed"):
             updates["appointment_created"] = True
@@ -252,7 +265,7 @@ class BookingModeNode(BaseModeNode):
         return updates
 
     # ──────────────────────────────────────────────────────────────────────
-    # _pre_tool_call — 2 gates only
+    # _pre_tool_call — 3 gates
     # ──────────────────────────────────────────────────────────────────────
 
     async def _pre_tool_call(
@@ -262,9 +275,9 @@ class BookingModeNode(BaseModeNode):
     ) -> dict[str, Any] | ToolCallRejection:
         """Intercept tool calls before execution.
 
-        2 categories:
-        (a) book(): slot_index→UUID injection + services injection
-        (b) check_availability: stylist guard
+        3 gates:
+        (a) check_availability: stylist guard
+        (b) book(): slot_index→UUID injection + confirmation gate + services injection
         (c) Everything else: pass through unchanged
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
@@ -347,6 +360,29 @@ class BookingModeNode(BaseModeNode):
                         "_pre_tool_call: extracted customer_name=%s from book() args",
                         full_name,
                     )
+
+            # Step B: Confirmation gate — reject book() if not at confirmation step.
+            # Runs AFTER Steps A/A.1b/A.2 so selected_slot and customer_name
+            # are already persisted to mode_context even when rejected.
+            _current_step = self._compute_step(mode_context)
+            if _current_step != "confirmation":
+                _STEP_HINTS = {
+                    "service_selection": "Todavía falta elegir el servicio.",
+                    "stylist_selection": "Todavía falta elegir estilista.",
+                    "datetime_selection": "Todavía falta elegir fecha y hora.",
+                    "name_collection": "Todavía falta el nombre del cliente.",
+                    "notes_collection": "Todavía falta preguntar las notas.",
+                }
+                _hint = _STEP_HINTS.get(_current_step, "Faltan datos.")
+                return ToolCallRejection(
+                    name="book",
+                    error_code="CONFIRMATION_REQUIRED",
+                    error_message=(
+                        f"No puedes llamar a book() todavía. "
+                        f"Paso actual: {_current_step}. {_hint} "
+                        f"Mostrá el resumen del Paso 6 y esperá confirmación explícita."
+                    ),
+                )
 
             # Step C: inject services from mode_context if LLM didn't provide them
             if not tool_args.get("services") and mode_context.get("last_services"):
@@ -447,38 +483,18 @@ class BookingModeNode(BaseModeNode):
         return result
 
     # ──────────────────────────────────────────────────────────────────────
-    # Response building — F-8 only
+    # Response building
     # ──────────────────────────────────────────────────────────────────────
 
     def _build_response(self, result: AgenticLoopResult, mode_context: dict) -> str:
         """Build the final response text.
 
-        F-8: code-render a structured confirmation block after successful booking.
-        Everything else: return LLM text as-is (via _sanitize_response).
+        Returns the LLM-generated text as-is (via _sanitize_response).
+        The LLM generates the post-booking confirmation per booking.md instructions,
+        including the Google Calendar link — no code override needed.
         """
         response_text = result.response_text or ""
-
-        # F-8: code-rendered confirmation after successful booking
-        if mode_context.get("_booking_completed") and mode_context.get("selected_slot"):
-            return self._render_booking_confirmation(mode_context)
-
         return self._sanitize_response(response_text)
-
-    def _render_booking_confirmation(self, mode_context: dict) -> str:
-        """Code-render the post-booking confirmation block (F-8 path)."""
-        slot = mode_context.get("selected_slot") or {}
-        day = slot.get("day_label", "?")
-        time_ = slot.get("time", "?")
-        stylist = mode_context.get("last_stylist") or "?"
-        last_services = mode_context.get("last_services") or ["?"]
-        service_label = " + ".join(last_services)
-        return (
-            f"✅ ¡Reserva confirmada!\n\n"
-            f"📅 {day} a las {time_}\n"
-            f"💇 {stylist}\n"
-            f"✨ {service_label}\n\n"
-            f"Te esperamos 🌸"
-        )
 
     # ──────────────────────────────────────────────────────────────────────
     # Message construction
@@ -573,6 +589,16 @@ class BookingModeNode(BaseModeNode):
         next_action = _STEP_ACTIONS.get(step, "")
         parts.append(f"<current_step>{step}</current_step>")
         parts.append(f"<next_action>{next_action}</next_action>")
+
+        # P3: Available stylists at stylist_selection step
+        if step == "stylist_selection":
+            stylist_names = self._get_stylists_for_services(mode_context)
+            if stylist_names:
+                numbered = "\n".join(f"{i + 1}. {name}" for i, name in enumerate(stylist_names))
+                parts.append(
+                    f'<available_stylists>\n{numbered}\n'
+                    f'O "la primera disponible" 👌\n</available_stylists>'
+                )
 
         # Audience hint from greeting handoff
         audience_hint = mode_context.get("service_audience_hint")
@@ -869,6 +895,96 @@ class BookingModeNode(BaseModeNode):
             state_hint = (state.get("mode_context") or {}).get("service_audience_hint")
             if state_hint:
                 mode_context["service_audience_hint"] = state_hint
+
+    @staticmethod
+    async def _load_stylists_by_category() -> dict[str, list[str]]:
+        """Load active stylist names grouped by service category.
+
+        Returns a dict mapping category value (e.g. "HAIRDRESSING") to a sorted
+        list of stylist names that serve that category. Stylists with category
+        BOTH appear in both lists.
+
+        Falls back to an empty dict on any error — never raises.
+        """
+        try:
+            from sqlalchemy import select as sa_select
+
+            from database.connection import get_async_session
+            from database.models import Stylist, ServiceCategory
+
+            async with get_async_session() as session:
+                result = await session.execute(
+                    sa_select(Stylist.name, Stylist.category)
+                    .where(Stylist.is_active == True)
+                    .order_by(Stylist.name)
+                )
+                rows = result.all()
+
+            grouped: dict[str, list[str]] = {
+                ServiceCategory.HAIRDRESSING.value: [],
+                ServiceCategory.AESTHETICS.value: [],
+            }
+            for name, cat in rows:
+                cat_val = cat.value if hasattr(cat, "value") else cat
+                if cat_val == ServiceCategory.BOTH.value:
+                    grouped[ServiceCategory.HAIRDRESSING.value].append(name)
+                    grouped[ServiceCategory.AESTHETICS.value].append(name)
+                elif cat_val in grouped:
+                    grouped[cat_val].append(name)
+            return grouped
+        except Exception as exc:
+            logger.warning("_load_stylists_by_category: failed: %s", exc)
+            return {}
+
+    @staticmethod
+    async def _resolve_service_category(booking_context: dict) -> None:
+        """Look up and cache the service category from the first service name.
+
+        Sets booking_context["last_service_category"] to the category value string
+        (e.g. "HAIRDRESSING"). No-op if last_services is empty or already set.
+        Falls back silently on any DB error.
+        """
+        service_names = booking_context.get("last_services") or []
+        if not service_names:
+            return
+        try:
+            from sqlalchemy import select as sa_select
+
+            from database.connection import get_async_session
+            from database.models import Service
+
+            async with get_async_session() as session:
+                result = await session.execute(
+                    sa_select(Service.category).where(
+                        Service.name == service_names[0], Service.is_active == True
+                    )
+                )
+                row = result.first()
+            if row:
+                cat_val = row[0].value if hasattr(row[0], "value") else row[0]
+                booking_context["last_service_category"] = cat_val
+        except Exception as exc:
+            logger.warning("_resolve_service_category: failed for %r: %s", service_names[0], exc)
+
+    def _get_stylists_for_services(self, mode_context: dict) -> list[str]:
+        """Return category-compatible stylist names for the selected services.
+
+        Uses self._cached_stylists_by_category (pre-loaded in handle()).
+        Falls back to all active stylists if category is unknown.
+        """
+        cached: dict[str, list[str]] = getattr(self, "_cached_stylists_by_category", {})
+        if not cached:
+            return []
+
+        service_category = mode_context.get("last_service_category")
+        if service_category and service_category in cached:
+            return cached[service_category]
+
+        # Fallback: deduplicated union of all categories, sorted
+        all_names: set[str] = set()
+        for names in cached.values():
+            all_names.update(names)
+        return sorted(all_names)
 
 
 # Backward-compat alias — conversation_flow.py imports BookingMode by name

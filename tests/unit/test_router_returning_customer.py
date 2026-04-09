@@ -13,6 +13,7 @@ async def test_router_returning_customer_booking_intent_bypasses_greeting() -> N
     state["current_mode"] = "GENERAL"
     state["customer_name"] = "Ana"
     state["customer_id"] = "2ebf8aaf-03ed-4b4b-a063-88db48cd67db"
+    state["is_first_interaction"] = False  # Returning customer — not their first message ever
     state["messages"] = [
         {
             "role": "user",
