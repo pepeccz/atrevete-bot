@@ -31,18 +31,8 @@ logger = logging.getLogger(__name__)
 # Pre-defined greeting messages (ALL name-free)
 # FIX: Removed FIRST_TURN_INTRO from _WELCOME_NEW to avoid duplication.
 # FIRST_TURN_INTRO is prepended automatically by BaseModeNode._maybe_prepend_intro() (base.py:257)
-_WELCOME_NEW = (
-    "¿Qué necesitas?\n\n"
-    "1. Reservar cita 💇\n"
-    "2. Consultar servicios o precios\n"
-    "3. Gestionar una cita existente"
-)
-_WELCOME_RETURNING = (
-    "¡Hola de nuevo! 😊 ¿Qué necesitas?\n\n"
-    "1. Reservar cita 💇\n"
-    "2. Consultar servicios o precios\n"
-    "3. Gestionar una cita existente"
-)
+_WELCOME_NEW = "¿En qué te puedo ayudar?"
+_WELCOME_RETURNING = "¡Hola de nuevo! 😊 ¿En qué te puedo ayudar?"
 
 # ── ADR-4: Audience hint tokens — imported from shared.audience_maps ─────────
 
