@@ -32,6 +32,13 @@ COPY admin-panel/ ./
 
 # Build the application
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# NEXT_PUBLIC_ vars are baked at build time by webpack — must be ARG, not just runtime ENV
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_CHATWOOT_URL
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_CHATWOOT_URL=${NEXT_PUBLIC_CHATWOOT_URL}
+
 RUN npm run build
 
 # -----------------------------------------------------------------------------
