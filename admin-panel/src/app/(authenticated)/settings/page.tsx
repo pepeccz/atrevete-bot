@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, Activity, Users, Scissors, CalendarX, Settings2, Bell, Calendar, Coins } from "lucide-react";
+import { Clock, Activity, Users, Scissors, CalendarX, Settings2, Bell, Calendar, Receipt } from "lucide-react";
 import Link from "next/link";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,10 +50,10 @@ const configSections = [
     color: "bg-red-500",
   },
   {
-    title: "Consumo de Tokens",
-    description: "Seguimiento del consumo y coste de tokens del modelo de IA",
-    icon: Coins,
-    href: "/settings/usage",
+    title: "Facturación",
+    description: "Facturas, pagos SEPA y consumo de tokens del servicio",
+    icon: Receipt,
+    href: "/settings/billing",
     color: "bg-emerald-500",
   },
   {
