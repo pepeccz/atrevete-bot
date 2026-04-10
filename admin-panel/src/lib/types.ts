@@ -564,6 +564,76 @@ export interface TokenPricing {
   output_price_per_million: number;
 }
 
+// ─── Billing & Invoicing ─────────────────────────────────────────────────────
+
+export type InvoiceStatus = "draft" | "issued" | "paid" | "overdue" | "void";
+export type PaymentStatus = "pending" | "processing" | "succeeded" | "failed" | "refunded";
+
+export interface InvoiceResponse {
+  id: string;
+  invoice_number: string;
+  year: number;
+  month: number;
+  period_label: string;
+  maintenance_amount_eur: string;
+  token_amount_eur: string;
+  total_amount_eur: string;
+  status: InvoiceStatus;
+  issued_at: string | null;
+  paid_at: string | null;
+  due_date: string;
+  has_pdf: boolean;
+  stripe_payment_intent_id: string | null;
+  notes: string | null;
+  payments: PaymentSummary[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaymentSummary {
+  id: string;
+  stripe_payment_intent_id: string;
+  amount_eur: string;
+  status: PaymentStatus;
+  payment_method: string;
+  failure_reason: string | null;
+  created_at: string;
+}
+
+export interface InvoiceListResponse {
+  invoices: InvoiceResponse[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface CurrentEstimateResponse {
+  year: number;
+  month: number;
+  period_label: string;
+  estimate_date: string;
+  next_invoice_date: string;
+  maintenance_amount_eur: string;
+  token_amount_eur: string;
+  total_amount_eur: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_requests: number;
+}
+
+export interface StripeStatusResponse {
+  configured: boolean;
+  customer_id: string | null;
+  payment_method_last4: string | null;
+  payment_method_status: string | null;
+  sepa_mandate_status: string | null;
+}
+
+export interface SetupSessionResponse {
+  checkout_url: string;
+  session_id: string;
+}
+
 // ─── Escalations ────────────────────────────────────────────────────────────
 
 export type EscalationSource = "manual" | "auto_error" | "fallback";

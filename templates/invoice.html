@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page {
+    size: A4;
+    margin: 2cm;
+  }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    color: #333;
+    line-height: 1.5;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 30px;
+    border-bottom: 3px solid #e91e63;
+    padding-bottom: 20px;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 28px;
+    color: #e91e63;
+    letter-spacing: 1px;
+  }
+  .brand p {
+    margin: 4px 0 0;
+    color: #777;
+    font-size: 11px;
+  }
+  .invoice-meta {
+    text-align: right;
+    font-size: 12px;
+  }
+  .invoice-meta h2 {
+    margin: 0 0 8px;
+    font-size: 20px;
+    color: #333;
+  }
+  .invoice-meta p {
+    margin: 2px 0;
+    color: #555;
+  }
+  .invoice-meta .number {
+    font-weight: bold;
+    color: #e91e63;
+  }
+  .section-title {
+    font-size: 14px;
+    font-weight: bold;
+    color: #e91e63;
+    margin: 25px 0 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+  }
+  th {
+    background-color: #f8f9fa;
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #555;
+    border-bottom: 2px solid #dee2e6;
+  }
+  th:last-child { text-align: right; }
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #eee;
+  }
+  td:last-child { text-align: right; }
+  tr.detail td {
+    padding-left: 30px;
+    font-size: 11px;
+    color: #777;
+    border-bottom: 1px dashed #eee;
+  }
+  tr.total td {
+    font-weight: bold;
+    font-size: 14px;
+    border-top: 2px solid #333;
+    border-bottom: none;
+    padding-top: 12px;
+  }
+  tr.total td:last-child {
+    color: #e91e63;
+    font-size: 16px;
+  }
+  .footer {
+    margin-top: 40px;
+    padding-top: 15px;
+    border-top: 1px solid #ddd;
+    font-size: 10px;
+    color: #999;
+    text-align: center;
+  }
+  .footer p { margin: 2px 0; }
+  .payment-info {
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    padding: 15px;
+    margin-top: 20px;
+    font-size: 11px;
+  }
+  .payment-info strong { color: #333; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">
+    <h1>Atrévete Peluquería</h1>
+    <p>Sistema de gestión inteligente</p>
+  </div>
+  <div class="invoice-meta">
+    <h2>FACTURA</h2>
+    <p>Nº: <span class="number">{{ invoice.invoice_number }}</span></p>
+    <p>Fecha emisión: {{ issued_date }}</p>
+    <p>Periodo: {{ period_label }}</p>
+    <p>Vencimiento: {{ due_date }}</p>
+  </div>
+</div>
+
+<div class="section-title">Desglose de servicios</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Concepto</th>
+      <th>Importe (€)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Mantenimiento mensual (hosting, soporte, actualizaciones)</td>
+      <td>{{ maintenance_amount }} €</td>
+    </tr>
+    <tr>
+      <td>Consumo IA — Asistente virtual WhatsApp</td>
+      <td>{{ token_amount }} €</td>
+    </tr>
+    <tr class="detail">
+      <td>Tokens de entrada: {{ input_tokens }} × {{ input_price }} €/M</td>
+      <td>{{ input_cost }} €</td>
+    </tr>
+    <tr class="detail">
+      <td>Tokens de salida: {{ output_tokens }} × {{ output_price }} €/M</td>
+      <td>{{ output_cost }} €</td>
+    </tr>
+    <tr class="detail">
+      <td>Peticiones LLM totales: {{ total_requests }}</td>
+      <td></td>
+    </tr>
+    <tr class="total">
+      <td>TOTAL</td>
+      <td>{{ total_amount }} €</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="payment-info">
+  <strong>Forma de pago:</strong> Domiciliación SEPA (débito directo)<br>
+  <strong>Divisa:</strong> EUR (€)
+</div>
+
+<div class="footer">
+  <p>Factura generada automáticamente por el sistema Atrévete Bot</p>
+  <p>Contacto: {{ operator_email }}</p>
+</div>
+
+</body>
+</html>

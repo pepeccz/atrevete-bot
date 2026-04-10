@@ -1457,6 +1457,190 @@ class TokenUsage(Base):
 
 
 # ============================================================================
+# Billing Models — Invoice and payment tracking
+# ============================================================================
+
+
+class InvoiceStatus(str, PyEnum):
+    """Invoice lifecycle status."""
+
+    DRAFT = "draft"
+    ISSUED = "issued"
+    PAID = "paid"
+    OVERDUE = "overdue"
+    VOID = "void"
+
+
+class PaymentStatus(str, PyEnum):
+    """Stripe payment status."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    REFUNDED = "refunded"
+
+
+class Invoice(Base):
+    """
+    Monthly billing invoice combining maintenance + token costs.
+
+    One active invoice per (year, month) — void invoices don't count.
+    Invoice number format: ATR-YYYY-MM-SEQ (e.g., ATR-2026-04-001).
+    """
+
+    __tablename__ = "invoices"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Invoice identification
+    invoice_number: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Amounts (Decimal — NEVER float for money)
+    maintenance_amount_eur: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    token_amount_eur: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    total_amount_eur: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+
+    # Status
+    status: Mapped[InvoiceStatus] = mapped_column(
+        SQLEnum(
+            InvoiceStatus,
+            name="invoice_status",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=InvoiceStatus.DRAFT,
+        nullable=False,
+    )
+
+    # Dates
+    issued_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    due_date: Mapped[date] = mapped_column(DATE, nullable=False)
+
+    # PDF
+    pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Stripe
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # FK to TokenUsage (nullable — month may have no token usage)
+    token_usage_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("token_usage.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Notes
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    # Relationships
+    payments: Mapped[list["Payment"]] = relationship(
+        "Payment", back_populates="invoice", lazy="selectin"
+    )
+    token_usage: Mapped[Optional["TokenUsage"]] = relationship("TokenUsage", lazy="selectin")
+
+    # Indexes — partial unique index created in migration via raw SQL
+    __table_args__ = (
+        Index("idx_invoices_status", "status"),
+        Index("idx_invoices_year_month", "year", "month"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<Invoice(number='{self.invoice_number}', "
+            f"period={self.year}-{self.month:02d}, "
+            f"total={self.total_amount_eur}€, status={self.status.value})>"
+        )
+
+
+class Payment(Base):
+    """
+    Stripe payment record tied to an invoice.
+
+    One invoice may have multiple payment attempts (failed → retry).
+    """
+
+    __tablename__ = "payments"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # FK to Invoice
+    invoice_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Stripe identifiers
+    stripe_payment_intent_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    stripe_charge_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Amount
+    amount_eur: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    stripe_fee_eur: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+
+    # Status
+    status: Mapped[PaymentStatus] = mapped_column(
+        SQLEnum(
+            PaymentStatus,
+            name="payment_status",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=PaymentStatus.PENDING,
+        nullable=False,
+    )
+    payment_method: Mapped[str] = mapped_column(String(50), nullable=False, default="sepa_debit")
+    failure_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    # Relationships
+    invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="payments")
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_payments_invoice_id", "invoice_id"),
+        Index("idx_payments_stripe_pi", "stripe_payment_intent_id"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<Payment(invoice_id={self.invoice_id}, "
+            f"amount={self.amount_eur}€, status={self.status.value})>"
+        )
+
+
+# ============================================================================
 # Escalation Models
 # ============================================================================
 

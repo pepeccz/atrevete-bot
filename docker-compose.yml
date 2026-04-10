@@ -76,6 +76,7 @@ services:
     env_file: .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/app/data
     ports:
       - "8000:8000"
     depends_on:
@@ -185,6 +186,33 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import json,time,sys; d=json.load(open('/tmp/health/gcal_sync_worker_health.json')); sys.exit(0 if time.time()-d['last_heartbeat']<180 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # Billing worker: Monthly invoice generation and overdue checks
+  billing-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: atrevete-billing-worker
+    command: python -m agent.workers.billing_worker
+    env_file: .env
+    environment:
+      - TZ=Europe/Madrid
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - atrevete-network
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import json,time,sys; d=json.load(open('/tmp/health/billing_worker_health.json')); sys.exit(0 if time.time()-d['last_heartbeat']<180 else 1)"]
       interval: 60s
       timeout: 10s
       retries: 3

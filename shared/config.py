@@ -101,6 +101,43 @@ class Settings(BaseSettings):
         description="Per-turn input token alert threshold. None = disabled.",
     )
 
+    # Billing & Invoicing
+    MONTHLY_MAINTENANCE_EUR: Decimal = Field(
+        default=Decimal("50.00"),
+        description="Fixed monthly maintenance charge in EUR (hosting, support, etc.)",
+    )
+
+    # Stripe (Payment Gateway)
+    STRIPE_SECRET_KEY: str = Field(
+        default="",
+        description="Stripe secret API key (sk_live_... or sk_test_...)",
+    )
+    STRIPE_PUBLISHABLE_KEY: str = Field(
+        default="",
+        description="Stripe publishable API key (pk_live_... or pk_test_...)",
+    )
+    STRIPE_WEBHOOK_SECRET: str = Field(
+        default="",
+        description="Stripe webhook signing secret (whsec_...)",
+    )
+
+    # Email (SMTP for invoice delivery)
+    OPERATOR_EMAIL: str = Field(
+        default="",
+        description="Operator email — receives invoice copies",
+    )
+    SMTP_HOST: str = Field(default="", description="SMTP server hostname")
+    SMTP_PORT: int = Field(default=587, description="SMTP server port (587 for STARTTLS)")
+    SMTP_USER: str = Field(default="", description="SMTP username")
+    SMTP_PASSWORD: str = Field(default="", description="SMTP password")
+    SMTP_FROM: str = Field(default="", description="From email address for invoices")
+
+    # Invoice Storage
+    INVOICES_DIR: str = Field(
+        default="data/invoices",
+        description="Directory for generated invoice PDFs",
+    )
+
     # Resilience Layer (Multi-Provider Fallback + Retry)
     RESILIENCE_ENABLED: bool = Field(
         default=True,

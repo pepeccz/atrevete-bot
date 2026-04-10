@@ -21,6 +21,7 @@ import {
   Sun,
   Moon,
   Monitor,
+  Receipt,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
@@ -93,6 +94,11 @@ const configNav: NavItem[] = [
     title: "Configuración del Salón",
     href: "/settings",
     icon: Settings,
+  },
+  {
+    title: "Facturación",
+    href: "/settings/billing",
+    icon: Receipt,
   },
   {
     title: "Conversaciones",
