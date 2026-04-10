@@ -78,8 +78,8 @@ class StripeService:
         Handle checkout.session.completed event.
         Stores payment method and customer info in system_settings.
         """
-        setup_intent_id = event_data.get("setup_intent")
-        customer_id = event_data.get("customer")
+        setup_intent_id = event_data.setup_intent
+        customer_id = event_data.customer
 
         if not setup_intent_id:
             logger.warning("No setup_intent in checkout.session.completed event")

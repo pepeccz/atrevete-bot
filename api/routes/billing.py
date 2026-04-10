@@ -321,7 +321,7 @@ async def stripe_webhook(request: Request) -> dict:
                 logger.error(f"handle_setup_completed failed: {e}")
 
         elif event_type == "payment_intent.succeeded":
-            pi_id = event_data.get("id")
+            pi_id = event_data.id
             if pi_id:
                 try:
                     payment_result = await session.execute(
@@ -351,12 +351,13 @@ async def stripe_webhook(request: Request) -> dict:
                     logger.error(f"payment_intent.succeeded handler failed for {pi_id}: {e}")
 
         elif event_type == "payment_intent.payment_failed":
-            pi_id = event_data.get("id")
+            pi_id = event_data.id
             if pi_id:
                 try:
+                    last_error = getattr(event_data, "last_payment_error", None)
                     failure_message = (
-                        event_data.get("last_payment_error", {}) or {}
-                    ).get("message", "Unknown failure")
+                        last_error.message if last_error else "Unknown failure"
+                    )
 
                     payment_result = await session.execute(
                         select(Payment).where(Payment.stripe_payment_intent_id == pi_id)
