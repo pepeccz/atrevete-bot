@@ -15,15 +15,16 @@ interface Props {
   invoiceId: string;
   invoiceNumber: string;
   hasPdf: boolean;
+  pdfUrl?: string | null;
 }
 
-export function PdfDownloadButton({ invoiceId, invoiceNumber, hasPdf }: Props) {
+export function PdfDownloadButton({ invoiceId, invoiceNumber, hasPdf, pdfUrl }: Props) {
   const [downloading, setDownloading] = useState(false);
 
   const handleDownload = async () => {
     try {
       setDownloading(true);
-      await billingApi.downloadPdf(invoiceId, invoiceNumber);
+      await billingApi.downloadPdf(invoiceId, invoiceNumber, pdfUrl);
     } catch {
       console.error("Error downloading PDF");
     } finally {

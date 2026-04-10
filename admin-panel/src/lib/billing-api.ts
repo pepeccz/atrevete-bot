@@ -57,7 +57,11 @@ export const billingApi = {
   getInvoice: (id: string) =>
     billingRequest<InvoiceResponse>(`/api/billing/invoices/${id}`),
 
-  downloadPdf: async (id: string, invoiceNumber: string) => {
+  downloadPdf: async (id: string, invoiceNumber: string, pdfUrl?: string | null) => {
+    if (pdfUrl) {
+      window.open(pdfUrl, '_blank');
+      return;
+    }
     const token =
       typeof window !== "undefined"
         ? localStorage.getItem("admin_token")

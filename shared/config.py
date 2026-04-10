@@ -121,6 +121,25 @@ class Settings(BaseSettings):
         description="Stripe webhook signing secret (whsec_...)",
     )
 
+    # Fiscal compliance — Spain B2B invoicing
+    COMPANY_NIF: str = Field(default="", description="NIF del proveedor (emisor de facturas)")
+    COMPANY_LEGAL_NAME: str = Field(
+        default="", description="Nombre/Razón social del proveedor"
+    )
+    COMPANY_FISCAL_ADDRESS: str = Field(
+        default="", description="Domicilio fiscal del proveedor"
+    )
+    CLIENT_NIF: str = Field(default="", description="NIF del cliente (receptor de facturas)")
+    CLIENT_COMPANY_NAME: str = Field(
+        default="", description="Nombre/Razón social del cliente"
+    )
+    CLIENT_FISCAL_ADDRESS: str = Field(
+        default="", description="Domicilio fiscal del cliente"
+    )
+    STRIPE_TAX_RATE_ID: str = Field(
+        default="", description="Stripe TaxRate ID para IVA 21% (txr_...)"
+    )
+
     # Email (SMTP for invoice delivery)
     OPERATOR_EMAIL: str = Field(
         default="",

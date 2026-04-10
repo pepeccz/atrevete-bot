@@ -584,6 +584,12 @@ export interface InvoiceResponse {
   due_date: string;
   has_pdf: boolean;
   stripe_payment_intent_id: string | null;
+  stripe_invoice_id: string | null;
+  invoice_pdf_url: string | null;
+  subtotal_eur: string | null;
+  tax_rate_pct: string | null;
+  tax_amount_eur: string | null;
+  gross_amount_eur: string | null;
   notes: string | null;
   payments: PaymentSummary[];
   created_at: string;
@@ -616,6 +622,9 @@ export interface CurrentEstimateResponse {
   maintenance_amount_eur: string;
   token_amount_eur: string;
   total_amount_eur: string;
+  subtotal_eur: string;
+  tax_amount_eur: string;
+  gross_amount_eur: string;
   input_tokens: number;
   output_tokens: number;
   total_requests: number;

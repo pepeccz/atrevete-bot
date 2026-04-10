@@ -100,6 +100,8 @@ export function InvoiceHistory({
                     <TableHead>Periodo</TableHead>
                     <TableHead className="text-right">Mantenimiento</TableHead>
                     <TableHead className="text-right">Tokens</TableHead>
+                    <TableHead className="text-right">Base</TableHead>
+                    <TableHead className="text-right">IVA (21%)</TableHead>
                     <TableHead className="text-right">Total</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
@@ -118,8 +120,20 @@ export function InvoiceHistory({
                       <TableCell className="text-right">
                         {formatEur(invoice.token_amount_eur)}
                       </TableCell>
+                      <TableCell className="text-right text-muted-foreground">
+                        {invoice.subtotal_eur != null
+                          ? formatEur(invoice.subtotal_eur)
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">
+                        {invoice.tax_amount_eur != null
+                          ? formatEur(invoice.tax_amount_eur)
+                          : "—"}
+                      </TableCell>
                       <TableCell className="text-right font-medium">
-                        {formatEur(invoice.total_amount_eur)}
+                        {invoice.gross_amount_eur != null
+                          ? formatEur(invoice.gross_amount_eur)
+                          : formatEur(invoice.total_amount_eur)}
                       </TableCell>
                       <TableCell>
                         <InvoiceStatusBadge status={invoice.status} />
@@ -130,6 +144,7 @@ export function InvoiceHistory({
                             invoiceId={invoice.id}
                             invoiceNumber={invoice.invoice_number}
                             hasPdf={invoice.has_pdf}
+                            pdfUrl={invoice.invoice_pdf_url}
                           />
                           {(invoice.status === "issued" ||
                             invoice.status === "overdue") && (

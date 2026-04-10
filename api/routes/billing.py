@@ -17,7 +17,7 @@ import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
-from starlette.responses import StreamingResponse
+from starlette.responses import RedirectResponse, StreamingResponse
 
 from api.models.billing_schemas import (
     CurrentEstimateResponse,
@@ -118,8 +118,8 @@ async def get_invoice(
 async def download_invoice_pdf(
     invoice_id: UUID,
     current_user: Annotated[dict, Depends(get_current_user)],
-) -> StreamingResponse:
-    """Download the PDF for a given invoice. Regenerates if not present on disk."""
+):
+    """Download the PDF for a given invoice. Redirects to Stripe URL if available."""
     async with get_async_session() as session:
         result = await session.execute(select(Invoice).where(Invoice.id == invoice_id))
         invoice = result.scalar_one_or_none()
@@ -127,26 +127,34 @@ async def download_invoice_pdf(
         if not invoice:
             raise HTTPException(status_code=404, detail="Factura no encontrada.")
 
-        pdf_service = PdfService()
-        try:
-            pdf_path = await pdf_service.ensure_pdf_exists(invoice)
-        except Exception as e:
-            logger.error(f"PDF generation failed for invoice {invoice_id}: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail="No se pudo generar el PDF de la factura.",
+        # Prefer Stripe-hosted PDF URL
+        if invoice.invoice_pdf_url:
+            return RedirectResponse(invoice.invoice_pdf_url, status_code=302)
+
+        # Fall back to locally stored PDF
+        if invoice.pdf_path:
+            pdf_service = PdfService()
+            try:
+                pdf_path = await pdf_service.ensure_pdf_exists(invoice)
+            except Exception as e:
+                logger.error(f"PDF generation failed for invoice {invoice_id}: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="No se pudo generar el PDF de la factura.",
+                )
+
+            pdf_bytes = await asyncio.get_event_loop().run_in_executor(
+                None, Path(pdf_path).read_bytes
             )
 
-        pdf_bytes = await asyncio.get_event_loop().run_in_executor(
-            None, Path(pdf_path).read_bytes
-        )
+            filename = f"{invoice.invoice_number}.pdf"
+            return StreamingResponse(
+                io.BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
 
-        filename = f"{invoice.invoice_number}.pdf"
-        return StreamingResponse(
-            io.BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
+        raise HTTPException(status_code=404, detail="PDF no disponible para esta factura.")
 
 
 @router.post(
@@ -219,6 +227,62 @@ async def update_invoice_status(
 # =============================================================================
 # Endpoints — Stripe
 # =============================================================================
+
+
+@router.post(
+    "/setup-fiscal",
+    summary="One-time fiscal setup for Stripe Invoicing",
+    description="Creates IVA TaxRate and attaches client NIF to Stripe Customer. Idempotent.",
+)
+async def setup_stripe_fiscal(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    One-time setup:
+    1. Create Stripe TaxRate for IVA 21% (skip if STRIPE_TAX_RATE_ID already set)
+    2. Attach client NIF to Stripe Customer (skip if already attached)
+    """
+    settings = get_settings()
+    stripe_service = StripeService()
+    result = {"tax_rate_id": None, "tax_rate_created": False, "tax_id_attached": False}
+
+    # Step 1: TaxRate
+    if settings.STRIPE_TAX_RATE_ID:
+        result["tax_rate_id"] = settings.STRIPE_TAX_RATE_ID
+        logger.info(f"TaxRate already configured: {settings.STRIPE_TAX_RATE_ID}")
+    else:
+        loop = asyncio.get_event_loop()
+        tax_rate = await loop.run_in_executor(
+            None,
+            lambda: stripe.TaxRate.create(
+                display_name="IVA",
+                percentage=21.0,
+                inclusive=False,
+                country="ES",
+                jurisdiction="ES",
+                tax_type="vat",
+                description="IVA 21% España",
+            ),
+        )
+        result["tax_rate_id"] = tax_rate.id
+        result["tax_rate_created"] = True
+        logger.info(f"Created TaxRate: {tax_rate.id}")
+
+    # Step 2: Client NIF on Stripe Customer
+    if settings.CLIENT_NIF:
+        async with get_async_session() as session:
+            customer_id = await stripe_service._get_setting(session, "stripe_customer_id")
+            if customer_id:
+                created = await stripe_service.ensure_tax_id(
+                    customer_id, "es_nif", settings.CLIENT_NIF
+                )
+                result["tax_id_attached"] = created
+            else:
+                logger.warning("No stripe_customer_id found — configure SEPA first")
+    else:
+        logger.warning("CLIENT_NIF not set — skipping tax ID attachment")
+
+    return result
 
 
 @router.post(
@@ -320,6 +384,80 @@ async def stripe_webhook(request: Request) -> dict:
             except Exception as e:
                 logger.error(f"handle_setup_completed failed: {e}")
 
+        elif event_type == "invoice.finalized":
+            stripe_inv_id = event_data.id
+            if stripe_inv_id:
+                result = await session.execute(
+                    select(Invoice).where(Invoice.stripe_invoice_id == stripe_inv_id)
+                )
+                invoice = result.scalar_one_or_none()
+                if invoice:
+                    invoice.invoice_pdf_url = getattr(event_data, "invoice_pdf", None)
+                    if invoice.status == InvoiceStatus.DRAFT:
+                        invoice.status = InvoiceStatus.ISSUED
+                        invoice.issued_at = datetime.utcnow()
+                    await session.commit()
+                    logger.info(f"Invoice {invoice.invoice_number} finalized, PDF URL stored")
+                else:
+                    logger.debug(f"No local invoice for Stripe invoice {stripe_inv_id}")
+
+        elif event_type == "invoice.paid":
+            stripe_inv_id = event_data.id
+            if stripe_inv_id:
+                result = await session.execute(
+                    select(Invoice).where(Invoice.stripe_invoice_id == stripe_inv_id)
+                )
+                invoice = result.scalar_one_or_none()
+                if invoice and invoice.status != InvoiceStatus.PAID:
+                    invoice.status = InvoiceStatus.PAID
+                    invoice.paid_at = datetime.utcnow()
+                    invoice.invoice_pdf_url = getattr(event_data, "invoice_pdf", None)
+
+                    # Update Payment row if exists
+                    pi_id = getattr(event_data, "payment_intent", None)
+                    if pi_id:
+                        pay_result = await session.execute(
+                            select(Payment).where(
+                                Payment.stripe_payment_intent_id == pi_id
+                            )
+                        )
+                        payment = pay_result.scalar_one_or_none()
+                        if payment:
+                            payment.status = PaymentStatus.SUCCEEDED
+
+                    await session.commit()
+                    logger.info(
+                        f"Invoice {invoice.invoice_number} marked PAID via invoice.paid webhook"
+                    )
+                else:
+                    logger.debug(f"No local invoice or already paid for {stripe_inv_id}")
+
+        elif event_type == "invoice.payment_failed":
+            stripe_inv_id = event_data.id
+            if stripe_inv_id:
+                result = await session.execute(
+                    select(Invoice).where(Invoice.stripe_invoice_id == stripe_inv_id)
+                )
+                invoice = result.scalar_one_or_none()
+                if invoice:
+                    pi_id = getattr(event_data, "payment_intent", None)
+                    if pi_id:
+                        pay_result = await session.execute(
+                            select(Payment).where(
+                                Payment.stripe_payment_intent_id == pi_id
+                            )
+                        )
+                        payment = pay_result.scalar_one_or_none()
+                        if payment:
+                            last_error = getattr(event_data, "last_finalization_error", None)
+                            payment.status = PaymentStatus.FAILED
+                            payment.failure_reason = (
+                                last_error.message if last_error else "Unknown failure"
+                            )
+                            await session.commit()
+                            logger.info(f"Payment for {invoice.invoice_number} marked FAILED")
+
+        # LEGACY: remove after 30-day transition
         elif event_type == "payment_intent.succeeded":
             pi_id = event_data.id
             if pi_id:
@@ -350,6 +488,7 @@ async def stripe_webhook(request: Request) -> dict:
                 except Exception as e:
                     logger.error(f"payment_intent.succeeded handler failed for {pi_id}: {e}")
 
+        # LEGACY: remove after 30-day transition
         elif event_type == "payment_intent.payment_failed":
             pi_id = event_data.id
             if pi_id:

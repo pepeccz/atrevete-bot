@@ -48,6 +48,12 @@ class InvoiceResponse(BaseModel):
     due_date: date
     has_pdf: bool = False
     stripe_payment_intent_id: str | None = None
+    stripe_invoice_id: str | None = None
+    invoice_pdf_url: str | None = None
+    subtotal_eur: str | None = None
+    tax_rate_pct: str | None = None
+    tax_amount_eur: str | None = None
+    gross_amount_eur: str | None = None
     notes: str | None = None
     payments: list[PaymentSummary] = []
     created_at: datetime
@@ -85,8 +91,18 @@ class InvoiceResponse(BaseModel):
             issued_at=invoice.issued_at,
             paid_at=invoice.paid_at,
             due_date=invoice.due_date,
-            has_pdf=bool(invoice.pdf_path),
+            has_pdf=bool(invoice.pdf_path) or bool(invoice.invoice_pdf_url),
             stripe_payment_intent_id=invoice.stripe_payment_intent_id,
+            stripe_invoice_id=invoice.stripe_invoice_id,
+            invoice_pdf_url=invoice.invoice_pdf_url,
+            subtotal_eur=str(invoice.subtotal_eur) if invoice.subtotal_eur is not None else None,
+            tax_rate_pct=str(invoice.tax_rate_pct) if invoice.tax_rate_pct is not None else None,
+            tax_amount_eur=(
+                str(invoice.tax_amount_eur) if invoice.tax_amount_eur is not None else None
+            ),
+            gross_amount_eur=(
+                str(invoice.gross_amount_eur) if invoice.gross_amount_eur is not None else None
+            ),
             notes=invoice.notes,
             payments=[PaymentSummary.from_payment(p) for p in (invoice.payments or [])],
             created_at=invoice.created_at,
@@ -114,6 +130,9 @@ class CurrentEstimateResponse(BaseModel):
     maintenance_amount_eur: str
     token_amount_eur: str
     total_amount_eur: str
+    subtotal_eur: str
+    tax_amount_eur: str
+    gross_amount_eur: str
     input_tokens: int
     output_tokens: int
     total_requests: int

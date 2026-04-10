@@ -2,6 +2,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Wrench, Bot, Receipt } from "lucide-react";
 import type { CurrentEstimateResponse } from "@/lib/types";
 
+function formatEurFixed(value: string): string {
+  return `€${parseFloat(value).toFixed(2)}`;
+}
+
 function formatEur(value: string): string {
   return new Intl.NumberFormat("es-ES", {
     style: "currency",
@@ -48,14 +52,6 @@ export function CurrentMonthSummary({ estimate, loading }: Props) {
       color: "text-purple-600",
       bg: "bg-purple-50",
     },
-    {
-      title: "Total Estimado",
-      value: formatEur(estimate.total_amount_eur),
-      description: `Se facturará el ${estimate.next_invoice_date}`,
-      icon: Receipt,
-      color: "text-green-600",
-      bg: "bg-green-50",
-    },
   ];
 
   return (
@@ -85,6 +81,38 @@ export function CurrentMonthSummary({ estimate, loading }: Props) {
             </CardContent>
           </Card>
         ))}
+
+        {/* IVA breakdown + Total estimado */}
+        <Card className="border-green-200 bg-green-50/30">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-muted-foreground">
+                  Total estimado
+                </p>
+                <p className="mt-1 text-2xl font-bold text-green-700">
+                  {formatEurFixed(estimate.gross_amount_eur)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Se facturará el {estimate.next_invoice_date}
+                </p>
+                <div className="mt-3 space-y-1 border-t border-green-200 pt-3">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Base imponible</span>
+                    <span>{formatEurFixed(estimate.subtotal_eur)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>IVA (21%)</span>
+                    <span>{formatEurFixed(estimate.tax_amount_eur)}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg bg-green-100 p-3">
+                <Receipt className="h-5 w-5 text-green-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

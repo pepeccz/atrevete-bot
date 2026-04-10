@@ -1527,6 +1527,14 @@ class Invoice(Base):
     # Stripe
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    # Stripe Invoicing (nullable — old invoices won't have these)
+    stripe_invoice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    invoice_pdf_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    subtotal_eur: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    tax_rate_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    tax_amount_eur: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    gross_amount_eur: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+
     # FK to TokenUsage (nullable — month may have no token usage)
     token_usage_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
@@ -1560,6 +1568,7 @@ class Invoice(Base):
     __table_args__ = (
         Index("idx_invoices_status", "status"),
         Index("idx_invoices_year_month", "year", "month"),
+        Index("idx_invoices_stripe_invoice_id", "stripe_invoice_id"),
     )
 
     def __repr__(self) -> str:

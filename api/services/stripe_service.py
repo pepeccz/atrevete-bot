@@ -116,6 +116,7 @@ class StripeService:
         await session.commit()
         logger.info(f"SEPA mandate configured: customer={customer_id}, PM=...{last4}")
 
+    # DEPRECATED: remove after 30-day transition to Stripe Invoicing
     async def create_sepa_charge(
         self,
         amount_cents: int,
@@ -145,6 +146,7 @@ class StripeService:
             ),
         )
 
+    # DEPRECATED: remove after 30-day transition to Stripe Invoicing
     async def cancel_payment_intent(self, payment_intent_id: str) -> bool:
         """Cancel a PaymentIntent if it's in a cancellable state. Returns True if cancelled."""
         loop = asyncio.get_event_loop()
@@ -169,6 +171,88 @@ class StripeService:
         except stripe.error.StripeError as e:
             logger.warning(f"Failed to cancel PaymentIntent {payment_intent_id}: {e}")
             return False
+
+    async def create_invoice(
+        self,
+        customer_id: str,
+        invoice_number: str,
+        tax_rate_id: str,
+        metadata: dict | None = None,
+    ) -> stripe.Invoice:
+        """Create a draft Stripe Invoice with SEPA auto-charge."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: stripe.Invoice.create(
+                customer=customer_id,
+                collection_method="charge_automatically",
+                auto_advance=True,
+                number=invoice_number,
+                default_tax_rates=[tax_rate_id] if tax_rate_id else [],
+                payment_settings={"payment_method_types": ["sepa_debit"]},
+                metadata=metadata or {},
+            ),
+        )
+
+    async def add_invoice_line_item(
+        self,
+        customer_id: str,
+        invoice_id: str,
+        amount_cents: int,
+        description: str,
+    ) -> stripe.InvoiceItem:
+        """Add a line item to a draft invoice. Amount in cents."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: stripe.InvoiceItem.create(
+                customer=customer_id,
+                invoice=invoice_id,
+                amount=amount_cents,
+                currency="eur",
+                description=description,
+            ),
+        )
+
+    async def finalize_invoice(self, invoice_id: str) -> stripe.Invoice:
+        """Finalize invoice — triggers auto-charge via SEPA. Returns finalized invoice with pdf URL."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: stripe.Invoice.finalize_invoice(invoice_id),
+        )
+
+    async def void_stripe_invoice(self, invoice_id: str) -> stripe.Invoice:
+        """Void a Stripe invoice. Only works on open/uncollected invoices."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: stripe.Invoice.void_invoice(invoice_id),
+        )
+
+    async def ensure_tax_id(
+        self, customer_id: str, tax_type: str, tax_value: str
+    ) -> bool:
+        """Attach tax ID to customer if not already present. Returns True if created."""
+        loop = asyncio.get_event_loop()
+
+        # List existing tax IDs
+        existing = await loop.run_in_executor(
+            None,
+            lambda: stripe.Customer.list_tax_ids(customer_id, limit=10),
+        )
+
+        for tid in existing.data:
+            if tid.type == tax_type and tid.value == tax_value:
+                logger.info(f"Tax ID {tax_type}={tax_value} already on customer {customer_id}")
+                return False
+
+        await loop.run_in_executor(
+            None,
+            lambda: stripe.Customer.create_tax_id(customer_id, type=tax_type, value=tax_value),
+        )
+        logger.info(f"Attached tax ID {tax_type}={tax_value} to customer {customer_id}")
+        return True
 
     def verify_webhook(self, payload: bytes, sig_header: str) -> stripe.Event:
         """
