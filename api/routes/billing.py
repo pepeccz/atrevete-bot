@@ -307,10 +307,10 @@ async def stripe_webhook(request: Request) -> dict:
         logger.error(f"Stripe webhook verification error: {e}")
         raise HTTPException(status_code=400, detail="Webhook verification failed.")
 
-    event_type = event["type"]
-    event_data = event["data"]["object"]
+    event_type = event.type
+    event_data = event.data.object
 
-    logger.info(f"Stripe webhook received: type={event_type} id={event.get('id')}")
+    logger.info(f"Stripe webhook received: type={event_type} id={event.id}")
 
     async with get_async_session() as session:
         if event_type == "checkout.session.completed":
