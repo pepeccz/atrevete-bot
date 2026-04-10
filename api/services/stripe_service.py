@@ -139,7 +139,7 @@ class StripeService:
                 payment_method=payment_method_id,
                 payment_method_types=["sepa_debit"],
                 confirm=True,
-                mandate_data={"customer_acceptance": {"type": "online"}},
+                off_session=True,
                 idempotency_key=f"invoice_{invoice_number}",
                 metadata={"invoice_number": invoice_number},
             ),
