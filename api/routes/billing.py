@@ -225,6 +225,31 @@ async def update_invoice_status(
 
 
 # =============================================================================
+# Endpoints — Fiscal Details
+# =============================================================================
+
+
+@router.get(
+    "/fiscal-details",
+    summary="Get billing fiscal details for both parties",
+)
+async def get_fiscal_details(
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Return fiscal details for invoices — client and provider."""
+    settings = get_settings()
+    return {
+        "client_name": settings.CLIENT_COMPANY_NAME,
+        "client_nif": settings.CLIENT_NIF,
+        "client_address": settings.CLIENT_FISCAL_ADDRESS,
+        "provider_name": settings.COMPANY_LEGAL_NAME,
+        "provider_nif": settings.COMPANY_NIF,
+        "provider_address": settings.COMPANY_FISCAL_ADDRESS,
+        "provider_email": settings.OPERATOR_EMAIL or "info@zanovix.com",
+    }
+
+
+# =============================================================================
 # Endpoints — Stripe
 # =============================================================================
 
