@@ -417,13 +417,13 @@ class BillingService:
     async def _next_invoice_number(
         self, session: AsyncSession, year: int, month: int
     ) -> str:
-        """Generate next invoice number: ATR-YYYY-MM-SEQ with FOR UPDATE lock."""
+        """Generate next invoice number: ATR-YYYY-MM-SEQ with row-level lock."""
+        # Lock existing rows for this period to prevent concurrent sequence gaps
         result = await session.execute(
-            select(func.count())
-            .select_from(Invoice)
+            select(Invoice.id)
             .where(Invoice.year == year, Invoice.month == month)
             .with_for_update()
         )
-        count = result.scalar() or 0
+        count = len(result.all())
         seq = count + 1
         return f"ATR-{year}-{month:02d}-{seq:03d}"
