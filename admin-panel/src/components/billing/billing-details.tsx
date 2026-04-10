@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Building2, Mail } from "lucide-react";
-import api from "@/lib/api";
+import { billingApi } from "@/lib/billing-api";
 
 interface BillingDetailsData {
   client_name: string;
@@ -20,9 +20,9 @@ export function BillingDetails() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api
-      .request("/api/billing/fiscal-details")
-      .then((data: BillingDetailsData) => setDetails(data))
+    billingApi
+      .getFiscalDetails()
+      .then(setDetails)
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);

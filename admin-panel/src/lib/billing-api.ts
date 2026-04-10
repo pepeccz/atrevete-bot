@@ -107,4 +107,15 @@ export const billingApi = {
     billingRequest<SetupSessionResponse>("/api/billing/stripe/setup-session", {
       method: "POST",
     }),
+
+  getFiscalDetails: () =>
+    billingRequest<{
+      client_name: string;
+      client_nif: string;
+      client_address: string;
+      provider_name: string;
+      provider_nif: string;
+      provider_address: string;
+      provider_email: string;
+    }>("/api/billing/fiscal-details"),
 };
