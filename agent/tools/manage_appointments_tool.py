@@ -394,6 +394,7 @@ async def _reschedule_appointment(
         )
         from agent.utils.date_parser import parse_natural_date, DateParseError
         from agent.services.availability_service import get_available_slots
+        from agent.validators.transaction_validators import validate_3_day_rule
 
         # 1. Validate eligibility (ownership + status + 48h window)
         eligibility = await validate_reschedule_eligibility(
@@ -440,6 +441,20 @@ async def _reschedule_appointment(
                     f"No pude entender la fecha '{new_date}'. "
                     "Por favor, indicá una fecha como 'viernes', '15 de abril', o '2026-04-15'."
                 ),
+            }
+
+        # 2b. Enforce 3-day minimum advance booking rule
+        three_day_check = await validate_3_day_rule(parsed_date)
+        if not three_day_check["valid"]:
+            return {
+                "success": False,
+                "error_code": "MINIMUM_DAYS_RULE",
+                "appointment_id": appointment_id,
+                "old_start_time": None,
+                "new_start_time": None,
+                "within_window": False,
+                "slot_taken": False,
+                "message": three_day_check["error_message"],
             }
 
         # 3. Build new datetime

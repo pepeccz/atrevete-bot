@@ -91,7 +91,7 @@ async def is_holiday(target_date: date | datetime) -> Optional[str]:
 
     except Exception as e:
         logger.error(f"Error checking holiday for {check_date}: {e}", exc_info=True)
-        return None  # Fail open for holidays (don't block if DB error)
+        return "DB_UNAVAILABLE"  # Fail closed: block slot when DB is unavailable
 
 
 async def get_busy_periods(

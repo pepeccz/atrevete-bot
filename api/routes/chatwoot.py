@@ -34,6 +34,31 @@ router = APIRouter()
 IDEMPOTENCY_TTL = 300  # 5 minutes
 IDEMPOTENCY_PREFIX = "idempotency:chatwoot:"
 
+# Rate limit constants
+RATE_LIMIT_WINDOW_SECONDS = 300  # 5 minutes
+RATE_LIMIT_MAX_MESSAGES = 20
+RATE_LIMIT_PREFIX = "wa_rate_limit:"
+
+# Audio size limit
+MAX_AUDIO_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+async def check_conversation_rate_limit(conversation_id: int) -> bool:
+    """Check per-conversation rate limit. Returns True if limit exceeded."""
+    import time
+
+    window = int(time.time()) // RATE_LIMIT_WINDOW_SECONDS
+    key = f"{RATE_LIMIT_PREFIX}{conversation_id}:{window}"
+    try:
+        client = get_redis_client()
+        count = await client.incr(key)
+        if count == 1:
+            await client.expire(key, RATE_LIMIT_WINDOW_SECONDS)
+        return count > RATE_LIMIT_MAX_MESSAGES
+    except Exception as e:
+        logger.warning("Rate limit Redis error: %s — failing open", e)
+        return False
+
 
 async def check_and_set_idempotency(message_id: int) -> bool:
     """
@@ -138,6 +163,19 @@ async def receive_chatwoot_webhook(
     if await check_and_set_idempotency(last_message.id):
         return JSONResponse(status_code=200, content={"status": "duplicate"})
 
+    # Per-conversation rate limit check
+    if await check_conversation_rate_limit(payload.conversation.id):
+        try:
+            chatwoot_client = ChatwootClient()
+            await chatwoot_client.send_message(
+                customer_phone=payload.sender.phone_number,
+                message="Estás enviando mensajes muy rápido 😅 Esperá un momento y volvé a escribirme. 🙏",
+                conversation_id=payload.conversation.id,
+            )
+        except Exception:
+            pass
+        return JSONResponse(status_code=200, content={"status": "rate_limited"})
+
     # Ensure phone number exists (use sender from root level, not from message)
     if not payload.sender.phone_number:
         logger.warning(f"Message {last_message.id} has no phone number, ignoring")
@@ -222,16 +260,36 @@ async def receive_chatwoot_webhook(
 
         if non_audio_attachments:
             logger.info(
-                f"Ignoring message with non-audio attachments: {len(non_audio_attachments)} found",
+                "Ignoring message with non-audio attachments: %s found",
+                len(non_audio_attachments),
                 extra={
                     "conversation_id": str(payload.conversation.id),
                     "attachment_types": [att.file_type for att in non_audio_attachments],
                 }
             )
-            return JSONResponse(
-                status_code=200,
-                content={"status": "ignored_non_audio_attachment"}
-            )
+            if message_text:
+                # Text + non-audio attachment: process the text, ignore attachment
+                logger.info(
+                    "Message has text alongside non-audio attachment, processing text only"
+                )
+            else:
+                # Pure non-audio attachment: reply with friendly message and ignore
+                try:
+                    chatwoot_client = ChatwootClient()
+                    await chatwoot_client.send_message(
+                        customer_phone=payload.sender.phone_number,
+                        message=(
+                            "¡Hola! Solo puedo procesar mensajes de texto o de voz 🎤 "
+                            "¿Podrías escribirme lo que necesitas? 💕"
+                        ),
+                        conversation_id=payload.conversation.id,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to send non-audio attachment reply: %s", e)
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "ignored_non_audio_attachment"}
+                )
 
         audio_attachments = [
             att for att in message_attachments
@@ -264,7 +322,51 @@ async def receive_chatwoot_webhook(
                     async with session.get(audio_url) as response:
                         if response.status != 200:
                             raise Exception(f"Failed to download audio: HTTP {response.status}")
-                        audio_data = await response.read()
+                        content_length = response.headers.get("Content-Length")
+                        if content_length and int(content_length) > MAX_AUDIO_SIZE_BYTES:
+                            logger.warning(
+                                "Audio too large: %s bytes from conversation %s",
+                                content_length,
+                                payload.conversation.id,
+                            )
+                            try:
+                                chatwoot_client = ChatwootClient()
+                                await chatwoot_client.send_message(
+                                    customer_phone=payload.sender.phone_number,
+                                    message="El audio es demasiado largo. Por favor, enviá un mensaje más corto o escribí tu consulta. 🎙️",
+                                    conversation_id=payload.conversation.id,
+                                )
+                            except Exception:
+                                pass
+                            return JSONResponse(
+                                status_code=200, content={"status": "audio_too_large"}
+                            )
+                        if content_length:
+                            audio_data = await response.read()
+                        else:
+                            chunks = []
+                            total = 0
+                            async for chunk in response.content.iter_chunked(65536):
+                                total += len(chunk)
+                                if total > MAX_AUDIO_SIZE_BYTES:
+                                    logger.warning(
+                                        "Audio exceeded %d bytes mid-stream",
+                                        MAX_AUDIO_SIZE_BYTES,
+                                    )
+                                    try:
+                                        chatwoot_client = ChatwootClient()
+                                        await chatwoot_client.send_message(
+                                            customer_phone=payload.sender.phone_number,
+                                            message="El audio es demasiado largo. Por favor, enviá un mensaje más corto o escribí tu consulta. 🎙️",
+                                            conversation_id=payload.conversation.id,
+                                        )
+                                    except Exception:
+                                        pass
+                                    return JSONResponse(
+                                        status_code=200, content={"status": "audio_too_large"}
+                                    )
+                                chunks.append(chunk)
+                            audio_data = b"".join(chunks)
 
                 # 2. Save to temporary OGG file
                 with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as temp_ogg:
