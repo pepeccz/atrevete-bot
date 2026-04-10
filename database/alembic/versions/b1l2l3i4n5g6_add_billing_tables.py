@@ -53,7 +53,7 @@ def upgrade() -> None:
         sa.Column("total_amount_eur", sa.Numeric(10, 2), nullable=False),
         sa.Column(
             "status",
-            sa.Enum(
+            postgresql.ENUM(
                 "draft",
                 "issued",
                 "paid",
@@ -109,7 +109,7 @@ def upgrade() -> None:
         sa.Column("stripe_fee_eur", sa.Numeric(10, 2), nullable=True),
         sa.Column(
             "status",
-            sa.Enum(
+            postgresql.ENUM(
                 "pending",
                 "processing",
                 "succeeded",
