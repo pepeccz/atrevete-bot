@@ -19,6 +19,7 @@ from api.models.chatwoot_webhook import (
 from shared.audio_conversion import convert_ogg_to_wav
 from shared.audio_transcription import get_transcription_service
 from shared.config import get_settings
+from shared.settings_service import get_settings_service
 from shared.redis_client import (
     publish_to_channel,
     add_to_stream,
@@ -162,6 +163,35 @@ async def receive_chatwoot_webhook(
     # Idempotency check: Prevent duplicate processing if Chatwoot retries webhook
     if await check_and_set_idempotency(last_message.id):
         return JSONResponse(status_code=200, content={"status": "duplicate"})
+
+    # System-wide AI toggle check (panic button) — fail-CLOSED
+    try:
+        settings_service = await get_settings_service()
+        ai_enabled = await settings_service.get("ai_agent_enabled")
+        if ai_enabled is None or ai_enabled is False:
+            log_level = logging.ERROR if ai_enabled is None else logging.INFO
+            logger.log(
+                log_level,
+                "AI agent disabled — ignoring message for conversation %s%s",
+                payload.conversation.id,
+                " (setting missing — fail-closed)" if ai_enabled is None else "",
+                extra={"conversation_id": str(payload.conversation.id)},
+            )
+            return JSONResponse(
+                status_code=200,
+                content={"status": "ignored_ai_disabled"},
+            )
+    except Exception as e:
+        logger.error(
+            "SettingsService error checking ai_agent_enabled — fail-closed: %s",
+            e,
+            extra={"conversation_id": str(payload.conversation.id)},
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={"status": "ignored_ai_disabled"},
+        )
 
     # Per-conversation rate limit check
     if await check_conversation_rate_limit(payload.conversation.id):

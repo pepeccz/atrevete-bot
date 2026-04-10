@@ -435,6 +435,7 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
 export type SettingValueType = "string" | "int" | "float" | "boolean" | "enum";
 
 export type SettingCategory =
+  | "ai_control"
   | "confirmation"
   | "booking"
   | "llm"

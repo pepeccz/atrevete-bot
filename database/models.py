@@ -1145,6 +1145,7 @@ class SettingCategory(str, PyEnum):
     CACHE = "cache"
     ARCHIVAL = "archival"
     GCAL_SYNC = "gcal_sync"
+    AI_CONTROL = "ai_control"
 
 
 class SystemSetting(Base):

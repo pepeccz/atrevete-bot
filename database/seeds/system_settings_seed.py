@@ -1,7 +1,8 @@
 """
 Seed data for system_settings table.
 
-Contains 30+ configurable parameters organized in 7 categories:
+Contains 30+ configurable parameters organized in 8 categories:
+- ai_control: System-wide AI agent toggle (panic button)
 - confirmation: Appointment confirmation and reminder settings
 - booking: Booking rules and constraints
 - llm: LLM model and temperature settings
@@ -32,6 +33,25 @@ from shared.config import get_settings
 
 # All system settings organized by category
 SYSTEM_SETTINGS = [
+    # ========== AI CONTROL SETTINGS (1) ==========
+    {
+        "category": SettingCategory.AI_CONTROL.value,
+        "key": "ai_agent_enabled",
+        "value": True,
+        "value_type": SettingValueType.BOOLEAN.value,
+        "default_value": True,
+        "min_value": None,
+        "max_value": None,
+        "allowed_values": None,
+        "label": "Agente IA Activo",
+        "description": (
+            "Activa o desactiva a Maite en todas las conversaciones de WhatsApp. "
+            "Al desactivar, los mensajes entrantes serán ignorados por la IA y "
+            "deberán ser atendidos manualmente desde Chatwoot."
+        ),
+        "requires_restart": False,
+        "display_order": 0,
+    },
     # ========== CONFIRMATION SETTINGS (9) ==========
     {
         "category": SettingCategory.CONFIRMATION.value,

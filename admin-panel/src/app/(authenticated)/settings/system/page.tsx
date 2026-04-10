@@ -44,6 +44,10 @@ const CATEGORY_TO_WORKER: Partial<Record<SettingCategory, SystemServiceName>> = 
 
 // Category display names and descriptions in Spanish
 const CATEGORY_INFO: Record<SettingCategory, { name: string; description: string }> = {
+  ai_control: {
+    name: "Control de Agente IA",
+    description: "Activar o desactivar a Maite globalmente en todas las conversaciones",
+  },
   confirmation: {
     name: "Sistema de Confirmaciones",
     description: "Configuración de horarios y plantillas para confirmaciones y recordatorios de citas",
@@ -76,6 +80,7 @@ const CATEGORY_INFO: Record<SettingCategory, { name: string; description: string
 
 // Category order for display
 const CATEGORY_ORDER: SettingCategory[] = [
+  "ai_control",
   "confirmation",
   "booking",
   "llm",
@@ -96,6 +101,38 @@ function SettingInput({ setting, value, onChange, disabled }: SettingInputProps)
   const { value_type, min_value, max_value, allowed_values } = setting;
 
   if (value_type === "boolean") {
+    // Panic button: confirm before disabling AI
+    if (setting.key === "ai_agent_enabled" && value === true) {
+      return (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <div className="flex items-center gap-2 cursor-pointer">
+              <Switch checked disabled={disabled} />
+            </div>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>¿Desactivar a Maite?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Maite dejará de responder en TODAS las conversaciones de WhatsApp.
+                Los mensajes entrantes deberán ser atendidos manualmente desde Chatwoot.
+                El cambio se aplica en menos de 60 segundos.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => onChange(false)}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Sí, desactivar
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      );
+    }
+
     return (
       <Switch
         checked={value as boolean}
@@ -414,7 +451,23 @@ export default function SystemSettingsPage() {
       />
 
       <div className="flex-1 p-4 md:p-6">
-        <Accordion type="multiple" defaultValue={["confirmation"]} className="space-y-4">
+        {/* AI disabled warning banner */}
+        {settings["ai_control"]?.some(
+          (s) => s.key === "ai_agent_enabled" && editedValues[s.key] === false
+        ) && (
+          <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-300 bg-red-50 p-4 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+            <AlertTriangle className="h-5 w-5 flex-shrink-0" />
+            <div>
+              <p className="font-semibold">Maite está desactivada</p>
+              <p className="text-sm">
+                La IA no está respondiendo en ninguna conversación de WhatsApp.
+                Los mensajes entrantes deben ser atendidos manualmente desde Chatwoot.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <Accordion type="multiple" defaultValue={["ai_control", "confirmation"]} className="space-y-4">
           {CATEGORY_ORDER.map((category) => {
             const categorySettings = settings[category] || [];
             if (categorySettings.length === 0) return null;
