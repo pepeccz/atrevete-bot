@@ -54,6 +54,15 @@ Algunos servicios tienen variantes por condición. Pregunta solo cuando aplique:
 | Mechas | ¿Completas o solo en algunas zonas? | Completas → "Mechas" (o "Mechas Extras" si volumen), Zonas → "Mechas Localizadas" |
 | Recogido | ¿Para boda, evento especial o algo más casual? | Boda → "Recogido Novia", Evento → "Recogido", Casual → "Semirecogido" |
 | Bioterapia Facial | ¿Quieres añadir radiofrecuencia? | No → "Bioterapia Facial", Sí 15min → "+RF 15min", Sí 30min → "+RF 30min" |
+| Cultura de Color | ¿Tu pelo es de densidad normal o muy denso/largo? | Normal → "Cultura de Color", Denso/largo → "Cultura de Color Extra" |
+| Óleo | ¿Es un mantenimiento o tu pelo está muy seco/dañado? | Mantenimiento → "Óleo Pigmento", Muy seco/dañado → "Óleo Extra" |
+| Barro | ¿Barro clásico o con tonos dorados (Gold)? + ¿Pelo normal o denso/dañado? | Clásico normal → "Barro", Clásico denso → "Barro Extra", Gold → "Barro Gold". (Nota: "Barro Gold Extra" es facial/estética, no capilar) |
+| Infoactivo | ¿Sentís el pelo debilitado o el cuero cabelludo sensible? | Debilitado/caída → "Infoactivo Fuerza", Sensible/irritado → "Infoactivo Sensitivo" |
+| Maquillaje | ¿Es para el día a día, un evento o una boda? | Día a día → "Maquillaje Express", Evento/fiesta → "Maquillaje", Boda → "Maquillaje Novia" |
+| Masaje | ¿Preferís 30 minutos o una hora completa? | 30 min → "Masaje Corporal (30 min)", 60 min → "Masaje Corporal (60 min)" |
+| Bioterapia Sculptor | ¿Querés añadir radiofrecuencia? | No → "Bioterapia Sculptor Completo", Sí → "Bioterapia Sculptor + Radiofrecuencia 30 min" |
+| Uñas de manos | ¿Qué buscás? | Pintar normal → "Limar y Pintar Manos", Permanente → "Limar y Pintar Manos Permanente", Tratamiento → "Bioterapia de Manos", Permanente + tratamiento → "Manicura Permanente + Bio" |
+| Uñas de pies | ¿Qué buscás? | Pintar normal → "Limar y Pintar Pies", Permanente → "Limar y Pintar Pies Permanente", Tratamiento → "Bioterapia Podal", Permanente + tratamiento → "Pedicura Permanente con Bioterapia" |
 
 **Coherencia multi-servicio**
 Si el cliente pide varios servicios con audiencias incompatibles (ej: "Cortar" que es Señora + "Barba" que es Caballero), pregunta amablemente para aclarar. No bloquees — solo confirma.

@@ -447,7 +447,7 @@ AESTHETICS_SERVICES = [
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 70,
         "description": "Maquillaje de novia con prueba previa. Duración garantizada durante todo el evento (70 min)",
-        "audience": None,
+        "audience": "adult_female",
         "metadata_": {},
     },
     {
@@ -503,7 +503,7 @@ AESTHETICS_SERVICES = [
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 60,
         "description": "Tratamiento natural que mejora tonicidad e hidratación de la zona del busto (60 min)",
-        "audience": None,
+        "audience": "adult_female",
         "metadata_": {},
     },
     {
@@ -519,7 +519,7 @@ AESTHETICS_SERVICES = [
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 60,
         "description": "Pack de sesiones de Bioterapia de Senos para un resultado más progresivo y duradero (60 min)",
-        "audience": None,
+        "audience": "adult_female",
         "metadata_": {},
     },
     {
