@@ -248,7 +248,7 @@ class GreetingMode(BaseModeNode):
                 mode_context,
                 fallback_response=fallback_response,
                 step_name="returning_customer",
-                include_history=False,
+                include_history=has_booking_content,
             )
             final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
             transition_update = transition_mode(state, target_mode)
@@ -288,7 +288,7 @@ class GreetingMode(BaseModeNode):
             mode_context,
             fallback_response=fallback_response,
             step_name="welcome",
-            include_history=False,
+            include_history=has_booking_content,
         )
         final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
         transition_update = transition_mode(state, target_mode)
