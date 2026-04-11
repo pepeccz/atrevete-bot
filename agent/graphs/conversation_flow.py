@@ -28,6 +28,9 @@ from database.models import Customer
 # Configure logger
 logger = logging.getLogger(__name__)
 
+# Security: maximum allowed length for user messages
+MAX_USER_MESSAGE_LENGTH = 2000
+
 # Lazy-loaded system prompt cache
 _MAITE_SYSTEM_PROMPT_CACHE: str | None = None
 
@@ -829,6 +832,15 @@ async def preprocess_node_v6(state: ConversationState) -> dict[str, Any]:
 
     if not user_message:
         return {"last_node": "preprocess", "pending_confirmation_appointment_id": None}
+
+    # Security: hard truncate user input to prevent context inflation and injection
+    if len(user_message) > MAX_USER_MESSAGE_LENGTH:
+        logger.warning(
+            "preprocess_node_v6: message truncated | conversation_id=%s | original_len=%d",
+            conversation_id,
+            len(user_message),
+        )
+        user_message = user_message[:MAX_USER_MESSAGE_LENGTH]
 
     existing_messages = state.get("messages", [])
     is_first_interaction = len(existing_messages) == 0

@@ -9,6 +9,7 @@ Redesigned for T-06:
 """
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -134,6 +135,30 @@ async def _get_or_create_customer(
         except Exception as e:
             logger.error(f"_get_or_create_customer error: {e}", exc_info=True)
             return None
+
+
+# ============================================================================
+# Notes Sanitization
+# ============================================================================
+
+MAX_NOTES_LENGTH = 500
+
+
+def _sanitize_notes(notes: str | None, max_length: int = MAX_NOTES_LENGTH) -> str | None:
+    """Strip HTML tags (including script/style content), collapse whitespace, and truncate notes."""
+    if not notes:
+        return None
+    # Strip script and style tag content entirely (including inner text)
+    cleaned = re.sub(
+        r"<(script|style)[^>]*>.*?</(script|style)>", "", notes,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    # Strip remaining HTML tags (opening/closing, self-closing)
+    cleaned = re.sub(r"<[^>]+>", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return None
+    return cleaned[:max_length]
 
 
 # ============================================================================
@@ -329,6 +354,8 @@ async def book(
         )
 
         # ── 5. Execute BookingTransaction ──────────────────────────────────────
+        notes = _sanitize_notes(notes)
+
         from agent.transactions.booking_transaction import BookingTransaction
 
         result = await BookingTransaction.execute(
