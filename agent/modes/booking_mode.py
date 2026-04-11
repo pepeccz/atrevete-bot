@@ -176,6 +176,14 @@ class BookingModeNode(BaseModeNode):
         # We always start from the persisted checkpoint value and return a full replace.
         booking_context: dict[str, Any] = dict(state.get("booking_context") or {})
 
+        # Reset stale booking_context from a previously completed booking
+        if booking_context.get("_booking_completed"):
+            logger.info(
+                "BookingModeNode: clearing completed booking_context | conversation=%s",
+                state.get("conversation_id", "unknown"),
+            )
+            booking_context = {}
+
         # P4: Absorb booking hints forwarded from GREETING (first-interaction handoff)
         _hints = mode_context.pop("booking_hints", None) or {}
         if _hints.get("preferred_stylist_name") and not booking_context.get("preferred_stylist_name"):
@@ -287,7 +295,7 @@ class BookingModeNode(BaseModeNode):
             # This prevents STYLIST_NOT_RESOLVED deadlock when the LLM provides the
             # stylist directly in args before last_stylist is set in mode_context.
             stylist_from_args = tool_args.get("stylist_name")
-            if stylist_from_args and not mode_context.get("last_stylist"):
+            if stylist_from_args:
                 mode_context["last_stylist"] = stylist_from_args
             # Guard: stylist must be resolved before availability check
             if not mode_context.get("last_stylist") and not mode_context.get(
@@ -437,7 +445,7 @@ class BookingModeNode(BaseModeNode):
                 mode_context["last_total_duration_minutes"] = total_dur
             # Capture stylist name from args
             stylist_name = tool_args.get("stylist_name")
-            if stylist_name and not mode_context.get("last_stylist"):
+            if stylist_name:
                 mode_context["last_stylist"] = stylist_name
 
         elif tool_name == "book":
