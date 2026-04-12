@@ -705,17 +705,34 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
             "last_node": "router",
         }
 
-    # ── Pre-table: first interaction + book → GREETING with booking hints ──
+    # ── Pre-table: first interaction + book → BOOKING directly (skip GREETING turn) ──
     if is_first_interaction and intent_result.intent == "book":
+        from agent.modes.greeting_mode import _build_booking_handoff_context
+
         booking_hints_first = await _extract_booking_hints(user_message) if user_message else {}
-        return {
-            "current_mode": "GREETING",
-            "mode_context": {
-                **intent_data,
-                "booking_hints": booking_hints_first,
-            },
+        handoff_ctx = _build_booking_handoff_context(user_message) if user_message else {}
+
+        initial_booking_ctx: dict[str, Any] = {}
+        if booking_hints_first.get("preferred_stylist_name"):
+            initial_booking_ctx["preferred_stylist_name"] = booking_hints_first[
+                "preferred_stylist_name"
+            ]
+        if booking_hints_first.get("preferred_date_hint"):
+            initial_booking_ctx["preferred_date_hint"] = booking_hints_first["preferred_date_hint"]
+
+        booking_context_for_mode = {
+            **handoff_ctx,
+            **booking_hints_first,
+            **intent_data,
+        }
+
+        transition_result: dict[str, Any] = {
+            **transition_mode(state, "BOOKING", context_update=booking_context_for_mode),
             "last_node": "router",
         }
+        if initial_booking_ctx:
+            transition_result["booking_context"] = initial_booking_ctx
+        return transition_result
 
     # ── Pre-table: first interaction + greet → GREETING ──
     # Guard: don't eject from BOOKING (the table handles BOOKING inertia)

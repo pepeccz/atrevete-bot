@@ -628,6 +628,13 @@ class BookingModeNode(BaseModeNode):
             parts.append(
                 f"<opening_booking_request>{opening_request}</opening_booking_request>"
             )
+            parts.append(
+                "<disambiguation_reminder>RECUERDA: Haz TODAS las preguntas de "
+                "desambiguación de todos los servicios en UN SOLO mensaje. "
+                'Usa lenguaje natural de la columna "Pregunta" de la tabla, '
+                "NUNCA nombres del catálogo como "
+                '"Óleo Pigmento", "Peinado Extra", etc.</disambiguation_reminder>'
+            )
 
         collected = self._build_collected_summary(mode_context)
         if collected:
