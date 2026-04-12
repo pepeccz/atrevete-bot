@@ -622,6 +622,13 @@ class BookingModeNode(BaseModeNode):
                 f"<audience_hint>El cliente indicó que la cita es para: {hint_label}</audience_hint>"
             )
 
+        # Opening booking request from greeting handoff (carry-over for service inference)
+        opening_request = mode_context.get("opening_booking_request")
+        if opening_request and step == "service_selection":
+            parts.append(
+                f"<opening_booking_request>{opening_request}</opening_booking_request>"
+            )
+
         collected = self._build_collected_summary(mode_context)
         if collected:
             parts.append(f"<collected_data>\n{collected}\n</collected_data>")
