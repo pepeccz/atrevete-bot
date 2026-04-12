@@ -629,11 +629,11 @@ class BookingModeNode(BaseModeNode):
                 f"<opening_booking_request>{opening_request}</opening_booking_request>"
             )
             parts.append(
-                "<disambiguation_reminder>RECUERDA: Haz TODAS las preguntas de "
-                "desambiguación de todos los servicios en UN SOLO mensaje. "
-                'Usa lenguaje natural de la columna "Pregunta" de la tabla, '
-                "NUNCA nombres del catálogo como "
-                '"Óleo Pigmento", "Peinado Extra", etc.</disambiguation_reminder>'
+                "<disambiguation_reminder>OBLIGATORIO: Identifica TODOS los servicios "
+                "del mensaje y haz TODAS las preguntas de desambiguación pendientes "
+                "en UN SOLO mensaje. NO resuelvas un servicio sin preguntar primero. "
+                "Ejemplo: si piden corte + óleo, pregunta audiencia del corte Y "
+                "condición del óleo en el mismo mensaje.</disambiguation_reminder>"
             )
 
         collected = self._build_collected_summary(mode_context)
@@ -653,6 +653,13 @@ class BookingModeNode(BaseModeNode):
             )
             parts.append(f"<offered_slots>\n{slot_lines}\n</offered_slots>")
 
+        parts.append(
+            "<natural_language_rule>NUNCA uses nombres técnicos del catálogo "
+            '("Óleo Pigmento", "Corte - Señora", "Peinado Extra", etc.) al '
+            "hablar con el cliente. Usa siempre lenguaje natural y cercano. "
+            "Los nombres del catálogo son EXCLUSIVAMENTE para las herramientas."
+            "</natural_language_rule>"
+        )
         parts.append("</booking_context>")
 
         # Cross-conversation customer memories (injected when present)
