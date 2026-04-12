@@ -66,6 +66,132 @@ _ORDINAL_STEM_MAP: dict[str, int] = {
     "últim": -1,
 }
 
+# ============================================================================
+# Disambiguation table — deterministic mapping from service keywords to questions
+# ============================================================================
+
+_DISAMBIGUATION_TABLE: list[dict[str, Any]] = [
+    # Audience disambiguation (corte has audience variants)
+    {
+        "keywords": ["corte", "cortarme", "cortarme el pelo", "pelo"],
+        "axis": "audience",
+        "question": "Para el corte: ¿es para señora, caballero, niño/a o bebé?",
+        "skip_if_audience_hint": True,
+    },
+    # Condition disambiguation (service families with condition variants)
+    {
+        "keywords": ["oleo", "óleo"],
+        "axis": "condition",
+        "question": "Para el tratamiento de óleo: ¿es un mantenimiento o tu pelo está muy seco/dañado?",
+    },
+    {
+        "keywords": ["peinado", "peinarme", "secado con forma"],
+        "axis": "condition",
+        "question": "Para el peinado: ¿tu pelo es corto, largo o muy largo?",
+    },
+    {
+        "keywords": ["moldeado"],
+        "axis": "condition",
+        "question": "Para el moldeado: ¿tu pelo es largo o muy denso?",
+    },
+    {
+        "keywords": ["mechas"],
+        "axis": "condition",
+        "question": "Para las mechas: ¿completas o solo en algunas zonas?",
+    },
+    {
+        "keywords": ["recogido"],
+        "axis": "condition",
+        "question": "Para el recogido: ¿es para boda, evento especial o algo más casual?",
+    },
+    {
+        "keywords": ["cultura de color", "color", "tinte", "teñirme"],
+        "axis": "condition",
+        "question": "Para el color: ¿tu pelo es de densidad normal o muy denso/largo?",
+    },
+    {
+        "keywords": ["barro"],
+        "axis": "condition",
+        "question": "Para el barro: ¿clásico o con tonos dorados (Gold)? ¿Pelo normal o denso/dañado?",
+    },
+    {
+        "keywords": ["infoactivo"],
+        "axis": "condition",
+        "question": "Para el tratamiento: ¿sentís el pelo debilitado o el cuero cabelludo sensible?",
+    },
+    {
+        "keywords": ["maquillaje", "maquillarme"],
+        "axis": "condition",
+        "question": "Para el maquillaje: ¿es para el día a día, un evento o una boda?",
+    },
+    {
+        "keywords": ["masaje"],
+        "axis": "condition",
+        "question": "Para el masaje: ¿preferís 30 minutos o una hora completa?",
+    },
+    {
+        "keywords": ["sculptor", "anticelul"],
+        "axis": "condition",
+        "question": "Para la bioterapia sculptor: ¿querés añadir radiofrecuencia?",
+    },
+    {
+        "keywords": ["uñas de manos", "manicura", "pintar manos", "uñas manos"],
+        "axis": "condition",
+        "question": "Para las uñas de manos: ¿pintar normal, permanente, tratamiento o permanente con tratamiento?",
+    },
+    {
+        "keywords": ["uñas de pies", "pedicura", "pintar pies", "uñas pies"],
+        "axis": "condition",
+        "question": "Para las uñas de pies: ¿pintar normal, permanente, tratamiento o permanente con tratamiento?",
+    },
+    {
+        "keywords": ["bioterapia facial", "facial"],
+        "axis": "condition",
+        "question": "Para la bioterapia facial: ¿querés añadir radiofrecuencia?",
+    },
+]
+
+
+def _normalize_for_match(text: str) -> str:
+    """Normalize text for keyword matching: lowercase, strip accents."""
+    import unicodedata
+
+    raw = text.strip().lower()
+    normalized = unicodedata.normalize("NFKD", raw)
+    return "".join(c for c in normalized if not unicodedata.combining(c))
+
+
+def _detect_disambiguation_needs(
+    message: str, audience_hint: str | None = None
+) -> list[str]:
+    """Detect which disambiguation questions are needed for services in a message.
+
+    Returns a list of natural-language question strings. Deterministic — no LLM involved.
+    """
+    normalized = _normalize_for_match(message)
+    questions: list[str] = []
+    matched_axes: set[str] = set()
+
+    for entry in _DISAMBIGUATION_TABLE:
+        # Skip if this axis+family combo already matched
+        axis_key = f"{entry['axis']}:{entry['keywords'][0]}"
+        if axis_key in matched_axes:
+            continue
+
+        # Check if any keyword appears in the message
+        for kw in entry["keywords"]:
+            kw_normalized = _normalize_for_match(kw)
+            if kw_normalized in normalized:
+                # Skip audience question if audience_hint is already set
+                if entry.get("skip_if_audience_hint") and audience_hint:
+                    break
+                questions.append(entry["question"])
+                matched_axes.add(axis_key)
+                break
+
+    return questions
+
+
 _NO_PREFERENCE_PATTERNS = re.compile(
     r"(?:sin\s+preferencia|me\s+da\s+igual|cualquiera|no\s+tengo\s+preferencia|"
     r"da\s+lo\s+mismo|no\s+me\s+importa|la\s+que\s+sea|el\s+que\s+sea|"
@@ -289,15 +415,28 @@ class BookingModeNode(BaseModeNode):
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
-        # ── check_availability: stylist guard ───────────
+        # ── check_availability: disambiguation + stylist guards ───────────
         if tool_name == "check_availability":
+            # Guard 1: disambiguation must be resolved before availability check
+            if mode_context.get("_has_pending_disambiguation") and not mode_context.get(
+                "last_services"
+            ):
+                return ToolCallRejection(
+                    name="check_availability",
+                    error_code="DISAMBIGUATION_PENDING",
+                    error_message=(
+                        "Todavía hay preguntas de desambiguación pendientes. "
+                        "Presenta las preguntas de <required_questions> al cliente "
+                        "y esperá su respuesta antes de buscar disponibilidad."
+                    ),
+                )
             # Accept stylist_name from tool_args — LLM resolved it from conversation.
             # This prevents STYLIST_NOT_RESOLVED deadlock when the LLM provides the
             # stylist directly in args before last_stylist is set in mode_context.
             stylist_from_args = tool_args.get("stylist_name")
             if stylist_from_args:
                 mode_context["last_stylist"] = stylist_from_args
-            # Guard: stylist must be resolved before availability check
+            # Guard 2: stylist must be resolved before availability check
             if not mode_context.get("last_stylist") and not mode_context.get(
                 "no_preference_stylist"
             ):
@@ -622,19 +761,24 @@ class BookingModeNode(BaseModeNode):
                 f"<audience_hint>El cliente indicó que la cita es para: {hint_label}</audience_hint>"
             )
 
-        # Opening booking request from greeting handoff (carry-over for service inference)
+        # Opening booking request — deterministic disambiguation
         opening_request = mode_context.get("opening_booking_request")
         if opening_request and step == "service_selection":
             parts.append(
                 f"<opening_booking_request>{opening_request}</opening_booking_request>"
             )
-            parts.append(
-                "<disambiguation_reminder>OBLIGATORIO: Identifica TODOS los servicios "
-                "del mensaje y haz TODAS las preguntas de desambiguación pendientes "
-                "en UN SOLO mensaje. NO resuelvas un servicio sin preguntar primero. "
-                "Ejemplo: si piden corte + óleo, pregunta audiencia del corte Y "
-                "condición del óleo en el mismo mensaje.</disambiguation_reminder>"
-            )
+            # Detect disambiguation needs deterministically
+            audience_hint = mode_context.get("service_audience_hint")
+            questions = _detect_disambiguation_needs(opening_request, audience_hint)
+            if questions:
+                q_lines = "\n".join(f"- {q}" for q in questions)
+                parts.append(
+                    f"<required_questions>\nPresenta TODAS estas preguntas al cliente "
+                    f"en un solo mensaje con lenguaje natural y cercano:\n{q_lines}\n"
+                    f"NO avances al paso 2 hasta que el cliente responda todas.\n"
+                    f"</required_questions>"
+                )
+                mode_context["_has_pending_disambiguation"] = True
 
         collected = self._build_collected_summary(mode_context)
         if collected:
