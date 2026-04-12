@@ -148,13 +148,14 @@ class BaseModeNode(ABC):
         step_name: str | None = None,  # kept for call-site compat; no longer used
         include_history: bool = True,
         history_limit: int = 6,
+        include_catalog: bool = True,
     ) -> list:
         """
         Build messages using the optimized layered prompt approach.
 
         Assembly:
         1. SystemMessage: identity + critical_rules (cached)
-        2. SystemMessage: catalog (DB-driven, 5-min cache)
+        2. SystemMessage: catalog (DB-driven, 5-min cache) — skipped when include_catalog=False
         3. SystemMessage: mode overlay (cached)
         4. Conversation history (optional)
         5. SystemMessage: dynamic context (last, for recency attention)
@@ -165,6 +166,7 @@ class BaseModeNode(ABC):
             step_name: Deprecated — accepted for call-site compat, not used
             include_history: Whether to include conversation history
             history_limit: Max number of history messages to include
+            include_catalog: Whether to include the service catalog
 
         Returns:
             list: List of LangChain message objects
@@ -175,6 +177,7 @@ class BaseModeNode(ABC):
             include_history,
             history_limit,
             mode_name=self.mode_name,
+            include_catalog=include_catalog,
         )
         return messages
 

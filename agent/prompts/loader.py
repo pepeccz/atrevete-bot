@@ -286,6 +286,7 @@ async def build_layered_messages(
     history_limit: int = 6,
     mode_name: str | None = None,
     dynamic_context_override: str | None = None,
+    include_catalog: bool = True,
 ) -> tuple[list, int]:
     """
     Build a complete message list using the layered prompt approach.
@@ -305,6 +306,8 @@ async def build_layered_messages(
         mode_name: Optional active mode name for overlay loading
         dynamic_context_override: If provided, replaces the default _build_simple_dynamic_context()
             output. Used by BookingMode to inject its richer dynamic context.
+        include_catalog: Whether to include the service catalog. Set to False for modes
+            that don't need it (e.g. GREETING) to reduce context and prevent hallucinations.
 
     Returns:
         tuple[list, int]: (messages, dynamic_context_index) where dynamic_context_index
@@ -321,8 +324,9 @@ async def build_layered_messages(
     messages.append(SystemMessage(content=system_prompt))
 
     # 2. Catalog (services, stylists, business hours — DB-driven, 5-min cache)
-    catalog = await build_catalog_markdown()
-    messages.append(SystemMessage(content=catalog))
+    if include_catalog:
+        catalog = await build_catalog_markdown()
+        messages.append(SystemMessage(content=catalog))
 
     # 3. Optional mode overlay (per-mode TTL cache)
     mode_overlay = await load_mode_overlay(mode_name, mode_context)

@@ -334,6 +334,7 @@ class GreetingMode(BaseModeNode):
             mode_context,
             step_name=step_name,
             include_history=include_history,
+            include_catalog=False,
         )
         response_text = self._extract_response_text(await self._call_llm(messages))
         return response_text if response_text else fallback_response
