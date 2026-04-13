@@ -47,23 +47,30 @@ def test_compute_step_empty_context():
     assert result == "service_selection"
 
 
-def test_compute_step_service_known():
-    """last_services set → stylist_selection (service resolved, stylist pending)."""
+def test_compute_step_service_known_no_add_more():
+    """last_services set but add_more_asked=False → stays at service_selection."""
     ctx = {"last_services": ["Cortar"]}
+    result = BookingModeNode._compute_booking_step(ctx)
+    assert result == "service_selection"
+
+
+def test_compute_step_service_known_add_more_asked():
+    """last_services + add_more_asked → stylist_selection."""
+    ctx = {"last_services": ["Cortar"], "add_more_asked": True}
     result = BookingModeNode._compute_booking_step(ctx)
     assert result == "stylist_selection"
 
 
 def test_compute_step_stylist_known():
-    """last_services + last_stylist → datetime_selection."""
-    ctx = {"last_services": ["Cortar"], "last_stylist": "Ana"}
+    """last_services + add_more_asked + last_stylist → datetime_selection."""
+    ctx = {"last_services": ["Cortar"], "add_more_asked": True, "last_stylist": "Ana"}
     result = BookingModeNode._compute_booking_step(ctx)
     assert result == "datetime_selection"
 
 
 def test_compute_step_no_preference():
     """no_preference_stylist=True without last_stylist → datetime_selection (bypass)."""
-    ctx = {"last_services": ["Cortar"], "no_preference_stylist": True}
+    ctx = {"last_services": ["Cortar"], "add_more_asked": True, "no_preference_stylist": True}
     result = BookingModeNode._compute_booking_step(ctx)
     assert result == "datetime_selection"
 
@@ -72,6 +79,7 @@ def test_compute_step_slot_selected():
     """last_services + last_stylist + selected_slot → name_collection (no name yet)."""
     ctx = {
         "last_services": ["Cortar"],
+        "add_more_asked": True,
         "last_stylist": "Ana",
         "selected_slot": {"day_label": "Lunes", "time": "10:00"},
     }
@@ -83,6 +91,7 @@ def test_compute_step_name_known():
     """All fields set including notes_asked → confirmation."""
     ctx = {
         "last_services": ["Cortar"],
+        "add_more_asked": True,
         "last_stylist": "Ana",
         "selected_slot": {"day_label": "Lunes", "time": "10:00"},
         "customer_name": "María García",
@@ -96,6 +105,7 @@ def test_compute_step_notes_not_asked():
     """All fields set but notes_asked=False → notes_collection."""
     ctx = {
         "last_services": ["Cortar"],
+        "add_more_asked": True,
         "last_stylist": "Ana",
         "selected_slot": {"day_label": "Lunes", "time": "10:00"},
         "customer_name": "María García",
@@ -109,6 +119,7 @@ def test_compute_step_notes_asked_missing_key():
     """notes_asked not present → notes_collection (falsy check)."""
     ctx = {
         "last_services": ["Cortar"],
+        "add_more_asked": True,
         "last_stylist": "Ana",
         "selected_slot": {"day_label": "Lunes", "time": "10:00"},
         "customer_name": "María García",
@@ -244,10 +255,11 @@ async def test_pre_tool_call_allows_no_stylist_no_context(booking_node: BookingM
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_call_allows_disambiguation_pending(booking_node: BookingModeNode):
-    """_has_pending_disambiguation=True, no last_services → allowed (guard removed).
+async def test_pre_tool_call_rejects_disambiguation_pending(booking_node: BookingModeNode):
+    """_has_pending_disambiguation=True, no last_services → rejected (gate restored).
 
-    Change B: DISAMBIGUATION_PENDING guard is gone — LLM decides flow.
+    Change A: DISAMBIGUATION_PENDING gate blocks check_availability when
+    disambiguation questions are pending and services not yet resolved.
     """
     booking_node._mode_context = {
         "_has_pending_disambiguation": True,
@@ -256,8 +268,8 @@ async def test_pre_tool_call_allows_disambiguation_pending(booking_node: Booking
     result = await booking_node._pre_tool_call(
         "check_availability", {"service_names": ["Cortar"]}
     )
-    assert not isinstance(result, ToolCallRejection)
-    assert isinstance(result, dict)
+    assert isinstance(result, ToolCallRejection)
+    assert result.error_code == "DISAMBIGUATION_PENDING"
 
 
 @pytest.mark.asyncio
@@ -333,15 +345,16 @@ def test_unrecognized_phrase_no_flag(booking_node: BookingModeNode):
 
 def test_full_info_atajo_reaches_slot_selection():
     """Single message with service+stylist+date → booking_step advances past stylist."""
-    # If mode_context already has last_services + last_stylist, step should be
-    # datetime_selection (not rejected by stylist guard) after _compute_booking_step
+    # With add_more_asked=True (auto-set by shortcut), service+stylist resolved →
+    # datetime_selection
     ctx = {
         "last_services": ["Cortar"],
+        "add_more_asked": True,
         "last_stylist": "Ana",
     }
     step = BookingModeNode._compute_booking_step(ctx)
     assert step == "datetime_selection", (
-        "With service+stylist resolved, step must advance to datetime_selection"
+        "With service+stylist resolved + add_more_asked, step must advance to datetime_selection"
     )
 
 

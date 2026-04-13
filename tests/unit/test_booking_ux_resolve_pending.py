@@ -122,6 +122,7 @@ def test_resolve_pending_selection_skips_notes_on_no(booking_node) -> None:
         "last_stylist": "Ana",
         "selected_slot": {"day_label": "Lunes", "time": "10:00"},
         "customer_name": "María",
+        "add_more_asked": True,
     }
     booking_node._resolve_pending_selection(state, mode_context)
     assert mode_context["notes_asked"] is True
@@ -137,6 +138,7 @@ def test_resolve_pending_selection_skips_notes_on_nada(booking_node) -> None:
         "last_stylist": "Ana",
         "selected_slot": {"day_label": "Lunes", "time": "10:00"},
         "customer_name": "María",
+        "add_more_asked": True,
     }
     booking_node._resolve_pending_selection(state, mode_context)
     assert mode_context["notes_asked"] is True

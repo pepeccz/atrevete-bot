@@ -177,6 +177,7 @@ async def test_pre_tool_call_name_extraction_and_slot_injection(booking_node):
             }
         ],
         "notes_asked": True,
+        "add_more_asked": True,
     }
     tool_args = {
         "customer_first_name": "María",
@@ -533,6 +534,7 @@ async def test_confirmation_gate_rejects_at_name_collection():
         "last_stylist": "Pilar",
         "selected_slot": {"stylist_id": "abc", "start_time": "2026-04-10T10:00:00"},
         "customer_name": None,  # Missing — step = name_collection
+        "add_more_asked": True,
     }
     node._mode_context = node._booking_context
 
@@ -556,6 +558,7 @@ async def test_confirmation_gate_rejects_at_notes_collection():
         "selected_slot": {"stylist_id": "abc", "start_time": "2026-04-10T10:00:00"},
         "customer_name": "Pablo",
         "notes_asked": False,  # Step = notes_collection
+        "add_more_asked": True,
     }
     node._mode_context = node._booking_context
 
@@ -583,6 +586,7 @@ async def test_confirmation_gate_passes_at_confirmation_step():
         },
         "customer_name": "Pablo",
         "notes_asked": True,
+        "add_more_asked": True,
     }
     node._mode_context = node._booking_context
 
@@ -724,7 +728,7 @@ def test_get_stylists_for_services_no_cache_returns_empty():
 
 @pytest.mark.asyncio
 async def test_router_first_interaction_book_routes_to_greeting():
-    """is_first_interaction=True + intent=book → router routes to GREETING with booking_hints."""
+    """is_first_interaction=True + intent=book → router routes to BOOKING directly."""
     from unittest.mock import AsyncMock, MagicMock, patch
 
     state = {
@@ -761,13 +765,9 @@ async def test_router_first_interaction_book_routes_to_greeting():
 
         result = await router_node(state)
 
-    assert result["current_mode"] == "GREETING", (
-        f"Expected GREETING but got {result.get('current_mode')}"
+    assert result["current_mode"] == "BOOKING", (
+        f"Expected BOOKING but got {result.get('current_mode')}"
     )
-    assert "booking_hints" in result.get("mode_context", {}), (
-        "booking_hints must be in mode_context"
-    )
-    assert result["mode_context"]["booking_hints"]["preferred_stylist_name"] == "Marta"
 
 
 @pytest.mark.asyncio

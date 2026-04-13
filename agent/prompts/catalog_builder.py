@@ -93,7 +93,7 @@ async def _build_catalog_from_db() -> str:
             if aud_label != "General":
                 sections.append(f"**{aud_label}:**")
             for svc in aud_services:
-                line = f"- {svc.name} — {svc.duration_minutes}min"
+                line = f"- {svc.name} [INTERNO: {svc.duration_minutes}min]"
                 if svc.description:
                     line += f" — {svc.description}"
                 sections.append(line)

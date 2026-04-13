@@ -199,6 +199,11 @@ _NO_PREFERENCE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_DECLINE_MORE_PATTERN = re.compile(
+    r"^(?:no|nada|nada\s+m[aá]s|solo\s+eso|ya\s+est[aá]|no\s+gracias|eso\s+es\s+todo|con\s+eso)$",
+    re.IGNORECASE,
+)
+
 
 def _is_spanish_affirmative(text: str) -> bool:
     """Return True if text is a bare Spanish affirmative (e.g. 'sí', 'dale', 'ok')."""
@@ -249,6 +254,8 @@ class BookingModeNode(BaseModeNode):
             String literal representing the current booking step.
         """
         if not ctx.get("last_services"):
+            return "service_selection"
+        if not ctx.get("add_more_asked"):
             return "service_selection"
         if not ctx.get("last_stylist") and not ctx.get("no_preference_stylist"):
             return "stylist_selection"
@@ -417,6 +424,17 @@ class BookingModeNode(BaseModeNode):
 
         # ── check_availability: stylist guard ────────────────────────────
         if tool_name == "check_availability":
+            # Gate 1: reject if disambiguation questions are still pending
+            if mode_context.get("_has_pending_disambiguation") and not mode_context.get("last_services"):
+                return ToolCallRejection(
+                    name="check_availability",
+                    error_code="DISAMBIGUATION_PENDING",
+                    error_message=(
+                        "Hay preguntas de desambiguación pendientes en <required_questions>. "
+                        "Preguntá al cliente y resolvé los servicios antes de buscar disponibilidad."
+                    ),
+                )
+
             # Accept stylist_name from tool_args — LLM resolved it from conversation.
             # This prevents STYLIST_NOT_RESOLVED deadlock when the LLM provides the
             # stylist directly in args before last_stylist is set in mode_context.
@@ -552,6 +570,11 @@ class BookingModeNode(BaseModeNode):
             svc_names = tool_args.get("service_names") or []
             if svc_names:
                 mode_context["last_services"] = svc_names
+                # Auto-skip "algo más?" if opening message had complete intent
+                if not mode_context.get("add_more_asked"):
+                    if mode_context.get("preferred_date_hint") or mode_context.get("preferred_stylist_name"):
+                        mode_context["add_more_asked"] = True
+                        logger.info("_post_tool_result: auto-set add_more_asked (complete-intent shortcut)")
             # Capture total duration from result
             total_dur = result_dict.get("total_duration_minutes")
             if total_dur:
@@ -699,19 +722,25 @@ class BookingModeNode(BaseModeNode):
 
         # Booking context XML block
         parts.append("<booking_context>")
+        parts.append("<ui_constraint>Nunca menciones duraciones, tiempos de servicio ni datos marcados como [INTERNO] al cliente. Son datos internos.</ui_constraint>")
         parts.append(f"<min_valid_date>{min_date_label} ({min_date.isoformat()})</min_valid_date>")
 
         # Current booking step and next action hint
-        _STEP_ACTIONS = {
-            "service_selection": "Identificar el servicio del catálogo",
-            "stylist_selection": "Preguntar preferencia de estilista (número, nombre o 'sin preferencia')",
-            "datetime_selection": "Buscar disponibilidad con check_availability",
-            "name_collection": "Pedir nombre del cliente",
-            "notes_collection": "Preguntar si hay algo que tener en cuenta para la cita",
-            "confirmation": "Mostrar resumen y pedir confirmación",
-        }
         step = mode_context.get("booking_step", "service_selection")
-        next_action = _STEP_ACTIONS.get(step, "")
+
+        # Override next_action for "algo más?" sub-step
+        if step == "service_selection" and mode_context.get("last_services") and not mode_context.get("add_more_asked"):
+            next_action = "AHORA: preguntá al cliente '¿Querés añadir algo más a la cita?' NO avances al siguiente paso hasta que responda."
+        else:
+            _STEP_ACTIONS = {
+                "service_selection": "Identificar el servicio del catálogo",
+                "stylist_selection": "Preguntar preferencia de estilista (número, nombre o 'sin preferencia')",
+                "datetime_selection": "Preguntá qué día le viene bien al cliente",
+                "name_collection": "Pedir nombre del cliente",
+                "notes_collection": "Preguntar si hay algo que tener en cuenta para la cita",
+                "confirmation": "Mostrar resumen y pedir confirmación",
+            }
+            next_action = _STEP_ACTIONS.get(step, "")
         parts.append(f"<current_step>{step}</current_step>")
         parts.append(f"<next_action>{next_action}</next_action>")
 
@@ -800,13 +829,10 @@ class BookingModeNode(BaseModeNode):
 
         last_services = mode_context.get("last_services") or []
         if last_services:
-            total_dur = mode_context.get("last_total_duration_minutes")
             if len(last_services) == 1:
-                dur_str = f" ({total_dur}min)" if total_dur else ""
-                lines.append(f"✅ Servicio: {last_services[0]}{dur_str}")
+                lines.append(f"✅ Servicio: {last_services[0]}")
             else:
-                dur_str = f" ({total_dur}min total)" if total_dur else ""
-                lines.append(f"✅ Servicios: {', '.join(last_services)}{dur_str}")
+                lines.append(f"✅ Servicios: {', '.join(last_services)}")
 
         last_stylist = mode_context.get("last_stylist")
         if last_stylist:
@@ -839,8 +865,10 @@ class BookingModeNode(BaseModeNode):
         last_services = mode_context.get("last_services") or []
         if not last_services:
             missing.append("❌ Servicio: pendiente")
+        elif not mode_context.get("add_more_asked"):
+            missing.append("⏳ ¿Algo más?: pregunta pendiente")
 
-        if last_services and not mode_context.get("last_stylist"):
+        if last_services and mode_context.get("add_more_asked") and not mode_context.get("last_stylist"):
             missing.append("❌ Estilista: pendiente")
 
         selected_slot = mode_context.get("selected_slot")
@@ -882,6 +910,15 @@ class BookingModeNode(BaseModeNode):
         user_message = get_last_user_message(state).strip()
         if not user_message:
             return
+
+        # "¿Algo más?" decline detection at service_selection when services exist
+        step = self._compute_step(mode_context)
+        last_services = mode_context.get("last_services") or []
+        if step == "service_selection" and last_services and not mode_context.get("add_more_asked"):
+            if _DECLINE_MORE_PATTERN.match(user_message.strip()):
+                mode_context["add_more_asked"] = True
+                logger.info("_resolve_pending_selection: add_more declined from %r", user_message)
+                return
 
         # "Sin preferencia" recognition: detect no-preference phrases and set the flag
         # so the LLM sees it in dynamic context without needing to re-parse.
