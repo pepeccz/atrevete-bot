@@ -286,6 +286,15 @@ class BookingModeNode(BaseModeNode):
         # 1. Resolve digit selection: map bare digit user reply → selected_slot
         self._resolve_digit_selection(state, booking_context)
 
+        # 1a. Ensure opening_booking_request is set for disambiguation.
+        # The router only sets it on first-interaction→BOOKING transitions.
+        # For returning customers or re-entries, populate it from the user message
+        # so _detect_disambiguation_needs() can fire.
+        if not booking_context.get("opening_booking_request") and not booking_context.get("last_services"):
+            user_msg = get_last_user_message(state).strip()
+            if user_msg:
+                booking_context["opening_booking_request"] = user_msg
+
         # 1b. Pre-load stylist names by category for dynamic context
         self._cached_stylists_by_category = await self._load_stylists_by_category()
 
