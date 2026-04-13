@@ -81,14 +81,6 @@ class BookingStateExtraction(BaseModel):
         default=False,
         description="True if the client explicitly said they don't need notes (e.g., 'no', 'nada').",
     )
-    wants_to_exit: bool = Field(
-        default=False,
-        description=(
-            "True if the client wants to abandon the booking entirely "
-            "(e.g., 'dejalo', 'no quiero reservar', 'olvidalo', 'mejor no'). "
-            "False if they're continuing the booking process."
-        ),
-    )
 
 
 # ============================================================================
@@ -262,6 +254,11 @@ _NO_PREFERENCE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_DECLINE_MORE_PATTERN = re.compile(
+    r"^(?:no|nada|nada\s+m[aá]s|solo\s+eso|ya\s+est[aá]|no\s+gracias|eso\s+es\s+todo|con\s+eso)$",
+    re.IGNORECASE,
+)
+
 
 def _is_spanish_affirmative(text: str) -> bool:
     """Return True if text is a bare Spanish affirmative (e.g. 'sí', 'dale', 'ok')."""
@@ -378,42 +375,7 @@ class BookingModeNode(BaseModeNode):
         # 1. Resolve pending selection: map numbered/text user reply → last_services/last_stylist/selected_slot
         self._resolve_pending_selection(state, booking_context)
 
-        # 1b. Pre-loop state extraction — detect user intent signals (decline, skip, etc.)
-        #     via structured LLM call BEFORE computing step and building dynamic context.
-        extraction = await self._extract_booking_state(state, booking_context)
-        if extraction is not None:
-            if extraction.resolved_services and not booking_context.get("last_services"):
-                booking_context["last_services"] = extraction.resolved_services
-            if extraction.add_more_declined and not booking_context.get("add_more_asked"):
-                booking_context["add_more_asked"] = True
-            if extraction.stylist_preference and not booking_context.get("last_stylist"):
-                booking_context["last_stylist"] = extraction.stylist_preference
-                if extraction.stylist_preference.lower() in ("sin preferencia",):
-                    booking_context["no_preference_stylist"] = True
-            if extraction.customer_name and not booking_context.get("customer_name"):
-                booking_context["customer_name"] = extraction.customer_name
-            if extraction.notes_declined and not booking_context.get("notes_asked"):
-                booking_context["notes_asked"] = True
-                booking_context["notes"] = None
-            elif extraction.notes and not booking_context.get("notes_asked"):
-                booking_context["notes_asked"] = True
-                booking_context["notes"] = extraction.notes
-
-            # Exit detection — user wants to abandon booking
-            if extraction.wants_to_exit:
-                logger.info("BookingModeNode: user wants to exit booking (extraction)")
-                return {
-                    **transition_mode(state, "GENERAL"),
-                    **add_message(
-                        state,
-                        "assistant",
-                        "Vale, sin problema 😊 Si necesitas algo más, aquí estoy.",
-                    ),
-                    "last_node": "booking",
-                    "user_message": None,
-                }
-
-        # 1c. Compute booking step (idempotent — re-evaluated each turn after extraction + resolution)
+        # 1c. Compute booking step (idempotent — re-evaluated each turn after resolution)
         booking_context["booking_step"] = self._compute_step(booking_context)
 
         # 1b. Pre-load stylist names by category for dynamic context (P3 — stylist list)
@@ -452,6 +414,28 @@ class BookingModeNode(BaseModeNode):
         result = await self._run_agentic_loop(
             messages, tools=self.get_tools(), tool_choice=tool_choice
         )
+
+        # 5b. Passive state extraction — sync state machine with LLM decisions
+        extraction = await self._extract_booking_state(state, booking_context)
+        if extraction is not None:
+            if extraction.resolved_services and not booking_context.get("last_services"):
+                booking_context["last_services"] = extraction.resolved_services
+            if extraction.add_more_declined and not booking_context.get("add_more_asked"):
+                booking_context["add_more_asked"] = True
+            if extraction.stylist_preference and not booking_context.get("last_stylist"):
+                booking_context["last_stylist"] = extraction.stylist_preference
+                if extraction.stylist_preference.lower() in ("sin preferencia",):
+                    booking_context["no_preference_stylist"] = True
+            if extraction.customer_name and not booking_context.get("customer_name"):
+                booking_context["customer_name"] = extraction.customer_name
+            if extraction.notes_declined and not booking_context.get("notes_asked"):
+                booking_context["notes_asked"] = True
+                booking_context["notes"] = None
+            elif extraction.notes and not booking_context.get("notes_asked"):
+                booking_context["notes_asked"] = True
+                booking_context["notes"] = extraction.notes
+            # Re-compute step with fresh data
+            booking_context["booking_step"] = self._compute_step(booking_context)
 
         # 6. Build response (LLM-generated text via _sanitize_response)
         response_text = self._build_response(result, booking_context)
@@ -1064,6 +1048,15 @@ class BookingModeNode(BaseModeNode):
         if not user_message:
             return
 
+        # "¿Algo más?" decline detection at service_selection when services exist
+        step = self._compute_step(mode_context)
+        last_services = mode_context.get("last_services") or []
+        if step == "service_selection" and last_services and not mode_context.get("add_more_asked"):
+            if _DECLINE_MORE_PATTERN.match(user_message.strip()):
+                mode_context["add_more_asked"] = True
+                logger.info("_resolve_pending_selection: add_more declined from %r", user_message)
+                return
+
         # "Sin preferencia" recognition: detect no-preference phrases and set the flag
         # so the LLM sees it in dynamic context without needing to re-parse.
         if _NO_PREFERENCE_PATTERNS.search(user_message) and not mode_context.get("last_stylist"):
@@ -1071,6 +1064,22 @@ class BookingModeNode(BaseModeNode):
             mode_context["last_stylist"] = "Sin preferencia"
             logger.info("_resolve_pending_selection: no-preference detected from %r", user_message)
             return  # No further resolution needed for stylists
+
+        # Notes skip logic: detect negative responses at the notes_collection step
+        # "no", "nada", "ninguna", "sin notas" → mark step done, notes stays None
+        _NOTES_SKIP_PATTERNS = re.compile(
+            r"^(?:no|nada|ninguna|sin\s+notas?|no\s+hay\s+nada|no\s+tengo\s+nada)$",
+            re.IGNORECASE,
+        )
+        if mode_context.get("booking_step") == "notes_collection" and _NOTES_SKIP_PATTERNS.match(
+            user_message.strip()
+        ):
+            mode_context["notes_asked"] = True
+            mode_context["notes"] = None
+            logger.info(
+                "_resolve_pending_selection: notes skipped (negative response: %r)", user_message
+            )
+            return
 
         # Slot acceptance transition: offered_slots + digit/time/ordinal/affirmative → selected_slot
         # Covers the deterministic state transition:

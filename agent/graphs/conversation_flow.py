@@ -230,6 +230,24 @@ def _is_booking_related_query(user_message: str) -> bool:
     return any(term in msg_lower for term in BOOKING_RELATED_TERMS)
 
 
+# Phrases that explicitly signal the user wants to LEAVE booking mode
+_BOOKING_EXIT_PHRASES = {
+    "salir",
+    "otra cosa",
+    "dejalo",
+    "dejémoslo",
+    "no quiero reservar",
+    "olvidalo",
+}
+
+
+def _wants_to_exit_booking(message: str) -> bool:
+    """Check if the user explicitly wants to leave the booking flow."""
+    if not message:
+        return False
+    msg_lower = message.lower()
+    return any(phrase in msg_lower for phrase in _BOOKING_EXIT_PHRASES)
+
 
 def _normalize_handoff_text(value: str) -> str:
     import unicodedata
@@ -506,8 +524,7 @@ def _resolve_booking_ask_info(state: ConversationState, intent_result: Any) -> s
         or booking_ctx.get("offered_slots")
         or booking_ctx.get("selected_slot")
     )
-    if has_active:
-        # Exit detection is handled inside BookingModeNode via LLM extraction
+    if has_active and not _wants_to_exit_booking(user_message):
         return "BOOKING"
     return "GENERAL"
 
