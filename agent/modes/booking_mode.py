@@ -382,17 +382,24 @@ class BookingModeNode(BaseModeNode):
         #     via structured LLM call BEFORE computing step and building dynamic context.
         extraction = await self._extract_booking_state(state, booking_context)
         if extraction is not None:
-            if extraction.resolved_services and not booking_context.get("last_services"):
-                booking_context["last_services"] = extraction.resolved_services
+            # Pre-loop extraction merge — ONLY fill fields relevant to the current
+            # flow position. The extraction was originally a post-loop safety net;
+            # running it pre-loop requires guards to prevent premature state advancement.
+            #
+            # resolved_services: NEVER from extraction — tools (search_services /
+            # check_availability) handle service resolution with disambiguation.
+            # The extraction can't know about the disambiguation table.
+            #
+            # add_more_declined / notes_declined / wants_to_exit: ALWAYS — these are
+            # user intent signals that the extraction detects better than regex.
             if extraction.add_more_declined and not booking_context.get("add_more_asked"):
                 booking_context["add_more_asked"] = True
             if extraction.stylist_preference and not booking_context.get("last_stylist"):
-                booking_context["last_stylist"] = extraction.stylist_preference
-                if extraction.stylist_preference.lower() in ("sin preferencia",):
-                    booking_context["no_preference_stylist"] = True
-            # Only accept customer_name from extraction if the flow has reached
-            # name_collection step — prevents the LLM from eagerly inferring a name
-            # before the bot has asked for it.
+                # Only accept stylist preference if services are already resolved
+                if booking_context.get("last_services") and booking_context.get("add_more_asked"):
+                    booking_context["last_stylist"] = extraction.stylist_preference
+                    if extraction.stylist_preference.lower() in ("sin preferencia",):
+                        booking_context["no_preference_stylist"] = True
             if (
                 extraction.customer_name
                 and not booking_context.get("customer_name")
@@ -400,9 +407,15 @@ class BookingModeNode(BaseModeNode):
             ):
                 booking_context["customer_name"] = extraction.customer_name
             if extraction.notes_declined and not booking_context.get("notes_asked"):
-                booking_context["notes_asked"] = True
-                booking_context["notes"] = None
-            elif extraction.notes and not booking_context.get("notes_asked"):
+                # Only accept notes decline if we're actually at the notes step
+                if booking_context.get("customer_name"):
+                    booking_context["notes_asked"] = True
+                    booking_context["notes"] = None
+            elif (
+                extraction.notes
+                and not booking_context.get("notes_asked")
+                and booking_context.get("customer_name")
+            ):
                 booking_context["notes_asked"] = True
                 booking_context["notes"] = extraction.notes
 
