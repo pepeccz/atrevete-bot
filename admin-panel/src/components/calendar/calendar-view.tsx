@@ -30,6 +30,8 @@ import { CalendarLegend } from "./calendar-legend";
 import { useCalendarState } from "./use-calendar-state";
 import { AppointmentPopover, type PopoverAppointmentData } from "./appointment-popover";
 import { SelectActionDialog } from "./select-action-dialog";
+import { AppointmentWizard } from "@/app/(authenticated)/appointments/components/wizard/appointment-wizard";
+import type { Service, Customer, Stylist as FullStylist } from "@/lib/types";
 
 interface CalendarEvent {
   id: string;
@@ -162,6 +164,33 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     anchorEl: HTMLElement | null;
     data: PopoverAppointmentData | null;
   }>({ open: false, anchorEl: null, data: null });
+
+  // Appointment Wizard state (for "Nueva Cita" button)
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [wizardServices, setWizardServices] = useState<Service[]>([]);
+  const [wizardCustomers, setWizardCustomers] = useState<Customer[]>([]);
+
+  const loadWizardData = useCallback(async () => {
+    try {
+      const [servicesRes, customersRes] = await Promise.all([
+        api.list<Service>("services", { is_active: true, page_size: 200 }),
+        api.list<Customer>("customers", { page_size: 500 }),
+      ]);
+      setWizardServices(servicesRes.items);
+      setWizardCustomers(customersRes.items);
+    } catch (error) {
+      console.error("Error loading wizard data:", error);
+    }
+  }, []);
+
+  const refreshWizardCustomers = useCallback(async () => {
+    try {
+      const res = await api.list<Customer>("customers", { page_size: 500 });
+      setWizardCustomers(res.items);
+    } catch (error) {
+      console.error("Error refreshing customers:", error);
+    }
+  }, []);
 
   // Generate darker border color from background color
   const getDarkerColor = (hex: string): string => {
@@ -588,9 +617,10 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     setIsBlockingModalOpen(true);
   };
 
-  // Handle creating appointment - redirect to wizard
-  const handleCreateAppointment = () => {
-    router.push('/appointments?new=true');
+  // Handle creating appointment - open wizard modal
+  const handleCreateAppointment = async () => {
+    await loadWizardData();
+    setIsWizardOpen(true);
   };
 
   // Handle event creation success
@@ -858,6 +888,17 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         }}
         exceptionCount={exceptionsInfo?.exception_count || 0}
         onConfirm={handleExceptionDialogConfirm}
+      />
+
+      {/* Appointment Wizard (from "Nueva Cita" button) */}
+      <AppointmentWizard
+        open={isWizardOpen}
+        onOpenChange={setIsWizardOpen}
+        onSuccess={handleEventCreated}
+        services={wizardServices}
+        stylists={stylists as unknown as FullStylist[]}
+        customers={wizardCustomers}
+        refreshCustomers={refreshWizardCustomers}
       />
 
       {/* Appointment Popover (CAL-06) */}

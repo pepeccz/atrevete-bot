@@ -70,6 +70,7 @@ export function CreateAppointmentModal({
   const [services, setServices] = useState<Service[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [serviceSearch, setServiceSearch] = useState("");
 
   // Form state
   const [selectedCustomer, setSelectedCustomer] = useState<string>("");
@@ -187,6 +188,7 @@ export function CreateAppointmentModal({
       setSelectedCustomer("");
       setSelectedServices([]);
       setActiveStylistId(stylistId);
+      setServiceSearch("");
       setFirstName("");
       setLastName("");
       setNotes("");
@@ -280,8 +282,16 @@ export function CreateAppointmentModal({
           {/* Services Multi-Select */}
           <div className="space-y-2">
             <Label>Servicios * (Duración total: {totalDuration} min)</Label>
+            <Input
+              type="text"
+              placeholder="Buscar servicio..."
+              value={serviceSearch}
+              onChange={(e) => setServiceSearch(e.target.value)}
+            />
             <div className="border rounded-md p-2 max-h-40 overflow-y-auto space-y-1">
-              {services.map((service) => (
+              {services.filter((s) =>
+                !serviceSearch || s.name.toLowerCase().includes(serviceSearch.toLowerCase())
+              ).map((service) => (
                 <label
                   key={service.id}
                   className="flex items-center space-x-2 p-1 hover:bg-accent rounded cursor-pointer"
