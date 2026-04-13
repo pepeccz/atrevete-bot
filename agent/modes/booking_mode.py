@@ -324,6 +324,16 @@ class BookingModeNode(BaseModeNode):
         if _hints.get("preferred_date_hint") and not booking_context.get("preferred_date_hint"):
             booking_context["preferred_date_hint"] = _hints["preferred_date_hint"]
 
+        # Absorb opening_booking_request + audience hint from mode_context (router handoff)
+        if mode_context.get("opening_booking_request") and not booking_context.get(
+            "opening_booking_request"
+        ):
+            booking_context["opening_booking_request"] = mode_context["opening_booking_request"]
+        if mode_context.get("service_audience_hint") and not booking_context.get(
+            "service_audience_hint"
+        ):
+            booking_context["service_audience_hint"] = mode_context["service_audience_hint"]
+
         # 1. Resolve pending selection: map numbered/text user reply → last_services/last_stylist/selected_slot
         self._resolve_pending_selection(state, booking_context)
 
