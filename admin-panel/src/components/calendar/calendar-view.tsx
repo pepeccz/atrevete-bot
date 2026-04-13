@@ -29,6 +29,7 @@ import { CalendarFilters } from "./calendar-filters";
 import { CalendarLegend } from "./calendar-legend";
 import { useCalendarState } from "./use-calendar-state";
 import { AppointmentPopover, type PopoverAppointmentData } from "./appointment-popover";
+import { SelectActionDialog } from "./select-action-dialog";
 
 interface CalendarEvent {
   id: string;
@@ -150,6 +151,10 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   } | null>(null);
   const [pendingEditScope, setPendingEditScope] = useState<SeriesEditScope | null>(null);
   const [pendingOverwriteExceptions, setPendingOverwriteExceptions] = useState<boolean>(false);
+
+  // Action selection dialog state (drag-select: cita vs bloqueo)
+  const [isActionDialogOpen, setIsActionDialogOpen] = useState(false);
+  const [pendingSelectInfo, setPendingSelectInfo] = useState<{ start: Date; end: Date } | null>(null);
 
   // Appointment popover state (CAL-06)
   const [popoverState, setPopoverState] = useState<{
@@ -531,7 +536,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     setIsAppointmentModalOpen(true);
   };
 
-  // Handle drag-select — opens CreateAppointmentModal with start+end pre-filled
+  // Handle drag-select — shows action choice dialog (cita vs bloqueo)
   const handleSelect = (info: { start: Date; end: Date; allDay: boolean }) => {
     if (info.allDay) return;
     if (selectedStylistIds.length === 0) {
@@ -539,11 +544,31 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       return;
     }
 
-    setSelectedDateForModal(info.start);
-    setSelectedStartTimeForModal(info.start);
-    setSelectedEndTimeForModal(info.end);
+    setPendingSelectInfo({ start: info.start, end: info.end });
+    setIsActionDialogOpen(true);
+  };
+
+  // Action dialog handlers
+  const handleSelectAppointment = () => {
+    if (!pendingSelectInfo) return;
+    setSelectedDateForModal(pendingSelectInfo.start);
+    setSelectedStartTimeForModal(pendingSelectInfo.start);
+    setSelectedEndTimeForModal(pendingSelectInfo.end);
     setSelectedStylistForAppointmentModal(selectedStylistIds[0]);
     setIsAppointmentModalOpen(true);
+    setPendingSelectInfo(null);
+  };
+
+  const handleSelectBlocking = () => {
+    if (!pendingSelectInfo) return;
+    setSelectedStylistForModal(selectedStylistIds[0]);
+    setSelectedDate(pendingSelectInfo.start);
+    setSelectedStartTime(pendingSelectInfo.start);
+    setSelectedEndTime(pendingSelectInfo.end);
+    setBlockingModalMode("create");
+    setEditingBlockingEvent(null);
+    setIsBlockingModalOpen(true);
+    setPendingSelectInfo(null);
   };
 
   // Handle creating blocking event from button (uses current date/time)
@@ -748,6 +773,17 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         />
       </Card>
 
+      {/* Action Selection Dialog (drag-select: cita vs bloqueo) */}
+      <SelectActionDialog
+        isOpen={isActionDialogOpen}
+        onClose={() => {
+          setIsActionDialogOpen(false);
+          setPendingSelectInfo(null);
+        }}
+        onSelectAppointment={handleSelectAppointment}
+        onSelectBlocking={handleSelectBlocking}
+      />
+
       {/* Appointment Modal (from dateClick / drag-select) */}
       <CreateAppointmentModal
         isOpen={isAppointmentModalOpen}
@@ -763,6 +799,9 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         selectedStartTime={selectedStartTimeForModal}
         selectedEndTime={selectedEndTimeForModal}
         onSuccess={handleEventCreated}
+        availableStylists={stylists
+          .filter(s => selectedStylistIds.includes(s.id))
+          .map(s => ({ id: s.id, name: s.name }))}
       />
 
       {/* Blocking Event Modal (Create/Edit) */}

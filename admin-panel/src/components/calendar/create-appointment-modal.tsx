@@ -37,6 +37,11 @@ interface Service {
   duration_minutes: number;
 }
 
+interface StylistOption {
+  id: string;
+  name: string;
+}
+
 interface CreateAppointmentModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -47,6 +52,8 @@ interface CreateAppointmentModalProps {
   selectedStartTime?: Date | null;
   /** Optional pre-filled end time from calendar drag selection (unused in form but accepted for API parity). */
   selectedEndTime?: Date | null;
+  /** Available stylists to choose from. When provided, shows a stylist selector. */
+  availableStylists?: StylistOption[];
 }
 
 export function CreateAppointmentModal({
@@ -57,6 +64,7 @@ export function CreateAppointmentModal({
   onSuccess,
   selectedStartTime,
   selectedEndTime: _selectedEndTime,
+  availableStylists,
 }: CreateAppointmentModalProps) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -66,6 +74,7 @@ export function CreateAppointmentModal({
   // Form state
   const [selectedCustomer, setSelectedCustomer] = useState<string>("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
+  const [activeStylistId, setActiveStylistId] = useState(stylistId);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [notes, setNotes] = useState("");
@@ -76,6 +85,13 @@ export function CreateAppointmentModal({
   const [pendingConflicts, setPendingConflicts] = useState<OverlapConflict[]>([]);
   const [showOverlapDialog, setShowOverlapDialog] = useState(false);
   const [allowOverlap, setAllowOverlap] = useState(false);
+
+  // Sync activeStylistId when modal opens or stylistId prop changes
+  useEffect(() => {
+    if (isOpen) {
+      setActiveStylistId(stylistId);
+    }
+  }, [isOpen, stylistId]);
 
   // Load customers and services on mount
   useEffect(() => {
@@ -143,7 +159,7 @@ export function CreateAppointmentModal({
       // Check for overlaps if not already allowed
       if (!allowOverlap) {
         const overlapCheck = await api.checkOverlaps(
-          stylistId,
+          activeStylistId,
           startTimeISO,
           totalDuration
         );
@@ -158,7 +174,7 @@ export function CreateAppointmentModal({
 
       await api.create("appointments", {
         customer_id: selectedCustomer,
-        stylist_id: stylistId,
+        stylist_id: activeStylistId,
         service_ids: selectedServices,
         start_time: startTimeISO,
         first_name: firstName,
@@ -170,6 +186,7 @@ export function CreateAppointmentModal({
       // Reset form and state
       setSelectedCustomer("");
       setSelectedServices([]);
+      setActiveStylistId(stylistId);
       setFirstName("");
       setLastName("");
       setNotes("");
@@ -217,6 +234,25 @@ export function CreateAppointmentModal({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          {/* Stylist Selector */}
+          {availableStylists && availableStylists.length > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="stylist">Estilista *</Label>
+              <Select value={activeStylistId} onValueChange={setActiveStylistId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona una estilista" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableStylists.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           {/* Customer Search/Select */}
           <div className="space-y-2">
             <Label htmlFor="customer">Cliente *</Label>
