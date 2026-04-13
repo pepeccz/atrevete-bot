@@ -253,17 +253,25 @@ class GreetingMode(BaseModeNode):
             final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
             transition_update = transition_mode(state, target_mode)
 
-            # ADR-4: Inject booking handoff context into the new mode_context
-            if has_booking_content and booking_handoff:
-                new_mode_ctx = {**transition_update.get("mode_context", {}), **booking_handoff}
-                transition_update["mode_context"] = new_mode_ctx
-
-            # P4: Forward booking_hints from router (first-interaction booking) to BOOKING mode
-            booking_hints_from_router = mode_context.get("booking_hints")
-            if booking_hints_from_router and target_mode == "BOOKING":
-                new_mode_ctx = {**transition_update.get("mode_context", {})}
-                new_mode_ctx.update(booking_hints_from_router)
-                transition_update["mode_context"] = new_mode_ctx
+            # Write booking handoff data directly to booking_context (single source of truth)
+            if has_booking_content and target_mode == "BOOKING":
+                booking_ctx_update: dict = {}
+                if booking_handoff:
+                    if booking_handoff.get("opening_booking_request"):
+                        booking_ctx_update["opening_booking_request"] = booking_handoff[
+                            "opening_booking_request"
+                        ]
+                    if booking_handoff.get("service_audience_hint"):
+                        booking_ctx_update["service_audience_hint"] = booking_handoff[
+                            "service_audience_hint"
+                        ]
+                hints = mode_context.get("booking_hints") or {}
+                if hints.get("preferred_stylist_name"):
+                    booking_ctx_update["preferred_stylist_name"] = hints["preferred_stylist_name"]
+                if hints.get("preferred_date_hint"):
+                    booking_ctx_update["preferred_date_hint"] = hints["preferred_date_hint"]
+                if booking_ctx_update:
+                    transition_update["booking_context"] = booking_ctx_update
 
             updates = {
                 **transition_update,
@@ -293,17 +301,25 @@ class GreetingMode(BaseModeNode):
         final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
         transition_update = transition_mode(state, target_mode)
 
-        # ADR-4: Inject booking handoff context into the new mode_context
-        if has_booking_content and booking_handoff:
-            new_mode_ctx = {**transition_update.get("mode_context", {}), **booking_handoff}
-            transition_update["mode_context"] = new_mode_ctx
-
-        # P4: Forward booking_hints from router (first-interaction booking) to BOOKING mode
-        booking_hints_from_router = mode_context.get("booking_hints")
-        if booking_hints_from_router and target_mode == "BOOKING":
-            new_mode_ctx = {**transition_update.get("mode_context", {})}
-            new_mode_ctx.update(booking_hints_from_router)
-            transition_update["mode_context"] = new_mode_ctx
+        # Write booking handoff data directly to booking_context (single source of truth)
+        if has_booking_content and target_mode == "BOOKING":
+            booking_ctx_update: dict = {}
+            if booking_handoff:
+                if booking_handoff.get("opening_booking_request"):
+                    booking_ctx_update["opening_booking_request"] = booking_handoff[
+                        "opening_booking_request"
+                    ]
+                if booking_handoff.get("service_audience_hint"):
+                    booking_ctx_update["service_audience_hint"] = booking_handoff[
+                        "service_audience_hint"
+                    ]
+            hints = mode_context.get("booking_hints") or {}
+            if hints.get("preferred_stylist_name"):
+                booking_ctx_update["preferred_stylist_name"] = hints["preferred_stylist_name"]
+            if hints.get("preferred_date_hint"):
+                booking_ctx_update["preferred_date_hint"] = hints["preferred_date_hint"]
+            if booking_ctx_update:
+                transition_update["booking_context"] = booking_ctx_update
 
         updates = {
             **transition_update,

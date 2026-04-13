@@ -713,6 +713,12 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         handoff_ctx = _build_booking_handoff_context(user_message) if user_message else {}
 
         initial_booking_ctx: dict[str, Any] = {}
+        if handoff_ctx.get("opening_booking_request"):
+            initial_booking_ctx["opening_booking_request"] = handoff_ctx[
+                "opening_booking_request"
+            ]
+        if handoff_ctx.get("service_audience_hint"):
+            initial_booking_ctx["service_audience_hint"] = handoff_ctx["service_audience_hint"]
         if booking_hints_first.get("preferred_stylist_name"):
             initial_booking_ctx["preferred_stylist_name"] = booking_hints_first[
                 "preferred_stylist_name"
@@ -720,14 +726,8 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         if booking_hints_first.get("preferred_date_hint"):
             initial_booking_ctx["preferred_date_hint"] = booking_hints_first["preferred_date_hint"]
 
-        booking_context_for_mode = {
-            **handoff_ctx,
-            **booking_hints_first,
-            **intent_data,
-        }
-
         transition_result: dict[str, Any] = {
-            **transition_mode(state, "BOOKING", context_update=booking_context_for_mode),
+            **transition_mode(state, "BOOKING", context_update=intent_data),
             "last_node": "router",
         }
         if initial_booking_ctx:

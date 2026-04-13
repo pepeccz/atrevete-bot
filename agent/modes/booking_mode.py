@@ -317,23 +317,6 @@ class BookingModeNode(BaseModeNode):
             )
             booking_context = {}
 
-        # P4: Absorb booking hints forwarded from GREETING (first-interaction handoff)
-        _hints = mode_context.pop("booking_hints", None) or {}
-        if _hints.get("preferred_stylist_name") and not booking_context.get("preferred_stylist_name"):
-            booking_context["preferred_stylist_name"] = _hints["preferred_stylist_name"]
-        if _hints.get("preferred_date_hint") and not booking_context.get("preferred_date_hint"):
-            booking_context["preferred_date_hint"] = _hints["preferred_date_hint"]
-
-        # Absorb opening_booking_request + audience hint from mode_context (router handoff)
-        if mode_context.get("opening_booking_request") and not booking_context.get(
-            "opening_booking_request"
-        ):
-            booking_context["opening_booking_request"] = mode_context["opening_booking_request"]
-        if mode_context.get("service_audience_hint") and not booking_context.get(
-            "service_audience_hint"
-        ):
-            booking_context["service_audience_hint"] = mode_context["service_audience_hint"]
-
         # 1. Resolve pending selection: map numbered/text user reply → last_services/last_stylist/selected_slot
         self._resolve_pending_selection(state, booking_context)
 
@@ -1088,11 +1071,6 @@ class BookingModeNode(BaseModeNode):
             if state_id:
                 mode_context["customer_id"] = str(state_id)
 
-        # Propagate service_audience_hint from greeting handoff (safety net)
-        if not mode_context.get("service_audience_hint"):
-            state_hint = (state.get("mode_context") or {}).get("service_audience_hint")
-            if state_hint:
-                mode_context["service_audience_hint"] = state_hint
 
     @staticmethod
     async def _load_stylists_by_category() -> dict[str, list[str]]:

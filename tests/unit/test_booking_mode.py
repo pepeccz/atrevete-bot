@@ -881,8 +881,8 @@ async def test_greeting_mode_forwards_booking_hints_to_booking():
         result = await node.handle(state, None)
 
     # target_mode should be BOOKING (last_intent="book")
-    # mode_context in result should carry preferred_stylist_name
-    mode_ctx = result.get("mode_context") or {}
-    assert mode_ctx.get("preferred_stylist_name") == "Marta", (
-        f"booking_hints not forwarded to transition mode_context: {mode_ctx}"
+    # booking_context in result should carry preferred_stylist_name (single source of truth)
+    booking_ctx = result.get("booking_context") or {}
+    assert booking_ctx.get("preferred_stylist_name") == "Marta", (
+        f"booking_hints not forwarded to booking_context: {booking_ctx}"
     )

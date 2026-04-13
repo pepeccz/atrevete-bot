@@ -492,7 +492,7 @@ class TestGreetingModeBookingContentTransition:
     async def test_booking_handoff_context_set_when_booking_content_detected(self):
         """
         When booking content is detected and F-9 forces BOOKING transition,
-        mode_context must include opening_booking_request for the handoff.
+        booking_context must include opening_booking_request for the handoff.
         """
         mode = make_greeting_mode()
         state = create_initial_state("conv-f9-004", "+34612345678")
@@ -510,6 +510,6 @@ class TestGreetingModeBookingContentTransition:
 
         # Must transition to BOOKING
         assert result["current_mode"] == "BOOKING"
-        # opening_booking_request must be set in mode_context for BOOKING mode
-        mode_ctx = result.get("mode_context", {})
-        assert "opening_booking_request" in mode_ctx
+        # opening_booking_request must be set in booking_context (single source of truth)
+        booking_ctx = result.get("booking_context", {})
+        assert "opening_booking_request" in booking_ctx

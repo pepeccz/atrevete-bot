@@ -60,9 +60,13 @@ class BookingContext(TypedDict, total=False):
     _booking_completed: bool
 
     # Handoff hints (from router / greeting mode)
+    opening_booking_request: str | None  # original user message for disambiguation
     service_audience_hint: str | None
     preferred_stylist_name: str | None  # from router handoff hints
     preferred_date_hint: str | None
+
+    # Flow control
+    add_more_asked: bool  # True after "¿algo más?" has been answered
 
     # Extra
     notes: str | None
