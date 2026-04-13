@@ -390,7 +390,14 @@ class BookingModeNode(BaseModeNode):
                 booking_context["last_stylist"] = extraction.stylist_preference
                 if extraction.stylist_preference.lower() in ("sin preferencia",):
                     booking_context["no_preference_stylist"] = True
-            if extraction.customer_name and not booking_context.get("customer_name"):
+            # Only accept customer_name from extraction if the flow has reached
+            # name_collection step — prevents the LLM from eagerly inferring a name
+            # before the bot has asked for it.
+            if (
+                extraction.customer_name
+                and not booking_context.get("customer_name")
+                and booking_context.get("selected_slot")
+            ):
                 booking_context["customer_name"] = extraction.customer_name
             if extraction.notes_declined and not booking_context.get("notes_asked"):
                 booking_context["notes_asked"] = True
