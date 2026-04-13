@@ -35,54 +35,6 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 
-class BookingStateExtraction(BaseModel):
-    """Structured extraction of booking state from conversation.
-
-    Used by _extract_booking_state() as the response schema for a
-    with_structured_output() call. Only extracts what the CLIENT confirmed.
-    """
-
-    resolved_services: list[str] | None = Field(
-        default=None,
-        description=(
-            "Exact catalog service names the client has confirmed. "
-            "None if services are not yet resolved. "
-            "Use the exact names from the service catalog."
-        ),
-    )
-    add_more_declined: bool = Field(
-        default=False,
-        description=(
-            "True ONLY if the client explicitly said they don't want more services "
-            "(e.g., 'no', 'nada más', 'solo eso'). False if the question hasn't been asked yet."
-        ),
-    )
-    stylist_preference: str | None = Field(
-        default=None,
-        description=(
-            "Stylist name the client chose, 'Sin preferencia' if they said "
-            "'me da igual' / 'cualquiera' / 'la primera disponible', "
-            "or None if stylist preference hasn't been discussed yet."
-        ),
-    )
-    preferred_date: str | None = Field(
-        default=None,
-        description="Date the client mentioned (e.g., 'el martes', 'mañana', '2026-04-15'). None if not discussed.",
-    )
-    customer_name: str | None = Field(
-        default=None,
-        description="Client's full name if they provided it. None if not asked or not provided yet.",
-    )
-    notes: str | None = Field(
-        default=None,
-        description="Notes for the stylist if the client provided them. None if not asked yet.",
-    )
-    notes_declined: bool = Field(
-        default=False,
-        description="True if the client explicitly said they don't need notes (e.g., 'no', 'nada').",
-    )
-
-
 # ============================================================================
 # Constants
 # ============================================================================
@@ -93,33 +45,6 @@ _HISTORY_LIMIT = 8
 # Module-level helpers
 # ============================================================================
 
-_AFFIRMATIVE_PATTERN = re.compile(
-    r"^(?:s[ií]|ok|dale|vale|claro|perfecto|confirmo|correcto|exacto|"
-    r"de acuerdo|acepto|listo|hecho|va|venga)$",
-    re.IGNORECASE,
-)
-
-# Matches time expressions: "a las 11", "las 9:00", "a las 9 y media", "11:00", "a las 11:40"
-_TIME_PATTERN = re.compile(
-    r"(?:a\s+)?las?\s+(\d{1,2})(?::(\d{2})|\s+y\s+media)?|^(\d{1,2}):(\d{2})$",
-    re.IGNORECASE,
-)
-
-# Matches ordinal expressions: "la primera", "la segunda", "el último", etc.
-_ORDINAL_PATTERN = re.compile(
-    r"(?:la|el)\s+(primer[ao]?|segund[ao]|tercer[ao]?|cuart[ao]|quint[ao]|últim[ao])",
-    re.IGNORECASE,
-)
-
-# Maps ordinal stem (first 5 chars lowercased) → 0-based index (-1 means last)
-_ORDINAL_STEM_MAP: dict[str, int] = {
-    "prime": 0,
-    "segun": 1,
-    "terce": 2,
-    "cuart": 3,
-    "quint": 4,
-    "últim": -1,
-}
 
 # ============================================================================
 # Disambiguation table — deterministic mapping from service keywords to questions
@@ -247,22 +172,6 @@ def _detect_disambiguation_needs(
     return questions
 
 
-_NO_PREFERENCE_PATTERNS = re.compile(
-    r"(?:sin\s+preferencia|me\s+da\s+igual|cualquiera|no\s+tengo\s+preferencia|"
-    r"da\s+lo\s+mismo|no\s+me\s+importa|la\s+que\s+sea|el\s+que\s+sea|"
-    r"la\s+primera\s+disponible)",
-    re.IGNORECASE,
-)
-
-_DECLINE_MORE_PATTERN = re.compile(
-    r"^(?:no|nada|nada\s+m[aá]s|solo\s+eso|ya\s+est[aá]|no\s+gracias|eso\s+es\s+todo|con\s+eso)$",
-    re.IGNORECASE,
-)
-
-
-def _is_spanish_affirmative(text: str) -> bool:
-    """Return True if text is a bare Spanish affirmative (e.g. 'sí', 'dale', 'ok')."""
-    return bool(_AFFIRMATIVE_PATTERN.match(text.strip()))
 
 
 # ============================================================================
@@ -291,41 +200,43 @@ class BookingModeNode(BaseModeNode):
         return [check_availability, book]
 
     # ──────────────────────────────────────────────────────────────────────
-    # Booking step computation — pure function, idempotent
+    # Booking completeness check — GATE for book(), not a flow sequencer
     # ──────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _compute_step(ctx: dict) -> str:
-        """Return current booking step based on BookingContext fields. Pure function.
+    def _booking_complete(ctx: dict) -> tuple[bool, list[str]]:
+        """Check if all required booking fields are present.
 
-        Idempotent: re-evaluates from the current state of ctx fields.
-        Steps progress from service_selection → stylist_selection → datetime_selection
-        → name_collection → notes_collection → confirmation.
-
-        Args:
-            ctx: BookingContext dict (or any dict with the same fields).
+        This is a GATE, not a sequencer — it checks whether book() can proceed,
+        without dictating the ORDER in which data should be collected.
 
         Returns:
-            String literal representing the current booking step.
+            (is_complete, list_of_missing_field_names_in_spanish)
         """
+        missing: list[str] = []
         if not ctx.get("last_services"):
-            return "service_selection"
-        if not ctx.get("add_more_asked"):
-            return "service_selection"
-        if not ctx.get("last_stylist") and not ctx.get("no_preference_stylist"):
-            return "stylist_selection"
+            missing.append("servicio")
+        if not (ctx.get("last_stylist") or ctx.get("no_preference_stylist")):
+            missing.append("estilista")
         if not ctx.get("selected_slot"):
-            return "datetime_selection"
+            missing.append("fecha/hora")
         if not ctx.get("customer_name"):
-            return "name_collection"
+            missing.append("nombre")
         if not ctx.get("notes_asked"):
-            return "notes_collection"
-        return "confirmation"
+            missing.append("notas")
+        return (len(missing) == 0, missing)
 
     @staticmethod
-    def _compute_booking_step(mode_context: dict) -> str:
-        """Backward-compat alias — delegates to _compute_step(). Do not add new callers."""
-        return BookingModeNode._compute_step(mode_context)
+    def _build_flow_hint(ctx: dict) -> str:
+        """Build a neutral flow hint listing pending data.
+
+        Factual, not prescriptive — tells the LLM what's missing without
+        dictating the order to collect it.
+        """
+        is_complete, missing = BookingModeNode._booking_complete(ctx)
+        if is_complete:
+            return "<flow_hint>Todos los datos recogidos. Muestra resumen y pide confirmación.</flow_hint>"
+        return f"<flow_hint>Datos pendientes: {', '.join(missing)}</flow_hint>"
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -372,13 +283,10 @@ class BookingModeNode(BaseModeNode):
             )
             booking_context = {}
 
-        # 1. Resolve pending selection: map numbered/text user reply → last_services/last_stylist/selected_slot
-        self._resolve_pending_selection(state, booking_context)
+        # 1. Resolve digit selection: map bare digit user reply → selected_slot
+        self._resolve_digit_selection(state, booking_context)
 
-        # 1c. Compute booking step (idempotent — re-evaluated each turn after resolution)
-        booking_context["booking_step"] = self._compute_step(booking_context)
-
-        # 1b. Pre-load stylist names by category for dynamic context (P3 — stylist list)
+        # 1b. Pre-load stylist names by category for dynamic context
         self._cached_stylists_by_category = await self._load_stylists_by_category()
 
         # 1c. Resolve service category if services are known but category is not yet cached
@@ -414,28 +322,6 @@ class BookingModeNode(BaseModeNode):
         result = await self._run_agentic_loop(
             messages, tools=self.get_tools(), tool_choice=tool_choice
         )
-
-        # 5b. Passive state extraction — sync state machine with LLM decisions
-        extraction = await self._extract_booking_state(state, booking_context)
-        if extraction is not None:
-            if extraction.resolved_services and not booking_context.get("last_services"):
-                booking_context["last_services"] = extraction.resolved_services
-            if extraction.add_more_declined and not booking_context.get("add_more_asked"):
-                booking_context["add_more_asked"] = True
-            if extraction.stylist_preference and not booking_context.get("last_stylist"):
-                booking_context["last_stylist"] = extraction.stylist_preference
-                if extraction.stylist_preference.lower() in ("sin preferencia",):
-                    booking_context["no_preference_stylist"] = True
-            if extraction.customer_name and not booking_context.get("customer_name"):
-                booking_context["customer_name"] = extraction.customer_name
-            if extraction.notes_declined and not booking_context.get("notes_asked"):
-                booking_context["notes_asked"] = True
-                booking_context["notes"] = None
-            elif extraction.notes and not booking_context.get("notes_asked"):
-                booking_context["notes_asked"] = True
-                booking_context["notes"] = extraction.notes
-            # Re-compute step with fresh data
-            booking_context["booking_step"] = self._compute_step(booking_context)
 
         # 6. Build response (LLM-generated text via _sanitize_response)
         response_text = self._build_response(result, booking_context)
@@ -569,26 +455,19 @@ class BookingModeNode(BaseModeNode):
                         full_name,
                     )
 
-            # Step B: Confirmation gate — reject book() if not at confirmation step.
+            # Step B: Confirmation gate — reject book() if required fields are missing.
             # Runs AFTER Steps A/A.1b/A.2 so selected_slot and customer_name
             # are already persisted to mode_context even when rejected.
-            _current_step = self._compute_step(mode_context)
-            if _current_step != "confirmation":
-                _STEP_HINTS = {
-                    "service_selection": "Todavía falta elegir el servicio.",
-                    "stylist_selection": "Todavía falta elegir estilista.",
-                    "datetime_selection": "Todavía falta elegir fecha y hora.",
-                    "name_collection": "Todavía falta el nombre del cliente.",
-                    "notes_collection": "Todavía falta preguntar las notas.",
-                }
-                _hint = _STEP_HINTS.get(_current_step, "Faltan datos.")
+            is_complete, missing_fields = self._booking_complete(mode_context)
+            if not is_complete:
+                missing_hint = ", ".join(missing_fields)
                 return ToolCallRejection(
                     name="book",
                     error_code="CONFIRMATION_REQUIRED",
                     error_message=(
                         f"No puedes llamar a book() todavía. "
-                        f"Paso actual: {_current_step}. {_hint} "
-                        f"Mostrá el resumen del Paso 6 y esperá confirmación explícita."
+                        f"Faltan: {missing_hint}. "
+                        f"Recoge los datos que faltan, mostrá el resumen y esperá confirmación explícita."
                     ),
                 )
 
@@ -795,27 +674,11 @@ class BookingModeNode(BaseModeNode):
         parts.append("<ui_constraint>Nunca menciones duraciones, tiempos de servicio ni datos marcados como [INTERNO] al cliente. Son datos internos.</ui_constraint>")
         parts.append(f"<min_valid_date>{min_date_label} ({min_date.isoformat()})</min_valid_date>")
 
-        # Current booking step and next action hint
-        step = mode_context.get("booking_step", "service_selection")
+        # Flow hint — neutral factual list of pending data (not prescriptive)
+        parts.append(self._build_flow_hint(mode_context))
 
-        # Override next_action for "algo más?" sub-step
-        if step == "service_selection" and mode_context.get("last_services") and not mode_context.get("add_more_asked"):
-            next_action = "AHORA: preguntá al cliente '¿Querés añadir algo más a la cita?' NO avances al siguiente paso hasta que responda."
-        else:
-            _STEP_ACTIONS = {
-                "service_selection": "Identificar el servicio del catálogo. NO preguntes por fecha, estilista ni horario.",
-                "stylist_selection": "Preguntar preferencia de estilista (número, nombre o 'sin preferencia'). NO preguntes por fecha ni horario.",
-                "datetime_selection": "Preguntá qué día le viene bien al cliente. NO pidas nombre ni notas.",
-                "name_collection": "Pedir nombre del cliente. NO preguntes por notas aún.",
-                "notes_collection": "Preguntar si hay algo que tener en cuenta para la cita.",
-                "confirmation": "Mostrar resumen y pedir confirmación.",
-            }
-            next_action = _STEP_ACTIONS.get(step, "")
-        parts.append(f"<current_step>{step}</current_step>")
-        parts.append(f"<next_action>{next_action}</next_action>")
-
-        # P3: Available stylists at stylist_selection step
-        if step == "stylist_selection":
+        # Available stylists — shown whenever services are known and stylist not yet chosen
+        if mode_context.get("last_services") and not mode_context.get("last_stylist"):
             stylist_names = self._get_stylists_for_services(mode_context)
             if stylist_names:
                 numbered = "\n".join(f"{i + 1}. {name}" for i, name in enumerate(stylist_names))
@@ -841,7 +704,7 @@ class BookingModeNode(BaseModeNode):
 
         # Opening booking request — deterministic disambiguation
         opening_request = mode_context.get("opening_booking_request")
-        if opening_request and step == "service_selection":
+        if opening_request and not mode_context.get("last_services"):
             parts.append(
                 f"<opening_booking_request>{opening_request}</opening_booking_request>"
             )
@@ -861,10 +724,6 @@ class BookingModeNode(BaseModeNode):
         collected = self._build_collected_summary(mode_context)
         if collected:
             parts.append(f"<collected_data>\n{collected}\n</collected_data>")
-
-        missing = self._build_missing_summary(mode_context)
-        if missing:
-            parts.append(f"<missing_data>\n{missing}\n</missing_data>")
 
         offered_slots = mode_context.get("offered_slots") or []
         if offered_slots:
@@ -928,119 +787,16 @@ class BookingModeNode(BaseModeNode):
 
         return "\n".join(lines) if lines else "(ningún dato recogido todavía)"
 
-    def _build_missing_summary(self, mode_context: dict) -> str:
-        """Build missing_data summary from flat mode_context dict."""
-        missing: list[str] = []
-
-        last_services = mode_context.get("last_services") or []
-        if not last_services:
-            missing.append("❌ Servicio: pendiente")
-        elif not mode_context.get("add_more_asked"):
-            missing.append("⏳ ¿Algo más?: pregunta pendiente")
-
-        if last_services and mode_context.get("add_more_asked") and not mode_context.get("last_stylist"):
-            missing.append("❌ Estilista: pendiente")
-
-        selected_slot = mode_context.get("selected_slot")
-        offered_slots = mode_context.get("offered_slots") or []
-        if selected_slot is None:
-            if offered_slots:
-                missing.append("⏳ Horario: elige uno de los ofrecidos")
-            else:
-                missing.append("❌ Fecha/hora: pendiente")
-
-        service_known = bool(last_services)
-        if (
-            not mode_context.get("customer_name")
-            and service_known
-            and mode_context.get("last_stylist")
-            and selected_slot is not None
-        ):
-            missing.append("❌ Nombre: pendiente")
-
-        return "\n".join(missing)
-
     # ──────────────────────────────────────────────────────────────────────
-    # Passive state extraction — sync state machine with LLM decisions
+    # Digit slot selection — deterministic fast-path
     # ──────────────────────────────────────────────────────────────────────
 
-    async def _extract_booking_state(
-        self, state: ConversationState, booking_context: dict
-    ) -> BookingStateExtraction | None:
-        """Run a structured extraction pass to sync state with LLM decisions.
+    def _resolve_digit_selection(self, state: ConversationState, mode_context: dict) -> None:
+        """Resolve bare digit slot selection — deterministic fast-path only.
 
-        Uses a second LLM call with with_structured_output() to extract
-        what the client confirmed in the conversation. Cheap (~200 tokens).
-
-        Returns None on error (extraction is best-effort, never blocks the flow).
-        """
-        if self.llm is None:
-            return None
-
-        messages = state.get("messages") or []
-        recent = messages[-_HISTORY_LIMIT:]
-        if not recent:
-            return None
-
-        # Current state summary so the extractor knows what's already confirmed
-        summary_parts = []
-        if booking_context.get("last_services"):
-            summary_parts.append(f"Servicios confirmados: {booking_context['last_services']}")
-        if booking_context.get("add_more_asked"):
-            summary_parts.append("Cliente confirmó que no quiere más servicios.")
-        if booking_context.get("last_stylist"):
-            summary_parts.append(f"Estilista: {booking_context['last_stylist']}")
-        if booking_context.get("selected_slot"):
-            slot = booking_context["selected_slot"]
-            summary_parts.append(f"Horario: {slot.get('date', '?')} a las {slot.get('time', '?')}")
-        if booking_context.get("customer_name"):
-            summary_parts.append(f"Nombre: {booking_context['customer_name']}")
-        if booking_context.get("notes_asked"):
-            summary_parts.append(f"Notas: {booking_context.get('notes') or '(sin notas)'}")
-        state_summary = "\n".join(summary_parts) if summary_parts else "Ningún dato confirmado aún."
-
-        # Build conversation text
-        conv_lines = []
-        for msg in recent:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            if content:
-                label = "Cliente" if role == "user" else "Maite"
-                conv_lines.append(f"{label}: {content}")
-        conv_text = "\n".join(conv_lines)
-
-        extraction_prompt = (
-            "Eres un extractor de datos de una conversación de reserva de peluquería.\n"
-            "Extrae SOLO lo que el CLIENTE ha confirmado explícitamente. "
-            "NO inferir ni asumir datos que no se hayan dicho.\n"
-            "Si un dato no se ha discutido aún, déjalo como null/None.\n\n"
-            f"Estado actual conocido:\n{state_summary}\n\n"
-            f"Conversación reciente:\n{conv_text}\n\n"
-            "Extrae el estado de la reserva."
-        )
-
-        try:
-            extractor = self.llm.with_structured_output(BookingStateExtraction)
-            result = await extractor.ainvoke([{"role": "user", "content": extraction_prompt}])
-            return result
-        except Exception:
-            logger.warning("_extract_booking_state: extraction failed", exc_info=True)
-            return None
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Pending selection helpers (Tasks 2.1 / 2.2)
-    # ──────────────────────────────────────────────────────────────────────
-
-    def _resolve_pending_selection(self, state: ConversationState, mode_context: dict) -> None:
-        """Resolve deterministic state-machine transitions from user input.
-
-        Handles only what the LLM cannot do deterministically:
-        - "Sin preferencia" detection → sets no_preference_stylist flag
-        - Notes skip detection → marks notes_asked at notes_collection step
-        - Slot acceptance: digit/time/ordinal/affirmative against offered_slots
-
-        Service and stylist selection from numbered lists is handled by the LLM,
-        which can read its own conversation history.
+        When the user sends a single digit (e.g., "2") and offered_slots exist,
+        maps it to the corresponding slot. All other natural language parsing
+        (times, ordinals, affirmatives, declines) is handled by the LLM.
 
         Called at the top of handle(), BEFORE the agentic loop.
         """
@@ -1048,127 +804,24 @@ class BookingModeNode(BaseModeNode):
         if not user_message:
             return
 
-        # "¿Algo más?" decline detection at service_selection when services exist
-        step = self._compute_step(mode_context)
-        last_services = mode_context.get("last_services") or []
-        if step == "service_selection" and last_services and not mode_context.get("add_more_asked"):
-            if _DECLINE_MORE_PATTERN.match(user_message.strip()):
-                mode_context["add_more_asked"] = True
-                logger.info("_resolve_pending_selection: add_more declined from %r", user_message)
-                return
-
-        # "Sin preferencia" recognition: detect no-preference phrases and set the flag
-        # so the LLM sees it in dynamic context without needing to re-parse.
-        if _NO_PREFERENCE_PATTERNS.search(user_message) and not mode_context.get("last_stylist"):
-            mode_context["no_preference_stylist"] = True
-            mode_context["last_stylist"] = "Sin preferencia"
-            logger.info("_resolve_pending_selection: no-preference detected from %r", user_message)
-            return  # No further resolution needed for stylists
-
-        # Notes skip logic: detect negative responses at the notes_collection step
-        # "no", "nada", "ninguna", "sin notas" → mark step done, notes stays None
-        _NOTES_SKIP_PATTERNS = re.compile(
-            r"^(?:no|nada|ninguna|sin\s+notas?|no\s+hay\s+nada|no\s+tengo\s+nada)$",
-            re.IGNORECASE,
-        )
-        if mode_context.get("booking_step") == "notes_collection" and _NOTES_SKIP_PATTERNS.match(
-            user_message.strip()
-        ):
-            mode_context["notes_asked"] = True
-            mode_context["notes"] = None
-            logger.info(
-                "_resolve_pending_selection: notes skipped (negative response: %r)", user_message
-            )
+        offered_slots: list[dict] = mode_context.get("offered_slots") or []
+        if not offered_slots or mode_context.get("selected_slot"):
             return
 
-        # Slot acceptance transition: offered_slots + digit/time/ordinal/affirmative → selected_slot
-        # Covers the deterministic state transition:
-        #   bot proposes slots → user says "2", "a las 11", "la primera", "Sí" → selected_slot set
-        offered_slots: list[dict] = mode_context.get("offered_slots") or []
-        if offered_slots and not mode_context.get("selected_slot"):
-            slot_resolved: dict | None = None
-            msg_lower = user_message.strip().lower()
-
-            # 1. Try bare digit (1-indexed)
-            try:
-                digit = int(user_message.strip())
-                if 1 <= digit <= len(offered_slots):
-                    slot_resolved = offered_slots[digit - 1]
-                    logger.info(
-                        "_resolve_pending_selection: slot resolved by digit %d → %r",
-                        digit,
-                        slot_resolved,
-                    )
-            except (ValueError, TypeError):
-                pass
-
-            # 2. Try time pattern ("a las 11", "las 9:00", "11:00", "a las 9 y media")
-            if slot_resolved is None:
-                time_match = _TIME_PATTERN.search(user_message)
-                if time_match:
-                    # Group layout: (1,2) from "las N[:MM]", (3,4) from "^HH:MM$"
-                    raw_hour = time_match.group(1) or time_match.group(3)
-                    raw_minute = time_match.group(2) or time_match.group(4)
-                    if raw_hour is not None:
-                        hour = int(raw_hour)
-                        if raw_minute is not None:
-                            minute = int(raw_minute)
-                        elif "media" in msg_lower:
-                            minute = 30
-                        else:
-                            minute = 0
-                        target_time = f"{hour:02d}:{minute:02d}"
-                        matches = [s for s in offered_slots if s.get("time", "") == target_time]
-                        if len(matches) == 1:
-                            slot_resolved = matches[0]
-                            logger.info(
-                                "_resolve_pending_selection: slot resolved by time %r → %r",
-                                target_time,
-                                slot_resolved,
-                            )
-                        # 0 matches or ambiguous → fall through (LLM handles it)
-
-            # 3. Try ordinal ("la primera", "el último", "la segunda", etc.)
-            if slot_resolved is None:
-                ordinal_match = _ORDINAL_PATTERN.search(user_message)
-                if ordinal_match:
-                    stem = ordinal_match.group(1)[:5].lower()
-                    idx = _ORDINAL_STEM_MAP.get(stem)
-                    if idx is not None:
-                        # Normalize -1 to actual last index
-                        resolved_idx = idx if idx >= 0 else len(offered_slots) + idx
-                        if 0 <= resolved_idx < len(offered_slots):
-                            slot_resolved = offered_slots[resolved_idx]
-                            logger.info(
-                                "_resolve_pending_selection: slot resolved by ordinal %r (idx=%d) → %r",
-                                ordinal_match.group(1),
-                                resolved_idx,
-                                slot_resolved,
-                            )
-
-            # 4. Try affirmative ("Sí", "Dale", "Ok") → only when exactly one slot offered
-            if (
-                slot_resolved is None
-                and len(offered_slots) == 1
-                and _is_spanish_affirmative(user_message)
-            ):
-                slot_resolved = offered_slots[0]
-                logger.info(
-                    "_resolve_pending_selection: slot resolved by affirmative %r → slot[0]=%r",
-                    user_message,
-                    slot_resolved,
-                )
-
-            if slot_resolved is not None:
+        try:
+            digit = int(user_message.strip())
+            if 1 <= digit <= len(offered_slots):
+                slot_resolved = offered_slots[digit - 1]
                 mode_context["selected_slot"] = slot_resolved
-                mode_context["booking_step"] = "confirmation"
-                # Also update last_stylist from slot if not already set
                 if not mode_context.get("last_stylist") and slot_resolved.get("stylist_name"):
                     mode_context["last_stylist"] = slot_resolved["stylist_name"]
                 logger.info(
-                    "_resolve_pending_selection: selected_slot=%r, booking_step→confirmation",
+                    "_resolve_digit_selection: slot resolved by digit %d → %r",
+                    digit,
                     slot_resolved,
                 )
+        except (ValueError, TypeError):
+            pass
 
     # ──────────────────────────────────────────────────────────────────────
     # Mid-loop dynamic context refresh
