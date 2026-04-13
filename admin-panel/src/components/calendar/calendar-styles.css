@@ -1,0 +1,6 @@
+/* Status border indicators — appointment events only */
+.fc-event.cal-status-confirmed { border-left: 4px solid #16a34a !important; }
+.fc-event.cal-status-pending   { border-left: 4px solid #d97706 !important; }
+.fc-event.cal-status-cancelled { border-left: 4px solid #dc2626 !important; opacity: 0.65; }
+.fc-event.cal-status-completed { border-left: 4px solid #6b7280 !important; opacity: 0.65; }
+.fc-event.cal-status-no_show   { border-left: 4px solid #7f1d1d !important; opacity: 0.65; }

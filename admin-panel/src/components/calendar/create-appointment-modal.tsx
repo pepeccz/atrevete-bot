@@ -43,6 +43,10 @@ interface CreateAppointmentModalProps {
   stylistId: string;
   selectedDate: Date | null;
   onSuccess: () => void;
+  /** Optional pre-filled start time from calendar drag/click. */
+  selectedStartTime?: Date | null;
+  /** Optional pre-filled end time from calendar drag selection (unused in form but accepted for API parity). */
+  selectedEndTime?: Date | null;
 }
 
 export function CreateAppointmentModal({
@@ -51,6 +55,8 @@ export function CreateAppointmentModal({
   stylistId,
   selectedDate,
   onSuccess,
+  selectedStartTime,
+  selectedEndTime: _selectedEndTime,
 }: CreateAppointmentModalProps) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -90,14 +96,15 @@ export function CreateAppointmentModal({
     }
   }, [isOpen]);
 
-  // Pre-fill date/time when selected
+  // Pre-fill time: prefer selectedStartTime (from drag), fall back to selectedDate (from click)
   useEffect(() => {
-    if (selectedDate) {
-      const hours = selectedDate.getHours().toString().padStart(2, "0");
-      const minutes = selectedDate.getMinutes().toString().padStart(2, "0");
+    const timeSource = selectedStartTime ?? selectedDate;
+    if (timeSource) {
+      const hours = timeSource.getHours().toString().padStart(2, "0");
+      const minutes = timeSource.getMinutes().toString().padStart(2, "0");
       setStartTime(`${hours}:${minutes}`);
     }
-  }, [selectedDate]);
+  }, [selectedDate, selectedStartTime]);
 
   const filteredCustomers = customers.filter(
     (c) =>

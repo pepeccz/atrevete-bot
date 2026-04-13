@@ -693,27 +693,15 @@ async def get_calendar_events_for_range(
                     service_result = await session.execute(
                         select(Service.name).where(Service.id.in_(appt.service_ids))
                     )
-                    service_names = ", ".join([row[0] for row in service_result.fetchall()])
+                    service_names_list = [row[0] for row in service_result.fetchall()]
+                    service_names_str = ", ".join(service_names_list)
                 else:
-                    service_names = ""
+                    service_names_list = []
+                    service_names_str = ""
 
-                # Determine emoji based on status
-                if appt.status == AppointmentStatus.PENDING:
-                    emoji = "🟡"
-                elif appt.status == AppointmentStatus.CONFIRMED:
-                    emoji = "🟢"
-                else:
-                    emoji = ""
-
-                # Build title: Emoji Name LastName - Services
-                title_parts = []
-                if emoji:
-                    title_parts.append(emoji)
+                # Build title: Name LastName - Services
                 full_name = f"{appt.first_name} {appt.last_name or ''}".strip()
-                title_parts.append(full_name)
-                if service_names:
-                    title_parts.append(f"- {service_names}")
-                title = " ".join(title_parts)
+                title = f"{full_name} - {service_names_str}" if service_names_str else full_name
 
                 events.append(
                     {
@@ -731,6 +719,8 @@ async def get_calendar_events_for_range(
                             "duration_minutes": appt.duration_minutes,
                             "notes": appt.notes,
                             "type": "appointment",
+                            "customer_name": full_name,
+                            "service_names": service_names_list,
                         },
                     }
                 )

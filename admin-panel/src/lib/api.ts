@@ -339,6 +339,8 @@ class ApiClient {
         description?: string | null;
         event_type?: string;
         type: "appointment" | "blocking_event" | "holiday";
+        customer_name?: string;
+        service_names?: string[];
       };
     }>;
     stylist_colors: Record<string, string>;

@@ -6,31 +6,29 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
+import listPlugin from "@fullcalendar/list";
 import esLocale from "@fullcalendar/core/locales/es";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { Plus, Calendar, Ban } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Plus, Calendar, Ban, Filter } from "lucide-react";
 import api from "@/lib/api";
 import { BlockingEventModal } from "./blocking-event-modal";
+import { CreateAppointmentModal } from "./create-appointment-modal";
 import { SeriesEditDialog, type SeriesEditScope } from "./series-edit-dialog";
 import { ExceptionWarningDialog } from "./exception-warning-dialog";
-
-// Color palette for stylists (8 distinct colors)
-const STYLIST_COLORS = [
-  { bg: "#7C3AED", border: "#6D28D9", name: "Violet" },
-  { bg: "#2563EB", border: "#1D4ED8", name: "Blue" },
-  { bg: "#059669", border: "#047857", name: "Emerald" },
-  { bg: "#DC2626", border: "#B91C1C", name: "Red" },
-  { bg: "#D97706", border: "#B45309", name: "Amber" },
-  { bg: "#7C2D12", border: "#6B2610", name: "Brown" },
-  { bg: "#DB2777", border: "#BE185D", name: "Pink" },
-  { bg: "#0891B2", border: "#0E7490", name: "Cyan" },
-];
-
-// Holiday color (special - no stylist)
-const HOLIDAY_COLOR = { bg: "#991B1B", border: "#7F1D1D" };
+import { STYLIST_COLORS, HOLIDAY_COLOR, STATUS_MAP } from "./calendar-constants";
+import "./calendar-styles.css";
+import { CalendarFilters } from "./calendar-filters";
+import { CalendarLegend } from "./calendar-legend";
+import { useCalendarState } from "./use-calendar-state";
+import { AppointmentPopover, type PopoverAppointmentData } from "./appointment-popover";
 
 interface CalendarEvent {
   id: string;
@@ -55,6 +53,8 @@ interface CalendarEvent {
     // Recurring series info
     recurring_series_id?: string | null;
     occurrence_index?: number | null;
+    customer_name?: string;
+    service_names?: string[];
   };
 }
 
@@ -90,12 +90,31 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Modal states
+  // localStorage persistence + business hours + mobile detection
+  const { getPersistedStylistIds, persistStylistIds, businessHours, isMobile } = useCalendarState();
+
+  // Mobile filter sheet state
+  const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
+
+  // Badge count: number of selected stylists when not all are selected
+  const filterBadgeCount =
+    selectedStylistIds.length > 0 && selectedStylistIds.length < stylists.length
+      ? selectedStylistIds.length
+      : null;
+
+  // Modal states (blocking events)
   const [isBlockingModalOpen, setIsBlockingModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedStartTime, setSelectedStartTime] = useState<Date | null>(null);
   const [selectedEndTime, setSelectedEndTime] = useState<Date | null>(null);
   const [selectedStylistForModal, setSelectedStylistForModal] = useState<string | null>(null);
+
+  // Appointment modal states (Task 1.3)
+  const [isAppointmentModalOpen, setIsAppointmentModalOpen] = useState(false);
+  const [selectedDateForModal, setSelectedDateForModal] = useState<Date | null>(null);
+  const [selectedStartTimeForModal, setSelectedStartTimeForModal] = useState<Date | null>(null);
+  const [selectedEndTimeForModal, setSelectedEndTimeForModal] = useState<Date | null>(null);
+  const [selectedStylistForAppointmentModal, setSelectedStylistForAppointmentModal] = useState<string | null>(null);
 
   // Edit mode states
   const [blockingModalMode, setBlockingModalMode] = useState<"create" | "edit">("create");
@@ -132,6 +151,13 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   const [pendingEditScope, setPendingEditScope] = useState<SeriesEditScope | null>(null);
   const [pendingOverwriteExceptions, setPendingOverwriteExceptions] = useState<boolean>(false);
 
+  // Appointment popover state (CAL-06)
+  const [popoverState, setPopoverState] = useState<{
+    open: boolean;
+    anchorEl: HTMLElement | null;
+    data: PopoverAppointmentData | null;
+  }>({ open: false, anchorEl: null, data: null });
+
   // Generate darker border color from background color
   const getDarkerColor = (hex: string): string => {
     // Remove # and parse RGB
@@ -166,16 +192,24 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         const response = await api.list<Stylist>("stylists", { is_active: true });
         setStylists(response.items);
         assignStylistColors(response.items);
-        // Select all stylists by default
+        // Restore persisted selection, falling back to all active stylists
         if (response.items.length > 0) {
-          setSelectedStylistIds(response.items.map(s => s.id));
+          const allIds = response.items.map(s => s.id);
+          setSelectedStylistIds(getPersistedStylistIds(allIds));
         }
       } catch (error) {
         console.error("Error fetching stylists:", error);
       }
     }
     fetchStylists();
-  }, [assignStylistColors]);
+  }, [assignStylistColors, getPersistedStylistIds]);
+
+  // Persist stylist selection whenever it changes (only after stylists are loaded)
+  useEffect(() => {
+    if (stylists.length > 0) {
+      persistStylistIds(selectedStylistIds);
+    }
+  }, [selectedStylistIds, stylists.length, persistStylistIds]);
 
   // Toggle stylist selection
   const toggleStylist = (stylistId: string) => {
@@ -281,13 +315,37 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     },
   }), [fetchEvents]);
 
+  // Switch calendar view when screen size changes
+  useEffect(() => {
+    const api = calendarRef.current?.getApi();
+    if (!api) return;
+    const currentView = api.view.type;
+    if (isMobile && currentView === "timeGridWeek") {
+      api.changeView("listWeek");
+    } else if (!isMobile && currentView === "listWeek") {
+      api.changeView("timeGridWeek");
+    }
+  }, [isMobile]);
+
   // Handle date set (when calendar view changes)
   const handleDatesSet = (arg: { start: Date; end: Date }) => {
     fetchEvents(arg.start, arg.end);
   };
 
   // Handle event click
-  const handleEventClick = async (info: { event: { id: string; title: string; startStr: string; endStr: string; extendedProps: Record<string, unknown> } }) => {
+  const handleEventClick = async (info: {
+    el: HTMLElement;
+    event: {
+      id: string;
+      title: string;
+      startStr: string;
+      endStr: string;
+      start: Date | null;
+      end: Date | null;
+      backgroundColor: string;
+      extendedProps: Record<string, unknown>;
+    };
+  }) => {
     const props = info.event.extendedProps;
     console.log("Event clicked:", info.event.id, props);
 
@@ -323,8 +381,28 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         openBlockingEditModal(blockingEventId, info.event.title, props, info.event.startStr, info.event.endStr);
       }
     } else if (props.type === "appointment" && props.appointment_id) {
-      // Navigate to appointment detail page
-      router.push(`/appointments/${props.appointment_id}`);
+      if (isMobile) {
+        // On mobile, navigate directly instead of showing popover
+        router.push(`/appointments/${props.appointment_id as string}`);
+      } else {
+        // Open appointment popover instead of navigating
+        setPopoverState({
+          open: true,
+          anchorEl: info.el,
+          data: {
+            appointmentId: props.appointment_id as string,
+            customerName: (props.customer_name as string) || "",
+            serviceNames: (props.service_names as string[]) || [],
+            status: (props.status as string) || "",
+            duration: (props.duration_minutes as number) || 0,
+            notes: (props.notes as string | null) || null,
+            stylistColor: info.event.backgroundColor,
+            title: info.event.title,
+            start: info.event.start,
+            end: info.event.end,
+          },
+        });
+      }
     }
     // Holidays: no action on click
   };
@@ -437,29 +515,35 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     setIsBlockingModalOpen(true);
   };
 
-  // Handle drag-select (for creating blocking events)
-  const handleSelect = (info: { start: Date; end: Date; allDay: boolean }) => {
+  // Handle single date/time click — opens CreateAppointmentModal
+  const handleDateClick = (info: { date: Date; allDay: boolean }) => {
+    if (info.allDay) return; // skip all-day header clicks
+
     if (selectedStylistIds.length === 0) {
-      alert("Por favor selecciona al menos un estilista para crear un bloqueo");
+      alert("Por favor selecciona al menos un estilista");
       return;
     }
 
-    // Save start and end times from drag selection
-    setSelectedStartTime(info.start);
-    setSelectedEndTime(info.end);
-    setSelectedDate(info.start);
+    setSelectedDateForModal(info.date);
+    setSelectedStartTimeForModal(info.date);
+    setSelectedEndTimeForModal(null);
+    setSelectedStylistForAppointmentModal(selectedStylistIds[0]);
+    setIsAppointmentModalOpen(true);
+  };
 
-    // If only one stylist selected, use that one
-    if (selectedStylistIds.length === 1) {
-      setSelectedStylistForModal(selectedStylistIds[0]);
-    } else {
-      // Default to first selected stylist (modal will allow changing)
-      setSelectedStylistForModal(selectedStylistIds[0]);
+  // Handle drag-select — opens CreateAppointmentModal with start+end pre-filled
+  const handleSelect = (info: { start: Date; end: Date; allDay: boolean }) => {
+    if (info.allDay) return;
+    if (selectedStylistIds.length === 0) {
+      alert("Por favor selecciona al menos un estilista");
+      return;
     }
 
-    setBlockingModalMode("create");
-    setEditingBlockingEvent(null);
-    setIsBlockingModalOpen(true);
+    setSelectedDateForModal(info.start);
+    setSelectedStartTimeForModal(info.start);
+    setSelectedEndTimeForModal(info.end);
+    setSelectedStylistForAppointmentModal(selectedStylistIds[0]);
+    setIsAppointmentModalOpen(true);
   };
 
   // Handle creating blocking event from button (uses current date/time)
@@ -507,87 +591,100 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     <div className="space-y-4">
       {/* Header with controls */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        {/* Stylist Multi-Select */}
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Label className="text-sm font-medium">Estilistas:</Label>
+        {isMobile ? (
+          /* Mobile: filter button + icon-only action buttons */
+          <>
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
-              onClick={toggleAllStylists}
-              className="text-xs h-6 px-2"
+              onClick={() => setIsFilterSheetOpen(true)}
+              className="relative"
             >
-              {selectedStylistIds.length === stylists.length ? "Ninguno" : "Todos"}
+              <Filter className="h-4 w-4" />
+              {filterBadgeCount !== null && (
+                <Badge
+                  variant="destructive"
+                  className="absolute -top-2 -right-2 h-5 w-5 flex items-center justify-center p-0 text-xs"
+                >
+                  {filterBadgeCount}
+                </Badge>
+              )}
             </Button>
-          </div>
 
-          <div className="flex flex-wrap gap-3">
-            {stylists.map((stylist) => {
-              const color = stylistColors[stylist.id];
-              const isSelected = selectedStylistIds.includes(stylist.id);
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCreateBlockingEvent}
+                disabled={selectedStylistIds.length === 0}
+                title="Crear Bloqueo"
+              >
+                <Ban className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleCreateAppointment}
+                title="Nueva Cita"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        ) : (
+          /* Desktop: inline filters + labelled action buttons */
+          <>
+            <CalendarFilters
+              stylists={stylists}
+              selectedStylistIds={selectedStylistIds}
+              stylistColors={stylistColors}
+              onToggle={toggleStylist}
+              onToggleAll={toggleAllStylists}
+            />
 
-              return (
-                <div key={stylist.id} className="flex items-center gap-2">
-                  <Checkbox
-                    id={`stylist-${stylist.id}`}
-                    checked={isSelected}
-                    onCheckedChange={() => toggleStylist(stylist.id)}
-                    className="border-2"
-                    style={{
-                      borderColor: color?.bg || "#888",
-                      backgroundColor: isSelected ? color?.bg : "transparent",
-                    }}
-                  />
-                  <Label
-                    htmlFor={`stylist-${stylist.id}`}
-                    className="text-sm cursor-pointer flex items-center gap-1"
-                  >
-                    <span
-                      className="w-3 h-3 rounded-full inline-block"
-                      style={{ backgroundColor: color?.bg || "#888" }}
-                    />
-                    {stylist.name}
-                  </Label>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCreateBlockingEvent}
-            disabled={selectedStylistIds.length === 0}
-          >
-            <Ban className="h-4 w-4 mr-1" />
-            Crear Bloqueo
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={handleCreateAppointment}
-          >
-            <Plus className="h-4 w-4 mr-1" />
-            Nueva Cita
-          </Button>
-        </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCreateBlockingEvent}
+                disabled={selectedStylistIds.length === 0}
+              >
+                <Ban className="h-4 w-4 mr-1" />
+                Crear Bloqueo
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleCreateAppointment}
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Nueva Cita
+              </Button>
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Legend */}
-      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-        <span className="font-medium">Leyenda:</span>
-        <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded border-2 border-dashed border-gray-400" />
-          <span>Citas y bloqueos (color por estilista)</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded" style={{ backgroundColor: HOLIDAY_COLOR.bg }} />
-          <span>Festivos</span>
-        </div>
-      </div>
+      {/* Mobile filter Sheet */}
+      {isMobile && (
+        <Sheet open={isFilterSheetOpen} onOpenChange={setIsFilterSheetOpen}>
+          <SheetContent side="left" className="w-64">
+            <SheetHeader>
+              <SheetTitle>Filtrar estilistas</SheetTitle>
+            </SheetHeader>
+            <CalendarFilters
+              stylists={stylists}
+              selectedStylistIds={selectedStylistIds}
+              stylistColors={stylistColors}
+              onToggle={toggleStylist}
+              onToggleAll={toggleAllStylists}
+            />
+          </SheetContent>
+        </Sheet>
+      )}
+
+      {/* Legend — hidden on mobile */}
+      {!isMobile && <CalendarLegend stylistColors={stylistColors} stylists={stylists} />}
 
       {/* Calendar */}
       <Card className="p-4 relative">
@@ -601,21 +698,23 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         )}
         <FullCalendar
           ref={calendarRef}
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
+          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}
+          initialView={isMobile ? "listWeek" : "timeGridWeek"}
           locale={esLocale}
           timeZone="Europe/Madrid"
-          headerToolbar={{
-            left: "prev,next today",
-            center: "title",
-            right: "timeGridDay,timeGridWeek,dayGridMonth",
-          }}
+          headerToolbar={
+            isMobile
+              ? { left: "prev,next", center: "title", right: "listWeek,timeGridDay" }
+              : { left: "prev,next today", center: "title", right: "timeGridDay,timeGridWeek,dayGridMonth,listWeek" }
+          }
           buttonText={{
             today: "Hoy",
             day: "Dia",
             week: "Semana",
             month: "Mes",
+            list: "Lista",
           }}
+          noEventsText="No hay eventos en este período"
           slotMinTime="09:00:00"
           slotMaxTime="21:00:00"
           allDaySlot={true}
@@ -627,7 +726,9 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           events={events}
           datesSet={handleDatesSet}
           eventClick={handleEventClick}
+          dateClick={handleDateClick}
           select={handleSelect}
+          businessHours={businessHours || undefined}
           height="auto"
           slotDuration="00:15:00"
           slotLabelInterval="01:00"
@@ -637,17 +738,32 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
             minute: "2-digit",
             hour12: false,
           }}
-          eventDidMount={(info) => {
-            // Add double-click handler for appointments
-            info.el.addEventListener('dblclick', () => {
-              const props = info.event.extendedProps;
-              if (props.type === "appointment" && props.appointment_id) {
-                router.push(`/appointments/${props.appointment_id}`);
-              }
-            });
+          eventClassNames={(arg) => {
+            const type = arg.event.extendedProps.type;
+            const status = arg.event.extendedProps.status;
+            if (type !== "appointment" || !status) return [];
+            const config = STATUS_MAP[status as keyof typeof STATUS_MAP];
+            return config ? [config.cssClass] : [];
           }}
         />
       </Card>
+
+      {/* Appointment Modal (from dateClick / drag-select) */}
+      <CreateAppointmentModal
+        isOpen={isAppointmentModalOpen}
+        onClose={() => {
+          setIsAppointmentModalOpen(false);
+          setSelectedDateForModal(null);
+          setSelectedStartTimeForModal(null);
+          setSelectedEndTimeForModal(null);
+          setSelectedStylistForAppointmentModal(null);
+        }}
+        stylistId={selectedStylistForAppointmentModal || selectedStylistIds[0] || ""}
+        selectedDate={selectedDateForModal}
+        selectedStartTime={selectedStartTimeForModal}
+        selectedEndTime={selectedEndTimeForModal}
+        onSuccess={handleEventCreated}
+      />
 
       {/* Blocking Event Modal (Create/Edit) */}
       <BlockingEventModal
@@ -703,6 +819,19 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         }}
         exceptionCount={exceptionsInfo?.exception_count || 0}
         onConfirm={handleExceptionDialogConfirm}
+      />
+
+      {/* Appointment Popover (CAL-06) */}
+      <AppointmentPopover
+        open={popoverState.open}
+        anchorEl={popoverState.anchorEl}
+        data={popoverState.data}
+        onClose={() => setPopoverState({ open: false, anchorEl: null, data: null })}
+        onCancelSuccess={handleEventCreated}
+        onNavigate={(appointmentId) => {
+          setPopoverState({ open: false, anchorEl: null, data: null });
+          router.push(`/appointments/${appointmentId}`);
+        }}
       />
     </div>
   );
