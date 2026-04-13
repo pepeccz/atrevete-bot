@@ -11,8 +11,8 @@ import pytest
 
 from agent.graphs.conversation_flow import (
     _is_booking_related_query,
-    _wants_to_exit_booking,
 )
+from agent.modes.booking_mode import BookingStateExtraction
 from agent.routing.intent_router import IntentResult
 from agent.state.schemas import create_initial_state
 
@@ -116,38 +116,19 @@ class TestBookingRelatedQuery:
 
 
 class TestWantsToExitBooking:
-    """Tests for the booking exit phrase detection."""
+    """Exit detection moved from regex to BookingStateExtraction.wants_to_exit.
 
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "salir",
-            "otra cosa quiero",
-            "dejalo",
-            "dejémoslo así",
-            "no quiero reservar",
-            "olvidalo",
-        ],
-    )
-    def test_exit_phrases_detected(self, message: str):
-        """Exit phrases trigger booking exit."""
-        assert _wants_to_exit_booking(message) is True
+    The _wants_to_exit_booking() function was removed. Exit is now detected
+    inside BookingModeNode via pre-loop LLM extraction.
+    """
 
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "quiero reservar",
-            "el jueves",
-            "sí, confirmo",
-            "otra vez por favor",
-        ],
-    )
-    def test_non_exit_messages_not_detected(self, message: str):
-        """Normal booking messages do not trigger exit."""
-        assert _wants_to_exit_booking(message) is False
+    def test_extraction_schema_has_wants_to_exit_field(self):
+        extraction = BookingStateExtraction(wants_to_exit=True)
+        assert extraction.wants_to_exit is True
 
-    def test_empty_message_returns_false(self):
-        assert _wants_to_exit_booking("") is False
+    def test_extraction_schema_wants_to_exit_defaults_false(self):
+        extraction = BookingStateExtraction()
+        assert extraction.wants_to_exit is False
 
 
 # ============================================================================

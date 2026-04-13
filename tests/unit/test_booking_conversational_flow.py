@@ -16,7 +16,6 @@ from agent.modes.base import ToolCallRejection
 from agent.modes.booking_mode import (
     BookingModeNode,
     BookingStateExtraction,
-    _DECLINE_MORE_PATTERN,
 )
 
 
@@ -107,22 +106,36 @@ class TestChangeBComputeStep:
 
 
 class TestChangeBDeclineDetection:
-    """_DECLINE_MORE_PATTERN matches decline phrases for '¿Algo más?'."""
+    """add_more_declined is handled by pre-loop LLM extraction, not regex.
 
-    @pytest.mark.parametrize(
-        "phrase",
-        ["no", "nada", "nada más", "nada mas", "solo eso", "ya está", "ya esta",
-         "no gracias", "eso es todo", "con eso"],
-    )
-    def test_decline_phrases_match(self, phrase):
-        assert _DECLINE_MORE_PATTERN.match(phrase), f"Should match: {phrase!r}"
+    The _DECLINE_MORE_PATTERN regex was removed because it failed on natural
+    language variations like 'Nope, nada más'. BookingStateExtraction.add_more_declined
+    handles this via structured LLM output before the agentic loop.
+    """
 
-    @pytest.mark.parametrize(
-        "phrase",
-        ["sí", "dale", "quiero también mechas", "añade un corte", "y una manicura"],
-    )
-    def test_non_decline_phrases_dont_match(self, phrase):
-        assert not _DECLINE_MORE_PATTERN.match(phrase), f"Should NOT match: {phrase!r}"
+    def test_extraction_schema_has_add_more_declined_field(self):
+        extraction = BookingStateExtraction(add_more_declined=True)
+        assert extraction.add_more_declined is True
+
+    def test_extraction_schema_add_more_defaults_false(self):
+        extraction = BookingStateExtraction()
+        assert extraction.add_more_declined is False
+
+    def test_extraction_schema_notes_declined_field(self):
+        extraction = BookingStateExtraction(notes_declined=True)
+        assert extraction.notes_declined is True
+
+    def test_extraction_schema_notes_declined_defaults_false(self):
+        extraction = BookingStateExtraction()
+        assert extraction.notes_declined is False
+
+    def test_extraction_schema_wants_to_exit_field(self):
+        extraction = BookingStateExtraction(wants_to_exit=True)
+        assert extraction.wants_to_exit is True
+
+    def test_extraction_schema_wants_to_exit_defaults_false(self):
+        extraction = BookingStateExtraction()
+        assert extraction.wants_to_exit is False
 
 
 class TestChangeBMissingSummary:

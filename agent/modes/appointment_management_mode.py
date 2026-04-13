@@ -19,10 +19,11 @@ import json
 import logging
 import unicodedata
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 from agent.modes.appointment_context import AppointmentContext
 from agent.modes.base import BaseModeNode, ToolCallRejection
@@ -32,6 +33,36 @@ from agent.state.schemas import ConversationState, transition_mode
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# Structured extraction schema
+# ============================================================================
+
+
+class AppointmentManagementExtraction(BaseModel):
+    """Structured extraction of user intent for appointment management.
+
+    Used by _extract_appointment_state() as the response schema for a
+    with_structured_output() call. Only extracts what the CLIENT expressed.
+    """
+
+    user_confirms: bool | None = Field(
+        default=None,
+        description=(
+            "True if user confirms the pending action (cancel/reschedule), "
+            "False if they deny or retract (e.g., 'no quiero cancelar', 'mejor no'). "
+            "None if no confirmation question is pending or user's response is unclear."
+        ),
+    )
+    intended_action: Literal["cancel", "reschedule", "query"] | None = Field(
+        default=None,
+        description=(
+            "What the user wants to do with their appointment: "
+            "'cancel' to delete, 'reschedule' to change date/time, 'query' to view. "
+            "None if not yet clear from the conversation."
+        ),
+    )
+
 # ============================================================================
 # Constants
 # ============================================================================
@@ -39,58 +70,7 @@ logger = logging.getLogger(__name__)
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 _HISTORY_LIMIT = 8
 
-# Affirmative phrases that trigger pending_confirmation=True
-_AFFIRMATIVE_PHRASES: frozenset[str] = frozenset(
-    {
-        "si",
-        "sí",
-        "dale",
-        "ok",
-        "perfecto",
-        "va",
-        "adelante",
-        "bueno",
-        "confirmo",
-        "confirmar",
-        "confirmá",
-        "confirmalo",
-        "de acuerdo",
-        "genial",
-        "claro",
-        "por supuesto",
-        "venga",
-        "listo",
-        "hecho",
-        "eso",
-        "correcto",
-        "exacto",
-        "tal cual",
-        "quiero cancelar",
-        "cancelar",
-        "anular",
-        "reagendar",
-        "reprogramar",
-    }
-)
-
-# Negation phrases that cancel a pending_confirmation
-_NEGATION_PHRASES: frozenset[str] = frozenset(
-    {
-        "no",
-        "no quiero",
-        "mejor no",
-        "cancelar",
-        "anular",
-        "para atras",
-        "para atrás",
-        "olvida",
-        "olvidalo",
-        "olvidá",
-        "no confirmo",
-    }
-)
-
-# Keywords for detecting action from intent string
+# Keywords for detecting action from intent string (used ONLY against intent name, not user message)
 _CANCEL_KEYWORDS: frozenset[str] = frozenset({"cancel", "cancelar", "anular", "baja", "eliminar"})
 _RESCHEDULE_KEYWORDS: frozenset[str] = frozenset(
     {
@@ -181,11 +161,11 @@ class AppointmentManagementMode(BaseModeNode):
         mode_context = dict(state.get("mode_context") or {})
         ctx = AppointmentContext.from_mode_context(mode_context)
 
-        # 1. Pre-resolvers (deterministic)
+        # 1. Pre-resolvers (deterministic + LLM extraction)
         user_message = get_last_user_message(state)
-        self._resolve_action_from_intent(ctx, intent, user_message)
+        self._resolve_action_from_intent(ctx, intent)
         self._resolve_appointment_selection(ctx, user_message)
-        self._resolve_confirmation_state(ctx, user_message)
+        await self._apply_extraction(ctx, state)
 
         # 2. Store ctx for _pre_tool_call and _post_tool_result access
         self._ctx = ctx
@@ -210,20 +190,18 @@ class AppointmentManagementMode(BaseModeNode):
         self,
         ctx: AppointmentContext,
         intent: Any,
-        user_message: str,
     ) -> None:
-        """Detect action (cancel/reschedule/query) from intent and message.
+        """Detect action (cancel/reschedule/query) from intent string only.
 
         Only sets ctx.action if it is not already determined (preserves
-        cross-turn continuity).
+        cross-turn continuity). Message-level detection is handled by
+        _extract_appointment_state() via LLM.
         """
         if ctx.action:
             return  # Already determined — preserve across turns
 
         intent_name = self._extract_intent_name(intent)
-        msg_lower = _normalize_text(user_message)
 
-        # Check intent string first
         if any(kw in intent_name for kw in _CANCEL_KEYWORDS):
             ctx.action = "cancel"
             logger.info("_resolve_action: cancel from intent=%r", intent_name)
@@ -239,24 +217,7 @@ class AppointmentManagementMode(BaseModeNode):
             logger.info("_resolve_action: query from intent=%r", intent_name)
             return
 
-        # Fallback: check user message keywords
-        if any(kw in msg_lower for kw in _CANCEL_KEYWORDS):
-            ctx.action = "cancel"
-            logger.info("_resolve_action: cancel from message=%r", user_message[:50])
-            return
-
-        if any(kw in msg_lower for kw in _RESCHEDULE_KEYWORDS):
-            ctx.action = "reschedule"
-            logger.info("_resolve_action: reschedule from message=%r", user_message[:50])
-            return
-
-        if any(kw in msg_lower for kw in _QUERY_KEYWORDS):
-            ctx.action = "query"
-            logger.info("_resolve_action: query from message=%r", user_message[:50])
-            return
-
-        # No action detected — LLM will ask the user
-        logger.debug("_resolve_action: no action detected, LLM will ask")
+        logger.debug("_resolve_action: no action from intent, extraction will handle")
 
     def _resolve_appointment_selection(
         self,
@@ -310,65 +271,102 @@ class AppointmentManagementMode(BaseModeNode):
                 msg,
             )
 
-    def _resolve_confirmation_state(
-        self,
-        ctx: AppointmentContext,
-        user_message: str,
-    ) -> None:
-        """Detect user affirmation or negation to update pending_confirmation.
+    async def _apply_extraction(self, ctx: AppointmentContext, state: ConversationState) -> None:
+        """Run pre-loop LLM extraction and apply results to ctx.
 
-        Rules:
-        - If pending_confirmation=True and user negates → reset pending_confirmation
-        - If pending_confirmation=False and user affirms → set pending_confirmation=True
-          (only when a selected_appointment_id exists, so we know what to confirm)
-
-        Note: when pending_confirmation=True and user says "sí", we keep it True —
-        the tool will fire in _pre_tool_call when the LLM calls cancel/reschedule.
+        Replaces _resolve_confirmation_state() and message-keyword scan in
+        _resolve_action_from_intent(). Uses structured LLM output to detect
+        user confirmation/denial and intended action.
         """
-        if not user_message:
+        extraction = await self._extract_appointment_state(state, ctx)
+        if extraction is None:
             return
 
-        msg_lower = _normalize_text(user_message)
+        # Fill intended_action if not yet determined
+        if extraction.intended_action and not ctx.action:
+            ctx.action = extraction.intended_action
+            logger.info("_apply_extraction: action=%s from LLM extraction", ctx.action)
 
-        # If pending_confirmation is True and user negates → reset
-        if ctx.pending_confirmation:
-            if any(neg in msg_lower for neg in _NEGATION_PHRASES):
-                # Only reset on explicit negation UNLESS the negation IS the action word
-                # e.g. "cancelar" is both in negation AND is the action — don't reset for that
-                pure_negations = {
-                    "no",
-                    "no quiero",
-                    "mejor no",
-                    "para atras",
-                    "para atrás",
-                    "olvida",
-                    "olvidalo",
-                    "olvidá",
-                    "no confirmo",
-                }
-                if any(neg in msg_lower for neg in pure_negations):
-                    ctx.pending_confirmation = False
-                    ctx.pending_confirmation_type = ""
-                    logger.info("_resolve_confirmation: user negated — pending_confirmation reset")
-                    return
-
-        # If pending_confirmation is False and we have a selected appointment and user affirms
-        if (
-            not ctx.pending_confirmation
-            and ctx.selected_appointment_id
-            and ctx.action in ("cancel", "reschedule")
-        ):
-            # For reschedule: require a pending_new_slot too
-            if ctx.action == "reschedule" and not ctx.pending_new_slot:
-                return  # Can't confirm reschedule without knowing the new slot
-
-            if any(affirm in msg_lower for affirm in _AFFIRMATIVE_PHRASES):
+        # Apply user confirmation/denial
+        if extraction.user_confirms is True:
+            if (
+                ctx.selected_appointment_id
+                and ctx.action in ("cancel", "reschedule")
+                and not ctx.pending_confirmation
+            ):
+                if ctx.action == "reschedule" and not ctx.pending_new_slot:
+                    return  # Can't confirm reschedule without knowing the new slot
                 ctx.pending_confirmation = True
                 ctx.pending_confirmation_type = ctx.action
                 logger.info(
-                    "_resolve_confirmation: user affirmed → pending_confirmation=True, type=%s",
+                    "_apply_extraction: user confirmed → pending_confirmation=True, type=%s",
                     ctx.action,
                 )
+        elif extraction.user_confirms is False:
+            if ctx.pending_confirmation:
+                ctx.pending_confirmation = False
+                ctx.pending_confirmation_type = ""
+                logger.info("_apply_extraction: user denied → pending_confirmation reset")
+
+    async def _extract_appointment_state(
+        self, state: ConversationState, ctx: AppointmentContext
+    ) -> AppointmentManagementExtraction | None:
+        """Run a structured extraction pass to detect user intent.
+
+        Uses an async LLM call with with_structured_output() to extract
+        confirmation signals and intended action. Cheap (~150 tokens).
+
+        Returns None on error (extraction is best-effort, never blocks the flow).
+        """
+        if self.llm is None:
+            return None
+
+        messages = state.get("messages") or []
+        recent = messages[-_HISTORY_LIMIT:]
+        if not recent:
+            return None
+
+        summary_parts = []
+        if ctx.action:
+            summary_parts.append(f"Acción detectada: {ctx.action}")
+        if ctx.selected_appointment_id:
+            snap = ctx.selected_appointment_snapshot or {}
+            summary_parts.append(
+                f"Cita seleccionada: {snap.get('service_name', '?')} "
+                f"el {snap.get('date_display', '?')} a las {snap.get('time_display', '?')}"
+            )
+        if ctx.pending_confirmation:
+            summary_parts.append(
+                f"Confirmación pendiente: el sistema pidió al cliente confirmar "
+                f"'{ctx.pending_confirmation_type}'"
+            )
+        state_summary = "\n".join(summary_parts) if summary_parts else "Ningún dato confirmado aún."
+
+        conv_lines = []
+        for msg in recent:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if content:
+                label = "Cliente" if role == "user" else "Maite"
+                conv_lines.append(f"{label}: {content}")
+        conv_text = "\n".join(conv_lines)
+
+        extraction_prompt = (
+            "Eres un extractor de intención en una conversación de gestión de citas.\n"
+            "Extrae SOLO lo que el CLIENTE ha expresado explícitamente.\n"
+            "NO inferir ni asumir intenciones que no se hayan dicho.\n"
+            "Si un dato no está claro, déjalo como null/None.\n\n"
+            f"Estado actual:\n{state_summary}\n\n"
+            f"Conversación reciente:\n{conv_text}\n\n"
+            "Extrae la intención del cliente."
+        )
+
+        try:
+            extractor = self.llm.with_structured_output(AppointmentManagementExtraction)
+            return await extractor.ainvoke([{"role": "user", "content": extraction_prompt}])
+        except Exception:
+            logger.warning("_extract_appointment_state: extraction failed", exc_info=True)
+            return None
 
     # ──────────────────────────────────────────────────────────────────────
     # Pre-tool-call safety gates
