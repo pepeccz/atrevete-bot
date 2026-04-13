@@ -124,19 +124,6 @@ def test_compute_step_notes_asked_missing_key():
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_call_rejects_no_stylist(booking_node: BookingModeNode):
-    """check_availability without last_stylist or no_preference_stylist → ToolCallRejection."""
-    booking_node._mode_context = {
-        "last_services": ["Cortar"],
-        # No last_stylist, no no_preference_stylist
-    }
-    result = await booking_node._pre_tool_call("check_availability", {"service_names": ["Cortar"]})
-    assert isinstance(result, ToolCallRejection)
-    assert result.error_code == "STYLIST_NOT_RESOLVED"
-    assert result.name == "check_availability"
-
-
-@pytest.mark.asyncio
 async def test_pre_tool_call_allows_with_stylist(booking_node: BookingModeNode):
     """check_availability with last_stylist set → returns tool_args (not rejection)."""
     tool_args = {"service_names": ["Cortar"], "stylist_name": "Ana"}
@@ -220,24 +207,6 @@ async def test_pre_tool_call_sets_last_stylist_from_args(booking_node: BookingMo
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_call_empty_stylist_name_in_args_rejects(booking_node: BookingModeNode):
-    """Empty string stylist_name in tool_args is treated as absent → guard rejects.
-
-    Spec: Domain A — Edge case: LLM passes stylist_name='' → guard rejects.
-    """
-    tool_args = {"service_names": ["Cortar"], "stylist_name": ""}
-    booking_node._mode_context = {
-        "last_services": ["Cortar"],
-        # No last_stylist, no no_preference_stylist
-    }
-    result = await booking_node._pre_tool_call("check_availability", tool_args)
-    assert isinstance(result, ToolCallRejection), (
-        "Empty string stylist_name must be treated as absent — guard must reject"
-    )
-    assert result.error_code == "STYLIST_NOT_RESOLVED"
-
-
-@pytest.mark.asyncio
 async def test_pre_tool_call_does_not_overwrite_existing_last_stylist(
     booking_node: BookingModeNode,
 ):
@@ -255,6 +224,56 @@ async def test_pre_tool_call_does_not_overwrite_existing_last_stylist(
     assert booking_node._mode_context.get("last_stylist") == "Harolyn", (
         "Existing last_stylist must NOT be overwritten by tool_args stylist_name"
     )
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_allows_no_stylist_no_context(booking_node: BookingModeNode):
+    """check_availability with service but no stylist info → allowed (guard removed).
+
+    Change B: STYLIST_NOT_RESOLVED guard is gone — LLM decides when to call.
+    """
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        # No last_stylist, no no_preference_stylist
+    }
+    result = await booking_node._pre_tool_call(
+        "check_availability", {"service_names": ["Cortar"]}
+    )
+    assert not isinstance(result, ToolCallRejection)
+    assert isinstance(result, dict)
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_allows_disambiguation_pending(booking_node: BookingModeNode):
+    """_has_pending_disambiguation=True, no last_services → allowed (guard removed).
+
+    Change B: DISAMBIGUATION_PENDING guard is gone — LLM decides flow.
+    """
+    booking_node._mode_context = {
+        "_has_pending_disambiguation": True,
+        # No last_services
+    }
+    result = await booking_node._pre_tool_call(
+        "check_availability", {"service_names": ["Cortar"]}
+    )
+    assert not isinstance(result, ToolCallRejection)
+    assert isinstance(result, dict)
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_empty_stylist_passes_through(booking_node: BookingModeNode):
+    """stylist_name='' in tool_args → passes through (no longer rejected).
+
+    Change B: Empty string is no longer treated as missing — guard removed.
+    """
+    tool_args = {"service_names": ["Cortar"], "stylist_name": ""}
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        # No last_stylist, no no_preference_stylist
+    }
+    result = await booking_node._pre_tool_call("check_availability", tool_args)
+    assert not isinstance(result, ToolCallRejection)
+    assert isinstance(result, dict)
 
 
 # ===========================================================================
@@ -324,3 +343,67 @@ def test_full_info_atajo_reaches_slot_selection():
     assert step == "datetime_selection", (
         "With service+stylist resolved, step must advance to datetime_selection"
     )
+
+
+# ===========================================================================
+# Change C — _post_tool_result no_preference inference tests
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_sets_no_preference_when_slots_and_no_stylist(
+    booking_node: BookingModeNode,
+):
+    """No stylist_name in tool_args + result has slots → no_preference_stylist=True, last_stylist='Sin preferencia'."""
+    booking_node._mode_context = {}
+    tool_args = {"service_names": ["Cortar"]}  # No stylist_name
+    result_dict = {"available_slots": [{"stylist_id": "abc", "start_time": "2026-04-15T10:00:00"}]}
+    import json
+
+    await booking_node._post_tool_result("check_availability", tool_args, json.dumps(result_dict))
+    assert booking_node._mode_context.get("no_preference_stylist") is True
+    assert booking_node._mode_context.get("last_stylist") == "Sin preferencia"
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_no_preference_not_set_when_stylist_named(
+    booking_node: BookingModeNode,
+):
+    """stylist_name='Marta' in tool_args + slots → no_preference_stylist NOT set."""
+    booking_node._mode_context = {}
+    tool_args = {"service_names": ["Cortar"], "stylist_name": "Marta"}
+    result_dict = {"available_slots": [{"stylist_id": "abc", "start_time": "2026-04-15T10:00:00"}]}
+    import json
+
+    await booking_node._post_tool_result("check_availability", tool_args, json.dumps(result_dict))
+    assert not booking_node._mode_context.get("no_preference_stylist")
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_no_preference_not_set_when_empty_slots(
+    booking_node: BookingModeNode,
+):
+    """No stylist_name + empty slots → no_preference_stylist NOT set."""
+    booking_node._mode_context = {}
+    tool_args = {"service_names": ["Cortar"]}  # No stylist_name
+    result_dict = {"available_slots": []}
+    import json
+
+    await booking_node._post_tool_result("check_availability", tool_args, json.dumps(result_dict))
+    assert not booking_node._mode_context.get("no_preference_stylist")
+    assert booking_node._mode_context.get("last_stylist") is None
+
+
+@pytest.mark.asyncio
+async def test_post_tool_result_no_preference_does_not_overwrite_last_stylist(
+    booking_node: BookingModeNode,
+):
+    """last_stylist='Ana' already set + no stylist_name + slots → no_preference=True but last_stylist stays 'Ana'."""
+    booking_node._mode_context = {"last_stylist": "Ana"}
+    tool_args = {"service_names": ["Cortar"]}  # No stylist_name
+    result_dict = {"available_slots": [{"stylist_id": "abc", "start_time": "2026-04-15T10:00:00"}]}
+    import json
+
+    await booking_node._post_tool_result("check_availability", tool_args, json.dumps(result_dict))
+    assert booking_node._mode_context.get("no_preference_stylist") is True
+    assert booking_node._mode_context.get("last_stylist") == "Ana"

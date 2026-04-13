@@ -415,40 +415,14 @@ class BookingModeNode(BaseModeNode):
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
-        # ── check_availability: disambiguation + stylist guards ───────────
+        # ── check_availability: stylist guard ────────────────────────────
         if tool_name == "check_availability":
-            # Guard 1: disambiguation must be resolved before availability check
-            if mode_context.get("_has_pending_disambiguation") and not mode_context.get(
-                "last_services"
-            ):
-                return ToolCallRejection(
-                    name="check_availability",
-                    error_code="DISAMBIGUATION_PENDING",
-                    error_message=(
-                        "Todavía hay preguntas de desambiguación pendientes. "
-                        "Presenta las preguntas de <required_questions> al cliente "
-                        "y esperá su respuesta antes de buscar disponibilidad."
-                    ),
-                )
             # Accept stylist_name from tool_args — LLM resolved it from conversation.
             # This prevents STYLIST_NOT_RESOLVED deadlock when the LLM provides the
             # stylist directly in args before last_stylist is set in mode_context.
             stylist_from_args = tool_args.get("stylist_name")
-            if stylist_from_args:
+            if stylist_from_args and not mode_context.get("last_stylist"):
                 mode_context["last_stylist"] = stylist_from_args
-            # Guard 2: stylist must be resolved before availability check
-            if not mode_context.get("last_stylist") and not mode_context.get(
-                "no_preference_stylist"
-            ):
-                return ToolCallRejection(
-                    name="check_availability",
-                    error_code="STYLIST_NOT_RESOLVED",
-                    error_message=(
-                        "Antes de buscar disponibilidad, preguntá al cliente "
-                        "qué estilista prefiere (o si le da igual). "
-                        "El cliente puede responder con el nombre, un número o 'sin preferencia'."
-                    ),
-                )
             return tool_args
 
         # ── book(): slot resolution → confirmation gate → injection ───────────
@@ -586,6 +560,11 @@ class BookingModeNode(BaseModeNode):
             stylist_name = tool_args.get("stylist_name")
             if stylist_name:
                 mode_context["last_stylist"] = stylist_name
+            # No stylist specified + slots returned → implicit "no preference"
+            if not stylist_name and slots:
+                mode_context["no_preference_stylist"] = True
+                if not mode_context.get("last_stylist"):
+                    mode_context["last_stylist"] = "Sin preferencia"
 
         elif tool_name == "book":
             status = result_dict.get("status")
