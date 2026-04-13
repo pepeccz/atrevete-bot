@@ -19,6 +19,8 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from pydantic import BaseModel, Field
+
 from agent.config import get_booking_config, ToolChoicePolicy
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
@@ -27,6 +29,59 @@ from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Structured extraction schema
+# ============================================================================
+
+
+class BookingStateExtraction(BaseModel):
+    """Structured extraction of booking state from conversation.
+
+    Used by _extract_booking_state() as the response schema for a
+    with_structured_output() call. Only extracts what the CLIENT confirmed.
+    """
+
+    resolved_services: list[str] | None = Field(
+        default=None,
+        description=(
+            "Exact catalog service names the client has confirmed. "
+            "None if services are not yet resolved. "
+            "Use the exact names from the service catalog."
+        ),
+    )
+    add_more_declined: bool = Field(
+        default=False,
+        description=(
+            "True ONLY if the client explicitly said they don't want more services "
+            "(e.g., 'no', 'nada más', 'solo eso'). False if the question hasn't been asked yet."
+        ),
+    )
+    stylist_preference: str | None = Field(
+        default=None,
+        description=(
+            "Stylist name the client chose, 'Sin preferencia' if they said "
+            "'me da igual' / 'cualquiera' / 'la primera disponible', "
+            "or None if stylist preference hasn't been discussed yet."
+        ),
+    )
+    preferred_date: str | None = Field(
+        default=None,
+        description="Date the client mentioned (e.g., 'el martes', 'mañana', '2026-04-15'). None if not discussed.",
+    )
+    customer_name: str | None = Field(
+        default=None,
+        description="Client's full name if they provided it. None if not asked or not provided yet.",
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Notes for the stylist if the client provided them. None if not asked yet.",
+    )
+    notes_declined: bool = Field(
+        default=False,
+        description="True if the client explicitly said they don't need notes (e.g., 'no', 'nada').",
+    )
+
 
 # ============================================================================
 # Constants
@@ -359,6 +414,28 @@ class BookingModeNode(BaseModeNode):
         result = await self._run_agentic_loop(
             messages, tools=self.get_tools(), tool_choice=tool_choice
         )
+
+        # 5b. Passive state extraction — sync state machine with LLM decisions
+        extraction = await self._extract_booking_state(state, booking_context)
+        if extraction is not None:
+            if extraction.resolved_services and not booking_context.get("last_services"):
+                booking_context["last_services"] = extraction.resolved_services
+            if extraction.add_more_declined and not booking_context.get("add_more_asked"):
+                booking_context["add_more_asked"] = True
+            if extraction.stylist_preference and not booking_context.get("last_stylist"):
+                booking_context["last_stylist"] = extraction.stylist_preference
+                if extraction.stylist_preference.lower() in ("sin preferencia",):
+                    booking_context["no_preference_stylist"] = True
+            if extraction.customer_name and not booking_context.get("customer_name"):
+                booking_context["customer_name"] = extraction.customer_name
+            if extraction.notes_declined and not booking_context.get("notes_asked"):
+                booking_context["notes_asked"] = True
+                booking_context["notes"] = None
+            elif extraction.notes and not booking_context.get("notes_asked"):
+                booking_context["notes_asked"] = True
+                booking_context["notes"] = extraction.notes
+            # Re-compute step with fresh data
+            booking_context["booking_step"] = self._compute_step(booking_context)
 
         # 6. Build response (LLM-generated text via _sanitize_response)
         response_text = self._build_response(result, booking_context)
@@ -726,12 +803,12 @@ class BookingModeNode(BaseModeNode):
             next_action = "AHORA: preguntá al cliente '¿Querés añadir algo más a la cita?' NO avances al siguiente paso hasta que responda."
         else:
             _STEP_ACTIONS = {
-                "service_selection": "Identificar el servicio del catálogo",
-                "stylist_selection": "Preguntar preferencia de estilista (número, nombre o 'sin preferencia')",
-                "datetime_selection": "Preguntá qué día le viene bien al cliente",
-                "name_collection": "Pedir nombre del cliente",
-                "notes_collection": "Preguntar si hay algo que tener en cuenta para la cita",
-                "confirmation": "Mostrar resumen y pedir confirmación",
+                "service_selection": "Identificar el servicio del catálogo. NO preguntes por fecha, estilista ni horario.",
+                "stylist_selection": "Preguntar preferencia de estilista (número, nombre o 'sin preferencia'). NO preguntes por fecha ni horario.",
+                "datetime_selection": "Preguntá qué día le viene bien al cliente. NO pidas nombre ni notas.",
+                "name_collection": "Pedir nombre del cliente. NO preguntes por notas aún.",
+                "notes_collection": "Preguntar si hay algo que tener en cuenta para la cita.",
+                "confirmation": "Mostrar resumen y pedir confirmación.",
             }
             next_action = _STEP_ACTIONS.get(step, "")
         parts.append(f"<current_step>{step}</current_step>")
@@ -882,6 +959,73 @@ class BookingModeNode(BaseModeNode):
             missing.append("❌ Nombre: pendiente")
 
         return "\n".join(missing)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Passive state extraction — sync state machine with LLM decisions
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def _extract_booking_state(
+        self, state: ConversationState, booking_context: dict
+    ) -> BookingStateExtraction | None:
+        """Run a structured extraction pass to sync state with LLM decisions.
+
+        Uses a second LLM call with with_structured_output() to extract
+        what the client confirmed in the conversation. Cheap (~200 tokens).
+
+        Returns None on error (extraction is best-effort, never blocks the flow).
+        """
+        if self.llm is None:
+            return None
+
+        messages = state.get("messages") or []
+        recent = messages[-_HISTORY_LIMIT:]
+        if not recent:
+            return None
+
+        # Current state summary so the extractor knows what's already confirmed
+        summary_parts = []
+        if booking_context.get("last_services"):
+            summary_parts.append(f"Servicios confirmados: {booking_context['last_services']}")
+        if booking_context.get("add_more_asked"):
+            summary_parts.append("Cliente confirmó que no quiere más servicios.")
+        if booking_context.get("last_stylist"):
+            summary_parts.append(f"Estilista: {booking_context['last_stylist']}")
+        if booking_context.get("selected_slot"):
+            slot = booking_context["selected_slot"]
+            summary_parts.append(f"Horario: {slot.get('date', '?')} a las {slot.get('time', '?')}")
+        if booking_context.get("customer_name"):
+            summary_parts.append(f"Nombre: {booking_context['customer_name']}")
+        if booking_context.get("notes_asked"):
+            summary_parts.append(f"Notas: {booking_context.get('notes') or '(sin notas)'}")
+        state_summary = "\n".join(summary_parts) if summary_parts else "Ningún dato confirmado aún."
+
+        # Build conversation text
+        conv_lines = []
+        for msg in recent:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if content:
+                label = "Cliente" if role == "user" else "Maite"
+                conv_lines.append(f"{label}: {content}")
+        conv_text = "\n".join(conv_lines)
+
+        extraction_prompt = (
+            "Eres un extractor de datos de una conversación de reserva de peluquería.\n"
+            "Extrae SOLO lo que el CLIENTE ha confirmado explícitamente. "
+            "NO inferir ni asumir datos que no se hayan dicho.\n"
+            "Si un dato no se ha discutido aún, déjalo como null/None.\n\n"
+            f"Estado actual conocido:\n{state_summary}\n\n"
+            f"Conversación reciente:\n{conv_text}\n\n"
+            "Extrae el estado de la reserva."
+        )
+
+        try:
+            extractor = self.llm.with_structured_output(BookingStateExtraction)
+            result = await extractor.ainvoke([{"role": "user", "content": extraction_prompt}])
+            return result
+        except Exception:
+            logger.warning("_extract_booking_state: extraction failed", exc_info=True)
+            return None
 
     # ──────────────────────────────────────────────────────────────────────
     # Pending selection helpers (Tasks 2.1 / 2.2)
