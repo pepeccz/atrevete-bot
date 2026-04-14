@@ -35,6 +35,63 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 
+class BookingStateExtraction(BaseModel):
+    """Structured extraction of booking state from conversation.
+
+    Used by _extract_booking_state() to sync booking_context with what
+    the user confirmed conversationally (without tool calls).
+    """
+
+    resolved_services: list[str] | None = Field(
+        None,
+        description=(
+            "Exact catalog service names the client confirmed. "
+            "None if not yet resolved."
+        ),
+    )
+    add_more_declined: bool = Field(
+        False,
+        description=(
+            "True ONLY if the client explicitly said they don't want more services "
+            "(e.g. 'no', 'nada más', 'solo eso'). False if not asked yet or no answer."
+        ),
+    )
+    stylist_preference: str | None = Field(
+        None,
+        description=(
+            "Stylist name the client chose, 'Sin preferencia' if they said "
+            "'me da igual'/'cualquiera', or None if not discussed yet."
+        ),
+    )
+    preferred_date: str | None = Field(
+        None,
+        description=(
+            "Date the client mentioned (natural Spanish like 'el martes' or ISO). "
+            "None if not discussed yet."
+        ),
+    )
+    customer_name: str | None = Field(
+        None,
+        description=(
+            "Client's full name if they provided it. None if not asked yet."
+        ),
+    )
+    notes: str | None = Field(
+        None,
+        description=(
+            "Notes for the stylist if provided. None if not asked yet. "
+            "Empty string if client said 'no notes'."
+        ),
+    )
+    notes_declined: bool = Field(
+        False,
+        description=(
+            "True if client explicitly said no notes needed "
+            "(e.g. 'no', 'ninguna', 'sin notas'). False if not asked yet."
+        ),
+    )
+
+
 # ============================================================================
 # Constants
 # ============================================================================
@@ -391,6 +448,12 @@ class BookingModeNode(BaseModeNode):
             messages, tools=self.get_tools(), tool_choice=tool_choice
         )
 
+        # 5b. Passive state extraction — sync booking_context from conversation.
+        # Catches data the LLM resolved conversationally without tool calls.
+        extraction = await self._extract_booking_state(state, booking_context)
+        if extraction is not None:
+            self._merge_extraction(booking_context, extraction)
+
         # 6. Build response (LLM-generated text via _sanitize_response)
         response_text = self._build_response(result, booking_context)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
@@ -655,6 +718,113 @@ class BookingModeNode(BaseModeNode):
         """
         response_text = result.response_text or ""
         return self._sanitize_response(response_text)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Passive state extraction — sync booking_context from conversation
+    # ──────────────────────────────────────────────────────────────────────
+
+    _EXTRACTION_PROMPT = (
+        "Given this salon booking conversation, extract what the CLIENT has "
+        "confirmed so far.\n"
+        "Only extract data the client has EXPLICITLY provided or confirmed. "
+        "Do NOT infer or assume.\n"
+        "If the bot asked a question but the client hasn't answered yet, "
+        "leave that field as None/False.\n\n"
+        "Current known state:\n{state_summary}\n\n"
+        "Recent conversation:\n{conversation}\n\n"
+        "Extract the booking state."
+    )
+
+    async def _extract_booking_state(
+        self,
+        state: ConversationState,
+        booking_context: dict[str, Any],
+    ) -> BookingStateExtraction | None:
+        """Run a cheap structured-output LLM call to extract user-confirmed data.
+
+        Returns None on any error — the flow continues without extraction.
+        """
+        if self.llm is None:
+            return None
+
+        try:
+            # Build state summary from booking_context
+            summary_parts: list[str] = []
+            if booking_context.get("last_services"):
+                summary_parts.append(f"Services: {booking_context['last_services']}")
+            if booking_context.get("add_more_asked"):
+                summary_parts.append("Client confirmed no more services")
+            if booking_context.get("last_stylist"):
+                summary_parts.append(f"Stylist: {booking_context['last_stylist']}")
+            if booking_context.get("selected_slot"):
+                summary_parts.append(f"Selected slot: {booking_context['selected_slot']}")
+            if booking_context.get("customer_name"):
+                summary_parts.append(f"Customer name: {booking_context['customer_name']}")
+            if booking_context.get("notes_asked"):
+                summary_parts.append(f"Notes: {booking_context.get('notes', 'none')}")
+            state_summary = "\n".join(summary_parts) if summary_parts else "(no data collected yet)"
+
+            # Build conversation text from last N messages
+            messages = state.get("messages") or []
+            recent = messages[-_HISTORY_LIMIT:]
+            conv_lines: list[str] = []
+            for msg in recent:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if isinstance(content, str) and content.strip():
+                    conv_lines.append(f"{role}: {content.strip()}")
+            conversation = "\n".join(conv_lines) if conv_lines else "(empty)"
+
+            prompt = self._EXTRACTION_PROMPT.format(
+                state_summary=state_summary,
+                conversation=conversation,
+            )
+
+            extraction_llm = self.llm.with_structured_output(BookingStateExtraction)
+            result = await extraction_llm.ainvoke(prompt)
+
+            logger.debug(
+                "extraction_result | %s",
+                result.model_dump() if result else "None",
+            )
+            return result
+
+        except Exception as exc:
+            logger.warning("_extract_booking_state failed: %s", exc)
+            return None
+
+    def _merge_extraction(
+        self,
+        booking_context: dict[str, Any],
+        extraction: BookingStateExtraction,
+    ) -> None:
+        """Merge extraction results into booking_context — only fill missing fields."""
+        if extraction.resolved_services and not booking_context.get("last_services"):
+            booking_context["last_services"] = extraction.resolved_services
+            logger.info("extraction_merge: last_services=%s", extraction.resolved_services)
+
+        if extraction.add_more_declined and not booking_context.get("add_more_asked"):
+            booking_context["add_more_asked"] = True
+            logger.info("extraction_merge: add_more_asked=True")
+
+        if extraction.stylist_preference and not booking_context.get("last_stylist"):
+            booking_context["last_stylist"] = extraction.stylist_preference
+            if extraction.stylist_preference.lower() in ("sin preferencia", "me da igual", "cualquiera"):
+                booking_context["no_preference_stylist"] = True
+            logger.info("extraction_merge: last_stylist=%s", extraction.stylist_preference)
+
+        if extraction.customer_name and not booking_context.get("customer_name"):
+            booking_context["customer_name"] = extraction.customer_name
+            logger.info("extraction_merge: customer_name=%s", extraction.customer_name)
+
+        if extraction.notes_declined and not booking_context.get("notes_asked"):
+            booking_context["notes_asked"] = True
+            booking_context["notes"] = None
+            logger.info("extraction_merge: notes_asked=True (declined)")
+        elif extraction.notes and not booking_context.get("notes_asked"):
+            booking_context["notes_asked"] = True
+            booking_context["notes"] = extraction.notes
+            logger.info("extraction_merge: notes=%s", extraction.notes)
 
     # ──────────────────────────────────────────────────────────────────────
     # Message construction

@@ -7,6 +7,7 @@ Tests cover:
 - C: Hide durations from client (_build_collected_summary, catalog_builder, ui_constraint)
 - D: Dynamic context — factual, no imperative directives
 - E: _build_flow_hint() neutral pending-data list
+- F: BookingStateExtraction schema + _merge_extraction
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from agent.modes.base import ToolCallRejection
-from agent.modes.booking_mode import BookingModeNode
+from agent.modes.booking_mode import BookingModeNode, BookingStateExtraction
 
 
 # ===========================================================================
@@ -393,3 +394,122 @@ class TestBuildFlowHint:
         result = BookingModeNode._build_flow_hint(ctx)
         # Should be at phase 3 (date) since stylist is already set
         assert "día" in result.lower()
+
+
+# ===========================================================================
+# Change F — BookingStateExtraction schema + _merge_extraction
+# ===========================================================================
+
+
+class TestBookingStateExtractionSchema:
+    """BookingStateExtraction Pydantic schema defaults are safe."""
+
+    def test_defaults_are_safe(self):
+        """Empty construction produces no state pollution."""
+        ext = BookingStateExtraction()
+        assert ext.resolved_services is None
+        assert ext.add_more_declined is False
+        assert ext.stylist_preference is None
+        assert ext.preferred_date is None
+        assert ext.customer_name is None
+        assert ext.notes is None
+        assert ext.notes_declined is False
+
+    def test_full_construction(self):
+        """All fields can be set."""
+        ext = BookingStateExtraction(
+            resolved_services=["Cortar", "Óleo Mantenimiento"],
+            add_more_declined=True,
+            stylist_preference="Pilar",
+            preferred_date="el martes",
+            customer_name="Maria Garcia",
+            notes="Tengo alergia",
+            notes_declined=False,
+        )
+        assert ext.resolved_services == ["Cortar", "Óleo Mantenimiento"]
+        assert ext.customer_name == "Maria Garcia"
+        assert ext.stylist_preference == "Pilar"
+
+
+class TestMergeExtraction:
+    """_merge_extraction fills missing fields and never overwrites existing ones."""
+
+    def test_fills_missing_add_more_asked(self, booking_node):
+        """add_more_declined=True → sets add_more_asked in booking_context."""
+        ctx: dict = {"last_services": ["Cortar"]}
+        ext = BookingStateExtraction(add_more_declined=True)
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["add_more_asked"] is True
+
+    def test_does_not_overwrite_existing_services(self, booking_node):
+        """Tool-provided services are preserved even if extraction disagrees."""
+        ctx: dict = {"last_services": ["Cortar"]}
+        ext = BookingStateExtraction(resolved_services=["Cortar", "Óleo"])
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["last_services"] == ["Cortar"]
+
+    def test_fills_missing_services(self, booking_node):
+        """Extraction fills last_services when empty."""
+        ctx: dict = {}
+        ext = BookingStateExtraction(resolved_services=["Cortar"])
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["last_services"] == ["Cortar"]
+
+    def test_fills_customer_name(self, booking_node):
+        """Extraction fills customer_name when missing."""
+        ctx: dict = {}
+        ext = BookingStateExtraction(customer_name="Maria Garcia")
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["customer_name"] == "Maria Garcia"
+
+    def test_does_not_overwrite_existing_customer_name(self, booking_node):
+        """Existing customer_name is preserved."""
+        ctx: dict = {"customer_name": "Pablo Cabeza"}
+        ext = BookingStateExtraction(customer_name="Maria Garcia")
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["customer_name"] == "Pablo Cabeza"
+
+    def test_fills_stylist_preference(self, booking_node):
+        """Extraction fills last_stylist."""
+        ctx: dict = {}
+        ext = BookingStateExtraction(stylist_preference="Pilar")
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["last_stylist"] == "Pilar"
+
+    def test_sin_preferencia_sets_flag(self, booking_node):
+        """'Sin preferencia' also sets no_preference_stylist."""
+        ctx: dict = {}
+        ext = BookingStateExtraction(stylist_preference="Sin preferencia")
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["last_stylist"] == "Sin preferencia"
+        assert ctx["no_preference_stylist"] is True
+
+    def test_notes_declined(self, booking_node):
+        """notes_declined=True → notes_asked=True, notes=None."""
+        ctx: dict = {}
+        ext = BookingStateExtraction(notes_declined=True)
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["notes_asked"] is True
+        assert ctx["notes"] is None
+
+    def test_notes_provided(self, booking_node):
+        """Notes string → notes_asked=True, notes set."""
+        ctx: dict = {}
+        ext = BookingStateExtraction(notes="Tengo alergia al tinte")
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["notes_asked"] is True
+        assert ctx["notes"] == "Tengo alergia al tinte"
+
+    def test_does_not_overwrite_existing_notes(self, booking_node):
+        """Existing notes_asked is preserved."""
+        ctx: dict = {"notes_asked": True, "notes": "Pelo fino"}
+        ext = BookingStateExtraction(notes="Otra cosa")
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx["notes"] == "Pelo fino"
+
+    def test_empty_extraction_changes_nothing(self, booking_node):
+        """Default extraction (all None/False) leaves context untouched."""
+        ctx: dict = {"last_services": ["Cortar"], "customer_name": "Pablo"}
+        ext = BookingStateExtraction()
+        booking_node._merge_extraction(ctx, ext)
+        assert ctx == {"last_services": ["Cortar"], "customer_name": "Pablo"}
