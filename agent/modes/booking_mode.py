@@ -222,8 +222,8 @@ class BookingModeNode(BaseModeNode):
             missing.append("fecha/hora")
         if not ctx.get("customer_name"):
             missing.append("nombre")
-        if not ctx.get("notes_asked"):
-            missing.append("notas")
+        # Notes are optional — the LLM handles asking via prompt (Paso 5).
+        # No Python gate needed; book() accepts notes=None.
         return (len(missing) == 0, missing)
 
     @staticmethod
@@ -234,9 +234,12 @@ class BookingModeNode(BaseModeNode):
         dictating the order to collect it.
         """
         is_complete, missing = BookingModeNode._booking_complete(ctx)
-        if is_complete:
-            return "<flow_hint>Todos los datos recogidos. Muestra resumen y pide confirmación.</flow_hint>"
-        return f"<flow_hint>Datos pendientes: {', '.join(missing)}</flow_hint>"
+        if not is_complete:
+            return f"<flow_hint>Datos pendientes: {', '.join(missing)}</flow_hint>"
+        # All required fields present — remind about notes if not yet asked
+        if not ctx.get("notes") and not ctx.get("notes_asked"):
+            return "<flow_hint>Datos obligatorios completos. Pregunta por notas (Paso 5) antes del resumen de confirmación.</flow_hint>"
+        return "<flow_hint>Todos los datos recogidos. Muestra resumen y pide confirmación.</flow_hint>"
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -389,17 +392,6 @@ class BookingModeNode(BaseModeNode):
 
         # ── check_availability: stylist guard ────────────────────────────
         if tool_name == "check_availability":
-            # Gate 1: reject if disambiguation questions are still pending
-            if mode_context.get("_has_pending_disambiguation") and not mode_context.get("last_services"):
-                return ToolCallRejection(
-                    name="check_availability",
-                    error_code="DISAMBIGUATION_PENDING",
-                    error_message=(
-                        "Hay preguntas de desambiguación pendientes en <required_questions>. "
-                        "Preguntá al cliente y resolvé los servicios antes de buscar disponibilidad."
-                    ),
-                )
-
             # Accept stylist_name from tool_args — LLM resolved it from conversation.
             # This prevents STYLIST_NOT_RESOLVED deadlock when the LLM provides the
             # stylist directly in args before last_stylist is set in mode_context.
@@ -464,9 +456,15 @@ class BookingModeNode(BaseModeNode):
                         full_name,
                     )
 
+            # Step A.3: capture notes from tool args (LLM passes them after Paso 5)
+            notes_arg = tool_args.get("notes")
+            if notes_arg is not None:
+                mode_context["notes"] = notes_arg if notes_arg.lower() not in ("no", "ninguna", "sin notas") else None
+                mode_context["notes_asked"] = True
+
             # Step B: Confirmation gate — reject book() if required fields are missing.
-            # Runs AFTER Steps A/A.1b/A.2 so selected_slot and customer_name
-            # are already persisted to mode_context even when rejected.
+            # Runs AFTER Steps A/A.1b/A.2/A.3 so selected_slot, customer_name,
+            # and notes are already persisted to mode_context even when rejected.
             is_complete, missing_fields = self._booking_complete(mode_context)
             if not is_complete:
                 missing_hint = ", ".join(missing_fields)
@@ -711,24 +709,34 @@ class BookingModeNode(BaseModeNode):
                 f"<audience_hint>El cliente indicó que la cita es para: {hint_label}</audience_hint>"
             )
 
-        # Opening booking request — deterministic disambiguation
+        # Opening booking request — informational context (decoupled from disambiguation)
         opening_request = mode_context.get("opening_booking_request")
         if opening_request and not mode_context.get("last_services"):
             parts.append(
                 f"<opening_booking_request>{opening_request}</opening_booking_request>"
             )
-            # Detect disambiguation needs deterministically
-            audience_hint = mode_context.get("service_audience_hint")
-            questions = _detect_disambiguation_needs(opening_request, audience_hint)
-            if questions:
-                q_lines = "\n".join(f"- {q}" for q in questions)
+
+        # Deterministic disambiguation — show-once, runs on current user message
+        if not mode_context.get("last_services"):
+            if not mode_context.get("_disambiguation_questions_shown"):
+                user_msg = get_last_user_message(state).strip()
+                audience_hint = mode_context.get("service_audience_hint")
+                questions = _detect_disambiguation_needs(user_msg, audience_hint)
+                if questions:
+                    q_lines = "\n".join(f"- {q}" for q in questions)
+                    parts.append(
+                        f"<required_questions>\nPresenta TODAS estas preguntas al cliente "
+                        f"en un solo mensaje con lenguaje natural y cercano:\n{q_lines}\n"
+                        f"</required_questions>"
+                    )
+                    mode_context["_disambiguation_questions_shown"] = True
+            else:
                 parts.append(
-                    f"<required_questions>\nPresenta TODAS estas preguntas al cliente "
-                    f"en un solo mensaje con lenguaje natural y cercano:\n{q_lines}\n"
-                    f"NO avances al paso 2 hasta que el cliente responda todas.\n"
-                    f"</required_questions>"
+                    "<disambiguation_context>Preguntas de desambiguación ya realizadas. "
+                    "Revisá las respuestas del cliente en el historial y resolvé los "
+                    "servicios exactos del catálogo antes de llamar a check_availability."
+                    "</disambiguation_context>"
                 )
-                mode_context["_has_pending_disambiguation"] = True
 
         collected = self._build_collected_summary(mode_context)
         if collected:

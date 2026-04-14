@@ -37,7 +37,7 @@ class TestBookingCompleteGate:
     def test_empty_context(self):
         is_complete, missing = BookingModeNode._booking_complete({})
         assert is_complete is False
-        assert set(missing) == {"servicio", "estilista", "fecha/hora", "nombre", "notas"}
+        assert set(missing) == {"servicio", "estilista", "fecha/hora", "nombre"}
 
     def test_service_only(self):
         _, missing = BookingModeNode._booking_complete({"last_services": ["Cortar"]})
@@ -54,11 +54,21 @@ class TestBookingCompleteGate:
             "last_stylist": "Ana",
             "selected_slot": {"time": "10:00"},
             "customer_name": "María",
-            "notes_asked": True,
         }
         is_complete, missing = BookingModeNode._booking_complete(ctx)
         assert is_complete is True
         assert missing == []
+
+    def test_notes_not_required_for_complete(self):
+        """notes_asked is NOT a gate — notes are optional, handled by prompt."""
+        ctx = {
+            "last_services": ["Cortar"],
+            "last_stylist": "Ana",
+            "selected_slot": {"time": "10:00"},
+            "customer_name": "María",
+        }
+        is_complete, _ = BookingModeNode._booking_complete(ctx)
+        assert is_complete is True
 
 
 # ===========================================================================
@@ -121,14 +131,13 @@ async def test_pre_tool_call_does_not_overwrite_existing_stylist(booking_node: B
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_call_rejects_disambiguation_pending(booking_node: BookingModeNode):
-    """DISAMBIGUATION_PENDING gate blocks check_availability."""
+async def test_check_availability_allowed_despite_disambiguation(booking_node: BookingModeNode):
+    """check_availability NOT blocked by _has_pending_disambiguation — gate removed."""
     booking_node._mode_context = {"_has_pending_disambiguation": True}
     result = await booking_node._pre_tool_call(
         "check_availability", {"service_names": ["Cortar"]}
     )
-    assert isinstance(result, ToolCallRejection)
-    assert result.error_code == "DISAMBIGUATION_PENDING"
+    assert not isinstance(result, ToolCallRejection)
 
 
 @pytest.mark.asyncio
@@ -164,7 +173,6 @@ async def test_book_rejected_missing_name(booking_node: BookingModeNode):
         "last_stylist": "Marta",
         "selected_slot": {"time": "10:00", "stylist_id": "x", "start_time": "2026-04-20T10:00"},
         "offered_slots": [{"time": "10:00", "stylist_id": "x", "start_time": "2026-04-20T10:00"}],
-        "notes_asked": True,
     }
     result = await booking_node._pre_tool_call("book", {"slot_index": 1, "services": ["Cortar"]})
     assert isinstance(result, ToolCallRejection)
@@ -172,8 +180,8 @@ async def test_book_rejected_missing_name(booking_node: BookingModeNode):
 
 
 @pytest.mark.asyncio
-async def test_book_rejected_missing_notes(booking_node: BookingModeNode):
-    """book() rejected when notes_asked is missing."""
+async def test_book_allowed_without_notes(booking_node: BookingModeNode):
+    """book() allowed when notes_asked is missing — notes are optional."""
     booking_node._mode_context = {
         "last_services": ["Cortar"],
         "last_stylist": "Marta",
@@ -182,5 +190,38 @@ async def test_book_rejected_missing_notes(booking_node: BookingModeNode):
         "customer_name": "Ana",
     }
     result = await booking_node._pre_tool_call("book", {"slot_index": 1, "services": ["Cortar"]})
-    assert isinstance(result, ToolCallRejection)
-    assert "notas" in result.error_message
+    assert not isinstance(result, ToolCallRejection)
+
+
+@pytest.mark.asyncio
+async def test_book_captures_notes_from_args(booking_node: BookingModeNode):
+    """book() captures notes from tool args into mode_context."""
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Marta",
+        "selected_slot": {"time": "10:00", "stylist_id": "x", "start_time": "2026-04-20T10:00"},
+        "offered_slots": [{"time": "10:00", "stylist_id": "x", "start_time": "2026-04-20T10:00"}],
+        "customer_name": "Ana",
+    }
+    await booking_node._pre_tool_call(
+        "book", {"slot_index": 1, "services": ["Cortar"], "notes": "Alergia al amoniaco"}
+    )
+    assert booking_node._mode_context["notes"] == "Alergia al amoniaco"
+    assert booking_node._mode_context["notes_asked"] is True
+
+
+@pytest.mark.asyncio
+async def test_book_notes_no_clears_to_none(booking_node: BookingModeNode):
+    """book() with notes='no' stores None (no notes)."""
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Marta",
+        "selected_slot": {"time": "10:00", "stylist_id": "x", "start_time": "2026-04-20T10:00"},
+        "offered_slots": [{"time": "10:00", "stylist_id": "x", "start_time": "2026-04-20T10:00"}],
+        "customer_name": "Ana",
+    }
+    await booking_node._pre_tool_call(
+        "book", {"slot_index": 1, "services": ["Cortar"], "notes": "no"}
+    )
+    assert booking_node._mode_context["notes"] is None
+    assert booking_node._mode_context["notes_asked"] is True

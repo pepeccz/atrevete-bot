@@ -67,6 +67,7 @@ class BookingContext(TypedDict, total=False):
 
     # Flow control
     add_more_asked: bool  # True after "¿algo más?" has been answered
+    _disambiguation_questions_shown: bool  # True after <required_questions> injected once
 
     # Extra
     notes: str | None

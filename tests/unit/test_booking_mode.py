@@ -176,7 +176,6 @@ async def test_pre_tool_call_name_extraction_and_slot_injection(booking_node):
                 "stylist_name": "Pilar",
             }
         ],
-        "notes_asked": True,
         "add_more_asked": True,
     }
     tool_args = {
@@ -542,12 +541,12 @@ async def test_confirmation_gate_rejects_at_name_collection():
 
     assert isinstance(result, ToolCallRejection)
     assert result.error_code == "CONFIRMATION_REQUIRED"
-    assert "name_collection" in result.error_message
+    assert "nombre" in result.error_message
 
 
 @pytest.mark.asyncio
-async def test_confirmation_gate_rejects_at_notes_collection():
-    """book() at notes_collection step → ToolCallRejection(CONFIRMATION_REQUIRED)."""
+async def test_confirmation_gate_allows_without_notes_asked():
+    """book() without notes_asked → allowed (notes are optional, prompt-driven)."""
     from agent.modes.booking_mode import BookingModeNode
     from agent.modes.base import ToolCallRejection
 
@@ -557,16 +556,13 @@ async def test_confirmation_gate_rejects_at_notes_collection():
         "last_stylist": "Pilar",
         "selected_slot": {"stylist_id": "abc", "start_time": "2026-04-10T10:00:00"},
         "customer_name": "Pablo",
-        "notes_asked": False,  # Step = notes_collection
         "add_more_asked": True,
     }
     node._mode_context = node._booking_context
 
     result = await node._pre_tool_call("book", {"services": ["Cortar"]})
 
-    assert isinstance(result, ToolCallRejection)
-    assert result.error_code == "CONFIRMATION_REQUIRED"
-    assert "notes_collection" in result.error_message
+    assert not isinstance(result, ToolCallRejection)
 
 
 @pytest.mark.asyncio
@@ -585,7 +581,6 @@ async def test_confirmation_gate_passes_at_confirmation_step():
             "stylist_name": "Pilar",
         },
         "customer_name": "Pablo",
-        "notes_asked": True,
         "add_more_asked": True,
     }
     node._mode_context = node._booking_context
@@ -628,14 +623,13 @@ async def test_confirmation_gate_persists_slot_on_rejection():
         },
     )
 
-    # Gate should reject (name_collection → confirmation not reached because name IS extracted
-    # BUT notes_asked is not set, so step = notes_collection)
-    assert isinstance(result, ToolCallRejection)
-    assert result.error_code == "CONFIRMATION_REQUIRED"
-    # selected_slot MUST be persisted (Step A ran before gate)
+    # Gate should pass — all required fields present after Step A extractions
+    # (notes_asked is no longer a blocking gate)
+    assert not isinstance(result, ToolCallRejection)
+    # selected_slot MUST be persisted (Step A ran)
     assert node._booking_context["selected_slot"] is not None
     assert node._booking_context["selected_slot"]["stylist_id"] == "abc-123"
-    # customer_name MUST be persisted (Step A.2 ran before gate)
+    # customer_name MUST be persisted (Step A.2 ran)
     assert node._booking_context["customer_name"] == "Pablo"
 
 
@@ -688,7 +682,6 @@ def test_build_dynamic_context_excludes_available_stylists_at_other_steps():
             "last_stylist": "Marta",
             "selected_slot": {"stylist_id": "x"},
             "customer_name": "Pablo",
-            "notes_asked": True,
         }
         context = node._build_dynamic_context(mode_context, {"customer_phone": "", "messages": []})  # type: ignore[arg-type]
         assert "<available_stylists>" not in context, (

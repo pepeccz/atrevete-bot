@@ -33,42 +33,89 @@ def booking_node() -> BookingModeNode:
 # ===========================================================================
 
 
-class TestChangeADisambiguationGate:
-    """_pre_tool_call rejects check_availability when disambiguation is pending."""
+class TestDisambiguationGateRemoved:
+    """DISAMBIGUATION_PENDING gate removed — check_availability always allowed."""
 
     @pytest.mark.asyncio
-    async def test_rejects_when_disambiguation_pending(self, booking_node):
-        """check_availability blocked when _has_pending_disambiguation=True and no services."""
-        booking_node._mode_context = {
-            "_has_pending_disambiguation": True,
-            # last_services absent → empty
-        }
-        result = await booking_node._pre_tool_call(
-            "check_availability", {"service_names": ["Cortar"]}
-        )
-        assert isinstance(result, ToolCallRejection)
-        assert result.error_code == "DISAMBIGUATION_PENDING"
-
-    @pytest.mark.asyncio
-    async def test_allows_when_services_resolved(self, booking_node):
-        """check_availability allowed even with flag if last_services is non-empty."""
-        booking_node._mode_context = {
-            "_has_pending_disambiguation": True,
-            "last_services": ["Cortar"],
-        }
+    async def test_allowed_despite_pending_flag(self, booking_node):
+        """check_availability NOT blocked even with _has_pending_disambiguation=True."""
+        booking_node._mode_context = {"_has_pending_disambiguation": True}
         result = await booking_node._pre_tool_call(
             "check_availability", {"service_names": ["Cortar"]}
         )
         assert not isinstance(result, ToolCallRejection)
 
     @pytest.mark.asyncio
-    async def test_allows_when_no_flag(self, booking_node):
-        """check_availability allowed when _has_pending_disambiguation is absent."""
+    async def test_allowed_with_no_context(self, booking_node):
+        """check_availability allowed with empty context."""
         booking_node._mode_context = {}
         result = await booking_node._pre_tool_call(
             "check_availability", {"service_names": ["Cortar"]}
         )
         assert not isinstance(result, ToolCallRejection)
+
+
+class TestDisambiguationShowOnce:
+    """Disambiguation questions shown once, then replaced with hint."""
+
+    def test_questions_shown_on_first_detection(self, booking_node):
+        """Current message with service keywords → <required_questions> injected, flag set."""
+        mode_context = {"opening_booking_request": "quiero cortarme el pelo y un oleo"}
+        state = {
+            "customer_phone": "+34600000000",
+            "messages": [{"role": "user", "content": "quiero cortarme el pelo y un oleo"}],
+        }
+        context = booking_node._build_dynamic_context(mode_context, state)
+        assert "<required_questions>" in context
+        assert mode_context.get("_disambiguation_questions_shown") is True
+
+    def test_hint_shown_on_subsequent_turn(self, booking_node):
+        """Flag already True, no last_services → <disambiguation_context> hint."""
+        mode_context = {
+            "_disambiguation_questions_shown": True,
+            "opening_booking_request": "quiero cortarme el pelo",
+        }
+        state = {
+            "customer_phone": "+34600000000",
+            "messages": [{"role": "user", "content": "para señora y por mantenimiento"}],
+        }
+        context = booking_node._build_dynamic_context(mode_context, state)
+        assert "<disambiguation_context>" in context
+        assert "<required_questions>" not in context
+
+    def test_no_disambiguation_when_services_resolved(self, booking_node):
+        """last_services set → neither block appears."""
+        mode_context = {"last_services": ["Cortar"], "last_stylist": "Pilar"}
+        state = {
+            "customer_phone": "+34600000000",
+            "messages": [{"role": "user", "content": "el viernes"}],
+        }
+        context = booking_node._build_dynamic_context(mode_context, state)
+        assert "<required_questions>" not in context
+        assert "<disambiguation_context>" not in context
+
+    def test_detection_on_current_message_not_opening_request(self, booking_node):
+        """opening_booking_request generic, user_msg has keywords → questions fire."""
+        mode_context = {"opening_booking_request": "quiero pedir cita"}
+        state = {
+            "customer_phone": "+34600000000",
+            "messages": [{"role": "user", "content": "un corte y un óleo"}],
+        }
+        context = booking_node._build_dynamic_context(mode_context, state)
+        assert "<required_questions>" in context
+        assert "corte" in context.lower()
+        assert "óleo" in context.lower() or "oleo" in context.lower()
+
+    def test_answer_message_does_not_retrigger(self, booking_node):
+        """User answer without service keywords → no questions, flag stays False."""
+        mode_context = {"opening_booking_request": "quiero cortarme el pelo"}
+        state = {
+            "customer_phone": "+34600000000",
+            "messages": [{"role": "user", "content": "para señora y por mantenimiento"}],
+        }
+        context = booking_node._build_dynamic_context(mode_context, state)
+        assert "<required_questions>" not in context
+        assert mode_context.get("_disambiguation_questions_shown") is not True
 
 
 # ===========================================================================
@@ -82,12 +129,11 @@ class TestBookingComplete:
     def test_empty_context_all_missing(self):
         is_complete, missing = BookingModeNode._booking_complete({})
         assert is_complete is False
-        assert len(missing) == 5
+        assert len(missing) == 4
         assert "servicio" in missing
         assert "estilista" in missing
         assert "fecha/hora" in missing
         assert "nombre" in missing
-        assert "notas" in missing
 
     def test_partial_context(self):
         ctx = {"last_services": ["Cortar"], "last_stylist": "Marta"}
@@ -108,7 +154,6 @@ class TestBookingComplete:
             "last_stylist": "Marta",
             "selected_slot": {"time": "10:00"},
             "customer_name": "Ana",
-            "notes_asked": True,
         }
         is_complete, missing = BookingModeNode._booking_complete(ctx)
         assert is_complete is True
@@ -145,7 +190,6 @@ class TestBookingComplete:
                 }
             ],
             "customer_name": "Ana",
-            "notes_asked": True,
         }
         result = await booking_node._pre_tool_call(
             "book",
@@ -279,7 +323,20 @@ class TestBuildFlowHint:
         assert "estilista" not in result
         assert "fecha/hora" in result
 
-    def test_complete_context(self):
+    def test_complete_context_without_notes(self):
+        """All required fields present but notes not yet asked → prompt to ask notes."""
+        ctx = {
+            "last_services": ["Cortar"],
+            "last_stylist": "Marta",
+            "selected_slot": {"time": "10:00"},
+            "customer_name": "Ana",
+        }
+        result = BookingModeNode._build_flow_hint(ctx)
+        assert "Datos obligatorios completos" in result
+        assert "notas" in result.lower()
+
+    def test_complete_context_with_notes(self):
+        """All fields present including notes → ready for confirmation."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Marta",
@@ -289,4 +346,3 @@ class TestBuildFlowHint:
         }
         result = BookingModeNode._build_flow_hint(ctx)
         assert "Todos los datos recogidos" in result
-        assert "Datos pendientes" not in result
