@@ -308,41 +308,88 @@ class TestDynamicContextFactual:
 
 
 class TestBuildFlowHint:
-    """_build_flow_hint produces neutral pending-data list."""
+    """_build_flow_hint produces prescriptive phase-aware instructions."""
 
-    def test_empty_context_lists_all_pending(self):
+    def test_phase1_no_services(self):
+        """No services → hint to identify services, no tools."""
         result = BookingModeNode._build_flow_hint({})
-        assert "Datos pendientes" in result
-        assert "servicio" in result
-        assert "nombre" in result
+        assert "Identificar servicios" in result
+        assert "NO llames herramientas" in result
 
-    def test_partial_context(self):
-        ctx = {"last_services": ["Cortar"], "last_stylist": "Marta"}
+    def test_phase1b_algo_mas(self):
+        """Services set, no add_more_asked, no hints → ask '¿algo más?'."""
+        ctx = {"last_services": ["Cortar"]}
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "servicio" not in result
-        assert "estilista" not in result
-        assert "fecha/hora" in result
+        assert "algo más" in result.lower()
+        assert "NO llames herramientas" in result
 
-    def test_complete_context_without_notes(self):
-        """All required fields present but notes not yet asked → prompt to ask notes."""
+    def test_phase1b_skipped_with_date_hint(self):
+        """Services set + preferred_date_hint → skip algo más, go to stylist."""
+        ctx = {"last_services": ["Cortar"], "preferred_date_hint": "viernes"}
+        result = BookingModeNode._build_flow_hint(ctx)
+        assert "estilista" in result.lower()
+        assert "algo más" not in result.lower()
+
+    def test_phase2_no_stylist(self):
+        """Services + add_more_asked, no stylist → ask stylist preference."""
+        ctx = {"last_services": ["Cortar"], "add_more_asked": True}
+        result = BookingModeNode._build_flow_hint(ctx)
+        assert "estilista" in result.lower()
+        assert "NO llames check_availability" in result
+
+    def test_phase3_no_slots(self):
+        """Stylist set, no slots → ask what day."""
+        ctx = {"last_services": ["Cortar"], "last_stylist": "Pilar", "add_more_asked": True}
+        result = BookingModeNode._build_flow_hint(ctx)
+        assert "día" in result.lower()
+        assert "check_availability" in result
+
+    def test_phase3b_slots_offered(self):
+        """Slots offered, none selected → wait for selection."""
+        ctx = {
+            "last_services": ["Cortar"],
+            "last_stylist": "Pilar",
+            "add_more_asked": True,
+            "offered_slots": [{"time": "10:00"}],
+        }
+        result = BookingModeNode._build_flow_hint(ctx)
+        assert "elige horario" in result.lower()
+
+    def test_phase5_notes(self):
+        """All required present, no notes → ask notes."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Marta",
+            "add_more_asked": True,
             "selected_slot": {"time": "10:00"},
             "customer_name": "Ana",
         }
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "Datos obligatorios completos" in result
-        assert "notas" in result.lower()
+        assert "nota" in result.lower()
 
-    def test_complete_context_with_notes(self):
-        """All fields present including notes → ready for confirmation."""
+    def test_phase6_confirmation(self):
+        """All data including notes → show summary and confirm."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Marta",
+            "add_more_asked": True,
             "selected_slot": {"time": "10:00"},
             "customer_name": "Ana",
             "notes_asked": True,
         }
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "Todos los datos recogidos" in result
+        assert "resumen" in result.lower()
+        assert "book()" in result
+
+    def test_atajo_with_handoff_hints(self):
+        """preferred_date_hint + preferred_stylist_name → skip to stylist (already hinted)."""
+        ctx = {
+            "last_services": ["Cortar"],
+            "preferred_date_hint": "viernes",
+            "preferred_stylist_name": "Pilar",
+            "last_stylist": "Pilar",
+            "add_more_asked": True,
+        }
+        result = BookingModeNode._build_flow_hint(ctx)
+        # Should be at phase 3 (date) since stylist is already set
+        assert "día" in result.lower()

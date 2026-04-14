@@ -228,18 +228,74 @@ class BookingModeNode(BaseModeNode):
 
     @staticmethod
     def _build_flow_hint(ctx: dict) -> str:
-        """Build a neutral flow hint listing pending data.
+        """Build a prescriptive flow hint for the current booking phase.
 
-        Factual, not prescriptive — tells the LLM what's missing without
-        dictating the order to collect it.
+        Phase-aware: detects where the flow is from booking_context fields
+        and outputs a specific instruction with explicit tool constraints.
         """
-        is_complete, missing = BookingModeNode._booking_complete(ctx)
-        if not is_complete:
-            return f"<flow_hint>Datos pendientes: {', '.join(missing)}</flow_hint>"
-        # All required fields present — remind about notes if not yet asked
-        if not ctx.get("notes") and not ctx.get("notes_asked"):
-            return "<flow_hint>Datos obligatorios completos. Pregunta por notas (Paso 5) antes del resumen de confirmación.</flow_hint>"
-        return "<flow_hint>Todos los datos recogidos. Muestra resumen y pide confirmación.</flow_hint>"
+        has_services = bool(ctx.get("last_services"))
+        has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
+        has_slots = bool(ctx.get("offered_slots"))
+        has_selected = bool(ctx.get("selected_slot"))
+        has_name = bool(ctx.get("customer_name"))
+        has_notes = bool(ctx.get("notes") or ctx.get("notes_asked"))
+
+        # Phase 1: services not resolved yet
+        if not has_services:
+            return (
+                "<flow_hint>PASO ACTUAL: Identificar servicios del catálogo. "
+                "NO llames herramientas hasta tener todos los servicios resueltos.</flow_hint>"
+            )
+
+        # Phase 1B: services resolved, check if "¿algo más?" needed
+        # Skip if user gave date or stylist hints (complete-intent shortcut)
+        if not ctx.get("add_more_asked"):
+            if not ctx.get("preferred_date_hint") and not ctx.get("preferred_stylist_name"):
+                return (
+                    "<flow_hint>PASO ACTUAL: Preguntá al cliente \"¿Querés añadir algo más a la cita?\". "
+                    "NO llames herramientas. Esperá respuesta.</flow_hint>"
+                )
+
+        # Phase 2: stylist not resolved
+        if not has_stylist:
+            return (
+                "<flow_hint>PASO ACTUAL: Preguntá si prefiere alguna estilista o le da igual. "
+                "NO llames check_availability hasta tener respuesta del cliente.</flow_hint>"
+            )
+
+        # Phase 3: date — need to ask what day
+        if not has_slots:
+            return (
+                "<flow_hint>PASO ACTUAL: Preguntá \"¿Qué día te viene bien?\". "
+                "Llamá check_availability SOLO cuando el cliente diga un día concreto.</flow_hint>"
+            )
+
+        # Phase 3b: slots offered, waiting for selection
+        if not has_selected:
+            return (
+                "<flow_hint>PASO ACTUAL: El cliente elige horario de la lista. "
+                "NO llames herramientas. Esperá selección.</flow_hint>"
+            )
+
+        # Phase 4: name
+        if not has_name:
+            return (
+                "<flow_hint>PASO ACTUAL: Preguntá nombre y apellidos para la reserva. "
+                "NO llames herramientas.</flow_hint>"
+            )
+
+        # Phase 5: notes
+        if not has_notes:
+            return (
+                "<flow_hint>PASO ACTUAL: Preguntá si tiene alguna nota para la estilista. "
+                "NO llames herramientas.</flow_hint>"
+            )
+
+        # Phase 6: confirmation
+        return (
+            "<flow_hint>PASO ACTUAL: Mostrá resumen de la cita y pedí confirmación. "
+            "Llamá book() SOLO cuando el cliente confirme.</flow_hint>"
+        )
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
