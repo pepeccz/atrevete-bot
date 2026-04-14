@@ -19,8 +19,6 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field
-
 from agent.config import get_booking_config, ToolChoicePolicy
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
@@ -29,68 +27,6 @@ from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
 
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# Structured extraction schema
-# ============================================================================
-
-
-class BookingStateExtraction(BaseModel):
-    """Structured extraction of booking state from conversation.
-
-    Used by _extract_booking_state() to sync booking_context with what
-    the user confirmed conversationally (without tool calls).
-    """
-
-    resolved_services: list[str] | None = Field(
-        None,
-        description=(
-            "Exact catalog service names the client confirmed. "
-            "None if not yet resolved."
-        ),
-    )
-    add_more_declined: bool = Field(
-        False,
-        description=(
-            "True ONLY if the client explicitly said they don't want more services "
-            "(e.g. 'no', 'nada más', 'solo eso'). False if not asked yet or no answer."
-        ),
-    )
-    stylist_preference: str | None = Field(
-        None,
-        description=(
-            "Stylist name the client chose, 'Sin preferencia' if they said "
-            "'me da igual'/'cualquiera', or None if not discussed yet."
-        ),
-    )
-    preferred_date: str | None = Field(
-        None,
-        description=(
-            "Date the client mentioned (natural Spanish like 'el martes' or ISO). "
-            "None if not discussed yet."
-        ),
-    )
-    customer_name: str | None = Field(
-        None,
-        description=(
-            "Client's full name if they provided it. None if not asked yet."
-        ),
-    )
-    notes: str | None = Field(
-        None,
-        description=(
-            "Notes for the stylist if provided. None if not asked yet. "
-            "Empty string if client said 'no notes'."
-        ),
-    )
-    notes_declined: bool = Field(
-        False,
-        description=(
-            "True if client explicitly said no notes needed "
-            "(e.g. 'no', 'ninguna', 'sin notas'). False if not asked yet."
-        ),
-    )
-
 
 # ============================================================================
 # Constants
@@ -196,6 +132,28 @@ def _normalize_for_match(text: str) -> str:
     raw = text.strip().lower()
     normalized = unicodedata.normalize("NFKD", raw)
     return "".join(c for c in normalized if not unicodedata.combining(c))
+
+
+# ============================================================================
+# Deterministic signal keywords — used by _resolve_conversational_signals
+# ============================================================================
+
+_ADD_MORE_DECLINE_KEYWORDS: frozenset[str] = frozenset({
+    "no", "nada", "nada mas", "solo eso", "ya esta", "eso es todo",
+    "no gracias", "solo", "no mas", "ya",
+})
+
+_NO_PREFERENCE_KEYWORDS: frozenset[str] = frozenset({
+    "me da igual", "cualquiera", "la primera", "sin preferencia",
+    "da lo mismo", "no me importa", "la que sea", "el que sea",
+    "da igual", "no tengo preferencia", "la primera disponible",
+    "la que este", "el que este",
+})
+
+_NOTES_DECLINE_KEYWORDS: frozenset[str] = frozenset({
+    "no", "nada", "ninguna", "sin notas", "paso", "no tengo",
+    "nada especial", "no hace falta", "no gracias",
+})
 
 
 def _detect_disambiguation_needs(
@@ -316,7 +274,8 @@ class BookingModeNode(BaseModeNode):
         # Phase 2: stylist not resolved
         if not has_stylist:
             return (
-                "<flow_hint>PASO ACTUAL: Preguntá si prefiere alguna estilista o le da igual. "
+                "<flow_hint>PASO ACTUAL: Mostrá la lista numerada de estilistas de "
+                "<available_stylists> con la última opción \"la primera con disponibilidad\". "
                 "NO llames check_availability hasta tener respuesta del cliente.</flow_hint>"
             )
 
@@ -433,12 +392,10 @@ class BookingModeNode(BaseModeNode):
                 logger.info("BookingModeNode: tool_choice='required' (service known, no slots yet)")
         # else: NEVER_FORCE — tool_choice stays None (LLM decides freely)
 
-        # 3b. Passive state extraction — sync booking_context from PREVIOUS turn.
+        # 3b. Deterministic state sync — resolve conversational signals.
         # Runs BEFORE building messages so flow_hint and collected_data reflect
         # what the user confirmed in their latest message.
-        extraction = await self._extract_booking_state(state, booking_context)
-        if extraction is not None:
-            self._merge_extraction(booking_context, extraction)
+        self._resolve_conversational_signals(state, booking_context)
 
         # Store for _pre_tool_call / _post_tool_result / _refresh_dynamic_context access.
         # _booking_context is the canonical store; _mode_context is kept as an alias
@@ -721,117 +678,6 @@ class BookingModeNode(BaseModeNode):
         return self._sanitize_response(response_text)
 
     # ──────────────────────────────────────────────────────────────────────
-    # Passive state extraction — sync booking_context from conversation
-    # ──────────────────────────────────────────────────────────────────────
-
-    _EXTRACTION_PROMPT = (
-        "Given this salon booking conversation, extract what the CLIENT has "
-        "confirmed so far.\n"
-        "Only extract data the client has EXPLICITLY provided or confirmed. "
-        "Do NOT infer or assume.\n"
-        "If the bot asked a question but the client hasn't answered yet, "
-        "leave that field as None/False.\n\n"
-        "Current known state:\n{state_summary}\n\n"
-        "Recent conversation:\n{conversation}\n\n"
-        "Extract the booking state."
-    )
-
-    async def _extract_booking_state(
-        self,
-        state: ConversationState,
-        booking_context: dict[str, Any],
-    ) -> BookingStateExtraction | None:
-        """Run a cheap structured-output LLM call to extract user-confirmed data.
-
-        Returns None on any error — the flow continues without extraction.
-        """
-        if self.llm is None:
-            return None
-
-        try:
-            # Build state summary from booking_context
-            summary_parts: list[str] = []
-            if booking_context.get("last_services"):
-                summary_parts.append(f"Services: {booking_context['last_services']}")
-            if booking_context.get("add_more_asked"):
-                summary_parts.append("Client confirmed no more services")
-            if booking_context.get("last_stylist"):
-                summary_parts.append(f"Stylist: {booking_context['last_stylist']}")
-            if booking_context.get("selected_slot"):
-                summary_parts.append(f"Selected slot: {booking_context['selected_slot']}")
-            if booking_context.get("customer_name"):
-                summary_parts.append(f"Customer name: {booking_context['customer_name']}")
-            if booking_context.get("notes_asked"):
-                summary_parts.append(f"Notes: {booking_context.get('notes', 'none')}")
-            state_summary = "\n".join(summary_parts) if summary_parts else "(no data collected yet)"
-
-            # Build conversation text from last N messages
-            messages = state.get("messages") or []
-            recent = messages[-_HISTORY_LIMIT:]
-            conv_lines: list[str] = []
-            for msg in recent:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                if isinstance(content, str) and content.strip():
-                    conv_lines.append(f"{role}: {content.strip()}")
-            conversation = "\n".join(conv_lines) if conv_lines else "(empty)"
-
-            prompt = self._EXTRACTION_PROMPT.format(
-                state_summary=state_summary,
-                conversation=conversation,
-            )
-
-            extraction_llm = self.llm.with_structured_output(BookingStateExtraction)
-            result = await extraction_llm.ainvoke(prompt)
-
-            logger.debug(
-                "extraction_result | %s",
-                result.model_dump() if result else "None",
-            )
-            return result
-
-        except Exception as exc:
-            logger.warning("_extract_booking_state failed: %s", exc)
-            return None
-
-    def _merge_extraction(
-        self,
-        booking_context: dict[str, Any],
-        extraction: BookingStateExtraction,
-    ) -> None:
-        """Merge extraction results into booking_context — only fill missing fields.
-
-        NOTE: resolved_services is deliberately NOT merged. Services require
-        disambiguation (señora/caballero/niño) and catalog-exact names that
-        only the LLM+tool flow can resolve correctly. Setting last_services
-        from extraction would bypass disambiguation and use natural-language
-        names instead of catalog names.
-        """
-
-        if extraction.add_more_declined and not booking_context.get("add_more_asked"):
-            booking_context["add_more_asked"] = True
-            logger.info("extraction_merge: add_more_asked=True")
-
-        if extraction.stylist_preference and not booking_context.get("last_stylist"):
-            booking_context["last_stylist"] = extraction.stylist_preference
-            if extraction.stylist_preference.lower() in ("sin preferencia", "me da igual", "cualquiera"):
-                booking_context["no_preference_stylist"] = True
-            logger.info("extraction_merge: last_stylist=%s", extraction.stylist_preference)
-
-        if extraction.customer_name and not booking_context.get("customer_name"):
-            booking_context["customer_name"] = extraction.customer_name
-            logger.info("extraction_merge: customer_name=%s", extraction.customer_name)
-
-        if extraction.notes_declined and not booking_context.get("notes_asked"):
-            booking_context["notes_asked"] = True
-            booking_context["notes"] = None
-            logger.info("extraction_merge: notes_asked=True (declined)")
-        elif extraction.notes and not booking_context.get("notes_asked"):
-            booking_context["notes_asked"] = True
-            booking_context["notes"] = extraction.notes
-            logger.info("extraction_merge: notes=%s", extraction.notes)
-
-    # ──────────────────────────────────────────────────────────────────────
     # Message construction
     # ──────────────────────────────────────────────────────────────────────
 
@@ -919,11 +765,14 @@ class BookingModeNode(BaseModeNode):
         if mode_context.get("last_services") and not mode_context.get("last_stylist"):
             stylist_names = self._get_stylists_for_services(mode_context)
             if stylist_names:
-                numbered = "\n".join(f"{i + 1}. {name}" for i, name in enumerate(stylist_names))
+                # Build numbered list with "Sin preferencia" as last option
+                display_list = stylist_names + ["La primera con disponibilidad 👌"]
+                numbered = "\n".join(f"{i + 1}. {name}" for i, name in enumerate(display_list))
                 parts.append(
-                    f'<available_stylists>\n{numbered}\n'
-                    f'O "la primera disponible" 👌\n</available_stylists>'
+                    f"<available_stylists>\n{numbered}\n</available_stylists>"
                 )
+                # Store for digit-based resolution in _resolve_stylist_signal
+                mode_context["_offered_stylists"] = stylist_names + ["Sin preferencia"]
 
         # Audience hint from greeting handoff
         audience_hint = mode_context.get("service_audience_hint")
@@ -1070,6 +919,115 @@ class BookingModeNode(BaseModeNode):
                 )
         except (ValueError, TypeError):
             pass
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Deterministic conversational signal resolution
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _resolve_conversational_signals(
+        self, state: ConversationState, booking_context: dict[str, Any]
+    ) -> None:
+        """Resolve conversational signals deterministically before the agentic loop.
+
+        Uses the same phase-detection logic as _build_flow_hint() to determine
+        what question the bot asked in the PREVIOUS turn, then pattern-matches
+        the user's response. Only fires for conversational phases (1B, 2, 5).
+
+        Follows the same pattern as _resolve_digit_selection(): reads user message,
+        checks context, writes to booking_context in-place. Zero LLM calls.
+        """
+        user_message = get_last_user_message(state).strip()
+        if not user_message:
+            return
+
+        normalized = _normalize_for_match(user_message)
+
+        # Compute current phase from booking_context (same logic as _build_flow_hint)
+        has_services = bool(booking_context.get("last_services"))
+        has_stylist = bool(booking_context.get("last_stylist") or booking_context.get("no_preference_stylist"))
+        has_slots = bool(booking_context.get("offered_slots"))
+        has_selected = bool(booking_context.get("selected_slot"))
+        has_name = bool(booking_context.get("customer_name"))
+        has_notes = bool(booking_context.get("notes") or booking_context.get("notes_asked"))
+
+        # ── Phase 1B: "¿Algo más?" ──
+        if has_services and not booking_context.get("add_more_asked"):
+            if not booking_context.get("preferred_date_hint") and not booking_context.get("preferred_stylist_name"):
+                # Multi-signal: check stylist names FIRST ("no, con Pilar")
+                stylist_resolved = self._resolve_stylist_signal(normalized, booking_context)
+                if stylist_resolved:
+                    booking_context["add_more_asked"] = True
+                    logger.info(
+                        "signal_resolved: Phase 1B+2 multi-signal | add_more_asked=True, last_stylist=%s",
+                        booking_context.get("last_stylist"),
+                    )
+                    return
+
+                if normalized in _ADD_MORE_DECLINE_KEYWORDS:
+                    booking_context["add_more_asked"] = True
+                    logger.info("signal_resolved: Phase 1B | add_more_asked=True | msg=%r", normalized)
+                return
+
+        # ── Phase 2: Stylist preference ──
+        if has_services and booking_context.get("add_more_asked") and not has_stylist:
+            resolved = self._resolve_stylist_signal(normalized, booking_context)
+            if resolved:
+                logger.info("signal_resolved: Phase 2 | last_stylist=%s | msg=%r", booking_context.get("last_stylist"), normalized)
+            return
+
+        # ── Phase 5: Notes ──
+        if has_services and has_stylist and has_slots and has_selected and has_name and not has_notes:
+            if normalized in _NOTES_DECLINE_KEYWORDS:
+                booking_context["notes_asked"] = True
+                booking_context["notes"] = None
+                logger.info("signal_resolved: Phase 5 decline | msg=%r", normalized)
+            else:
+                booking_context["notes_asked"] = True
+                booking_context["notes"] = user_message.strip()
+                logger.info("signal_resolved: Phase 5 provide | notes=%r", user_message.strip())
+            return
+
+    def _resolve_stylist_signal(
+        self, normalized_msg: str, booking_context: dict[str, Any]
+    ) -> bool:
+        """Try to resolve a stylist selection from the user's message.
+
+        Tries in order: digit from offered list, name match, no-preference keyword.
+        Returns True if resolved, False otherwise.
+        """
+        if booking_context.get("last_stylist"):
+            return False
+
+        # 1. Digit match from offered stylist list
+        offered_stylists: list[str] = booking_context.get("_offered_stylists") or []
+        if offered_stylists:
+            try:
+                digit = int(normalized_msg.strip())
+                if 1 <= digit <= len(offered_stylists):
+                    chosen = offered_stylists[digit - 1]
+                    if chosen == "Sin preferencia":
+                        booking_context["last_stylist"] = "Sin preferencia"
+                        booking_context["no_preference_stylist"] = True
+                    else:
+                        booking_context["last_stylist"] = chosen
+                    return True
+            except (ValueError, TypeError):
+                pass
+
+        # 2. Name match from cached stylists
+        stylist_names = self._get_stylists_for_services(booking_context)
+        for name in stylist_names:
+            if _normalize_for_match(name) in normalized_msg:
+                booking_context["last_stylist"] = name
+                return True
+
+        # 3. No-preference keywords
+        if normalized_msg in _NO_PREFERENCE_KEYWORDS:
+            booking_context["last_stylist"] = "Sin preferencia"
+            booking_context["no_preference_stylist"] = True
+            return True
+
+        return False
 
     # ──────────────────────────────────────────────────────────────────────
     # Mid-loop dynamic context refresh

@@ -7,7 +7,7 @@ Tests cover:
 - C: Hide durations from client (_build_collected_summary, catalog_builder, ui_constraint)
 - D: Dynamic context — factual, no imperative directives
 - E: _build_flow_hint() neutral pending-data list
-- F: BookingStateExtraction schema + _merge_extraction
+- F: Deterministic conversational signal resolution
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from agent.modes.base import ToolCallRejection
-from agent.modes.booking_mode import BookingModeNode, BookingStateExtraction
+from agent.modes.booking_mode import BookingModeNode
 
 
 # ===========================================================================
@@ -397,119 +397,145 @@ class TestBuildFlowHint:
 
 
 # ===========================================================================
-# Change F — BookingStateExtraction schema + _merge_extraction
+# Change F — Deterministic conversational signal resolution
 # ===========================================================================
 
 
-class TestBookingStateExtractionSchema:
-    """BookingStateExtraction Pydantic schema defaults are safe."""
-
-    def test_defaults_are_safe(self):
-        """Empty construction produces no state pollution."""
-        ext = BookingStateExtraction()
-        assert ext.resolved_services is None
-        assert ext.add_more_declined is False
-        assert ext.stylist_preference is None
-        assert ext.preferred_date is None
-        assert ext.customer_name is None
-        assert ext.notes is None
-        assert ext.notes_declined is False
-
-    def test_full_construction(self):
-        """All fields can be set."""
-        ext = BookingStateExtraction(
-            resolved_services=["Cortar", "Óleo Mantenimiento"],
-            add_more_declined=True,
-            stylist_preference="Pilar",
-            preferred_date="el martes",
-            customer_name="Maria Garcia",
-            notes="Tengo alergia",
-            notes_declined=False,
-        )
-        assert ext.resolved_services == ["Cortar", "Óleo Mantenimiento"]
-        assert ext.customer_name == "Maria Garcia"
-        assert ext.stylist_preference == "Pilar"
+def _make_state_with_message(msg: str) -> dict:
+    """Build a minimal ConversationState-like dict with a user message."""
+    return {"messages": [{"role": "user", "content": msg}]}
 
 
-class TestMergeExtraction:
-    """_merge_extraction fills missing fields and never overwrites existing ones."""
+class TestResolveConversationalSignals:
+    """_resolve_conversational_signals resolves phase-specific keywords."""
 
-    def test_fills_missing_add_more_asked(self, booking_node):
-        """add_more_declined=True → sets add_more_asked in booking_context."""
+    # ── Phase 1B: add_more_asked ──
+
+    @pytest.mark.parametrize("msg", ["no", "nada", "nada más", "solo eso", "ya está", "No gracias"])
+    def test_phase1b_decline_sets_add_more(self, booking_node, msg):
+        """User declines adding services → add_more_asked=True."""
         ctx: dict = {"last_services": ["Cortar"]}
-        ext = BookingStateExtraction(add_more_declined=True)
-        booking_node._merge_extraction(ctx, ext)
+        state = _make_state_with_message(msg)
+        booking_node._resolve_conversational_signals(state, ctx)
         assert ctx["add_more_asked"] is True
 
-    def test_does_not_merge_services(self, booking_node):
-        """Services are NEVER merged — they require disambiguation + catalog names."""
-        ctx: dict = {}
-        ext = BookingStateExtraction(resolved_services=["Corte de pelo"])
-        booking_node._merge_extraction(ctx, ext)
-        assert "last_services" not in ctx
-
-    def test_does_not_overwrite_existing_services(self, booking_node):
-        """Tool-provided services are preserved, extraction services ignored."""
+    def test_phase1b_non_decline_no_change(self, booking_node):
+        """User says something else → add_more_asked stays absent."""
         ctx: dict = {"last_services": ["Cortar"]}
-        ext = BookingStateExtraction(resolved_services=["Cortar", "Óleo"])
-        booking_node._merge_extraction(ctx, ext)
-        assert ctx["last_services"] == ["Cortar"]
+        state = _make_state_with_message("también quiero un tinte")
+        booking_node._resolve_conversational_signals(state, ctx)
+        assert "add_more_asked" not in ctx
 
-    def test_fills_customer_name(self, booking_node):
-        """Extraction fills customer_name when missing."""
-        ctx: dict = {}
-        ext = BookingStateExtraction(customer_name="Maria Garcia")
-        booking_node._merge_extraction(ctx, ext)
-        assert ctx["customer_name"] == "Maria Garcia"
+    def test_phase1b_skipped_when_hints_present(self, booking_node):
+        """With preferred_date_hint, Phase 1B is skipped (shortcut)."""
+        ctx: dict = {"last_services": ["Cortar"], "preferred_date_hint": "viernes"}
+        state = _make_state_with_message("no")
+        booking_node._resolve_conversational_signals(state, ctx)
+        assert "add_more_asked" not in ctx
 
-    def test_does_not_overwrite_existing_customer_name(self, booking_node):
-        """Existing customer_name is preserved."""
-        ctx: dict = {"customer_name": "Pablo Cabeza"}
-        ext = BookingStateExtraction(customer_name="Maria Garcia")
-        booking_node._merge_extraction(ctx, ext)
-        assert ctx["customer_name"] == "Pablo Cabeza"
+    # ── Phase 2: stylist ──
 
-    def test_fills_stylist_preference(self, booking_node):
-        """Extraction fills last_stylist."""
-        ctx: dict = {}
-        ext = BookingStateExtraction(stylist_preference="Pilar")
-        booking_node._merge_extraction(ctx, ext)
+    def test_phase2_digit_selection(self, booking_node):
+        """User sends digit matching offered stylist list."""
+        ctx: dict = {
+            "last_services": ["Cortar"],
+            "add_more_asked": True,
+            "_offered_stylists": ["Pilar", "Marta", "Sin preferencia"],
+        }
+        state = _make_state_with_message("1")
+        booking_node._resolve_conversational_signals(state, ctx)
         assert ctx["last_stylist"] == "Pilar"
 
-    def test_sin_preferencia_sets_flag(self, booking_node):
-        """'Sin preferencia' also sets no_preference_stylist."""
-        ctx: dict = {}
-        ext = BookingStateExtraction(stylist_preference="Sin preferencia")
-        booking_node._merge_extraction(ctx, ext)
+    def test_phase2_digit_last_option_sin_preferencia(self, booking_node):
+        """Last digit = Sin preferencia."""
+        ctx: dict = {
+            "last_services": ["Cortar"],
+            "add_more_asked": True,
+            "_offered_stylists": ["Pilar", "Sin preferencia"],
+        }
+        state = _make_state_with_message("2")
+        booking_node._resolve_conversational_signals(state, ctx)
         assert ctx["last_stylist"] == "Sin preferencia"
         assert ctx["no_preference_stylist"] is True
 
-    def test_notes_declined(self, booking_node):
-        """notes_declined=True → notes_asked=True, notes=None."""
-        ctx: dict = {}
-        ext = BookingStateExtraction(notes_declined=True)
-        booking_node._merge_extraction(ctx, ext)
+    def test_phase2_name_match(self, booking_node):
+        """User says stylist name from cached list."""
+        ctx: dict = {"last_services": ["Cortar"], "add_more_asked": True}
+        booking_node._cached_stylists_by_category = {"HAIRDRESSING": ["Pilar", "Marta"]}
+        state = _make_state_with_message("con Pilar")
+        booking_node._resolve_conversational_signals(state, ctx)
+        assert ctx["last_stylist"] == "Pilar"
+
+    @pytest.mark.parametrize("msg", ["me da igual", "cualquiera", "la primera disponible", "da igual"])
+    def test_phase2_no_preference(self, booking_node, msg):
+        """User expresses no preference → Sin preferencia."""
+        ctx: dict = {"last_services": ["Cortar"], "add_more_asked": True}
+        state = _make_state_with_message(msg)
+        booking_node._resolve_conversational_signals(state, ctx)
+        assert ctx["last_stylist"] == "Sin preferencia"
+        assert ctx["no_preference_stylist"] is True
+
+    def test_phase2_no_match_no_change(self, booking_node):
+        """Unrecognized message → no write."""
+        ctx: dict = {"last_services": ["Cortar"], "add_more_asked": True}
+        state = _make_state_with_message("hmm no sé")
+        booking_node._resolve_conversational_signals(state, ctx)
+        assert "last_stylist" not in ctx
+
+    # ── Phase 5: notes ──
+
+    @pytest.mark.parametrize("msg", ["no", "nada", "ninguna", "paso", "no gracias"])
+    def test_phase5_decline(self, booking_node, msg):
+        """User declines notes → notes_asked=True, notes=None."""
+        ctx: dict = {
+            "last_services": ["Cortar"],
+            "last_stylist": "Pilar",
+            "add_more_asked": True,
+            "offered_slots": [{"time": "10:00"}],
+            "selected_slot": {"time": "10:00"},
+            "customer_name": "Maria",
+        }
+        state = _make_state_with_message(msg)
+        booking_node._resolve_conversational_signals(state, ctx)
         assert ctx["notes_asked"] is True
         assert ctx["notes"] is None
 
-    def test_notes_provided(self, booking_node):
-        """Notes string → notes_asked=True, notes set."""
-        ctx: dict = {}
-        ext = BookingStateExtraction(notes="Tengo alergia al tinte")
-        booking_node._merge_extraction(ctx, ext)
+    def test_phase5_provide_notes(self, booking_node):
+        """User provides notes text."""
+        ctx: dict = {
+            "last_services": ["Cortar"],
+            "last_stylist": "Pilar",
+            "add_more_asked": True,
+            "offered_slots": [{"time": "10:00"}],
+            "selected_slot": {"time": "10:00"},
+            "customer_name": "Maria",
+        }
+        state = _make_state_with_message("Tengo alergia al tinte")
+        booking_node._resolve_conversational_signals(state, ctx)
         assert ctx["notes_asked"] is True
         assert ctx["notes"] == "Tengo alergia al tinte"
 
-    def test_does_not_overwrite_existing_notes(self, booking_node):
-        """Existing notes_asked is preserved."""
-        ctx: dict = {"notes_asked": True, "notes": "Pelo fino"}
-        ext = BookingStateExtraction(notes="Otra cosa")
-        booking_node._merge_extraction(ctx, ext)
-        assert ctx["notes"] == "Pelo fino"
+    # ── Wrong phase: no-op ──
 
-    def test_empty_extraction_changes_nothing(self, booking_node):
-        """Default extraction (all None/False) leaves context untouched."""
-        ctx: dict = {"last_services": ["Cortar"], "customer_name": "Pablo"}
-        ext = BookingStateExtraction()
-        booking_node._merge_extraction(ctx, ext)
-        assert ctx == {"last_services": ["Cortar"], "customer_name": "Pablo"}
+    def test_wrong_phase_no_op(self, booking_node):
+        """Phase 3 (waiting for date) — no signals resolved."""
+        ctx: dict = {
+            "last_services": ["Cortar"],
+            "add_more_asked": True,
+            "last_stylist": "Pilar",
+        }
+        state = _make_state_with_message("no")
+        original = dict(ctx)
+        booking_node._resolve_conversational_signals(state, ctx)
+        assert ctx == original
+
+    # ── Multi-signal ──
+
+    def test_multi_signal_no_con_pilar(self, booking_node):
+        """'no, con Pilar' → sets BOTH add_more_asked and last_stylist."""
+        ctx: dict = {"last_services": ["Cortar"]}
+        booking_node._cached_stylists_by_category = {"HAIRDRESSING": ["Pilar", "Marta"]}
+        state = _make_state_with_message("no, con Pilar")
+        booking_node._resolve_conversational_signals(state, ctx)
+        assert ctx["add_more_asked"] is True
+        assert ctx["last_stylist"] == "Pilar"
