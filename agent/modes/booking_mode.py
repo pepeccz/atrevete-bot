@@ -799,10 +799,14 @@ class BookingModeNode(BaseModeNode):
         booking_context: dict[str, Any],
         extraction: BookingStateExtraction,
     ) -> None:
-        """Merge extraction results into booking_context — only fill missing fields."""
-        if extraction.resolved_services and not booking_context.get("last_services"):
-            booking_context["last_services"] = extraction.resolved_services
-            logger.info("extraction_merge: last_services=%s", extraction.resolved_services)
+        """Merge extraction results into booking_context — only fill missing fields.
+
+        NOTE: resolved_services is deliberately NOT merged. Services require
+        disambiguation (señora/caballero/niño) and catalog-exact names that
+        only the LLM+tool flow can resolve correctly. Setting last_services
+        from extraction would bypass disambiguation and use natural-language
+        names instead of catalog names.
+        """
 
         if extraction.add_more_declined and not booking_context.get("add_more_asked"):
             booking_context["add_more_asked"] = True

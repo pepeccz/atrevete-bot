@@ -441,17 +441,17 @@ class TestMergeExtraction:
         booking_node._merge_extraction(ctx, ext)
         assert ctx["add_more_asked"] is True
 
+    def test_does_not_merge_services(self, booking_node):
+        """Services are NEVER merged — they require disambiguation + catalog names."""
+        ctx: dict = {}
+        ext = BookingStateExtraction(resolved_services=["Corte de pelo"])
+        booking_node._merge_extraction(ctx, ext)
+        assert "last_services" not in ctx
+
     def test_does_not_overwrite_existing_services(self, booking_node):
-        """Tool-provided services are preserved even if extraction disagrees."""
+        """Tool-provided services are preserved, extraction services ignored."""
         ctx: dict = {"last_services": ["Cortar"]}
         ext = BookingStateExtraction(resolved_services=["Cortar", "Óleo"])
-        booking_node._merge_extraction(ctx, ext)
-        assert ctx["last_services"] == ["Cortar"]
-
-    def test_fills_missing_services(self, booking_node):
-        """Extraction fills last_services when empty."""
-        ctx: dict = {}
-        ext = BookingStateExtraction(resolved_services=["Cortar"])
         booking_node._merge_extraction(ctx, ext)
         assert ctx["last_services"] == ["Cortar"]
 
