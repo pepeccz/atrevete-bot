@@ -237,8 +237,8 @@ class BookingModeNode(BaseModeNode):
             missing.append("fecha/hora")
         if not ctx.get("customer_name"):
             missing.append("nombre")
-        # Notes are optional — the LLM handles asking via prompt (Paso 5).
-        # No Python gate needed; book() accepts notes=None.
+        if not ctx.get("notes_asked"):
+            missing.append("notas (preguntá si tiene alguna nota para la estilista)")
         return (len(missing) == 0, missing)
 
     @staticmethod
@@ -480,10 +480,20 @@ class BookingModeNode(BaseModeNode):
                         "cualquier desambiguación pendiente."
                     ),
                 )
-            # Gate 2: accept stylist_name from tool_args — LLM resolved it from conversation.
-            # This prevents STYLIST_NOT_RESOLVED deadlock when the LLM provides the
-            # stylist directly in args before last_stylist is set in mode_context.
+            # Gate 2: reject if stylist not yet resolved (unless LLM passes it in args)
             stylist_from_args = tool_args.get("stylist_name")
+            has_stylist = mode_context.get("last_stylist") or mode_context.get("no_preference_stylist")
+            if not has_stylist and not stylist_from_args:
+                return ToolCallRejection(
+                    name="check_availability",
+                    error_code="STYLIST_NOT_RESOLVED",
+                    error_message=(
+                        "No puedes llamar a check_availability sin estilista. "
+                        "Mostrá la lista de <available_stylists> y esperá "
+                        "que el cliente elija o diga 'la primera disponible'."
+                    ),
+                )
+            # Accept stylist_name from tool_args — LLM resolved it from conversation.
             if stylist_from_args and not mode_context.get("last_stylist"):
                 mode_context["last_stylist"] = stylist_from_args
             return tool_args
@@ -627,11 +637,6 @@ class BookingModeNode(BaseModeNode):
             stylist_name = tool_args.get("stylist_name")
             if stylist_name:
                 mode_context["last_stylist"] = stylist_name
-            # No stylist specified + slots returned → implicit "no preference"
-            if not stylist_name and slots:
-                mode_context["no_preference_stylist"] = True
-                if not mode_context.get("last_stylist"):
-                    mode_context["last_stylist"] = "Sin preferencia"
 
         elif tool_name == "book":
             status = result_dict.get("status")

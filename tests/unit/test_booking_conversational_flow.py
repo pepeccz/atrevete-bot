@@ -40,7 +40,11 @@ class TestDisambiguationGateRemoved:
     @pytest.mark.asyncio
     async def test_allowed_despite_pending_flag(self, booking_node):
         """check_availability NOT blocked even with _has_pending_disambiguation=True."""
-        booking_node._mode_context = {"_has_pending_disambiguation": True, "last_services": ["Cortar"]}
+        booking_node._mode_context = {
+            "_has_pending_disambiguation": True,
+            "last_services": ["Cortar"],
+            "last_stylist": "Pilar",
+        }
         result = await booking_node._pre_tool_call(
             "check_availability", {"service_names": ["Cortar"]}
         )
@@ -58,8 +62,8 @@ class TestDisambiguationGateRemoved:
 
     @pytest.mark.asyncio
     async def test_allowed_with_services(self, booking_node):
-        """check_availability allowed when last_services is set."""
-        booking_node._mode_context = {"last_services": ["Cortar"]}
+        """check_availability allowed when last_services and last_stylist are set."""
+        booking_node._mode_context = {"last_services": ["Cortar"], "last_stylist": "Pilar"}
         result = await booking_node._pre_tool_call(
             "check_availability", {"service_names": ["Cortar"]}
         )
@@ -140,11 +144,12 @@ class TestBookingComplete:
     def test_empty_context_all_missing(self):
         is_complete, missing = BookingModeNode._booking_complete({})
         assert is_complete is False
-        assert len(missing) == 4
+        assert len(missing) == 5
         assert "servicio" in missing
         assert "estilista" in missing
         assert "fecha/hora" in missing
         assert "nombre" in missing
+        assert any("notas" in m for m in missing)
 
     def test_partial_context(self):
         ctx = {"last_services": ["Cortar"], "last_stylist": "Marta"}
@@ -165,6 +170,7 @@ class TestBookingComplete:
             "last_stylist": "Marta",
             "selected_slot": {"time": "10:00"},
             "customer_name": "Ana",
+            "notes_asked": True,
         }
         is_complete, missing = BookingModeNode._booking_complete(ctx)
         assert is_complete is True
@@ -201,6 +207,7 @@ class TestBookingComplete:
                 }
             ],
             "customer_name": "Ana",
+            "notes_asked": True,
         }
         result = await booking_node._pre_tool_call(
             "book",

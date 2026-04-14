@@ -177,6 +177,7 @@ async def test_pre_tool_call_name_extraction_and_slot_injection(booking_node):
             }
         ],
         "add_more_asked": True,
+        "notes_asked": True,
     }
     tool_args = {
         "customer_first_name": "María",
@@ -545,8 +546,8 @@ async def test_confirmation_gate_rejects_at_name_collection():
 
 
 @pytest.mark.asyncio
-async def test_confirmation_gate_allows_without_notes_asked():
-    """book() without notes_asked → allowed (notes are optional, prompt-driven)."""
+async def test_confirmation_gate_rejects_without_notes_asked():
+    """book() without notes_asked → ToolCallRejection (notes gate is now required)."""
     from agent.modes.booking_mode import BookingModeNode
     from agent.modes.base import ToolCallRejection
 
@@ -562,7 +563,9 @@ async def test_confirmation_gate_allows_without_notes_asked():
 
     result = await node._pre_tool_call("book", {"services": ["Cortar"]})
 
-    assert not isinstance(result, ToolCallRejection)
+    assert isinstance(result, ToolCallRejection)
+    assert result.error_code == "CONFIRMATION_REQUIRED"
+    assert "notas" in result.error_message
 
 
 @pytest.mark.asyncio
@@ -582,6 +585,7 @@ async def test_confirmation_gate_passes_at_confirmation_step():
         },
         "customer_name": "Pablo",
         "add_more_asked": True,
+        "notes_asked": True,
     }
     node._mode_context = node._booking_context
 
@@ -610,7 +614,8 @@ async def test_confirmation_gate_persists_slot_on_rejection():
                 "stylist_name": "Pilar",
             }
         ],
-        "customer_name": None,  # Will be extracted from args → triggers name_collection → rejected
+        "customer_name": None,  # Will be extracted from args → "Pablo"
+        "notes_asked": True,
     }
     node._mode_context = node._booking_context
 
@@ -624,7 +629,6 @@ async def test_confirmation_gate_persists_slot_on_rejection():
     )
 
     # Gate should pass — all required fields present after Step A extractions
-    # (notes_asked is no longer a blocking gate)
     assert not isinstance(result, ToolCallRejection)
     # selected_slot MUST be persisted (Step A ran)
     assert node._booking_context["selected_slot"] is not None
