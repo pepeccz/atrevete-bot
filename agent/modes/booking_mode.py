@@ -271,6 +271,13 @@ class BookingModeNode(BaseModeNode):
 
         # Phase 1: services not resolved yet
         if not has_services:
+            # Sub-phase: disambiguation already done → LLM should call check_availability
+            if ctx.get("_disambiguation_questions_shown"):
+                return (
+                    "<flow_hint>PASO ACTUAL: Las preguntas de desambiguación ya se hicieron. "
+                    "Resolvé los nombres exactos del catálogo a partir de las respuestas del "
+                    "cliente y llamá check_availability con service_names.</flow_hint>"
+                )
             return (
                 "<flow_hint>PASO ACTUAL: Identificar servicios del catálogo. "
                 "NO llames herramientas hasta tener todos los servicios resueltos.</flow_hint>"
@@ -484,16 +491,23 @@ class BookingModeNode(BaseModeNode):
         # ── check_availability: service + stylist guards ─────────────────
         if tool_name == "check_availability":
             # Gate 1: reject if services not yet identified
+            # Allow when disambiguation is done or the LLM provides service_names
+            # in tool args (it resolved them from conversation context).
             if not mode_context.get("last_services"):
-                return ToolCallRejection(
-                    name="check_availability",
-                    error_code="SERVICES_NOT_RESOLVED",
-                    error_message=(
-                        "No puedes llamar a check_availability todavía. "
-                        "Primero identificá los servicios del catálogo y resolvé "
-                        "cualquier desambiguación pendiente."
-                    ),
+                has_service_context = (
+                    mode_context.get("_disambiguation_questions_shown")
+                    or tool_args.get("service_names")
                 )
+                if not has_service_context:
+                    return ToolCallRejection(
+                        name="check_availability",
+                        error_code="SERVICES_NOT_RESOLVED",
+                        error_message=(
+                            "No puedes llamar a check_availability todavía. "
+                            "Primero identificá los servicios del catálogo y resolvé "
+                            "cualquier desambiguación pendiente."
+                        ),
+                    )
             # Gate 2: reject if stylist not yet resolved (unless LLM passes it in args)
             stylist_from_args = tool_args.get("stylist_name")
             has_stylist = mode_context.get("last_stylist") or mode_context.get("no_preference_stylist")

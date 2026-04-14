@@ -52,13 +52,22 @@ class TestDisambiguationGateRemoved:
 
     @pytest.mark.asyncio
     async def test_rejected_without_services(self, booking_node):
-        """check_availability rejected when last_services is empty."""
+        """check_availability rejected when last_services is empty and no service context."""
         booking_node._mode_context = {}
         result = await booking_node._pre_tool_call(
-            "check_availability", {"service_names": ["Cortar"]}
+            "check_availability", {}
         )
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "SERVICES_NOT_RESOLVED"
+
+    @pytest.mark.asyncio
+    async def test_allowed_with_service_names_in_args(self, booking_node):
+        """check_availability allowed when LLM passes service_names + stylist in tool args."""
+        booking_node._mode_context = {}
+        result = await booking_node._pre_tool_call(
+            "check_availability", {"service_names": ["Cortar"], "stylist_name": "Pilar"}
+        )
+        assert not isinstance(result, ToolCallRejection)
 
     @pytest.mark.asyncio
     async def test_allowed_with_services(self, booking_node):
