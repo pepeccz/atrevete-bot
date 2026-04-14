@@ -30,11 +30,14 @@ class ToolCallRejection:
     1. Skips tool.ainvoke()
     2. Builds a rejection dict with {"rejected": True, ...}
     3. Appends it as a ToolMessage so the LLM sees the rejection reason
+    4. If the same error_code is hit 2+ times AND recovery_response is set,
+       breaks the loop and returns recovery_response as the final text.
     """
 
     name: str  # Tool name that was rejected (e.g. "book")
     error_code: str  # Machine code: NO_OFFERED_SLOTS, NO_CUSTOMER_NAME, etc.
-    error_message: str  # Spanish message for LLM context
+    error_message: str  # Prescriptive instruction for LLM ("RECHAZADO. SIGUIENTE ACCIÓN: ...")
+    recovery_response: str | None = None  # Human-facing forced text on 2nd failure
 
 
 # ============================================================================
@@ -540,6 +543,9 @@ class BaseModeNode(ABC):
             working_messages = list(messages)
             iterations = 0
             response: Any | None = None
+            # Gate recovery: track rejection counts per error_code.
+            # On 2nd hit with recovery_response set, break and return forced text.
+            rejection_counts: dict[str, int] = {}
             # R3: Tool-call dedup guard — cache keyed by (tool_name, sorted_args)
             # On cache hit, return cached result without re-invoking the tool.
             seen_tool_calls: dict[str, Any] = {}
@@ -590,6 +596,22 @@ class BaseModeNode(ABC):
                     #   - Exception path: original_tool_args (set above in except block)
                     if isinstance(effective_args, ToolCallRejection):
                         rejection = effective_args
+                        code = rejection.error_code
+                        rejection_counts[code] = rejection_counts.get(code, 0) + 1
+
+                        # Gate recovery: if same gate hit 2+ times with a forced response,
+                        # break the loop and return the recovery text directly.
+                        if rejection_counts[code] >= 2 and rejection.recovery_response:
+                            self.logger.warning(
+                                "gate_recovery: %s hit %d times — forcing response",
+                                code,
+                                rejection_counts[code],
+                            )
+                            return AgenticLoopResult(
+                                response_text=rejection.recovery_response,
+                                tool_results=tool_results,
+                            )
+
                         post_args = original_tool_args
                         result = {
                             "rejected": True,

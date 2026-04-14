@@ -503,23 +503,32 @@ class BookingModeNode(BaseModeNode):
                         name="check_availability",
                         error_code="SERVICES_NOT_RESOLVED",
                         error_message=(
-                            "No puedes llamar a check_availability todavía. "
-                            "Primero identificá los servicios del catálogo y resolvé "
-                            "cualquier desambiguación pendiente."
+                            "RECHAZADO. SIGUIENTE ACCIÓN: preguntá al cliente qué "
+                            "servicio quiere. Si hay <required_questions> en tu "
+                            "contexto, hacé esas preguntas primero."
                         ),
+                        recovery_response="¿Qué servicio te gustaría? 😊",
                     )
             # Gate 2: reject if stylist not yet resolved (unless LLM passes it in args)
             stylist_from_args = tool_args.get("stylist_name")
             has_stylist = mode_context.get("last_stylist") or mode_context.get("no_preference_stylist")
             if not has_stylist and not stylist_from_args:
+                # Build dynamic recovery with numbered stylist list
+                offered = mode_context.get("_offered_stylists") or []
+                if offered:
+                    display = [s if s != "Sin preferencia" else "La primera con disponibilidad 👌" for s in offered]
+                    numbered = "\n".join(f"{i + 1}. {name}" for i, name in enumerate(display))
+                    recovery = f"¿Con quién te gustaría la cita? 😊\n{numbered}"
+                else:
+                    recovery = "¿Preferís alguna estilista en concreto o la primera con disponibilidad? 😊"
                 return ToolCallRejection(
                     name="check_availability",
                     error_code="STYLIST_NOT_RESOLVED",
                     error_message=(
-                        "No puedes llamar a check_availability sin estilista. "
-                        "Mostrá la lista de <available_stylists> y esperá "
-                        "que el cliente elija o diga 'la primera disponible'."
+                        "RECHAZADO. SIGUIENTE ACCIÓN: mostrá la lista numerada de "
+                        "<available_stylists> y preguntá '¿Con quién te gustaría la cita?'"
                     ),
+                    recovery_response=recovery,
                 )
             # Accept stylist_name from tool_args — LLM resolved it from conversation.
             if stylist_from_args and not mode_context.get("last_stylist"):
@@ -598,9 +607,9 @@ class BookingModeNode(BaseModeNode):
                     name="book",
                     error_code="CONFIRMATION_REQUIRED",
                     error_message=(
-                        f"No puedes llamar a book() todavía. "
-                        f"Faltan: {missing_hint}. "
-                        f"Recoge los datos que faltan, mostrá el resumen y esperá confirmación explícita."
+                        f"RECHAZADO. Faltan: {missing_hint}. "
+                        f"SIGUIENTE ACCIÓN: preguntá al cliente por los datos "
+                        f"faltantes uno a uno."
                     ),
                 )
 

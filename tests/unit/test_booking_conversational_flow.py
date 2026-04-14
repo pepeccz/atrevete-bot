@@ -565,3 +565,76 @@ class TestResolveConversationalSignals:
         booking_node._resolve_conversational_signals(state, ctx)
         assert ctx["add_more_asked"] is True
         assert ctx["last_stylist"] == "Pilar"
+
+
+# ===========================================================================
+# Change G — Smart gate recovery (prescriptive messages + recovery responses)
+# ===========================================================================
+
+
+class TestGateRecoveryResponses:
+    """Gate rejections provide prescriptive messages and recovery responses."""
+
+    @pytest.mark.asyncio
+    async def test_services_gate_has_prescriptive_message(self, booking_node):
+        """SERVICES_NOT_RESOLVED message contains RECHAZADO + SIGUIENTE ACCIÓN."""
+        booking_node._mode_context = {}
+        result = await booking_node._pre_tool_call("check_availability", {})
+        assert isinstance(result, ToolCallRejection)
+        assert "RECHAZADO" in result.error_message
+        assert "SIGUIENTE ACCIÓN" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_services_gate_has_recovery_response(self, booking_node):
+        """SERVICES_NOT_RESOLVED provides a warm recovery_response."""
+        booking_node._mode_context = {}
+        result = await booking_node._pre_tool_call("check_availability", {})
+        assert isinstance(result, ToolCallRejection)
+        assert result.recovery_response is not None
+        assert "servicio" in result.recovery_response.lower()
+
+    @pytest.mark.asyncio
+    async def test_stylist_gate_has_prescriptive_message(self, booking_node):
+        """STYLIST_NOT_RESOLVED message contains RECHAZADO + SIGUIENTE ACCIÓN."""
+        booking_node._mode_context = {"last_services": ["Cortar"]}
+        result = await booking_node._pre_tool_call("check_availability", {})
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "STYLIST_NOT_RESOLVED"
+        assert "RECHAZADO" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_stylist_gate_has_dynamic_recovery_with_list(self, booking_node):
+        """STYLIST_NOT_RESOLVED builds numbered recovery from _offered_stylists."""
+        booking_node._mode_context = {
+            "last_services": ["Cortar"],
+            "_offered_stylists": ["Pilar", "Marta", "Sin preferencia"],
+        }
+        result = await booking_node._pre_tool_call("check_availability", {})
+        assert isinstance(result, ToolCallRejection)
+        assert result.recovery_response is not None
+        assert "1. Pilar" in result.recovery_response
+        assert "2. Marta" in result.recovery_response
+        assert "disponibilidad" in result.recovery_response
+
+    @pytest.mark.asyncio
+    async def test_confirmation_gate_has_no_recovery(self, booking_node):
+        """CONFIRMATION_REQUIRED has recovery_response=None (progressive)."""
+        booking_node._mode_context = {"last_services": ["Cortar"]}
+        booking_node._booking_context = booking_node._mode_context
+        result = await booking_node._pre_tool_call("book", {"services": ["Cortar"]})
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "CONFIRMATION_REQUIRED"
+        assert result.recovery_response is None
+
+    def test_tool_call_rejection_default_recovery_is_none(self):
+        """ToolCallRejection without recovery_response defaults to None."""
+        r = ToolCallRejection(name="test", error_code="TEST", error_message="test")
+        assert r.recovery_response is None
+
+    def test_tool_call_rejection_with_recovery(self):
+        """ToolCallRejection accepts recovery_response."""
+        r = ToolCallRejection(
+            name="test", error_code="TEST", error_message="test",
+            recovery_response="fallback text",
+        )
+        assert r.recovery_response == "fallback text"
