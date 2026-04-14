@@ -196,7 +196,7 @@ class AppointmentContext:
             return "\n".join(f"❌ {m.capitalize()}: pendiente" for m in missing)
 
         if not self.appointments_list and not self.action_completed:
-            missing.append("lista de citas (llamá list_customer_appointments)")
+            missing.append("lista de citas (llama a list_customer_appointments)")
 
         if (
             self.appointments_list
@@ -204,14 +204,14 @@ class AppointmentContext:
             and not self.action_completed
         ):
             missing.append(
-                "selección de cita (mostrá la lista numerada y esperá que el cliente elija)"
+                "selección de cita (muestra la lista numerada y espera que el cliente elija)"
             )
 
         if self.action in ("cancel", "reschedule") and self.selected_appointment_id:
             if self.action == "reschedule" and not self.pending_new_slot:
                 if not self.offered_slots:
                     missing.append(
-                        "horarios disponibles (llamá check_availability o find_next_available)"
+                        "horarios disponibles (llama a check_availability o find_next_available)"
                     )
                 else:
                     missing.append("selección del nuevo horario")
@@ -220,7 +220,7 @@ class AppointmentContext:
                 action_display = "cancelación" if self.action == "cancel" else "reagendado"
                 missing.append(
                     f"confirmación del cliente para el {action_display} "
-                    f"(mostrá el resumen y pedí confirmación explícita)"
+                    f"(muestra el resumen y pide confirmación explícita)"
                 )
 
         if not missing:

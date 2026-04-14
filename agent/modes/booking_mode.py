@@ -119,7 +119,7 @@ _DISAMBIGUATION_TABLE: list[dict[str, Any]] = [
     {
         "keywords": ["sculptor", "anticelul"],
         "axis": "condition",
-        "question": "Para la bioterapia sculptor: ¿querés añadir radiofrecuencia?",
+        "question": "Para la bioterapia sculptor: ¿quieres añadir radiofrecuencia?",
     },
     {
         "keywords": ["pedicura", "pintar pies", "uñas de pies", "uñas pies"],
@@ -129,7 +129,7 @@ _DISAMBIGUATION_TABLE: list[dict[str, Any]] = [
     {
         "keywords": ["bioterapia facial", "facial"],
         "axis": "condition",
-        "question": "Para la bioterapia facial: ¿querés añadir radiofrecuencia?",
+        "question": "Para la bioterapia facial: ¿quieres añadir radiofrecuencia?",
     },
     {
         "keywords": ["depilar", "depilacion", "cera"],
@@ -252,7 +252,7 @@ class BookingModeNode(BaseModeNode):
         if not ctx.get("customer_name"):
             missing.append("nombre")
         if not ctx.get("notes_asked"):
-            missing.append("notas (preguntá si tiene alguna nota para la estilista)")
+            missing.append("notas (pregunta si tiene alguna nota para la estilista)")
         return (len(missing) == 0, missing)
 
     @staticmethod
@@ -275,8 +275,8 @@ class BookingModeNode(BaseModeNode):
             if ctx.get("_disambiguation_questions_shown"):
                 return (
                     "<flow_hint>PASO ACTUAL: Las preguntas de desambiguación ya se hicieron. "
-                    "Resolvé los nombres exactos del catálogo a partir de las respuestas del "
-                    "cliente y llamá check_availability con service_names.</flow_hint>"
+                    "Resuelve los nombres exactos del catálogo a partir de las respuestas del "
+                    "cliente y llama a check_availability con service_names.</flow_hint>"
                 )
             return (
                 "<flow_hint>PASO ACTUAL: Identificar servicios del catálogo. "
@@ -288,14 +288,14 @@ class BookingModeNode(BaseModeNode):
         if not ctx.get("add_more_asked"):
             if not ctx.get("preferred_date_hint") and not ctx.get("preferred_stylist_name"):
                 return (
-                    "<flow_hint>PASO ACTUAL: Preguntá al cliente \"¿Querés añadir algo más a la cita?\". "
-                    "NO llames herramientas. Esperá respuesta.</flow_hint>"
+                    "<flow_hint>PASO ACTUAL: Pregunta al cliente \"¿Quieres añadir algo más a la cita?\". "
+                    "NO llames herramientas. Espera respuesta.</flow_hint>"
                 )
 
         # Phase 2: stylist not resolved
         if not has_stylist:
             return (
-                "<flow_hint>PASO ACTUAL: Mostrá la lista numerada de estilistas de "
+                "<flow_hint>PASO ACTUAL: Muestra la lista numerada de estilistas de "
                 "<available_stylists> con la última opción \"la primera con disponibilidad\". "
                 "NO llames check_availability hasta tener respuesta del cliente.</flow_hint>"
             )
@@ -303,35 +303,35 @@ class BookingModeNode(BaseModeNode):
         # Phase 3: date — need to ask what day
         if not has_slots:
             return (
-                "<flow_hint>PASO ACTUAL: Preguntá \"¿Qué día te viene bien?\". "
-                "Llamá check_availability SOLO cuando el cliente diga un día concreto.</flow_hint>"
+                "<flow_hint>PASO ACTUAL: Pregunta \"¿Qué día te viene bien?\". "
+                "Llama a check_availability SOLO cuando el cliente diga un día concreto.</flow_hint>"
             )
 
         # Phase 3b: slots offered, waiting for selection
         if not has_selected:
             return (
                 "<flow_hint>PASO ACTUAL: El cliente elige horario de la lista. "
-                "NO llames herramientas. Esperá selección.</flow_hint>"
+                "NO llames herramientas. Espera selección.</flow_hint>"
             )
 
         # Phase 4: name
         if not has_name:
             return (
-                "<flow_hint>PASO ACTUAL: Preguntá nombre y apellidos para la reserva. "
+                "<flow_hint>PASO ACTUAL: Pregunta nombre y apellidos para la reserva. "
                 "NO llames herramientas.</flow_hint>"
             )
 
         # Phase 5: notes
         if not has_notes:
             return (
-                "<flow_hint>PASO ACTUAL: Preguntá si tiene alguna nota para la estilista. "
+                "<flow_hint>PASO ACTUAL: Pregunta si tiene alguna nota para la estilista. "
                 "NO llames herramientas.</flow_hint>"
             )
 
         # Phase 6: confirmation
         return (
-            "<flow_hint>PASO ACTUAL: Mostrá resumen de la cita y pedí confirmación. "
-            "Llamá book() SOLO cuando el cliente confirme.</flow_hint>"
+            "<flow_hint>PASO ACTUAL: Muestra resumen de la cita y pide confirmación. "
+            "Llama a book() SOLO cuando el cliente confirme.</flow_hint>"
         )
 
     # ──────────────────────────────────────────────────────────────────────
@@ -503,9 +503,9 @@ class BookingModeNode(BaseModeNode):
                         name="check_availability",
                         error_code="SERVICES_NOT_RESOLVED",
                         error_message=(
-                            "RECHAZADO. SIGUIENTE ACCIÓN: preguntá al cliente qué "
+                            "RECHAZADO. SIGUIENTE ACCIÓN: pregunta al cliente qué "
                             "servicio quiere. Si hay <required_questions> en tu "
-                            "contexto, hacé esas preguntas primero."
+                            "contexto, haz esas preguntas primero."
                         ),
                         recovery_response="¿Qué servicio te gustaría? 😊",
                     )
@@ -525,8 +525,8 @@ class BookingModeNode(BaseModeNode):
                     name="check_availability",
                     error_code="STYLIST_NOT_RESOLVED",
                     error_message=(
-                        "RECHAZADO. SIGUIENTE ACCIÓN: mostrá la lista numerada de "
-                        "<available_stylists> y preguntá '¿Con quién te gustaría la cita?'"
+                        "RECHAZADO. SIGUIENTE ACCIÓN: muestra la lista numerada de "
+                        "<available_stylists> y pregunta '¿Con quién te gustaría la cita?'"
                     ),
                     recovery_response=recovery,
                 )
@@ -608,7 +608,7 @@ class BookingModeNode(BaseModeNode):
                     error_code="CONFIRMATION_REQUIRED",
                     error_message=(
                         f"RECHAZADO. Faltan: {missing_hint}. "
-                        f"SIGUIENTE ACCIÓN: preguntá al cliente por los datos "
+                        f"SIGUIENTE ACCIÓN: pregunta al cliente por los datos "
                         f"faltantes uno a uno."
                     ),
                 )
@@ -869,7 +869,7 @@ class BookingModeNode(BaseModeNode):
             else:
                 parts.append(
                     "<disambiguation_context>Preguntas de desambiguación ya realizadas. "
-                    "Revisá las respuestas del cliente en el historial y resolvé los "
+                    "Revisa las respuestas del cliente en el historial y resuelve los "
                     "servicios exactos del catálogo antes de llamar a check_availability."
                     "</disambiguation_context>"
                 )

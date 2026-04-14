@@ -52,7 +52,7 @@ _AFFIRMATIVE_PHRASES: frozenset[str] = frozenset(
         "bueno",
         "confirmo",
         "confirmar",
-        "confirmá",
+        "confirma",
         "confirmalo",
         "de acuerdo",
         "genial",
@@ -414,7 +414,7 @@ class AppointmentManagementMode(BaseModeNode):
                         error_code="CONFIRMATION_REQUIRED",
                         error_message=(
                             "Debes confirmar la cancelación antes de ejecutarla. "
-                            "Mostrá el resumen de la cita y pedí confirmación explícita al cliente."
+                            "Muestra el resumen de la cita y pide confirmación explícita al cliente."
                         ),
                     )
 
@@ -445,7 +445,7 @@ class AppointmentManagementMode(BaseModeNode):
                         error_code="CONFIRMATION_REQUIRED",
                         error_message=(
                             "Debes confirmar el nuevo horario antes de reagendar. "
-                            "Mostrá el nuevo horario y pedí confirmación explícita al cliente."
+                            "Muestra el nuevo horario y pide confirmación explícita al cliente."
                         ),
                     )
                 if not ctx.pending_new_slot:
@@ -458,8 +458,8 @@ class AppointmentManagementMode(BaseModeNode):
                         error_code="NO_NEW_SLOT",
                         error_message=(
                             "No hay un nuevo horario seleccionado. "
-                            "Llamá check_availability o find_next_available primero, "
-                            "y esperá que el cliente elija un horario."
+                            "Llama a check_availability o find_next_available primero, "
+                            "y espera que el cliente elija un horario."
                         ),
                     )
 
@@ -821,8 +821,8 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
     if not ctx.action:
         lines.append(
             "El cliente no ha indicado qué quiere hacer. "
-            "Preguntá si quiere VER sus citas, CANCELAR una cita, o REAGENDAR una cita. "
-            "Una vez determinada la acción, llamá manage_appointments con action='list'."
+            "Pregunta si quiere VER sus citas, CANCELAR una cita, o REAGENDAR una cita. "
+            "Una vez determinada la acción, llama a manage_appointments con action='list'."
         )
         return "\n".join(lines)
 
@@ -830,7 +830,7 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
     if not ctx.appointments_list and not ctx.action_completed:
         lines.append(
             f"Acción detectada: {ctx.action}. "
-            "Llamá manage_appointments con action='list' para cargar las citas del cliente."
+            "Llama a manage_appointments con action='list' para cargar las citas del cliente."
         )
         return "\n".join(lines)
 
@@ -838,11 +838,11 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
     if ctx.appointments_list and not ctx.selected_appointment_id and not ctx.action_completed:
         if len(ctx.appointments_list) == 1:
             # Only one appointment — auto-select or ask for confirmation
-            lines.append(f"Solo hay 1 cita. Mostrala y preguntá si es la que quiere {ctx.action}.")
+            lines.append(f"Solo hay 1 cita. Muéstrala y pregunta si es la que quiere {ctx.action}.")
         else:
             lines.append(
                 f"Hay {len(ctx.appointments_list)} citas. "
-                "Mostrá la lista y pedí al cliente que elija la cita. "
+                "Muestra la lista y pide al cliente que elija la cita. "
                 "El cliente puede elegir por número (1, 2...), nombre de estilista, "
                 "fecha, hora u ordinal (la primera, la segunda, etc.)."
             )
@@ -852,8 +852,8 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
     if ctx.action == "query" and ctx.selected_appointment_id:
         lines.append(
             "El cliente solo quería VER sus citas. "
-            "Mostrá el detalle de la cita seleccionada o el listado completo. "
-            "Luego ofrecé más ayuda."
+            "Muestra el detalle de la cita seleccionada o el listado completo. "
+            "Luego ofrece más ayuda."
         )
         return "\n".join(lines)
 
@@ -862,7 +862,7 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
         if ctx.pending_confirmation and ctx.pending_confirmation_type == "cancel":
             lines.append(
                 "✅ CONFIRMACIÓN RECIBIDA para cancelación. "
-                "Llamá manage_appointments con action='cancel' y el appointment_id del contexto."
+                "Llama a manage_appointments con action='cancel' y el appointment_id del contexto."
             )
         else:
             snapshot = ctx.selected_appointment_snapshot
@@ -873,8 +873,8 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
             if stylist_str:
                 cita_desc += f" con {stylist_str}"
             lines.append(
-                f"Mostrá el resumen de la cita {cita_desc} y preguntá: "
-                f"'¿Confirmás la cancelación?' Esperá respuesta afirmativa antes de actuar."
+                f"Muestra el resumen de la cita {cita_desc} y pregunta: "
+                f"'¿Confirmas la cancelación?' Espera respuesta afirmativa antes de actuar."
             )
         return "\n".join(lines)
 
@@ -891,30 +891,30 @@ def _build_situational_instructions(ctx: AppointmentContext) -> str:
                     "Si el cliente no indica otra preferencia, usa ese stylist_id en find_next_available."
                 )
             lines.append(
-                "Llamá check_availability o find_next_available para buscar horarios disponibles "
+                "Llama a check_availability o find_next_available para buscar horarios disponibles "
                 f"y mostrárselos al cliente.{stylist_hint}"
             )
         elif not ctx.pending_new_slot:
             lines.append(
                 f"Hay {len(ctx.offered_slots)} horario(s) disponible(s). "
-                "Mostrá la lista y pedí al cliente que elija un horario. "
+                "Muestra la lista y pide al cliente que elija un horario. "
                 "Puede responder con número, hora, ordinal o nombre de estilista."
             )
         elif ctx.pending_confirmation and ctx.pending_confirmation_type == "reschedule":
             lines.append(
                 "✅ CONFIRMACIÓN RECIBIDA para reagendado. "
-                "Llamá manage_appointments con action='reschedule', appointment_id y new_start_time del contexto."
+                "Llama a manage_appointments con action='reschedule', appointment_id y new_start_time del contexto."
             )
         else:
             slot_time = ctx.pending_new_slot.get("time", "")
             slot_date = ctx.pending_new_slot.get("date", "")
             lines.append(
                 f"El cliente eligió el horario: {slot_date} a las {slot_time}. "
-                "Mostrá el resumen del nuevo horario y preguntá: "
-                "'¿Confirmás el reagendado?' Esperá respuesta afirmativa."
+                "Muestra el resumen del nuevo horario y pregunta: "
+                "'¿Confirmas el reagendado?' Espera respuesta afirmativa."
             )
         return "\n".join(lines)
 
     # Default: shouldn't reach here, but guide LLM to ask
-    lines.append("Continuá el flujo según el estado actual. Preguntá al cliente qué necesita.")
+    lines.append("Continúa el flujo según el estado actual. Pregunta al cliente qué necesita.")
     return "\n".join(lines)
