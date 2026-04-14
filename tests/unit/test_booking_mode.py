@@ -662,7 +662,7 @@ def test_build_dynamic_context_includes_available_stylists_at_stylist_selection(
     assert "1. Marta" in context
     assert "2. Victor" in context
     assert "3. Pilar" in context
-    assert "la primera disponible" in context
+    assert "La primera con disponibilidad" in context
     # Ana (AESTHETICS) should NOT appear
     assert "Ana" not in context
 

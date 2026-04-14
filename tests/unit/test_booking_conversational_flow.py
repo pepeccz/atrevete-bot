@@ -40,16 +40,26 @@ class TestDisambiguationGateRemoved:
     @pytest.mark.asyncio
     async def test_allowed_despite_pending_flag(self, booking_node):
         """check_availability NOT blocked even with _has_pending_disambiguation=True."""
-        booking_node._mode_context = {"_has_pending_disambiguation": True}
+        booking_node._mode_context = {"_has_pending_disambiguation": True, "last_services": ["Cortar"]}
         result = await booking_node._pre_tool_call(
             "check_availability", {"service_names": ["Cortar"]}
         )
         assert not isinstance(result, ToolCallRejection)
 
     @pytest.mark.asyncio
-    async def test_allowed_with_no_context(self, booking_node):
-        """check_availability allowed with empty context."""
+    async def test_rejected_without_services(self, booking_node):
+        """check_availability rejected when last_services is empty."""
         booking_node._mode_context = {}
+        result = await booking_node._pre_tool_call(
+            "check_availability", {"service_names": ["Cortar"]}
+        )
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "SERVICES_NOT_RESOLVED"
+
+    @pytest.mark.asyncio
+    async def test_allowed_with_services(self, booking_node):
+        """check_availability allowed when last_services is set."""
+        booking_node._mode_context = {"last_services": ["Cortar"]}
         result = await booking_node._pre_tool_call(
             "check_availability", {"service_names": ["Cortar"]}
         )

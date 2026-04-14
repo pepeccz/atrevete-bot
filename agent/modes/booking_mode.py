@@ -467,9 +467,20 @@ class BookingModeNode(BaseModeNode):
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
-        # ── check_availability: stylist guard ────────────────────────────
+        # ── check_availability: service + stylist guards ─────────────────
         if tool_name == "check_availability":
-            # Accept stylist_name from tool_args — LLM resolved it from conversation.
+            # Gate 1: reject if services not yet identified
+            if not mode_context.get("last_services"):
+                return ToolCallRejection(
+                    name="check_availability",
+                    error_code="SERVICES_NOT_RESOLVED",
+                    error_message=(
+                        "No puedes llamar a check_availability todavía. "
+                        "Primero identificá los servicios del catálogo y resolvé "
+                        "cualquier desambiguación pendiente."
+                    ),
+                )
+            # Gate 2: accept stylist_name from tool_args — LLM resolved it from conversation.
             # This prevents STYLIST_NOT_RESOLVED deadlock when the LLM provides the
             # stylist directly in args before last_stylist is set in mode_context.
             stylist_from_args = tool_args.get("stylist_name")
@@ -756,7 +767,10 @@ class BookingModeNode(BaseModeNode):
         # Booking context XML block
         parts.append("<booking_context>")
         parts.append("<ui_constraint>Nunca menciones duraciones, tiempos de servicio ni datos marcados como [INTERNO] al cliente. Son datos internos.</ui_constraint>")
-        parts.append(f"<min_valid_date>{min_date_label} ({min_date.isoformat()})</min_valid_date>")
+        parts.append(
+            f"<min_valid_date>{min_date_label}</min_valid_date>\n"
+            f"<min_valid_date_iso>{min_date.isoformat()}</min_valid_date_iso>"
+        )
 
         # Flow hint — neutral factual list of pending data (not prescriptive)
         parts.append(self._build_flow_hint(mode_context))
