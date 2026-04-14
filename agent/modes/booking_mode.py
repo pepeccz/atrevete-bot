@@ -46,7 +46,7 @@ _HISTORY_LIMIT = 8
 _DISAMBIGUATION_TABLE: list[dict[str, Any]] = [
     # Audience disambiguation (corte has audience variants)
     {
-        "keywords": ["corte", "cortarme", "cortarme el pelo", "pelo"],
+        "keywords": ["corte", "cortarme", "cortarme el pelo", "pelo", "pelarme", "pelar"],
         "axis": "audience",
         "question": "Para el corte: ¿es para señora, caballero, niño/a o bebé?",
         "skip_if_audience_hint": True,
