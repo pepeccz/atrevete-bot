@@ -44,16 +44,30 @@ _HISTORY_LIMIT = 8
 # ============================================================================
 
 _DISAMBIGUATION_TABLE: list[dict[str, Any]] = [
-    # Audience disambiguation (corte has audience variants)
+    # ── Audience disambiguation ──────────────────────────────────────────
+    # Services with audience variants (señora/caballero/niño/bebé)
     {
-        "keywords": ["corte", "cortarme", "cortarme el pelo", "pelo", "pelarme", "pelar"],
+        "keywords": ["corte", "cortarme", "cortarme el pelo", "pelo", "pelarme", "pelar", "raparme", "rapado"],
         "axis": "audience",
         "question": "Para el corte: ¿es para señora, caballero, niño/a o bebé?",
         "skip_if_audience_hint": True,
     },
-    # Condition disambiguation (service families with condition variants)
     {
-        "keywords": ["oleo", "óleo"],
+        "keywords": ["color", "tinte", "teñirme", "teñir"],
+        "axis": "audience",
+        "question": "Para el tinte: ¿es para señora o caballero?",
+        "skip_if_audience_hint": True,
+    },
+    {
+        "keywords": ["manicura", "uñas de manos", "pintar manos", "uñas manos"],
+        "axis": "audience",
+        "question": "Para la manicura: ¿es para señora o caballero?",
+        "skip_if_audience_hint": True,
+    },
+    # ── Condition disambiguation ─────────────────────────────────────────
+    # Services with condition/type variants (duration, intensity, etc.)
+    {
+        "keywords": ["oleo", "óleo", "tratamiento capilar"],
         "axis": "condition",
         "question": "Para el tratamiento de óleo: ¿es un mantenimiento o tu pelo está muy seco/dañado?",
     },
@@ -78,14 +92,14 @@ _DISAMBIGUATION_TABLE: list[dict[str, Any]] = [
         "question": "Para el recogido: ¿es para boda, evento especial o algo más casual?",
     },
     {
-        "keywords": ["cultura de color", "color", "tinte", "teñirme"],
+        "keywords": ["cultura de color"],
         "axis": "condition",
         "question": "Para el color: ¿tu pelo es de densidad normal o muy denso/largo?",
     },
     {
         "keywords": ["barro"],
         "axis": "condition",
-        "question": "Para el barro: ¿clásico o con tonos dorados (Gold)? ¿Pelo normal o denso/dañado?",
+        "question": "Para el barro: ¿clásico o con tonos dorados (Gold)?",
     },
     {
         "keywords": ["infoactivo"],
@@ -108,12 +122,7 @@ _DISAMBIGUATION_TABLE: list[dict[str, Any]] = [
         "question": "Para la bioterapia sculptor: ¿querés añadir radiofrecuencia?",
     },
     {
-        "keywords": ["uñas de manos", "manicura", "pintar manos", "uñas manos"],
-        "axis": "condition",
-        "question": "Para las uñas de manos: ¿pintar normal, permanente, tratamiento o permanente con tratamiento?",
-    },
-    {
-        "keywords": ["uñas de pies", "pedicura", "pintar pies", "uñas pies"],
+        "keywords": ["pedicura", "pintar pies", "uñas de pies", "uñas pies"],
         "axis": "condition",
         "question": "Para las uñas de pies: ¿pintar normal, permanente, tratamiento o permanente con tratamiento?",
     },
@@ -121,6 +130,11 @@ _DISAMBIGUATION_TABLE: list[dict[str, Any]] = [
         "keywords": ["bioterapia facial", "facial"],
         "axis": "condition",
         "question": "Para la bioterapia facial: ¿querés añadir radiofrecuencia?",
+    },
+    {
+        "keywords": ["depilar", "depilacion", "cera"],
+        "axis": "condition",
+        "question": "Para la depilación: ¿qué zona? (piernas, ingles, axilas, brazos, labio, cejas...)",
     },
 ]
 
