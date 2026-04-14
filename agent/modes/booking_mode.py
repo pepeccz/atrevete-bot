@@ -433,6 +433,13 @@ class BookingModeNode(BaseModeNode):
                 logger.info("BookingModeNode: tool_choice='required' (service known, no slots yet)")
         # else: NEVER_FORCE — tool_choice stays None (LLM decides freely)
 
+        # 3b. Passive state extraction — sync booking_context from PREVIOUS turn.
+        # Runs BEFORE building messages so flow_hint and collected_data reflect
+        # what the user confirmed in their latest message.
+        extraction = await self._extract_booking_state(state, booking_context)
+        if extraction is not None:
+            self._merge_extraction(booking_context, extraction)
+
         # Store for _pre_tool_call / _post_tool_result / _refresh_dynamic_context access.
         # _booking_context is the canonical store; _mode_context is kept as an alias
         # so that both attributes resolve to the same dict (defensive programming).
@@ -447,12 +454,6 @@ class BookingModeNode(BaseModeNode):
         result = await self._run_agentic_loop(
             messages, tools=self.get_tools(), tool_choice=tool_choice
         )
-
-        # 5b. Passive state extraction — sync booking_context from conversation.
-        # Catches data the LLM resolved conversationally without tool calls.
-        extraction = await self._extract_booking_state(state, booking_context)
-        if extraction is not None:
-            self._merge_extraction(booking_context, extraction)
 
         # 6. Build response (LLM-generated text via _sanitize_response)
         response_text = self._build_response(result, booking_context)
