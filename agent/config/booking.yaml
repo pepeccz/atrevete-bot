@@ -10,5 +10,8 @@ slot_diversification_strategy: "one_per_stylist"
 # Extra business days to auto-search when requested date has no availability (0-14, default: 3)
 auto_search_extra_days: 3
 
+# Maximum slots contributed by any single date when results span multiple days (1-10, default: 2)
+max_slots_per_day: 2
+
 # When to force tool_choice='required': never_force | force_after_service_known | always_force
 tool_choice_policy: "never_force"

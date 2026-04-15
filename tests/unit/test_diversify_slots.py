@@ -6,7 +6,7 @@ All tests use plain dict fixtures. No DB or async needed.
 
 import pytest
 
-from agent.tools.availability_tools import diversify_slots
+from agent.tools.availability_tools import _pre_filter_by_day, diversify_slots
 
 
 # ---------------------------------------------------------------------------
@@ -157,3 +157,96 @@ def test_unknown_strategy_does_not_raise():
     assert len(result) == 2
     times = [s["time"] for s in result]
     assert times == sorted(times)
+
+
+# ---------------------------------------------------------------------------
+# _pre_filter_by_day tests (AC-E1 through AC-E5)
+# ---------------------------------------------------------------------------
+
+
+def test_pre_filter_multi_day_caps_per_day():
+    """AC-E1: Multi-day slots are capped at max_per_day per date."""
+    slots = (
+        _make_slots("Ana", "2026-04-20", ["10:00", "11:00", "12:00"])
+        + _make_slots("Bea", "2026-04-20", ["10:30", "11:30", "12:30"])
+        + _make_slots("Ana", "2026-04-21", ["10:00", "11:00", "12:00"])
+        + _make_slots("Bea", "2026-04-21", ["10:30", "11:30", "12:30"])
+        + _make_slots("Ana", "2026-04-22", ["10:00", "11:00"])
+    )
+    result = _pre_filter_by_day(slots, max_per_day=2)
+
+    dates = [s["date"] for s in result]
+    assert len(set(dates)) >= 2, "must include slots from at least 2 dates"
+    for date in set(dates):
+        count = dates.count(date)
+        assert count <= 2, f"date {date} has {count} slots, expected ≤2"
+
+
+def test_pre_filter_single_day_noop():
+    """AC-E2: Single-day slots pass through unchanged."""
+    slots = _make_slots("Ana", "2026-04-20", ["10:00", "11:00", "12:00", "13:00", "14:00"])
+    result = _pre_filter_by_day(slots, max_per_day=2)
+    assert result == slots, "single-day should return original list unchanged"
+
+
+def test_pre_filter_specific_stylist_multi_day():
+    """AC-E3: Pre-filtered to one stylist across multiple days still caps per day."""
+    slots = (
+        _make_slots("Ana", "2026-04-20", ["10:00", "11:00", "12:00"])
+        + _make_slots("Ana", "2026-04-21", ["10:00", "11:00", "12:00"])
+    )
+    result = _pre_filter_by_day(slots, max_per_day=2)
+
+    dates = [s["date"] for s in result]
+    assert dates.count("2026-04-20") <= 2
+    assert dates.count("2026-04-21") <= 2
+    assert len(set(dates)) >= 2, "must span at least 2 days"
+
+
+def test_pre_filter_uneven_distribution():
+    """AC-E4: Uneven day distribution — smaller day is NOT excluded."""
+    slots = (
+        _make_slots("Ana", "2026-04-20", ["10:00", "11:00", "12:00", "13:00"])
+        + _make_slots("Bea", "2026-04-21", ["10:00"])
+    )
+    result = _pre_filter_by_day(slots, max_per_day=2)
+
+    dates = [s["date"] for s in result]
+    assert "2026-04-21" in dates, "single-slot day must be included"
+    assert dates.count("2026-04-20") <= 2
+
+
+def test_pre_filter_below_cap_preserved():
+    """AC-E5: Days with fewer slots than cap contribute all their slots."""
+    slots = (
+        _make_slots("Ana", "2026-04-20", ["10:00"])
+        + _make_slots("Bea", "2026-04-21", ["10:00", "11:00", "12:00"])
+    )
+    result = _pre_filter_by_day(slots, max_per_day=2)
+
+    dates = [s["date"] for s in result]
+    assert dates.count("2026-04-20") == 1, "day with 1 slot keeps its 1 slot"
+    assert dates.count("2026-04-21") <= 2
+
+
+def test_pre_filter_empty_input():
+    """Empty input returns empty list."""
+    assert _pre_filter_by_day([], max_per_day=2) == []
+
+
+def test_diversify_with_day_spread_integration():
+    """AC-E1 integrated: diversify_slots with multi-day data returns diverse dates."""
+    stylists = ["Ana", "Bea", "Carla", "Dani", "Eva"]
+    slots = []
+    for s in stylists:
+        slots.extend(_make_slots(s, "2026-04-20", ["10:00", "11:00"]))
+        slots.extend(_make_slots(s, "2026-04-21", ["10:00", "11:00"]))
+        slots.extend(_make_slots(s, "2026-04-22", ["10:00", "11:00"]))
+
+    result = diversify_slots(
+        slots, strategy="one_per_stylist", max_slots=5, max_slots_per_day=2,
+    )
+
+    assert len(result) == 5
+    dates = {s["date"] for s in result}
+    assert len(dates) >= 2, f"expected slots from ≥2 dates, got {dates}"

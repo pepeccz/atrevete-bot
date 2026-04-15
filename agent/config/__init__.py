@@ -34,6 +34,7 @@ class BookingConfig(BaseModel):
     max_slots_to_present: int = Field(default=5, ge=1, le=20)
     slot_diversification_strategy: SlotStrategy = Field(default=SlotStrategy.ONE_PER_STYLIST)
     auto_search_extra_days: int = Field(default=3, ge=0, le=14)
+    max_slots_per_day: int = Field(default=2, ge=1, le=10)
     tool_choice_policy: ToolChoicePolicy = Field(default=ToolChoicePolicy.NEVER_FORCE)
 
 

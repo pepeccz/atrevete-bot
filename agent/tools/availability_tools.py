@@ -462,6 +462,7 @@ async def check_availability(
             all_slots,
             strategy=config.slot_diversification_strategy.value,
             max_slots=config.max_slots_to_present,
+            max_slots_per_day=config.max_slots_per_day,
         )
 
         # Add 1-based index
@@ -552,10 +553,48 @@ async def _collect_slots_for_date(
     return slots
 
 
+def _pre_filter_by_day(
+    slots: list[dict[str, Any]],
+    max_per_day: int = 2,
+) -> list[dict[str, Any]]:
+    """Cap how many slots each date contributes when results span multiple days.
+
+    When only one date has slots, returns the original list unchanged (no-op).
+
+    Algorithm:
+        1. Count distinct dates.
+        2. If only 1 date → return unchanged.
+        3. Group by date; within each group sort by (stylist_name, time)
+           to maximise within-day stylist variety.
+        4. Take at most *max_per_day* from each group.
+        5. Return combined (unsorted — caller sorts).
+    """
+    if not slots or max_per_day < 1:
+        return slots
+
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    for slot in slots:
+        by_date.setdefault(slot["date"], []).append(slot)
+
+    if len(by_date) <= 1:
+        return slots
+
+    filtered: list[dict[str, Any]] = []
+    for date_key in sorted(by_date):
+        day_slots = sorted(
+            by_date[date_key],
+            key=lambda s: (s["stylist_name"], s["time"]),
+        )
+        filtered.extend(day_slots[:max_per_day])
+
+    return filtered
+
+
 def diversify_slots(
     slots: list[dict[str, Any]],
     strategy: str = "one_per_stylist",
     max_slots: int = 5,
+    max_slots_per_day: int = 2,
 ) -> list[dict[str, Any]]:
     """
     Select and diversify slots for presentation using the given strategy.
@@ -590,6 +629,9 @@ def diversify_slots(
     """
     if not slots:
         return []
+
+    # Day-spread pre-filter: cap per-day contribution before strategy dispatch
+    slots = _pre_filter_by_day(slots, max_per_day=max_slots_per_day)
 
     if strategy == "one_per_stylist":
         return _diversify_one_per_stylist(slots, max_slots)
