@@ -39,146 +39,6 @@ _HISTORY_LIMIT = 8
 # ============================================================================
 
 
-# ============================================================================
-# Disambiguation table — deterministic mapping from service keywords to questions
-# ============================================================================
-
-_DISAMBIGUATION_TABLE: list[dict[str, Any]] = [
-    # ── Audience disambiguation ──────────────────────────────────────────
-    # Services with audience variants (señora/caballero/niño/bebé)
-    {
-        "keywords": ["corte", "cortarme", "cortarme el pelo", "pelo", "pelarme", "pelar", "raparme", "rapado"],
-        "axis": "audience",
-        "question": "Para el corte: ¿es para señora, caballero, niño/a o bebé?",
-        "skip_if_audience_hint": True,
-    },
-    {
-        "keywords": ["color", "tinte", "teñirme", "teñir"],
-        "axis": "audience",
-        "question": "Para el tinte: ¿es para señora o caballero?",
-        "skip_if_audience_hint": True,
-    },
-    {
-        "keywords": ["manicura", "uñas de manos", "pintar manos", "uñas manos"],
-        "axis": "audience",
-        "question": "Para la manicura: ¿es para señora o caballero?",
-        "skip_if_audience_hint": True,
-    },
-    # ── Condition disambiguation ─────────────────────────────────────────
-    # Services with condition/type variants (duration, intensity, etc.)
-    {
-        "keywords": ["oleo", "óleo", "tratamiento capilar"],
-        "axis": "condition",
-        "question": "Para el tratamiento de óleo: ¿es un mantenimiento o tu pelo está muy seco/dañado?",
-    },
-    {
-        "keywords": ["peinado", "peinarme", "secado con forma"],
-        "axis": "condition",
-        "question": "Para el peinado: ¿tu pelo es corto, largo o muy largo?",
-    },
-    {
-        "keywords": ["moldeado"],
-        "axis": "condition",
-        "question": "Para el moldeado: ¿tu pelo es largo o muy denso?",
-    },
-    {
-        "keywords": ["mechas"],
-        "axis": "condition",
-        "question": "Para las mechas: ¿completas o solo en algunas zonas?",
-    },
-    {
-        "keywords": ["recogido"],
-        "axis": "condition",
-        "question": "Para el recogido: ¿es para boda, evento especial o algo más casual?",
-    },
-    {
-        "keywords": ["cultura de color"],
-        "axis": "condition",
-        "question": "Para el color: ¿tu pelo es de densidad normal o muy denso/largo?",
-    },
-    {
-        "keywords": ["barro"],
-        "axis": "condition",
-        "question": "Para el barro: ¿clásico o con tonos dorados (Gold)?",
-    },
-    {
-        "keywords": ["infoactivo"],
-        "axis": "condition",
-        "question": "Para el tratamiento: ¿sentís el pelo debilitado o el cuero cabelludo sensible?",
-    },
-    {
-        "keywords": ["maquillaje", "maquillarme"],
-        "axis": "condition",
-        "question": "Para el maquillaje: ¿es para el día a día, un evento o una boda?",
-    },
-    {
-        "keywords": ["masaje"],
-        "axis": "condition",
-        "question": "Para el masaje: ¿preferís 30 minutos o una hora completa?",
-    },
-    {
-        "keywords": ["sculptor", "anticelul"],
-        "axis": "condition",
-        "question": "Para la bioterapia sculptor: ¿quieres añadir radiofrecuencia?",
-    },
-    {
-        "keywords": ["pedicura", "pintar pies", "uñas de pies", "uñas pies"],
-        "axis": "condition",
-        "question": "Para las uñas de pies: ¿pintar normal, permanente, tratamiento o permanente con tratamiento?",
-    },
-    {
-        "keywords": ["bioterapia facial", "facial"],
-        "axis": "condition",
-        "question": "Para la bioterapia facial: ¿quieres añadir radiofrecuencia?",
-    },
-    {
-        "keywords": ["depilar", "depilacion", "cera"],
-        "axis": "condition",
-        "question": "Para la depilación: ¿qué zona? (piernas, ingles, axilas, brazos, labio, cejas...)",
-    },
-]
-
-
-def _normalize_for_match(text: str) -> str:
-    """Normalize text for keyword matching: lowercase, strip accents."""
-    import unicodedata
-
-    raw = text.strip().lower()
-    normalized = unicodedata.normalize("NFKD", raw)
-    return "".join(c for c in normalized if not unicodedata.combining(c))
-
-
-def _detect_disambiguation_needs(
-    message: str, audience_hint: str | None = None
-) -> list[str]:
-    """Detect which disambiguation questions are needed for services in a message.
-
-    Returns a list of natural-language question strings. Deterministic — no LLM involved.
-    """
-    normalized = _normalize_for_match(message)
-    questions: list[str] = []
-    matched_axes: set[str] = set()
-
-    for entry in _DISAMBIGUATION_TABLE:
-        # Skip if this axis+family combo already matched
-        axis_key = f"{entry['axis']}:{entry['keywords'][0]}"
-        if axis_key in matched_axes:
-            continue
-
-        # Check if any keyword appears in the message
-        for kw in entry["keywords"]:
-            kw_normalized = _normalize_for_match(kw)
-            if kw_normalized in normalized:
-                # Skip audience question if audience_hint is already set
-                if entry.get("skip_if_audience_hint") and audience_hint:
-                    break
-                questions.append(entry["question"])
-                matched_axes.add(axis_key)
-                break
-
-    return questions
-
-
 
 
 # ============================================================================
@@ -247,14 +107,9 @@ class BookingModeNode(BaseModeNode):
 
         # Phase 1: services not resolved yet
         if not has_services:
-            if ctx.get("_disambiguation_questions_shown"):
-                return (
-                    "<flow_hint>PASO ACTUAL: Las preguntas de desambiguación ya se hicieron. "
-                    "Resuelve los nombres exactos del catálogo a partir de las respuestas del "
-                    "cliente y llama a check_availability con service_names.</flow_hint>"
-                )
             return (
                 "<flow_hint>PASO ACTUAL: Identificar servicios del catálogo. "
+                "Si el servicio es ambiguo, consulta el catálogo y pregunta al cliente. "
                 "NO llames herramientas hasta tener todos los servicios resueltos.</flow_hint>"
             )
 
@@ -352,7 +207,7 @@ class BookingModeNode(BaseModeNode):
         # 1a. Ensure opening_booking_request is set for disambiguation.
         # The router only sets it on first-interaction→BOOKING transitions.
         # For returning customers or re-entries, populate it from the user message
-        # so _detect_disambiguation_needs() can fire.
+        # so the LLM has context about what the client originally asked for.
         if not booking_context.get("opening_booking_request") and not booking_context.get("last_services"):
             user_msg = get_last_user_message(state).strip()
             if user_msg:
@@ -453,21 +308,16 @@ class BookingModeNode(BaseModeNode):
         # ── check_availability: service + stylist guards ─────────────────
         if tool_name == "check_availability":
             # Gate 1: reject if services not yet identified
-            # Allow when disambiguation is done or the LLM provides service_names
-            # in tool args (it resolved them from conversation context).
+            # LLM must provide service_names in tool args (resolved from conversation + catalog).
             if not mode_context.get("last_services"):
-                has_service_context = (
-                    mode_context.get("_disambiguation_questions_shown")
-                    or tool_args.get("service_names")
-                )
-                if not has_service_context:
+                if not tool_args.get("service_names"):
                     return ToolCallRejection(
                         name="check_availability",
                         error_code="SERVICES_NOT_RESOLVED",
                         error_message=(
                             "RECHAZADO. SIGUIENTE ACCIÓN: pregunta al cliente qué "
-                            "servicio quiere. Si hay <required_questions> en tu "
-                            "contexto, haz esas preguntas primero."
+                            "servicio quiere. Consulta el catálogo para identificar "
+                            "variantes y desambigua si es necesario."
                         ),
                         recovery_response="¿Qué servicio te gustaría? 😊",
                     )
@@ -821,28 +671,6 @@ class BookingModeNode(BaseModeNode):
             parts.append(
                 f"<opening_booking_request>{opening_request}</opening_booking_request>"
             )
-
-        # Deterministic disambiguation — show-once, runs on current user message
-        if not mode_context.get("last_services"):
-            if not mode_context.get("_disambiguation_questions_shown"):
-                user_msg = get_last_user_message(state).strip()
-                audience_hint = mode_context.get("service_audience_hint")
-                questions = _detect_disambiguation_needs(user_msg, audience_hint)
-                if questions:
-                    q_lines = "\n".join(f"- {q}" for q in questions)
-                    parts.append(
-                        f"<required_questions>\nPresenta TODAS estas preguntas al cliente "
-                        f"en un solo mensaje con lenguaje natural y cercano:\n{q_lines}\n"
-                        f"</required_questions>"
-                    )
-                    mode_context["_disambiguation_questions_shown"] = True
-            else:
-                parts.append(
-                    "<disambiguation_context>Preguntas de desambiguación ya realizadas. "
-                    "Revisa las respuestas del cliente en el historial y resuelve los "
-                    "servicios exactos del catálogo antes de llamar a check_availability."
-                    "</disambiguation_context>"
-                )
 
         collected = self._build_collected_summary(mode_context)
         if collected:
