@@ -19,7 +19,14 @@ interface OverlapConfirmDialogProps {
   onConfirm: () => void;
   conflicts: OverlapConflict[];
   isSubmitting?: boolean;
+  operationType?: "create" | "resize" | "move";
 }
+
+const ACTION_TEXT = {
+  create: { question: "crear la cita", button: "Crear de todos modos", gerund: "Creando..." },
+  resize: { question: "cambiar la duración", button: "Cambiar de todos modos", gerund: "Actualizando..." },
+  move: { question: "mover la cita", button: "Mover de todos modos", gerund: "Moviendo..." },
+} as const;
 
 export function OverlapConfirmDialog({
   isOpen,
@@ -27,7 +34,9 @@ export function OverlapConfirmDialog({
   onConfirm,
   conflicts,
   isSubmitting = false,
+  operationType = "create",
 }: OverlapConfirmDialogProps) {
+  const actionText = ACTION_TEXT[operationType];
   // Format datetime for display
   const formatDateTime = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -84,7 +93,7 @@ export function OverlapConfirmDialog({
             </div>
 
             <p className="font-medium text-amber-700 dark:text-amber-300">
-              ¿Deseas crear la cita de todos modos? Esto creará una superposición en el calendario.
+              ¿Deseas {actionText.question} de todos modos? Esto creará una superposición en el calendario.
             </p>
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -95,7 +104,7 @@ export function OverlapConfirmDialog({
             disabled={isSubmitting}
             className="bg-amber-600 text-white hover:bg-amber-700"
           >
-            {isSubmitting ? "Creando..." : "Confirmar de todos modos"}
+            {isSubmitting ? actionText.gerund : actionText.button}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
