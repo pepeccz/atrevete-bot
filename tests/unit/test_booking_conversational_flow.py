@@ -46,7 +46,8 @@ class TestDisambiguationGateRemoved:
             "last_stylist": "Pilar",
         }
         result = await booking_node._pre_tool_call(
-            "check_availability", {"service_names": ["Cortar"]}
+            "check_availability",
+            {"service_names": ["Cortar"], "date": "el martes"},
         )
         assert not isinstance(result, ToolCallRejection)
 
@@ -62,19 +63,20 @@ class TestDisambiguationGateRemoved:
 
     @pytest.mark.asyncio
     async def test_allowed_with_service_names_in_args(self, booking_node):
-        """check_availability allowed when LLM passes service_names + stylist in tool args."""
+        """check_availability allowed when LLM passes service_names + stylist + date in tool args."""
         booking_node._mode_context = {}
         result = await booking_node._pre_tool_call(
-            "check_availability", {"service_names": ["Cortar"], "stylist_name": "Pilar"}
+            "check_availability",
+            {"service_names": ["Cortar"], "stylist_name": "Pilar", "date": "el viernes"},
         )
         assert not isinstance(result, ToolCallRejection)
 
     @pytest.mark.asyncio
     async def test_allowed_with_services(self, booking_node):
-        """check_availability allowed when last_services and last_stylist are set."""
+        """check_availability allowed when last_services, last_stylist set + date in args."""
         booking_node._mode_context = {"last_services": ["Cortar"], "last_stylist": "Pilar"}
         result = await booking_node._pre_tool_call(
-            "check_availability", {"service_names": ["Cortar"]}
+            "check_availability", {"service_names": ["Cortar"], "date": "mañana"}
         )
         assert not isinstance(result, ToolCallRejection)
 

@@ -298,10 +298,12 @@ class BookingModeNode(BaseModeNode):
     ) -> dict[str, Any] | ToolCallRejection:
         """Intercept tool calls before execution.
 
-        3 gates:
-        (a) check_availability: stylist guard
-        (b) book(): slot_index→UUID injection + confirmation gate + services injection
-        (c) Everything else: pass through unchanged
+        4 gates:
+        (a) check_availability: services guard
+        (b) check_availability: stylist guard
+        (c) check_availability: date guard — client must say a day before calling
+        (d) book(): slot_index→UUID injection + confirmation gate + services injection
+        Everything else: pass through unchanged.
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
@@ -353,6 +355,22 @@ class BookingModeNode(BaseModeNode):
             # Accept stylist_name from tool_args — LLM resolved it from conversation.
             if stylist_from_args and not mode_context.get("last_stylist"):
                 mode_context["last_stylist"] = stylist_from_args
+
+            # Gate 3: reject if no date from the client.
+            # The tool silently defaults to min_valid_date when date is None,
+            # but the flow requires asking the client first (Paso 3).
+            date_from_args = tool_args.get("date")
+            if not date_from_args:
+                return ToolCallRejection(
+                    name="check_availability",
+                    error_code="DATE_NOT_PROVIDED",
+                    error_message=(
+                        "RECHAZADO. SIGUIENTE ACCIÓN: pregunta al cliente "
+                        "'¿Qué día te viene bien?' y espera su respuesta. "
+                        "NO llames check_availability sin fecha."
+                    ),
+                    recovery_response="¿Qué día te viene bien? 😊",
+                )
             return tool_args
 
         # ── book(): slot resolution → confirmation gate → injection ───────────

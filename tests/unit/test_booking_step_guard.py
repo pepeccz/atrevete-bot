@@ -78,34 +78,36 @@ class TestBookingCompleteGate:
 
 @pytest.mark.asyncio
 async def test_pre_tool_call_allows_with_stylist(booking_node: BookingModeNode):
-    """check_availability with last_stylist set → allowed."""
+    """check_availability with last_stylist set + date → allowed."""
     booking_node._mode_context = {"last_services": ["Cortar"], "last_stylist": "Ana"}
     result = await booking_node._pre_tool_call(
-        "check_availability", {"service_names": ["Cortar"], "stylist_name": "Ana"}
+        "check_availability",
+        {"service_names": ["Cortar"], "stylist_name": "Ana", "date": "el martes"},
     )
     assert not isinstance(result, ToolCallRejection)
 
 
 @pytest.mark.asyncio
 async def test_pre_tool_call_allows_with_no_preference(booking_node: BookingModeNode):
-    """check_availability with no_preference_stylist → allowed."""
+    """check_availability with no_preference_stylist + date → allowed."""
     booking_node._mode_context = {
         "last_services": ["Cortar"],
         "no_preference_stylist": True,
         "last_stylist": "Sin preferencia",
     }
     result = await booking_node._pre_tool_call(
-        "check_availability", {"service_names": ["Cortar"]}
+        "check_availability", {"service_names": ["Cortar"], "date": "mañana"}
     )
     assert not isinstance(result, ToolCallRejection)
 
 
 @pytest.mark.asyncio
 async def test_pre_tool_call_allows_stylist_name_in_args(booking_node: BookingModeNode):
-    """LLM provides stylist_name in tool_args → guard passes."""
+    """LLM provides stylist_name + date in tool_args → guard passes."""
     booking_node._mode_context = {"last_services": ["Cortar"]}
     result = await booking_node._pre_tool_call(
-        "check_availability", {"service_names": ["Cortar"], "stylist_name": "Victor"}
+        "check_availability",
+        {"service_names": ["Cortar"], "stylist_name": "Victor", "date": "el viernes"},
     )
     assert not isinstance(result, ToolCallRejection)
 
@@ -115,7 +117,8 @@ async def test_pre_tool_call_sets_last_stylist_from_args(booking_node: BookingMo
     """stylist_name from tool_args promotes to mode_context."""
     booking_node._mode_context = {"last_services": ["Cortar"]}
     await booking_node._pre_tool_call(
-        "check_availability", {"service_names": ["Cortar"], "stylist_name": "Marta"}
+        "check_availability",
+        {"service_names": ["Cortar"], "stylist_name": "Marta", "date": "el lunes"},
     )
     assert booking_node._mode_context.get("last_stylist") == "Marta"
 
@@ -125,7 +128,8 @@ async def test_pre_tool_call_does_not_overwrite_existing_stylist(booking_node: B
     """Existing last_stylist is NOT overwritten by tool_args."""
     booking_node._mode_context = {"last_services": ["Cortar"], "last_stylist": "Harolyn"}
     await booking_node._pre_tool_call(
-        "check_availability", {"service_names": ["Cortar"], "stylist_name": "Pilar"}
+        "check_availability",
+        {"service_names": ["Cortar"], "stylist_name": "Pilar", "date": "el martes"},
     )
     assert booking_node._mode_context.get("last_stylist") == "Harolyn"
 
@@ -133,31 +137,38 @@ async def test_pre_tool_call_does_not_overwrite_existing_stylist(booking_node: B
 @pytest.mark.asyncio
 async def test_check_availability_allowed_despite_disambiguation(booking_node: BookingModeNode):
     """check_availability NOT blocked by _has_pending_disambiguation — gate removed."""
-    booking_node._mode_context = {"_has_pending_disambiguation": True}
+    booking_node._mode_context = {
+        "_has_pending_disambiguation": True,
+        "last_services": ["Cortar"],
+        "last_stylist": "Ana",
+    }
     result = await booking_node._pre_tool_call(
-        "check_availability", {"service_names": ["Cortar"]}
+        "check_availability",
+        {"service_names": ["Cortar"], "stylist_name": "Ana", "date": "el martes"},
     )
     assert not isinstance(result, ToolCallRejection)
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_call_allows_no_stylist_no_context(booking_node: BookingModeNode):
-    """check_availability without stylist info → allowed (LLM decides)."""
+async def test_pre_tool_call_rejects_no_stylist(booking_node: BookingModeNode):
+    """check_availability without stylist → rejected by stylist gate."""
     booking_node._mode_context = {"last_services": ["Cortar"]}
     result = await booking_node._pre_tool_call(
         "check_availability", {"service_names": ["Cortar"]}
     )
-    assert not isinstance(result, ToolCallRejection)
+    assert isinstance(result, ToolCallRejection)
+    assert result.error_code == "STYLIST_NOT_RESOLVED"
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_call_empty_stylist_passes(booking_node: BookingModeNode):
-    """stylist_name='' → passes through."""
-    booking_node._mode_context = {"last_services": ["Cortar"]}
+async def test_pre_tool_call_rejects_no_date(booking_node: BookingModeNode):
+    """check_availability with stylist but no date → rejected by date gate."""
+    booking_node._mode_context = {"last_services": ["Cortar"], "last_stylist": "Ana"}
     result = await booking_node._pre_tool_call(
-        "check_availability", {"service_names": ["Cortar"], "stylist_name": ""}
+        "check_availability", {"service_names": ["Cortar"], "stylist_name": "Ana"}
     )
-    assert not isinstance(result, ToolCallRejection)
+    assert isinstance(result, ToolCallRejection)
+    assert result.error_code == "DATE_NOT_PROVIDED"
 
 
 # ===========================================================================
