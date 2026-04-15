@@ -85,8 +85,12 @@ def replace_booking_context(
     is selected) actually disappear from state instead of persisting as zombies.
 
     Semantics:
-    - update is truthy (non-empty dict) → return dict(update) [full replace]
-    - update is falsy (None or {}) → return current or {} [no-op / keep current]
+    - update is not None (including empty dict {}) → return dict(update) [full replace]
+    - update is None → return current or {} [no-op / keep current]
+
+    Note: empty dict {} is a valid reset — it clears all booking data.
+    Previous code used `if update:` which treated {} as falsy,
+    silently preventing booking context resets between bookings.
 
     Args:
         current: The previous BookingContext value from the checkpoint
@@ -95,7 +99,7 @@ def replace_booking_context(
     Returns:
         The resolved BookingContext dict
     """
-    if update:
+    if update is not None:
         return dict(update)
     return current or {}
 
