@@ -372,8 +372,8 @@ class TestBuildFlowHint:
         result = BookingModeNode._build_flow_hint(ctx)
         assert "elige horario" in result.lower()
 
-    def test_phase4_collect_and_confirm(self):
-        """All tool-gated data present → Phase 4: collect name, notes, confirm."""
+    def test_phase4a_ask_name(self):
+        """Slot selected, no name → ask name only."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Marta",
@@ -381,7 +381,20 @@ class TestBuildFlowHint:
             "selected_slot": {"time": "10:00"},
         }
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "nombre" in result.lower() or "notas" in result.lower()
+        assert "nombre" in result.lower()
+        assert "UN solo dato" in result
+
+    def test_phase4b_ask_notes_and_confirm(self):
+        """Name collected → notes + summary + confirm (step by step)."""
+        ctx = {
+            "last_services": ["Cortar"],
+            "last_stylist": "Marta",
+            "offered_slots": [{"time": "10:00"}],
+            "selected_slot": {"time": "10:00"},
+            "customer_name": "Ana García",
+        }
+        result = BookingModeNode._build_flow_hint(ctx)
+        assert "notas" in result.lower()
         assert "book()" in result
 
     def test_atajo_with_handoff_hints(self):

@@ -282,12 +282,23 @@ class BookingModeNode(BaseModeNode):
                 "NO llames herramientas. Espera selección.</flow_hint>"
             )
 
-        # Phase 4: collect remaining data + confirm
-        # The prompt guides name (Paso 4), notes (Paso 5), and confirmation (Paso 6).
+        # Phase 4a: name not collected yet
+        has_name = bool(ctx.get("customer_name"))
+        if not has_name:
+            return (
+                "<flow_hint>PASO ACTUAL: Pregunta \"¿A qué nombre hago la reserva?\". "
+                "UN solo dato en este mensaje. NO preguntes notas ni muestres resumen todavía.</flow_hint>"
+            )
+
+        # Phase 4b: name collected → notes + summary + confirmation pending
+        # The LLM handles notes → summary → confirmation step by step via booking.md.
+        # Each turn should do ONE thing only.
         return (
-            "<flow_hint>PASO ACTUAL: Sigue booking.md — recoge nombre (Paso 4), "
-            "notas (Paso 5), muestra resumen y pide confirmación (Paso 6). "
-            "Llama a book() SOLO cuando el cliente confirme.</flow_hint>"
+            "<flow_hint>PASO ACTUAL: Sigue booking.md paso a paso. "
+            "Si aún no preguntaste por notas → pregunta \"¿Alguna nota para tu estilista?\" (Paso 5). "
+            "Si ya preguntaste por notas → muestra resumen y pregunta \"¿Te confirmo?\" (Paso 6). "
+            "IMPORTANTE: UN solo paso por mensaje. NO llames book() hasta que el cliente confirme "
+            "explícitamente con \"sí\" o similar.</flow_hint>"
         )
 
     # ──────────────────────────────────────────────────────────────────────
