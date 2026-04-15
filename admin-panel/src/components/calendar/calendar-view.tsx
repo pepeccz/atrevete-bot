@@ -89,6 +89,7 @@ export interface CalendarViewRef {
 export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_props, ref) {
   const router = useRouter();
   const calendarRef = useRef<FullCalendar>(null);
+  const fetchEventsRef = useRef<(start: Date, end: Date) => void>(() => {});
   const [selectedStylistIds, setSelectedStylistIds] = useState<string[]>([]);
   const [stylists, setStylists] = useState<Stylist[]>([]);
   const [stylistColors, setStylistColors] = useState<Record<string, { bg: string; border: string }>>({});
@@ -351,6 +352,9 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     }
   }, [selectedStylistIds, stylistColors]);
 
+  // Keep ref in sync so resize handlers always use latest fetchEvents
+  useEffect(() => { fetchEventsRef.current = fetchEvents; }, [fetchEvents]);
+
   // Fetch events when stylists change
   useEffect(() => {
     if (calendarRef.current) {
@@ -505,7 +509,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
             scope
           );
           pendingRevertRef.current = null;
-          handleEventCreated();
+          refreshCalendar();
         } catch (err) {
           console.error("Failed to resize recurring blocking event:", err);
           pendingRevertRef.current?.();
@@ -661,6 +665,16 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     setIsWizardOpen(true);
   };
 
+  // Stable refetch that always uses latest fetchEvents (avoids stale closures)
+  const refreshCalendar = useCallback(() => {
+    const calendarApi = calendarRef.current?.getApi();
+    if (calendarApi) {
+      const start = calendarApi.view.activeStart;
+      const end = calendarApi.view.activeEnd || new Date();
+      fetchEventsRef.current(start, end);
+    }
+  }, []);
+
   // Handle appointment resize with overlap check
   const handleAppointmentResize = useCallback(async (
     props: Record<string, unknown>,
@@ -690,14 +704,14 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       }
 
       await api.updateAppointment(appointmentId, { duration_minutes: newDurationMinutes });
-      handleEventCreated();
+      refreshCalendar();
     } catch (error) {
       console.error("Failed to resize appointment:", error);
       revert();
     } finally {
       setIsResizing(false);
     }
-  }, []);
+  }, [refreshCalendar]);
 
   // Handle blocking event resize
   const handleBlockingEventResize = useCallback(async (
@@ -730,12 +744,12 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       }
 
       await api.updateBlockingEvent(blockingEventId, { end_time: newEnd.toISOString() });
-      handleEventCreated();
+      refreshCalendar();
     } catch (error) {
       console.error("Failed to resize blocking event:", error);
       revert();
     }
-  }, []);
+  }, [refreshCalendar]);
 
   // Main resize dispatcher
   const handleEventResize = useCallback(async (info: EventResizeDoneArg) => {
@@ -771,7 +785,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       setIsOverlapDialogOpen(false);
       setPendingResizePayload(null);
       setOverlapConflicts([]);
-      handleEventCreated();
+      refreshCalendar();
     } catch (error) {
       console.error("Failed to resize appointment after overlap confirm:", error);
       pendingRevertRef.current?.();
@@ -782,7 +796,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     } finally {
       setIsResizing(false);
     }
-  }, [pendingResizePayload]);
+  }, [pendingResizePayload, refreshCalendar]);
 
   // Handle overlap dialog cancel for resize
   const handleResizeOverlapCancel = useCallback(() => {
