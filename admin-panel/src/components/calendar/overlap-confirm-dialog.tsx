@@ -68,10 +68,11 @@ export function OverlapConfirmDialog({
             <AlertTriangle className="h-5 w-5" />
             Cita superpuesta detectada
           </AlertDialogTitle>
-          <AlertDialogDescription className="space-y-4">
-            <p>
+          <AlertDialogDescription asChild>
+            <div className="text-sm text-muted-foreground space-y-4">
+            <span>
               La nueva cita se solaparía con {conflicts.length} cita{conflicts.length !== 1 ? "s" : ""} existente{conflicts.length !== 1 ? "s" : ""}:
-            </p>
+            </span>
 
             <div className="border rounded-md p-3 space-y-2 bg-amber-50 dark:bg-amber-950/20">
               {conflicts.map((conflict) => (
@@ -92,10 +93,10 @@ export function OverlapConfirmDialog({
               ))}
             </div>
 
-            <p className="font-medium text-amber-700 dark:text-amber-300">
+            <span className="block font-medium text-amber-700 dark:text-amber-300">
               ¿Deseas {actionText.question} de todos modos? Esto creará una superposición en el calendario.
-            </p>
-          </AlertDialogDescription>
+            </span>
+          </div></AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter className="gap-2">
           <AlertDialogCancel disabled={isSubmitting}>Cancelar</AlertDialogCancel>
