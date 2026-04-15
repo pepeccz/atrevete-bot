@@ -250,17 +250,20 @@ class BookingModeNode(BaseModeNode):
             messages, tools=self.get_tools(), tool_choice=tool_choice
         )
 
-        # 5b. Detect Phase 3 text-only turn → set _date_question_asked flag.
-        # Phase 3 = services + stylist resolved, no slots yet.
-        # If the LLM produced text without calling check_availability,
-        # it asked the client something (presumably the date question).
+        # 5b. Detect text-only turn after services are set → set _date_question_asked.
+        # The LLM handles Paso 2 (stylist) and Paso 3 (date) conversationally
+        # without necessarily calling tools. If it produced text without calling
+        # check_availability while services are resolved, it's guiding the client
+        # through steps 2-3. The flag allows the next check_availability call
+        # to pass the date gate (Path 3).
+        # Note: don't require has_stylist — the LLM may accept the stylist
+        # conversationally (text only) without calling a tool to persist it.
         _has_svc = bool(booking_context.get("last_services"))
-        _has_sty = bool(booking_context.get("last_stylist") or booking_context.get("no_preference_stylist"))
         _has_slots = bool(booking_context.get("offered_slots"))
         _no_avail = "check_availability" not in (result.tool_results or {})
-        if _has_svc and _has_sty and not _has_slots and _no_avail:
+        if _has_svc and not _has_slots and _no_avail:
             booking_context["_date_question_asked"] = True
-            logger.info("handle: set _date_question_asked=True (Phase 3 text-only turn)")
+            logger.info("handle: set _date_question_asked=True (text-only turn, services resolved)")
 
         # 6. Build response (LLM-generated text via _sanitize_response)
         response_text = self._build_response(result, booking_context)
