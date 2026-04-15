@@ -117,9 +117,13 @@ export function CreateAppointmentModal({
   useEffect(() => {
     const timeSource = selectedStartTime ?? selectedDate;
     if (timeSource) {
-      const hours = timeSource.getHours().toString().padStart(2, "0");
-      const minutes = timeSource.getMinutes().toString().padStart(2, "0");
-      setStartTime(`${hours}:${minutes}`);
+      const madridTime = new Intl.DateTimeFormat('es-ES', {
+        timeZone: 'Europe/Madrid',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(timeSource);
+      setStartTime(madridTime);
     }
   }, [selectedDate, selectedStartTime]);
 
