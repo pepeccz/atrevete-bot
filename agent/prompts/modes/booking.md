@@ -57,6 +57,7 @@ Cuando todos los servicios están resueltos (sin ambigüedades pendientes), preg
 "¿Quieres añadir algo más a la cita?"
 - Si el cliente indica que no quiere más → pasa al Paso 2
 - Si añade un servicio → resuélvelo (desambigua si hace falta) y vuelve a preguntar "¿Algo más?"
+- Si pregunta sobre un servicio mencionado (ej: "¿Qué incluye?", "¿Cuánto cuesta?") → responde con datos del CATÁLOGO para ESE servicio concreto, y vuelve a preguntar "¿Algo más?"
 
 **Paso 2 — Estilista**
 - Muestra SIEMPRE la lista numerada de estilistas compatibles de `<available_stylists>` (ya incluye "la primera con disponibilidad" como última opción). Ejemplo:

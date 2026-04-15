@@ -120,7 +120,7 @@ async def _build_catalog_from_db() -> str:
 
     # --- Policies Section ---
     sections.append("## Políticas de Reserva\n")
-    sections.append("- Anticipación mínima: 3 días")
+    sections.append("- Anticipación mínima: 3 días (validado por herramientas — no rechaces fechas)")
     sections.append("- Cancelación o cambio: hasta 48 horas antes de la cita")
     sections.append("- La compatibilidad de categorías se valida automáticamente al buscar disponibilidad")
     sections.append("")
