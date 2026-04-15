@@ -6,6 +6,7 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin, { type EventResizeDoneArg } from "@fullcalendar/interaction";
+import type { EventDropArg } from "@fullcalendar/core";
 import listPlugin from "@fullcalendar/list";
 import esLocale from "@fullcalendar/core/locales/es";
 import { Card } from "@/components/ui/card";
@@ -43,6 +44,7 @@ interface CalendarEvent {
   borderColor: string;
   allDay?: boolean;
   durationEditable?: boolean;
+  startEditable?: boolean;
   extendedProps: {
     appointment_id?: string;
     blocking_event_id?: string;
@@ -188,6 +190,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     durationMinutes: number;
   } | null>(null);
   const [isResizing, setIsResizing] = useState(false);
+  const [pendingDropStartTime, setPendingDropStartTime] = useState<string | null>(null);
 
   // Appointment Wizard state (for "Nueva Cita" button)
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -349,6 +352,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           backgroundColor: bgColor,
           borderColor: borderColor,
           durationEditable,
+          startEditable: durationEditable,
         };
       });
 
@@ -528,13 +532,19 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         // Delete with scope
         await api.deleteBlockingEventWithScope(pendingSeriesEvent.id, scope);
         handleEventCreated(); // Refresh calendar
-      } else if (pendingSeriesEvent.props.new_end_time) {
-        // Resize origin — apply end_time change directly
-        const newEndTime = pendingSeriesEvent.props.new_end_time as string;
+      } else if (pendingSeriesEvent.props.new_end_time || pendingSeriesEvent.props.new_start_time) {
+        // Resize or move origin — apply time change directly
+        const updateData: { start_time?: string; end_time?: string } = {};
+        if (pendingSeriesEvent.props.new_start_time) {
+          updateData.start_time = pendingSeriesEvent.props.new_start_time as string;
+        }
+        if (pendingSeriesEvent.props.new_end_time) {
+          updateData.end_time = pendingSeriesEvent.props.new_end_time as string;
+        }
         try {
           await api.updateBlockingEventWithScope(
             pendingSeriesEvent.id,
-            { end_time: newEndTime },
+            updateData,
             scope
           );
           pendingRevertRef.current = null;
@@ -802,37 +812,146 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     }
   }, [handleAppointmentResize, handleBlockingEventResize]);
 
-  // Handle overlap dialog confirm for resize
-  const handleResizeOverlapConfirm = useCallback(async () => {
+  // Handle appointment drag-to-move
+  const handleAppointmentDrop = useCallback(async (
+    props: Record<string, unknown>,
+    newStart: Date,
+    newEnd: Date,
+    revert: () => void
+  ) => {
+    const appointmentId = props.appointment_id as string;
+    const stylistId = props.stylist_id as string;
+    const durationMinutes = props.duration_minutes as number;
+
+    try {
+      const overlapResult = await api.checkOverlaps(
+        stylistId,
+        newStart.toISOString(),
+        durationMinutes,
+        appointmentId
+      );
+
+      if (overlapResult.has_overlaps) {
+        pendingRevertRef.current = revert;
+        setOverlapConflicts(overlapResult.conflicts);
+        setPendingResizePayload({ appointmentId, durationMinutes: 0 });
+        setPendingDropStartTime(newStart.toISOString());
+        setIsOverlapDialogOpen(true);
+        return;
+      }
+
+      await api.updateAppointment(appointmentId, { start_time: newStart.toISOString() });
+      refreshCalendar();
+    } catch (error) {
+      console.error("Failed to move appointment:", error);
+      revert();
+    }
+  }, [refreshCalendar]);
+
+  // Handle blocking event drag-to-move
+  const handleBlockingEventDrop = useCallback(async (
+    props: Record<string, unknown>,
+    newStart: Date,
+    newEnd: Date,
+    revert: () => void
+  ) => {
+    const blockingEventId = props.blocking_event_id as string;
+    const isRecurring = !!props.recurring_series_id;
+
+    try {
+      if (isRecurring) {
+        pendingRevertRef.current = revert;
+        setIsSeriesLoading(true);
+        const seriesData = await api.getBlockingEventSeries(blockingEventId);
+        setSeriesInfo(seriesData);
+        setPendingSeriesEvent({
+          id: blockingEventId,
+          title: (props.title as string) || "",
+          props: {
+            ...props,
+            new_start_time: newStart.toISOString(),
+            new_end_time: newEnd.toISOString(),
+          },
+          startStr: newStart.toISOString(),
+          endStr: newEnd.toISOString(),
+        });
+        setSeriesDialogAction("edit");
+        setIsSeriesDialogOpen(true);
+        setIsSeriesLoading(false);
+        return;
+      }
+
+      await api.updateBlockingEvent(blockingEventId, {
+        start_time: newStart.toISOString(),
+        end_time: newEnd.toISOString(),
+      });
+      refreshCalendar();
+    } catch (error) {
+      console.error("Failed to move blocking event:", error);
+      revert();
+    }
+  }, [refreshCalendar]);
+
+  // Main drag-to-move dispatcher
+  const handleEventDrop = useCallback(async (info: EventDropArg) => {
+    const { event, revert } = info;
+    const props = event.extendedProps;
+    const newStart = event.start;
+    const newEnd = event.end;
+
+    if (!newStart || !newEnd) { revert(); return; }
+
+    if (props.type === "appointment") {
+      await handleAppointmentDrop(props, newStart, newEnd, revert);
+    } else if (props.type === "blocking_event") {
+      await handleBlockingEventDrop(props, newStart, newEnd, revert);
+    } else {
+      revert();
+    }
+  }, [handleAppointmentDrop, handleBlockingEventDrop]);
+
+  // Handle overlap dialog confirm (for both resize and move)
+  const handleOverlapConfirm = useCallback(async () => {
     if (!pendingResizePayload) return;
     try {
       setIsResizing(true);
-      await api.updateAppointment(pendingResizePayload.appointmentId, {
-        duration_minutes: pendingResizePayload.durationMinutes,
-      });
+      if (pendingDropStartTime) {
+        // Move operation — update start_time
+        await api.updateAppointment(pendingResizePayload.appointmentId, {
+          start_time: pendingDropStartTime,
+        });
+      } else {
+        // Resize operation — update duration
+        await api.updateAppointment(pendingResizePayload.appointmentId, {
+          duration_minutes: pendingResizePayload.durationMinutes,
+        });
+      }
       pendingRevertRef.current = null;
       setIsOverlapDialogOpen(false);
       setPendingResizePayload(null);
+      setPendingDropStartTime(null);
       setOverlapConflicts([]);
       refreshCalendar();
     } catch (error) {
-      console.error("Failed to resize appointment after overlap confirm:", error);
+      console.error("Failed to update appointment after overlap confirm:", error);
       pendingRevertRef.current?.();
       pendingRevertRef.current = null;
       setIsOverlapDialogOpen(false);
       setPendingResizePayload(null);
+      setPendingDropStartTime(null);
       setOverlapConflicts([]);
     } finally {
       setIsResizing(false);
     }
-  }, [pendingResizePayload, refreshCalendar]);
+  }, [pendingResizePayload, pendingDropStartTime, refreshCalendar]);
 
-  // Handle overlap dialog cancel for resize
-  const handleResizeOverlapCancel = useCallback(() => {
+  // Handle overlap dialog cancel (for both resize and move)
+  const handleOverlapCancel = useCallback(() => {
     pendingRevertRef.current?.();
     pendingRevertRef.current = null;
     setIsOverlapDialogOpen(false);
     setPendingResizePayload(null);
+    setPendingDropStartTime(null);
     setOverlapConflicts([]);
   }, []);
 
@@ -988,10 +1107,11 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           allDaySlot={true}
           weekends={true}
           editable={false}
-          eventStartEditable={false}
+          eventStartEditable={true}
           eventDurationEditable={true}
           eventResizableFromStart={false}
           eventResize={handleEventResize}
+          eventDrop={handleEventDrop}
           selectable={true}
           selectMirror={true}
           dayMaxEvents={true}
@@ -1108,8 +1228,8 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           isOpen={isSeriesDialogOpen}
           onClose={() => {
             setIsSeriesDialogOpen(false);
-            // Revert resize if this was a resize-triggered dialog
-            if (pendingSeriesEvent?.props?.new_end_time) {
+            // Revert resize/move if this was a drag-triggered dialog
+            if (pendingSeriesEvent?.props?.new_end_time || pendingSeriesEvent?.props?.new_start_time) {
               pendingRevertRef.current?.();
               pendingRevertRef.current = null;
             }
@@ -1165,8 +1285,8 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       {/* Overlap Confirm Dialog (for resize) */}
       <OverlapConfirmDialog
         isOpen={isOverlapDialogOpen}
-        onClose={handleResizeOverlapCancel}
-        onConfirm={handleResizeOverlapConfirm}
+        onClose={handleOverlapCancel}
+        onConfirm={handleOverlapConfirm}
         conflicts={overlapConflicts}
         isSubmitting={isResizing}
       />
