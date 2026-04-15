@@ -133,17 +133,8 @@ export function BlockingEventModal({
   } | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
-  // Extract time as displayed on calendar grid (for CREATE mode)
-  // FullCalendar with named timezone uses UTC-coercion: visual time is stored as UTC value
-  // Per FullCalendar docs: "use UTC-flavored methods" when using named timezone without plugin
-  const getVisualTime = (date: Date): string => {
-    const hours = date.getUTCHours().toString().padStart(2, '0');
-    const minutes = date.getUTCMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
-  };
-
-  // Convert ISO-parsed Date to Madrid time for display (for EDIT mode)
-  // Backend sends proper ISO strings, so we need proper timezone conversion
+  // Convert Date to Madrid time string (HH:MM) for display and form defaults
+  // Works correctly with luxon3 plugin (real UTC dates) and without (UTC-coerced dates)
   const formatTimeInMadrid = (date: Date): string => {
     return new Intl.DateTimeFormat('es-ES', {
       timeZone: 'Europe/Madrid',
@@ -156,14 +147,14 @@ export function BlockingEventModal({
   // Calculate default times from drag selection or use defaults
   const getDefaultStartTime = () => {
     if (selectedStartTime) {
-      return getVisualTime(selectedStartTime);
+      return formatTimeInMadrid(selectedStartTime);
     }
     return "09:00";
   };
 
   const getDefaultEndTime = () => {
     if (selectedEndTime) {
-      return getVisualTime(selectedEndTime);
+      return formatTimeInMadrid(selectedEndTime);
     }
     return "14:00";
   };

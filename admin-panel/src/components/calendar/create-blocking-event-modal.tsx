@@ -80,26 +80,27 @@ export function CreateBlockingEventModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Extract time as displayed on calendar grid (for CREATE mode)
-  // FullCalendar with named timezone uses UTC-coercion: visual time is stored as UTC value
-  // Per FullCalendar docs: "use UTC-flavored methods" when using named timezone without plugin
-  const getVisualTime = (date: Date): string => {
-    const hours = date.getUTCHours().toString().padStart(2, '0');
-    const minutes = date.getUTCMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
+  // Convert Date to Madrid time string (HH:MM)
+  const formatTimeInMadrid = (date: Date): string => {
+    return new Intl.DateTimeFormat('es-ES', {
+      timeZone: 'Europe/Madrid',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(date);
   };
 
   // Calculate default times from drag selection or use defaults
   const getDefaultStartTime = () => {
     if (selectedStartTime) {
-      return getVisualTime(selectedStartTime);
+      return formatTimeInMadrid(selectedStartTime);
     }
     return "09:00";
   };
 
   const getDefaultEndTime = () => {
     if (selectedEndTime) {
-      return getVisualTime(selectedEndTime);
+      return formatTimeInMadrid(selectedEndTime);
     }
     return "14:00";
   };
