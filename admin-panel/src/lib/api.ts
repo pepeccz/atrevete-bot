@@ -492,13 +492,17 @@ class ApiClient {
   async checkOverlaps(
     stylistId: string,
     startTime: string,
-    durationMinutes: number
+    durationMinutes: number,
+    excludeAppointmentId?: string
   ): Promise<OverlapCheckResponse> {
     const params = new URLSearchParams({
       stylist_id: stylistId,
       start_time: startTime,
       duration_minutes: durationMinutes.toString(),
     });
+    if (excludeAppointmentId) {
+      params.set("exclude_appointment_id", excludeAppointmentId);
+    }
     return this.request(`/api/admin/appointments/check-overlaps?${params}`);
   }
 

@@ -2301,6 +2301,7 @@ async def check_overlaps(
     start_time: datetime,
     duration_minutes: int,
     current_user: Annotated[dict, Depends(get_current_user)],
+    exclude_appointment_id: UUID | None = None,
 ):
     """
     Check for overlapping appointments before creating a new one.
@@ -2339,6 +2340,7 @@ async def check_overlaps(
             start_time=parsed_start,
             duration_minutes=duration_minutes,
             session=session,
+            exclude_appointment_id=exclude_appointment_id,
         )
 
         # Build conflicts list
@@ -2456,6 +2458,7 @@ async def find_overlapping_appointments(
     start_time: datetime,
     duration_minutes: int,
     session: AsyncSession,
+    exclude_appointment_id: UUID | None = None,
 ) -> list[Appointment]:
     """
     Find overlapping appointments for a given time slot.
@@ -2498,6 +2501,9 @@ async def find_overlapping_appointments(
             ).bindparams(start_time=start_time)
         )
     )
+
+    if exclude_appointment_id is not None:
+        stmt = stmt.where(Appointment.id != exclude_appointment_id)
 
     result = await session.execute(stmt)
     return list(result.scalars().all())
@@ -2792,6 +2798,7 @@ class UpdateAppointmentRequest(BaseModel):
     stylist_id: UUID | None = None
     service_ids: list[UUID] | None = None
     start_time: datetime | None = None
+    duration_minutes: int | None = Field(None, ge=15, le=480)
     status: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -2840,6 +2847,8 @@ async def update_appointment(
                 raise HTTPException(status_code=404, detail="One or more services not found")
             appointment.service_ids = request.service_ids
             appointment.duration_minutes = sum(s.duration_minutes for s in services)
+        elif request.duration_minutes is not None:
+            appointment.duration_minutes = request.duration_minutes
 
         if request.start_time is not None:
             appointment.start_time = request.start_time

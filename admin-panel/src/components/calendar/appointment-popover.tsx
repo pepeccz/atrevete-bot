@@ -110,7 +110,7 @@ export function AppointmentPopover({
       <Popover
         open={open}
         onOpenChange={(o) => {
-          if (!o) onClose();
+          if (!o && !cancelDialogOpen) onClose();
         }}
       >
         {/* Virtual anchor — zero-size div positioned at the event element */}
@@ -132,7 +132,13 @@ export function AppointmentPopover({
           align="center"
           sideOffset={8}
           className="w-72 p-0 z-50"
-          onInteractOutside={onClose}
+          onInteractOutside={(e) => {
+            if (cancelDialogOpen) {
+              e.preventDefault();
+              return;
+            }
+            onClose();
+          }}
         >
           {data && (
             <>
