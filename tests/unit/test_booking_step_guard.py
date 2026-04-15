@@ -23,7 +23,12 @@ from agent.modes.booking_mode import BookingModeNode
 @pytest.fixture()
 def booking_node() -> BookingModeNode:
     """Create a bare BookingModeNode (no LLM needed for unit tests)."""
-    return BookingModeNode(tools=[])
+    node = BookingModeNode(tools=[])
+    # Pre-load known stylists so the stylist gate can validate names from args
+    node._cached_stylists_by_category = {
+        "HAIRDRESSING": ["Pilar", "Marta", "Victor", "Harolyn", "Ana"],
+    }
+    return node
 
 
 # ===========================================================================
@@ -169,6 +174,30 @@ async def test_pre_tool_call_rejects_no_date(booking_node: BookingModeNode):
     )
     assert isinstance(result, ToolCallRejection)
     assert result.error_code == "DATE_NOT_PROVIDED"
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_rejects_unknown_stylist(booking_node: BookingModeNode):
+    """check_availability with unknown stylist_name in args → rejected by stylist gate."""
+    booking_node._mode_context = {"last_services": ["Cortar"]}
+    result = await booking_node._pre_tool_call(
+        "check_availability",
+        {"service_names": ["Cortar"], "stylist_name": "Inventada", "date": "el martes"},
+    )
+    assert isinstance(result, ToolCallRejection)
+    assert result.error_code == "STYLIST_NOT_RESOLVED"
+
+
+@pytest.mark.asyncio
+async def test_pre_tool_call_accepts_no_preference_phrase(booking_node: BookingModeNode):
+    """check_availability with no-preference phrase → accepted, sets no_preference_stylist."""
+    booking_node._mode_context = {"last_services": ["Cortar"]}
+    result = await booking_node._pre_tool_call(
+        "check_availability",
+        {"service_names": ["Cortar"], "stylist_name": "me da igual", "date": "el martes"},
+    )
+    assert not isinstance(result, ToolCallRejection)
+    assert booking_node._mode_context.get("no_preference_stylist") is True
 
 
 # ===========================================================================

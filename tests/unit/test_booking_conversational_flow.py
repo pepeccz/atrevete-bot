@@ -26,7 +26,11 @@ from agent.modes.booking_mode import BookingModeNode
 @pytest.fixture()
 def booking_node() -> BookingModeNode:
     """Create a bare BookingModeNode (no LLM needed for unit tests)."""
-    return BookingModeNode(tools=[])
+    node = BookingModeNode(tools=[])
+    node._cached_stylists_by_category = {
+        "HAIRDRESSING": ["Pilar", "Marta", "Victor", "Harolyn", "Ana"],
+    }
+    return node
 
 
 # ===========================================================================

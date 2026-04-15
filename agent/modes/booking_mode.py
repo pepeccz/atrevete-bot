@@ -331,10 +331,34 @@ class BookingModeNode(BaseModeNode):
                 mode_context["last_services"] = svc_from_args
                 logger.info("_pre_tool_call: persisted last_services=%s from args (before stylist gate)", svc_from_args)
 
-            # Gate 2: reject if stylist not yet resolved (unless LLM passes it in args)
-            stylist_from_args = tool_args.get("stylist_name")
+            # Persist stylist from args BEFORE gate — same pattern as services.
+            # Only accept if it matches a KNOWN stylist or no-preference phrase.
+            _NO_PREF_PHRASES = frozenset({
+                "sin preferencia", "me da igual", "cualquiera", "la primera disponible",
+                "no tengo preferencia", "da lo mismo", "no me importa", "la que sea",
+                "el que sea", "la primera con disponibilidad",
+            })
+            stylist_from_args = (tool_args.get("stylist_name") or "").strip()
+            if stylist_from_args and not mode_context.get("last_stylist"):
+                known: set[str] = set()
+                for names in (getattr(self, "_cached_stylists_by_category", None) or {}).values():
+                    known.update(names)
+                if stylist_from_args in known:
+                    mode_context["last_stylist"] = stylist_from_args
+                    logger.info("_pre_tool_call: accepted known stylist=%s from args", stylist_from_args)
+                elif stylist_from_args.lower() in _NO_PREF_PHRASES:
+                    mode_context["no_preference_stylist"] = True
+                    mode_context["last_stylist"] = "Sin preferencia"
+                    logger.info("_pre_tool_call: accepted no-preference stylist from args (%s)", stylist_from_args)
+                else:
+                    logger.warning(
+                        "_pre_tool_call: rejected unknown stylist_name=%r from args (not in known list)",
+                        stylist_from_args,
+                    )
+
+            # Gate 2: reject if stylist STILL not resolved after validation
             has_stylist = mode_context.get("last_stylist") or mode_context.get("no_preference_stylist")
-            if not has_stylist and not stylist_from_args:
+            if not has_stylist:
                 # Build dynamic recovery with numbered stylist list
                 offered = mode_context.get("_offered_stylists") or []
                 if offered:
@@ -352,9 +376,6 @@ class BookingModeNode(BaseModeNode):
                     ),
                     recovery_response=recovery,
                 )
-            # Accept stylist_name from tool_args — LLM resolved it from conversation.
-            if stylist_from_args and not mode_context.get("last_stylist"):
-                mode_context["last_stylist"] = stylist_from_args
 
             # Gate 3: reject if no date from the client.
             # The tool silently defaults to min_valid_date when date is None,
@@ -418,16 +439,27 @@ class BookingModeNode(BaseModeNode):
                     )
 
             # Step A.2: customer_name extraction from tool args
+            # Reject placeholder names the LLM might hallucinate.
+            _NAME_BLOCKLIST = frozenset({
+                "cliente", "usuario", "desconocido", "n/a", "nombre",
+                "sin nombre", "no proporcionado", "unknown", "user", "customer",
+            })
             if not mode_context.get("customer_name"):
                 first = (tool_args.get("customer_first_name") or "").strip()
                 if first:
-                    last = (tool_args.get("customer_last_name") or "").strip()
-                    full_name = f"{first} {last}" if last else first
-                    mode_context["customer_name"] = full_name
-                    logger.info(
-                        "_pre_tool_call: extracted customer_name=%s from book() args",
-                        full_name,
-                    )
+                    if first.lower() in _NAME_BLOCKLIST:
+                        logger.warning(
+                            "_pre_tool_call: rejected placeholder customer_name=%r from book() args",
+                            first,
+                        )
+                    else:
+                        last = (tool_args.get("customer_last_name") or "").strip()
+                        full_name = f"{first} {last}" if last else first
+                        mode_context["customer_name"] = full_name
+                        logger.info(
+                            "_pre_tool_call: extracted customer_name=%s from book() args",
+                            full_name,
+                        )
 
             # Step A.3: capture notes from tool args (LLM passes them after Paso 5)
             notes_arg = tool_args.get("notes")
