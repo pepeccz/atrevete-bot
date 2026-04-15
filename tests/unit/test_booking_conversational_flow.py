@@ -594,9 +594,19 @@ class TestGateRecoveryResponses:
         assert "servicio" in result.recovery_response.lower()
 
     @pytest.mark.asyncio
+    async def test_add_more_gate_before_stylist(self, booking_node):
+        """ADD_MORE_NOT_ASKED fires before STYLIST when add_more_asked is False."""
+        booking_node._mode_context = {"last_services": ["Cortar"]}
+        result = await booking_node._pre_tool_call("check_availability", {})
+        assert isinstance(result, ToolCallRejection)
+        assert result.error_code == "ADD_MORE_NOT_ASKED"
+        assert "RECHAZADO" in result.error_message
+        assert result.recovery_response is not None
+
+    @pytest.mark.asyncio
     async def test_stylist_gate_has_prescriptive_message(self, booking_node):
         """STYLIST_NOT_RESOLVED message contains RECHAZADO + SIGUIENTE ACCIÓN."""
-        booking_node._mode_context = {"last_services": ["Cortar"]}
+        booking_node._mode_context = {"last_services": ["Cortar"], "add_more_asked": True}
         result = await booking_node._pre_tool_call("check_availability", {})
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "STYLIST_NOT_RESOLVED"
@@ -607,6 +617,7 @@ class TestGateRecoveryResponses:
         """STYLIST_NOT_RESOLVED builds numbered recovery from _offered_stylists."""
         booking_node._mode_context = {
             "last_services": ["Cortar"],
+            "add_more_asked": True,
             "_offered_stylists": ["Pilar", "Marta", "Sin preferencia"],
         }
         result = await booking_node._pre_tool_call("check_availability", {})

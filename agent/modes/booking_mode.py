@@ -521,6 +521,17 @@ class BookingModeNode(BaseModeNode):
             stylist_from_args = tool_args.get("stylist_name")
             has_stylist = mode_context.get("last_stylist") or mode_context.get("no_preference_stylist")
             if not has_stylist and not stylist_from_args:
+                # If add_more_asked hasn't been asked yet, redirect to Phase 1B first
+                if not mode_context.get("add_more_asked"):
+                    return ToolCallRejection(
+                        name="check_availability",
+                        error_code="ADD_MORE_NOT_ASKED",
+                        error_message=(
+                            "RECHAZADO. SIGUIENTE ACCIÓN: antes de elegir estilista, "
+                            "pregunta al cliente '¿Quieres añadir algo más a la cita?'"
+                        ),
+                        recovery_response="¿Quieres añadir algo más a la cita? 😊",
+                    )
                 # Build dynamic recovery with numbered stylist list
                 offered = mode_context.get("_offered_stylists") or []
                 if offered:
@@ -528,7 +539,7 @@ class BookingModeNode(BaseModeNode):
                     numbered = "\n".join(f"{i + 1}. {name}" for i, name in enumerate(display))
                     recovery = f"¿Con quién te gustaría la cita? 😊\n{numbered}"
                 else:
-                    recovery = "¿Preferís alguna estilista en concreto o la primera con disponibilidad? 😊"
+                    recovery = "¿Prefieres alguna estilista en concreto o la primera con disponibilidad? 😊"
                 return ToolCallRejection(
                     name="check_availability",
                     error_code="STYLIST_NOT_RESOLVED",
