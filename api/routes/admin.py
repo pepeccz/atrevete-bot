@@ -5022,6 +5022,7 @@ async def delete_conversation_endpoint(
 
         try:
             patterns = [
+                f"checkpoint_latest:{thread_id}:*",
                 f"checkpoint:{thread_id}:*",
                 f"checkpoint_write:{thread_id}:*",
                 f"write_keys_zset:{thread_id}:*",

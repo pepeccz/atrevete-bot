@@ -31,10 +31,12 @@ logger = logging.getLogger(__name__)
 
 # LangGraph AsyncRedisSaver key families — NO "langgraph:" prefix.
 # Verified against running Redis instance: actual key patterns are:
-#   checkpoint:{thread_id}:__empty__:{uuid}
-#   checkpoint_write:{thread_id}:__empty__:{uuid}:{uuid}:{step}
-#   write_keys_zset:{thread_id}:__empty__:{uuid}
+#   checkpoint_latest:{thread_id}:__empty__          (latest checkpoint pointer)
+#   checkpoint:{thread_id}:__empty__:{uuid}          (checkpoint states)
+#   checkpoint_write:{thread_id}:__empty__:{uuid}:{uuid}:{step}  (write records)
+#   write_keys_zset:{thread_id}:__empty__:{uuid}     (sorted set index)
 _REDIS_KEY_FAMILIES = [
+    "checkpoint_latest:{thread_id}:*",
     "checkpoint:{thread_id}:*",
     "checkpoint_write:{thread_id}:*",
     "write_keys_zset:{thread_id}:*",
