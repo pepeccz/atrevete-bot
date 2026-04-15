@@ -17,7 +17,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Plus, Calendar, Ban, Filter } from "lucide-react";
+import { Plus, Calendar, Ban, Filter, ZoomIn, ZoomOut } from "lucide-react";
 import api from "@/lib/api";
 import { BlockingEventModal } from "./blocking-event-modal";
 import { CreateAppointmentModal } from "./create-appointment-modal";
@@ -86,6 +86,15 @@ export interface CalendarViewRef {
   refresh: () => void;
 }
 
+const ZOOM_LEVELS = [
+  { slot: "00:30:00", label: "30 min", labelInterval: "01:00" },
+  { slot: "00:15:00", label: "15 min", labelInterval: "01:00" },
+  { slot: "00:10:00", label: "10 min", labelInterval: "00:30" },
+  { slot: "00:05:00", label: "5 min", labelInterval: "00:15" },
+] as const;
+
+const DEFAULT_ZOOM = 1; // 15 min
+
 export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_props, ref) {
   const router = useRouter();
   const calendarRef = useRef<FullCalendar>(null);
@@ -95,6 +104,8 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   const [stylistColors, setStylistColors] = useState<Record<string, { bg: string; border: string }>>({});
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState(DEFAULT_ZOOM);
+  const calendarCardRef = useRef<HTMLDivElement>(null);
 
   // localStorage persistence + business hours + mobile detection
   const { getPersistedStylistIds, persistStylistIds, businessHours, isMobile } = useCalendarState();
@@ -351,6 +362,24 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       setIsLoading(false);
     }
   }, [selectedStylistIds, stylistColors]);
+
+  // Ctrl+Wheel zoom on calendar
+  useEffect(() => {
+    const el = calendarCardRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      setZoomLevel(prev => {
+        const next = prev + (e.deltaY > 0 ? -1 : 1);
+        return Math.max(0, Math.min(next, ZOOM_LEVELS.length - 1));
+      });
+    };
+
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, []);
 
   // Keep ref in sync so resize handlers always use latest fetchEvents
   useEffect(() => { fetchEventsRef.current = fetchEvents; }, [fetchEvents]);
@@ -926,7 +955,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       {!isMobile && <CalendarLegend stylistColors={stylistColors} stylists={stylists} />}
 
       {/* Calendar */}
-      <Card className="p-4 relative">
+      <Card ref={calendarCardRef} className="p-4 relative">
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10 rounded-lg">
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -973,8 +1002,8 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           select={handleSelect}
           businessHours={businessHours || undefined}
           height="auto"
-          slotDuration="00:15:00"
-          slotLabelInterval="01:00"
+          slotDuration={ZOOM_LEVELS[zoomLevel].slot}
+          slotLabelInterval={ZOOM_LEVELS[zoomLevel].labelInterval}
           nowIndicator={true}
           eventTimeFormat={{
             hour: "2-digit",
@@ -989,6 +1018,32 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
             return config ? [config.cssClass] : [];
           }}
         />
+        {/* Zoom controls */}
+        {!isMobile && (
+          <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-background/90 border rounded-md px-1.5 py-1 shadow-sm z-10">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setZoomLevel(prev => Math.max(0, prev - 1))}
+              disabled={zoomLevel === 0}
+            >
+              <ZoomOut className="h-3.5 w-3.5" />
+            </Button>
+            <span className="text-xs text-muted-foreground w-12 text-center font-mono">
+              {ZOOM_LEVELS[zoomLevel].label}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setZoomLevel(prev => Math.min(ZOOM_LEVELS.length - 1, prev + 1))}
+              disabled={zoomLevel === ZOOM_LEVELS.length - 1}
+            >
+              <ZoomIn className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        )}
       </Card>
 
       {/* Action Selection Dialog (drag-select: cita vs bloqueo) */}
