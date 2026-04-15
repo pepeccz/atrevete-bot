@@ -7,7 +7,7 @@ Tests cover:
 - C: Hide durations from client (_build_collected_summary, catalog_builder, ui_constraint)
 - D: Dynamic context — factual, no imperative directives
 - E: _build_flow_hint() neutral pending-data list
-- F: Deterministic conversational signal resolution
+- F: Smart gate recovery (prescriptive messages + recovery responses)
 """
 
 from __future__ import annotations
@@ -153,12 +153,11 @@ class TestBookingComplete:
     def test_empty_context_all_missing(self):
         is_complete, missing = BookingModeNode._booking_complete({})
         assert is_complete is False
-        assert len(missing) == 5
+        assert len(missing) == 4
         assert "servicio" in missing
         assert "estilista" in missing
         assert "fecha/hora" in missing
         assert "nombre" in missing
-        assert any("notas" in m for m in missing)
 
     def test_partial_context(self):
         ctx = {"last_services": ["Cortar"], "last_stylist": "Marta"}
@@ -179,7 +178,6 @@ class TestBookingComplete:
             "last_stylist": "Marta",
             "selected_slot": {"time": "10:00"},
             "customer_name": "Ana",
-            "notes_asked": True,
         }
         is_complete, missing = BookingModeNode._booking_complete(ctx)
         assert is_complete is True
@@ -216,7 +214,6 @@ class TestBookingComplete:
                 }
             ],
             "customer_name": "Ana",
-            "notes_asked": True,
         }
         result = await booking_node._pre_tool_call(
             "book",
@@ -343,22 +340,15 @@ class TestBuildFlowHint:
         assert "Identificar servicios" in result
         assert "NO llames herramientas" in result
 
-    def test_phase1b_algo_mas(self):
-        """Services set, no add_more_asked, no hints → ask '¿algo más?'."""
+    def test_phase2_services_no_stylist(self):
+        """Services set, no stylist → hint mentions algo más + estilistas."""
         ctx = {"last_services": ["Cortar"]}
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "algo más" in result.lower()
-        assert "NO llames herramientas" in result
-
-    def test_phase1b_skipped_with_date_hint(self):
-        """Services set + preferred_date_hint → skip algo más, go to stylist."""
-        ctx = {"last_services": ["Cortar"], "preferred_date_hint": "viernes"}
-        result = BookingModeNode._build_flow_hint(ctx)
-        assert "estilista" in result.lower()
-        assert "algo más" not in result.lower()
+        assert "algo más" in result.lower() or "estilista" in result.lower()
+        assert "NO llames check_availability" in result
 
     def test_phase2_no_stylist(self):
-        """Services + add_more_asked, no stylist → ask stylist preference."""
+        """Services + no stylist → same phase (algo más + stylist combined)."""
         ctx = {"last_services": ["Cortar"], "add_more_asked": True}
         result = BookingModeNode._build_flow_hint(ctx)
         assert "estilista" in result.lower()
@@ -382,30 +372,16 @@ class TestBuildFlowHint:
         result = BookingModeNode._build_flow_hint(ctx)
         assert "elige horario" in result.lower()
 
-    def test_phase5_notes(self):
-        """All required present, no notes → ask notes."""
+    def test_phase4_collect_and_confirm(self):
+        """All tool-gated data present → Phase 4: collect name, notes, confirm."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Marta",
-            "add_more_asked": True,
+            "offered_slots": [{"time": "10:00"}],
             "selected_slot": {"time": "10:00"},
-            "customer_name": "Ana",
         }
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "nota" in result.lower()
-
-    def test_phase6_confirmation(self):
-        """All data including notes → show summary and confirm."""
-        ctx = {
-            "last_services": ["Cortar"],
-            "last_stylist": "Marta",
-            "add_more_asked": True,
-            "selected_slot": {"time": "10:00"},
-            "customer_name": "Ana",
-            "notes_asked": True,
-        }
-        result = BookingModeNode._build_flow_hint(ctx)
-        assert "resumen" in result.lower()
+        assert "nombre" in result.lower() or "notas" in result.lower()
         assert "book()" in result
 
     def test_atajo_with_handoff_hints(self):
@@ -423,152 +399,7 @@ class TestBuildFlowHint:
 
 
 # ===========================================================================
-# Change F — Deterministic conversational signal resolution
-# ===========================================================================
-
-
-def _make_state_with_message(msg: str) -> dict:
-    """Build a minimal ConversationState-like dict with a user message."""
-    return {"messages": [{"role": "user", "content": msg}]}
-
-
-class TestResolveConversationalSignals:
-    """_resolve_conversational_signals resolves phase-specific keywords."""
-
-    # ── Phase 1B: add_more_asked ──
-
-    @pytest.mark.parametrize("msg", ["no", "nada", "nada más", "solo eso", "ya está", "No gracias"])
-    def test_phase1b_decline_sets_add_more(self, booking_node, msg):
-        """User declines adding services → add_more_asked=True."""
-        ctx: dict = {"last_services": ["Cortar"]}
-        state = _make_state_with_message(msg)
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert ctx["add_more_asked"] is True
-
-    def test_phase1b_non_decline_no_change(self, booking_node):
-        """User says something else → add_more_asked stays absent."""
-        ctx: dict = {"last_services": ["Cortar"]}
-        state = _make_state_with_message("también quiero un tinte")
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert "add_more_asked" not in ctx
-
-    def test_phase1b_skipped_when_hints_present(self, booking_node):
-        """With preferred_date_hint, Phase 1B is skipped (shortcut)."""
-        ctx: dict = {"last_services": ["Cortar"], "preferred_date_hint": "viernes"}
-        state = _make_state_with_message("no")
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert "add_more_asked" not in ctx
-
-    # ── Phase 2: stylist ──
-
-    def test_phase2_digit_selection(self, booking_node):
-        """User sends digit matching offered stylist list."""
-        ctx: dict = {
-            "last_services": ["Cortar"],
-            "add_more_asked": True,
-            "_offered_stylists": ["Pilar", "Marta", "Sin preferencia"],
-        }
-        state = _make_state_with_message("1")
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert ctx["last_stylist"] == "Pilar"
-
-    def test_phase2_digit_last_option_sin_preferencia(self, booking_node):
-        """Last digit = Sin preferencia."""
-        ctx: dict = {
-            "last_services": ["Cortar"],
-            "add_more_asked": True,
-            "_offered_stylists": ["Pilar", "Sin preferencia"],
-        }
-        state = _make_state_with_message("2")
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert ctx["last_stylist"] == "Sin preferencia"
-        assert ctx["no_preference_stylist"] is True
-
-    def test_phase2_name_match(self, booking_node):
-        """User says stylist name from cached list."""
-        ctx: dict = {"last_services": ["Cortar"], "add_more_asked": True}
-        booking_node._cached_stylists_by_category = {"HAIRDRESSING": ["Pilar", "Marta"]}
-        state = _make_state_with_message("con Pilar")
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert ctx["last_stylist"] == "Pilar"
-
-    @pytest.mark.parametrize("msg", ["me da igual", "cualquiera", "la primera disponible", "da igual"])
-    def test_phase2_no_preference(self, booking_node, msg):
-        """User expresses no preference → Sin preferencia."""
-        ctx: dict = {"last_services": ["Cortar"], "add_more_asked": True}
-        state = _make_state_with_message(msg)
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert ctx["last_stylist"] == "Sin preferencia"
-        assert ctx["no_preference_stylist"] is True
-
-    def test_phase2_no_match_no_change(self, booking_node):
-        """Unrecognized message → no write."""
-        ctx: dict = {"last_services": ["Cortar"], "add_more_asked": True}
-        state = _make_state_with_message("hmm no sé")
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert "last_stylist" not in ctx
-
-    # ── Phase 5: notes ──
-
-    @pytest.mark.parametrize("msg", ["no", "nada", "ninguna", "paso", "no gracias"])
-    def test_phase5_decline(self, booking_node, msg):
-        """User declines notes → notes_asked=True, notes=None."""
-        ctx: dict = {
-            "last_services": ["Cortar"],
-            "last_stylist": "Pilar",
-            "add_more_asked": True,
-            "offered_slots": [{"time": "10:00"}],
-            "selected_slot": {"time": "10:00"},
-            "customer_name": "Maria",
-        }
-        state = _make_state_with_message(msg)
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert ctx["notes_asked"] is True
-        assert ctx["notes"] is None
-
-    def test_phase5_provide_notes(self, booking_node):
-        """User provides notes text."""
-        ctx: dict = {
-            "last_services": ["Cortar"],
-            "last_stylist": "Pilar",
-            "add_more_asked": True,
-            "offered_slots": [{"time": "10:00"}],
-            "selected_slot": {"time": "10:00"},
-            "customer_name": "Maria",
-        }
-        state = _make_state_with_message("Tengo alergia al tinte")
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert ctx["notes_asked"] is True
-        assert ctx["notes"] == "Tengo alergia al tinte"
-
-    # ── Wrong phase: no-op ──
-
-    def test_wrong_phase_no_op(self, booking_node):
-        """Phase 3 (waiting for date) — no signals resolved."""
-        ctx: dict = {
-            "last_services": ["Cortar"],
-            "add_more_asked": True,
-            "last_stylist": "Pilar",
-        }
-        state = _make_state_with_message("no")
-        original = dict(ctx)
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert ctx == original
-
-    # ── Multi-signal ──
-
-    def test_multi_signal_no_con_pilar(self, booking_node):
-        """'no, con Pilar' → sets BOTH add_more_asked and last_stylist."""
-        ctx: dict = {"last_services": ["Cortar"]}
-        booking_node._cached_stylists_by_category = {"HAIRDRESSING": ["Pilar", "Marta"]}
-        state = _make_state_with_message("no, con Pilar")
-        booking_node._resolve_conversational_signals(state, ctx)
-        assert ctx["add_more_asked"] is True
-        assert ctx["last_stylist"] == "Pilar"
-
-
-# ===========================================================================
-# Change G — Smart gate recovery (prescriptive messages + recovery responses)
+# Change F — Smart gate recovery (prescriptive messages + recovery responses)
 # ===========================================================================
 
 
@@ -594,19 +425,9 @@ class TestGateRecoveryResponses:
         assert "servicio" in result.recovery_response.lower()
 
     @pytest.mark.asyncio
-    async def test_add_more_gate_before_stylist(self, booking_node):
-        """ADD_MORE_NOT_ASKED fires before STYLIST when add_more_asked is False."""
-        booking_node._mode_context = {"last_services": ["Cortar"]}
-        result = await booking_node._pre_tool_call("check_availability", {})
-        assert isinstance(result, ToolCallRejection)
-        assert result.error_code == "ADD_MORE_NOT_ASKED"
-        assert "RECHAZADO" in result.error_message
-        assert result.recovery_response is not None
-
-    @pytest.mark.asyncio
     async def test_stylist_gate_has_prescriptive_message(self, booking_node):
         """STYLIST_NOT_RESOLVED message contains RECHAZADO + SIGUIENTE ACCIÓN."""
-        booking_node._mode_context = {"last_services": ["Cortar"], "add_more_asked": True}
+        booking_node._mode_context = {"last_services": ["Cortar"]}
         result = await booking_node._pre_tool_call("check_availability", {})
         assert isinstance(result, ToolCallRejection)
         assert result.error_code == "STYLIST_NOT_RESOLVED"
@@ -617,7 +438,6 @@ class TestGateRecoveryResponses:
         """STYLIST_NOT_RESOLVED builds numbered recovery from _offered_stylists."""
         booking_node._mode_context = {
             "last_services": ["Cortar"],
-            "add_more_asked": True,
             "_offered_stylists": ["Pilar", "Marta", "Sin preferencia"],
         }
         result = await booking_node._pre_tool_call("check_availability", {})

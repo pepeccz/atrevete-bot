@@ -177,7 +177,6 @@ async def test_pre_tool_call_name_extraction_and_slot_injection(booking_node):
             }
         ],
         "add_more_asked": True,
-        "notes_asked": True,
     }
     tool_args = {
         "customer_first_name": "María",
@@ -546,8 +545,8 @@ async def test_confirmation_gate_rejects_at_name_collection():
 
 
 @pytest.mark.asyncio
-async def test_confirmation_gate_rejects_without_notes_asked():
-    """book() without notes_asked → ToolCallRejection (notes gate is now required)."""
+async def test_confirmation_gate_allows_without_notes_asked():
+    """book() without notes_asked → allowed (notes are optional, prompt handles them)."""
     from agent.modes.booking_mode import BookingModeNode
     from agent.modes.base import ToolCallRejection
 
@@ -557,15 +556,12 @@ async def test_confirmation_gate_rejects_without_notes_asked():
         "last_stylist": "Pilar",
         "selected_slot": {"stylist_id": "abc", "start_time": "2026-04-10T10:00:00"},
         "customer_name": "Pablo",
-        "add_more_asked": True,
     }
     node._mode_context = node._booking_context
 
     result = await node._pre_tool_call("book", {"services": ["Cortar"]})
 
-    assert isinstance(result, ToolCallRejection)
-    assert result.error_code == "CONFIRMATION_REQUIRED"
-    assert "notas" in result.error_message
+    assert not isinstance(result, ToolCallRejection)
 
 
 @pytest.mark.asyncio
@@ -585,7 +581,6 @@ async def test_confirmation_gate_passes_at_confirmation_step():
         },
         "customer_name": "Pablo",
         "add_more_asked": True,
-        "notes_asked": True,
     }
     node._mode_context = node._booking_context
 
@@ -615,7 +610,6 @@ async def test_confirmation_gate_persists_slot_on_rejection():
             }
         ],
         "customer_name": None,  # Will be extracted from args → "Pablo"
-        "notes_asked": True,
     }
     node._mode_context = node._booking_context
 

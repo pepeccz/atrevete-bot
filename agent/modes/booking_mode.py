@@ -148,28 +148,6 @@ def _normalize_for_match(text: str) -> str:
     return "".join(c for c in normalized if not unicodedata.combining(c))
 
 
-# ============================================================================
-# Deterministic signal keywords — used by _resolve_conversational_signals
-# ============================================================================
-
-_ADD_MORE_DECLINE_KEYWORDS: frozenset[str] = frozenset({
-    "no", "nada", "nada mas", "solo eso", "ya esta", "eso es todo",
-    "no gracias", "solo", "no mas", "ya",
-})
-
-_NO_PREFERENCE_KEYWORDS: frozenset[str] = frozenset({
-    "me da igual", "cualquiera", "la primera", "sin preferencia",
-    "da lo mismo", "no me importa", "la que sea", "el que sea",
-    "da igual", "no tengo preferencia", "la primera disponible",
-    "la que este", "el que este",
-})
-
-_NOTES_DECLINE_KEYWORDS: frozenset[str] = frozenset({
-    "no", "nada", "ninguna", "sin notas", "paso", "no tengo",
-    "nada especial", "no hace falta", "no gracias",
-})
-
-
 def _detect_disambiguation_needs(
     message: str, audience_hint: str | None = None
 ) -> list[str]:
@@ -251,27 +229,24 @@ class BookingModeNode(BaseModeNode):
             missing.append("fecha/hora")
         if not ctx.get("customer_name"):
             missing.append("nombre")
-        if not ctx.get("notes_asked"):
-            missing.append("notas (pregunta si tiene alguna nota para la estilista)")
+        # Notes are optional — the prompt instructs the LLM to ask (Paso 5).
+        # No Python gate needed; book() accepts notes=None.
         return (len(missing) == 0, missing)
 
     @staticmethod
     def _build_flow_hint(ctx: dict) -> str:
         """Build a prescriptive flow hint for the current booking phase.
 
-        Phase-aware: detects where the flow is from booking_context fields
-        and outputs a specific instruction with explicit tool constraints.
+        4 phases based on tool-gated state only. Conversational steps
+        (algo más, notes) are handled by the prompt — not tracked here.
         """
         has_services = bool(ctx.get("last_services"))
         has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
         has_slots = bool(ctx.get("offered_slots"))
         has_selected = bool(ctx.get("selected_slot"))
-        has_name = bool(ctx.get("customer_name"))
-        has_notes = bool(ctx.get("notes") or ctx.get("notes_asked"))
 
         # Phase 1: services not resolved yet
         if not has_services:
-            # Sub-phase: disambiguation already done → LLM should call check_availability
             if ctx.get("_disambiguation_questions_shown"):
                 return (
                     "<flow_hint>PASO ACTUAL: Las preguntas de desambiguación ya se hicieron. "
@@ -283,24 +258,17 @@ class BookingModeNode(BaseModeNode):
                 "NO llames herramientas hasta tener todos los servicios resueltos.</flow_hint>"
             )
 
-        # Phase 1B: services resolved, check if "¿algo más?" needed
-        # Skip if user gave date or stylist hints (complete-intent shortcut)
-        if not ctx.get("add_more_asked"):
-            if not ctx.get("preferred_date_hint") and not ctx.get("preferred_stylist_name"):
-                return (
-                    "<flow_hint>PASO ACTUAL: Pregunta al cliente \"¿Quieres añadir algo más a la cita?\". "
-                    "NO llames herramientas. Espera respuesta.</flow_hint>"
-                )
-
         # Phase 2: stylist not resolved
+        # The prompt (booking.md) guides "¿algo más?" BEFORE asking for stylist.
         if not has_stylist:
             return (
-                "<flow_hint>PASO ACTUAL: Muestra la lista numerada de estilistas de "
-                "<available_stylists> con la última opción \"la primera con disponibilidad\". "
-                "NO llames check_availability hasta tener respuesta del cliente.</flow_hint>"
+                "<flow_hint>PASO ACTUAL: Sigue el flujo de booking.md — pregunta si quiere "
+                "algo más (Paso 1B), luego muestra la lista de estilistas de "
+                "<available_stylists> (Paso 2). NO llames check_availability hasta "
+                "tener estilista.</flow_hint>"
             )
 
-        # Phase 3: date — need to ask what day
+        # Phase 3: date/time
         if not has_slots:
             return (
                 "<flow_hint>PASO ACTUAL: Pregunta \"¿Qué día te viene bien?\". "
@@ -314,23 +282,11 @@ class BookingModeNode(BaseModeNode):
                 "NO llames herramientas. Espera selección.</flow_hint>"
             )
 
-        # Phase 4: name
-        if not has_name:
-            return (
-                "<flow_hint>PASO ACTUAL: Pregunta nombre y apellidos para la reserva. "
-                "NO llames herramientas.</flow_hint>"
-            )
-
-        # Phase 5: notes
-        if not has_notes:
-            return (
-                "<flow_hint>PASO ACTUAL: Pregunta si tiene alguna nota para la estilista. "
-                "NO llames herramientas.</flow_hint>"
-            )
-
-        # Phase 6: confirmation
+        # Phase 4: collect remaining data + confirm
+        # The prompt guides name (Paso 4), notes (Paso 5), and confirmation (Paso 6).
         return (
-            "<flow_hint>PASO ACTUAL: Muestra resumen de la cita y pide confirmación. "
+            "<flow_hint>PASO ACTUAL: Sigue booking.md — recoge nombre (Paso 4), "
+            "notas (Paso 5), muestra resumen y pide confirmación (Paso 6). "
             "Llama a book() SOLO cuando el cliente confirme.</flow_hint>"
         )
 
@@ -412,11 +368,6 @@ class BookingModeNode(BaseModeNode):
                 tool_choice = "required"
                 logger.info("BookingModeNode: tool_choice='required' (service known, no slots yet)")
         # else: NEVER_FORCE — tool_choice stays None (LLM decides freely)
-
-        # 3b. Deterministic state sync — resolve conversational signals.
-        # Runs BEFORE building messages so flow_hint and collected_data reflect
-        # what the user confirmed in their latest message.
-        self._resolve_conversational_signals(state, booking_context)
 
         # Store for _pre_tool_call / _post_tool_result / _refresh_dynamic_context access.
         # _booking_context is the canonical store; _mode_context is kept as an alias
@@ -521,17 +472,6 @@ class BookingModeNode(BaseModeNode):
             stylist_from_args = tool_args.get("stylist_name")
             has_stylist = mode_context.get("last_stylist") or mode_context.get("no_preference_stylist")
             if not has_stylist and not stylist_from_args:
-                # If add_more_asked hasn't been asked yet, redirect to Phase 1B first
-                if not mode_context.get("add_more_asked"):
-                    return ToolCallRejection(
-                        name="check_availability",
-                        error_code="ADD_MORE_NOT_ASKED",
-                        error_message=(
-                            "RECHAZADO. SIGUIENTE ACCIÓN: antes de elegir estilista, "
-                            "pregunta al cliente '¿Quieres añadir algo más a la cita?'"
-                        ),
-                        recovery_response="¿Quieres añadir algo más a la cita? 😊",
-                    )
                 # Build dynamic recovery with numbered stylist list
                 offered = mode_context.get("_offered_stylists") or []
                 if offered:
@@ -994,115 +934,6 @@ class BookingModeNode(BaseModeNode):
                 )
         except (ValueError, TypeError):
             pass
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Deterministic conversational signal resolution
-    # ──────────────────────────────────────────────────────────────────────
-
-    def _resolve_conversational_signals(
-        self, state: ConversationState, booking_context: dict[str, Any]
-    ) -> None:
-        """Resolve conversational signals deterministically before the agentic loop.
-
-        Uses the same phase-detection logic as _build_flow_hint() to determine
-        what question the bot asked in the PREVIOUS turn, then pattern-matches
-        the user's response. Only fires for conversational phases (1B, 2, 5).
-
-        Follows the same pattern as _resolve_digit_selection(): reads user message,
-        checks context, writes to booking_context in-place. Zero LLM calls.
-        """
-        user_message = get_last_user_message(state).strip()
-        if not user_message:
-            return
-
-        normalized = _normalize_for_match(user_message)
-
-        # Compute current phase from booking_context (same logic as _build_flow_hint)
-        has_services = bool(booking_context.get("last_services"))
-        has_stylist = bool(booking_context.get("last_stylist") or booking_context.get("no_preference_stylist"))
-        has_slots = bool(booking_context.get("offered_slots"))
-        has_selected = bool(booking_context.get("selected_slot"))
-        has_name = bool(booking_context.get("customer_name"))
-        has_notes = bool(booking_context.get("notes") or booking_context.get("notes_asked"))
-
-        # ── Phase 1B: "¿Algo más?" ──
-        if has_services and not booking_context.get("add_more_asked"):
-            if not booking_context.get("preferred_date_hint") and not booking_context.get("preferred_stylist_name"):
-                # Multi-signal: check stylist names FIRST ("no, con Pilar")
-                stylist_resolved = self._resolve_stylist_signal(normalized, booking_context)
-                if stylist_resolved:
-                    booking_context["add_more_asked"] = True
-                    logger.info(
-                        "signal_resolved: Phase 1B+2 multi-signal | add_more_asked=True, last_stylist=%s",
-                        booking_context.get("last_stylist"),
-                    )
-                    return
-
-                if normalized in _ADD_MORE_DECLINE_KEYWORDS:
-                    booking_context["add_more_asked"] = True
-                    logger.info("signal_resolved: Phase 1B | add_more_asked=True | msg=%r", normalized)
-                return
-
-        # ── Phase 2: Stylist preference ──
-        if has_services and booking_context.get("add_more_asked") and not has_stylist:
-            resolved = self._resolve_stylist_signal(normalized, booking_context)
-            if resolved:
-                logger.info("signal_resolved: Phase 2 | last_stylist=%s | msg=%r", booking_context.get("last_stylist"), normalized)
-            return
-
-        # ── Phase 5: Notes ──
-        if has_services and has_stylist and has_slots and has_selected and has_name and not has_notes:
-            if normalized in _NOTES_DECLINE_KEYWORDS:
-                booking_context["notes_asked"] = True
-                booking_context["notes"] = None
-                logger.info("signal_resolved: Phase 5 decline | msg=%r", normalized)
-            else:
-                booking_context["notes_asked"] = True
-                booking_context["notes"] = user_message.strip()
-                logger.info("signal_resolved: Phase 5 provide | notes=%r", user_message.strip())
-            return
-
-    def _resolve_stylist_signal(
-        self, normalized_msg: str, booking_context: dict[str, Any]
-    ) -> bool:
-        """Try to resolve a stylist selection from the user's message.
-
-        Tries in order: digit from offered list, name match, no-preference keyword.
-        Returns True if resolved, False otherwise.
-        """
-        if booking_context.get("last_stylist"):
-            return False
-
-        # 1. Digit match from offered stylist list
-        offered_stylists: list[str] = booking_context.get("_offered_stylists") or []
-        if offered_stylists:
-            try:
-                digit = int(normalized_msg.strip())
-                if 1 <= digit <= len(offered_stylists):
-                    chosen = offered_stylists[digit - 1]
-                    if chosen == "Sin preferencia":
-                        booking_context["last_stylist"] = "Sin preferencia"
-                        booking_context["no_preference_stylist"] = True
-                    else:
-                        booking_context["last_stylist"] = chosen
-                    return True
-            except (ValueError, TypeError):
-                pass
-
-        # 2. Name match from cached stylists
-        stylist_names = self._get_stylists_for_services(booking_context)
-        for name in stylist_names:
-            if _normalize_for_match(name) in normalized_msg:
-                booking_context["last_stylist"] = name
-                return True
-
-        # 3. No-preference keywords
-        if normalized_msg in _NO_PREFERENCE_KEYWORDS:
-            booking_context["last_stylist"] = "Sin preferencia"
-            booking_context["no_preference_stylist"] = True
-            return True
-
-        return False
 
     # ──────────────────────────────────────────────────────────────────────
     # Mid-loop dynamic context refresh
