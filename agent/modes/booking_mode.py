@@ -509,6 +509,14 @@ class BookingModeNode(BaseModeNode):
                         ),
                         recovery_response="¿Qué servicio te gustaría? 😊",
                     )
+            # Persist service_names from args BEFORE stylist gate.
+            # Even if stylist gate rejects, last_services is set so flow_hint
+            # advances to Phase 1B ("¿algo más?") on the next turn.
+            svc_from_args = tool_args.get("service_names") or []
+            if svc_from_args and not mode_context.get("last_services"):
+                mode_context["last_services"] = svc_from_args
+                logger.info("_pre_tool_call: persisted last_services=%s from args (before stylist gate)", svc_from_args)
+
             # Gate 2: reject if stylist not yet resolved (unless LLM passes it in args)
             stylist_from_args = tool_args.get("stylist_name")
             has_stylist = mode_context.get("last_stylist") or mode_context.get("no_preference_stylist")
