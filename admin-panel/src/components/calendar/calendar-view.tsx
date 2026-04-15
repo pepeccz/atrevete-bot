@@ -382,24 +382,42 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     }
   }, [selectedStylistIds, stylistColors]);
 
-  // Zoom helper: get current scroll time from calendar view
-  const getCurrentScrollTime = useCallback((): string | null => {
-    const cardEl = calendarCardRef.current;
-    if (!cardEl) return null;
-    const scrollEl = cardEl.querySelector(".fc-scroller-liquid-absolute") as HTMLElement | null;
-    if (!scrollEl) return null;
-    const scrollTop = scrollEl.scrollTop;
-    const totalHeight = scrollEl.scrollHeight;
-    const slotMin = 9; // slotMinTime hours
-    const slotMax = 21; // slotMaxTime hours
-    const totalHours = slotMax - slotMin;
-    const hourAtScroll = slotMin + (scrollTop / totalHeight) * totalHours;
-    const h = Math.floor(hourAtScroll);
-    const m = Math.floor((hourAtScroll - h) * 60);
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+  // Get the FullCalendar scroll container
+  const getScrollEl = useCallback((): HTMLElement | null => {
+    return calendarCardRef.current?.querySelector(".fc-scroller-liquid-absolute") as HTMLElement | null;
   }, []);
 
-  // Ctrl+Wheel zoom on calendar — preserves scroll position
+  // Zoom toward a point: keeps the same time at the same pixel position
+  const zoomTowardPoint = useCallback((direction: 1 | -1, cursorYInViewport?: number) => {
+    const scrollEl = getScrollEl();
+    // Capture scroll ratio at cursor position BEFORE zoom
+    let ratio = 0.5; // default: center of viewport
+    let cursorOffset = 0;
+    if (scrollEl) {
+      const containerRect = scrollEl.getBoundingClientRect();
+      cursorOffset = cursorYInViewport !== undefined
+        ? cursorYInViewport - containerRect.top
+        : containerRect.height / 2;
+      ratio = (scrollEl.scrollTop + cursorOffset) / scrollEl.scrollHeight;
+    }
+
+    setZoomLevel(prev => {
+      const next = prev + direction;
+      const clamped = Math.max(0, Math.min(next, ZOOM_LEVELS.length - 1));
+      if (clamped !== prev) {
+        // After React re-render, restore scroll so ratio stays at cursorOffset
+        setTimeout(() => {
+          const el = getScrollEl();
+          if (el) {
+            el.scrollTop = ratio * el.scrollHeight - cursorOffset;
+          }
+        }, 50);
+      }
+      return clamped;
+    });
+  }, [getScrollEl]);
+
+  // Ctrl+Wheel zoom on calendar — zoom toward cursor position
   useEffect(() => {
     const el = calendarCardRef.current;
     if (!el) return;
@@ -407,23 +425,12 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     const handleWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
-      const scrollTime = getCurrentScrollTime();
-      setZoomLevel(prev => {
-        const next = prev + (e.deltaY > 0 ? -1 : 1);
-        const clamped = Math.max(0, Math.min(next, ZOOM_LEVELS.length - 1));
-        if (clamped !== prev && scrollTime) {
-          // Defer scrollToTime to after FullCalendar re-renders with new slotDuration
-          setTimeout(() => {
-            calendarRef.current?.getApi().scrollToTime(scrollTime);
-          }, 50);
-        }
-        return clamped;
-      });
+      zoomTowardPoint(e.deltaY > 0 ? -1 : 1, e.clientY);
     };
 
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
-  }, [getCurrentScrollTime]);
+  }, [zoomTowardPoint]);
 
   // Keep ref in sync so resize handlers always use latest fetchEvents
   useEffect(() => { fetchEventsRef.current = fetchEvents; }, [fetchEvents]);
@@ -1158,18 +1165,14 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
             return config ? [config.cssClass] : [];
           }}
         />
-        {/* Zoom controls */}
+        {/* Zoom controls — top-right, sticky */}
         {!isMobile && (
-          <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-background/90 border rounded-md px-1.5 py-1 shadow-sm z-10">
+          <div className="absolute top-2 right-2 flex items-center gap-1 bg-background/90 border rounded-md px-1.5 py-1 shadow-sm z-20">
             <Button
               variant="ghost"
               size="icon"
               className="h-6 w-6"
-              onClick={() => {
-                const t = getCurrentScrollTime();
-                setZoomLevel(prev => Math.max(0, prev - 1));
-                if (t) setTimeout(() => calendarRef.current?.getApi().scrollToTime(t), 50);
-              }}
+              onClick={() => zoomTowardPoint(-1)}
               disabled={zoomLevel === 0}
             >
               <ZoomOut className="h-3.5 w-3.5" />
@@ -1181,11 +1184,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
               variant="ghost"
               size="icon"
               className="h-6 w-6"
-              onClick={() => {
-                const t = getCurrentScrollTime();
-                setZoomLevel(prev => Math.min(ZOOM_LEVELS.length - 1, prev + 1));
-                if (t) setTimeout(() => calendarRef.current?.getApi().scrollToTime(t), 50);
-              }}
+              onClick={() => zoomTowardPoint(1)}
               disabled={zoomLevel === ZOOM_LEVELS.length - 1}
             >
               <ZoomIn className="h-3.5 w-3.5" />
