@@ -694,8 +694,10 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   };
 
   // Handle drag-select — shows action choice dialog (cita vs bloqueo)
+  // Skip zero-duration clicks (handled by dateClick instead)
   const handleSelect = (info: { start: Date; end: Date; allDay: boolean }) => {
     if (info.allDay) return;
+    if (info.start.getTime() === info.end.getTime()) return;
     if (selectedStylistIds.length === 0) {
       alert("Por favor selecciona al menos un estilista");
       return;
