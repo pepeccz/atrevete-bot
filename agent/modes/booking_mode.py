@@ -250,6 +250,18 @@ class BookingModeNode(BaseModeNode):
             messages, tools=self.get_tools(), tool_choice=tool_choice
         )
 
+        # 5b. Detect Phase 3 text-only turn → set _date_question_asked flag.
+        # Phase 3 = services + stylist resolved, no slots yet.
+        # If the LLM produced text without calling check_availability,
+        # it asked the client something (presumably the date question).
+        _has_svc = bool(booking_context.get("last_services"))
+        _has_sty = bool(booking_context.get("last_stylist") or booking_context.get("no_preference_stylist"))
+        _has_slots = bool(booking_context.get("offered_slots"))
+        _no_avail = "check_availability" not in (result.tool_results or {})
+        if _has_svc and _has_sty and not _has_slots and _no_avail:
+            booking_context["_date_question_asked"] = True
+            logger.info("handle: set _date_question_asked=True (Phase 3 text-only turn)")
+
         # 6. Build response (LLM-generated text via _sanitize_response)
         response_text = self._build_response(result, booking_context)
         response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
@@ -377,21 +389,40 @@ class BookingModeNode(BaseModeNode):
                     recovery_response=recovery,
                 )
 
-            # Gate 3: reject if no date from the client.
-            # The tool silently defaults to min_valid_date when date is None,
-            # but the flow requires asking the client first (Paso 3).
+            # Gate 3: date validation — 4 paths (guide, not block)
             date_from_args = tool_args.get("date")
+
+            # Path 1: No date at all → guide
             if not date_from_args:
                 return ToolCallRejection(
                     name="check_availability",
                     error_code="DATE_NOT_PROVIDED",
                     error_message=(
-                        "RECHAZADO. SIGUIENTE ACCIÓN: pregunta al cliente "
-                        "'¿Qué día te viene bien?' y espera su respuesta. "
-                        "NO llames check_availability sin fecha."
+                        "GUÍA: Pregunta al cliente '¿Qué día te viene bien?' "
+                        "y espera su respuesta antes de llamar check_availability."
                     ),
                     recovery_response="¿Qué día te viene bien? 😊",
                 )
+
+            # Path 4: Shortcut — client gave service+stylist+date in one message
+            if mode_context.get("preferred_date_hint"):
+                return tool_args
+
+            # Path 2: Date present but LLM hasn't asked the client yet
+            # (likely copied min_valid_date from dynamic context)
+            if not mode_context.get("_date_question_asked"):
+                return ToolCallRejection(
+                    name="check_availability",
+                    error_code="DATE_NOT_FROM_CLIENT",
+                    error_message=(
+                        "GUÍA: Pregunta primero al cliente qué día le viene bien. "
+                        "No uses min_valid_date directamente. "
+                        "SIGUIENTE ACCIÓN: pregunta '¿Qué día te viene bien?'"
+                    ),
+                    recovery_response="¿Qué día te viene bien? 😊",
+                )
+
+            # Path 3: Date present + client was asked → allow
             return tool_args
 
         # ── book(): slot resolution → confirmation gate → injection ───────────
@@ -460,6 +491,20 @@ class BookingModeNode(BaseModeNode):
                             "_pre_tool_call: extracted customer_name=%s from book() args",
                             full_name,
                         )
+
+            # Step A.2b: surname guidance — single-word name needs apellido
+            _cname = mode_context.get("customer_name", "")
+            if _cname and " " not in _cname.strip():
+                mode_context.pop("customer_name", None)
+                return ToolCallRejection(
+                    name="book",
+                    error_code="SURNAME_MISSING",
+                    error_message=(
+                        "GUÍA: El nombre necesita incluir el primer apellido para la reserva. "
+                        "SIGUIENTE ACCIÓN: pregunta '¿Me dices también tu primer apellido?'"
+                    ),
+                    recovery_response="¿Me dices también tu primer apellido? 😊",
+                )
 
             # Step A.3: capture notes from tool args (LLM passes them after Paso 5)
             notes_arg = tool_args.get("notes")

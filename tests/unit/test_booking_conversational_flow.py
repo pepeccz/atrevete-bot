@@ -48,6 +48,7 @@ class TestDisambiguationGateRemoved:
             "_has_pending_disambiguation": True,
             "last_services": ["Cortar"],
             "last_stylist": "Pilar",
+            "_date_question_asked": True,
         }
         result = await booking_node._pre_tool_call(
             "check_availability",
@@ -67,8 +68,8 @@ class TestDisambiguationGateRemoved:
 
     @pytest.mark.asyncio
     async def test_allowed_with_service_names_in_args(self, booking_node):
-        """check_availability allowed when LLM passes service_names + stylist + date in tool args."""
-        booking_node._mode_context = {}
+        """check_availability allowed when LLM passes service_names + stylist + date (with shortcut)."""
+        booking_node._mode_context = {"preferred_date_hint": "viernes"}
         result = await booking_node._pre_tool_call(
             "check_availability",
             {"service_names": ["Cortar"], "stylist_name": "Pilar", "date": "el viernes"},
@@ -77,8 +78,8 @@ class TestDisambiguationGateRemoved:
 
     @pytest.mark.asyncio
     async def test_allowed_with_services(self, booking_node):
-        """check_availability allowed when last_services, last_stylist set + date in args."""
-        booking_node._mode_context = {"last_services": ["Cortar"], "last_stylist": "Pilar"}
+        """check_availability allowed when last_services, last_stylist set + date + flag."""
+        booking_node._mode_context = {"last_services": ["Cortar"], "last_stylist": "Pilar", "_date_question_asked": True}
         result = await booking_node._pre_tool_call(
             "check_availability", {"service_names": ["Cortar"], "date": "mañana"}
         )
@@ -219,7 +220,7 @@ class TestBookingComplete:
                     "stylist_name": "Marta",
                 }
             ],
-            "customer_name": "Ana",
+            "customer_name": "Ana García",
         }
         result = await booking_node._pre_tool_call(
             "book",
