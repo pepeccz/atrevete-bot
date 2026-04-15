@@ -60,11 +60,12 @@ class BookingModeNode(BaseModeNode):
         return "BOOKING"
 
     def get_tools(self) -> list:
-        """Return the 2 booking tools for the agentic loop."""
+        """Return the 3 booking tools for the agentic loop."""
+        from agent.tools.booking_data_tools import update_booking
         from agent.tools.availability_tools import check_availability
         from agent.tools.booking_tools import book
 
-        return [check_availability, book]
+        return [update_booking, check_availability, book]
 
     # ──────────────────────────────────────────────────────────────────────
     # Booking completeness check — GATE for book(), not a flow sequencer
@@ -322,10 +323,14 @@ class BookingModeNode(BaseModeNode):
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
+        # ── update_booking: inject current context ───────────────────────
+        if tool_name == "update_booking":
+            tool_args["_current_context"] = dict(mode_context)
+            return tool_args
+
         # ── check_availability: service + stylist guards ─────────────────
         if tool_name == "check_availability":
             # Gate 1: reject if services not yet identified
-            # LLM must provide service_names in tool args (resolved from conversation + catalog).
             if not mode_context.get("last_services"):
                 if not tool_args.get("service_names"):
                     return ToolCallRejection(
@@ -338,40 +343,8 @@ class BookingModeNode(BaseModeNode):
                         ),
                         recovery_response="¿Qué servicio te gustaría? 😊",
                     )
-            # Persist service_names from args BEFORE stylist gate.
-            # Even if stylist gate rejects, last_services is set so flow_hint
-            # advances to Phase 1B ("¿algo más?") on the next turn.
-            svc_from_args = tool_args.get("service_names") or []
-            if svc_from_args and not mode_context.get("last_services"):
-                mode_context["last_services"] = svc_from_args
-                logger.info("_pre_tool_call: persisted last_services=%s from args (before stylist gate)", svc_from_args)
 
-            # Persist stylist from args BEFORE gate — same pattern as services.
-            # Only accept if it matches a KNOWN stylist or no-preference phrase.
-            _NO_PREF_PHRASES = frozenset({
-                "sin preferencia", "me da igual", "cualquiera", "la primera disponible",
-                "no tengo preferencia", "da lo mismo", "no me importa", "la que sea",
-                "el que sea", "la primera con disponibilidad",
-            })
-            stylist_from_args = (tool_args.get("stylist_name") or "").strip()
-            if stylist_from_args and not mode_context.get("last_stylist"):
-                known: set[str] = set()
-                for names in (getattr(self, "_cached_stylists_by_category", None) or {}).values():
-                    known.update(names)
-                if stylist_from_args in known:
-                    mode_context["last_stylist"] = stylist_from_args
-                    logger.info("_pre_tool_call: accepted known stylist=%s from args", stylist_from_args)
-                elif stylist_from_args.lower() in _NO_PREF_PHRASES:
-                    mode_context["no_preference_stylist"] = True
-                    mode_context["last_stylist"] = "Sin preferencia"
-                    logger.info("_pre_tool_call: accepted no-preference stylist from args (%s)", stylist_from_args)
-                else:
-                    logger.warning(
-                        "_pre_tool_call: rejected unknown stylist_name=%r from args (not in known list)",
-                        stylist_from_args,
-                    )
-
-            # Gate 2: reject if stylist STILL not resolved after validation
+            # Gate 2: reject if stylist not resolved
             has_stylist = mode_context.get("last_stylist") or mode_context.get("no_preference_stylist")
             if not has_stylist:
                 # Build dynamic recovery with numbered stylist list
@@ -562,6 +535,20 @@ class BookingModeNode(BaseModeNode):
                 pass
         elif isinstance(result, dict):
             result_dict = result
+
+        if tool_name == "update_booking":
+            patch = result_dict.get("_booking_context_patch", {})
+            if patch:
+                for key, val in patch.items():
+                    if val is None:
+                        mode_context.pop(key, None)
+                    else:
+                        mode_context[key] = val
+                logger.info(
+                    "_post_tool_result[update_booking]: applied patch keys=%s",
+                    list(patch.keys()),
+                )
+            return result
 
         if tool_name == "check_availability":
             # Store offered slots from availability result

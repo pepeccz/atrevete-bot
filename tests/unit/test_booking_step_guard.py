@@ -109,8 +109,12 @@ async def test_pre_tool_call_allows_with_no_preference(booking_node: BookingMode
 
 @pytest.mark.asyncio
 async def test_pre_tool_call_allows_stylist_name_in_args(booking_node: BookingModeNode):
-    """LLM provides stylist_name + date in tool_args → guard passes (with flag set)."""
-    booking_node._mode_context = {"last_services": ["Cortar"], "_date_question_asked": True}
+    """LLM provides stylist_name + date in tool_args → guard passes when stylist already in context."""
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Victor",
+        "_date_question_asked": True,
+    }
     result = await booking_node._pre_tool_call(
         "check_availability",
         {"service_names": ["Cortar"], "stylist_name": "Victor", "date": "el viernes"},
@@ -120,12 +124,17 @@ async def test_pre_tool_call_allows_stylist_name_in_args(booking_node: BookingMo
 
 @pytest.mark.asyncio
 async def test_pre_tool_call_sets_last_stylist_from_args(booking_node: BookingModeNode):
-    """stylist_name from tool_args promotes to mode_context."""
-    booking_node._mode_context = {"last_services": ["Cortar"], "_date_question_asked": True}
-    await booking_node._pre_tool_call(
+    """Stylist must be in mode_context (via update_booking) before check_availability passes."""
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        "last_stylist": "Marta",
+        "_date_question_asked": True,
+    }
+    result = await booking_node._pre_tool_call(
         "check_availability",
         {"service_names": ["Cortar"], "stylist_name": "Marta", "date": "el lunes"},
     )
+    assert not isinstance(result, ToolCallRejection)
     assert booking_node._mode_context.get("last_stylist") == "Marta"
 
 
@@ -192,11 +201,16 @@ async def test_pre_tool_call_rejects_unknown_stylist(booking_node: BookingModeNo
 
 @pytest.mark.asyncio
 async def test_pre_tool_call_accepts_no_preference_phrase(booking_node: BookingModeNode):
-    """check_availability with no-preference phrase → accepted, sets no_preference_stylist."""
-    booking_node._mode_context = {"last_services": ["Cortar"], "_date_question_asked": True}
+    """check_availability with no-preference set in context → accepted."""
+    booking_node._mode_context = {
+        "last_services": ["Cortar"],
+        "no_preference_stylist": True,
+        "last_stylist": "Sin preferencia",
+        "_date_question_asked": True,
+    }
     result = await booking_node._pre_tool_call(
         "check_availability",
-        {"service_names": ["Cortar"], "stylist_name": "me da igual", "date": "el martes"},
+        {"service_names": ["Cortar"], "date": "el martes"},
     )
     assert not isinstance(result, ToolCallRejection)
     assert booking_node._mode_context.get("no_preference_stylist") is True

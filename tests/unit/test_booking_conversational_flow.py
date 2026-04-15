@@ -68,8 +68,12 @@ class TestDisambiguationGateRemoved:
 
     @pytest.mark.asyncio
     async def test_allowed_with_service_names_in_args(self, booking_node):
-        """check_availability allowed when LLM passes service_names + stylist + date (with shortcut)."""
-        booking_node._mode_context = {"preferred_date_hint": "viernes"}
+        """check_availability allowed when services + stylist in context + shortcut hint."""
+        booking_node._mode_context = {
+            "preferred_date_hint": "viernes",
+            "last_services": ["Cortar"],
+            "last_stylist": "Pilar",
+        }
         result = await booking_node._pre_tool_call(
             "check_availability",
             {"service_names": ["Cortar"], "stylist_name": "Pilar", "date": "el viernes"},
