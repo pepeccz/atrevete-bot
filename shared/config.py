@@ -78,7 +78,7 @@ class Settings(BaseSettings):
         description="Site URL for OpenRouter rankings (optional)",
     )
     SITE_NAME: str = Field(
-        default="Atrévete Bot", description="Site name for OpenRouter rankings (optional)"
+        default="Atrévete Peluquería", description="Site name for OpenRouter rankings (optional)"
     )
 
     # Token Cost Tracking (EUR per 1M tokens)

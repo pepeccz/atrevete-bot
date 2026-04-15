@@ -378,6 +378,10 @@ class FallbackChain:
             temperature=0.3,
             request_timeout=30.0,
             max_retries=0,  # Retry logic is handled externally by FallbackChain
+            default_headers={
+                "HTTP-Referer": settings.SITE_URL,
+                "X-Title": settings.SITE_NAME,
+            },
         )
         logger.debug(
             "FallbackChain.get_llm_client: created client | "

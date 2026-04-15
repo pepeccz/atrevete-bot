@@ -121,6 +121,10 @@ def _get_llm_client():
         temperature=0.3,
         request_timeout=30.0,
         max_retries=2,
+        default_headers={
+            "HTTP-Referer": settings.SITE_URL,
+            "X-Title": settings.SITE_NAME,
+        },
     )
 
 
@@ -138,6 +142,10 @@ def _get_intent_router():
             base_url="https://openrouter.ai/api/v1",
             api_key=settings.OPENROUTER_API_KEY,
             temperature=0.3,
+            default_headers={
+                "HTTP-Referer": settings.SITE_URL,
+                "X-Title": settings.SITE_NAME,
+            },
         )
         _intent_router = IntentRouter(llm_client=llm)
     return _intent_router
