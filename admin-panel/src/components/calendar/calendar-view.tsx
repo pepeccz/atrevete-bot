@@ -8,6 +8,7 @@ import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin, { type EventResizeDoneArg } from "@fullcalendar/interaction";
 import type { EventDropArg } from "@fullcalendar/core";
 import listPlugin from "@fullcalendar/list";
+import luxonPlugin from "@fullcalendar/luxon3";
 import esLocale from "@fullcalendar/core/locales/es";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1079,7 +1080,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         )}
         <FullCalendar
           ref={calendarRef}
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}
+          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin, luxonPlugin]}
           initialView={isMobile ? "listWeek" : "timeGridWeek"}
           locale={esLocale}
           timeZone="Europe/Madrid"

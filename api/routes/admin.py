@@ -177,11 +177,12 @@ def parse_datetime_as_madrid(v: Any) -> datetime | None:
         if dt.tzinfo is None:
             # Naive datetime → assume Madrid timezone
             return dt.replace(tzinfo=MADRID_TZ)
-        return dt
+        # TZ-aware datetime → convert to Madrid (e.g., UTC → Madrid)
+        return dt.astimezone(MADRID_TZ)
     if isinstance(v, datetime):
         if v.tzinfo is None:
             return v.replace(tzinfo=MADRID_TZ)
-        return v
+        return v.astimezone(MADRID_TZ)
     return v
 
 
