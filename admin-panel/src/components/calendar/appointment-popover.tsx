@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, Loader2, X } from "lucide-react";
+import { Check, ExternalLink, Loader2, X } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -64,6 +64,7 @@ export function AppointmentPopover({
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
 
   // Position the virtual anchor element at the clicked calendar event
   const [anchorPos, setAnchorPos] = useState({ top: 0, left: 0 });
@@ -78,16 +79,31 @@ export function AppointmentPopover({
     }
   }, [anchorEl, open]);
 
-  // Reset cancel state when popover closes
+  // Reset state when popover closes
   useEffect(() => {
     if (!open) {
       setCancelDialogOpen(false);
       setCancelError(null);
       setIsCancelling(false);
+      setIsConfirming(false);
     }
   }, [open]);
 
   const statusConfig = data?.status ? STATUS_MAP[data.status] : null;
+
+  const handleConfirmAppointment = async () => {
+    if (!data) return;
+    setIsConfirming(true);
+    try {
+      await api.updateAppointment(data.appointmentId, { status: "confirmed" });
+      onClose();
+      onCancelSuccess(); // reuses the same refresh callback
+    } catch {
+      // silently fail — user can retry or use detail page
+    } finally {
+      setIsConfirming(false);
+    }
+  };
 
   const handleConfirmCancel = async () => {
     if (!data) return;
@@ -218,8 +234,23 @@ export function AppointmentPopover({
                   onClick={() => onNavigate(data.appointmentId)}
                 >
                   <ExternalLink className="h-3 w-3 mr-1" />
-                  Ver detalle
+                  Detalle
                 </Button>
+                {data.status === "pending" && (
+                  <Button
+                    size="sm"
+                    className="flex-1 bg-green-600 text-white hover:bg-green-700"
+                    onClick={handleConfirmAppointment}
+                    disabled={isConfirming}
+                  >
+                    {isConfirming ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <Check className="h-3 w-3 mr-1" />
+                    )}
+                    Confirmar
+                  </Button>
+                )}
                 <Button
                   variant="destructive"
                   size="sm"
@@ -230,7 +261,7 @@ export function AppointmentPopover({
                   }}
                   disabled={data.status === "cancelled"}
                 >
-                  Cancelar cita
+                  Cancelar
                 </Button>
               </div>
             </>

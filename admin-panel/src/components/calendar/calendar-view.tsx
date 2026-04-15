@@ -382,7 +382,24 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     }
   }, [selectedStylistIds, stylistColors]);
 
-  // Ctrl+Wheel zoom on calendar
+  // Zoom helper: get current scroll time from calendar view
+  const getCurrentScrollTime = useCallback((): string | null => {
+    const cardEl = calendarCardRef.current;
+    if (!cardEl) return null;
+    const scrollEl = cardEl.querySelector(".fc-scroller-liquid-absolute") as HTMLElement | null;
+    if (!scrollEl) return null;
+    const scrollTop = scrollEl.scrollTop;
+    const totalHeight = scrollEl.scrollHeight;
+    const slotMin = 9; // slotMinTime hours
+    const slotMax = 21; // slotMaxTime hours
+    const totalHours = slotMax - slotMin;
+    const hourAtScroll = slotMin + (scrollTop / totalHeight) * totalHours;
+    const h = Math.floor(hourAtScroll);
+    const m = Math.floor((hourAtScroll - h) * 60);
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+  }, []);
+
+  // Ctrl+Wheel zoom on calendar — preserves scroll position
   useEffect(() => {
     const el = calendarCardRef.current;
     if (!el) return;
@@ -390,15 +407,23 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     const handleWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
+      const scrollTime = getCurrentScrollTime();
       setZoomLevel(prev => {
         const next = prev + (e.deltaY > 0 ? -1 : 1);
-        return Math.max(0, Math.min(next, ZOOM_LEVELS.length - 1));
+        const clamped = Math.max(0, Math.min(next, ZOOM_LEVELS.length - 1));
+        if (clamped !== prev && scrollTime) {
+          // Defer scrollToTime to after FullCalendar re-renders with new slotDuration
+          setTimeout(() => {
+            calendarRef.current?.getApi().scrollToTime(scrollTime);
+          }, 50);
+        }
+        return clamped;
       });
     };
 
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
-  }, []);
+  }, [getCurrentScrollTime]);
 
   // Keep ref in sync so resize handlers always use latest fetchEvents
   useEffect(() => { fetchEventsRef.current = fetchEvents; }, [fetchEvents]);
@@ -1116,7 +1141,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           dateClick={handleDateClick}
           select={handleSelect}
           businessHours={businessHours || undefined}
-          height="auto"
+          height="calc(100vh - 180px)"
           slotDuration={ZOOM_LEVELS[zoomLevel].slot}
           slotLabelInterval={ZOOM_LEVELS[zoomLevel].labelInterval}
           nowIndicator={true}
@@ -1140,7 +1165,11 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
               variant="ghost"
               size="icon"
               className="h-6 w-6"
-              onClick={() => setZoomLevel(prev => Math.max(0, prev - 1))}
+              onClick={() => {
+                const t = getCurrentScrollTime();
+                setZoomLevel(prev => Math.max(0, prev - 1));
+                if (t) setTimeout(() => calendarRef.current?.getApi().scrollToTime(t), 50);
+              }}
               disabled={zoomLevel === 0}
             >
               <ZoomOut className="h-3.5 w-3.5" />
@@ -1152,7 +1181,11 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
               variant="ghost"
               size="icon"
               className="h-6 w-6"
-              onClick={() => setZoomLevel(prev => Math.min(ZOOM_LEVELS.length - 1, prev + 1))}
+              onClick={() => {
+                const t = getCurrentScrollTime();
+                setZoomLevel(prev => Math.min(ZOOM_LEVELS.length - 1, prev + 1));
+                if (t) setTimeout(() => calendarRef.current?.getApi().scrollToTime(t), 50);
+              }}
               disabled={zoomLevel === ZOOM_LEVELS.length - 1}
             >
               <ZoomIn className="h-3.5 w-3.5" />
