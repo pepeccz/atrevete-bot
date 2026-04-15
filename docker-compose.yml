@@ -77,6 +77,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/app/data
+      - ./api:/app/api
+      - ./shared:/app/shared
+      - ./database:/app/database
     ports:
       - "8000:8000"
     depends_on:
@@ -101,6 +104,10 @@ services:
       dockerfile: docker/Dockerfile.agent
     container_name: atrevete-agent
     env_file: .env
+    volumes:
+      - ./agent:/app/agent
+      - ./shared:/app/shared
+      - ./database:/app/database
     depends_on:
       postgres:
         condition: service_healthy
