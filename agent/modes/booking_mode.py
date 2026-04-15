@@ -685,13 +685,6 @@ class BookingModeNode(BaseModeNode):
             )
             parts.append(f"<offered_slots>\n{slot_lines}\n</offered_slots>")
 
-        parts.append(
-            "<natural_language_rule>NUNCA uses nombres técnicos del catálogo "
-            '("Óleo Pigmento", "Corte - Señora", "Peinado Extra", etc.) al '
-            "hablar con el cliente. Usa siempre lenguaje natural y cercano. "
-            "Los nombres del catálogo son EXCLUSIVAMENTE para las herramientas."
-            "</natural_language_rule>"
-        )
         parts.append("</booking_context>")
 
         # Cross-conversation customer memories (injected when present)
