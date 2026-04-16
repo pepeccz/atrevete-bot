@@ -1,4 +1,10 @@
-"""Unit tests for ``FinalTextRecoveryMiddleware``."""
+"""Unit tests for ``FinalTextRecoveryMiddleware``.
+
+The middleware fires at ``after_agent`` — once, when the agent loop ends —
+rather than ``after_model`` (which would hijack every mid-loop tool call
+that naturally has empty content). Tests assert the recovery only kicks in
+when the AGENT terminates with an empty final AIMessage.
+"""
 
 from __future__ import annotations
 
@@ -19,16 +25,9 @@ def _noop(x: str | None = None) -> str:
 _FALLBACK = "Perdoná, tuve un problema. ¿Podés repetirlo?"
 
 
-def test_empty_content_with_tool_calls_is_rewritten():
-    # First AI has tool_calls + empty content; second is plain text to terminate.
-    # The middleware should overwrite the FIRST message in place.
-    responses = [
-        AIMessage(
-            content="",
-            tool_calls=[{"name": "_noop", "args": {}, "id": "tc1"}],
-        ),
-        AIMessage(content="real final"),
-    ]
+def test_empty_final_content_is_rewritten():
+    """When the agent ends with an AIMessage of empty content, recovery fires."""
+    responses = [AIMessage(content="")]
     agent = create_agent(
         model=ScriptedModel(responses=responses),
         tools=[_noop],
@@ -36,18 +35,11 @@ def test_empty_content_with_tool_calls_is_rewritten():
     )
     result = agent.invoke({"messages": [HumanMessage("x")]})
 
-    # The first AIMessage with tool_calls should have been overwritten — no
-    # AIMessage in the final history should still carry the empty-content +
-    # tool_calls shape.
-    ai_with_empty_and_calls = [
-        m
-        for m in result["messages"]
-        if isinstance(m, AIMessage) and m.tool_calls and not (m.content or "").strip()
-    ]
-    assert ai_with_empty_and_calls == []
+    ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
+    assert ai_messages[-1].content == _FALLBACK
 
 
-def test_nonempty_content_is_left_alone():
+def test_nonempty_final_content_is_left_alone():
     responses = [AIMessage(content="an honest reply")]
     agent = create_agent(
         model=ScriptedModel(responses=responses),
@@ -60,9 +52,17 @@ def test_nonempty_content_is_left_alone():
     assert ai_messages[-1].content == "an honest reply"
 
 
-def test_empty_content_without_tool_calls_is_left_alone():
-    # No tool_calls → recovery does NOT apply; create_agent will just stop.
-    responses = [AIMessage(content="")]
+def test_tool_call_cycle_is_not_hijacked():
+    """A mid-loop AIMessage with tool_calls + empty content (the normal tool
+    invocation shape) must NOT be rewritten. Regression test for the bug that
+    caused every booking flow to fall back on its first tool call."""
+    responses = [
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "_noop", "args": {}, "id": "tc1"}],
+        ),
+        AIMessage(content="real final answer"),
+    ]
     agent = create_agent(
         model=ScriptedModel(responses=responses),
         tools=[_noop],
@@ -71,18 +71,15 @@ def test_empty_content_without_tool_calls_is_left_alone():
     result = agent.invoke({"messages": [HumanMessage("x")]})
 
     ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
-    # Not replaced — the middleware only fires when there are pending tool_calls.
-    assert ai_messages[-1].content == ""
+    # The tool-call AIMessage survived (the loop continued past it).
+    tool_call_ai = [m for m in ai_messages if m.tool_calls]
+    assert len(tool_call_ai) == 1
+    # Final AIMessage is the real final answer — recovery did NOT fire.
+    assert ai_messages[-1].content == "real final answer"
 
 
-def test_whitespace_only_content_is_treated_as_empty():
-    responses = [
-        AIMessage(
-            content="   \n  ",
-            tool_calls=[{"name": "_noop", "args": {}, "id": "tc1"}],
-        ),
-        AIMessage(content="next"),
-    ]
+def test_whitespace_only_final_content_is_treated_as_empty():
+    responses = [AIMessage(content="   \n  ")]
     agent = create_agent(
         model=ScriptedModel(responses=responses),
         tools=[_noop],
@@ -90,9 +87,5 @@ def test_whitespace_only_content_is_treated_as_empty():
     )
     result = agent.invoke({"messages": [HumanMessage("x")]})
 
-    ai_with_empty_and_calls = [
-        m
-        for m in result["messages"]
-        if isinstance(m, AIMessage) and m.tool_calls and not (m.content or "").strip()
-    ]
-    assert ai_with_empty_and_calls == []
+    ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
+    assert ai_messages[-1].content == _FALLBACK

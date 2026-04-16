@@ -1,14 +1,16 @@
-"""Inject a fallback assistant message when the loop ends on an empty AIMessage.
+"""Inject a fallback assistant message when the agent ENDS on an empty AIMessage.
 
-If the LLM emits an ``AIMessage`` with tool calls and an empty content string
-AND no further handler produces a final response, ``create_agent`` can end the
-run with nothing for the user. This middleware replaces such an empty
-``AIMessage`` (preserving its id so ``add_messages`` overwrites in place) with
-a synthetic assistant reply containing the configured fallback text, clearing
-the tool calls so the agent terminates cleanly.
+If the agent loop terminates with an ``AIMessage`` whose content is empty (and
+no more tool results will arrive), the user would receive nothing. This
+middleware fires at ``after_agent`` time — i.e. once, when the loop exits —
+and replaces such a message with a fixed fallback text.
 
-Replaces the ``_post_loop_final_text_recovery`` path formerly at the tail end
-of ``BaseModeNode._run_agentic_loop``.
+Why ``after_agent`` and NOT ``after_model``: every tool call cycle starts with
+an ``AIMessage`` that has tool_calls and empty content (that's how tool
+invocations are represented). Running at ``after_model`` therefore fires on
+every single tool round and hijacks the very first tool call the LLM attempts,
+breaking the entire booking flow. ``after_agent`` only runs when the agent
+has decided it's done; at that point an empty AIMessage is a real failure.
 """
 
 from __future__ import annotations
@@ -22,20 +24,19 @@ from langgraph.runtime import Runtime
 
 
 class FinalTextRecoveryMiddleware(AgentMiddleware):
-    """Overwrite empty-content tool-call-only AIMessages with a fallback reply.
+    """Overwrite an empty terminal ``AIMessage`` with ``fallback_text``.
 
     Args:
-        fallback_text: The assistant text to send to the user when the loop
-            ends with an empty ``AIMessage``. Typically a safe, short, mode-
-            appropriate error string (e.g. ``"Perdoná, tuve un problema
-            procesando tu mensaje. ¿Podés repetirlo?"``).
+        fallback_text: The assistant text to substitute when the agent loop
+            ends with an empty AIMessage. Typically a safe, short, mode-
+            appropriate error string.
     """
 
     def __init__(self, fallback_text: str) -> None:
         super().__init__()
         self._fallback = fallback_text
 
-    def after_model(
+    def after_agent(
         self,
         state: AgentState,
         runtime: Runtime,
@@ -46,15 +47,16 @@ class FinalTextRecoveryMiddleware(AgentMiddleware):
         last = messages[-1]
         if not isinstance(last, AIMessage):
             return None
-        if not last.tool_calls:
-            return None
 
         content = last.content
         if isinstance(content, str) and content.strip():
             return None
         if isinstance(content, list) and content:
+            # Non-empty rich content — leave alone.
             return None
 
+        # Empty terminal AIMessage: overwrite in place (matching id so the
+        # ``add_messages`` reducer treats this as an update, not an append).
         replacement = AIMessage(
             id=last.id,
             content=self._fallback,
