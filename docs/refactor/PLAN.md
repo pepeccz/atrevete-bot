@@ -63,14 +63,15 @@ Out of scope:
 - Tests rewritten: `test_general_mode.py` (4 architecture guards), `test_escalation_mode.py` (24 behaviour tests), `test_ws4_escalation_fast_path.py` (33 tests), `test_intro_sanitization.py` (shimmed to point at the shared helper).
 - Regression: 173 failed (−3 vs baseline 176), 1930 passed (+33). Zero new regressions.
 
-### M5 — Booking middleware stack
-- `agent/middleware/dynamic_tools.py` — filters tools by `BookingContext` state via `wrap_model_call` + `dataclasses.replace`
-- `agent/middleware/tool_choice.py` — forces `tool_choice="required"` on HumanMessage turn
-- `agent/middleware/dedup.py` — `wrap_tool_call` with cache derived from prior ToolMessages
-- `agent/middleware/final_text_recovery.py` — `after_model` injects fallback AIMessage if loop ends with empty content + tool_calls
-- `agent/middleware/gate_recovery.py` — `after_model` counts rejections, `jump_to: "end"` with fixed text on threshold
-- Unit tests for each middleware with `FakeMessagesListChatModel` (subclass with `bind_tools` stub) in `tests/unit/middleware/`
-- Done when: all 5 middleware have passing unit tests
+### M5 — Booking middleware stack ✅ DONE
+- `agent/middleware/dynamic_tools.py` — `DynamicToolsMiddleware(allowed_names)` — state-driven tool list filter via `wrap_model_call`.
+- `agent/middleware/tool_choice.py` — `ToolChoiceMiddleware(when, choice)` — predicate-driven tool_choice forcing.
+- `agent/middleware/dedup.py` — `DedupToolCallMiddleware` — cache derived from prior ToolMessages in state; no custom state field needed.
+- `agent/middleware/final_text_recovery.py` — `FinalTextRecoveryMiddleware(fallback_text)` — overwrites empty-content tool-call-only AIMessages with a fallback reply.
+- `agent/middleware/gate_recovery.py` — `GateRecoveryMiddleware(marker, recovery_text, threshold)` — aborts the loop via `jump_to: "end"` after N rejection markers accumulate.
+- `tests/unit/middleware/_offline.py` — `ScriptedModel` subclass of `FakeMessagesListChatModel` with a no-op `bind_tools` (documented gotcha from the spike).
+- Unit tests: `test_dynamic_tools.py` (4), `test_tool_choice.py` (4), `test_dedup.py` (5), `test_final_text_recovery.py` (4), `test_gate_recovery.py` (4). All 21 pass.
+- Regression: 173 failed (unchanged), 1951 passed (+21). Zero new regressions.
 
 ### M6 — BookingMode → create_agent
 - Replace `agent/modes/booking_mode.py` with `create_agent` + middleware stack
