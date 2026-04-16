@@ -190,7 +190,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
 
   // Action selection dialog state (drag-select: cita vs bloqueo)
   const [isActionDialogOpen, setIsActionDialogOpen] = useState(false);
-  const [pendingSelectInfo, setPendingSelectInfo] = useState<{ start: Date; end: Date } | null>(null);
+  const [pendingSelectInfo, setPendingSelectInfo] = useState<{ start: Date; end: Date | null } | null>(null);
 
   // Appointment popover state (CAL-06)
   const [popoverState, setPopoverState] = useState<{
@@ -677,7 +677,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     setIsBlockingModalOpen(true);
   };
 
-  // Handle single date/time click — opens CreateAppointmentModal
+  // Handle single date/time click — shows action choice dialog (cita vs bloqueo)
   const handleDateClick = (info: { date: Date; allDay: boolean }) => {
     if (info.allDay) return; // skip all-day header clicks
 
@@ -686,11 +686,8 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       return;
     }
 
-    setSelectedDateForModal(info.date);
-    setSelectedStartTimeForModal(info.date);
-    setSelectedEndTimeForModal(null);
-    setSelectedStylistForAppointmentModal(selectedStylistIds[0]);
-    setIsAppointmentModalOpen(true);
+    setPendingSelectInfo({ start: info.date, end: null });
+    setIsActionDialogOpen(true);
   };
 
   // Handle drag-select — shows action choice dialog (cita vs bloqueo)
