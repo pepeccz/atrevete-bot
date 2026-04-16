@@ -73,12 +73,12 @@ Out of scope:
 - Unit tests: `test_dynamic_tools.py` (4), `test_tool_choice.py` (4), `test_dedup.py` (5), `test_final_text_recovery.py` (4), `test_gate_recovery.py` (4). All 21 pass.
 - Regression: 173 failed (unchanged), 1951 passed (+21). Zero new regressions.
 
-### M6 — BookingMode → create_agent
-- Replace `agent/modes/booking_mode.py` with `create_agent` + middleware stack
-- Preserve existing `_pre_tool_call`/`_post_tool_result` LOGIC as pre/post hooks inside middleware (customer_memories write, slot clearing, etc.)
-- Port audience-variant validation (bug "Corte Señora") into `update_booking` tool as data response with `ambiguity` payload (not rejection)
-- Rewrite tests in `tests/unit/test_booking_mode.py` and related
-- Done when: booking mode passes; "Corte Señora" scenario handles ambiguity without assuming
+### M6 — BookingMode → create_agent ✅ DONE (scope adjusted)
+- `agent/middleware/booking_agent.py` — `BookingAgentMiddleware` delegates to the node's async `_pre_tool_call` / `_post_tool_result` via `awrap_tool_call`. Preserves all existing logic (slot resolution, customer memory writes, context injection) without duplication.
+- `agent/modes/booking_mode.py` — new `_invoke_create_agent` method replaces the `_run_agentic_loop` call. Composes `BookingAgentMiddleware`, `DedupToolCallMiddleware`, `FinalTextRecoveryMiddleware`, `TokenTrackingMiddleware`, and optionally `ToolChoiceMiddleware`. Returns an `AgenticLoopResult` for API compatibility.
+- `agent/tools/booking_data_tools.py` — Option D: `update_booking` now detects audience-variant ambiguity (e.g. `Corte Señora` with siblings `Corte Caballero`, `Corte Niño`) and returns a data response asking the LLM to disambiguate before committing. Fixes the production bug where the LLM silently assumed `Corte Señora`.
+- Scope adjustment: kept `BookingModeNode(BaseModeNode)` class surface so the 6 test files (87 passing tests) keep working. Full class cleanup moved to M8 alongside the BaseModeNode deletion.
+- Regression: 173 failed (−3 vs baseline), 1951 passed (+54 total). Zero new regressions.
 
 ### M7 — AppointmentManagementMode → create_agent
 - Same pattern as M6

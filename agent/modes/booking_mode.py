@@ -39,6 +39,12 @@ _HISTORY_LIMIT = 8
 # ============================================================================
 
 
+def _last_message_is_human(state) -> bool:
+    """Predicate for ``ToolChoiceMiddleware``: True when last message is HumanMessage."""
+    from langchain_core.messages import HumanMessage
+
+    messages = state.get("messages") or []
+    return bool(messages) and isinstance(messages[-1], HumanMessage)
 
 
 # ============================================================================
@@ -272,9 +278,11 @@ class BookingModeNode(BaseModeNode):
         # 4. Build messages with dynamic context
         messages = await self._build_messages(state, booking_context)
 
-        # 5. Run agentic loop — LLM calls tools freely
-        result = await self._run_agentic_loop(
-            messages, tools=self.get_tools(booking_context), tool_choice=tool_choice
+        # 5. Run the agent loop via ``create_agent`` + composed middleware.
+        result = await self._invoke_create_agent(
+            messages=messages,
+            tools=self.get_tools(booking_context),
+            tool_choice=tool_choice,
         )
 
         # 6. Build response (LLM-generated text via _sanitize_response)
@@ -597,6 +605,97 @@ class BookingModeNode(BaseModeNode):
         """
         response_text = result.response_text or ""
         return self._sanitize_response(response_text)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # create_agent integration (M6)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def _invoke_create_agent(
+        self,
+        messages: list,
+        tools: list,
+        tool_choice: str | None,
+    ) -> AgenticLoopResult:
+        """Run ``create_agent`` with the composed booking middleware stack.
+
+        Replaces the legacy ``_run_agentic_loop`` call. Preserves the
+        ``AgenticLoopResult`` return contract so ``_build_response`` and the
+        existing response-building logic keep working unchanged.
+        """
+        from langchain.agents import create_agent
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+        from agent.middleware.booking_agent import BookingAgentMiddleware
+        from agent.middleware.dedup import DedupToolCallMiddleware
+        from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
+        from agent.middleware.token_tracking import TokenTrackingMiddleware
+        from agent.middleware.tool_choice import ToolChoiceMiddleware
+
+        # Split the legacy layered message list into ``system_prompt`` + transcript.
+        system_parts: list[str] = []
+        transcript: list = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                if content:
+                    system_parts.append(content)
+            else:
+                transcript.append(msg)
+        system_prompt = "\n\n".join(system_parts)
+
+        fallback_text = (
+            "Perdoná, tuve un problema procesando tu mensaje. ¿Podés repetirlo?"
+        )
+
+        middleware: list = [
+            BookingAgentMiddleware(self),
+            DedupToolCallMiddleware(),
+            FinalTextRecoveryMiddleware(fallback_text=fallback_text),
+            TokenTrackingMiddleware(mode_name="BOOKING"),
+        ]
+        if tool_choice:
+            middleware.insert(
+                0,
+                ToolChoiceMiddleware(
+                    when=lambda state: _last_message_is_human(state),
+                    choice=tool_choice,
+                ),
+            )
+
+        agent = create_agent(
+            model=self.llm,
+            tools=tools,
+            system_prompt=system_prompt,
+            middleware=middleware,
+        )
+
+        try:
+            result_dict = await agent.ainvoke({"messages": transcript})
+        except Exception as exc:
+            logger.error("BookingModeNode: create_agent invocation failed: %s", exc)
+            return AgenticLoopResult(response_text="", error=str(exc))
+
+        response_text = ""
+        final_messages = result_dict.get("messages") or []
+        for msg in reversed(final_messages):
+            if isinstance(msg, AIMessage):
+                content = msg.content
+                if isinstance(content, str):
+                    response_text = content.strip()
+                elif isinstance(content, list):
+                    parts: list[str] = []
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            parts.append(block.get("text", ""))
+                        elif isinstance(block, str):
+                            parts.append(block)
+                    response_text = "\n".join(parts).strip()
+                if response_text:
+                    break
+        if not response_text:
+            response_text = fallback_text
+
+        return AgenticLoopResult(response_text=response_text)
 
     # ──────────────────────────────────────────────────────────────────────
     # Message construction
