@@ -25,6 +25,7 @@ Usage::
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from dataclasses import replace
 from typing import Callable
 
@@ -47,14 +48,25 @@ class DynamicToolsMiddleware(AgentMiddleware):
         super().__init__()
         self._allowed_names = allowed_names
 
+    def _apply_filter(self, request: ModelRequest) -> ModelRequest:
+        """Return a new ModelRequest with tools filtered to the allowed set."""
+        allowed = set(self._allowed_names(request.state))
+        filtered = [t for t in request.tools if getattr(t, "name", None) in allowed]
+        return replace(request, tools=filtered)
+
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        allowed = set(self._allowed_names(request.state))
-        filtered = [t for t in request.tools if getattr(t, "name", None) in allowed]
-        return handler(replace(request, tools=filtered))
+        return handler(self._apply_filter(request))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        return await handler(self._apply_filter(request))
 
 
 __all__ = ["DynamicToolsMiddleware"]

@@ -11,6 +11,7 @@ Replaces the ``seen_tool_calls`` guard formerly inside
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from typing import Any, Callable
 
 from langchain.agents.middleware import AgentMiddleware
@@ -41,11 +42,13 @@ class DedupToolCallMiddleware(AgentMiddleware):
     ``ToolMessage`` objects in ``messages`` (``create_agent`` does).
     """
 
-    def wrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage],
-    ) -> ToolMessage:
+    def _dedup_lookup(self, request: ToolCallRequest) -> ToolMessage | None:
+        """Return a cached ToolMessage if an identical call was already executed.
+
+        Reconstructs the (tool_name, sorted_args) cache from prior ToolMessages
+        in state['messages'] and returns a new ToolMessage with the current call's
+        id on a hit, or None on a miss.
+        """
         tool_call = request.tool_call
         key = _tool_call_key(tool_call)
 
@@ -67,7 +70,21 @@ class DedupToolCallMiddleware(AgentMiddleware):
                         name=tool_call.get("name", ""),
                     )
 
-        return handler(request)
+        return None
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage],
+    ) -> ToolMessage:
+        return self._dedup_lookup(request) or handler(request)
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
+    ) -> ToolMessage:
+        return self._dedup_lookup(request) or await handler(request)
 
 
 __all__ = ["DedupToolCallMiddleware", "_tool_call_key"]

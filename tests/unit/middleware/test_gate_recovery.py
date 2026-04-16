@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, ClassVar
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
@@ -21,7 +21,13 @@ def _book(day: str = "mon") -> str:
 
 
 class _RejectingBook(AgentMiddleware):
-    """Force every ``_book`` call to return a marker-tagged error ToolMessage."""
+    """Force every ``_book`` call to return a marker-tagged error ToolMessage.
+
+    Single variant is acceptable here: this test helper is only composed into
+    sync agents driven by ``invoke()``; it is never used with ``ainvoke()``.
+    """
+
+    _allow_single_variant: ClassVar[bool] = True
 
     def wrap_tool_call(
         self,

@@ -18,6 +18,7 @@ Usage::
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from dataclasses import replace
 from typing import Any, Callable
 
@@ -46,13 +47,24 @@ class ToolChoiceMiddleware(AgentMiddleware):
         self._when = when
         self._choice = choice
 
+    def _apply_choice(self, request: ModelRequest) -> ModelRequest:
+        """Return a new ModelRequest with tool_choice applied based on the predicate."""
+        tool_choice = self._choice if self._when(request.state) else None
+        return replace(request, tool_choice=tool_choice)
+
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        tool_choice = self._choice if self._when(request.state) else None
-        return handler(replace(request, tool_choice=tool_choice))
+        return handler(self._apply_choice(request))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        return await handler(self._apply_choice(request))
 
 
 __all__ = ["ToolChoiceMiddleware"]
