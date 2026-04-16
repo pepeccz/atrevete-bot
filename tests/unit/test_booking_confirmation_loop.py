@@ -26,6 +26,7 @@ def _base_ctx() -> dict:
     return {
         "last_services": ["Cortar"],
         "last_stylist": "Victor",
+        "add_more_asked": True,
         "offered_slots": [{"stylist_id": "abc", "time": "10:00", "date": "miércoles 9"}],
         "selected_slot": {"stylist_id": "abc", "time": "10:00", "date": "miércoles 9"},
         "customer_name": "Pablo García",

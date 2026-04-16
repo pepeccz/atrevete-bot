@@ -111,6 +111,9 @@ class BookingModeNode(BaseModeNode):
         else:
             pending.append("servicio")
 
+        if ctx.get("last_services") and not ctx.get("add_more_asked"):
+            pending.append("preguntar ¿algo más?")
+
         if ctx.get("last_stylist") or ctx.get("no_preference_stylist"):
             stylist = ctx.get("last_stylist", "sin preferencia")
             collected.append(f"estilista ({stylist})")
@@ -758,8 +761,13 @@ class BookingModeNode(BaseModeNode):
         # Flow hint — neutral factual list of pending data (not prescriptive)
         parts.append(self._build_flow_hint(mode_context))
 
-        # Available stylists — shown whenever services are known and stylist not yet chosen
-        if mode_context.get("last_services") and not mode_context.get("last_stylist"):
+        # Available stylists — shown when services are known, stylist not chosen, and
+        # "algo más?" has already been asked (add_more_asked gate)
+        if (
+            mode_context.get("last_services")
+            and not mode_context.get("last_stylist")
+            and mode_context.get("add_more_asked")
+        ):
             stylist_names = self._get_stylists_for_services(mode_context)
             if stylist_names:
                 # Build numbered list with "Sin preferencia" as last option

@@ -129,6 +129,9 @@ def _build_response(
     else:
         missing.append("servicio")
 
+    if ctx.get("last_services") and not ctx.get("add_more_asked"):
+        missing.append("preguntar ¿algo más?")
+
     if ctx.get("last_stylist") or ctx.get("no_preference_stylist"):
         stylist = ctx.get("last_stylist", "Sin preferencia")
         collected.append(f"estilista: {stylist}")

@@ -326,15 +326,25 @@ class TestDynamicContextFactual:
         result = booking_node._build_dynamic_context({}, state)
         assert "<missing_data>" not in result
 
-    def test_stylists_shown_when_services_known(self, booking_node):
-        """Stylists visible when last_services is set, regardless of step."""
+    def test_stylists_shown_after_algo_mas_asked(self, booking_node):
+        """Stylists visible when last_services is set AND add_more_asked is True."""
+        state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
+        ctx = {"last_services": ["Cortar"], "add_more_asked": True}
+        booking_node._cached_stylists_by_category = {
+            "HAIRDRESSING": ["Marta", "Pilar"],
+        }
+        result = booking_node._build_dynamic_context(ctx, state)
+        assert "<available_stylists>" in result
+
+    def test_stylists_hidden_before_algo_mas(self, booking_node):
+        """Stylists NOT visible when services set but add_more_asked is False."""
         state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
         ctx = {"last_services": ["Cortar"]}
         booking_node._cached_stylists_by_category = {
             "HAIRDRESSING": ["Marta", "Pilar"],
         }
         result = booking_node._build_dynamic_context(ctx, state)
-        assert "<available_stylists>" in result
+        assert "<available_stylists>" not in result
 
 
 # ===========================================================================
