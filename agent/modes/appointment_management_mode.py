@@ -193,9 +193,10 @@ class AppointmentManagementMode(BaseModeNode):
         # 3. Build messages
         messages = await self._build_messages(state, ctx)
 
-        # 4. Run agentic loop — ``_run_agentic_loop`` is retained here for
-        # M7; the full create_agent migration for this mode ships in M8.
-        result = await self._run_agentic_loop(messages, tools=self.get_tools())
+        # 4. Run the agent loop via ``create_agent`` + composed middleware (M8).
+        result = await self._invoke_create_agent(
+            messages=messages, tools=self.get_tools()
+        )
 
         # 5. Extract tool results into ctx
         self._apply_tool_results(result.tool_results, ctx)
@@ -685,6 +686,86 @@ class AppointmentManagementMode(BaseModeNode):
 
         return "\n".join(parts)
 
+
+    # ──────────────────────────────────────────────────────────────────────
+    # create_agent integration (M8)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def _invoke_create_agent(self, messages: list, tools: list) -> Any:
+        """Run ``create_agent`` with the composed appointment-management middleware."""
+        from langchain.agents import create_agent
+        from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+
+        from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
+        from agent.middleware.node_bridge import NodeBridgeMiddleware
+        from agent.middleware.token_tracking import TokenTrackingMiddleware
+        from agent.modes.base import AgenticLoopResult
+
+        system_parts: list[str] = []
+        transcript: list = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                if content:
+                    system_parts.append(content)
+            else:
+                transcript.append(msg)
+        system_prompt = "\n\n".join(system_parts)
+
+        fallback_text = (
+            "Perdoná, tuve un problema procesando tu mensaje. ¿Podés repetirlo?"
+        )
+
+        middleware = [
+            NodeBridgeMiddleware(self),
+            FinalTextRecoveryMiddleware(fallback_text=fallback_text),
+            TokenTrackingMiddleware(mode_name="APPOINTMENT_MANAGEMENT"),
+        ]
+
+        agent = create_agent(
+            model=self.llm,
+            tools=tools,
+            system_prompt=system_prompt,
+            middleware=middleware,
+        )
+
+        try:
+            result_dict = await agent.ainvoke({"messages": transcript})
+        except Exception as exc:
+            logger.error("AppointmentManagementMode: create_agent failed: %s", exc)
+            return AgenticLoopResult(response_text="", error=str(exc))
+
+        response_text = ""
+        tool_results: dict = {}
+        for msg in result_dict.get("messages") or []:
+            if isinstance(msg, AIMessage):
+                content = msg.content
+                if isinstance(content, str) and content.strip():
+                    response_text = content.strip()
+                elif isinstance(content, list):
+                    parts: list[str] = []
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            parts.append(block.get("text", ""))
+                        elif isinstance(block, str):
+                            parts.append(block)
+                    if parts:
+                        response_text = "\n".join(parts).strip()
+            elif isinstance(msg, ToolMessage) and msg.name:
+                try:
+                    parsed = (
+                        json.loads(msg.content)
+                        if isinstance(msg.content, str)
+                        else msg.content
+                    )
+                except (json.JSONDecodeError, ValueError):
+                    parsed = msg.content
+                tool_results[msg.name] = parsed
+
+        if not response_text:
+            response_text = fallback_text
+
+        return AgenticLoopResult(response_text=response_text, tool_results=tool_results)
 
     # ──────────────────────────────────────────────────────────────────────
     # Response Building

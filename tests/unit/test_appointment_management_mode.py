@@ -124,7 +124,7 @@ class TestQueryFlow:
 
         loop_result = make_agentic_loop_result("Tus citas son...")
 
-        with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(mode, "_invoke_create_agent", new_callable=AsyncMock) as mock_loop:
             mock_loop.return_value = loop_result
             with patch.object(mode, "_build_messages", new_callable=AsyncMock) as mock_msgs:
                 mock_msgs.return_value = []
@@ -148,7 +148,7 @@ class TestQueryFlow:
 
         loop_result = make_agentic_loop_result("Aquí están tus citas.")
 
-        with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(mode, "_invoke_create_agent", new_callable=AsyncMock) as mock_loop:
             mock_loop.return_value = loop_result
             with patch.object(mode, "_build_messages", new_callable=AsyncMock) as mock_msgs:
                 mock_msgs.return_value = []
@@ -465,7 +465,7 @@ class TestWithinWindowEscalation:
             },
         )
 
-        with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(mode, "_invoke_create_agent", new_callable=AsyncMock) as mock_loop:
             mock_loop.return_value = loop_result
             with patch.object(mode, "_build_messages", new_callable=AsyncMock) as mock_msgs:
                 mock_msgs.return_value = []
@@ -505,7 +505,7 @@ class TestWithinWindowEscalation:
             },
         )
 
-        with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(mode, "_invoke_create_agent", new_callable=AsyncMock) as mock_loop:
             mock_loop.return_value = loop_result
             with patch.object(mode, "_build_messages", new_callable=AsyncMock) as mock_msgs:
                 mock_msgs.return_value = []
@@ -549,7 +549,7 @@ class TestActionCompletion:
             },
         )
 
-        with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(mode, "_invoke_create_agent", new_callable=AsyncMock) as mock_loop:
             mock_loop.return_value = loop_result
             with patch.object(mode, "_build_messages", new_callable=AsyncMock) as mock_msgs:
                 mock_msgs.return_value = []
@@ -582,7 +582,7 @@ class TestActionCompletion:
             tool_results={"manage_appointments": [{"action": "reschedule", "success": True}]},
         )
 
-        with patch.object(mode, "_run_agentic_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(mode, "_invoke_create_agent", new_callable=AsyncMock) as mock_loop:
             mock_loop.return_value = loop_result
             with patch.object(mode, "_build_messages", new_callable=AsyncMock) as mock_msgs:
                 mock_msgs.return_value = []
