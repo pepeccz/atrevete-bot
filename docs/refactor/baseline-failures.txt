@@ -1,0 +1,235 @@
+ERROR    agent.prompts:__init__.py:172 Error loading stylist context from database: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    agent.prompts:__init__.py:55 System prompt too short (9 characters), using fallback
+ERROR    agent.prompts:__init__.py:62 System prompt file not found at /home/pepe/Proyectos/atrevete-bot/agent/prompts/legacy/maite_system_prompt.md, using fallback
+ERROR    agent.prompts:__init__.py:66 Error reading system prompt file: Read error, using fallback
+ERROR    agent.prompts.loader:loader.py:114 Prompt file not found: /home/pepe/Proyectos/atrevete-bot/agent/prompts/shared/glossary.md
+ERROR    agent.services.availability_service:availability_service.py:817 Error fetching calendar events: sequence item 0: expected str instance, UUID found
+ERROR    agent.transactions.booking_transaction:booking_transaction.py:538 [550e8400-e29b-41d4-a716-446655440000_2026-04-21T20:41:46.865567+02:00] Unexpected error in booking transaction
+ERROR    agent.transactions.booking_transaction:booking_transaction.py:538 [550e8400-e29b-41d4-a716-446655440000_2026-04-21T20:41:46.885721+02:00] Unexpected error in booking transaction
+ERROR    shared.business_hours_validator:business_hours_validator.py:271 Error fetching business hours for day_of_week=1: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    shared.business_hours_validator:business_hours_validator.py:271 Error fetching business hours for day_of_week=2: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    shared.business_hours_validator:business_hours_validator.py:271 Error fetching business hours for day_of_week=5: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    shared.business_hours_validator:business_hours_validator.py:95 Error checking if day_of_week=0 is closed: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    shared.business_hours_validator:business_hours_validator.py:95 Error checking if day_of_week=1 is closed: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    shared.business_hours_validator:business_hours_validator.py:95 Error checking if day_of_week=2 is closed: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    shared.business_hours_validator:business_hours_validator.py:95 Error checking if day_of_week=3 is closed: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    shared.business_hours_validator:business_hours_validator.py:95 Error checking if day_of_week=4 is closed: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    shared.business_hours_validator:business_hours_validator.py:95 Error checking if day_of_week=5 is closed: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR    shared.business_hours_validator:business_hours_validator.py:95 Error checking if day_of_week=6 is closed: Multiple exceptions: [Errno 111] Connect call failed ('::1', 5432, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 5432)
+ERROR tests/unit/test_booking_transaction.py::TestBookingTransactionSuccess::test_duration_calculation_with_buffer
+ERROR tests/unit/test_booking_transaction.py::TestBookingTransactionSuccess::test_friendly_confirmation_message_format
+ERROR tests/unit/test_booking_transaction.py::TestBookingTransactionSuccess::test_successful_booking_complete_flow
+ERROR tests/unit/test_booking_transaction.py::TestCalendarEventFailure::test_calendar_event_creation_fails
+ERROR tests/unit/test_booking_transaction.py::TestDatabaseErrorsRollback::test_integrity_error_triggers_rollback
+ERROR tests/unit/test_booking_transaction.py::TestDatabaseErrorsRollback::test_sqlalchemy_error_triggers_rollback
+ERROR tests/unit/test_booking_transaction.py::TestEdgeCases::test_optional_fields_none
+ERROR tests/unit/test_booking_transaction.py::TestNotFoundErrors::test_stylist_not_found
+ERROR tests/unit/test_booking_transaction.py::TestTransactionIsolation::test_serializable_isolation_set
+ERROR tests/unit/test_booking_transaction.py::TestValidationFailures::test_slot_availability_validation_failure
+ERROR tests/unit/test_category_validation.py::TestCategoryValidation::test_empty_service_list_valid
+ERROR tests/unit/test_category_validation.py::TestCategoryValidation::test_mixed_categories_error_message_contains_both_categories
+ERROR tests/unit/test_category_validation.py::TestCategoryValidation::test_mixed_categories_rejected
+ERROR tests/unit/test_category_validation.py::TestCategoryValidation::test_multiple_aesthetics_services_valid
+ERROR tests/unit/test_category_validation.py::TestCategoryValidation::test_multiple_hairdressing_services_valid
+ERROR tests/unit/test_category_validation.py::TestCategoryValidation::test_single_service_always_valid
+ERROR tests/unit/test_category_validation.py::TestCategoryValidation::test_three_services_same_category_valid
+ERROR tests/unit/test_customer_notes.py::TestCustomerNotes::test_create_customer_with_notes
+ERROR tests/unit/test_customer_notes.py::TestCustomerNotes::test_create_customer_without_notes
+ERROR tests/unit/test_customer_notes.py::TestCustomerNotes::test_get_customer_returns_notes_field
+ERROR tests/unit/test_customer_notes.py::TestCustomerNotes::test_notes_with_long_text
+ERROR tests/unit/test_customer_notes.py::TestCustomerNotes::test_notes_with_special_characters
+ERROR tests/unit/test_customer_notes.py::TestCustomerNotes::test_update_customer_notes
+ERROR tests/unit/test_customer_notes.py::TestCustomerNotes::test_update_customer_notes_to_empty
+ERROR tests/unit/test_customer_notes.py::TestCustomerNotes::test_update_customer_notes_without_changing_name
+ERROR tests/unit/test_customer_notes.py::TestCustomerNotes::test_update_multiple_fields_including_notes
+ERROR tests/unit/test_database_models.py::test_create_customer_with_stylist
+ERROR tests/unit/test_database_models.py::test_create_service
+ERROR tests/unit/test_database_models.py::test_create_stylist
+ERROR tests/unit/test_database_models.py::test_customer_phone_index_exists
+ERROR tests/unit/test_database_models.py::test_customer_phone_validation
+ERROR tests/unit/test_database_models.py::test_customer_stylist_on_delete_set_null
+ERROR tests/unit/test_database_models.py::test_customer_unique_phone
+ERROR tests/unit/test_database_models.py::test_seed_stylists
+ERROR tests/unit/test_database_models.py::test_seed_stylists_idempotent
+ERROR tests/unit/test_database_models.py::test_service_check_duration_positive
+ERROR tests/unit/test_database_models.py::test_stylist_calendar_id_index_exists
+ERROR tests/unit/test_database_models.py::test_stylist_google_calendar_id_nullable
+ERROR tests/unit/test_database_models.py::test_stylist_model_slug_field_exists
+ERROR tests/unit/test_database_models.py::test_stylist_no_column_level_unique_on_calendar
+ERROR tests/unit/test_database_models.py::test_stylist_unique_calendar_id
+FAILED tests/unit/test_archival_logic.py::test_find_expired_checkpoints_with_exact_cutoff_boundary
+FAILED tests/unit/test_archival_logic.py::test_redis_key_pattern_parsing_skips_malformed_keys
+FAILED tests/unit/test_archival_logic.py::test_redis_key_pattern_parsing_standard_format
+FAILED tests/unit/test_archival_logic.py::test_redis_key_pattern_parsing_with_complex_thread_id
+FAILED tests/unit/test_availability_service_n1.py::TestGetCalendarEventsServiceBatch::test_appointment_with_empty_service_ids_no_query
+FAILED tests/unit/test_availability_service_n1.py::TestGetCalendarEventsServiceBatch::test_deleted_service_id_returns_empty_string_no_crash
+FAILED tests/unit/test_availability_service_n1.py::TestGetCalendarEventsServiceBatch::test_service_ordering_preserved
+FAILED tests/unit/test_availability_service_n1.py::TestGetCalendarEventsServiceBatch::test_single_service_query_for_multiple_appointments
+FAILED tests/unit/test_billing_service.py::TestNextInvoiceNumber::test_next_invoice_number_format_subsequent
+FAILED tests/unit/test_billing_service.py::TestVoidInvoice::test_void_invoice_cancels_stripe_pi
+FAILED tests/unit/test_booking_conversational_flow.py::TestDisambiguationShowOnce::test_detection_on_current_message_not_opening_request
+FAILED tests/unit/test_booking_conversational_flow.py::TestDisambiguationShowOnce::test_hint_shown_on_subsequent_turn
+FAILED tests/unit/test_booking_conversational_flow.py::TestDisambiguationShowOnce::test_questions_shown_on_first_detection
+FAILED tests/unit/test_booking_mode.py::test_build_dynamic_context_includes_available_stylists_at_stylist_selection
+FAILED tests/unit/test_booking_step_guard.py::test_gate3_rejects_date_without_flag
+FAILED tests/unit/test_booking_step_guard.py::test_pre_tool_call_rejects_no_date
+FAILED tests/unit/test_booking_step_guard.py::test_pre_tool_call_rejects_no_stylist
+FAILED tests/unit/test_booking_step_guard.py::test_pre_tool_call_rejects_unknown_stylist
+FAILED tests/unit/test_booking_transaction.py::TestEdgeCases::test_single_service_booking
+FAILED tests/unit/test_booking_transaction.py::TestNotFoundErrors::test_service_ids_not_found
+FAILED tests/unit/test_booking_transaction.py::TestValidationFailures::test_category_consistency_validation_failure
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[  ]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[confirmar reserva]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[dal\xe9]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[luego]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[mas o menos]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[no]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[nop]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[ok pero cambia la hora]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[quiz\xe1s]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[s\xed quiero pero ma\xf1ana]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_negative[tal vez]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[  dale  ]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[  s\xed  ]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[acepto]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[claro]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[confirmo]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[correcto]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[dale]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[Dale]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[de acuerdo]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[exacto]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[hecho]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[listo]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[ok]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[OK]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[perfecto]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[si]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[SI]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[s\xed]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[va]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[vale]
+FAILED tests/unit/test_booking_ux_helpers.py::test_is_affirmative_positive[venga]
+FAILED tests/unit/test_business_hours_validator.py::TestGetBusinessHoursForDay::test_saturday_hours
+FAILED tests/unit/test_business_hours_validator.py::TestGetBusinessHoursForDay::test_tuesday_hours
+FAILED tests/unit/test_business_hours_validator.py::TestGetBusinessHoursForDay::test_wednesday_hours
+FAILED tests/unit/test_business_hours_validator.py::TestGetNextOpenDate::test_from_monday_finds_tuesday
+FAILED tests/unit/test_business_hours_validator.py::TestGetNextOpenDate::test_from_saturday_returns_saturday
+FAILED tests/unit/test_business_hours_validator.py::TestGetNextOpenDate::test_from_sunday_finds_tuesday
+FAILED tests/unit/test_business_hours_validator.py::TestGetNextOpenDate::test_from_tuesday_returns_tuesday
+FAILED tests/unit/test_business_hours_validator.py::TestIsDateClosed::test_saturday_date_is_open
+FAILED tests/unit/test_business_hours_validator.py::TestIsDateClosed::test_tuesday_date_is_open
+FAILED tests/unit/test_business_hours_validator.py::TestIsDayClosed::test_friday_is_open
+FAILED tests/unit/test_business_hours_validator.py::TestIsDayClosed::test_saturday_is_open
+FAILED tests/unit/test_business_hours_validator.py::TestIsDayClosed::test_thursday_is_open
+FAILED tests/unit/test_business_hours_validator.py::TestIsDayClosed::test_tuesday_is_open
+FAILED tests/unit/test_business_hours_validator.py::TestIsDayClosed::test_wednesday_is_open
+FAILED tests/unit/test_business_hours_validator.py::TestValidateSlotOnOpenDay::test_saturday_slot_is_valid
+FAILED tests/unit/test_business_hours_validator.py::TestValidateSlotOnOpenDay::test_tuesday_slot_is_valid
+FAILED tests/unit/test_confirmation_service.py::TestDeclineAppointmentFlow::test_decline_updates_status_to_cancelled
+FAILED tests/unit/test_confirmation_service.py::TestGetCustomerByPhone::test_customer_found
+FAILED tests/unit/test_confirmation_service.py::TestIsEmphaticDecline::test_non_emphatic_simple_decline
+FAILED tests/unit/test_conversation_state.py::TestReplaceBookingContext::test_replace_booking_context_empty_update_keeps_current
+FAILED tests/unit/test_date_parser.py::TestFormatDateSpanish::test_format_date_spanish_full
+FAILED tests/unit/test_date_parser.py::TestTimezoneHandling::test_custom_timezone
+FAILED tests/unit/test_fallback_chain.py::TestGetLlmClient::test_max_retries_set_to_zero
+FAILED tests/unit/test_fallback_chain.py::TestGetLlmClient::test_returns_chat_openai_instance
+FAILED tests/unit/test_fallback_chain.py::TestGetLlmClient::test_uses_openrouter_api_key_from_settings
+FAILED tests/unit/test_fallback_chain.py::TestGetLlmClient::test_uses_openrouter_base_url
+FAILED tests/unit/test_fallback_chain.py::TestGetLlmClient::test_uses_provider_model
+FAILED tests/unit/test_fallback_chain.py::TestPackageLevelImports::test_fallback_chain_importable_from_package
+FAILED tests/unit/test_fallback_chain.py::TestPackageLevelImports::test_fallback_exhausted_error_importable_from_package
+FAILED tests/unit/test_fallback_chain.py::TestPackageLevelImports::test_provider_config_importable_from_package
+FAILED tests/unit/test_gcal_oauth.py::TestGoogleOAuthServiceGenerateAuthUrl::test_generate_auth_url_accepts_custom_state
+FAILED tests/unit/test_gcal_oauth.py::TestGoogleOAuthServiceGenerateAuthUrl::test_generate_auth_url_returns_url_and_state
+FAILED tests/unit/test_greeting_booking_handoff.py::test_greeting_response_never_contains_customer_name
+FAILED tests/unit/test_greeting_booking_handoff.py::test_greeting_with_book_intent_transitions_to_booking
+FAILED tests/unit/test_greeting_booking_handoff.py::test_new_customer_always_transitions_to_general
+FAILED tests/unit/test_intent_router_no_preference.py::test_no_preference_classification[cualquiera-ambiguous]
+FAILED tests/unit/test_intent_router_no_preference.py::test_no_preference_classification[No soy pedofilo mamon, es para una mujer adulta-None]
+FAILED tests/unit/test_intent_router_no_preference.py::test_no_preference_classification[No tengo preferencia, con cualquiera que tenga lugar-ambiguous]
+FAILED tests/unit/test_intent_router_no_preference.py::test_no_preference_classification[no tengo preferencia de estilista-ambiguous]
+FAILED tests/unit/test_intent_router.py::TestIntentRouterConstants::test_all_intent_types_covered
+FAILED tests/unit/test_intent_router.py::TestIntentRouterConstants::test_non_booking_intents_complete
+FAILED tests/unit/test_intent_router.py::TestIntentRouterConstants::test_non_booking_intents_count
+FAILED tests/unit/test_intent_router.py::TestIntentRouterRouting::test_routes_all_booking_intents_to_booking_handler
+FAILED tests/unit/test_intent_router.py::TestIntentRouterRouting::test_routes_all_non_booking_intents_to_non_booking_handler
+FAILED tests/unit/test_intent_router.py::TestIntentRouterRouting::test_routes_faq_to_non_booking_handler
+FAILED tests/unit/test_intent_router.py::TestIntentRouterRouting::test_routes_greeting_to_non_booking_handler
+FAILED tests/unit/test_intent_router.py::TestIntentRouterRouting::test_routes_select_service_to_booking_handler
+FAILED tests/unit/test_intent_router.py::TestIntentRouterRouting::test_routes_start_booking_to_booking_handler
+FAILED tests/unit/test_intent_router.py::TestIntentRouterRouting::test_routing_preserves_intent_entities
+FAILED tests/unit/test_intent_router.py::TestIntentRouterRouting::test_routing_with_fsm_context
+FAILED tests/unit/test_intent_router_retry.py::TestRetryInValidIntents::test_valid_intents_count
+FAILED tests/unit/test_loader_assembly.py::test_build_layered_messages_returns_tuple_with_index
+FAILED tests/unit/test_loader_assembly.py::test_dynamic_context_is_last_system_message
+FAILED tests/unit/test_loader_assembly.py::test_dynamic_context_override_replaces_build_step_context
+FAILED tests/unit/test_loader_assembly.py::test_message_order_shared_mode_dynamic_history
+FAILED tests/unit/test_loader_memory.py::test_memory_context_notes_included
+FAILED tests/unit/test_loader_memory.py::test_memory_context_services_multiple
+FAILED tests/unit/test_loader_memory.py::test_memory_context_services_single
+FAILED tests/unit/test_loader_memory.py::test_memory_context_stylist_above_threshold
+FAILED tests/unit/test_message_windowing.py::test_add_11_messages_exactly_10_retained
+FAILED tests/unit/test_message_windowing.py::test_fifo_ordering_alternating_roles
+FAILED tests/unit/test_message_windowing.py::test_max_messages_exactly_10
+FAILED tests/unit/test_message_windowing.py::test_state_immutability
+FAILED tests/unit/test_message_windowing.py::test_updated_at_field_set
+FAILED tests/unit/test_notifications_admin.py::TestNotificationCategories::test_all_notification_types_have_category
+FAILED tests/unit/test_notifications_admin.py::TestNotificationModel::test_notification_starred_defaults
+FAILED tests/unit/test_overlap_detection.py::TestCheckOverlapsEndpoint::test_check_overlaps_invalid_stylist
+FAILED tests/unit/test_overlap_detection.py::TestCheckOverlapsEndpoint::test_check_overlaps_with_conflicts
+FAILED tests/unit/test_overlap_detection.py::TestCreateAppointmentEndpoint::test_create_appointment_customer_not_found
+FAILED tests/unit/test_overlap_detection.py::TestCreateAppointmentEndpoint::test_create_appointment_inactive_stylist
+FAILED tests/unit/test_overlap_detection.py::TestCreateAppointmentEndpoint::test_create_appointment_no_overlap
+FAILED tests/unit/test_overlap_detection.py::TestCreateAppointmentEndpoint::test_create_appointment_with_overlap_allowed
+FAILED tests/unit/test_overlap_detection.py::TestCreateAppointmentEndpoint::test_create_appointment_with_overlap_rejected
+FAILED tests/unit/test_prompt_files.py::TestClosedWorldGrounding::test_rule_13_present_in_critical_rules
+FAILED tests/unit/test_prompt_injection_defense.py::TestPromptRulesIntegrity::test_total_rule_count_is_18
+FAILED tests/unit/test_prompt_injection.py::test_load_stylist_context_alphabetically_sorted
+FAILED tests/unit/test_prompt_injection.py::test_load_stylist_context_categorizes_correctly
+FAILED tests/unit/test_prompt_injection.py::test_load_stylist_context_counts_correctly
+FAILED tests/unit/test_prompt_injection.py::test_load_stylist_context_includes_database_stylists
+FAILED tests/unit/test_prompt_injection.py::test_load_stylist_context_returns_formatted_markdown
+FAILED tests/unit/test_prompt_loader.py::TestLoadMarkdown::test_load_markdown_different_files
+FAILED tests/unit/test_prompt_loader.py::TestPromptCacheHitMiss::test_cached_prompt_avoids_reloading_markdown
+FAILED tests/unit/test_prompt_loading.py::TestPromptLoading::test_file_not_found_returns_fallback
+FAILED tests/unit/test_prompt_loading.py::TestPromptLoading::test_io_error_returns_fallback
+FAILED tests/unit/test_prompt_loading.py::TestPromptLoading::test_prompt_contains_business_context
+FAILED tests/unit/test_prompt_loading.py::TestPromptLoading::test_prompt_file_exists
+FAILED tests/unit/test_prompt_loading.py::TestPromptLoading::test_prompt_too_short_returns_fallback
+FAILED tests/unit/test_qa_adaptive_driver.py::test_classifier_confirmation_intent
+FAILED tests/unit/test_qa_adaptive_driver.py::test_classifier_service_selection_intent
+FAILED tests/unit/test_qa_adaptive_driver.py::test_classifier_slot_intent
+FAILED tests/unit/test_qa_adaptive_driver.py::test_extract_case_insensitive
+FAILED tests/unit/test_qa_adaptive_driver.py::test_extract_cualquiera_fallback
+FAILED tests/unit/test_qa_adaptive_driver.py::test_extract_empty_when_no_options
+FAILED tests/unit/test_qa_adaptive_driver.py::test_extract_inline_options_with_o_separator
+FAILED tests/unit/test_qa_adaptive_driver.py::test_option_extraction_inline_and_cualquiera
+FAILED tests/unit/test_qa_adaptive_driver.py::test_reply_generator_handles_confirmation_with_templates
+FAILED tests/unit/test_qa_adaptive_driver.py::test_reply_generator_max_200_chars
+FAILED tests/unit/test_qa_adaptive_driver.py::test_resolve_flow_context_exposes_adaptive_and_legacy_structures
+FAILED tests/unit/test_qa_adaptive_driver.py::test_tracker_stops_on_max_turns
+FAILED tests/unit/test_qa_redis_harness.py::test_cleanup_only_deletes_test_phone
+FAILED tests/unit/test_qa_redis_harness.py::test_execute_turn_records_session_evidence
+FAILED tests/unit/test_qa_tool_tracking.py::test_validate_out_of_order
+FAILED tests/unit/test_redis_client.py::TestRedisClient::test_redis_client_configured_with_pool
+FAILED tests/unit/test_router_intent_gate.py::test_router_unknown_customer_booking_intent_routes_to_greeting
+FAILED tests/unit/test_router_node.py::TestFirstTurnRouterExamples::test_first_turn_quiero_agendar_routes_to_greeting
+FAILED tests/unit/test_router_node.py::TestFirstTurnRouterExamples::test_first_turn_quiero_reservar_routes_to_greeting
+FAILED tests/unit/test_router_node.py::TestRouterNodeRules::test_rule4a_first_interaction_booking_routes_to_greeting
+FAILED tests/unit/test_router_node.py::TestScopeRealignmentRouterRules::test_router_unknown_customer_book_intent_routes_to_greeting_first
+FAILED tests/unit/test_state_reset.py::test_verify_appointment_returns_none_when_customer_missing
+FAILED tests/unit/test_state_reset.py::test_verify_appointment_returns_normalized_row
+FAILED tests/unit/test_stylist_context.py::test_stylist_context_caching
+FAILED tests/unit/test_stylist_context.py::test_stylist_context_contains_full_uuids
+FAILED tests/unit/test_stylist_context.py::test_stylist_context_format
+FAILED tests/unit/test_token_tracking_hook.py::test_track_extracts_usage_metadata
+FAILED tests/unit/test_token_tracking_hook.py::test_track_fallback_response_metadata
+FAILED tests/unit/test_transaction_validators.py::TestLoggingBehavior::test_category_mismatch_logs_warning
+FAILED tests/unit/test_transaction_validators.py::TestValidateCategoryConsistency::test_all_estetica_services_valid
+FAILED tests/unit/test_transaction_validators.py::TestValidateCategoryConsistency::test_mixed_categories_invalid
+FAILED tests/unit/test_transaction_validators.py::TestValidateCategoryConsistency::test_multiple_services_same_category_valid
+FAILED tests/unit/test_transaction_validators.py::TestValidateCategoryConsistency::test_single_service_is_valid
+FAILED tests/unit/test_transaction_validators.py::TestValidateSlotAvailability::test_multiple_conflicts_returns_first
+FAILED tests/unit/test_transaction_validators.py::TestValidateSlotAvailability::test_slot_unavailable_when_conflict_exists
