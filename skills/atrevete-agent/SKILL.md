@@ -597,7 +597,7 @@ class IntentResult:
 ### Classification flow
 
 1. **Keyword fast-path**: Check message against `KEYWORD_MAP` (10 intents). Threshold: `0.80`. If hit → return immediately, skip LLM.
-2. **LLM fallback**: Send message + current_mode to GPT-4.1-mini for classification. Returns structured JSON.
+2. **LLM fallback**: Send message + current_mode to GPT-5.4-mini for classification. Returns structured JSON.
 3. **Bare-digit shortcut**: If `booking_step == "slot_selection"` and message is a bare digit → classify as `"confirm"` without LLM.
 
 ---
@@ -735,7 +735,7 @@ def test_no_user_message_reads_in_modes():
 from shared.config import get_settings
 
 settings = get_settings()
-settings.LLM_MODEL                # "openai/gpt-4.1-mini"
+settings.LLM_MODEL                # "openai/gpt-5.4-mini"
 settings.OPENROUTER_API_KEY       # OpenRouter API key
 settings.USE_OPTIMIZED_PROMPTS    # True (layered prompt system)
 settings.RESILIENCE_ENABLED       # True

@@ -142,7 +142,7 @@ mypy .
 | **Database** | `DATABASE_URL`, `POSTGRES_*` |
 | **Redis** | `REDIS_URL` |
 | **Chatwoot** | `CHATWOOT_API_URL/TOKEN/ACCOUNT_ID/INBOX_ID/WEBHOOK_TOKEN` |
-| **LLM** | `OPENROUTER_API_KEY`, `LLM_MODEL` (default: `openai/gpt-4.1-mini`) |
+| **LLM** | `OPENROUTER_API_KEY`, `LLM_MODEL` (default: `openai/gpt-5.4-mini`) |
 | **Resilience** | `RESILIENCE_ENABLED`, `LLM_FALLBACK_MODEL`, `LLM_EMERGENCY_MODEL` |
 | **Google Calendar** | `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_CALENDAR_IDS` |
 

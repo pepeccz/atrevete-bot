@@ -266,7 +266,7 @@ class ConversationState(TypedDict, total=False):
     granular prompt loading. All fields are optional (total=False) to allow
     partial state updates.
 
-    Core Principle: GPT-4.1-mini + tools handle all logic. State stores:
+    Core Principle: GPT-5.4-mini + tools handle all logic. State stores:
     - Conversation history (messages)
     - Booking progress flags (for granular prompt loading)
     - Metadata for checkpointing

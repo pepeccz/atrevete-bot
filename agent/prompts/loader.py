@@ -194,20 +194,85 @@ async def load_mode_overlay(
 # ============================================================================
 
 
-def _build_customer_memory_context(memories: dict[str, Any]) -> str:
+def _genericize_service_name(
+    service_name: str,
+    all_service_names: list[str] | None,
+) -> str:
+    """Return a generic display name if the service has ambiguous siblings.
+
+    Checks if other services share the same base name. Uses the first word
+    as the base, but if the service name has a distinguishing second word
+    (e.g., "Corte de Flequillo" vs "Corte Señora"), checks whether the
+    two-word prefix is shared by others before genericizing.
+
+    This prevents the LLM from seeing the exact variant and assuming it
+    without asking the user.
+    """
+    if not all_service_names or not service_name:
+        return service_name
+
+    parts = service_name.split()
+    first_word = parts[0].lower()
+
+    # Find all services sharing the same first word (excluding self)
+    same_first = [
+        n for n in all_service_names
+        if n.split()[0].lower() == first_word and n != service_name
+    ]
+    if not same_first:
+        return service_name  # Unique first word — no ambiguity
+
+    # Check if THIS service's full name is distinguishable via a unique
+    # multi-word prefix. E.g., "Corte de Flequillo" — "Corte de" only appears
+    # in this one service, so it's not ambiguous even though "Corte" is shared.
+    if len(parts) >= 3:
+        # Three-word services with a preposition (e.g., "Corte de Flequillo")
+        # are usually unique sub-categories, not audience variants.
+        prefix_2 = f"{parts[0]} {parts[1]}".lower()
+        same_prefix_2 = [
+            n for n in same_first
+            if len(n.split()) >= 2 and f"{n.split()[0]} {n.split()[1]}".lower() == prefix_2
+        ]
+        if not same_prefix_2:
+            return service_name
+
+    # For multi-word family names (e.g., "Cultura de Color"), genericize
+    # using the full base (without the differentiator like "Extra")
+    if len(parts) >= 2:
+        # Find the shortest common prefix shared by all siblings + self
+        all_family = [service_name] + same_first
+        common_words = parts[:]
+        for sibling in all_family:
+            sib_parts = sibling.split()
+            new_common = []
+            for i, w in enumerate(common_words):
+                if i < len(sib_parts) and sib_parts[i].lower() == w.lower():
+                    new_common.append(w)
+                else:
+                    break
+            common_words = new_common
+        if len(common_words) >= 2:
+            return " ".join(common_words)
+
+    return f"un {first_word}"
+
+
+def _build_customer_memory_context(
+    memories: dict[str, Any],
+    all_service_names: list[str] | None = None,
+) -> str:
     """Format customer memories as a Spanish-language section for prompt injection.
 
     Pure sync function — no I/O. Only called when memories is a non-empty dict.
-    Per spec AC-8.6:
-    - Always: visit_count
-    - Stylist line: shown only when visit_count >= 2 AND preferred_stylist_name set
-      (replaced by "Sin preferencia" when no_preference_stylist=True)
-    - Services: last service (with date), frecuentes if > 1
-    - Day/time: only when typical_day_of_week present
-    - Notes: only when non-empty
+
+    When all_service_names is provided, services with ambiguous family names
+    (e.g., "Corte Señora" when "Corte Caballero" also exists) are shown
+    generically (e.g., "un corte de pelo") to prevent the LLM from assuming
+    the specific variant without asking the user.
 
     Args:
         memories: Customer preferences dict from Store/PG.
+        all_service_names: Active service names from catalog (for ambiguity check).
 
     Returns:
         Formatted markdown section string.
@@ -232,13 +297,14 @@ def _build_customer_memory_context(memories: dict[str, Any]) -> str:
 
     if typical_services:
         date_suffix = f" ({last_visit_date})" if last_visit_date else ""
-        lines.append(
-            f"- Servicio en visita anterior: {typical_services[0]}{date_suffix} "
-            "— NO asumas que quiere lo mismo. Pregunta qué servicio quiere y "
-            "desambigua normalmente según el catálogo."
-        )
+        display_name = _genericize_service_name(typical_services[0], all_service_names)
+        lines.append(f"- Servicio en visita anterior: {display_name}{date_suffix}")
         if len(typical_services) > 1:
-            lines.append(f"- Otros servicios que ha pedido: {', '.join(typical_services[1:])}")
+            other_names = [
+                _genericize_service_name(s, all_service_names)
+                for s in typical_services[1:]
+            ]
+            lines.append(f"- Otros servicios que ha pedido: {', '.join(other_names)}")
 
     day = memories.get("typical_day_of_week")
     time_of_day = memories.get("typical_time_of_day")

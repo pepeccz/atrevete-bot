@@ -50,7 +50,7 @@ api_url = settings.CHATWOOT_API_URL
 api_token = settings.CHATWOOT_API_TOKEN
 
 # LLM
-llm_model = settings.LLM_MODEL  # openai/gpt-4o-mini
+llm_model = settings.LLM_MODEL  # openai/gpt-5.4-mini
 openrouter_key = settings.OPENROUTER_API_KEY
 
 # Resilience
@@ -238,7 +238,7 @@ class CustomerCreate(BaseModel):
 DATABASE_URL=postgresql+asyncpg://atrevete:changeme@localhost:5432/atrevete_db
 REDIS_URL=redis://localhost:6379/0
 CHATWOOT_API_URL=https://app.chatwoot.com
-LLM_MODEL=openai/gpt-4o-mini
+LLM_MODEL=openai/gpt-5.4-mini
 RESILIENCE_ENABLED=true
 ```
 

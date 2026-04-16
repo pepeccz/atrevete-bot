@@ -282,9 +282,9 @@ SYSTEM_SETTINGS = [
     {
         "category": SettingCategory.LLM.value,
         "key": "llm_model",
-        "value": "openai/gpt-4.1-mini",
+        "value": "openai/gpt-5.4-mini",
         "value_type": SettingValueType.STRING.value,
-        "default_value": "openai/gpt-4.1-mini",
+        "default_value": "openai/gpt-5.4-mini",
         "min_value": None,
         "max_value": None,
         "allowed_values": None,

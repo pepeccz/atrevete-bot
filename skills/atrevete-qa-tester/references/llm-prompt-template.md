@@ -4,7 +4,7 @@
 
 This is the prompt template that the orchestrator fills with persona-specific data and passes to the Claude Code tester sub-agent. The sub-agent simulates a WhatsApp customer interacting with the Atrevete Bot via the `qa_turn_helper.py` CLI, tracks milestones and bugs, and produces a complete trace report at the end.
 
-This replaces the previous gpt-4.1-mini per-turn JSON approach. The sub-agent now handles the full conversation loop autonomously.
+This replaces the previous gpt-5.4-mini per-turn JSON approach. The sub-agent now handles the full conversation loop autonomously.
 
 ## Prompt Template
 

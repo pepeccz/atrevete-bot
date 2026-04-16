@@ -9,7 +9,7 @@
 | Component | Technology |
 |-----------|------------|
 | **Agent** | Python 3.11+, LangGraph 0.6.7+, LangChain 0.3.0+ |
-| **LLM** | GPT-4.1-mini via OpenRouter (openai/gpt-4.1-mini) |
+| **LLM** | GPT-5.4-mini via OpenRouter (openai/gpt-5.4-mini) |
 | **API** | FastAPI 0.116.1, Pydantic 2.x, Uvicorn 0.30.0+ |
 | **Database** | PostgreSQL 15+, SQLAlchemy 2.0+ (asyncpg), Alembic 1.13+ |
 | **Cache** | Redis Stack (RedisSearch, RedisJSON) |

@@ -2,12 +2,12 @@
 Multi-Provider Fallback Chain for LLM API resilience.
 
 This module implements the FallbackChain component that manages a prioritized
-chain of LLM providers. When the primary provider (OpenRouter/GPT-4.1-mini)
+chain of LLM providers. When the primary provider (OpenRouter/GPT-5.4-mini)
 fails with a retryable error, FallbackChain automatically switches to the next
 available provider.
 
 Provider priority order (lower number = higher priority):
-  0. primary   — openai/gpt-4.1-mini (default, cheapest, fastest)
+  0. primary   — openai/gpt-5.4-mini (default, cheapest, fastest)
   1. fallback  — deepseek/deepseek-chat (cheap, capable)
   2. emergency — meta-llama/llama-3.1-8b-instruct (always-on, last resort)
 

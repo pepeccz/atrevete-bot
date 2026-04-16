@@ -219,6 +219,9 @@ class BookingModeNode(BaseModeNode):
         # 1b. Pre-load stylist names by category for dynamic context
         self._cached_stylists_by_category = await self._load_stylists_by_category()
 
+        # 1b2. Pre-load service names for customer memory ambiguity check
+        self._cached_service_names = await self._load_service_names()
+
         # 1c. Resolve service category if services are known but category is not yet cached
         if booking_context.get("last_services") and not booking_context.get("last_service_category"):
             await self._resolve_service_category(booking_context)
@@ -831,7 +834,9 @@ class BookingModeNode(BaseModeNode):
         if customer_memories and isinstance(customer_memories, dict):
             from agent.prompts.loader import _build_customer_memory_context
 
-            parts.append(_build_customer_memory_context(customer_memories))
+            # Pass service names from cached stylists catalog for ambiguity check
+            all_svc_names = getattr(self, "_cached_service_names", None)
+            parts.append(_build_customer_memory_context(customer_memories, all_svc_names))
 
         return "\n".join(parts)
 
@@ -996,6 +1001,24 @@ class BookingModeNode(BaseModeNode):
         except Exception as exc:
             logger.warning("_load_stylists_by_category: failed: %s", exc)
             return {}
+
+    @staticmethod
+    async def _load_service_names() -> list[str]:
+        """Load all active service names for ambiguity checks. Never raises."""
+        try:
+            from sqlalchemy import select as sa_select
+
+            from database.connection import get_async_session
+            from database.models import Service
+
+            async with get_async_session() as session:
+                result = await session.execute(
+                    sa_select(Service.name).where(Service.is_active == True).order_by(Service.name)
+                )
+                return [row[0] for row in result.all()]
+        except Exception as exc:
+            logger.warning("_load_service_names: failed: %s", exc)
+            return []
 
     @staticmethod
     async def _resolve_service_category(booking_context: dict) -> None:
