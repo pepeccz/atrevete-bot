@@ -129,67 +129,6 @@ def test_confirmation_shown_not_set_when_notes_missing():
 
 
 # ──────────────────────────────────────────────────────────────────────
-# T-14a: _pre_tool_call blocks update_booking when _confirmation_shown=True (no change-intent)
-# ──────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_pre_tool_call_blocks_update_booking_after_confirmation(node):
-    """Gate blocks update_booking when _confirmation_shown=True and no change-intent."""
-    node._booking_context["_confirmation_shown"] = True
-    node._current_state = _make_state(user_message="sí")
-    # Simulate the messages list reflects "sí" (affirmative — no change-intent)
-    node._current_state["messages"] = [
-        {"role": "user", "content": "sí", "timestamp": "2026-01-01T10:00:00"}
-    ]
-    node._current_state["user_message"] = "sí"
-
-    from agent.modes.base import ToolCallRejection
-
-    result = await node._pre_tool_call("update_booking", {"notes": "nada"})
-
-    assert isinstance(result, ToolCallRejection), (
-        "update_booking must be rejected when _confirmation_shown=True without change-intent"
-    )
-    assert result.error_code == "CONFIRMATION_ALREADY_SHOWN"
-
-
-# ──────────────────────────────────────────────────────────────────────
-# T-14b: change-intent keyword allows update_booking and resets flag
-# ──────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("user_message", [
-    "quiero cambiar la estilista",
-    "mejor con Pilar",
-    "en realidad prefiero el jueves",
-    "no, otro día",
-    "modificar la fecha",
-    "espera, cambiar servicio",
-])
-async def test_pre_tool_call_allows_update_booking_with_change_intent(user_message, node):
-    """Change-intent keywords allow update_booking and reset _confirmation_shown."""
-    node._booking_context["_confirmation_shown"] = True
-    node._current_state = _make_state(user_message=user_message)
-    node._current_state["messages"] = [
-        {"role": "user", "content": user_message, "timestamp": "2026-01-01T10:00:00"}
-    ]
-    node._current_state["user_message"] = user_message
-
-    from agent.modes.base import ToolCallRejection
-
-    result = await node._pre_tool_call("update_booking", {"stylist_name": "Pilar"})
-
-    assert not isinstance(result, ToolCallRejection), (
-        f"update_booking must be ALLOWED when user says '{user_message}'"
-    )
-    assert node._booking_context.get("_confirmation_shown") is False, (
-        "Change-intent must reset _confirmation_shown to False"
-    )
-
-
-# ──────────────────────────────────────────────────────────────────────
 # T-14c: book() is NEVER blocked regardless of _confirmation_shown
 # ──────────────────────────────────────────────────────────────────────
 

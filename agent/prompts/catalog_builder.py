@@ -83,21 +83,12 @@ async def _build_catalog_from_db() -> str:
     for cat_label, cat_services in categories.items():
         sections.append(f"### {cat_label}\n")
 
-        # Group by audience within category
-        audience_groups: dict[str, list[Service]] = {}
         for svc in cat_services:
-            aud_label = _AUDIENCE_LABELS.get(svc.audience, svc.audience or "General")
-            audience_groups.setdefault(aud_label, []).append(svc)
-
-        for aud_label, aud_services in audience_groups.items():
-            if aud_label != "General":
-                sections.append(f"**{aud_label}:**")
-            for svc in aud_services:
-                line = f"- {svc.name} [INTERNO: {svc.duration_minutes}min]"
-                if svc.description:
-                    line += f" — {svc.description}"
-                sections.append(line)
-            sections.append("")  # blank line between audience groups
+            line = f"- {svc.name} [INTERNO: {svc.duration_minutes}min]"
+            if svc.description:
+                line += f" — {svc.description}"
+            sections.append(line)
+        sections.append("")
 
     # --- Stylists Section ---
     sections.append("## Estilistas\n")

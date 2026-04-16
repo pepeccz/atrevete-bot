@@ -56,15 +56,12 @@ class TestDisambiguationGateRemoved:
         )
         assert not isinstance(result, ToolCallRejection)
 
-    @pytest.mark.asyncio
-    async def test_rejected_without_services(self, booking_node):
-        """check_availability rejected when last_services is empty and no service context."""
+    def test_check_availability_not_in_tools_without_services(self, booking_node):
+        """check_availability not included in get_tools() when services are empty (tool filtering)."""
         booking_node._mode_context = {}
-        result = await booking_node._pre_tool_call(
-            "check_availability", {}
-        )
-        assert isinstance(result, ToolCallRejection)
-        assert result.error_code == "SERVICES_NOT_RESOLVED"
+        tools = booking_node.get_tools(booking_node._mode_context)
+        tool_names = [t.name if hasattr(t, "name") else t.__name__ for t in tools]
+        assert "check_availability" not in tool_names
 
     @pytest.mark.asyncio
     async def test_allowed_with_service_names_in_args(self, booking_node):
@@ -278,9 +275,9 @@ class TestChangeCCatalog:
 
 
 class TestChangeCUiConstraint:
-    """_build_dynamic_context includes <ui_constraint> element."""
+    """<ui_constraint> was moved to booking.md — no longer injected in dynamic context."""
 
-    def test_ui_constraint_in_dynamic_context(self, booking_node):
+    def test_ui_constraint_not_in_dynamic_context(self, booking_node):
         state = {
             "messages": [],
             "customer_phone": "+34612345678",
@@ -288,8 +285,7 @@ class TestChangeCUiConstraint:
         }
         mode_context = {}
         result = booking_node._build_dynamic_context(mode_context, state)
-        assert "<ui_constraint>" in result
-        assert "duraciones" in result.lower() or "INTERNO" in result
+        assert "<ui_constraint>" not in result
 
 
 # ===========================================================================
@@ -310,11 +306,14 @@ class TestDynamicContextFactual:
         result = booking_node._build_dynamic_context({}, state)
         assert "<next_action>" not in result
 
-    def test_collected_data_present(self, booking_node):
+    def test_collected_data_in_flow_hint(self, booking_node):
+        """<collected_data> was removed; collected info is now reported via <flow_hint>."""
         state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
         ctx = {"last_services": ["Cortar"]}
         result = booking_node._build_dynamic_context(ctx, state)
-        assert "<collected_data>" in result
+        assert "<collected_data>" not in result
+        assert "<flow_hint>" in result
+        assert "Cortar" in result
 
     def test_flow_hint_present(self, booking_node):
         state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
@@ -428,63 +427,14 @@ class TestBuildFlowHint:
 
 
 # ===========================================================================
-# Change F — Smart gate recovery (prescriptive messages + recovery responses)
+# Change F — ToolCallRejection data class (gate recovery tests removed;
+#             gates that existed for services/stylist/date were removed and
+#             replaced by tool filtering in get_tools())
 # ===========================================================================
 
 
-class TestGateRecoveryResponses:
-    """Gate rejections provide prescriptive messages and recovery responses."""
-
-    @pytest.mark.asyncio
-    async def test_services_gate_has_prescriptive_message(self, booking_node):
-        """SERVICES_NOT_RESOLVED message contains RECHAZADO + SIGUIENTE ACCIÓN."""
-        booking_node._mode_context = {}
-        result = await booking_node._pre_tool_call("check_availability", {})
-        assert isinstance(result, ToolCallRejection)
-        assert "RECHAZADO" in result.error_message
-        assert "SIGUIENTE ACCIÓN" in result.error_message
-
-    @pytest.mark.asyncio
-    async def test_services_gate_has_recovery_response(self, booking_node):
-        """SERVICES_NOT_RESOLVED provides a warm recovery_response."""
-        booking_node._mode_context = {}
-        result = await booking_node._pre_tool_call("check_availability", {})
-        assert isinstance(result, ToolCallRejection)
-        assert result.recovery_response is not None
-        assert "servicio" in result.recovery_response.lower()
-
-    @pytest.mark.asyncio
-    async def test_stylist_gate_has_prescriptive_message(self, booking_node):
-        """STYLIST_NOT_RESOLVED message contains RECHAZADO + SIGUIENTE ACCIÓN."""
-        booking_node._mode_context = {"last_services": ["Cortar"]}
-        result = await booking_node._pre_tool_call("check_availability", {})
-        assert isinstance(result, ToolCallRejection)
-        assert result.error_code == "STYLIST_NOT_RESOLVED"
-        assert "RECHAZADO" in result.error_message
-
-    @pytest.mark.asyncio
-    async def test_stylist_gate_has_dynamic_recovery_with_list(self, booking_node):
-        """STYLIST_NOT_RESOLVED builds numbered recovery from _offered_stylists."""
-        booking_node._mode_context = {
-            "last_services": ["Cortar"],
-            "_offered_stylists": ["Pilar", "Marta", "Sin preferencia"],
-        }
-        result = await booking_node._pre_tool_call("check_availability", {})
-        assert isinstance(result, ToolCallRejection)
-        assert result.recovery_response is not None
-        assert "1. Pilar" in result.recovery_response
-        assert "2. Marta" in result.recovery_response
-        assert "disponibilidad" in result.recovery_response
-
-    @pytest.mark.asyncio
-    async def test_confirmation_gate_has_no_recovery(self, booking_node):
-        """CONFIRMATION_REQUIRED has recovery_response=None (progressive)."""
-        booking_node._mode_context = {"last_services": ["Cortar"]}
-        booking_node._booking_context = booking_node._mode_context
-        result = await booking_node._pre_tool_call("book", {"services": ["Cortar"]})
-        assert isinstance(result, ToolCallRejection)
-        assert result.error_code == "CONFIRMATION_REQUIRED"
-        assert result.recovery_response is None
+class TestToolCallRejectionDataClass:
+    """ToolCallRejection data class behaves correctly."""
 
     def test_tool_call_rejection_default_recovery_is_none(self):
         """ToolCallRejection without recovery_response defaults to None."""

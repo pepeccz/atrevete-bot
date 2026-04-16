@@ -99,6 +99,10 @@ class UpdateBookingSchema(BaseModel):
             "ANTES de llamar a book(). Ej: si el cliente dice '2', pasa slot_index=2."
         ),
     )
+    clear_slot: bool | None = Field(
+        default=None,
+        description="Pon true para limpiar el horario seleccionado y buscar otro día/hora.",
+    )
 
 
 # ============================================================================
@@ -122,32 +126,7 @@ async def _find_similar_services(name: str) -> list[str]:
 
     return [
         n for n in all_names if normalized in normalize_spanish(n)
-    ]
-
-
-async def _find_audience_siblings(service) -> list[str]:
-    """Find other active services sharing the same base name but different audience.
-
-    E.g., "Corte Señora" → ["Corte Caballero", "Corte Niño", "Corte Niña", "Corte Bebé"]
-    Returns empty list if no siblings (service is unique for its type).
-    """
-    from database.connection import get_async_session
-    from database.models import Service
-    from sqlalchemy import select
-
-    base_word = service.name.split()[0].lower()
-    async with get_async_session() as session:
-        result = await session.execute(
-            select(Service.name).where(
-                Service.is_active == True,
-                Service.audience.is_not(None),
-                Service.id != service.id,
-            )
-        )
-        return [
-            row[0] for row in result.all()
-            if row[0].split()[0].lower() == base_word
-        ]
+    ][:5]
 
 
 def _build_response(
@@ -227,6 +206,7 @@ async def update_booking(
     customer_last_name: str | None = None,
     notes: str | None = None,
     slot_index: int | None = None,
+    clear_slot: bool | None = None,
     _current_context: dict | None = None,
 ) -> dict[str, Any]:
     """Persist booking data collected from the conversation.
@@ -266,27 +246,14 @@ async def update_booking(
                 # Find similar names to guide the LLM
                 candidates = await _find_similar_services(svc_name)
                 if candidates:
-                    names = ", ".join(candidates[:6])
+                    names = ", ".join(candidates)
                     errors.append(
-                        f"Servicio '{svc_name}' es ambiguo o no encontrado. "
-                        f"Pregunta al cliente cuál quiere: {names}"
+                        f"Servicio '{svc_name}' no encontrado. "
+                        f"Variantes similares en el catálogo: {names}"
                     )
                 else:
                     errors.append(f"Servicio '{svc_name}' no encontrado en el catálogo.")
                 continue
-
-            # Gate: if service has audience variants, the client must have
-            # confirmed the specific variant. Reject if siblings exist.
-            if svc.audience:
-                siblings = await _find_audience_siblings(svc)
-                if siblings:
-                    sibling_names = ", ".join(siblings)
-                    errors.append(
-                        f"'{svc.name}' es una variante por audiencia. "
-                        f"También existen: {sibling_names}. "
-                        f"Pregunta al cliente cuál quiere antes de asumir."
-                    )
-                    continue
 
             resolved_services.append(svc)
             resolved_names.append(svc.name)
@@ -446,6 +413,13 @@ async def update_booking(
                     )
             except (ValueError, TypeError):
                 errors.append("slot_index debe ser un número entero válido.")
+
+    # ── Clear slot branch ────────────────────────────────────────────────
+    if clear_slot:
+        patch["selected_slot"] = None
+        patch["offered_slots"] = None
+        ctx.pop("selected_slot", None)
+        ctx.pop("offered_slots", None)
 
     # ── Build response ───────────────────────────────────────────────────
     success = len(errors) == 0

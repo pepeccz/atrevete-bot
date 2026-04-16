@@ -59,13 +59,34 @@ class BookingModeNode(BaseModeNode):
     def mode_name(self) -> str:
         return "BOOKING"
 
-    def get_tools(self) -> list:
-        """Return the 3 booking tools for the agentic loop."""
+    def get_tools(self, booking_context: dict | None = None) -> list:
+        """Return tools filtered by booking state (msi-a pattern).
+
+        Instead of offering all tools and rejecting calls via gates,
+        only offer tools that are relevant to the current state.
+        The LLM naturally follows the flow when it only sees applicable tools.
+        """
         from agent.tools.booking_data_tools import update_booking
         from agent.tools.availability_tools import check_availability
         from agent.tools.booking_tools import book
 
-        return [update_booking, check_availability, book]
+        ctx = booking_context or {}
+        tools = [update_booking]  # always available
+
+        has_services = bool(ctx.get("last_services"))
+        has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
+        has_slot = bool(ctx.get("selected_slot"))
+
+        # check_availability: only when services + stylist are set, no slot yet
+        if has_services and has_stylist and not has_slot:
+            tools.append(check_availability)
+
+        # book: only when all required data is collected
+        is_complete, _ = self._booking_complete(ctx)
+        if is_complete:
+            tools.append(book)
+
+        return tools
 
     # ──────────────────────────────────────────────────────────────────────
     # Booking completeness check — GATE for book(), not a flow sequencer
@@ -253,23 +274,8 @@ class BookingModeNode(BaseModeNode):
 
         # 5. Run agentic loop — LLM calls tools freely
         result = await self._run_agentic_loop(
-            messages, tools=self.get_tools(), tool_choice=tool_choice
+            messages, tools=self.get_tools(booking_context), tool_choice=tool_choice
         )
-
-        # 5b. Detect text-only turn after services are set → set _date_question_asked.
-        # The LLM handles Paso 2 (stylist) and Paso 3 (date) conversationally
-        # without necessarily calling tools. If it produced text without calling
-        # check_availability while services are resolved, it's guiding the client
-        # through steps 2-3. The flag allows the next check_availability call
-        # to pass the date gate (Path 3).
-        # Note: don't require has_stylist — the LLM may accept the stylist
-        # conversationally (text only) without calling a tool to persist it.
-        _has_svc = bool(booking_context.get("last_services"))
-        _has_slots = bool(booking_context.get("offered_slots"))
-        _no_avail = "check_availability" not in (result.tool_results or {})
-        if _has_svc and not _has_slots and _no_avail:
-            booking_context["_date_question_asked"] = True
-            logger.info("handle: set _date_question_asked=True (text-only turn, services resolved)")
 
         # 6. Build response (LLM-generated text via _sanitize_response)
         response_text = self._build_response(result, booking_context)
@@ -319,124 +325,39 @@ class BookingModeNode(BaseModeNode):
     ) -> dict[str, Any] | ToolCallRejection:
         """Intercept tool calls before execution.
 
-        4 gates:
-        (a) check_availability: services guard
-        (b) check_availability: stylist guard
-        (c) check_availability: date guard — client must say a day before calling
-        (d) book(): slot_index→UUID injection + confirmation gate + services injection
-        Everything else: pass through unchanged.
+        Tool filtering by state (get_tools) handles WHICH tools the LLM sees.
+        _pre_tool_call only handles:
+        - update_booking: inject _current_context
+        - check_availability: inject service/stylist from context
+        - book(): slot_index→UUID injection + completeness gate + services injection
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
-        # ── update_booking: confirmation gate + context injection ────────
+        # ── update_booking: context injection only ──────────────────────
         if tool_name == "update_booking":
-            # Gate: if confirmation already shown, only allow update_booking when
-            # the user explicitly wants to change something (change-intent keywords).
-            if mode_context.get("_confirmation_shown"):
-                user_msg = ""
-                if hasattr(self, "_current_state"):
-                    user_msg = get_last_user_message(self._current_state).lower()
-                _CHANGE_INTENT_KEYWORDS = (
-                    "cambiar", "modificar", "no,", "otro", "otra", "diferente",
-                    "en realidad", "mejor", "quiero cambiar", "quiero modificar",
-                    "espera", "momento", "no quiero", "equivocado",
-                )
-                has_change_intent = any(kw in user_msg for kw in _CHANGE_INTENT_KEYWORDS)
-                if not has_change_intent:
-                    return ToolCallRejection(
-                        name="update_booking",
-                        error_code="CONFIRMATION_ALREADY_SHOWN",
-                        error_message=(
-                            "RECHAZADO. El cliente ya vio el resumen. "
-                            "Usá book() para completar la reserva. "
-                            "Solo llamés update_booking si el cliente quiere modificar algo."
-                        ),
-                    )
-                # User wants to change something — reset confirmation flag so a new
-                # summary is shown after the modification
-                mode_context["_confirmation_shown"] = False
-                logger.info(
-                    "_pre_tool_call[update_booking]: change-intent detected, "
-                    "reset _confirmation_shown=False"
-                )
-
             tool_args["_current_context"] = dict(mode_context)
             return tool_args
 
-        # ── check_availability: service + stylist guards ─────────────────
+        # ── check_availability: inject from context ─────────────────────
         if tool_name == "check_availability":
-            # Gate 1: reject if services not yet identified
-            if not mode_context.get("last_services"):
-                if not tool_args.get("service_names"):
-                    return ToolCallRejection(
-                        name="check_availability",
-                        error_code="SERVICES_NOT_RESOLVED",
-                        error_message=(
-                            "RECHAZADO. SIGUIENTE ACCIÓN: pregunta al cliente qué "
-                            "servicio quiere. Consulta el catálogo para identificar "
-                            "variantes y desambigua si es necesario."
-                        ),
-                        recovery_response="¿Qué servicio te gustaría? 😊",
-                    )
-
-            # Gate 2: reject if stylist not resolved
-            has_stylist = mode_context.get("last_stylist") or mode_context.get("no_preference_stylist")
-            if not has_stylist:
-                # Build dynamic recovery with numbered stylist list
-                offered = mode_context.get("_offered_stylists") or []
-                if offered:
-                    display = [s if s != "Sin preferencia" else "La primera con disponibilidad 👌" for s in offered]
-                    numbered = "\n".join(f"{i + 1}. {name}" for i, name in enumerate(display))
-                    recovery = f"¿Con quién te gustaría la cita? 😊\n{numbered}"
-                else:
-                    recovery = "¿Prefieres alguna estilista en concreto o la primera con disponibilidad? 😊"
-                return ToolCallRejection(
-                    name="check_availability",
-                    error_code="STYLIST_NOT_RESOLVED",
-                    error_message=(
-                        "RECHAZADO. SIGUIENTE ACCIÓN: muestra la lista numerada de "
-                        "<available_stylists> y pregunta '¿Con quién te gustaría la cita?'"
-                    ),
-                    recovery_response=recovery,
-                )
-
-            # Gate 3: date validation — 4 paths (guide, not block)
-            date_from_args = tool_args.get("date")
-
-            # Path 1: No date at all → guide
-            if not date_from_args:
-                return ToolCallRejection(
-                    name="check_availability",
-                    error_code="DATE_NOT_PROVIDED",
-                    error_message=(
-                        "GUÍA: Pregunta al cliente '¿Qué día te viene bien?' "
-                        "y espera su respuesta antes de llamar check_availability."
-                    ),
-                    recovery_response="¿Qué día te viene bien? 😊",
-                )
-
-            # Path 4: Shortcut — client gave service+stylist+date in one message
-            if mode_context.get("preferred_date_hint"):
-                return tool_args
-
-            # Path 2: Date present but LLM hasn't asked the client yet
-            # (likely copied min_valid_date from dynamic context)
-            if not mode_context.get("_date_question_asked"):
-                return ToolCallRejection(
-                    name="check_availability",
-                    error_code="DATE_NOT_FROM_CLIENT",
-                    error_message=(
-                        "GUÍA: Pregunta primero al cliente qué día le viene bien. "
-                        "No uses min_valid_date directamente. "
-                        "SIGUIENTE ACCIÓN: pregunta '¿Qué día te viene bien?'"
-                    ),
-                    recovery_response="¿Qué día te viene bien? 😊",
-                )
-
-            # Path 3: Date present + client was asked → allow
+            if not tool_args.get("service_names") and mode_context.get("last_services"):
+                tool_args["service_names"] = mode_context["last_services"]
+            if not tool_args.get("stylist_name") and mode_context.get("last_stylist"):
+                if mode_context["last_stylist"] != "Sin preferencia":
+                    tool_args["stylist_name"] = mode_context["last_stylist"]
+            if not tool_args.get("total_duration_minutes") and mode_context.get(
+                "last_total_duration_minutes"
+            ):
+                tool_args["total_duration_minutes"] = mode_context[
+                    "last_total_duration_minutes"
+                ]
+            if not tool_args.get("service_category") and mode_context.get(
+                "last_service_category"
+            ):
+                tool_args["service_category"] = mode_context["last_service_category"]
             return tool_args
 
-        # ── book(): slot resolution → confirmation gate → injection ───────────
+        # ── book(): slot resolution → completeness gate → injection ─────
         if tool_name == "book":
             # Step A: slot_index → UUID resolution (runs BEFORE confirmation gate)
             # Persists selected_slot even when later gates reject the call.
@@ -755,7 +676,6 @@ class BookingModeNode(BaseModeNode):
 
         # Booking context XML block
         parts.append("<booking_context>")
-        parts.append("<ui_constraint>Nunca menciones duraciones, tiempos de servicio ni datos marcados como [INTERNO] al cliente. Son datos internos.</ui_constraint>")
         parts.append(
             f"<min_valid_date>{min_date_label}</min_valid_date>\n"
             f"<min_valid_date_iso>{min_date.isoformat()}</min_valid_date_iso>"
@@ -814,9 +734,7 @@ class BookingModeNode(BaseModeNode):
                 f"</suggested_name>"
             )
 
-        collected = self._build_collected_summary(mode_context)
-        if collected:
-            parts.append(f"<collected_data>\n{collected}\n</collected_data>")
+        # <collected_data> removed — <flow_hint> already shows collected/pending state
 
         offered_slots = mode_context.get("offered_slots") or []
         if offered_slots:
@@ -914,6 +832,13 @@ class BookingModeNode(BaseModeNode):
     # ──────────────────────────────────────────────────────────────────────
     # Mid-loop dynamic context refresh
     # ──────────────────────────────────────────────────────────────────────
+
+    def _refresh_tools(self) -> list | None:
+        """Refresh tool list based on updated booking state after each tool round."""
+        ctx = getattr(self, "_booking_context", None)
+        if ctx is not None:
+            return self.get_tools(ctx)
+        return None
 
     def _refresh_dynamic_context(self, working_messages: list) -> None:
         """Rebuild the dynamic context SystemMessage so the LLM sees fresh state.

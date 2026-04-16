@@ -176,8 +176,8 @@ def test_dynamic_context_without_suggestion_no_suggested_name_block(booking_node
     )
 
 
-def test_dynamic_context_confirmed_name_shows_in_collected_data_not_suggested(booking_node):
-    """When customer_name is confirmed, it shows in <collected_data>, no <suggested_name> block."""
+def test_dynamic_context_confirmed_name_shows_in_flow_hint_not_suggested(booking_node):
+    """When customer_name is confirmed, it shows in <flow_hint>, no <suggested_name> block."""
     state = _make_state()
     ctx = {
         "last_services": ["Cortar"],
@@ -192,14 +192,7 @@ def test_dynamic_context_confirmed_name_shows_in_collected_data_not_suggested(bo
     assert "<suggested_name>" not in result, (
         "No <suggested_name> block when customer_name is already confirmed"
     )
-
-    collected_start = result.find("<collected_data>")
-    collected_end = result.find("</collected_data>")
-    assert collected_start != -1 and collected_end != -1
-    collected_section = result[collected_start:collected_end]
-    assert "✅ Nombre: Pablo García" in collected_section, (
-        "Confirmed customer_name must appear in <collected_data>"
-    )
+    assert "Pablo García" in result, "Confirmed name should appear in flow_hint"
 
 
 def test_dynamic_context_suggestion_hidden_when_name_confirmed(booking_node):

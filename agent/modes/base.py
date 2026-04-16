@@ -493,6 +493,15 @@ class BaseModeNode(ABC):
         """
         return result
 
+    def _refresh_tools(self) -> list | None:
+        """Hook called after each tool round to refresh the tool list.
+
+        Subclasses can override to return an updated tool list based on
+        current state (e.g., BookingMode filters tools by booking progress).
+        Return None to keep the current tool list unchanged.
+        """
+        return None
+
     def _refresh_dynamic_context(
         self,
         working_messages: list,
@@ -692,6 +701,17 @@ class BaseModeNode(ABC):
                         "_refresh_dynamic_context failed: %s — continuing with stale context",
                         exc,
                     )
+
+                # Refresh tool list so state-aware filtering takes effect mid-loop
+                # (e.g., after update_booking resolves services+stylist,
+                # check_availability should become available in the same agentic loop).
+                try:
+                    refreshed_tools = self._refresh_tools()
+                    if refreshed_tools is not None:
+                        active_tools = refreshed_tools
+                        tool_map = {t.name: t for t in active_tools}
+                except Exception:
+                    pass  # keep current tools on failure
 
                 iterations += 1
 
