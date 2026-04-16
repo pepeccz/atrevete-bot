@@ -80,10 +80,11 @@ Out of scope:
 - Scope adjustment: kept `BookingModeNode(BaseModeNode)` class surface so the 6 test files (87 passing tests) keep working. Full class cleanup moved to M8 alongside the BaseModeNode deletion.
 - Regression: 173 failed (−3 vs baseline), 1951 passed (+54 total). Zero new regressions.
 
-### M7 — AppointmentManagementMode → create_agent
-- Same pattern as M6
-- Keep `interrupt()` for destructive actions OUT OF SCOPE this refactor — port the existing confirmation-gate keyword matcher as-is
-- Done when: mode tests pass
+### M7 — AppointmentManagementMode → create_agent ⚠️ PARTIAL (deferred)
+- Extracted the M6 booking-specific bridge into a reusable `agent/middleware/node_bridge.py` → `NodeBridgeMiddleware`. `booking_agent.BookingAgentMiddleware` is now a backwards-compatible alias.
+- Attempted full migration of `AppointmentManagementMode`. Five tests broke because `test_appointment_management_mode.py` uses `MagicMock()` for the LLM, which `create_agent` rejects with "Unsupported message type". These tests were in baseline as passing, so rewriting them is required — done alongside M8's full legacy cleanup.
+- Reverted the AppointmentManagementMode `_invoke_create_agent` change. Mode still runs `_run_agentic_loop` until M8.
+- Regression: 173 failed (−3 vs baseline), 1951 passed (+54), zero new regressions.
 
 ### M8 — Delete legacy code
 - Delete `agent/modes/base.py` (the entire BaseModeNode class, `_run_agentic_loop`, `ToolCallRejection`, dedup helpers)

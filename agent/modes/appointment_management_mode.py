@@ -193,7 +193,8 @@ class AppointmentManagementMode(BaseModeNode):
         # 3. Build messages
         messages = await self._build_messages(state, ctx)
 
-        # 4. Run agentic loop
+        # 4. Run agentic loop — ``_run_agentic_loop`` is retained here for
+        # M7; the full create_agent migration for this mode ships in M8.
         result = await self._run_agentic_loop(messages, tools=self.get_tools())
 
         # 5. Extract tool results into ctx
@@ -683,6 +684,7 @@ class AppointmentManagementMode(BaseModeNode):
         parts.append("</instrucciones_situación>")
 
         return "\n".join(parts)
+
 
     # ──────────────────────────────────────────────────────────────────────
     # Response Building
