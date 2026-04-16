@@ -217,16 +217,17 @@ async def update_booking(
                 patch["last_service_category"] = category.value
                 patch["last_total_duration_minutes"] = total_duration
 
-                # Cascade clear: new services → clear slots
-                patch["offered_slots"] = None
-                patch["selected_slot"] = None
+                # Cascade clear ONLY when services actually changed
+                old_services = ctx.get("last_services") or []
+                if set(resolved_names) != set(old_services):
+                    patch["offered_slots"] = None
+                    patch["selected_slot"] = None
 
-                # Category change + existing stylist → check compatibility
-                old_category = ctx.get("last_service_category")
-                if old_category and old_category != category.value and ctx.get("last_stylist"):
-                    # Clear stylist if category changed
-                    patch["last_stylist"] = None
-                    patch["no_preference_stylist"] = None
+                    # Category change + existing stylist → check compatibility
+                    old_category = ctx.get("last_service_category")
+                    if old_category and old_category != category.value and ctx.get("last_stylist"):
+                        patch["last_stylist"] = None
+                        patch["no_preference_stylist"] = None
 
                 # Include available stylists on first service resolution
                 if not ctx.get("_offered_stylists"):
