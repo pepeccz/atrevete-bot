@@ -958,9 +958,9 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
         Compiled StateGraph
     """
     from agent.modes.greeting_mode import build_greeting_node
-    from agent.modes.general_mode import GeneralMode
+    from agent.modes.general_mode import build_general_node
     from agent.modes.booking_mode import BookingMode
-    from agent.modes.escalation_mode import EscalationMode
+    from agent.modes.escalation_mode import build_escalation_node
     from agent.modes.appointment_management_mode import AppointmentManagementMode
     from agent.modes.confirmation_reply_node import confirmation_reply_node
     from agent.routing.intent_router import IntentResult
@@ -968,10 +968,13 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
     def _get_llm():
         return _get_llm_client()
 
-    # M3: GREETING runs as a create_agent + TokenTrackingMiddleware factory.
-    # The factory is instantiated once per graph build; the LLM is resolved
-    # lazily on every invocation so tests can patch ``_get_llm_client``.
+    # M3/M4: GREETING, GENERAL and ESCALATION run as create_agent factories (or
+    # pure FSMs for escalation). Factories are instantiated once per graph
+    # build; the LLM is resolved lazily per turn so tests can patch
+    # ``_get_llm_client``.
     _greeting_node_impl = build_greeting_node(llm_factory=_get_llm)
+    _general_node_impl = build_general_node(llm_factory=_get_llm)
+    _escalation_node_impl = build_escalation_node()
 
     def mode_dispatcher(state: ConversationState) -> str:
         """Conditional edge: current_mode → node name."""
@@ -994,15 +997,8 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
         return {**result, "last_node": "greeting"}
 
     async def general_node_fn(state: ConversationState) -> dict[str, Any]:
-        mode_context = state.get("mode_context") or {}
-        intent = IntentResult(
-            intent=mode_context.get("last_intent", "ask_info"),
-            confidence=mode_context.get("last_intent_confidence", 0.8),
-            raw_input="",
-            mode_hint="GENERAL",
-        )
-        mode = GeneralMode(tools=[], llm_client=_get_llm())
-        result = await mode.handle(state=state, intent=intent)
+        # M4: create_agent + TokenTrackingMiddleware, no tools.
+        result = await _general_node_impl(state)
         result = await _maybe_escalate(result, state)
         return {**result, "last_node": "general"}
 
@@ -1020,15 +1016,8 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
         return {**result, "last_node": "booking"}
 
     async def escalation_node_fn(state: ConversationState) -> dict[str, Any]:
-        mode_context = state.get("mode_context") or {}
-        intent = IntentResult(
-            intent=mode_context.get("last_intent", "escalate"),
-            confidence=mode_context.get("last_intent_confidence", 1.0),
-            raw_input="",
-            mode_hint="ESCALATION",
-        )
-        mode = EscalationMode(tools=[], llm_client=_get_llm())
-        result = await mode.handle(state=state, intent=intent)
+        # M4: pure FSM factory — no LLM, no tools, no middleware.
+        result = await _escalation_node_impl(state)
         return {**result, "last_node": "escalation"}
 
     async def appointment_management_node_fn(state: ConversationState) -> dict[str, Any]:

@@ -1,66 +1,60 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+"""Architecture guards for agent/modes/general_mode.py (M4 create_agent migration)."""
 
-import pytest
+from __future__ import annotations
 
-from agent.modes.base import AgenticLoopResult
-from agent.modes.general_mode import GeneralMode
-from agent.state.schemas import create_initial_state
+import inspect
 
-
-def _make_mock_llm(response_text: str = "Te recomiendo Corte Caballero") -> AsyncMock:
-    mock = AsyncMock()
-    mock_response = MagicMock()
-    mock_response.content = response_text
-    mock_response.tool_calls = []
-    mock.ainvoke = AsyncMock(return_value=mock_response)
-    mock.bind_tools = MagicMock(return_value=mock)
-    return mock
-
-
-# (search_services-based _extract_booking_handoff tests removed — tool was deleted
-# in catalog-in-prompt architecture. See design: AD-3 / Domain E.)
+from agent.modes import general_mode as _gm
 
 
 # =============================================================================
-# T-38: Architecture guard — no search_services or query_info in GeneralMode
+# T-38: GeneralMode must NOT reference search_services or query_info tools.
 # =============================================================================
 
 
 class TestGeneralModeNoDataTools:
-    """T-38: GeneralMode must NOT reference search_services or query_info tools."""
-
     def test_no_search_services_in_general_mode(self):
-        """search_services must not appear in general_mode source (tool removed)."""
-        import inspect
-        from agent.modes import general_mode as _gm
-
         src = inspect.getsource(_gm)
         assert "search_services" not in src, (
             "search_services found in general_mode source — this tool was removed from GENERAL mode"
         )
 
     def test_no_query_info_in_general_mode(self):
-        """query_info must not appear in general_mode source (tool removed)."""
-        import inspect
-        from agent.modes import general_mode as _gm
-
         src = inspect.getsource(_gm)
         assert "query_info" not in src, (
             "query_info found in general_mode source — this tool was removed from GENERAL mode"
         )
 
 
+# =============================================================================
+# Escalation tool must NOT be bound in GeneralMode (router-driven handoff).
+# =============================================================================
+
+
 class TestGeneralModeNoEscalateTool:
-    """GeneralMode.get_tools() no longer includes escalate_to_human (removed in escalation-lifecycle-completion)."""
+    def test_no_escalate_to_human_in_source(self):
+        """GeneralMode binds NO tools — escalation is driven by the router."""
+        src = inspect.getsource(_gm)
+        assert "escalate_to_human" not in src, (
+            "escalate_to_human found in general_mode — escalation must be router-driven"
+        )
 
-    def test_no_escalate_to_human_in_tools(self):
-        """GeneralMode.get_tools() returns empty list — escalation is router-driven."""
-        mode = GeneralMode(tools=[], llm_client=_make_mock_llm())
-        tools = mode.get_tools()
-        tool_names = [t.name for t in tools]
-        assert "escalate_to_human" not in tool_names
-        assert tools == []
+    def test_create_agent_call_passes_empty_tools(self):
+        """The create_agent invocation must pass tools=[] — guards against regressions."""
+        src = inspect.getsource(_gm)
+        assert "tools=[]" in src, "GeneralMode must call create_agent with tools=[]"
 
 
-# (test_general_mode_persists_booking_handoff_from_search_services removed —
-# search_services tool no longer exists; catalog is in-prompt via catalog_builder.py)
+# =============================================================================
+# Public factory surface
+# =============================================================================
+
+
+class TestGeneralModePublicAPI:
+    def test_build_general_node_is_exported(self):
+        assert hasattr(_gm, "build_general_node")
+        assert callable(_gm.build_general_node)
+
+    def test_build_general_node_returns_callable(self):
+        node = _gm.build_general_node(llm_factory=None)
+        assert callable(node)

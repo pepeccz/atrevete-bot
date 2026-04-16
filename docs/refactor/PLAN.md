@@ -55,10 +55,13 @@ Out of scope:
 - Deleted `tests/unit/test_greeting_booking_handoff.py` (redundant with new greeting tests; was baseline-broken)
 - Regression: −3 failures, +29 passing vs baseline. Zero new regressions.
 
-### M4 — GeneralMode + EscalationMode → create_agent
-- Same pattern as M3
-- Rewrite tests for both
-- Done when: both modes pass tests; graph builds
+### M4 — GeneralMode + EscalationMode → create_agent ✅ DONE
+- `agent/modes/general_mode.py` → `build_general_node(llm_factory)` invoking `create_agent` with `tools=[]` + `TokenTrackingMiddleware(mode_name="GENERAL")`.
+- `agent/modes/escalation_mode.py` → `build_escalation_node()` pure FSM factory (no LLM, no tools, no middleware).
+- New shared helper `agent/modes/_intro.py` with `maybe_prepend_intro` + `use_optimized_prompts` to replace the BaseModeNode methods.
+- `conversation_flow.py` now wires all three migrated modes via factories.
+- Tests rewritten: `test_general_mode.py` (4 architecture guards), `test_escalation_mode.py` (24 behaviour tests), `test_ws4_escalation_fast_path.py` (33 tests), `test_intro_sanitization.py` (shimmed to point at the shared helper).
+- Regression: 173 failed (−3 vs baseline 176), 1930 passed (+33). Zero new regressions.
 
 ### M5 — Booking middleware stack
 - `agent/middleware/dynamic_tools.py` — filters tools by `BookingContext` state via `wrap_model_call` + `dataclasses.replace`

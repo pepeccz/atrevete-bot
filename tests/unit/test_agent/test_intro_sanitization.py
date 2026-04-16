@@ -154,18 +154,21 @@ class TestIntroSanitizationIdempotency:
 
 
 def _make_general_mode_for_intro_tests():
-    """Instantiate a GeneralMode with a mock LLM for testing _maybe_prepend_intro."""
-    from unittest.mock import AsyncMock, MagicMock
+    """Return a thin shim that exposes ``_maybe_prepend_intro`` against the shared helper.
 
-    from agent.modes.general_mode import GeneralMode
+    After M4 the intro helper lives in ``agent.modes._intro`` as a module-level
+    function, so we wrap it in a trivial object to keep the existing test
+    assertions (``mode._maybe_prepend_intro(text, state)``) working without
+    rewriting every case.
+    """
+    from agent.modes._intro import maybe_prepend_intro
 
-    mock_llm = AsyncMock()
-    mock_response = MagicMock()
-    mock_response.content = "test"
-    mock_response.tool_calls = []
-    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-    mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-    return GeneralMode(tools=[], llm_client=mock_llm)
+    class _Shim:
+        @staticmethod
+        def _maybe_prepend_intro(text, state):
+            return maybe_prepend_intro(text, state)
+
+    return _Shim()
 
 
 class TestDisclosureRepairOnHistoryScan:
