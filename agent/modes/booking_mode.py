@@ -135,7 +135,9 @@ class BookingModeNode(BaseModeNode):
         if not has_selected:
             return (
                 "<flow_hint>PASO ACTUAL: El cliente elige horario de la lista. "
-                "NO llames herramientas. Espera selección.</flow_hint>"
+                "Cuando el cliente elija un horario (número o descripción), "
+                "llamá update_booking(slot_index=N) con SOLO el slot_index. "
+                "NO pases services ni otros campos.</flow_hint>"
             )
 
         # Phase 4a: name not collected yet

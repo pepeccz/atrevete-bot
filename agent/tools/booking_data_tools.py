@@ -184,12 +184,18 @@ async def update_booking(
 ) -> dict[str, Any]:
     """Persist booking data collected from the conversation.
 
+    ⚠️ IMPORTANT: Pass ONLY the field(s) that changed — do NOT re-send
+    fields already collected. Each call is INCREMENTAL.
+
     Call this tool AFTER resolving each piece of booking data:
     - Service identified → update_booking(services=["nombre exacto"])
     - Stylist chosen → update_booking(stylist_name="nombre") or "sin preferencia"
+    - Slot selected → update_booking(slot_index=2)  ← ONLY slot_index, nothing else
     - Name given → update_booking(customer_first_name="Pablo", customer_last_name="García")
     - Notes → update_booking(notes="texto") or notes="no" for none
-    - Slot selected → update_booking(slot_index=2) after check_availability offered slots
+
+    ❌ WRONG: update_booking(services=["Cortar"], slot_index=2)  ← re-sends services!
+    ✅ RIGHT: update_booking(slot_index=2)  ← only the new field
 
     Returns current booking state summary and a _booking_context_patch
     for the mode node to apply.
