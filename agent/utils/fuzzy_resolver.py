@@ -136,31 +136,44 @@ def resolve_from_options(
         if normalized_input == normalized_option:
             return Match(value=option, confidence=1.0, strategy="exact")
 
+    # Strategy 2: normalized_contains — collect ALL matches, only return if unambiguous
+    contains_matches: list[tuple[str, float]] = []
     for option in options:
         normalized_option = normalize_spanish(key(option))
-
-        # Strategy 2: normalized_contains
         if normalized_input and normalized_option and normalized_input in normalized_option:
-            return Match(value=option, confidence=0.95, strategy="normalized_contains")
-        if normalized_option and normalized_input and normalized_option in normalized_input:
-            return Match(value=option, confidence=0.90, strategy="normalized_contains")
+            contains_matches.append((option, 0.95))
+        elif normalized_option and normalized_input and normalized_option in normalized_input:
+            contains_matches.append((option, 0.90))
+    if len(contains_matches) == 1:
+        return Match(
+            value=contains_matches[0][0],
+            confidence=contains_matches[0][1],
+            strategy="normalized_contains",
+        )
+    # >1 matches = ambiguous → skip to next strategy (don't silently pick first)
 
+    # Strategy 3: prefix — collect ALL matches, only return if unambiguous
+    prefix_matches: list[tuple[str, float]] = []
     for option in options:
         normalized_option = normalize_spanish(key(option))
-
-        # Strategy 3: prefix
         if (
             normalized_option
             and normalized_input
             and normalized_option.startswith(normalized_input)
         ):
-            return Match(value=option, confidence=0.85, strategy="prefix")
-        if (
+            prefix_matches.append((option, 0.85))
+        elif (
             normalized_input
             and normalized_option
             and normalized_input.startswith(normalized_option)
         ):
-            return Match(value=option, confidence=0.80, strategy="prefix")
+            prefix_matches.append((option, 0.80))
+    if len(prefix_matches) == 1:
+        return Match(
+            value=prefix_matches[0][0],
+            confidence=prefix_matches[0][1],
+            strategy="prefix",
+        )
 
     # Strategy 6: fuzzy_ratio (last resort — expensive)
     best_option: str | None = None

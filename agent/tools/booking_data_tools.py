@@ -102,8 +102,27 @@ class UpdateBookingSchema(BaseModel):
 
 
 # ============================================================================
-# Helper
+# Helpers
 # ============================================================================
+
+
+async def _find_similar_services(name: str) -> list[str]:
+    """Find service names containing the input (for ambiguity guidance)."""
+    from agent.utils.fuzzy_resolver import normalize_spanish
+    from database.connection import get_async_session
+    from database.models import Service
+    from sqlalchemy import select
+
+    normalized = normalize_spanish(name)
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service.name).where(Service.is_active == True)
+        )
+        all_names = [row[0] for row in result.all()]
+
+    return [
+        n for n in all_names if normalized in normalize_spanish(n)
+    ]
 
 
 def _build_response(
@@ -219,7 +238,16 @@ async def update_booking(
         for svc_name in services:
             svc = await _resolve_service_by_name(svc_name)
             if svc is None:
-                errors.append(f"Servicio '{svc_name}' no encontrado en el catálogo.")
+                # Find similar names to guide the LLM
+                candidates = await _find_similar_services(svc_name)
+                if candidates:
+                    names = ", ".join(candidates[:6])
+                    errors.append(
+                        f"Servicio '{svc_name}' es ambiguo o no encontrado. "
+                        f"Pregunta al cliente cuál quiere: {names}"
+                    )
+                else:
+                    errors.append(f"Servicio '{svc_name}' no encontrado en el catálogo.")
                 continue
             resolved_services.append(svc)
             resolved_names.append(svc.name)
