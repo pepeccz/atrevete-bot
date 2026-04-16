@@ -96,94 +96,65 @@ class BookingModeNode(BaseModeNode):
 
     @staticmethod
     def _build_flow_hint(ctx: dict) -> str:
-        """Build a prescriptive flow hint for the current booking phase.
+        """Build a descriptive state hint — data, not commands.
 
-        4 phases based on tool-gated state only. Conversational steps
-        (algo más, notes) are handled by the prompt — not tracked here.
+        Reports WHAT is collected and WHAT is pending. The LLM reads
+        booking.md for flow order and reasons from the state.
+        Only _confirmation_shown is set here (deterministic Python gate).
         """
-        has_services = bool(ctx.get("last_services"))
-        has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
-        has_slots = bool(ctx.get("offered_slots"))
-        has_selected = bool(ctx.get("selected_slot"))
+        # ── Collect state facts ─────────────────────────────────────────
+        collected: list[str] = []
+        pending: list[str] = []
 
-        # Phase 1: services not resolved yet
-        if not has_services:
-            return (
-                "<flow_hint>PASO ACTUAL: Identificar servicios del catálogo. "
-                "Si el servicio es ambiguo, consulta el catálogo y pregunta al cliente. "
-                "NO llames herramientas hasta tener todos los servicios resueltos.</flow_hint>"
-            )
+        if ctx.get("last_services"):
+            collected.append(f"servicio ({', '.join(ctx['last_services'])})")
+        else:
+            pending.append("servicio")
 
-        # Phase 2: stylist not resolved
-        # The prompt (booking.md) guides "¿algo más?" BEFORE asking for stylist.
-        if not has_stylist:
-            return (
-                "<flow_hint>PASO ACTUAL: Sigue el flujo de booking.md — pregunta si quiere "
-                "algo más (Paso 1B), luego muestra la lista de estilistas de "
-                "<available_stylists> (Paso 2). NO llames check_availability hasta "
-                "tener estilista.</flow_hint>"
-            )
+        if ctx.get("last_stylist") or ctx.get("no_preference_stylist"):
+            stylist = ctx.get("last_stylist", "sin preferencia")
+            collected.append(f"estilista ({stylist})")
+        else:
+            pending.append("estilista")
 
-        # Phase 3: date/time
-        if not has_slots:
-            return (
-                "<flow_hint>PASO ACTUAL: Pregunta \"¿Qué día te viene bien?\". "
-                "Llama a check_availability SOLO cuando el cliente diga un día concreto.</flow_hint>"
-            )
+        if ctx.get("selected_slot"):
+            slot = ctx["selected_slot"]
+            collected.append(f"horario ({slot.get('date', '?')} a las {slot.get('time', '?')})")
+        elif ctx.get("offered_slots"):
+            n = len(ctx["offered_slots"])
+            pending.append(f"selección de horario ({n} opciones ofrecidas)")
+        else:
+            pending.append("fecha/hora")
 
-        # Phase 3b: slots offered, waiting for selection
-        if not has_selected:
-            return (
-                "<flow_hint>PASO ACTUAL: El cliente elige horario de la lista. "
-                "Cuando el cliente elija un horario (número o descripción), "
-                "llamá update_booking(slot_index=N) con SOLO el slot_index. "
-                "NO pases services ni otros campos.</flow_hint>"
-            )
+        if ctx.get("customer_name"):
+            collected.append(f"nombre ({ctx['customer_name']})")
+        else:
+            pending.append("nombre")
 
-        # Phase 4a: name not collected yet
-        has_name = bool(ctx.get("customer_name"))
-        if not has_name:
-            suggested_name = ctx.get("_suggested_customer_name")
-            if suggested_name:
-                return (
-                    f"<flow_hint>PASO ACTUAL: Hay un nombre sugerido en <suggested_name>. "
-                    f"Preguntá al cliente: \"¿La reserva va a nombre de {suggested_name} "
-                    f"o preferís otro nombre?\". "
-                    f"UN solo dato en este mensaje. NO preguntes notas ni muestres resumen todavía.</flow_hint>"
-                )
-            return (
-                "<flow_hint>PASO ACTUAL: Pregunta \"¿A qué nombre hago la reserva?\". "
-                "UN solo dato en este mensaje. NO preguntes notas ni muestres resumen todavía.</flow_hint>"
-            )
+        if ctx.get("notes_asked"):
+            notes = ctx.get("notes")
+            collected.append(f"notas ({notes or 'sin notas'})")
+        else:
+            pending.append("notas")
 
-        # Phase 4b: name collected but notes not yet asked
-        has_notes_asked = bool(ctx.get("notes_asked"))
-        if not has_notes_asked:
-            return (
-                "<flow_hint>PASO ACTUAL: Pregunta \"¿Alguna nota para tu estilista? "
-                "(escribe no si ninguna)\" (Paso 5). "
-                "UN solo dato en este mensaje. NO muestres resumen todavía.</flow_hint>"
-            )
-
-        # Phase 4c: all data collected (services + stylist + slot + name + notes asked)
-        # → show summary and ask for confirmation.
-        # Python sets _confirmation_shown=True here deterministically.
-        if not ctx.get("_confirmation_shown"):
+        # ── Confirmation gate (deterministic, Python-only) ──────────────
+        if not pending and not ctx.get("_confirmation_shown"):
             ctx["_confirmation_shown"] = True
-            return (
-                "<flow_hint>PASO ACTUAL: Todos los datos están recopilados. "
-                "Mostrá el resumen de la cita y preguntá \"¿Te confirmo?\" (Paso 6). "
-                "UN solo mensaje con el resumen. NO llames herramientas.</flow_hint>"
-            )
 
-        # Phase 4d: confirmation already shown → client should confirm or reject
-        # The LLM must call book() directly on affirmative. NO update_booking allowed.
-        return (
-            "<flow_hint>PASO ACTUAL: El cliente ya vio el resumen. "
-            "Si dice sí / dale / perfecto / ok / va → llamá book() DIRECTAMENTE. "
-            "NO llamés update_booking. "
-            "Si dice no / cambiar / espera → preguntá qué quiere modificar.</flow_hint>"
-        )
+        # ── Build hint ──────────────────────────────────────────────────
+        parts: list[str] = []
+
+        if collected:
+            parts.append(f"Recogido: {', '.join(collected)}.")
+
+        if pending:
+            parts.append(f"Pendiente: {', '.join(pending)}.")
+        elif ctx.get("_confirmation_shown"):
+            parts.append("Todos los datos recogidos — resumen mostrado, esperando confirmación.")
+        else:
+            parts.append("Todos los datos recogidos.")
+
+        return f"<flow_hint>{' '.join(parts)}</flow_hint>"
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point

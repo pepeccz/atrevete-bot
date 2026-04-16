@@ -343,48 +343,45 @@ class TestDynamicContextFactual:
 
 
 class TestBuildFlowHint:
-    """_build_flow_hint produces prescriptive phase-aware instructions."""
+    """_build_flow_hint produces descriptive state hints — data, not commands."""
 
-    def test_phase1_no_services(self):
-        """No services → hint to identify services, no tools."""
+    def test_empty_ctx_all_pending(self):
+        """Empty ctx → all fields listed as pending."""
         result = BookingModeNode._build_flow_hint({})
-        assert "Identificar servicios" in result
-        assert "NO llames herramientas" in result
+        assert "pendiente" in result.lower()
+        assert "servicio" in result.lower()
+        assert "estilista" in result.lower()
+        assert "nombre" in result.lower()
+        assert "notas" in result.lower()
 
-    def test_phase2_services_no_stylist(self):
-        """Services set, no stylist → hint mentions algo más + estilistas."""
+    def test_services_collected_stylist_pending(self):
+        """Services set → servicio in collected, estilista in pending."""
         ctx = {"last_services": ["Cortar"]}
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "algo más" in result.lower() or "estilista" in result.lower()
-        assert "NO llames check_availability" in result
-
-    def test_phase2_no_stylist(self):
-        """Services + no stylist → same phase (algo más + stylist combined)."""
-        ctx = {"last_services": ["Cortar"], "add_more_asked": True}
-        result = BookingModeNode._build_flow_hint(ctx)
+        assert "Cortar" in result
         assert "estilista" in result.lower()
-        assert "NO llames check_availability" in result
+        assert "pendiente" in result.lower()
 
-    def test_phase3_no_slots(self):
-        """Stylist set, no slots → ask what day."""
-        ctx = {"last_services": ["Cortar"], "last_stylist": "Pilar", "add_more_asked": True}
+    def test_services_and_stylist_collected(self):
+        """Services + stylist → both in collected, fecha in pending."""
+        ctx = {"last_services": ["Cortar"], "last_stylist": "Pilar"}
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "día" in result.lower()
-        assert "check_availability" in result
+        assert "Cortar" in result
+        assert "Pilar" in result
+        assert "fecha" in result.lower()
 
-    def test_phase3b_slots_offered(self):
-        """Slots offered, none selected → wait for selection."""
+    def test_slots_offered_not_selected(self):
+        """Slots offered but none selected → mentions options offered."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Pilar",
-            "add_more_asked": True,
             "offered_slots": [{"time": "10:00"}],
         }
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "elige horario" in result.lower()
+        assert "opciones ofrecidas" in result.lower() or "selección" in result.lower()
 
-    def test_phase4a_ask_name(self):
-        """Slot selected, no name → ask name only."""
+    def test_name_pending(self):
+        """Slot selected, no name → nombre in pending."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Marta",
@@ -393,10 +390,10 @@ class TestBuildFlowHint:
         }
         result = BookingModeNode._build_flow_hint(ctx)
         assert "nombre" in result.lower()
-        assert "UN solo dato" in result
+        assert "pendiente" in result.lower()
 
-    def test_phase4b_ask_notes_and_confirm(self):
-        """Name collected → notes phase (Phase 4b asks for notes, not book yet)."""
+    def test_notes_pending(self):
+        """Name collected but notes not asked → notas in pending."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Marta",
@@ -405,22 +402,19 @@ class TestBuildFlowHint:
             "customer_name": "Ana García",
         }
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "nota" in result.lower()
-        # After notes, Phase 4c sets _confirmation_shown, Phase 4d mentions book()
-        assert "_confirmation_shown" not in ctx, "Flag not set until Phase 4c"
+        assert "notas" in result.lower()
+        assert "pendiente" in result.lower()
+        assert "_confirmation_shown" not in ctx, "Flag not set when notes pending"
 
-    def test_atajo_with_handoff_hints(self):
-        """preferred_date_hint + preferred_stylist_name → skip to stylist (already hinted)."""
+    def test_all_collected_with_stylist_preference(self):
+        """Stylist + date hint → fecha/hora in pending, stylist in collected."""
         ctx = {
             "last_services": ["Cortar"],
-            "preferred_date_hint": "viernes",
-            "preferred_stylist_name": "Pilar",
             "last_stylist": "Pilar",
-            "add_more_asked": True,
         }
         result = BookingModeNode._build_flow_hint(ctx)
-        # Should be at phase 3 (date) since stylist is already set
-        assert "día" in result.lower()
+        assert "Pilar" in result
+        assert "fecha" in result.lower()
 
 
 # ===========================================================================

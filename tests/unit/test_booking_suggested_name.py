@@ -224,8 +224,8 @@ def test_dynamic_context_suggestion_hidden_when_name_confirmed(booking_node):
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_flow_hint_phase4a_no_suggestion():
-    """Phase 4a with no suggestion → generic name question."""
+def test_flow_hint_name_pending_no_suggestion():
+    """No name, no suggestion → nombre listed as pending."""
     from agent.modes.booking_mode import BookingModeNode
 
     ctx = {
@@ -233,17 +233,16 @@ def test_flow_hint_phase4a_no_suggestion():
         "last_stylist": "Marta",
         "offered_slots": [{"date": "miércoles 18", "time": "10:00"}],
         "selected_slot": {"date": "miércoles 18", "time": "10:00"},
-        # no customer_name, no _suggested_customer_name
     }
 
     result = BookingModeNode._build_flow_hint(ctx)
 
-    assert "¿A qué nombre hago la reserva?" in result
-    assert "PASO ACTUAL" in result
+    assert "nombre" in result.lower(), "nombre must appear as pending"
+    assert "pendiente" in result.lower()
 
 
-def test_flow_hint_phase4a_with_suggestion():
-    """Phase 4a with suggestion → personalized question with the suggested name."""
+def test_flow_hint_name_pending_with_suggestion():
+    """Suggestion present but not confirmed → nombre still pending (suggestion in dynamic ctx)."""
     from agent.modes.booking_mode import BookingModeNode
 
     ctx = {
@@ -252,18 +251,17 @@ def test_flow_hint_phase4a_with_suggestion():
         "offered_slots": [{"date": "miércoles 18", "time": "10:00"}],
         "selected_slot": {"date": "miércoles 18", "time": "10:00"},
         "_suggested_customer_name": "Pablo García",
-        # no customer_name yet
     }
 
     result = BookingModeNode._build_flow_hint(ctx)
 
-    assert "Pablo García" in result, "Suggested name must appear in the flow hint"
-    assert "preferís otro nombre" in result or "preferis otro nombre" in result or "otro nombre" in result
-    assert "PASO ACTUAL" in result
+    # nombre is still pending (suggestion ≠ confirmed name)
+    assert "nombre" in result.lower(), "nombre must be pending even with suggestion"
+    assert "pendiente" in result.lower()
 
 
-def test_flow_hint_phase4b_skipped_when_name_confirmed():
-    """When customer_name is set, we move to Phase 4b (notes + summary), not Phase 4a."""
+def test_flow_hint_name_collected():
+    """Name confirmed → nombre in collected, notas in pending."""
     from agent.modes.booking_mode import BookingModeNode
 
     ctx = {
@@ -276,10 +274,8 @@ def test_flow_hint_phase4b_skipped_when_name_confirmed():
 
     result = BookingModeNode._build_flow_hint(ctx)
 
-    # Should NOT be Phase 4a — we're past name collection
-    assert "¿A qué nombre hago la reserva?" not in result
-    # Should be Phase 4b
-    assert "notas" in result.lower() or "resumen" in result.lower() or "booking.md" in result
+    assert "Pablo García" in result, "Confirmed name must appear in collected"
+    assert "notas" in result.lower(), "notas must be pending"
 
 
 # ──────────────────────────────────────────────────────────────────────

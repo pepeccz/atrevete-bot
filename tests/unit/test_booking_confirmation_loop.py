@@ -62,21 +62,15 @@ def node():
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_flow_hint_phase_4b_notes_not_asked():
-    """Phase 4b: all data collected except notes → hint asks for notes."""
+def test_flow_hint_notes_pending_when_not_asked():
+    """When notes not asked, hint lists notas in pending."""
     ctx = _base_ctx()
-    ctx.pop("notes_asked")  # notes not yet asked
+    ctx.pop("notes_asked")
 
     hint = BookingModeNode._build_flow_hint(ctx)
 
-    assert "Paso 5" in hint or "nota" in hint.lower(), (
-        "Hint must mention notes (Paso 5) when notes_asked is False"
-    )
-    # The hint may mention "resumen" in negation ("no muestres resumen") — that's fine.
-    # What matters is it doesn't say to SHOW the summary.
-    assert "mostrá el resumen" not in hint.lower(), (
-        "Hint must NOT instruct to show summary before notes are asked"
-    )
+    assert "notas" in hint.lower(), "Hint must list notas as pending"
+    assert "pendiente" in hint.lower(), "Hint must use Pendiente format"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -84,18 +78,18 @@ def test_flow_hint_phase_4b_notes_not_asked():
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_flow_hint_phase_4c_sets_confirmation_shown():
-    """Phase 4c: all data + notes asked → _confirmation_shown set to True."""
+def test_flow_hint_all_collected_sets_confirmation_shown():
+    """All data collected → _confirmation_shown set to True deterministically."""
     ctx = _base_ctx()
     assert "_confirmation_shown" not in ctx, "Precondition: flag not yet set"
 
     hint = BookingModeNode._build_flow_hint(ctx)
 
     assert ctx.get("_confirmation_shown") is True, (
-        "_confirmation_shown must be set to True by Python in Phase 4c"
+        "_confirmation_shown must be set to True by Python when all data collected"
     )
-    assert "resumen" in hint.lower() or "confirmo" in hint.lower(), (
-        "Hint must tell LLM to show summary and ask ¿Te confirmo?"
+    assert "todos los datos" in hint.lower() or "recogido" in hint.lower(), (
+        "Hint must indicate all data is collected"
     )
 
 
@@ -104,19 +98,15 @@ def test_flow_hint_phase_4c_sets_confirmation_shown():
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_flow_hint_phase_4d_confirmation_already_shown():
-    """Phase 4d: _confirmation_shown=True → hint says call book() DIRECTLY."""
+def test_flow_hint_confirmation_shown_mentions_waiting():
+    """_confirmation_shown=True → hint says waiting for confirmation."""
     ctx = _base_ctx()
     ctx["_confirmation_shown"] = True
 
     hint = BookingModeNode._build_flow_hint(ctx)
 
-    assert "book()" in hint, "Hint must reference book() in Phase 4d"
-    assert "DIRECTAMENTE" in hint or "directamente" in hint.lower(), (
-        "Hint must emphasize calling book() directly"
-    )
-    assert "update_booking" not in hint.lower() or "NO" in hint or "no" in hint.lower(), (
-        "Hint must discourage update_booking when confirmation shown"
+    assert "confirmación" in hint.lower() or "esperando" in hint.lower(), (
+        "Hint must indicate waiting for confirmation when all data collected + shown"
     )
 
 
