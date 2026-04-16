@@ -125,6 +125,31 @@ async def _find_similar_services(name: str) -> list[str]:
     ]
 
 
+async def _find_audience_siblings(service) -> list[str]:
+    """Find other active services sharing the same base name but different audience.
+
+    E.g., "Corte Señora" → ["Corte Caballero", "Corte Niño", "Corte Niña", "Corte Bebé"]
+    Returns empty list if no siblings (service is unique for its type).
+    """
+    from database.connection import get_async_session
+    from database.models import Service
+    from sqlalchemy import select
+
+    base_word = service.name.split()[0].lower()
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service.name).where(
+                Service.is_active == True,
+                Service.audience.is_not(None),
+                Service.id != service.id,
+            )
+        )
+        return [
+            row[0] for row in result.all()
+            if row[0].split()[0].lower() == base_word
+        ]
+
+
 def _build_response(
     ctx: dict[str, Any],
     success: bool,
@@ -249,6 +274,20 @@ async def update_booking(
                 else:
                     errors.append(f"Servicio '{svc_name}' no encontrado en el catálogo.")
                 continue
+
+            # Gate: if service has audience variants, the client must have
+            # confirmed the specific variant. Reject if siblings exist.
+            if svc.audience:
+                siblings = await _find_audience_siblings(svc)
+                if siblings:
+                    sibling_names = ", ".join(siblings)
+                    errors.append(
+                        f"'{svc.name}' es una variante por audiencia. "
+                        f"También existen: {sibling_names}. "
+                        f"Pregunta al cliente cuál quiere antes de asumir."
+                    )
+                    continue
+
             resolved_services.append(svc)
             resolved_names.append(svc.name)
 

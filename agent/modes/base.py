@@ -571,6 +571,12 @@ class BaseModeNode(ABC):
                 for tool_call in response.tool_calls:
                     tool_name = tool_call.get("name", "")
                     tool_args = tool_call.get("args", {})
+                    # Log raw LLM tool call args (excluding internal injections)
+                    self.logger.info(
+                        "tool_call | tool=%s | args=%s",
+                        tool_name,
+                        {k: v for k, v in tool_args.items() if not k.startswith("_")},
+                    )
                     # Preserve original args before the hook can overwrite them.
                     # _post_tool_result always receives the original dict so it can
                     # safely call .get() regardless of what _pre_tool_call returned.
