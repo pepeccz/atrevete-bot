@@ -141,20 +141,46 @@ class BookingModeNode(BaseModeNode):
         # Phase 4a: name not collected yet
         has_name = bool(ctx.get("customer_name"))
         if not has_name:
+            suggested_name = ctx.get("_suggested_customer_name")
+            if suggested_name:
+                return (
+                    f"<flow_hint>PASO ACTUAL: Hay un nombre sugerido en <suggested_name>. "
+                    f"Preguntá al cliente: \"¿La reserva va a nombre de {suggested_name} "
+                    f"o preferís otro nombre?\". "
+                    f"UN solo dato en este mensaje. NO preguntes notas ni muestres resumen todavía.</flow_hint>"
+                )
             return (
                 "<flow_hint>PASO ACTUAL: Pregunta \"¿A qué nombre hago la reserva?\". "
                 "UN solo dato en este mensaje. NO preguntes notas ni muestres resumen todavía.</flow_hint>"
             )
 
-        # Phase 4b: name collected → notes + summary + confirmation pending
-        # The LLM handles notes → summary → confirmation step by step via booking.md.
-        # Each turn should do ONE thing only.
+        # Phase 4b: name collected but notes not yet asked
+        has_notes_asked = bool(ctx.get("notes_asked"))
+        if not has_notes_asked:
+            return (
+                "<flow_hint>PASO ACTUAL: Pregunta \"¿Alguna nota para tu estilista? "
+                "(escribe no si ninguna)\" (Paso 5). "
+                "UN solo dato en este mensaje. NO muestres resumen todavía.</flow_hint>"
+            )
+
+        # Phase 4c: all data collected (services + stylist + slot + name + notes asked)
+        # → show summary and ask for confirmation.
+        # Python sets _confirmation_shown=True here deterministically.
+        if not ctx.get("_confirmation_shown"):
+            ctx["_confirmation_shown"] = True
+            return (
+                "<flow_hint>PASO ACTUAL: Todos los datos están recopilados. "
+                "Mostrá el resumen de la cita y preguntá \"¿Te confirmo?\" (Paso 6). "
+                "UN solo mensaje con el resumen. NO llames herramientas.</flow_hint>"
+            )
+
+        # Phase 4d: confirmation already shown → client should confirm or reject
+        # The LLM must call book() directly on affirmative. NO update_booking allowed.
         return (
-            "<flow_hint>PASO ACTUAL: Sigue booking.md paso a paso. "
-            "Si aún no preguntaste por notas → pregunta \"¿Alguna nota para tu estilista?\" (Paso 5). "
-            "Si ya preguntaste por notas → muestra resumen y pregunta \"¿Te confirmo?\" (Paso 6). "
-            "IMPORTANTE: UN solo paso por mensaje. NO llames book() hasta que el cliente confirme "
-            "explícitamente con \"sí\" o similar.</flow_hint>"
+            "<flow_hint>PASO ACTUAL: El cliente ya vio el resumen. "
+            "Si dice sí / dale / perfecto / ok / va → llamá book() DIRECTAMENTE. "
+            "NO llamés update_booking. "
+            "Si dice no / cambiar / espera → preguntá qué quiere modificar.</flow_hint>"
         )
 
     # ──────────────────────────────────────────────────────────────────────
@@ -323,8 +349,38 @@ class BookingModeNode(BaseModeNode):
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
-        # ── update_booking: inject current context ───────────────────────
+        # ── update_booking: confirmation gate + context injection ────────
         if tool_name == "update_booking":
+            # Gate: if confirmation already shown, only allow update_booking when
+            # the user explicitly wants to change something (change-intent keywords).
+            if mode_context.get("_confirmation_shown"):
+                user_msg = ""
+                if hasattr(self, "_current_state"):
+                    user_msg = get_last_user_message(self._current_state).lower()
+                _CHANGE_INTENT_KEYWORDS = (
+                    "cambiar", "modificar", "no,", "otro", "otra", "diferente",
+                    "en realidad", "mejor", "quiero cambiar", "quiero modificar",
+                    "espera", "momento", "no quiero", "equivocado",
+                )
+                has_change_intent = any(kw in user_msg for kw in _CHANGE_INTENT_KEYWORDS)
+                if not has_change_intent:
+                    return ToolCallRejection(
+                        name="update_booking",
+                        error_code="CONFIRMATION_ALREADY_SHOWN",
+                        error_message=(
+                            "RECHAZADO. El cliente ya vio el resumen. "
+                            "Usá book() para completar la reserva. "
+                            "Solo llamés update_booking si el cliente quiere modificar algo."
+                        ),
+                    )
+                # User wants to change something — reset confirmation flag so a new
+                # summary is shown after the modification
+                mode_context["_confirmation_shown"] = False
+                logger.info(
+                    "_pre_tool_call[update_booking]: change-intent detected, "
+                    "reset _confirmation_shown=False"
+                )
+
             tool_args["_current_context"] = dict(mode_context)
             return tool_args
 
@@ -540,6 +596,21 @@ class BookingModeNode(BaseModeNode):
                     "_post_tool_result[update_booking]: applied patch keys=%s",
                     list(patch.keys()),
                 )
+
+                # Cascade clear: if the update invalidates previously confirmed data
+                # (services changed, slot cleared), reset _confirmation_shown so a new
+                # summary is shown before the next book() attempt.
+                _INVALIDATING_KEYS = ("last_services", "offered_slots", "selected_slot")
+                if mode_context.get("_confirmation_shown") and any(
+                    k in patch for k in _INVALIDATING_KEYS
+                ):
+                    mode_context["_confirmation_shown"] = False
+                    logger.info(
+                        "_post_tool_result[update_booking]: cascade cleared _confirmation_shown "
+                        "because invalidating keys changed: %s",
+                        [k for k in _INVALIDATING_KEYS if k in patch],
+                    )
+
             return result
 
         if tool_name == "check_availability":
@@ -749,6 +820,16 @@ class BookingModeNode(BaseModeNode):
                 f"<opening_booking_request>{opening_request}</opening_booking_request>"
             )
 
+        # Suggested name from DB/state — requires explicit confirmation from the client
+        suggested_name = mode_context.get("_suggested_customer_name")
+        if suggested_name and not mode_context.get("customer_name"):
+            parts.append(
+                f"<suggested_name>\n"
+                f"El cliente podría ser: {suggested_name}. "
+                f"PREGUNTÁ si la reserva va a ese nombre antes de asumirlo.\n"
+                f"</suggested_name>"
+            )
+
         collected = self._build_collected_summary(mode_context)
         if collected:
             parts.append(f"<collected_data>\n{collected}\n</collected_data>")
@@ -874,15 +955,20 @@ class BookingModeNode(BaseModeNode):
 
     @staticmethod
     def _resolve_customer_from_state(state: ConversationState, mode_context: dict) -> None:
-        """Inject customer name and ID from state if not already in mode_context.
+        """Inject customer suggestion and ID from state if not already in mode_context.
 
-        Handles returning customers whose data was collected in GREETING mode.
+        Handles returning customers whose data was collected in GREETING mode or DB lookup.
+        The name is stored as _suggested_customer_name — NOT as customer_name — because
+        the customer must explicitly confirm or provide their name in the current conversation.
+        customer_name is ONLY set via update_booking() when the user explicitly provides it.
+
         Priority: customer_first_name > customer_name from state.
         """
-        if not mode_context.get("customer_name"):
+        # Only suggest if neither confirmed name nor suggestion already set
+        if not mode_context.get("customer_name") and not mode_context.get("_suggested_customer_name"):
             state_name = state.get("customer_first_name") or state.get("customer_name")
             if state_name:
-                mode_context["customer_name"] = str(state_name)
+                mode_context["_suggested_customer_name"] = str(state_name)
 
         if not mode_context.get("customer_id"):
             state_id = state.get("customer_id")

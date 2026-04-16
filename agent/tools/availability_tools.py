@@ -244,6 +244,7 @@ async def check_availability(
         "requested_date": None,
         "available_slots": [],
         "alternative_dates": False,
+        "date_is_closed": False,
         "date_too_soon": False,
         "min_valid_date": None,
         "holiday_detected": False,
@@ -391,11 +392,13 @@ async def check_availability(
                 f"Holiday on {requested_date.date()}: {holiday_name} — skipping to auto-search"
             )
             base_response["holiday_detected"] = True
+            base_response["date_is_closed"] = True
             date_is_closed = True
         elif await is_date_closed(requested_date):
             logger.info(
                 f"Business closed on {requested_date.date()} — skipping to auto-search"
             )
+            base_response["date_is_closed"] = True
             date_is_closed = True
 
         # ── 8. Query availability (skip if date is closed) ────────────────────

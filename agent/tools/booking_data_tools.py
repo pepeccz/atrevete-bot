@@ -91,6 +91,14 @@ class UpdateBookingSchema(BaseModel):
         default=None,
         description="Notas para la estilista (ej: alergias, preferencias). 'no' = sin notas",
     )
+    slot_index: int | None = Field(
+        default=None,
+        description=(
+            "Índice (1-based) del slot elegido por el cliente de la lista ofrecida "
+            "por check_availability. Úsalo cuando el cliente seleccione un horario "
+            "ANTES de llamar a book(). Ej: si el cliente dice '2', pasa slot_index=2."
+        ),
+    )
 
 
 # ============================================================================
@@ -171,6 +179,7 @@ async def update_booking(
     customer_first_name: str | None = None,
     customer_last_name: str | None = None,
     notes: str | None = None,
+    slot_index: int | None = None,
     _current_context: dict | None = None,
 ) -> dict[str, Any]:
     """Persist booking data collected from the conversation.
@@ -180,6 +189,7 @@ async def update_booking(
     - Stylist chosen → update_booking(stylist_name="nombre") or "sin preferencia"
     - Name given → update_booking(customer_first_name="Pablo", customer_last_name="García")
     - Notes → update_booking(notes="texto") or notes="no" for none
+    - Slot selected → update_booking(slot_index=2) after check_availability offered slots
 
     Returns current booking state summary and a _booking_context_patch
     for the mode node to apply.
@@ -325,6 +335,41 @@ async def update_booking(
         patch["notes_asked"] = True
         ctx["notes_asked"] = True
         ctx["notes"] = patch.get("notes")
+
+    # ── Slot index branch ────────────────────────────────────────────────
+    if slot_index is not None:
+        offered_slots: list[dict] = ctx.get("offered_slots") or []
+        if not offered_slots:
+            errors.append(
+                "No hay slots ofrecidos en el contexto actual. "
+                "Llama primero a check_availability para obtener disponibilidad."
+            )
+        else:
+            try:
+                idx = int(slot_index)
+                if 1 <= idx <= len(offered_slots):
+                    slot = offered_slots[idx - 1]
+                    selected: dict[str, Any] = {
+                        "stylist_name": slot.get("stylist_name"),
+                        "stylist_id": slot.get("stylist_id"),
+                        "start_time": slot.get("start_time") or slot.get("full_datetime"),
+                        "end_time": slot.get("end_time"),
+                        "date": slot.get("date"),
+                        "time": slot.get("time"),
+                    }
+                    patch["selected_slot"] = selected
+                    ctx["selected_slot"] = selected
+                    # Keep last_stylist in sync with selected slot
+                    if slot.get("stylist_name") and not ctx.get("last_stylist"):
+                        patch["last_stylist"] = slot["stylist_name"]
+                        ctx["last_stylist"] = slot["stylist_name"]
+                else:
+                    errors.append(
+                        f"slot_index {idx} fuera de rango (1-{len(offered_slots)}). "
+                        "Mostrá la lista de horarios disponibles de nuevo."
+                    )
+            except (ValueError, TypeError):
+                errors.append("slot_index debe ser un número entero válido.")
 
     # ── Build response ───────────────────────────────────────────────────
     success = len(errors) == 0

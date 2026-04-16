@@ -396,7 +396,7 @@ class TestBuildFlowHint:
         assert "UN solo dato" in result
 
     def test_phase4b_ask_notes_and_confirm(self):
-        """Name collected → notes + summary + confirm (step by step)."""
+        """Name collected → notes phase (Phase 4b asks for notes, not book yet)."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Marta",
@@ -405,8 +405,9 @@ class TestBuildFlowHint:
             "customer_name": "Ana García",
         }
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "notas" in result.lower()
-        assert "book()" in result
+        assert "nota" in result.lower()
+        # After notes, Phase 4c sets _confirmation_shown, Phase 4d mentions book()
+        assert "_confirmation_shown" not in ctx, "Flag not set until Phase 4c"
 
     def test_atajo_with_handoff_hints(self):
         """preferred_date_hint + preferred_stylist_name → skip to stylist (already hinted)."""
