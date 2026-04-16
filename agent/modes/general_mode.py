@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Legacy fallback prompt used when USE_OPTIMIZED_PROMPTS is off.
 _LEGACY_SYSTEM_PROMPT = (
     "Eres Maite, asistenta virtual de Atrévete Peluquería en Alcobendas. "
-    "Respondé dudas sobre servicios, horarios, precios y políticas del salón "
+    "Responde dudas sobre servicios, horarios, precios y políticas del salón "
     "de forma breve, cálida y útil."
 )
 
@@ -152,7 +152,7 @@ async def _handle_general(state: ConversationState, llm: Any) -> dict:
     if not response_text:
         response_text = (
             "Perdona, tuve un problema procesando tu mensaje. "
-            "¿Podés repetirlo o darme más detalles?"
+            "¿Puedes repetirlo o darme más detalles?"
         )
 
     final_response, disclosure_sent = maybe_prepend_intro(response_text, state)

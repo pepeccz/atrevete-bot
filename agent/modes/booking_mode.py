@@ -644,7 +644,7 @@ class BookingModeNode(BaseModeNode):
         system_prompt = "\n\n".join(system_parts)
 
         fallback_text = (
-            "Perdoná, tuve un problema procesando tu mensaje. ¿Podés repetirlo?"
+            "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
         )
 
         middleware: list = [

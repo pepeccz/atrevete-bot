@@ -312,7 +312,7 @@ def _build_customer_memory_context(
         time_label = {"morning": "mañana", "afternoon": "tarde"}.get(time_of_day or "", "")
         day_str = f"{day} por la {time_label}" if time_label else day
         lines.append(
-            f"- Suele venir: {day_str} — pero preguntá qué día prefiere esta vez"
+            f"- Suele venir: {day_str} — pero pregunta qué día prefiere esta vez"
         )
 
     notes = memories.get("notes")

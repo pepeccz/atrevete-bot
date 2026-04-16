@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def _extract_response_text(result: Any, intent: str) -> tuple[str, dict[str, Any]]:
     confirm_fallback = "¡Perfecto! Tu cita ha sido confirmada. ¡Te esperamos!"
-    decline_fallback = "Entendido, hemos anotado tu respuesta. Si necesitás algo más, avisame."
+    decline_fallback = "Entendido, hemos anotado tu respuesta. Si necesitas algo más, avísame."
     default_fallback = confirm_fallback if intent == "confirm" else decline_fallback
 
     if isinstance(result, str):
@@ -74,7 +74,7 @@ async def confirmation_reply_node(state: ConversationState) -> dict[str, Any]:
             conversation_id,
             exc,
         )
-        response_text = "Hubo un problema procesando tu respuesta. Por favor, intentá de nuevo o escribí 'ayuda'."
+        response_text = "Hubo un problema procesando tu respuesta. Por favor, inténtalo de nuevo o escribe 'ayuda'."
         state_updates = {}
 
     return {
