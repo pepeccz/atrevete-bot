@@ -220,18 +220,25 @@ def _build_customer_memory_context(memories: dict[str, Any]) -> str:
     no_pref = memories.get("no_preference_stylist", False)
     preferred_stylist = memories.get("preferred_stylist_name")
     if no_pref:
-        lines.append("- Sin preferencia de estilista")
+        lines.append("- Sin preferencia de estilista en visitas anteriores")
     elif visit_count >= 2 and preferred_stylist:
-        lines.append(f"- Estilista habitual: {preferred_stylist}")
+        lines.append(
+            f"- Estilista en visitas anteriores: {preferred_stylist} "
+            "(pregunta si quiere la misma estilista, NO asumas)"
+        )
 
     typical_services = memories.get("typical_services") or []
     last_visit_date = memories.get("last_visit_date")
 
     if typical_services:
         date_suffix = f" ({last_visit_date})" if last_visit_date else ""
-        lines.append(f"- Último servicio: {typical_services[0]}{date_suffix}")
+        lines.append(
+            f"- Servicio en visita anterior: {typical_services[0]}{date_suffix} "
+            "— NO asumas que quiere lo mismo. Pregunta qué servicio quiere y "
+            "desambigua normalmente según el catálogo."
+        )
         if len(typical_services) > 1:
-            lines.append(f"- Servicios frecuentes: {', '.join(typical_services)}")
+            lines.append(f"- Otros servicios que ha pedido: {', '.join(typical_services[1:])}")
 
     day = memories.get("typical_day_of_week")
     time_of_day = memories.get("typical_time_of_day")

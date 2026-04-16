@@ -1991,8 +1991,26 @@ async def delete_customer(
         if not customer:
             raise HTTPException(status_code=404, detail="Customer not found")
 
+        customer_phone = customer.phone
         await session.delete(customer)
         await session.commit()
+
+    # Clean up customer memories from Redis Store
+    if customer_phone:
+        try:
+            from shared.redis_client import get_redis_client
+
+            redis = await get_redis_client()
+            async for key in redis.scan_iter(match="store:*"):
+                try:
+                    data = await redis.json().get(key)
+                    if data and isinstance(data, dict) and customer_phone in data.get("prefix", ""):
+                        await redis.delete(key)
+                        logger.info("Deleted memory store key %s for %s", key, customer_phone)
+                except Exception:
+                    continue
+        except Exception as exc:
+            logger.warning("Failed to clean memories for %s: %s", customer_phone, exc)
 
 
 # =============================================================================
