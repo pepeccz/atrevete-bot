@@ -673,7 +673,7 @@ class BookingModeNode(BaseModeNode):
             result_dict = await agent.ainvoke({"messages": transcript})
         except Exception as exc:
             logger.error("BookingModeNode: create_agent invocation failed: %s", exc)
-            return AgenticLoopResult(response_text="", error=str(exc))
+            return AgenticLoopResult(response_text=fallback_text, error=str(exc))
 
         response_text = ""
         final_messages = result_dict.get("messages") or []

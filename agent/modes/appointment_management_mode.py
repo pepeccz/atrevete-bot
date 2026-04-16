@@ -733,7 +733,7 @@ class AppointmentManagementMode(BaseModeNode):
             result_dict = await agent.ainvoke({"messages": transcript})
         except Exception as exc:
             logger.error("AppointmentManagementMode: create_agent failed: %s", exc)
-            return AgenticLoopResult(response_text="", error=str(exc))
+            return AgenticLoopResult(response_text=fallback_text, error=str(exc))
 
         response_text = ""
         tool_results: dict = {}
