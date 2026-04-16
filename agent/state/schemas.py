@@ -1,17 +1,25 @@
 """
-ConversationState schema for LangGraph StateGraph - v6.0 Mode-Based Architecture.
+ConversationState schema for LangGraph StateGraph — M2 refactor.
 
-This module defines the typed state structure for v6.0 architecture with independent mode nodes.
-The state is immutable - nodes must return new dicts rather than mutating the input state.
+This module defines the typed state structure for the mode-based architecture.
+The state is immutable — nodes must return new dicts rather than mutating the input.
 
-Architecture:
-- 4 independent mode nodes: GREETING, BOOKING, GENERAL, ESCALATION
-- Router node selects mode based on intent + state flags
-- Mode-specific context stored in mode_context dict (cleared on mode transitions via __reset__ sentinel)
+Milestone 2 (`refactor/create-agent-migration`) introduces:
+- A typed ``BookingContext`` TypedDict that captures every booking-flow key
+  currently stored under ``state["booking_context"]``.
+- A generic ``replace_dict`` reducer (full-replace semantics, ``None`` is a no-op)
+  that is used for ``booking_context``. ``replace_booking_context`` remains as
+  a thin backwards-compat alias so pre-existing tests and callers keep working.
+- Deduplication of the ``customer_data_collected`` TypedDict annotation (it was
+  declared twice; only the last ever took effect at runtime).
 
-Evolution: v6.0 adds current_mode, mode_context, mode_history for mode-based routing.
-FIX-005: merge_dicts supports __reset__ sentinel to clear stale booking data on mode transitions.
+The ``merge_dicts`` reducer and its ``__reset__`` sentinel are retained for
+``mode_context`` and ``draft_contexts`` because the router, modes, and several
+test suites rely on the sentinel to clear stale mode data in place. A full
+migration off ``__reset__`` is scheduled for Milestone 8.
 """
+
+from __future__ import annotations
 
 from operator import add as operator_add
 from typing import Annotated, Any, TypedDict
@@ -19,114 +27,117 @@ from uuid import UUID
 
 
 # ============================================================================
-# BookingContext — Typed dict for durable booking state (Phase 1 / AD-2)
+# BookingContext — Typed dict for durable booking state
 # ============================================================================
 
 
 class BookingContext(TypedDict, total=False):
     """
-    Typed container for all booking-flow state.
+    Typed container for every booking-flow field used by the agent.
 
-    Replaces the usage of booking-related keys inside mode_context, which used
-    a merge_dicts reducer that could not delete keys. BookingContext uses a
-    full-replace reducer (replace_booking_context), so writing a new
-    BookingContext atomically replaces the old one — no stale keys survive.
+    All keys are optional (``total=False``) because the context is built
+    incrementally as the booking conversation progresses. The fields listed
+    here mirror the keys that ``agent/modes/booking_mode.py``,
+    ``agent/tools/booking_data_tools.py``, and ``agent/graphs/conversation_flow.py``
+    actually read or write.
 
-    All fields are optional (total=False) because the context is built
-    incrementally as the booking flow progresses.
+    The reducer attached to the ``booking_context`` state field is
+    ``replace_dict``: any non-``None`` update fully replaces the previous
+    context. This guarantees that deleted keys (for example, ``offered_slots``
+    after a slot is selected) actually disappear from state instead of
+    lingering as zombies.
     """
 
-    # Booking step FSM
-    booking_step: (
-        str  # service_selection|stylist_selection|datetime_selection|name_collection|confirmation
-    )
+    # ── Booking step FSM ────────────────────────────────────────────────
+    booking_step: str  # service_selection | stylist_selection | datetime_selection | name_collection | confirmation
 
-    # Service data
+    # ── Service data ────────────────────────────────────────────────────
     last_services: list[str]  # e.g. ["CORTE LARGO"]
+    last_service_category: str | None  # ServiceCategory.value (e.g. "MUJER")
     last_total_duration_minutes: int | None
 
-    # Stylist data
-    last_stylist: str | None  # e.g. "Pilar"
-    no_preference_stylist: bool
+    # ── Stylist data ────────────────────────────────────────────────────
+    last_stylist: str | None
+    no_preference_stylist: bool | None
+    available_stylists: list[str] | None
+    last_confirmed_stylist_id: str | None  # preserved from legacy schemas (used in handoffs)
+    _offered_stylists: list[str] | None  # includes "Sin preferencia" sentinel
 
-    # Slot data
-    offered_slots: list[dict[str, Any]]  # from check_availability
-    selected_slot: dict[str, Any] | None  # user-confirmed slot
+    # ── Slot data ───────────────────────────────────────────────────────
+    offered_slots: list[dict[str, Any]] | None
+    selected_slot: dict[str, Any] | None
 
-    # Customer data
+    # ── Customer data ───────────────────────────────────────────────────
     customer_name: str | None
+    customer_first_name: str | None
+    customer_last_name: str | None
     customer_id: str | None
 
-    _booking_completed: bool
-
-    # Handoff hints (from router / greeting mode)
-    opening_booking_request: str | None  # original user message for disambiguation
+    # ── Handoff hints from router / greeting mode ───────────────────────
+    opening_booking_request: str | None
     service_audience_hint: str | None
-    preferred_stylist_name: str | None  # from router handoff hints
+    preferred_stylist_name: str | None
     preferred_date_hint: str | None
 
-    # Flow control
-    add_more_asked: bool  # True after "¿algo más?" has been answered
-    _disambiguation_questions_shown: bool  # True after <required_questions> injected once
-
-    # Extra
+    # ── Flow control / UX flags ─────────────────────────────────────────
+    add_more_asked: bool
     notes: str | None
-    notes_asked: bool  # True after the notes question has been presented to the user
+    notes_asked: bool
+    _booking_completed: bool
+    _confirmation_shown: bool
+    _disambiguation_questions_shown: bool
+    _suggested_customer_name: str | None
 
 
-def replace_booking_context(
-    current: dict[str, Any] | None, update: dict[str, Any] | None
-) -> dict[str, Any]:
+# ============================================================================
+# replace_dict — Clean full-replace reducer for dict-shaped state
+# ============================================================================
+
+
+def replace_dict(current: dict | None, update: dict | None) -> dict:
     """
-    Full-replace reducer for booking_context.
-
-    Unlike merge_dicts, this reducer REPLACES the entire booking_context on
-    every update. This ensures deleted keys (e.g. offered_slots after a slot
-    is selected) actually disappear from state instead of persisting as zombies.
+    Full-replace reducer for dict-shaped state fields.
 
     Semantics:
-    - update is not None (including empty dict {}) → return dict(update) [full replace]
-    - update is None → return current or {} [no-op / keep current]
+    - ``update is None``  → keep ``current`` unchanged (or ``{}`` if ``current`` is ``None``).
+    - ``update is not None`` (including ``{}``) → return a fresh copy of ``update``.
 
-    Note: empty dict {} is a valid reset — it clears all booking data.
-    Previous code used `if update:` which treated {} as falsy,
-    silently preventing booking context resets between bookings.
+    This reducer is intentionally simple. It does not merge keys and it does
+    not honor the legacy ``__reset__`` sentinel — callers get clean "last
+    write wins" semantics across the whole dict, which is exactly what
+    ``booking_context`` needs to avoid stale-key zombies.
 
     Args:
-        current: The previous BookingContext value from the checkpoint
-        update: The new BookingContext value returned by a node
+        current: Previous value from the checkpoint (may be ``None``).
+        update: New value returned by a node (``None`` means "no-op").
 
     Returns:
-        The resolved BookingContext dict
+        The resolved dict. A shallow ``dict(update)`` copy is made when an
+        update is provided so that mutating the result cannot leak back into
+        the caller.
     """
     if update is not None:
         return dict(update)
-    return current or {}
+    return dict(current) if current else {}
+
+
+# Backwards-compat alias: a number of tests and modules still import
+# ``replace_booking_context`` from this module. They all expect the exact
+# full-replace semantics that ``replace_dict`` now provides.
+replace_booking_context = replace_dict
 
 
 # ============================================================================
-# Type alias for Any (needed by reducer functions)
-# ============================================================================
-
-
-# ============================================================================
-# merge_dicts — Custom reducer for mode_context with __reset__ sentinel support
+# Legacy reducers — kept for backwards compatibility (scheduled for M8 cleanup)
 # ============================================================================
 
 
 def preserve_if_none(current: Any, update: Any) -> Any:
     """
-    Reducer that keeps the current value if update is None.
+    Reducer that keeps ``current`` when ``update`` is ``None``.
 
-    Used for fields like customer_name and customer_id that should not be
-    overwritten with None once set (prevents accidental resets).
-
-    Args:
-        current: Current value in state
-        update: New value from node return dict
-
-    Returns:
-        update if update is not None, else current
+    Used for fields that should not be overwritten with ``None`` once set
+    (for example, ``customer_name`` and ``customer_id``).
     """
     if update is None:
         return current
@@ -135,16 +146,10 @@ def preserve_if_none(current: Any, update: Any) -> Any:
 
 def append_unique_list(current: list | None, update: list | None) -> list:
     """
-    Reducer that appends unique items from update to current list.
+    Append items from ``update`` to ``current`` while suppressing consecutive
+    duplicates.
 
-    Used for mode_history to avoid duplicate consecutive entries.
-
-    Args:
-        current: Current list (or None)
-        update: New items to add (or None)
-
-    Returns:
-        Combined list with no consecutive duplicates
+    Used for ``mode_history`` to avoid noisy adjacent repeats of the same mode.
     """
     current = current or []
     update = update or []
@@ -157,28 +162,17 @@ def append_unique_list(current: list | None, update: list | None) -> list:
 
 def merge_dicts(current: dict | None, update: dict | None) -> dict:
     """
-    Merge two dicts, with __reset__ sentinel support.
+    Shallow-merge two dicts with ``__reset__`` sentinel support.
 
-    If update contains {"__reset__": True, ...rest}, returns ONLY rest,
-    ignoring current entirely. This clears stale booking data on mode transitions.
+    If ``update`` is ``{"__reset__": True, ...rest}`` the reducer returns only
+    the ``rest`` keys, dropping everything previously in ``current``. Otherwise
+    it performs ``{**current, **update}``.
 
-    Otherwise performs standard shallow merge (update wins on conflict).
-    If either argument is None, it is treated as an empty dict.
-
-    Args:
-        current: Current dict value in state (or None)
-        update: New dict to merge in (or None)
-
-    Returns:
-        Merged dict (or reset dict if __reset__ sentinel present)
-
-    Examples:
-        >>> merge_dicts({"a": 1}, {"b": 2})
-        {"a": 1, "b": 2}
-        >>> merge_dicts({"a": 1, "step": "old"}, {"__reset__": True, "step": "new"})
-        {"step": "new"}
-        >>> merge_dicts(None, None)
-        {}
+    This reducer is DEPRECATED and will be removed in Milestone 8 once every
+    caller (``mode_context``, ``draft_contexts``, and the router's
+    ``transition_mode`` helper) is migrated to ``replace_dict``. It is kept
+    here so the existing router, modes, and regression tests continue to work
+    unchanged during the create_agent migration.
     """
     current = current or {}
     update = update or {}
@@ -198,49 +192,35 @@ def transition_mode(
     context_update: dict | None = None,
 ) -> dict:
     """
-    Build state update dict for transitioning to a new mode.
+    Build a partial state update for transitioning to ``new_mode``.
 
-    Clears mode_context (via __reset__ sentinel) to prevent stale booking data
-    from leaking across mode boundaries. Appends the old mode to mode_history.
-    Saves old mode_context as a draft in draft_contexts (keyed by old mode name).
+    Uses the legacy ``__reset__`` sentinel on ``mode_context`` so that the
+    ``merge_dicts`` reducer clears stale routing metadata from the previous
+    mode. When ``mode_context`` is migrated to ``replace_dict`` in Milestone 8
+    this helper can simply return ``context_update`` (or ``{}``) without a
+    sentinel — the callers will not need to change.
 
-    Args:
-        state: Current conversation state
-        new_mode: Target mode name (GREETING/BOOKING/GENERAL/ESCALATION)
-        context_update: Optional additional keys to include in the new mode_context
-                        alongside the __reset__ sentinel.
+    Returns a partial ``ConversationState`` dict containing:
 
-    Returns:
-        Partial state dict with:
-        - current_mode: new_mode
-        - previous_mode: old current_mode (for back-tracking)
-        - mode_context: {"__reset__": True, ...context_update}
-        - mode_history: list containing the OLD mode (appended)
-        - draft_contexts: old mode_context saved under old mode key (if non-empty
-                          and mode actually changed)
-        - updated_at: ISO 8601 timestamp of transition
-
-    Example:
-        >>> update = transition_mode(state, "GENERAL")
-        >>> # update["mode_context"] will contain {"__reset__": True}
-        >>> # Which merge_dicts will use to reset stale booking data
-        >>> update = transition_mode(state, "BOOKING", context_update={"intent": "book"})
-        >>> # update["mode_context"] == {"__reset__": True, "intent": "book"}
+    - ``current_mode``  → ``new_mode``
+    - ``previous_mode`` → the previous ``current_mode``
+    - ``mode_context``  → ``{"__reset__": True, ...context_update}``
+    - ``mode_history``  → list containing the outgoing mode (appended)
+    - ``draft_contexts``→ outgoing ``mode_context`` saved under its mode key
+      (only when the mode actually changed and the previous context was non-empty)
+    - ``updated_at``    → ISO 8601 timestamp (Europe/Madrid)
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     old_mode = state.get("current_mode") or "GREETING"
     history = list(state.get("mode_history", []))
-    # Append the OLD mode to history (history tracks from where we came)
     history.append(old_mode)
 
-    # Build new mode_context with __reset__ sentinel + any new data
     new_mode_context: dict = {"__reset__": True}
     if context_update:
         new_mode_context.update(context_update)
 
-    # Save old mode_context as draft (only if mode changed and context is non-empty)
     old_mode_context = state.get("mode_context") or {}
     existing_drafts = dict(state.get("draft_contexts") or {})
     if old_mode != new_mode and old_mode_context:
@@ -258,205 +238,88 @@ def transition_mode(
     }
 
 
+# ============================================================================
+# ConversationState — Top-level state schema
+# ============================================================================
+
+
 class ConversationState(TypedDict, total=False):
     """
-    State schema for v3.2 architecture with granular state detection.
+    Top-level state schema for the v6.x mode-based conversation graph.
 
-    This TypedDict defines conversation context plus booking state flags for
-    granular prompt loading. All fields are optional (total=False) to allow
-    partial state updates.
-
-    Core Principle: GPT-5.4-mini + tools handle all logic. State stores:
-    - Conversation history (messages)
-    - Booking progress flags (for granular prompt loading)
-    - Metadata for checkpointing
-    - Escalation state
-
-    v3.2 Enhancement: Added service_selected, slot_selected flags to enable
-    7-state detection (GENERAL, SERVICE_SELECTION, AVAILABILITY_CHECK,
-    CUSTOMER_DATA, BOOKING_CONFIRMATION, BOOKING_EXECUTION, POST_BOOKING)
-    for focused prompt loading.
-
-    Fields (31 total):
-        # Core Metadata (5 fields)
-        conversation_id: LangGraph thread_id for checkpointing
-        customer_phone: E.164 phone (e.g., +34612345678)
-        messages: Recent conversation history (FIFO windowing)
-            Format: [{"role": "user"|"assistant", "content": str, "timestamp": str}]
-            Use add_message() helper to ensure correct format
-        metadata: Flexible dict for custom data
-        user_message: Incoming message to process
-
-        # Message Management (2 fields)
-        conversation_summary: Summary for context window management
-        total_message_count: Total messages (including summarized)
-
-        # Escalation Tracking (3 fields)
-        escalation_triggered: Whether escalated to human
-        escalation_reason: Why escalated (e.g., "medical_consultation")
-        error_count: Consecutive errors (for auto-escalation)
-
-        # Tool Execution Tracking - v3.2 Enhanced (5 fields)
-        customer_data_collected: True after manage_customer returns customer_id
-        service_selected: List of service names selected (e.g., ["CORTE LARGO", "TINTE COMPLETO"])
-        slot_selected: Selected slot dict {stylist_id, start_time, duration}
-        booking_confirmed: True after user confirms booking summary
-        appointment_created: True after book() successfully creates appointment
-
-        # Node Tracking (1 field)
-        last_node: Last executed node (for debugging)
-
-        # Timestamps (2 fields)
-        created_at: Conversation start (Europe/Madrid)
-        updated_at: Last modification (Europe/Madrid)
-
-        # First Interaction Detection (4 fields) - v3.3 customer greeting, v6.2 deferred customer creation
-        is_first_interaction: True if customer's first message ever (messages empty)
-        customer_first_name: Current first_name from database Customer record
-        pending_whatsapp_name: v6.2 WhatsApp display name for pass-through (not used for creation)
-        ai_disclosure_sent: True after the first-turn AI disclosure has been delivered
-
-        # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
-        cancellation_in_progress: True when in cancellation flow
-        pending_cancellation_id: UUID string of appointment selected for cancellation
-        cancellation_appointments: List of appointment dicts shown for selection
-
-        # Pending Decline State (2 fields) - v3.5 double confirmation for cancellation
-        pending_decline_appointment_id: UUID of appointment awaiting decline confirmation
-        pending_decline_initiated_at: ISO 8601 timestamp when decline was initiated
-
-        # Deprecated Fields (2 fields - kept for backward compatibility, will be removed)
-        customer_id: DEPRECATED - tools handle customer identification internally
-        customer_name: DEPRECATED - tools handle customer name internally
+    All fields are optional (``total=False``) to allow partial state updates.
+    Custom reducers are attached via ``Annotated[T, reducer_fn]``.
     """
 
-    # ============================================================================
-    # Core Metadata (5 fields)
-    # ============================================================================
+    # ── Core metadata ────────────────────────────────────────────────────
     conversation_id: str
     customer_phone: str
     messages: Annotated[list[dict[str, Any]], operator_add]
     metadata: dict[str, Any]
     user_message: str | None
 
-    # ============================================================================
-    # Message Management (2 fields)
-    # ============================================================================
+    # ── Message management ──────────────────────────────────────────────
     conversation_summary: str | None
     total_message_count: int
 
-    # ============================================================================
-    # Escalation Tracking (3 fields)
-    # ============================================================================
+    # ── Escalation tracking ─────────────────────────────────────────────
     escalation_triggered: bool
     escalation_reason: str | None
     error_count: int
 
-    # ============================================================================
-    # Tool Execution Tracking (5 fields) - v3.2 enhanced state detection
-    # ============================================================================
-    customer_data_collected: bool  # True after manage_customer returns customer_id
-    service_selected: (
-        list[str] | None
-    )  # List of service names selected by user (supports multi-service booking)
-    slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
-    booking_confirmed: bool  # True after user confirms booking summary
-    appointment_created: bool  # True after book() successfully creates appointment
+    # ── Tool-execution / booking-flag tracking ──────────────────────────
+    # NOTE: ``customer_data_collected`` was previously declared twice in this
+    # TypedDict. Python keeps only the last annotation at runtime so the
+    # duplicate had no effect, but it was confusing. Consolidated into a
+    # single block here.
+    customer_data_collected: bool
+    service_selected: list[str] | None
+    slot_selected: dict[str, Any] | None
+    booking_confirmed: bool
+    appointment_created: bool
 
-    # ============================================================================
-    # FSM State - ADR-011: Single Source of Truth (1 field)
-    # ============================================================================
-    fsm_state: dict[str, Any] | None  # DEPRECATED: use booking substep context instead
+    # ── Legacy FSM (deprecated — removed in M8) ─────────────────────────
+    fsm_state: dict[str, Any] | None
 
-    # ============================================================================
-    # Node Tracking (1 field)
-    # ============================================================================
+    # ── Node tracking / timestamps ──────────────────────────────────────
     last_node: str | None
-
-    # ============================================================================
-    # Timestamps (2 fields) — stored as ISO 8601 strings
-    # ============================================================================
     created_at: str
     updated_at: str
 
-    # ============================================================================
-    # First Interaction Detection (4 fields) - v3.3 customer greeting, v6.2 deferred customer creation
-    # ============================================================================
-    is_first_interaction: bool  # True if this is the customer's first message ever
-    ai_disclosure_sent: bool  # True after the first-turn AI disclosure has been delivered
-    customer_first_name: str | None  # Current customer first_name from database
-    pending_whatsapp_name: (
-        str | None
-    )  # v6.2: WhatsApp display name for pass-through to booking flow
+    # ── First interaction detection ─────────────────────────────────────
+    is_first_interaction: bool
+    ai_disclosure_sent: bool
+    customer_first_name: str | None
+    pending_whatsapp_name: str | None
 
-    # ============================================================================
-    # Cancellation Flow State (3 fields) - v3.4 customer-initiated cancellation
-    # ============================================================================
-    cancellation_in_progress: bool  # True when in cancellation flow
-    pending_cancellation_id: str | None  # UUID of appointment selected for cancellation
-    cancellation_appointments: list[dict[str, Any]] | None  # Appointments shown for selection
+    # ── Cancellation / decline flow ─────────────────────────────────────
+    cancellation_in_progress: bool
+    pending_cancellation_id: str | None
+    cancellation_appointments: list[dict[str, Any]] | None
+    pending_decline_appointment_id: str | None
+    pending_decline_initiated_at: str | None
+    pending_confirmation_appointment_id: str | None
 
-    # ============================================================================
-    # Booking State Flags (5 fields) - created by book tool result
-    # ============================================================================
-    customer_data_collected: bool  # True after manage_customer returns customer_id
-    service_selected: (
-        list[str] | None
-    )  # List of service names selected by user (supports multi-service booking)
-    slot_selected: dict[str, Any] | None  # Selected slot: {stylist_id, start_time, duration}
-    booking_confirmed: bool  # True after user confirms booking summary
-    appointment_created: bool  # True after book() successfully creates appointment
+    # ── Mode-based architecture ─────────────────────────────────────────
+    current_mode: str
+    previous_mode: str | None
+    mode_context: Annotated[dict[str, Any], merge_dicts]
+    mode_history: Annotated[list[str], append_unique_list]
+    draft_contexts: Annotated[dict[str, Any], merge_dicts]
 
-    # ============================================================================
-    # Node Tracking (1 field)
-    # ============================================================================
-    pending_decline_appointment_id: str | None  # UUID of appointment pending decline confirmation
-    pending_decline_initiated_at: str | None  # ISO 8601 timestamp when decline was initiated
-    pending_confirmation_appointment_id: (
-        str | None
-    )  # UUID string of appointment awaiting confirm/decline reply
+    # ── Typed booking context (replace-dict reducer) ────────────────────
+    booking_context: Annotated[BookingContext | None, replace_dict]
 
-    # ============================================================================
-    # v6.0 Mode-Based Architecture Fields
-    # mode_context may carry GREETING subflow keys such as greeting_step,
-    # suggested_name, and the router-owned last_intent metadata.
-    # ============================================================================
-    current_mode: str  # Active mode: GREETING / BOOKING / GENERAL / ESCALATION
-    previous_mode: str | None  # Previous mode (for back-tracking and debugging)
-    mode_context: Annotated[
-        dict[str, Any], merge_dicts
-    ]  # Mode-specific transient data (booking_step, last_intent, etc.)
-    mode_history: Annotated[
-        list[str], append_unique_list
-    ]  # Ordered list of mode transitions (for debugging)
-    draft_contexts: Annotated[
-        dict[str, Any], merge_dicts
-    ]  # Saved mode contexts keyed by mode name (for resumption)
+    # ── Cross-conversation customer memory (Store API) ──────────────────
+    customer_memories: dict[str, Any] | None
 
-    # ============================================================================
-    # v6.1 Booking Context — typed, durable booking state (Phase 1 + Phase 2)
-    # Uses replace_booking_context reducer: full-replace, no stale key zombies.
-    # All booking keys (last_services, last_stylist, offered_slots, etc.) live
-    # here instead of mode_context. mode_context retains only routing metadata.
-    # ============================================================================
-    booking_context: Annotated[BookingContext | None, replace_booking_context]
+    # ── Resilience layer ────────────────────────────────────────────────
+    retry_state: dict[str, Any] | None
+    fallback_metrics: dict[str, Any] | None
 
-    # ============================================================================
-    # v6.3 Cross-Conversation Customer Memory (Store API)
-    # ============================================================================
-    customer_memories: dict[str, Any] | None  # Preferences from Store/PG, loaded in preprocess
-
-    # ============================================================================
-    # Resilience Layer Fields (v5.1)
-    # ============================================================================
-    retry_state: dict[str, Any] | None  # Retry state for resilience layer
-    fallback_metrics: dict[str, Any] | None  # Metrics from fallback chain
-
-    # ============================================================================
-    # Deprecated Fields (kept for backward compatibility - will be removed)
-    # ============================================================================
-    customer_id: UUID | None  # DEPRECATED: Tools manage customer_id internally
-    customer_name: str | None  # DEPRECATED: Tools manage customer_name internally
+    # ── Deprecated (kept for backwards compatibility) ───────────────────
+    customer_id: UUID | None
+    customer_name: str | None
 
 
 # ============================================================================
@@ -473,23 +336,13 @@ def create_initial_state(
     """
     Create a minimal valid initial ConversationState dict.
 
-    Used by tests and agent/main.py to bootstrap a new conversation.
-    All optional fields default to safe/empty values.
-
-    Args:
-        conversation_id: LangGraph thread_id (unique per conversation)
-        customer_phone: E.164 phone number (e.g., "+34612345678")
-        customer_name: Customer first name if already known (returning customer)
-        customer_id: Customer DB UUID if already known (returning customer)
-
-    Returns:
-        Dict compatible with ConversationState TypedDict
+    Used by tests and ``agent/main.py`` to bootstrap a new conversation. All
+    optional fields default to safe/empty values.
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
-    now = datetime.now(ZoneInfo("Europe/Madrid"))
-    now_str = now.isoformat()
+    now_str = datetime.now(ZoneInfo("Europe/Madrid")).isoformat()
 
     return {
         # Core metadata
