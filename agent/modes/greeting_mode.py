@@ -1,5 +1,5 @@
 """
-Greeting Mode — v6.0 Mode-Based Architecture (scope-realignment refactor).
+Greeting Mode — v6.0 Mode-Based Architecture (M3 create_agent migration).
 
 Pure welcome + menu presenter. This mode NEVER asks for the customer's name,
 performs no customer lookup or creation, and never uses any name in responses.
@@ -7,41 +7,56 @@ performs no customer lookup or creation, and never uses any name in responses.
 Flow:
 1. Extract any booking-content hints from the greeting message.
 2. Determine target mode: BOOKING if booking content detected, else GENERAL.
-3. Render a static (or layered) welcome message.
+3. Render a welcome message (LLM via ``create_agent`` + fallback).
 4. Transition to the target mode.
 
-Target mode after greeting is determined by `last_intent` in mode_context:
-- "book" → BOOKING (user greeted AND wants to book)
-- "ask_info" → GENERAL (user greeted AND has a question)
-- anything else → GENERAL (default)
+Target mode after greeting is determined by ``last_intent`` in mode_context:
+- ``"book"`` / ``"reschedule"`` → BOOKING
+- otherwise → GENERAL (default)
+- Deterministic override: if the user message contains booking-intent tokens
+  (F-9), BOOKING wins regardless of the intent classifier output.
 
 NO name in any response. NO DB writes. NO customer creation.
+
+M3 changes: the legacy ``BaseModeNode`` subclass is gone. The public surface
+is now ``build_greeting_node(llm_factory)`` which returns an async LangGraph
+node function, plus the original module-level helpers (still imported by
+``conversation_flow.py`` and the test suite).
 """
 
-import logging
-import unicodedata
+from __future__ import annotations
 
-from agent.modes.base import BaseModeNode
+import logging
+import re
+import unicodedata
+from typing import Any, Callable
+
+from langchain.agents import create_agent
+from langchain_core.messages import AIMessage, SystemMessage
+
+from agent.middleware.token_tracking import TokenTrackingMiddleware
+from agent.prompts.loader import build_layered_messages
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
 from shared.audience_maps import AUDIENCE_HINT_MAP
+from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+
+# ── Constants ───────────────────────────────────────────────────────────────
+
 # Pre-defined greeting messages (ALL name-free)
-# FIX: Removed FIRST_TURN_INTRO from _WELCOME_NEW to avoid duplication.
-# FIRST_TURN_INTRO is prepended automatically by BaseModeNode._maybe_prepend_intro() (base.py:257)
 _WELCOME_NEW = "¿En qué te puedo ayudar?"
 _WELCOME_RETURNING = "¡Hola de nuevo! 😊 ¿En qué te puedo ayudar?"
 
-# ── ADR-4: Audience hint tokens — imported from shared.audience_maps ─────────
+# EU AI Act first-turn disclosure enforced in code.
+FIRST_TURN_INTRO = "¡Hola! 🌸 Soy Maite, la asistenta virtual con IA de Atrévete Peluquería."
 
-# Tokens that signal booking intent in the greeting message.
-# F-9: These tokens are used both for booking handoff context AND for
-# deterministic BOOKING transition override in _resolve_target_mode().
+# Tokens that signal booking intent in the greeting message (F-9).
 _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset(
     {
-        # People / gender / audience (from AUDIENCE_HINT_MAP)
+        # People / gender / audience
         "mujer",
         "hombre",
         "nino",
@@ -57,7 +72,7 @@ _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset(
         "cita",
         "quiero",
         "necesito",
-        "queria",  # "quería" normalized → no accent
+        "queria",
         # Services
         "corte",
         "tinte",
@@ -71,6 +86,9 @@ _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset(
 )
 
 
+# ── Pure helpers (kept as module-level functions so tests import them) ─────
+
+
 def _normalize_text(text: str | None) -> str:
     """Normalize text for comparison: strip, lowercase, remove accents."""
     if not text:
@@ -81,19 +99,7 @@ def _normalize_text(text: str | None) -> str:
 
 
 def _has_booking_content(message: str | None) -> bool:
-    """
-    Return True when the message contains tokens that signal a service request.
-
-    Used to detect when a greeting message also carries booking intent
-    (e.g. "Hola, quiero un corte de dama") so the booking context can be
-    passed to the next mode even when the router classified it as "greet".
-
-    Args:
-        message: Raw user message text (or None).
-
-    Returns:
-        True if any booking-intent token is found in the normalized text.
-    """
+    """Return True when the message contains tokens that signal a service request."""
     if not message:
         return False
     normalized = _normalize_text(message)
@@ -101,19 +107,7 @@ def _has_booking_content(message: str | None) -> bool:
 
 
 def _build_booking_handoff_context(message: str | None) -> dict:
-    """
-    Build a booking handoff context dict from a greeting message.
-
-    Extracts:
-    - opening_booking_request: the original message text (for intent carry-over)
-    - service_audience_hint: audience classification based on keywords
-
-    Args:
-        message: Raw user message text (or None).
-
-    Returns:
-        Dict with extracted booking context keys, or empty dict if no content.
-    """
+    """Build a booking handoff context dict from a greeting message."""
     if not message:
         return {}
     if not _has_booking_content(message):
@@ -131,226 +125,292 @@ def _build_booking_handoff_context(message: str | None) -> dict:
 
 
 def _resolve_target_mode(mode_context: dict, has_booking_content: bool = False) -> str:
-    """
-    Determine which mode to transition to after the greeting.
-
-    ADR-4 / F-9: Widened gate — routes to BOOKING when:
-    - last_intent == "book" or "reschedule" (LLM intent router result), OR
-    - has_booking_content is True (deterministic keyword detection override)
-
-    F-9 rationale: when the user's first message contains clear booking content
-    (service names, booking verbs, audience tokens), we force BOOKING regardless
-    of the intent router's classification. This reduces LLM-compliance dependency
-    on the critical first-turn routing decision.
-
-    Args:
-        mode_context: Current mode context dict from ConversationState.
-        has_booking_content: True when booking-intent tokens were detected in
-            the user's greeting message by _has_booking_content().
-
-    Returns:
-        "BOOKING" if last_intent == "book"/"reschedule" OR has_booking_content,
-        "GENERAL" otherwise (including greet, ask_info, ambiguous, etc.)
-    """
+    """Determine which mode to transition to after the greeting (ADR-4 / F-9)."""
     last_intent = (mode_context or {}).get("last_intent", "greet")
     if last_intent in ("book", "reschedule"):
         return "BOOKING"
-    # F-9: Deterministic override — booking content detected in first message
     if has_booking_content:
         return "BOOKING"
     return "GENERAL"
 
 
-class GreetingMode(BaseModeNode):
+# ── Intro prepend helper (ported from BaseModeNode._maybe_prepend_intro) ────
+
+_GREETING_OPENER_PATTERN = re.compile(
+    r"^[\s\U0001F300-\U0001FAFF]*"
+    r"[¡!]?"
+    r"(?:hola|buenas?(?:\s+(?:d[ií]as?|tardes?|noches?))?)"
+    r"[^.!?]*"
+    r"[.!?]?\s*"
+    r"[\U0001F300-\U0001FAFF\s]*",
+    re.IGNORECASE,
+)
+_SELF_INTRO_PATTERN = re.compile(
+    r"^(?:soy\s+maite|maite[,.]?\s+(?:tu|la|su)\s+asistent)[^.!?]*[.!?]?\s*",
+    re.IGNORECASE,
+)
+_MAX_STRIP_ITERATIONS = 5
+
+
+def _maybe_prepend_intro(
+    response_text: str,
+    state: ConversationState,
+) -> tuple[str, bool]:
+    """Prepend the first-turn disclosure unless it was already handled.
+
+    Ported verbatim from ``BaseModeNode._maybe_prepend_intro`` so GreetingMode
+    preserves the canonical EU AI Act first-turn disclosure behaviour.
     """
-    Mode node for first-contact greetings.
+    if state.get("ai_disclosure_sent", False):
+        return response_text, False
 
-    Responsibilities:
-    - Send a warm welcome on genuine greeting turns (name-free)
-    - Detect booking-intent content in the greeting and carry it over
-    - Transition to the appropriate mode based on detected intent (BOOKING or GENERAL)
+    for msg in state.get("messages", []):
+        if msg.get("role") == "assistant" and "soy maite" in (msg.get("content") or "").lower():
+            return response_text, True
 
-    NO customer creation. NO name collection. NO DB writes.
-    Customer creation happens atomically inside book() when the user confirms.
+    any_stripped = False
+    for _ in range(_MAX_STRIP_ITERATIONS):
+        prev = response_text
+        response_text = _GREETING_OPENER_PATTERN.sub("", response_text).lstrip()
+        response_text = _SELF_INTRO_PATTERN.sub("", response_text).lstrip()
+        if response_text == prev:
+            break
+        any_stripped = True
+    if any_stripped:
+        logger.debug("_maybe_prepend_intro: stripped LLM self-intro from first-turn response")
+
+    if response_text.startswith(FIRST_TURN_INTRO[:20]):
+        return response_text, True
+    if FIRST_TURN_INTRO in response_text:
+        return response_text, True
+
+    return f"{FIRST_TURN_INTRO} {response_text}", True
+
+
+# ── create_agent integration ────────────────────────────────────────────────
+
+
+def _use_optimized_prompts() -> bool:
+    """Return True when the layered-prompt assembly is enabled.
+
+    When False (or when settings can't be loaded), we short-circuit and use
+    the canned welcome string instead of calling the LLM — matches the
+    legacy BaseModeNode behaviour.
     """
+    try:
+        return bool(get_settings().USE_OPTIMIZED_PROMPTS)
+    except Exception:
+        return True
 
-    @property
-    def mode_name(self) -> str:
-        return "GREETING"
 
-    def get_tools(self):
-        return []
+def _extract_final_text(result: Any) -> str:
+    """Extract the final assistant message content from an agent result dict."""
+    if not isinstance(result, dict):
+        return ""
+    messages = result.get("messages") or []
+    # The agent's final response is the last AIMessage in the stream.
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            content = msg.content
+            if isinstance(content, str):
+                return content.strip()
+            if isinstance(content, list):
+                parts: list[str] = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        parts.append(block.get("text", ""))
+                    elif isinstance(block, str):
+                        parts.append(block)
+                return "\n".join(parts).strip()
+    return ""
 
-    @staticmethod
-    def _extract_response_text(result: object | None) -> str:
-        if result is None:
-            return ""
-        content = getattr(result, "content", result)
-        return str(content).strip()
 
-    async def handle(self, state: ConversationState, intent: object) -> dict:
-        """
-        Handle the greeting flow.
+async def _generate_welcome_response(
+    llm: Any,
+    state: ConversationState,
+    mode_context: dict,
+    fallback: str,
+) -> str:
+    """Run the greeting ``create_agent`` once and return the final assistant text.
 
-        Two branches, both name-free:
-        1. Returning customer (customer_name exists) → warm greeting → target mode
-        2. New customer → warm greeting → target mode (NO DB writes)
+    GREETING has NO tools and NO tool_choice — the agent is effectively a
+    single-shot LLM call wrapped in ``TokenTrackingMiddleware``. On any
+    failure we fall back to the canned welcome string.
+    """
+    if llm is None or not _use_optimized_prompts():
+        return fallback
 
-        ADR-4: Booking content in greeting message is detected and carried over to the
-               transition mode_context via _build_booking_handoff_context().
-
-        NEVER mentions the customer's name in any response.
-        NEVER creates a customer record — that happens inside book().
-
-        Args:
-            state: Current conversation state
-            intent: IntentResult (not used in GREETING — simple sequential flow)
-
-        Returns:
-            Partial state update dict
-        """
-        conversation_id = state.get("conversation_id", "unknown")
-        customer_name = state.get("customer_name")
-        mode_context = state.get("mode_context") or {}
-        is_first = state.get("is_first_interaction", True)
-
-        self.logger.info(
-            "GreetingMode.handle | conversation=%s | customer_name=%s | is_first=%s",
-            conversation_id,
-            customer_name,
-            is_first,
-        )
-
-        # ADR-4: Extract booking handoff context from the user's greeting message
-        # (e.g. "Hola, quiero turno para un caballero" → service_audience_hint = adult_male)
-        last_user_message = ""
-        for msg in reversed(state.get("messages", [])):
-            if msg.get("role") == "user":
-                last_user_message = msg.get("content", "")
-                break
-
-        booking_handoff = _build_booking_handoff_context(last_user_message)
-        has_booking_content = bool(booking_handoff)
-
-        # F-9: Pass has_booking_content so booking content forces BOOKING transition
-        target_mode = _resolve_target_mode(mode_context, has_booking_content=has_booking_content)
-
-        # ── Branch 1: Returning customer (name already known) ────────────
-        if customer_name:
-            self.logger.info(
-                "GreetingMode: returning customer (name=%s), transitioning to %s",
-                customer_name,
-                target_mode,
-            )
-            fallback_response = _WELCOME_RETURNING
-            response = await self._render_layered_response(
-                state,
-                mode_context,
-                fallback_response=fallback_response,
-                step_name="returning_customer",
-                include_history=True,
-            )
-            final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
-            transition_update = transition_mode(state, target_mode)
-
-            # Write booking handoff data directly to booking_context (single source of truth)
-            if has_booking_content and target_mode == "BOOKING":
-                booking_ctx_update: dict = {}
-                if booking_handoff:
-                    if booking_handoff.get("opening_booking_request"):
-                        booking_ctx_update["opening_booking_request"] = booking_handoff[
-                            "opening_booking_request"
-                        ]
-                    if booking_handoff.get("service_audience_hint"):
-                        booking_ctx_update["service_audience_hint"] = booking_handoff[
-                            "service_audience_hint"
-                        ]
-                hints = mode_context.get("booking_hints") or {}
-                if hints.get("preferred_stylist_name"):
-                    booking_ctx_update["preferred_stylist_name"] = hints["preferred_stylist_name"]
-                if hints.get("preferred_date_hint"):
-                    booking_ctx_update["preferred_date_hint"] = hints["preferred_date_hint"]
-                if booking_ctx_update:
-                    transition_update["booking_context"] = booking_ctx_update
-
-            updates = {
-                **transition_update,
-                **add_message(state, "assistant", final_response),
-                "user_message": None,
-            }
-            if disclosure_sent:
-                updates["ai_disclosure_sent"] = True
-            return updates
-
-        # ── Branch 2: New customer ───────────────────────────────────────
-        # Customer creation happens inside book() tool. GREETING does nothing
-        # to the DB — just render a welcome and transition to target mode.
-        self.logger.info(
-            "GreetingMode: new customer | target_mode=%s",
-            target_mode,
-        )
-
-        fallback_response = _WELCOME_NEW
-        response = await self._render_layered_response(
+    try:
+        messages, _ = await build_layered_messages(
             state,
             mode_context,
-            fallback_response=fallback_response,
-            step_name="welcome",
             include_history=True,
-        )
-        final_response, disclosure_sent = self._maybe_prepend_intro(response, state)
-        transition_update = transition_mode(state, target_mode)
-
-        # Write booking handoff data directly to booking_context (single source of truth)
-        if has_booking_content and target_mode == "BOOKING":
-            booking_ctx_update: dict = {}
-            if booking_handoff:
-                if booking_handoff.get("opening_booking_request"):
-                    booking_ctx_update["opening_booking_request"] = booking_handoff[
-                        "opening_booking_request"
-                    ]
-                if booking_handoff.get("service_audience_hint"):
-                    booking_ctx_update["service_audience_hint"] = booking_handoff[
-                        "service_audience_hint"
-                    ]
-            hints = mode_context.get("booking_hints") or {}
-            if hints.get("preferred_stylist_name"):
-                booking_ctx_update["preferred_stylist_name"] = hints["preferred_stylist_name"]
-            if hints.get("preferred_date_hint"):
-                booking_ctx_update["preferred_date_hint"] = hints["preferred_date_hint"]
-            if booking_ctx_update:
-                transition_update["booking_context"] = booking_ctx_update
-
-        updates = {
-            **transition_update,
-            **add_message(state, "assistant", final_response),
-            "user_message": None,
-        }
-        if disclosure_sent:
-            updates["ai_disclosure_sent"] = True
-        return updates
-
-    # ── Private helpers ───────────────────────────────────────────────────────
-
-    async def _render_layered_response(
-        self,
-        state: ConversationState,
-        mode_context: dict,
-        *,
-        fallback_response: str,
-        step_name: str,
-        include_history: bool = False,
-    ) -> str:
-        """Render a greeting response via layered prompts, falling back to hardcoded."""
-        if not self._use_optimized_prompts():
-            return fallback_response
-
-        messages = await self._build_layered_messages(
-            state,
-            mode_context,
-            step_name=step_name,
-            include_history=include_history,
+            history_limit=6,
+            mode_name="GREETING",
             include_catalog=False,
         )
-        response_text = self._extract_response_text(await self._call_llm(messages))
-        return response_text if response_text else fallback_response
+    except Exception as exc:
+        logger.warning("GreetingMode: build_layered_messages failed: %s — using fallback", exc)
+        return fallback
+
+    # Pull every SystemMessage into a single system_prompt string. create_agent
+    # accepts ``system_prompt`` + user/tool messages separately, so we collapse
+    # the layered SystemMessages into one block and pass the remaining
+    # Human/AI messages as the agent input.
+    system_parts: list[str] = []
+    transcript: list = []
+    for msg in messages:
+        if isinstance(msg, SystemMessage):
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            if content:
+                system_parts.append(content)
+        else:
+            transcript.append(msg)
+    system_prompt = "\n\n".join(system_parts)
+
+    try:
+        agent = create_agent(
+            model=llm,
+            tools=[],
+            system_prompt=system_prompt,
+            middleware=[TokenTrackingMiddleware(mode_name="GREETING")],
+        )
+        result = await agent.ainvoke({"messages": transcript})
+    except Exception as exc:
+        logger.warning("GreetingMode: create_agent invocation failed: %s — using fallback", exc)
+        return fallback
+
+    text = _extract_final_text(result)
+    return text or fallback
+
+
+def _build_booking_context_update(
+    booking_handoff: dict,
+    mode_context: dict,
+) -> dict:
+    """Assemble the partial ``booking_context`` update from handoff + hints."""
+    booking_ctx_update: dict = {}
+    if booking_handoff:
+        if booking_handoff.get("opening_booking_request"):
+            booking_ctx_update["opening_booking_request"] = booking_handoff[
+                "opening_booking_request"
+            ]
+        if booking_handoff.get("service_audience_hint"):
+            booking_ctx_update["service_audience_hint"] = booking_handoff[
+                "service_audience_hint"
+            ]
+    hints = mode_context.get("booking_hints") or {}
+    if hints.get("preferred_stylist_name"):
+        booking_ctx_update["preferred_stylist_name"] = hints["preferred_stylist_name"]
+    if hints.get("preferred_date_hint"):
+        booking_ctx_update["preferred_date_hint"] = hints["preferred_date_hint"]
+    return booking_ctx_update
+
+
+async def _handle_greeting(
+    state: ConversationState,
+    llm: Any,
+) -> dict:
+    """Compute the state update for a greeting turn.
+
+    Mirrors the old ``GreetingMode.handle`` contract:
+    - Returning customer (``customer_name`` set) → warm returning greeting.
+    - New customer → neutral welcome, NO DB writes, NO name collection.
+    - Booking content detected → transition to BOOKING + booking_context hints.
+    """
+    conversation_id = state.get("conversation_id", "unknown")
+    customer_name = state.get("customer_name")
+    mode_context = state.get("mode_context") or {}
+    is_first = state.get("is_first_interaction", True)
+
+    logger.info(
+        "GreetingMode.handle | conversation=%s | customer_name=%s | is_first=%s",
+        conversation_id,
+        customer_name,
+        is_first,
+    )
+
+    # Extract booking handoff from the user's greeting message
+    last_user_message = ""
+    for msg in reversed(state.get("messages", [])):
+        if msg.get("role") == "user":
+            last_user_message = msg.get("content", "")
+            break
+
+    booking_handoff = _build_booking_handoff_context(last_user_message)
+    has_booking_content = bool(booking_handoff)
+    target_mode = _resolve_target_mode(mode_context, has_booking_content=has_booking_content)
+
+    fallback = _WELCOME_RETURNING if customer_name else _WELCOME_NEW
+    response = await _generate_welcome_response(llm, state, mode_context, fallback=fallback)
+    final_response, disclosure_sent = _maybe_prepend_intro(response, state)
+
+    transition_update = transition_mode(state, target_mode)
+
+    if has_booking_content and target_mode == "BOOKING":
+        booking_ctx_update = _build_booking_context_update(booking_handoff, mode_context)
+        if booking_ctx_update:
+            transition_update["booking_context"] = booking_ctx_update
+
+    updates: dict = {
+        **transition_update,
+        **add_message(state, "assistant", final_response),
+        "user_message": None,
+    }
+    if disclosure_sent:
+        updates["ai_disclosure_sent"] = True
+
+    if customer_name:
+        logger.info(
+            "GreetingMode: returning customer → %s",
+            target_mode,
+        )
+    else:
+        logger.info(
+            "GreetingMode: new customer → %s",
+            target_mode,
+        )
+    return updates
+
+
+# ── Public factory used by conversation_flow.create_graph ──────────────────
+
+
+def build_greeting_node(
+    llm_factory: Callable[[], Any] | None = None,
+) -> Callable[[ConversationState], Any]:
+    """Return an async LangGraph node function for the GREETING mode.
+
+    Args:
+        llm_factory: Zero-arg callable that returns a ``BaseChatModel``
+            instance. Invoked lazily on every turn so tests can swap the
+            factory per graph build. When ``None`` the node falls back to
+            the canned welcome string (matches legacy behaviour on
+            misconfigured deployments).
+
+    Returns:
+        ``async def greeting_node(state) -> dict`` — LangGraph-compatible
+        node that reads the active intent from ``state["mode_context"]``
+        and returns a partial state update dict. ``last_node`` is set to
+        ``"greeting"`` by the caller in ``conversation_flow.create_graph``.
+    """
+
+    async def greeting_node(state: ConversationState) -> dict:
+        llm = llm_factory() if llm_factory is not None else None
+        return await _handle_greeting(state, llm)
+
+    return greeting_node
+
+
+__all__ = [
+    "FIRST_TURN_INTRO",
+    "_BOOKING_CONTENT_TOKENS",
+    "_WELCOME_NEW",
+    "_WELCOME_RETURNING",
+    "_build_booking_handoff_context",
+    "_has_booking_content",
+    "_maybe_prepend_intro",
+    "_normalize_text",
+    "_resolve_target_mode",
+    "build_greeting_node",
+]

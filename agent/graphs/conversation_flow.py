@@ -957,7 +957,7 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
     Returns:
         Compiled StateGraph
     """
-    from agent.modes.greeting_mode import GreetingMode
+    from agent.modes.greeting_mode import build_greeting_node
     from agent.modes.general_mode import GeneralMode
     from agent.modes.booking_mode import BookingMode
     from agent.modes.escalation_mode import EscalationMode
@@ -967,6 +967,11 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
 
     def _get_llm():
         return _get_llm_client()
+
+    # M3: GREETING runs as a create_agent + TokenTrackingMiddleware factory.
+    # The factory is instantiated once per graph build; the LLM is resolved
+    # lazily on every invocation so tests can patch ``_get_llm_client``.
+    _greeting_node_impl = build_greeting_node(llm_factory=_get_llm)
 
     def mode_dispatcher(state: ConversationState) -> str:
         """Conditional edge: current_mode → node name."""
@@ -981,15 +986,11 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
         return mode_to_node.get(state.get("current_mode") or "GENERAL", "general")
 
     async def greeting_node_fn(state: ConversationState) -> dict[str, Any]:
-        mode_context = state.get("mode_context") or {}
-        intent = IntentResult(
-            intent=mode_context.get("last_intent", "greet"),
-            confidence=mode_context.get("last_intent_confidence", 0.9),
-            raw_input="",
-            mode_hint="GREETING",
-        )
-        mode = GreetingMode(tools=[], llm_client=_get_llm())
-        result = await mode.handle(state=state, intent=intent)
+        # M3: create_agent + TokenTrackingMiddleware (no BaseModeNode).
+        # The mode_context-derived IntentResult that legacy code built here is
+        # no longer needed — the greeting factory reads last_intent directly
+        # from state["mode_context"] inside _resolve_target_mode().
+        result = await _greeting_node_impl(state)
         return {**result, "last_node": "greeting"}
 
     async def general_node_fn(state: ConversationState) -> dict[str, Any]:

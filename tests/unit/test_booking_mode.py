@@ -838,12 +838,15 @@ async def test_router_non_first_interaction_book_routes_to_booking():
 
 
 @pytest.mark.asyncio
-async def test_greeting_mode_forwards_booking_hints_to_booking():
-    """GreetingMode.handle with booking_hints in mode_context → hints forwarded in transition."""
-    from unittest.mock import AsyncMock, patch
-    from agent.modes.greeting_mode import GreetingMode
+async def test_greeting_mode_forwards_booking_hints_to_booking(monkeypatch):
+    """Greeting node with booking_hints in mode_context → hints forwarded in transition."""
+    from unittest.mock import MagicMock
 
-    # Simulate state where router put booking_hints in mode_context
+    from agent.modes import greeting_mode as gm_module
+    from agent.modes.greeting_mode import build_greeting_node
+
+    monkeypatch.setattr(gm_module, "_use_optimized_prompts", lambda: False)
+
     state = {
         "conversation_id": "test-conv",
         "customer_name": None,
@@ -861,18 +864,9 @@ async def test_greeting_mode_forwards_booking_hints_to_booking():
         "booking_context": {},
     }
 
-    node = GreetingMode(tools=[])
+    greeting_node = build_greeting_node(llm_factory=lambda: MagicMock())
+    result = await greeting_node(state)
 
-    # Patch _render_layered_response to avoid LLM call
-    with patch.object(
-        node,
-        "_render_layered_response",
-        new=AsyncMock(return_value="¡Hola! ¿Qué necesitas?"),
-    ):
-        result = await node.handle(state, None)
-
-    # target_mode should be BOOKING (last_intent="book")
-    # booking_context in result should carry preferred_stylist_name (single source of truth)
     booking_ctx = result.get("booking_context") or {}
     assert booking_ctx.get("preferred_stylist_name") == "Marta", (
         f"booking_hints not forwarded to booking_context: {booking_ctx}"
