@@ -446,7 +446,8 @@ class BookingModeNode(BaseModeNode):
                     )
 
             # Step A.2: customer_name extraction from tool args
-            # Reject placeholder names the LLM might hallucinate.
+            # Step A.2: customer_name — prefer mode_context (from update_booking),
+            # fall back to tool args (defense-in-depth).
             _NAME_BLOCKLIST = frozenset({
                 "cliente", "usuario", "desconocido", "n/a", "nombre",
                 "sin nombre", "no proporcionado", "unknown", "user", "customer",
@@ -468,19 +469,10 @@ class BookingModeNode(BaseModeNode):
                             full_name,
                         )
 
-            # Step A.2b: surname guidance — single-word name needs apellido
-            _cname = mode_context.get("customer_name", "")
-            if _cname and " " not in _cname.strip():
-                mode_context.pop("customer_name", None)
-                return ToolCallRejection(
-                    name="book",
-                    error_code="SURNAME_MISSING",
-                    error_message=(
-                        "GUÍA: El nombre necesita incluir el primer apellido para la reserva. "
-                        "SIGUIENTE ACCIÓN: pregunta '¿Me dices también tu primer apellido?'"
-                    ),
-                    recovery_response="¿Me dices también tu primer apellido? 😊",
-                )
+            # Inject customer_first_name/last_name into book() args from mode_context
+            if not tool_args.get("customer_first_name") and mode_context.get("customer_first_name"):
+                tool_args["customer_first_name"] = mode_context["customer_first_name"]
+                tool_args["customer_last_name"] = mode_context.get("customer_last_name")
 
             # Step A.3: capture notes from tool args (LLM passes them after Paso 5)
             notes_arg = tool_args.get("notes")

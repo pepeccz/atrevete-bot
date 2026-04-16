@@ -339,8 +339,8 @@ async def test_gate3_allows_shortcut_without_flag(booking_node: BookingModeNode)
 
 
 @pytest.mark.asyncio
-async def test_surname_missing_single_word(booking_node: BookingModeNode):
-    """book() with single-word name → SURNAME_MISSING guidance."""
+async def test_single_name_accepted_in_book(booking_node: BookingModeNode):
+    """book() accepts single-word name (surname validation moved to update_booking)."""
     booking_node._mode_context = {
         "last_services": ["Cortar"],
         "last_stylist": "Marta",
@@ -350,9 +350,8 @@ async def test_surname_missing_single_word(booking_node: BookingModeNode):
     result = await booking_node._pre_tool_call(
         "book", {"slot_index": 1, "customer_first_name": "María", "customer_last_name": ""}
     )
-    assert isinstance(result, ToolCallRejection)
-    assert result.error_code == "SURNAME_MISSING"
-    assert booking_node._mode_context.get("customer_name") is None
+    # Single-word name passes book() gate — update_booking handles surname enforcement
+    assert booking_node._mode_context.get("customer_name") == "María"
 
 
 @pytest.mark.asyncio

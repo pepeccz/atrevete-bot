@@ -79,9 +79,13 @@ class UpdateBookingSchema(BaseModel):
             "'cualquiera' si no tiene preferencia"
         ),
     )
-    customer_name: str | None = Field(
+    customer_first_name: str | None = Field(
         default=None,
-        description="Nombre y primer apellido del cliente (ej: 'Pablo García')",
+        description="Nombre del cliente (ej: 'Pablo')",
+    )
+    customer_last_name: str | None = Field(
+        default=None,
+        description="Primer apellido del cliente (ej: 'García')",
     )
     notes: str | None = Field(
         default=None,
@@ -164,7 +168,8 @@ def _build_response(
 async def update_booking(
     services: list[str] | None = None,
     stylist_name: str | None = None,
-    customer_name: str | None = None,
+    customer_first_name: str | None = None,
+    customer_last_name: str | None = None,
     notes: str | None = None,
     _current_context: dict | None = None,
 ) -> dict[str, Any]:
@@ -173,7 +178,7 @@ async def update_booking(
     Call this tool AFTER resolving each piece of booking data:
     - Service identified → update_booking(services=["nombre exacto"])
     - Stylist chosen → update_booking(stylist_name="nombre") or "sin preferencia"
-    - Name given → update_booking(customer_name="Nombre Apellido")
+    - Name given → update_booking(customer_first_name="Pablo", customer_last_name="García")
     - Notes → update_booking(notes="texto") or notes="no" for none
 
     Returns current booking state summary and a _booking_context_patch
@@ -294,21 +299,22 @@ async def update_booking(
                     ctx["last_stylist"] = resolved.name
 
     # ── Customer name branch ─────────────────────────────────────────────
-    if customer_name is not None:
-        name_clean = customer_name.strip()
-        if name_clean.lower() in _NAME_BLOCKLIST:
+    if customer_first_name is not None:
+        first = customer_first_name.strip()
+        last = (customer_last_name or "").strip()
+        if first.lower() in _NAME_BLOCKLIST:
             errors.append(
-                f"Nombre rechazado: '{name_clean}' parece un placeholder. "
+                f"Nombre rechazado: '{first}' parece un placeholder. "
                 "Pregunta el nombre real al cliente."
             )
-        elif " " not in name_clean:
-            errors.append(
-                "El nombre necesita incluir el primer apellido (ej: 'Pablo García'). "
-                "Pregunta al cliente su primer apellido."
-            )
         else:
-            patch["customer_name"] = name_clean
-            ctx["customer_name"] = name_clean
+            patch["customer_first_name"] = first
+            patch["customer_last_name"] = last or None
+            full_name = f"{first} {last}" if last else first
+            patch["customer_name"] = full_name
+            ctx["customer_name"] = full_name
+            ctx["customer_first_name"] = first
+            ctx["customer_last_name"] = last or None
 
     # ── Notes branch ─────────────────────────────────────────────────────
     if notes is not None:
