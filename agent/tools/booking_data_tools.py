@@ -210,6 +210,21 @@ def _build_response(
     else:
         next_step = "Todos los datos recogidos — muestra resumen y pide confirmación"
 
+    # Audience ambiguity signal — propagate through tool response fields so the
+    # LLM reads it on the SAME turn (the system_message is cached at construction;
+    # the <audience_ambiguity> XML tag only renders on turn N+1 via dynamic context
+    # refresh). Using descriptive-state form — no imperative verbs.
+    ambiguity = ctx.get("_audience_ambiguity")
+    if ambiguity and not ctx.get("service_audience_hint"):
+        variants_str = ", ".join(ambiguity.get("variants", []))
+        next_step = (
+            f"Audiencia ambigua: familia {ambiguity.get('family', '')}, "
+            f"variantes {variants_str}. "
+            f"Falta confirmar variante antes de avanzar."
+        )
+        if "audiencia" not in missing:
+            missing.append("audiencia")
+
     return {
         "success": success,
         "collected": collected,
@@ -330,12 +345,15 @@ async def update_booking(
                 if svc.audience is not None:
                     siblings = await _find_audience_siblings_for_signal(svc)
                     if siblings:
-                        patch["_audience_ambiguity"] = {
+                        ambiguity_data = {
                             "family": svc.name.split()[0].capitalize(),
                             "resolved_as": svc.name,
                             "resolved_audience": svc.audience,
                             "variants": [svc.name, *siblings],
                         }
+                        patch["_audience_ambiguity"] = ambiguity_data
+                        # Mirror into ctx so _build_response sees it on this turn
+                        ctx["_audience_ambiguity"] = ambiguity_data
                         break  # first ambiguous service wins
 
     # ── Stylist branch ───────────────────────────────────────────────────
