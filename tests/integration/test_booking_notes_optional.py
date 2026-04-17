@@ -170,3 +170,108 @@ class TestNotesOptionalGate:
         assert "notas" not in result["missing"], (
             f"'notas' must never be in missing. Got missing={result['missing']!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# C5.1 — flow_hint must NOT show "notas" as pending (W1 follow-up)
+# ---------------------------------------------------------------------------
+
+
+class TestFlowHintNotasLeak:
+    """
+    W1: _build_flow_hint must NOT include "notas" in pending when notes_asked=False.
+
+    Before C5.2 fix, _build_flow_hint always appends "notas" to pending when
+    notes_asked is falsy — even though notes are optional at the gate level (R8).
+    This causes <flow_hint>Pendiente: notas</flow_hint> on every turn, creating
+    LLM behavioral pressure to ask for notes before calling `book`.
+
+    TDD cycle:
+    - FAILS before C5.2 (else: pending.append("notas") still present).
+    - PASSES after C5.2 (that branch is removed).
+    """
+
+    def test_flow_hint_no_notas_pending_when_complete_without_notes(self) -> None:
+        """W1/R8: _build_flow_hint must NOT show 'notas' as pending when booking is complete.
+
+        Given all required fields (services, stylist, slot, name) and notes_asked=False,
+        the flow hint must not contain 'Pendiente: notas' or 'notas' in the pending list.
+        FAILS on master: line 215 of booking_mode.py unconditionally appends "notas" to pending
+        when notes_asked is falsy.
+        """
+        node = _make_node()
+
+        ctx = {
+            "last_services": ["Corte Señora"],
+            "last_stylist": "Maria",
+            "add_more_asked": True,
+            "selected_slot": {"date": "2026-05-01", "time": "10:00"},
+            "customer_name": "Ana García",
+            # notes_asked NOT set — notes are optional
+        }
+
+        hint = node._build_flow_hint(ctx)
+
+        assert "Pendiente: notas" not in hint, (
+            f"_build_flow_hint must NOT show 'Pendiente: notas' when booking is complete "
+            f"and notes are optional. Got: {hint!r}. "
+            "FAILS on master because of the else: pending.append('notas') branch."
+        )
+        # Verify "notas" does not appear anywhere in the pending segment
+        # (could be combined like "Pendiente: nombre, notas")
+        if "Pendiente:" in hint:
+            pending_segment = hint.split("Pendiente:")[1].split("</flow_hint>")[0]
+            assert "notas" not in pending_segment, (
+                f"'notas' must not appear in the Pendiente segment of flow_hint. "
+                f"Got pending segment: {pending_segment!r}"
+            )
+
+    def test_confirmation_shown_set_when_complete_without_notes(self) -> None:
+        """W1: _confirmation_shown must be set to True when all required fields collected.
+
+        With the leak present, pending is never empty (always has "notas"), so
+        _confirmation_shown is never set, and the hint never reaches
+        "Todos los datos recogidos".
+        FAILS on master for the same reason as above.
+        """
+        node = _make_node()
+
+        ctx: dict = {
+            "last_services": ["Corte Señora"],
+            "last_stylist": "Maria",
+            "add_more_asked": True,
+            "selected_slot": {"date": "2026-05-01", "time": "10:00"},
+            "customer_name": "Ana García",
+            # notes_asked NOT set
+        }
+
+        node._build_flow_hint(ctx)
+
+        assert ctx.get("_confirmation_shown") is True, (
+            f"_confirmation_shown must be True after _build_flow_hint when all required "
+            f"fields are set and notes are optional. Got: {ctx.get('_confirmation_shown')!r}. "
+            "FAILS on master because 'notas' is always in pending, blocking the gate."
+        )
+
+    def test_flow_hint_notas_in_collected_when_notes_asked_true(self) -> None:
+        """When notes_asked=True, notas should appear in collected (not pending) — no regression."""
+        node = _make_node()
+
+        ctx = {
+            "last_services": ["Corte Señora"],
+            "last_stylist": "Maria",
+            "add_more_asked": True,
+            "selected_slot": {"date": "2026-05-01", "time": "10:00"},
+            "customer_name": "Ana García",
+            "notes_asked": True,
+            "notes": "Tiene alergia al amoniaco",
+        }
+
+        hint = node._build_flow_hint(ctx)
+
+        assert "notas" in hint, (
+            f"When notes_asked=True, notas info must appear somewhere in the hint. Got: {hint!r}"
+        )
+        assert "Recogido:" in hint and "notas" in hint.split("Recogido:")[1].split("Pendiente:")[0] if "Pendiente:" in hint else "notas" in hint.split("Recogido:")[1], (
+            f"When notes_asked=True, notas must be in the Recogido segment. Got: {hint!r}"
+        )

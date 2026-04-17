@@ -254,7 +254,7 @@ def test_flow_hint_name_pending_with_suggestion():
 
 
 def test_flow_hint_name_collected():
-    """Name confirmed → nombre in collected, notas in pending."""
+    """Name confirmed → nombre in collected. Notes are optional (R8/C5): not in pending."""
     from agent.modes.booking_mode import BookingModeNode
 
     ctx = {
@@ -268,7 +268,12 @@ def test_flow_hint_name_collected():
     result = BookingModeNode._build_flow_hint(ctx)
 
     assert "Pablo García" in result, "Confirmed name must appear in collected"
-    assert "notas" in result.lower(), "notas must be pending"
+    # Notes are optional (R8/C5): must NOT appear in pending when notes_asked=False
+    if "Pendiente:" in result:
+        pending_segment = result.split("Pendiente:")[1].split("</flow_hint>")[0]
+        assert "notas" not in pending_segment.lower(), (
+            f"notas must not be in pending when notes_asked=False. Got: {pending_segment!r}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────

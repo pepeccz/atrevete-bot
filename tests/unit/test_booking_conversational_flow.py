@@ -355,13 +355,14 @@ class TestBuildFlowHint:
     """_build_flow_hint produces descriptive state hints — data, not commands."""
 
     def test_empty_ctx_all_pending(self):
-        """Empty ctx → all fields listed as pending."""
+        """Empty ctx → required fields listed as pending. Notes are optional — not in pending."""
         result = BookingModeNode._build_flow_hint({})
         assert "pendiente" in result.lower()
         assert "servicio" in result.lower()
         assert "estilista" in result.lower()
         assert "nombre" in result.lower()
-        assert "notas" in result.lower()
+        # Notes are optional (R8/C5): not listed as pending even when notes_asked is False
+        assert "notas" not in result.lower() or "recogido" in result.lower()
 
     def test_services_collected_stylist_pending(self):
         """Services set → servicio in collected, estilista in pending."""
@@ -401,19 +402,32 @@ class TestBuildFlowHint:
         assert "nombre" in result.lower()
         assert "pendiente" in result.lower()
 
-    def test_notes_pending(self):
-        """Name collected but notes not asked → notas in pending."""
+    def test_all_required_collected_no_notes_asked(self):
+        """All required fields set, notes_asked=False → no notas in pending (R8/C5 fix).
+
+        Notes are optional: _build_flow_hint must NOT add 'notas' to pending.
+        When all required fields are present, _confirmation_shown must be set.
+        add_more_asked=True required to suppress the "preguntar ¿algo más?" pending item.
+        """
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Marta",
+            "add_more_asked": True,
             "offered_slots": [{"time": "10:00"}],
             "selected_slot": {"time": "10:00"},
             "customer_name": "Ana García",
         }
         result = BookingModeNode._build_flow_hint(ctx)
-        assert "notas" in result.lower()
-        assert "pendiente" in result.lower()
-        assert "_confirmation_shown" not in ctx, "Flag not set when notes pending"
+        # notas must NOT appear in pending segment (notes are optional)
+        if "Pendiente:" in result:
+            pending_segment = result.split("Pendiente:")[1].split("</flow_hint>")[0]
+            assert "notas" not in pending_segment.lower(), (
+                f"notas must not be in pending when notes_asked=False. Got: {pending_segment!r}"
+            )
+        # _confirmation_shown must be set since all required fields are present
+        assert ctx.get("_confirmation_shown") is True, (
+            "_confirmation_shown must be set when all required fields are present"
+        )
 
     def test_all_collected_with_stylist_preference(self):
         """Stylist + date hint → fecha/hora in pending, stylist in collected."""

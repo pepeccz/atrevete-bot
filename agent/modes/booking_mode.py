@@ -211,8 +211,6 @@ class BookingModeNode(BaseModeNode):
         if ctx.get("notes_asked"):
             notes = ctx.get("notes")
             collected.append(f"notas ({notes or 'sin notas'})")
-        else:
-            pending.append("notas")
 
         # ── Confirmation gate (deterministic, Python-only) ──────────────
         if not pending and not ctx.get("_confirmation_shown"):

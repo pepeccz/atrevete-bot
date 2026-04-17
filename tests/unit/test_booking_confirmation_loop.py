@@ -63,15 +63,28 @@ def node():
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_flow_hint_notes_pending_when_not_asked():
-    """When notes not asked, hint lists notas in pending."""
+def test_flow_hint_notes_not_pending_when_not_asked():
+    """When notes not asked, hint must NOT list notas in pending (R8/C5 fix).
+
+    Notes are optional — _build_flow_hint must not block completion by adding
+    notas to pending. When all required fields are present, _confirmation_shown
+    is set and the hint shows 'Todos los datos recogidos'.
+    """
     ctx = _base_ctx()
     ctx.pop("notes_asked")
 
     hint = BookingModeNode._build_flow_hint(ctx)
 
-    assert "notas" in hint.lower(), "Hint must list notas as pending"
-    assert "pendiente" in hint.lower(), "Hint must use Pendiente format"
+    # notes are optional: must NOT appear in pending
+    if "Pendiente:" in hint:
+        pending_segment = hint.split("Pendiente:")[1].split("</flow_hint>")[0]
+        assert "notas" not in pending_segment.lower(), (
+            f"notas must NOT be in pending when notes_asked=False. Got: {pending_segment!r}"
+        )
+    # All required fields are present → hint should indicate completion
+    assert "todos los datos" in hint.lower() or "confirmación" in hint.lower(), (
+        f"Hint must indicate completion when all required fields set. Got: {hint!r}"
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -116,15 +129,19 @@ def test_flow_hint_confirmation_shown_mentions_waiting():
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_confirmation_shown_not_set_when_notes_missing():
-    """_confirmation_shown must NOT be set if notes have not been asked."""
+def test_confirmation_shown_set_when_required_fields_present_without_notes():
+    """_confirmation_shown must be set when all required fields are present, even without notes.
+
+    After R8/C5: notes are optional. _confirmation_shown is gated on required fields only
+    (services, stylist, slot, name). notes_asked=False must not block the gate.
+    """
     ctx = _base_ctx()
     ctx.pop("notes_asked")
 
     BookingModeNode._build_flow_hint(ctx)
 
-    assert not ctx.get("_confirmation_shown"), (
-        "_confirmation_shown must stay False when notes not yet asked"
+    assert ctx.get("_confirmation_shown") is True, (
+        "_confirmation_shown must be set when all required fields present — notes are optional (R8/C5)"
     )
 
 
