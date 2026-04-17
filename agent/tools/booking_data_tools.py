@@ -17,6 +17,8 @@ from typing import Any
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from database.connection import get_async_session
+
 logger = logging.getLogger(__name__)
 
 # ============================================================================
@@ -127,6 +129,30 @@ async def _find_similar_services(name: str) -> list[str]:
     return [
         n for n in all_names if normalized in normalize_spanish(n)
     ][:5]
+
+
+async def _find_audience_siblings_for_signal(svc: Any) -> list[str]:
+    """Return names of services that share the base word but have different audience.
+
+    Informational only — never raised as an error. Used by update_booking to populate
+    _audience_ambiguity in _booking_context_patch when the user may have under-specified.
+    """
+    from database.models import Service
+    from sqlalchemy import select
+
+    base_word = svc.name.split()[0].lower() if svc.name else ""
+    if not base_word:
+        return []
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service.id, Service.name, Service.audience).where(
+                Service.audience.is_not(None),
+                Service.id != svc.id,
+                Service.is_active.is_(True),
+            )
+        )
+        rows = result.all()
+    return [row[1] for row in rows if row[1].split()[0].lower() == base_word]
 
 
 def _build_response(
@@ -297,6 +323,20 @@ async def update_booking(
 
                 # Apply service changes to effective context
                 ctx.update({k: v for k, v in patch.items() if v is not None})
+
+        # Informational audience ambiguity signal (non-blocking)
+        if resolved_services and not ctx.get("service_audience_hint"):
+            for svc in resolved_services:
+                if svc.audience is not None:
+                    siblings = await _find_audience_siblings_for_signal(svc)
+                    if siblings:
+                        patch["_audience_ambiguity"] = {
+                            "family": svc.name.split()[0].capitalize(),
+                            "resolved_as": svc.name,
+                            "resolved_audience": svc.audience,
+                            "variants": [svc.name, *siblings],
+                        }
+                        break  # first ambiguous service wins
 
     # ── Stylist branch ───────────────────────────────────────────────────
     if stylist_name is not None:

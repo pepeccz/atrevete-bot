@@ -1,11 +1,14 @@
 """
-Tests for update_booking tool — slot_index resolution (T-07).
+Tests for update_booking tool — slot_index resolution (T-07) and
+audience ambiguity signal (T1 RED phase).
 
 Covers:
 1. slot_index=0 (0-based) is rejected (1-based expected) — actually 1-based design, slot_index=1 valid
 2. slot_index=5 with 3 offered_slots → error (out of range)
 3. slot_index=None → no slot resolution, other fields still work
 4. slot_index=1 with no offered_slots in context → error
+5. _find_audience_siblings_for_signal helper (T1 RED — helper not yet defined)
+6. update_booking audience ambiguity detection (T1 RED — detection block not yet added)
 """
 
 from __future__ import annotations
@@ -242,3 +245,307 @@ async def test_slot_index_combined_with_notes():
     patch = result["_booking_context_patch"]
     assert patch["selected_slot"]["stylist_name"] == "Carmen"
     assert patch["notes"] == "prefiero corte suave"
+
+
+# ===========================================================================
+# T1 RED — Audience ambiguity signal (helper + detection block)
+#
+# These tests FAIL on master because:
+#   - _find_audience_siblings_for_signal() does not exist yet (ImportError)
+#   - update_booking detection block is not yet added
+# After Batch B (T3 + T4), all 6 tests must PASS.
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Helper: _find_audience_siblings_for_signal
+# ---------------------------------------------------------------------------
+
+
+class TestFindAudienceSiblingsForSignal:
+    """Unit tests for the private helper _find_audience_siblings_for_signal.
+
+    Expected RED: ImportError / AttributeError — function does not exist yet.
+    After T3 (Batch B), all 3 pass.
+    """
+
+    @pytest.mark.asyncio
+    async def test_find_audience_siblings_positive(self):
+        """DB has multiple 'Corte*' services with audience set; helper returns siblings.
+
+        Expected RED: ImportError — _find_audience_siblings_for_signal not yet defined.
+        """
+        from agent.tools.booking_data_tools import _find_audience_siblings_for_signal
+
+        # Build a mock Service for "Corte Señora" (audience set)
+        svc = MagicMock()
+        svc.id = "uuid-corte-senora"
+        svc.name = "Corte Señora"
+        svc.audience = "adult_female"
+
+        # DB rows returned — siblings sharing "Corte" prefix with audience set
+        sibling_caballero = MagicMock()
+        sibling_caballero.id = "uuid-corte-caballero"
+        sibling_caballero.name = "Corte Caballero"
+        sibling_caballero.audience = "adult_male"
+
+        sibling_nino = MagicMock()
+        sibling_nino.id = "uuid-corte-nino"
+        sibling_nino.name = "Corte Niño"
+        sibling_nino.audience = "child_male"
+
+        # Mock the DB session so no real DB call is made
+        mock_result = MagicMock()
+        mock_result.all.return_value = [
+            (sibling_caballero.id, sibling_caballero.name, sibling_caballero.audience),
+            (sibling_nino.id, sibling_nino.name, sibling_nino.audience),
+        ]
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "agent.tools.booking_data_tools.get_async_session",
+            return_value=mock_session,
+        ):
+            siblings = await _find_audience_siblings_for_signal(svc)
+
+        assert isinstance(siblings, list), f"Expected list, got {type(siblings)}"
+        assert len(siblings) >= 2, (
+            f"Expected at least 2 siblings for 'Corte Señora', got {siblings!r}"
+        )
+        assert "Corte Caballero" in siblings, f"Expected 'Corte Caballero' in {siblings!r}"
+        assert "Corte Niño" in siblings, f"Expected 'Corte Niño' in {siblings!r}"
+
+    @pytest.mark.asyncio
+    async def test_find_audience_siblings_no_siblings(self):
+        """Only single variant exists; helper returns [].
+
+        Expected RED: ImportError — _find_audience_siblings_for_signal not yet defined.
+        """
+        from agent.tools.booking_data_tools import _find_audience_siblings_for_signal
+
+        svc = MagicMock()
+        svc.id = "uuid-tinte"
+        svc.name = "Tinte Completo"
+        svc.audience = "adult_female"
+
+        # DB returns nothing with matching prefix (only other services with diff prefix)
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "agent.tools.booking_data_tools.get_async_session",
+            return_value=mock_session,
+        ):
+            siblings = await _find_audience_siblings_for_signal(svc)
+
+        assert siblings == [], f"Expected [] for no-sibling case, got {siblings!r}"
+
+    @pytest.mark.asyncio
+    async def test_find_audience_siblings_audience_null(self):
+        """Resolved service has audience=None; caller decision means this returns [].
+
+        When the queried service itself has audience=None, siblings with audience=None
+        are filtered out (the query filters audience IS NOT NULL).
+        Expected RED: ImportError — _find_audience_siblings_for_signal not yet defined.
+        """
+        from agent.tools.booking_data_tools import _find_audience_siblings_for_signal
+
+        # Service with audience=None (unisex/no-audience service)
+        svc = MagicMock()
+        svc.id = "uuid-lavado"
+        svc.name = "Lavado Completo"
+        svc.audience = None
+
+        # Even if DB had rows, the query filters audience IS NOT NULL —
+        # simulate empty result for this service with no audience siblings
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "agent.tools.booking_data_tools.get_async_session",
+            return_value=mock_session,
+        ):
+            siblings = await _find_audience_siblings_for_signal(svc)
+
+        assert siblings == [], (
+            f"Expected [] for audience=None service (no audience siblings), got {siblings!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Detection block in update_booking
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateBookingAudienceAmbiguity:
+    """Detection guard tests for the _audience_ambiguity patch key in update_booking.
+
+    Expected RED: _audience_ambiguity key does not exist yet (detection block missing).
+    After T4 (Batch B), all 3 pass.
+    """
+
+    @pytest.mark.asyncio
+    async def test_update_booking_emits_ambiguity_when_service_has_audience_and_no_hint(self):
+        """Tool response patch contains _audience_ambiguity when service has audience and no hint.
+
+        Preconditions:
+        - Service "Corte Señora" resolved with audience="adult_female"
+        - _current_context has NO service_audience_hint
+        - At least 1 sibling returned by _find_audience_siblings_for_signal
+
+        Expected patch: contains _audience_ambiguity with family, resolved_as,
+        resolved_audience, variants. success=True always.
+        Expected RED: _audience_ambiguity not in patch (detection block missing).
+        """
+        # Mock resolved service with audience set
+        mock_svc = MagicMock()
+        mock_svc.name = "Corte Señora"
+        mock_svc.audience = "adult_female"
+        mock_svc.category = MagicMock(value="cabello")
+        mock_svc.duration_minutes = 45
+
+        # Mock sibling discovery — helper returns at least 1 sibling
+        siblings = ["Corte Caballero", "Corte Niño"]
+
+        with (
+            patch(
+                "agent.tools.booking_data_tools._find_audience_siblings_for_signal",
+                new_callable=AsyncMock,
+                return_value=siblings,
+            ),
+            patch(
+                "agent.tools.availability_tools._resolve_service_by_name",
+                new_callable=AsyncMock,
+                return_value=mock_svc,
+            ),
+            patch(
+                "agent.tools.availability_tools._get_active_stylists_for_category",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await update_booking.coroutine(
+                services=["Corte Señora"],
+                _current_context={},  # no service_audience_hint
+            )
+
+        assert result["success"] is True, (
+            f"Tool must always return success=True for informational signal. "
+            f"Got errors: {result.get('errors')}"
+        )
+        ctx_patch = result["_booking_context_patch"]
+        assert "_audience_ambiguity" in ctx_patch, (
+            f"Expected '_audience_ambiguity' in patch when service has audience and no hint. "
+            f"Patch keys: {list(ctx_patch.keys())}"
+        )
+        ambiguity = ctx_patch["_audience_ambiguity"]
+        assert "family" in ambiguity, f"Missing 'family' key in _audience_ambiguity: {ambiguity!r}"
+        assert "resolved_as" in ambiguity, f"Missing 'resolved_as' in {ambiguity!r}"
+        assert "resolved_audience" in ambiguity, f"Missing 'resolved_audience' in {ambiguity!r}"
+        assert "variants" in ambiguity, f"Missing 'variants' in {ambiguity!r}"
+        assert len(ambiguity["variants"]) >= 2, (
+            f"variants must contain resolved service + siblings (≥2). Got {ambiguity['variants']!r}"
+        )
+        assert ambiguity["resolved_as"] == "Corte Señora"
+        assert ambiguity["resolved_audience"] == "adult_female"
+
+    @pytest.mark.asyncio
+    async def test_update_booking_suppresses_ambiguity_when_hint_set(self):
+        """When ctx has service_audience_hint, patch does NOT have _audience_ambiguity.
+
+        Expected RED: test may accidentally pass if key is simply absent even in
+        positive case — but assertion in previous test will catch that. This test
+        explicitly confirms suppression when hint IS set.
+        """
+        mock_svc = MagicMock()
+        mock_svc.name = "Corte Señora"
+        mock_svc.audience = "adult_female"
+        mock_svc.category = MagicMock(value="cabello")
+        mock_svc.duration_minutes = 45
+
+        # Even if siblings exist, hint is already set → no ambiguity signal
+        siblings = ["Corte Caballero", "Corte Niño"]
+
+        with (
+            patch(
+                "agent.tools.booking_data_tools._find_audience_siblings_for_signal",
+                new_callable=AsyncMock,
+                return_value=siblings,
+            ),
+            patch(
+                "agent.tools.availability_tools._resolve_service_by_name",
+                new_callable=AsyncMock,
+                return_value=mock_svc,
+            ),
+            patch(
+                "agent.tools.availability_tools._get_active_stylists_for_category",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await update_booking.coroutine(
+                services=["Corte Señora"],
+                _current_context={"service_audience_hint": "adult_female"},  # hint already set
+            )
+
+        assert result["success"] is True
+        ctx_patch = result["_booking_context_patch"]
+        assert "_audience_ambiguity" not in ctx_patch, (
+            f"Expected NO '_audience_ambiguity' in patch when service_audience_hint is set. "
+            f"Patch: {ctx_patch!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_booking_suppresses_ambiguity_when_audience_null(self):
+        """When resolved service has audience=None, no _audience_ambiguity in patch.
+
+        Unisex services (audience=None) do not trigger the disambiguation signal.
+        Expected RED: if detection block is absent, key will also be absent —
+        but this test documents the INTENT (even when block is added).
+        The positive test (emits_ambiguity) confirms the block fires when it should.
+        """
+        mock_svc = MagicMock()
+        mock_svc.name = "Lavado Completo"
+        mock_svc.audience = None  # unisex, no audience
+        mock_svc.category = MagicMock(value="cabello")
+        mock_svc.duration_minutes = 30
+
+        with (
+            patch(
+                "agent.tools.booking_data_tools._find_audience_siblings_for_signal",
+                new_callable=AsyncMock,
+                return_value=[],  # helper returns [] for audience=None services
+            ),
+            patch(
+                "agent.tools.availability_tools._resolve_service_by_name",
+                new_callable=AsyncMock,
+                return_value=mock_svc,
+            ),
+            patch(
+                "agent.tools.availability_tools._get_active_stylists_for_category",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await update_booking.coroutine(
+                services=["Lavado Completo"],
+                _current_context={},  # no hint, but service has audience=None
+            )
+
+        assert result["success"] is True
+        ctx_patch = result["_booking_context_patch"]
+        assert "_audience_ambiguity" not in ctx_patch, (
+            f"Expected NO '_audience_ambiguity' in patch when service.audience is None. "
+            f"Patch: {ctx_patch!r}"
+        )

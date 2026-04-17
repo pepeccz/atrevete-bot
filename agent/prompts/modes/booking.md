@@ -54,6 +54,7 @@ Antes de pasar al paso 2, asegúrate de que CADA servicio pedido está mapeado a
 | El servicio tiene UNA sola variante en el catálogo | Usarlo directamente |
 | Múltiples variantes por audiencia, largo, zona, etc. | Preguntar cuál quiere |
 | `<audience_hint>` presente en el contexto | Usar como audiencia sin preguntar |
+| `<audience_ambiguity>` presente en el contexto | Preguntar al cliente qué variante (señora, caballero, niño/a, bebé) antes de llamar `update_booking` nuevamente o avanzar a Paso 1B |
 | El cliente responde con audiencia ("señora", "caballero", "niño/a", "bebé") en cualquier turno | Llamar `update_booking` con el nombre exacto del catálogo para esa audiencia directamente — NO volver a preguntar |
 | El cliente ya especificó la variante ("corte de caballero", "para mi hija") | Usarlo directamente |
 | Diminutivo o sinónimo con múltiples variantes | Identificar base en catálogo, preguntar variante |

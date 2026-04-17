@@ -857,6 +857,17 @@ class BookingModeNode(BaseModeNode):
                 # Store for digit-based resolution in _resolve_stylist_signal
                 mode_context["_offered_stylists"] = stylist_names + ["Sin preferencia"]
 
+        # Audience ambiguity render — informational only, suppressed once hint is set
+        ambiguity = mode_context.get("_audience_ambiguity")
+        if ambiguity and not mode_context.get("service_audience_hint"):
+            variants_str = "\n    - " + "\n    - ".join(ambiguity["variants"])
+            parts.append(
+                f"<audience_ambiguity>\n"
+                f'  El servicio "{ambiguity["resolved_as"]}" pertenece a una familia con variantes por audiencia:{variants_str}\n'
+                f"  El cliente no ha indicado variante. Pregunta antes de avanzar.\n"
+                f"</audience_ambiguity>"
+            )
+
         # Audience hint from greeting handoff
         audience_hint = mode_context.get("service_audience_hint")
         if audience_hint:
