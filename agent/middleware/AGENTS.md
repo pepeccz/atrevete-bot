@@ -92,3 +92,63 @@ Two tests enforce this contract automatically:
   and drives it via `create_agent.ainvoke()` with a scripted tool call. This test **FAILED**
   on master before the fix (commit `366cf79`) and is the definitive end-to-end proof that
   async dispatch works correctly under the production stack.
+
+---
+
+## Dynamic tool filtering pattern
+
+### When to use it
+
+Use `DynamicToolsMiddleware` when the set of tools the LLM should see must change
+**mid-flow within a single `ainvoke` call** — for example, exposing `check_availability`
+only after the user selects a reschedule action, or hiding `book` until a service and
+stylist are resolved.  Static pre-filtering at `create_agent(tools=...)` construction
+time is NOT enough because the LLM may loop across multiple tool calls before returning.
+
+### How to wire it
+
+Pass a **zero-arg closure** that captures `self` (the owning node instance):
+
+```python
+DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._mode_context))
+```
+
+Place the middleware BEFORE `NodeBridgeMiddleware` in the list (position 0, or position 1
+when `ToolChoiceMiddleware` is present):
+
+```python
+middleware = [
+    DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._mode_context)),
+    NodeBridgeMiddleware(self),
+    ...
+]
+```
+
+`self._mode_context` (or `self._booking_context`) MUST be set by `handle()` before
+`_invoke_create_agent` is called.  The closure reads the live attribute on each model
+call, so mid-loop mutations are reflected immediately.
+
+### Critical rule: NEVER read `request.state` for project context
+
+`request.state` inside a middleware hook is LangChain's `AgentState` — it contains
+**only** `messages`, `jump_to`, and `structured_response`.  It does NOT contain booking
+context, mode context, or any application-level state.  Reading it for project data
+produces `KeyError` / `None` silently.  Always use a closure over the node instance
+instead (decision D1 in the design artifact).
+
+### How to test
+
+See `tests/unit/middleware/test_dynamic_tools.py`, especially:
+
+- `test_closure_reads_live_node_attribute_between_calls` — proves the closure reads a
+  freshly mutated node attribute on the second `wrap_model_call` without re-constructing
+  the middleware.
+- `test_sync_async_parity` — proves `wrap_model_call` and `awrap_model_call` produce
+  identical filtering results.
+
+### Parity reminder
+
+`DynamicToolsMiddleware` overrides the **model-call** pair.  Per REQ-2 above, both
+`wrap_model_call` and `awrap_model_call` MUST be defined.  They share a `_apply_filter`
+helper to prevent drift.  Do NOT add `wrap_tool_call` or `awrap_tool_call` unless the
+filtering logic also needs to apply at the tool-call layer.

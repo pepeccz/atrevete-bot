@@ -129,32 +129,6 @@ async def _find_similar_services(name: str) -> list[str]:
     ][:5]
 
 
-async def _find_audience_siblings(service) -> list[str]:
-    """Return other active services sharing the same base name but different audience.
-
-    E.g. ``Corte Señora`` → ``["Corte Caballero", "Corte Niño", ...]``. Returns
-    an empty list when the service has no siblings (no audience ambiguity).
-    """
-    from database.connection import get_async_session
-    from database.models import Service
-    from sqlalchemy import select
-
-    base_word = service.name.split()[0].lower()
-    async with get_async_session() as session:
-        result = await session.execute(
-            select(Service.name).where(
-                Service.is_active == True,
-                Service.audience.is_not(None),
-                Service.id != service.id,
-            )
-        )
-        return [
-            row[0]
-            for row in result.all()
-            if row[0].split()[0].lower() == base_word
-        ]
-
-
 def _build_response(
     ctx: dict[str, Any],
     success: bool,
@@ -280,23 +254,6 @@ async def update_booking(
                 else:
                     errors.append(f"Servicio '{svc_name}' no encontrado en el catálogo.")
                 continue
-
-            # Audience-variant gate (Option D). If the resolved service has an
-            # audience AND siblings with different audiences exist AND the
-            # conversation context has NO ``service_audience_hint``, refuse
-            # the assumption and tell the LLM to ask the client which variant
-            # they want. The response carries ``ambiguity`` so the LLM can
-            # produce a natural disambiguation question.
-            if svc.audience and not ctx.get("service_audience_hint"):
-                siblings = await _find_audience_siblings(svc)
-                if siblings:
-                    errors.append(
-                        f"'{svc.name}' tiene variantes por audiencia en el catálogo: "
-                        f"{', '.join(siblings)}. Pregunta al cliente a quién "
-                        f"va dirigida la cita (señora, caballero, niño/a, bebé) "
-                        f"antes de continuar."
-                    )
-                    continue
 
             resolved_services.append(svc)
             resolved_names.append(svc.name)

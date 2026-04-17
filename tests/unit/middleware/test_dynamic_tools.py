@@ -1,151 +1,212 @@
-"""Unit tests for ``DynamicToolsMiddleware``."""
+"""Unit tests for ``DynamicToolsMiddleware`` — closure-based API (NEW).
+
+These tests target the REWRITTEN API:
+    DynamicToolsMiddleware(get_tools_fn: Callable[[], list[BaseTool]])
+
+The old API (`allowed_names: Callable[[AgentState], set[str]]`) is gone.
+Running these tests on master FAILS because the current class still uses the
+old state-based constructor signature.  That failure is the expected RED state.
+
+Tests (6):
+    test_closure_filters_tools_per_model_call
+    test_closure_reads_live_node_attribute_between_calls
+    test_sync_async_parity
+    test_override_not_dataclasses_replace
+    test_empty_get_tools_fn_does_not_raise
+    test_non_overlapping_tools_produces_empty_list
+"""
 
 from __future__ import annotations
 
-from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from langchain_core.tools import tool
 
 from agent.middleware.dynamic_tools import DynamicToolsMiddleware
-from tests.unit.middleware._offline import ScriptedModel
+from langchain.agents.middleware.types import ModelRequest
+
+
+# ---------------------------------------------------------------------------
+# Tool stubs
+# ---------------------------------------------------------------------------
 
 
 @tool
-def _fake_update(x: str | None = None) -> str:
-    """update stub"""
+def _update_stub(x: str | None = None) -> str:  # type: ignore[override]
+    """update stub tool"""
     return f"updated {x}"
 
 
 @tool
-def _fake_check(x: str | None = None) -> str:
-    """check stub"""
+def _check_stub(x: str | None = None) -> str:  # type: ignore[override]
+    """check stub tool"""
     return f"checked {x}"
 
 
 @tool
-def _fake_book(x: str | None = None) -> str:
-    """book stub"""
+def _book_stub(x: str | None = None) -> str:  # type: ignore[override]
+    """book stub tool"""
     return f"booked {x}"
 
 
-_allow_ref: dict[str, set[str]] = {"current": set()}
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-def _bind_set(_state) -> set[str]:
-    """Test hook — closure-backed allow-set (independent of state schema)."""
-    return _allow_ref["current"]
-
-
-def test_filters_out_disallowed_tools_from_model_request():
-    _allow_ref["current"] = {"_fake_update"}
-    captured: list[list[str]] = []
-
-    class _Recorder(DynamicToolsMiddleware):
-        def wrap_model_call(self, request, handler):
-            from dataclasses import replace
-
-            allowed = set(self._allowed_names(request.state))
-            filtered = [t for t in request.tools if getattr(t, "name", None) in allowed]
-            captured.append([t.name for t in filtered])
-            return handler(replace(request, tools=filtered))
-
-    agent = create_agent(
-        model=ScriptedModel(responses=[AIMessage(content="done")]),
-        tools=[_fake_update, _fake_check, _fake_book],
-        middleware=[_Recorder(_bind_set)],
+def _make_request(tools: list) -> ModelRequest:
+    """Build a minimal ModelRequest with a given tool list."""
+    model = MagicMock()
+    model.bind_tools = MagicMock(return_value=model)
+    return ModelRequest(
+        model=model,
+        messages=[],
+        tools=tools,
+        state={"messages": []},
     )
-    agent.invoke({"messages": [HumanMessage("x")]})
-
-    assert captured == [["_fake_update"]]
 
 
-def test_returns_empty_tool_list_when_no_names_allowed():
-    _allow_ref["current"] = set()
-    captured_lists: list[list[str]] = []
+def _sync_handler(request: ModelRequest):
+    """Capture-and-return handler for wrap_model_call."""
+    return request
 
-    class _Recorder(DynamicToolsMiddleware):
-        def wrap_model_call(self, request, handler):
-            from dataclasses import replace
 
-            allowed = set(self._allowed_names(request.state))
-            filtered = [t for t in request.tools if getattr(t, "name", None) in allowed]
-            captured_lists.append([t.name for t in filtered])
-            return handler(replace(request, tools=filtered))
+async def _async_handler(request: ModelRequest):
+    """Async capture-and-return handler for awrap_model_call."""
+    return request
 
-    agent = create_agent(
-        model=ScriptedModel(responses=[AIMessage(content="done")]),
-        tools=[_fake_update, _fake_check, _fake_book],
-        middleware=[_Recorder(_bind_set)],
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+def test_closure_filters_tools_per_model_call():
+    """get_tools_fn is called on every model call and filters tools correctly.
+
+    Expected RED on master: ``DynamicToolsMiddleware(get_tools_fn=...)`` raises
+    TypeError because the current class expects ``allowed_names`` (a state→set callable).
+    """
+    mw = DynamicToolsMiddleware(get_tools_fn=lambda: [_update_stub])
+
+    request = _make_request(tools=[_update_stub, _check_stub, _book_stub])
+    result = mw.wrap_model_call(request, _sync_handler)
+
+    tool_names = [t.name for t in result.tools]
+    assert tool_names == ["_update_stub"], (
+        f"Expected only _update_stub, got {tool_names}"
     )
-    agent.invoke({"messages": [HumanMessage("x")]})
-
-    assert captured_lists == [[]]
 
 
-def test_all_tools_pass_through_when_all_names_allowed():
-    _allow_ref["current"] = {"_fake_update", "_fake_check", "_fake_book"}
-    captured: list[list[str]] = []
+def test_closure_reads_live_node_attribute_between_calls():
+    """Closure captures a live mutable reference — tool list changes between calls.
 
-    class _Recorder(DynamicToolsMiddleware):
-        def wrap_model_call(self, request, handler):
-            from dataclasses import replace
+    This proves the filter is re-evaluated on every model call, not frozen
+    at construction time.
 
-            allowed = set(self._allowed_names(request.state))
-            filtered = [t for t in request.tools if getattr(t, "name", None) in allowed]
-            captured.append([t.name for t in filtered])
-            return handler(replace(request, tools=filtered))
+    Expected RED on master: TypeError on construction (old API).
+    """
+    ctx: dict = {"phase": "empty"}
 
-    agent = create_agent(
-        model=ScriptedModel(responses=[AIMessage(content="done")]),
-        tools=[_fake_update, _fake_check, _fake_book],
-        middleware=[_Recorder(_bind_set)],
+    def get_tools() -> list:
+        if ctx["phase"] == "empty":
+            return [_update_stub]
+        return [_update_stub, _book_stub]
+
+    mw = DynamicToolsMiddleware(get_tools_fn=get_tools)
+
+    request = _make_request(tools=[_update_stub, _check_stub, _book_stub])
+
+    # First call — only _update_stub
+    result1 = mw.wrap_model_call(request, _sync_handler)
+    assert [t.name for t in result1.tools] == ["_update_stub"]
+
+    # Mutate ctx — simulates node updating booking_context
+    ctx["phase"] = "complete"
+
+    # Second call through the same middleware — closure now returns 2 tools
+    result2 = mw.wrap_model_call(request, _sync_handler)
+    assert set(t.name for t in result2.tools) == {"_update_stub", "_book_stub"}, (
+        f"Expected update+book after mutation, got {[t.name for t in result2.tools]}"
     )
-    agent.invoke({"messages": [HumanMessage("x")]})
-
-    assert set(captured[0]) == {"_fake_update", "_fake_check", "_fake_book"}
 
 
-def test_state_driven_filter_reacts_to_state_change_mid_run():
-    """The filter callable receives live state on every call — it must see
-    updates that earlier middleware writes into state."""
+def test_sync_async_parity():
+    """wrap_model_call and awrap_model_call produce identical filtering results.
 
-    sequence: list[list[str]] = []
+    Expected RED on master: TypeError on construction (old API).
+    """
+    mw = DynamicToolsMiddleware(get_tools_fn=lambda: [_update_stub])
+    request = _make_request(tools=[_update_stub, _check_stub])
 
-    class _Recorder(DynamicToolsMiddleware):
-        def wrap_model_call(self, request, handler):
-            from dataclasses import replace
-
-            allowed = set(self._allowed_names(request.state))
-            filtered = [t for t in request.tools if getattr(t, "name", None) in allowed]
-            sequence.append([t.name for t in filtered])
-            return handler(replace(request, tools=filtered))
-
-    # Two model turns: first emits a tool_call to _fake_update, second ends.
-    # The filter returns {_fake_update} initially, then {_fake_update, _fake_book}.
-    state_toggle = {"turn": 0}
-
-    def dynamic_allow(state) -> set[str]:
-        state_toggle["turn"] += 1
-        if state_toggle["turn"] == 1:
-            return {"_fake_update"}
-        return {"_fake_update", "_fake_book"}
-
-    agent = create_agent(
-        model=ScriptedModel(
-            responses=[
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {"name": "_fake_update", "args": {"x": "a"}, "id": "t1"}
-                    ],
-                ),
-                AIMessage(content="done"),
-            ]
-        ),
-        tools=[_fake_update, _fake_check, _fake_book],
-        middleware=[_Recorder(dynamic_allow)],
+    sync_result = mw.wrap_model_call(request, _sync_handler)
+    async_result = asyncio.get_event_loop().run_until_complete(
+        mw.awrap_model_call(request, _async_handler)
     )
-    agent.invoke({"messages": [HumanMessage("x")]})
 
-    assert sequence[0] == ["_fake_update"]
-    assert set(sequence[1]) == {"_fake_update", "_fake_book"}
+    sync_names = [t.name for t in sync_result.tools]
+    async_names = [t.name for t in async_result.tools]
+
+    assert sync_names == async_names == ["_update_stub"], (
+        f"Sync={sync_names!r} and async={async_names!r} must be identical and filter to [_update_stub]"
+    )
+
+
+def test_override_not_dataclasses_replace():
+    """The filtered request must be produced via request.override(), not dataclasses.replace.
+
+    We verify the output by asserting:
+    1. The returned object is a ModelRequest.
+    2. Its tools list contains only the allowed tools (proving override() worked).
+
+    Expected RED on master: TypeError on construction (old API) + old code uses
+    ``dataclasses.replace`` which emits a DeprecationWarning.
+    """
+    mw = DynamicToolsMiddleware(get_tools_fn=lambda: [_check_stub])
+    request = _make_request(tools=[_update_stub, _check_stub])
+
+    result = mw.wrap_model_call(request, _sync_handler)
+
+    assert isinstance(result, ModelRequest), (
+        f"Result must be a ModelRequest, got {type(result)}"
+    )
+    assert [t.name for t in result.tools] == ["_check_stub"], (
+        f"override() must produce a request with only _check_stub, got {[t.name for t in result.tools]}"
+    )
+    # Original request is unchanged (immutable override pattern)
+    assert len(request.tools) == 2, "Original request.tools must be unchanged after override()"
+
+
+def test_empty_get_tools_fn_does_not_raise():
+    """get_tools_fn returning [] must NOT raise — model receives empty tool list.
+
+    Expected RED on master: TypeError on construction (old API).
+    """
+    mw = DynamicToolsMiddleware(get_tools_fn=lambda: [])
+    request = _make_request(tools=[_update_stub, _check_stub])
+
+    result = mw.wrap_model_call(request, _sync_handler)
+
+    assert result.tools == [], (
+        f"Empty get_tools_fn must yield empty tools on request, got {result.tools}"
+    )
+
+
+def test_non_overlapping_tools_produces_empty_list():
+    """Closure returning tools NOT in request.tools → empty result (intersection, not injection).
+
+    The middleware must NOT inject tools the agent wasn't bound with.
+
+    Expected RED on master: TypeError on construction (old API).
+    """
+    # Closure returns _book_stub, but request only has _update_stub and _check_stub
+    mw = DynamicToolsMiddleware(get_tools_fn=lambda: [_book_stub])
+    request = _make_request(tools=[_update_stub, _check_stub])  # _book_stub NOT here
+
+    result = mw.wrap_model_call(request, _sync_handler)
+
+    assert result.tools == [], (
+        f"Non-overlapping closure must yield empty tool list, got {[t.name for t in result.tools]}"
+    )

@@ -15,6 +15,7 @@ Core principle: Python only does:
 3. Post-processing (_post_tool_result): extract tool results into context mid-loop
 """
 
+import dataclasses
 import json
 import logging
 import unicodedata
@@ -150,15 +151,32 @@ class AppointmentManagementMode(BaseModeNode):
     def mode_name(self) -> str:
         return "APPOINTMENT_MANAGEMENT"
 
-    def get_tools(self) -> list[StructuredTool]:
-        """Return appointment management tools.
+    def get_tools(self, mode_context: dict | None = None) -> list[StructuredTool]:
+        """Return appointment management tools, varying by state.
 
-        Tools:
+        Args:
+            mode_context: Optional dict with current action state. When action is
+                ``"reschedule"`` and no ``pending_new_slot`` is set, ``check_availability``
+                is also included so the LLM can offer slots. Mirrors the pattern from
+                ``BookingModeNode.get_tools(booking_context)``.
+
+        Tools (always):
         - manage_appointments (consolidated: list, cancel, reschedule)
+
+        Tools (conditional):
+        - check_availability — when action=="reschedule" and pending_new_slot is missing
         """
+        from agent.tools.availability_tools import check_availability
         from agent.tools.manage_appointments_tool import manage_appointments
 
-        return [manage_appointments]
+        ctx = mode_context or {}
+        tools: list[StructuredTool] = [manage_appointments]
+
+        action = ctx.get("action")
+        if action == "reschedule" and not ctx.get("pending_new_slot"):
+            tools.append(check_availability)
+
+        return tools
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -189,13 +207,15 @@ class AppointmentManagementMode(BaseModeNode):
 
         # 2. Store ctx for _pre_tool_call and _post_tool_result access
         self._ctx = ctx
+        # Store as plain dict so DynamicToolsMiddleware closure can read it
+        self._mode_context = dataclasses.asdict(ctx)
 
         # 3. Build messages
         messages = await self._build_messages(state, ctx)
 
         # 4. Run the agent loop via ``create_agent`` + composed middleware (M8).
         result = await self._invoke_create_agent(
-            messages=messages, tools=self.get_tools()
+            messages=messages, tools=self.get_tools(self._mode_context)
         )
 
         # 5. Extract tool results into ctx
@@ -415,8 +435,8 @@ class AppointmentManagementMode(BaseModeNode):
                         name="manage_appointments",
                         error_code="CONFIRMATION_REQUIRED",
                         error_message=(
-                            "Debes confirmar la cancelación antes de ejecutarla. "
-                            "Muestra el resumen de la cita y pide confirmación explícita al cliente."
+                            "Estado actual: cancelación pendiente de confirmación explícita del usuario. "
+                            "Criterio de avance: el usuario confirma explícitamente querer cancelar."
                         ),
                     )
 
@@ -446,8 +466,8 @@ class AppointmentManagementMode(BaseModeNode):
                         name="manage_appointments",
                         error_code="CONFIRMATION_REQUIRED",
                         error_message=(
-                            "Debes confirmar el nuevo horario antes de reagendar. "
-                            "Muestra el nuevo horario y pide confirmación explícita al cliente."
+                            "Estado actual: reagendamiento pendiente de confirmación explícita del usuario. "
+                            "Criterio de avance: el usuario confirma explícitamente el nuevo horario."
                         ),
                     )
                 if not ctx.pending_new_slot:
@@ -459,9 +479,8 @@ class AppointmentManagementMode(BaseModeNode):
                         name="manage_appointments",
                         error_code="NO_NEW_SLOT",
                         error_message=(
-                            "No hay un nuevo horario seleccionado. "
-                            "Llama a check_availability o find_next_available primero, "
-                            "y espera que el cliente elija un horario."
+                            "Estado actual: sin horario nuevo seleccionado. "
+                            "Criterio de avance: el usuario elige un horario de entre los ofrecidos por check_availability."
                         ),
                     )
 
@@ -696,6 +715,7 @@ class AppointmentManagementMode(BaseModeNode):
         from langchain.agents import create_agent
         from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
+        from agent.middleware.dynamic_tools import DynamicToolsMiddleware
         from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
         from agent.middleware.node_bridge import NodeBridgeMiddleware
         from agent.middleware.token_tracking import TokenTrackingMiddleware
@@ -717,6 +737,7 @@ class AppointmentManagementMode(BaseModeNode):
         )
 
         middleware = [
+            DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._mode_context)),
             NodeBridgeMiddleware(self),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="APPOINTMENT_MANAGEMENT"),

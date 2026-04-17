@@ -1,58 +1,66 @@
-"""Filter the bound tool list per model call based on agent state.
+"""Filter the bound tool list per model call via a zero-arg closure over the owning node.
 
-Replaces the legacy ``BookingModeNode.get_tools(booking_context)`` +
-``_refresh_tools`` machinery used by ``BaseModeNode._run_agentic_loop``. The
-filter is parametrised by a callable that inspects state and returns the set
-of tool names the model is allowed to use for the next step.
+The middleware is initialised with a **zero-arg callable** that returns the list of
+tools the current node wants to expose at this exact model call. The middleware then
+intersects that list with the tools already bound to the agent, so only tools that are
+*both* bound to the agent *and* returned by the closure survive.
 
 Usage::
 
-    def allowed(state: AgentState) -> set[str]:
-        ctx = state.get("booking_context") or {}
-        allowed = {"update_booking"}
-        if ctx.get("last_services") and ctx.get("last_stylist"):
-            allowed.add("check_availability")
-        if _booking_complete(ctx):
-            allowed.add("book")
-        return allowed
+    class MyModeNode(BaseModeNode):
+        def get_tools(self, ctx=None):
+            tools = [update_booking]
+            if ctx and ctx.get("last_services"):
+                tools.append(check_availability)
+            return tools
 
-    agent = create_agent(
-        model=llm,
-        tools=[update_booking, check_availability, book],
-        middleware=[DynamicToolsMiddleware(allowed)],
-    )
+        async def _invoke_create_agent(self, messages, tools, ...):
+            middleware = [
+                DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._booking_context)),
+                NodeBridgeMiddleware(self),
+                ...
+            ]
+            agent = create_agent(model=self.llm, tools=tools, middleware=middleware)
+            ...
+
+The closure reads ``self._booking_context`` (or equivalent) which is set *once per turn*
+by ``handle()`` before ``_invoke_create_agent`` is called. Within a single ``ainvoke``
+(multi-step reasoning), each model call re-enters ``awrap_model_call`` and the closure
+re-reads the live attribute — so mid-loop state mutations (e.g. ``update_booking``
+writes a new slot) are visible to the *next* model step without any extra wiring.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable
-from dataclasses import replace
 from typing import Callable
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import AgentState, ModelRequest, ModelResponse
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.tools import BaseTool
 
 
 class DynamicToolsMiddleware(AgentMiddleware):
-    """Restrict the tool list for each model call by consulting a filter callable.
+    """Restrict the tool list for each model call via a zero-arg closure over the owning node.
 
     Args:
-        allowed_names: Zero-arg function ``(state) -> Iterable[str]`` returning
-            the tool names permitted for the next model step. Tools bound on
-            the agent but NOT in the returned set are filtered out of the
-            request. If the callable returns an empty iterable, no tools are
-            passed — the model is forced to reply with text.
+        get_tools_fn: Zero-arg callable that returns the list of :class:`BaseTool` instances
+            the node wants to expose for the *next* model step. Called on every model call
+            so it always reflects the latest node state. Tools not returned by this callable
+            are filtered out of ``ModelRequest.tools`` before the LLM sees the request.
+            An empty list forces the model to reply with plain text (no tool calls possible).
     """
 
-    def __init__(self, allowed_names: Callable[[AgentState], "set[str] | list[str]"]) -> None:
+    def __init__(self, get_tools_fn: Callable[[], list[BaseTool]]) -> None:
         super().__init__()
-        self._allowed_names = allowed_names
+        self._get_tools_fn = get_tools_fn
 
     def _apply_filter(self, request: ModelRequest) -> ModelRequest:
         """Return a new ModelRequest with tools filtered to the allowed set."""
-        allowed = set(self._allowed_names(request.state))
-        filtered = [t for t in request.tools if getattr(t, "name", None) in allowed]
-        return replace(request, tools=filtered)
+        allowed_tools = self._get_tools_fn() or []
+        allowed_names = {getattr(t, "name", None) for t in allowed_tools}
+        filtered = [t for t in request.tools if getattr(t, "name", None) in allowed_names]
+        return request.override(tools=filtered)
 
     def wrap_model_call(
         self,

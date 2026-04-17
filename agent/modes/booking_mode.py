@@ -15,16 +15,19 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from agent.config import get_booking_config, ToolChoicePolicy
+from agent.middleware.dynamic_tools import DynamicToolsMiddleware
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
+from shared.audience_maps import AUDIENCE_HINT_MAP, canonicalize_audience
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +123,45 @@ class BookingModeNode(BaseModeNode):
         # Notes are optional — the prompt instructs the LLM to ask (Paso 5).
         # No Python gate needed; book() accepts notes=None.
         return (len(missing) == 0, missing)
+
+    def _extract_audience_from_reply(self, messages: list) -> str | None:
+        """Scan the most recent user message for an AUDIENCE_HINT_MAP token.
+
+        Returns the canonical hint value (e.g. ``"adult_female"``) on match, else None.
+        Case-insensitive, accent-normalised, substring match. This is a PURE method —
+        it does NOT read booking_context. Activation logic lives in handle().
+        """
+        def _normalize(text: str) -> str:
+            """NFKD-normalize, strip combining characters, then lowercase."""
+            nfkd = unicodedata.normalize("NFKD", text)
+            return "".join(ch for ch in nfkd if not unicodedata.combining(ch)).lower()
+
+        # Find last user message (dict with role="user" or HumanMessage)
+        last_user_content: str | None = None
+        for msg in reversed(messages):
+            if isinstance(msg, dict):
+                if msg.get("role") == "user":
+                    last_user_content = str(msg.get("content", ""))
+                    break
+            else:
+                from langchain_core.messages import HumanMessage
+
+                if isinstance(msg, HumanMessage):
+                    content = msg.content
+                    last_user_content = content if isinstance(content, str) else str(content)
+                    break
+
+        if not last_user_content:
+            return None
+
+        normalized = _normalize(last_user_content)
+        # Sort tokens by descending length so longer, more specific tokens (e.g. "senora")
+        # are checked before shorter prefixes (e.g. "senor") — avoids false substring matches.
+        for token, canonical in sorted(AUDIENCE_HINT_MAP.items(), key=lambda kv: -len(kv[0])):
+            if token in normalized:
+                return canonical
+
+        return None
 
     @staticmethod
     def _build_flow_hint(ctx: dict) -> str:
@@ -274,6 +316,19 @@ class BookingModeNode(BaseModeNode):
         self._booking_context = booking_context
         self._mode_context = booking_context  # alias: both point to booking_context
         self._current_state = state
+
+        # Narrow audience-hint extraction: propagate a mid-flow audience reply
+        # (e.g. "señora") into booking_context so update_booking can proceed
+        # without re-asking. Only runs when no hint is already set.
+        if not booking_context.get("service_audience_hint"):
+            # state["messages"] already contains the current turn's user message
+            # (preprocess_node adds it before modes run). Pass directly.
+            hint = self._extract_audience_from_reply(list(state.get("messages", [])))
+            if hint:
+                booking_context["service_audience_hint"] = hint
+                logger.debug(
+                    "BookingModeNode: audience hint extracted from reply: %r", hint
+                )
 
         # 4. Build messages with dynamic context
         messages = await self._build_messages(state, booking_context)
@@ -648,6 +703,7 @@ class BookingModeNode(BaseModeNode):
         )
 
         middleware: list = [
+            DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._booking_context)),
             NodeBridgeMiddleware(self),
             DedupToolCallMiddleware(),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
