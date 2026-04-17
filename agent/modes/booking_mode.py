@@ -323,9 +323,12 @@ class BookingModeNode(BaseModeNode):
         # Narrow audience-hint extraction: propagate a mid-flow audience reply
         # (e.g. "señora") into booking_context so update_booking can proceed
         # without re-asking. Only runs when no hint is already set.
+        _synthetic_msgs: list = []
         if not booking_context.get("service_audience_hint"):
             # state["messages"] already contains the current turn's user message
             # (preprocess_node adds it before modes run). Pass directly.
+            # Capture _audience_ambiguity BEFORE pop so variants remain available.
+            _audience_ambiguity_snapshot = booking_context.get("_audience_ambiguity")
             hint = self._extract_audience_from_reply(list(state.get("messages", [])))
             if hint:
                 booking_context["service_audience_hint"] = hint
@@ -333,6 +336,39 @@ class BookingModeNode(BaseModeNode):
                 logger.debug(
                     "BookingModeNode: audience hint extracted from reply: %r", hint
                 )
+
+                # T3 state-delivery: synthesise a fresh tool signal so the LLM
+                # anchors on the resolved service name, not the stale Turn-1
+                # "Audiencia ambigua" next_step. Only fires when _audience_ambiguity
+                # had variants and last_services is set (i.e., we can resolve).
+                if (
+                    _audience_ambiguity_snapshot
+                    and isinstance(_audience_ambiguity_snapshot, dict)
+                    and booking_context.get("last_services")
+                ):
+                    from agent.core import deliver_state_update
+                    from agent.tools import booking_data_tools
+                    from shared.audience_maps import _pick_variant_by_hint
+
+                    _variants = _audience_ambiguity_snapshot.get("variants", [])
+                    _resolved_name = _pick_variant_by_hint(_variants, hint)
+                    if _resolved_name:
+                        booking_context["last_services"] = [_resolved_name]
+                        _synthetic_msgs = deliver_state_update(
+                            tool_name="update_booking",
+                            tool_args={"services": [_resolved_name]},
+                            build_response_fn=booking_data_tools._build_response,
+                            booking_context=booking_context,
+                            context_label="audience-t3",
+                            conversation_id=state.get("conversation_id"),
+                        )
+                        logger.debug(
+                            "BookingModeNode: T3 synthetic delivery — resolved %r → %r "
+                            "(%d messages)",
+                            hint,
+                            _resolved_name,
+                            len(_synthetic_msgs),
+                        )
 
         # Pre-loop negation resolver: deterministic classification of "¿algo más?" negations.
         # Runs AFTER audience extraction (so an audience reply that looks negative is routed
@@ -371,6 +407,21 @@ class BookingModeNode(BaseModeNode):
 
         # 4. Build messages with dynamic context
         messages = await self._build_messages(state, booking_context)
+
+        # Inject synthetic state-delivery messages into the transcript (same-turn delivery).
+        # They are non-SystemMessage objects so _invoke_create_agent routes them to the
+        # transcript, not the system_prompt. Inserted before the last HumanMessage so
+        # the LLM reads them as prior tool context before the current user turn.
+        if _synthetic_msgs:
+            from langchain_core.messages import HumanMessage as _HumanMsg
+
+            # Find insertion point: right before the last HumanMessage in messages.
+            insert_idx = len(messages)
+            for _i in range(len(messages) - 1, -1, -1):
+                if isinstance(messages[_i], _HumanMsg):
+                    insert_idx = _i
+                    break
+            messages = messages[:insert_idx] + list(_synthetic_msgs) + messages[insert_idx:]
 
         # 5. Run the agent loop via ``create_agent`` + composed middleware.
         result = await self._invoke_create_agent(

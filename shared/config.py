@@ -215,6 +215,22 @@ class Settings(BaseSettings):
         description="Groq API key for Whisper audio transcription (console.groq.com)",
     )
 
+    # State Delivery — synthetic message primitive (E1 seed)
+    STATE_DELIVERY_SYNTHETIC_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Feature flag for the synthetic state-delivery message primitive. "
+            "When True, deliver_state_update() emits synthetic (AIMessage + ToolMessage) "
+            "pairs to correct LLM anchoring mid-flow. "
+            "Set to False for emergency rollback without code revert."
+        ),
+    )
+
+    @property
+    def state_delivery_synthetic_enabled(self) -> bool:
+        """Lowercase alias for STATE_DELIVERY_SYNTHETIC_ENABLED (ergonomic access)."""
+        return self.STATE_DELIVERY_SYNTHETIC_ENABLED
+
     # Prompt System Optimization
     USE_OPTIMIZED_PROMPTS: bool = Field(
         default=True,

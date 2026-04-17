@@ -44,6 +44,36 @@ AUDIENCE_HINT_MAP: dict[str, str] = {
     "bebe": "baby",
 }
 
+def _pick_variant_by_hint(variants: list[str], hint: str) -> str | None:
+    """Match an audience hint (e.g. 'adult_female') to a full service variant name.
+
+    Strategy: iterate ``variants``; for each, apply ``canonicalize_audience`` on
+    each token of the variant name. Return the first variant whose audience
+    token maps to ``hint``.
+
+    Args:
+        variants: Full service variant names (e.g. ``["Corte Señora", "Corte Caballero"]``).
+        hint: Canonical audience hint (e.g. ``"adult_female"``).
+
+    Returns:
+        The first matching variant name, or ``None`` if no match.
+
+    Examples:
+        >>> _pick_variant_by_hint(["Corte Señora", "Corte Caballero"], "adult_female")
+        'Corte Señora'
+        >>> _pick_variant_by_hint(["Corte Señora", "Corte Caballero"], "baby")
+        None
+    """
+    for variant in variants:
+        # tokenize variant name on whitespace and check each token
+        tokens = variant.split()
+        for token in tokens:
+            canonical = canonicalize_audience(token)
+            if canonical == hint:
+                return variant
+    return None
+
+
 def canonicalize_audience(raw: str) -> str:
     """Normalize an audience string to a canonical audience hint value.
 
