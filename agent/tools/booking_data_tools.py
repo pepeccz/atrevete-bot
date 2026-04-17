@@ -201,8 +201,9 @@ def _build_response(
     if ctx.get("notes_asked"):
         notes = ctx.get("notes")
         collected.append(f"notas: {notes or '(sin notas)'}")
-    else:
-        missing.append("notas")
+    # Notes are optional at the gate level (R8).
+    # The LLM is instructed to ask for notes via Paso 5 in booking.md — that is
+    # conversational guidance only. No Python gate should block on notes_asked.
 
     # Determine next step
     if missing:
