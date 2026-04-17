@@ -88,8 +88,11 @@ class BookingModeNode(BaseModeNode):
         has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
         has_slot = bool(ctx.get("selected_slot"))
 
-        # check_availability: only when services + stylist are set, no slot yet
-        if has_services and has_stylist and not has_slot:
+        # check_availability: only when services + stylist are set, no slot yet,
+        # AND no audience ambiguity is pending (R7 — hide during disambiguation).
+        # Q G5 POSITIVE: DynamicToolsMiddleware removes BOTH schema AND description
+        # from what the LLM sees — hiding is not cosmetic. design §1.
+        if has_services and has_stylist and not has_slot and not ctx.get("_audience_ambiguity"):
             tools.append(check_availability)
 
         # book: only when all required data is collected
