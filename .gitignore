@@ -79,3 +79,7 @@ CLAUDE.md
 v4-backup/
 
 .atl/
+
+# Local AI tooling (Claude Code agents config + OpenCode editor)
+.agents/
+.opencode/
