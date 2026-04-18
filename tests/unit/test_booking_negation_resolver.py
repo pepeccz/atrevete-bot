@@ -1,7 +1,7 @@
 """
 Unit tests for the booking negation resolver.
 
-Tests normalize_for_negation() and is_negation() from shared.negation_phrases.
+Tests normalize_for_negation() and is_negation() from infra.resolvers.negation.
 
 TDD cycle:
 - C1.1: normalize_for_negation tests (must FAIL before C1.3 — module doesn't exist)
@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from shared.negation_phrases import is_negation, normalize_for_negation
+from infra.resolvers.negation import is_negation, normalize_for_negation
 
 
 # ============================================================================

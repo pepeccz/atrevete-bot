@@ -29,7 +29,7 @@ from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
 from shared.audience_maps import AUDIENCE_HINT_MAP, canonicalize_audience
-from shared.negation_phrases import is_negation
+from infra.resolvers.negation import is_negation
 
 logger = logging.getLogger(__name__)
 
