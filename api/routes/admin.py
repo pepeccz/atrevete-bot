@@ -186,6 +186,44 @@ def parse_datetime_as_madrid(v: Any) -> datetime | None:
     return v
 
 
+def _conversation_display_name(row: Any) -> str:
+    """
+    Resolve the display name for a ConversationHistory row.
+
+    Priority:
+    1. Linked Customer → 'first_name last_name'.strip()
+    2. metadata_.sender_name (WhatsApp name captured at webhook time)
+    3. 'Desconocido' fallback
+    """
+    if row.customer:
+        return f"{row.customer.first_name} {row.customer.last_name or ''}".strip()
+
+    metadata = row.metadata_ or {}
+    sender_name = metadata.get("sender_name", "")
+    return sender_name if sender_name else "Desconocido"
+
+
+def _resolve_conversation_list_item(row: Any) -> dict[str, Any]:
+    """
+    Convert a ConversationHistory ORM row to a dict for the list response.
+
+    Reads started_at / ended_at directly from the DB row (not derived from messages).
+    Uses _conversation_display_name for customer_name resolution.
+    """
+    return {
+        "id": str(row.id),
+        "conversation_id": row.conversation_id,
+        "customer_id": str(row.customer_id) if row.customer_id else None,
+        "customer_name": _conversation_display_name(row),
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "ended_at": row.ended_at.isoformat() if row.ended_at else None,
+        "message_count": row.message_count,
+        "summary": row.summary,
+        "created_at": row.created_at.isoformat(),
+        "source": "db",
+    }
+
+
 async def _get_latest_checkpoint_state(redis_client: Any, thread_id: str) -> dict[str, Any] | None:
     """Return the checkpoint state with the highest message count for a thread."""
     thread_keys: list[str | bytes] = []
@@ -4797,22 +4835,7 @@ async def list_conversations(
             db_conv_ids = {row.conversation_id for row in db_rows}
 
             db_items = [
-                {
-                    "id": str(row.id),
-                    "conversation_id": row.conversation_id,
-                    "customer_id": str(row.customer_id) if row.customer_id else None,
-                    "customer_name": (
-                        f"{row.customer.first_name} {row.customer.last_name or ''}".strip()
-                        if row.customer
-                        else None
-                    ),
-                    "started_at": row.started_at.isoformat() if row.started_at else None,
-                    "ended_at": row.ended_at.isoformat() if row.ended_at else None,
-                    "message_count": row.message_count,
-                    "summary": row.summary,
-                    "created_at": row.created_at.isoformat(),
-                    "source": "db",
-                }
+                _resolve_conversation_list_item(row)
                 for row in db_rows
             ]
 
