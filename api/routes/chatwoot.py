@@ -5,11 +5,14 @@ import hmac
 import logging
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from groq import RateLimitError, APIError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.chatwoot_client import ChatwootClient
 from api.models.chatwoot_webhook import (
@@ -30,6 +33,56 @@ from shared.redis_client import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ============================================================================
+# Conversation history upsert
+# ============================================================================
+
+
+async def upsert_conversation_history(
+    session: AsyncSession, payload: ChatwootWebhookPayload
+) -> None:
+    """
+    UPSERT a ConversationHistory row for the incoming Chatwoot message.
+
+    - INSERT on first message: sets started_at=now(), stores sender_name in metadata_.
+    - UPDATE on subsequent messages: increments message_count, sets ended_at=now().
+
+    customer_id is left NULL (populated later by the agent when the customer is identified).
+    """
+    from database.models import ConversationHistory
+
+    conversation_id_str = str(payload.conversation.id)
+    sender_name = payload.sender.name or ""
+
+    result = await session.execute(
+        select(ConversationHistory).where(
+            ConversationHistory.conversation_id == conversation_id_str
+        )
+    )
+    existing = result.scalar_one_or_none()
+    now = datetime.now(tz=timezone.utc)
+
+    if existing is None:
+        # INSERT — new conversation
+        row = ConversationHistory(
+            conversation_id=conversation_id_str,
+            customer_id=None,
+            started_at=now,
+            ended_at=None,
+            message_count=1,
+            metadata_={"sender_name": sender_name},
+        )
+        session.add(row)
+    else:
+        # UPDATE — existing conversation
+        existing.message_count = existing.message_count + 1
+        existing.ended_at = now
+        # Preserve existing metadata; only update sender_name if not already set
+        if not existing.metadata_.get("sender_name") and sender_name:
+            existing.metadata_ = {**existing.metadata_, "sender_name": sender_name}
+
 
 # Idempotency constants
 IDEMPOTENCY_TTL = 300  # 5 minutes
@@ -488,6 +541,21 @@ async def receive_chatwoot_webhook(
                         logger.debug(f"Cleaned up: {wav_path.name}")
                     except Exception as e:
                         logger.warning(f"Failed to cleanup WAV file: {e}")
+
+    # Upsert conversation_history with sender metadata (fire-and-don't-block-on-error)
+    try:
+        from database.connection import get_async_session
+
+        async with get_async_session() as db_session:
+            await upsert_conversation_history(db_session, payload)
+            await db_session.commit()
+    except Exception as e:
+        logger.warning(
+            "Failed to upsert conversation_history for conversation %s: %s",
+            payload.conversation.id,
+            e,
+            extra={"conversation_id": str(payload.conversation.id)},
+        )
 
     # Create message event for Redis
     message_event = ChatwootMessageEvent(
