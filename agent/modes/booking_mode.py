@@ -169,69 +169,6 @@ class BookingModeNode(BaseModeNode):
         return None
 
     @staticmethod
-    def _build_flow_hint(ctx: dict) -> str:
-        """Build a descriptive state hint — data, not commands.
-
-        Reports WHAT is collected and WHAT is pending. The LLM reads
-        booking.md for flow order and reasons from the state.
-        Only _confirmation_shown is set here (deterministic Python gate).
-        """
-        # ── Collect state facts ─────────────────────────────────────────
-        collected: list[str] = []
-        pending: list[str] = []
-
-        if ctx.get("last_services"):
-            collected.append(f"servicio ({', '.join(ctx['last_services'])})")
-        else:
-            pending.append("servicio")
-
-        if ctx.get("last_services") and not ctx.get("add_more_asked"):
-            pending.append("preguntar ¿algo más?")
-
-        if ctx.get("last_stylist") or ctx.get("no_preference_stylist"):
-            stylist = ctx.get("last_stylist", "sin preferencia")
-            collected.append(f"estilista ({stylist})")
-        else:
-            pending.append("estilista")
-
-        if ctx.get("selected_slot"):
-            slot = ctx["selected_slot"]
-            collected.append(f"horario ({slot.get('date', '?')} a las {slot.get('time', '?')})")
-        elif ctx.get("offered_slots"):
-            n = len(ctx["offered_slots"])
-            pending.append(f"selección de horario ({n} opciones ofrecidas)")
-        else:
-            pending.append("fecha/hora")
-
-        if ctx.get("customer_name"):
-            collected.append(f"nombre ({ctx['customer_name']})")
-        else:
-            pending.append("nombre")
-
-        if ctx.get("notes_asked"):
-            notes = ctx.get("notes")
-            collected.append(f"notas ({notes or 'sin notas'})")
-
-        # ── Confirmation gate (deterministic, Python-only) ──────────────
-        if not pending and not ctx.get("_confirmation_shown"):
-            ctx["_confirmation_shown"] = True
-
-        # ── Build hint ──────────────────────────────────────────────────
-        parts: list[str] = []
-
-        if collected:
-            parts.append(f"Recogido: {', '.join(collected)}.")
-
-        if pending:
-            parts.append(f"Pendiente: {', '.join(pending)}.")
-        elif ctx.get("_confirmation_shown"):
-            parts.append("Todos los datos recogidos — resumen mostrado, esperando confirmación.")
-        else:
-            parts.append("Todos los datos recogidos.")
-
-        return f"<flow_hint>{' '.join(parts)}</flow_hint>"
-
-    @staticmethod
     def _evaluate_confirmation_gate(ctx: dict) -> bool:
         """Return True iff all required booking fields are present AND _confirmation_shown is False.
 
@@ -683,7 +620,7 @@ class BookingModeNode(BaseModeNode):
                 # Gate eval: deterministic Python check after patch is applied,
                 # BEFORE cascade clear runs.  The gate is a pure function — it reads
                 # mode_context but does NOT mutate it.  Write path: only this block
-                # (and _build_flow_hint legacy, until Batch 4) may set _confirmation_shown=True.
+                # may set _confirmation_shown=True.
                 if self._evaluate_confirmation_gate(mode_context):
                     mode_context["_confirmation_shown"] = True
                     logger.info(
@@ -981,9 +918,6 @@ class BookingModeNode(BaseModeNode):
             f"<min_valid_date_iso>{min_date.isoformat()}</min_valid_date_iso>"
         )
 
-        # Flow hint — neutral factual list of pending data (not prescriptive)
-        parts.append(self._build_flow_hint(mode_context))
-
         # Available stylists — shown when services are known, stylist not chosen, and
         # "algo más?" has already been asked (add_more_asked gate)
         if (
@@ -1044,8 +978,6 @@ class BookingModeNode(BaseModeNode):
                 f"PREGUNTÁ si la reserva va a ese nombre antes de asumirlo.\n"
                 f"</suggested_name>"
             )
-
-        # <collected_data> removed — <flow_hint> already shows collected/pending state
 
         offered_slots = mode_context.get("offered_slots") or []
         if offered_slots:
