@@ -150,10 +150,6 @@ class TestPostToolResultOrder:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="state-first-booking Batch 4: _build_flow_hint deleted, test needs rewrite — issue #TBD",
-        strict=True,
-    )
     async def test_no_duplicate_write_path_via_build_flow_hint(self):
         """_build_flow_hint side-effect and _post_tool_result gate must not diverge.
 
