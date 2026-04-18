@@ -2,9 +2,11 @@
 
 ## Introducción
 
-Este archivo documenta los 17 tests marcados con `@pytest.mark.xfail(strict=True)` como parte del
-change `state-first-booking` (Batch 4). Todos ellos referenciaban `_build_flow_hint`, un método
-estático que fue eliminado en el Batch 4 de este change.
+Este archivo documenta los 23 tests marcados con `@pytest.mark.xfail(strict=True)` como parte del
+change `state-first-booking`. La mayoría referencia `_build_flow_hint`, un método estático eliminado
+en Batch 4. Los 6 adicionales (xfails #18-23, Batch 4 CRITICAL-1) son tests de
+`_build_dynamic_context` que asertaban sobre los tags `<flow_hint>`, `<required_questions>` y
+`<disambiguation_context>`, también eliminados del código productivo en Batch 4.
 
 **Por qué existen**: `_build_flow_hint` era la implementación original que construía el estado del
 booking como un bloque XML `<flow_hint>`. Los tests validaban esa API. Tras el delete del método, los
@@ -44,6 +46,12 @@ real). Los 4 archivos a editar están listados en la columna "Archivo" de la tab
 | 15 | `tests/integration/test_booking_notes_optional.py` | `TestFlowHintNotasLeak::test_flow_hint_no_notas_pending_when_complete_without_notes` | Core del W1/R8 bug: `<flow_hint>Pendiente: notas</flow_hint>` leak. | **rewrite** — test más crítico del grupo; reescribir contra output del `StatusLineMiddleware` |
 | 16 | `tests/integration/test_booking_notes_optional.py` | `TestFlowHintNotasLeak::test_confirmation_shown_set_when_complete_without_notes` | Valida que `_confirmation_shown=True` tras fix del leak. Cobertura parcialmente solapada con Batch 2. | **delete o rewrite** — si `test_confirmation_gate.py` ya cubre el gate, este puede eliminarse; de lo contrario reescribir |
 | 17 | `tests/integration/test_booking_notes_optional.py` | `TestFlowHintNotasLeak::test_flow_hint_notas_in_collected_when_notes_asked_true` | Testa que `notes_asked=True` → notas aparece en "recogido" (no regresión). | **rewrite** — verificar que `StatusLineMiddleware` muestra notas en collected cuando `notes_asked=True` |
+| 18 | `tests/unit/test_booking_conversational_flow.py` | `TestDisambiguationShowOnce::test_questions_shown_on_first_detection` | Aserta `<required_questions>` en `_build_dynamic_context`. Tag eliminado en Batch 4. | **rewrite** — verificar que el comportamiento de disambiguación sobrevivió de otra forma |
+| 19 | `tests/unit/test_booking_conversational_flow.py` | `TestDisambiguationShowOnce::test_hint_shown_on_subsequent_turn` | Aserta `<disambiguation_context>` en `_build_dynamic_context`. Tag eliminado en Batch 4. | **rewrite** — mismo análisis que #18 |
+| 20 | `tests/unit/test_booking_conversational_flow.py` | `TestDisambiguationShowOnce::test_detection_on_current_message_not_opening_request` | Aserta `<required_questions>` en context para mensaje con keywords. Tag eliminado. | **rewrite** |
+| 21 | `tests/unit/test_booking_conversational_flow.py` | `TestDynamicContextFactual::test_collected_data_in_flow_hint` | Aserta `<flow_hint>` en `_build_dynamic_context` cuando hay `last_services`. Tag eliminado. | **rewrite** — verificar que `last_services` se expone en `[estado]` del `StatusLineMiddleware` |
+| 22 | `tests/unit/test_booking_conversational_flow.py` | `TestDynamicContextFactual::test_flow_hint_present` | Aserta que `<flow_hint>` siempre aparece en dynamic context. Tag eliminado. | **rewrite** — verificar presencia del bloque `[estado]` en HumanMessage |
+| 23 | `tests/unit/test_booking_suggested_name.py` | `test_dynamic_context_confirmed_name_shows_in_flow_hint_not_suggested` | Aserta que nombre confirmado aparece en `<flow_hint>`, sin `<suggested_name>`. Tag `<flow_hint>` eliminado. | **rewrite** — verificar en `[estado]` del `StatusLineMiddleware` |
 
 ---
 
@@ -54,6 +62,12 @@ real). Los 4 archivos a editar están listados en la columna "Archivo" de la tab
 - **Nuevo contrato**: `StatusLineMiddleware._inject(request)` → `HumanMessage` con prefix `[estado]`.
 - **Acción**: Reescribir la clase entera como `TestStatusLineInject` con el mismo coverage semántico.
 - **Prioridad**: Alta — son los tests más completos del behavior de estado.
+
+### `tests/unit/test_booking_conversational_flow.py` — clases `TestDisambiguationShowOnce` y `TestDynamicContextFactual` (5 tests — CRITICAL-1)
+- **Scope**: Testean `_build_dynamic_context` pero asertaban contra tags XML eliminados: `<required_questions>`, `<disambiguation_context>`, `<flow_hint>`.
+- **Nuevo contrato**: Verificar que el comportamiento semántico equivalente existe en el output actual de `_build_dynamic_context` o en `StatusLineMiddleware`.
+- **Acción**: Reescribir los 5 tests contra el nuevo contrato. Los tests de `TestDisambiguationShowOnce` que SÍ pasan (`test_no_disambiguation_when_services_resolved`, `test_answer_message_does_not_retrigger`) muestran el patrón correcto.
+- **Prioridad**: Alta — son los xfails del verify CRITICAL-1.
 
 ### `tests/unit/test_booking_confirmation_loop.py` (4 tests)
 - **Scope**: 3 tests del bug R8/C5 (notes no-pending), 1 duplica cobertura de `test_confirmation_gate.py`.
@@ -102,6 +116,12 @@ Cada xfail debe tener una decisión tomada antes de archivar el change:
 - [ ] xfail #15 — `test_flow_hint_no_notas_pending_when_complete_without_notes` → rewrite completado _(core W1/R8)_
 - [ ] xfail #16 — `test_confirmation_shown_set_when_complete_without_notes` → evaluar delete vs rewrite
 - [ ] xfail #17 — `test_flow_hint_notas_in_collected_when_notes_asked_true` → rewrite completado
+- [ ] xfail #18 — `test_questions_shown_on_first_detection` → rewrite completado _(CRITICAL-1)_
+- [ ] xfail #19 — `test_hint_shown_on_subsequent_turn` → rewrite completado _(CRITICAL-1)_
+- [ ] xfail #20 — `test_detection_on_current_message_not_opening_request` → rewrite completado _(CRITICAL-1)_
+- [ ] xfail #21 — `test_collected_data_in_flow_hint` → rewrite completado _(CRITICAL-1)_
+- [ ] xfail #22 — `test_flow_hint_present` → rewrite completado _(CRITICAL-1)_
+- [ ] xfail #23 — `test_dynamic_context_confirmed_name_shows_in_flow_hint_not_suggested` → rewrite completado _(CRITICAL-1)_
 - [ ] Issue de GitHub creado con este contenido como body
 - [ ] Todos los `reason` actualizados con `issue #NNN`
 - [ ] Suite final: 0 xfail marcados como `state-first-booking`, 0 FAILED
