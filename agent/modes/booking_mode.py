@@ -680,6 +680,16 @@ class BookingModeNode(BaseModeNode):
                     list(patch.keys()),
                 )
 
+                # Gate eval: deterministic Python check after patch is applied,
+                # BEFORE cascade clear runs.  The gate is a pure function — it reads
+                # mode_context but does NOT mutate it.  Write path: only this block
+                # (and _build_flow_hint legacy, until Batch 4) may set _confirmation_shown=True.
+                if self._evaluate_confirmation_gate(mode_context):
+                    mode_context["_confirmation_shown"] = True
+                    logger.info(
+                        "_post_tool_result[update_booking]: gate confirmed → _confirmation_shown=True"
+                    )
+
                 # Cascade clear: if the update invalidates previously confirmed data
                 # (services changed, slot cleared), reset _confirmation_shown so a new
                 # summary is shown before the next book() attempt.
