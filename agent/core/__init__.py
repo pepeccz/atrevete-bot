@@ -22,12 +22,12 @@ from agent.core.resolvers import (
     registered_names,
     unregister,
 )
-from agent.core.status_line import build_status_line
 from agent.core.state_delivery import (
     SYNTHETIC_TOOL_CALL_ID_PREFIX,
     build_synthetic_state_delivery,
     deliver_state_update,
 )
+from agent.core.status_line import build_status_line
 from agent.core.tool_response import (
     FORBIDDEN_IMPERATIVES,
     ToolResponse,
