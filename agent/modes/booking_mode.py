@@ -776,6 +776,8 @@ class BookingModeNode(BaseModeNode):
         from agent.middleware.token_tracking import TokenTrackingMiddleware
         from agent.middleware.tool_choice import ToolChoiceMiddleware
 
+        from shared.config import get_settings
+
         # Split the legacy layered message list into ``system_prompt`` + transcript.
         system_parts: list[str] = []
         transcript: list = []
@@ -799,6 +801,19 @@ class BookingModeNode(BaseModeNode):
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="BOOKING"),
         ]
+
+        # StatusLineMiddleware — condicional al feature flag (T1.4).
+        # Posición 1 (después de DynamicTools, antes de NodeBridge) per design §7.
+        if get_settings().ENABLE_STATUS_LINE_MIDDLEWARE:
+            from agent.middleware.status_line import StatusLineMiddleware
+
+            middleware.insert(
+                1,
+                StatusLineMiddleware(
+                    get_state_fn=lambda: self._current_state,
+                    mode_name="BOOKING",
+                ),
+            )
         if tool_choice:
             middleware.insert(
                 0,
