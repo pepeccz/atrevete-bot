@@ -231,6 +231,36 @@ class BookingModeNode(BaseModeNode):
 
         return f"<flow_hint>{' '.join(parts)}</flow_hint>"
 
+    @staticmethod
+    def _evaluate_confirmation_gate(ctx: dict) -> bool:
+        """Return True iff all required booking fields are present AND _confirmation_shown is False.
+
+        Pure function: reads ctx, does NOT mutate it.
+
+        This is the deterministic Python gate that controls whether _confirmation_shown
+        should be set to True in _post_tool_result[update_booking].
+
+        Conditions for True:
+        - last_services is non-empty
+        - last_stylist OR no_preference_stylist is set
+        - selected_slot is set
+        - customer_name is set
+        - notes_asked is truthy
+        - add_more_asked is truthy
+        - _confirmation_shown is NOT already True (gate must not fire twice)
+        """
+        if ctx.get("_confirmation_shown"):
+            return False
+
+        has_services = bool(ctx.get("last_services"))
+        has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
+        has_slot = bool(ctx.get("selected_slot"))
+        has_name = bool(ctx.get("customer_name"))
+        notes_answered = bool(ctx.get("notes_asked"))
+        add_more_answered = bool(ctx.get("add_more_asked"))
+
+        return has_services and has_stylist and has_slot and has_name and notes_answered and add_more_answered
+
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
     # ──────────────────────────────────────────────────────────────────────
