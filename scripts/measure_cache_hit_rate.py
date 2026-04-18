@@ -37,6 +37,30 @@ Token fields location in trace:
 If the trace does not contain token_usage (older format or live run not yet
 done), the script emits ratio=null and avg_ratio=null with a note explaining
 the data is not available yet.
+
+state-first-booking — Post-change measurement (T5.1 / T5.2)
+------------------------------------------------------------
+Run ON pepe@server with ENABLE_STATUS_LINE_MIDDLEWARE=True (Batch 5 gate).
+Docker and OpenRouter must be running for real token_usage data.
+
+Exact command to run on server::
+
+    cd /home/pepe/Proyectos/atrevete-bot
+    ENABLE_STATUS_LINE_MIDDLEWARE=True \\
+        python scripts/measure_cache_hit_rate.py \\
+        --scenario tests/qa/conversations/baseline_booking_flow.json \\
+        --output sdd/state-first-booking/post-cache-hit.json
+
+Expected output file: sdd/state-first-booking/post-cache-hit.json
+Expected format: same JSON schema as above, with avg_ratio != null.
+
+Gate T5.2 (go/no-go for Batch 6):
+  - Retrieve baseline avg_ratio from engram topic: sdd/state-first-booking/baseline-cache-hit
+  - Retrieve post-change avg_ratio from sdd/state-first-booking/post-cache-hit.json
+  - delta = abs(avg_ratio_post - avg_ratio_pre)
+  - If delta <= 0.05 (5 percentage points): GATE PASSED → proceed to Batch 6
+  - If delta > 0.05: STOP → investigate before flipping flag
+    (likely cause: _build_dynamic_context changed SystemMessages, invalidating cache)
 """
 
 from __future__ import annotations
