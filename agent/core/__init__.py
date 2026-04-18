@@ -22,6 +22,7 @@ from agent.core.resolvers import (
     registered_names,
     unregister,
 )
+from agent.core.status_line import build_status_line
 from agent.core.state_delivery import (
     SYNTHETIC_TOOL_CALL_ID_PREFIX,
     build_synthetic_state_delivery,
@@ -45,6 +46,8 @@ __all__ = [
     "register",
     "registered_names",
     "unregister",
+    # E1: StatusLine pre-turn HumanMessage builder
+    "build_status_line",
     # E1: ToolResponse Pydantic + AST linter
     "FORBIDDEN_IMPERATIVES",
     "ToolResponse",
