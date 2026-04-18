@@ -1,6 +1,9 @@
 """
 Deterministic negation resolver for the booking flow.
 
+Moved from shared/negation_phrases.py in E1 per P8 (shared/ is for utilities,
+not domain resolvers; resolvers belong in infra/resolvers/).
+
 Classifies whether a user message is a negation of "¿algo más?" BEFORE the LLM
 agentic loop runs. Uses stdlib only (unicodedata, difflib) — zero new dependencies.
 
