@@ -1,0 +1,105 @@
+{
+  "_comment": "QA scenario definition for baseline_booking_flow. 8-turn booking flow covering service selection, audience resolution, add-more, stylist, slot and confirmation. Used as input for scripts/measure_cache_hit_rate.py to measure cache_hit_rate PRE-change (T0.3). NOTE: token_usage fields are null here — they must be populated by running this scenario against the live agent via tests/e2e/harness/qa_turn_helper.py and saving the raw responses. See scripts/run_baseline_measurement.sh for the automation sequence.",
+  "scenario_id": "baseline_booking_flow",
+  "persona_id": "baseline_measurement_client",
+  "description": "8-turn booking: servicio → audiencia → nada-más → estilista → slot → nombre → confirmación → ok",
+  "measurement_target": "cache_hit_rate PRE state-first-booking change",
+  "conversation_id": null,
+  "turns": [
+    {
+      "turn_number": 1,
+      "user_message": "Hola, quiero reservar un turno",
+      "expected_intent": "BOOKING",
+      "expected_keywords": ["hola", "turno", "servicio"],
+      "agent_response": null,
+      "response_latency_ms": null,
+      "timed_out": false,
+      "raw_response": null,
+      "token_usage": null
+    },
+    {
+      "turn_number": 2,
+      "user_message": "Quiero un corte de cabello",
+      "expected_intent": "BOOKING",
+      "expected_keywords": ["corte", "señora", "caballero"],
+      "agent_response": null,
+      "response_latency_ms": null,
+      "timed_out": false,
+      "raw_response": null,
+      "token_usage": null
+    },
+    {
+      "turn_number": 3,
+      "user_message": "Para señora",
+      "expected_intent": "BOOKING",
+      "expected_keywords": ["señora", "algo más", "añadir"],
+      "agent_response": null,
+      "response_latency_ms": null,
+      "timed_out": false,
+      "raw_response": null,
+      "token_usage": null
+    },
+    {
+      "turn_number": 4,
+      "user_message": "Nada más, gracias",
+      "expected_intent": "BOOKING",
+      "expected_keywords": ["estilista", "con quién", "preferencia"],
+      "agent_response": null,
+      "response_latency_ms": null,
+      "timed_out": false,
+      "raw_response": null,
+      "token_usage": null
+    },
+    {
+      "turn_number": 5,
+      "user_message": "Me da igual el estilista",
+      "expected_intent": "BOOKING",
+      "expected_keywords": ["fecha", "cuándo", "disponibilidad"],
+      "agent_response": null,
+      "response_latency_ms": null,
+      "timed_out": false,
+      "raw_response": null,
+      "token_usage": null
+    },
+    {
+      "turn_number": 6,
+      "user_message": "El próximo martes a las 10",
+      "expected_intent": "BOOKING",
+      "expected_keywords": ["nombre", "llamas"],
+      "agent_response": null,
+      "response_latency_ms": null,
+      "timed_out": false,
+      "raw_response": null,
+      "token_usage": null
+    },
+    {
+      "turn_number": 7,
+      "user_message": "Me llamo Laura",
+      "expected_intent": "BOOKING",
+      "expected_keywords": ["confirmar", "resumen", "turno"],
+      "agent_response": null,
+      "response_latency_ms": null,
+      "timed_out": false,
+      "raw_response": null,
+      "token_usage": null
+    },
+    {
+      "turn_number": 8,
+      "user_message": "Sí, confirmo",
+      "expected_intent": "BOOKING",
+      "expected_keywords": ["confirmado", "reservado", "gracias"],
+      "agent_response": null,
+      "response_latency_ms": null,
+      "timed_out": false,
+      "raw_response": null,
+      "token_usage": null
+    }
+  ],
+  "_run_instructions": {
+    "step1": "Start Docker stack: docker-compose up -d",
+    "step2": "Run QA scenario via harness: python tests/e2e/harness/qa_turn_helper.py turn ...",
+    "step3": "Populate token_usage fields from agent logs / TokenTrackingMiddleware output",
+    "step4": "Run: python scripts/measure_cache_hit_rate.py --scenario tests/qa/conversations/baseline_booking_flow.json --output sdd/state-first-booking/baseline-cache-hit.json",
+    "step5": "Save result to engram: topic_key sdd/state-first-booking/baseline-cache-hit"
+  }
+}
