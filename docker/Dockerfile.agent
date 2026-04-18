@@ -28,6 +28,7 @@ COPY agent/ ./agent/
 COPY api/ ./api/
 COPY database/ ./database/
 COPY shared/ ./shared/
+COPY infra/ ./infra/
 COPY scripts/ ./scripts/
 COPY templates/ ./templates/
 

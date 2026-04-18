@@ -169,67 +169,34 @@ class BookingModeNode(BaseModeNode):
         return None
 
     @staticmethod
-    def _build_flow_hint(ctx: dict) -> str:
-        """Build a descriptive state hint — data, not commands.
+    def _evaluate_confirmation_gate(ctx: dict) -> bool:
+        """Return True iff all required booking fields are present AND _confirmation_shown is False.
 
-        Reports WHAT is collected and WHAT is pending. The LLM reads
-        booking.md for flow order and reasons from the state.
-        Only _confirmation_shown is set here (deterministic Python gate).
+        Pure function: reads ctx, does NOT mutate it.
+
+        This is the deterministic Python gate that controls whether _confirmation_shown
+        should be set to True in _post_tool_result[update_booking].
+
+        Conditions for True:
+        - last_services is non-empty
+        - last_stylist OR no_preference_stylist is set
+        - selected_slot is set
+        - customer_name is set
+        - notes_asked is truthy
+        - add_more_asked is truthy
+        - _confirmation_shown is NOT already True (gate must not fire twice)
         """
-        # ── Collect state facts ─────────────────────────────────────────
-        collected: list[str] = []
-        pending: list[str] = []
+        if ctx.get("_confirmation_shown"):
+            return False
 
-        if ctx.get("last_services"):
-            collected.append(f"servicio ({', '.join(ctx['last_services'])})")
-        else:
-            pending.append("servicio")
+        has_services = bool(ctx.get("last_services"))
+        has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
+        has_slot = bool(ctx.get("selected_slot"))
+        has_name = bool(ctx.get("customer_name"))
+        notes_answered = bool(ctx.get("notes_asked"))
+        add_more_answered = bool(ctx.get("add_more_asked"))
 
-        if ctx.get("last_services") and not ctx.get("add_more_asked"):
-            pending.append("preguntar ¿algo más?")
-
-        if ctx.get("last_stylist") or ctx.get("no_preference_stylist"):
-            stylist = ctx.get("last_stylist", "sin preferencia")
-            collected.append(f"estilista ({stylist})")
-        else:
-            pending.append("estilista")
-
-        if ctx.get("selected_slot"):
-            slot = ctx["selected_slot"]
-            collected.append(f"horario ({slot.get('date', '?')} a las {slot.get('time', '?')})")
-        elif ctx.get("offered_slots"):
-            n = len(ctx["offered_slots"])
-            pending.append(f"selección de horario ({n} opciones ofrecidas)")
-        else:
-            pending.append("fecha/hora")
-
-        if ctx.get("customer_name"):
-            collected.append(f"nombre ({ctx['customer_name']})")
-        else:
-            pending.append("nombre")
-
-        if ctx.get("notes_asked"):
-            notes = ctx.get("notes")
-            collected.append(f"notas ({notes or 'sin notas'})")
-
-        # ── Confirmation gate (deterministic, Python-only) ──────────────
-        if not pending and not ctx.get("_confirmation_shown"):
-            ctx["_confirmation_shown"] = True
-
-        # ── Build hint ──────────────────────────────────────────────────
-        parts: list[str] = []
-
-        if collected:
-            parts.append(f"Recogido: {', '.join(collected)}.")
-
-        if pending:
-            parts.append(f"Pendiente: {', '.join(pending)}.")
-        elif ctx.get("_confirmation_shown"):
-            parts.append("Todos los datos recogidos — resumen mostrado, esperando confirmación.")
-        else:
-            parts.append("Todos los datos recogidos.")
-
-        return f"<flow_hint>{' '.join(parts)}</flow_hint>"
+        return has_services and has_stylist and has_slot and has_name and notes_answered and add_more_answered
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -650,6 +617,16 @@ class BookingModeNode(BaseModeNode):
                     list(patch.keys()),
                 )
 
+                # Gate eval: deterministic Python check after patch is applied,
+                # BEFORE cascade clear runs.  The gate is a pure function — it reads
+                # mode_context but does NOT mutate it.  Write path: only this block
+                # may set _confirmation_shown=True.
+                if self._evaluate_confirmation_gate(mode_context):
+                    mode_context["_confirmation_shown"] = True
+                    logger.info(
+                        "_post_tool_result[update_booking]: gate confirmed → _confirmation_shown=True"
+                    )
+
                 # Cascade clear: if the update invalidates previously confirmed data
                 # (services changed, slot cleared), reset _confirmation_shown so a new
                 # summary is shown before the next book() attempt.
@@ -776,6 +753,8 @@ class BookingModeNode(BaseModeNode):
         from agent.middleware.token_tracking import TokenTrackingMiddleware
         from agent.middleware.tool_choice import ToolChoiceMiddleware
 
+        from shared.config import get_settings
+
         # Split the legacy layered message list into ``system_prompt`` + transcript.
         system_parts: list[str] = []
         transcript: list = []
@@ -799,6 +778,19 @@ class BookingModeNode(BaseModeNode):
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="BOOKING"),
         ]
+
+        # StatusLineMiddleware — condicional al feature flag (T1.4).
+        # Posición 1 (después de DynamicTools, antes de NodeBridge) per design §7.
+        if get_settings().ENABLE_STATUS_LINE_MIDDLEWARE:
+            from agent.middleware.status_line import StatusLineMiddleware
+
+            middleware.insert(
+                1,
+                StatusLineMiddleware(
+                    get_state_fn=lambda: self._current_state,
+                    mode_name="BOOKING",
+                ),
+            )
         if tool_choice:
             middleware.insert(
                 0,
@@ -926,9 +918,6 @@ class BookingModeNode(BaseModeNode):
             f"<min_valid_date_iso>{min_date.isoformat()}</min_valid_date_iso>"
         )
 
-        # Flow hint — neutral factual list of pending data (not prescriptive)
-        parts.append(self._build_flow_hint(mode_context))
-
         # Available stylists — shown when services are known, stylist not chosen, and
         # "algo más?" has already been asked (add_more_asked gate)
         if (
@@ -989,8 +978,6 @@ class BookingModeNode(BaseModeNode):
                 f"PREGUNTÁ si la reserva va a ese nombre antes de asumirlo.\n"
                 f"</suggested_name>"
             )
-
-        # <collected_data> removed — <flow_hint> already shows collected/pending state
 
         offered_slots = mode_context.get("offered_slots") or []
         if offered_slots:

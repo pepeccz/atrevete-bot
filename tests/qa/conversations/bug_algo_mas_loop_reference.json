@@ -1,0 +1,82 @@
+{
+  "_comment": "Reference transcript documenting the '¿algo más? loop' bug (2026-04-17 21:30). The pre-loop negation resolver hook already handles the add_more_asked flag correctly (test_booking_add_more_loop.py passes). The BUG documented here is the DEEPER root cause: _build_flow_hint renders <flow_hint> XML into a cacheable SystemMessage. When OpenRouter prefix-cache returns a stale hit, the LLM reads _confirmation_shown=False from the XML and re-asks '¿algo más?' even though add_more_asked=True is set in booking_context live. This reference transcript describes the conversation pattern that triggers the bug and will be used in Batch 1 tests to assert the fix via StatusLineMiddleware [estado] HumanMessage.",
+  "bug_id": "algo_mas_loop_2026-04-17",
+  "bug_reported": "2026-04-17T21:30:00Z",
+  "root_cause": "_build_flow_hint mutates ctx['_confirmation_shown']=True in-place (booking_mode.py:217) without returning the dict to the state. Additionally, <flow_hint> XML lives in a cacheable SystemMessage; when OpenRouter prefix-cache returns a stale hit, the LLM reads stale flow_hint state and re-asks questions already answered.",
+  "reproduction_conditions": {
+    "booking_context_before_turn": {
+      "last_services": ["Corte Señora"],
+      "service_audience_hint": "adult_female",
+      "add_more_asked": true,
+      "_confirmation_shown": false,
+      "last_stylist": null,
+      "selected_slot": null
+    },
+    "user_message": "Nada más, gracias",
+    "expected_behavior": "Agent advances to ask for stylist preference (add_more_asked is True)",
+    "bug_behavior": "Agent re-asks '¿Quieres añadir algo más?' ignoring add_more_asked=True in live state, because <flow_hint> XML in cached SystemMessage shows stale state"
+  },
+  "conversation_transcript": [
+    {
+      "turn": 1,
+      "role": "user",
+      "content": "Hola, quiero reservar un turno",
+      "note": "GREETING mode"
+    },
+    {
+      "turn": 2,
+      "role": "assistant",
+      "content": "¡Hola! Soy Maite, la asistente virtual de Atrévete. ¿En qué puedo ayudarte hoy?"
+    },
+    {
+      "turn": 3,
+      "role": "user",
+      "content": "Quiero un corte de cabello"
+    },
+    {
+      "turn": 4,
+      "role": "assistant",
+      "content": "¡Perfecto! ¿El corte es para señora, caballero, niño/a o bebé?"
+    },
+    {
+      "turn": 5,
+      "role": "user",
+      "content": "Para señora"
+    },
+    {
+      "turn": 6,
+      "role": "assistant",
+      "content": "Genial, te apunto 'Corte Señora'. ¿Quieres añadir algo más a tu cita?"
+    },
+    {
+      "turn": 7,
+      "role": "user",
+      "content": "Nada más, gracias",
+      "note": "pre-loop negation resolver sets add_more_asked=True BEFORE LLM call. booking_context live: add_more_asked=True. BUT: <flow_hint> XML in cached SystemMessage still shows add_more_asked=False (stale prefix cache hit from OpenRouter)"
+    },
+    {
+      "turn": 8,
+      "role": "assistant",
+      "content": "¿Quieres añadir algo más a tu cita?",
+      "note": "BUG: Agent re-asks the same question. LLM read stale <flow_hint> from cached SystemMessage instead of live booking_context. _confirmation_shown=False in stale XML overrides the real state.",
+      "bug_evidence": {
+        "_build_flow_hint_output_stale": "<flow_hint>\\n  <add_more_asked>false</add_more_asked>\\n  <_confirmation_shown>false</_confirmation_shown>\\n</flow_hint>",
+        "booking_context_live": {
+          "add_more_asked": true,
+          "_confirmation_shown": false
+        },
+        "discrepancy": "add_more_asked in live context is True but <flow_hint> XML shows false due to OpenRouter prefix cache returning stale SystemMessage"
+      }
+    }
+  ],
+  "expected_fix": {
+    "description": "StatusLineMiddleware injects fresh HumanMessage '[estado]' before each model call with live booking_context. booking.md updated to read '[estado]' as ground truth. _build_flow_hint deleted.",
+    "key_assertion_batch1": "After fix: turn 8 agent_response does NOT contain '¿algo más?' OR '¿Quieres añadir' when add_more_asked=True and last_services is set",
+    "test_file": "tests/integration/test_booking_add_more_loop.py",
+    "implemented_in_batch": 1
+  },
+  "current_test_status": {
+    "test_booking_add_more_loop.py": "PASSES (5/5) — negation resolver hook is wired and works for the pre-loop detection. The deeper bug (stale <flow_hint> XML) is not yet fixed — Batch 1 addresses it via StatusLineMiddleware.",
+    "note": "The test currently passes because it mocks build_layered_messages and create_agent, so the stale XML cache path is not exercised. The real bug only manifests with a live LLM call against OpenRouter with prefix caching enabled."
+  }
+}
