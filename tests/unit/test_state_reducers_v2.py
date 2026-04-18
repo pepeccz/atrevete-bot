@@ -132,7 +132,6 @@ class TestBookingContextType:
             "last_stylist",
             "no_preference_stylist",
             "available_stylists",
-            "last_confirmed_stylist_id",
             "offered_slots",
             "selected_slot",
             "customer_name",

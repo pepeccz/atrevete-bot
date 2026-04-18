@@ -60,7 +60,6 @@ class BookingContext(TypedDict, total=False):
     last_stylist: str | None
     no_preference_stylist: bool | None
     available_stylists: list[str] | None
-    last_confirmed_stylist_id: str | None  # preserved from legacy schemas (used in handoffs)
     _offered_stylists: list[str] | None  # includes "Sin preferencia" sentinel
 
     # ── Slot data ───────────────────────────────────────────────────────
@@ -84,7 +83,7 @@ class BookingContext(TypedDict, total=False):
     notes: str | None
     notes_asked: bool
     _booking_completed: bool
-    _confirmation_shown: bool
+    _confirmation_shown: bool  # Solo setteable via return path explícito al reducer en _post_tool_result. No mutar in-place fuera de ese bloque.
     _disambiguation_questions_shown: bool
     _suggested_customer_name: str | None
 
