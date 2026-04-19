@@ -1,20 +1,9 @@
 """
-Unit + integration tests for the ROBUST pre-loop negation_resolver precondition
-in BookingModeNode (Opción B).
+Integration tests for the pre-loop negation_resolver in BookingModeNode.
 
-Bug (conv_id=5, 2026-04-18): LLM incorrectly set no_preference_stylist in an
-earlier turn, which silenced the resolver for the user's negation "Nada mas" —
-bot looped on "¿algo más?" question.
-
-Fix: replace brittle state guards (last_stylist / no_preference_stylist) with
-a CONTEXTUAL check — the resolver fires only when the LAST AIMessage in the
-transcript contains an "algo más" style question.
-
-TDD: these tests FAIL on master (guards still present) and PASS after the fix.
-
-Covers:
-- _last_ai_message_has_add_more_question pure helper (dict + LangChain shape).
-- Resolver integration via booking_mode.handle() with the new precondition.
+Validates that the resolver fires based on booking_context state guards
+(last_services set, add_more_asked falsy, no audience ambiguity), NOT on
+stale positional flags like last_stylist / no_preference_stylist.
 """
 
 from __future__ import annotations
@@ -25,140 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from agent.modes.booking_mode import (
-    BookingModeNode,
-    _last_ai_message_has_add_more_question,
-)
+from agent.modes.booking_mode import BookingModeNode
 from agent.state.schemas import create_initial_state
 
 
 # ============================================================================
-# Part 1 — Pure helper: _last_ai_message_has_add_more_question
-# ============================================================================
-
-
-class TestLastAIMessageHelper:
-    """The helper scans messages from the end and returns True iff the most
-    recent AIMessage contains an 'algo más'-style substring (case insensitive).
-    """
-
-    # --- Positive matches (dict shape) -----------------------------------
-
-    @pytest.mark.parametrize(
-        "bot_text",
-        [
-            "Vale, ¿quieres añadir algo más a la cita?",
-            "Perfecto, ¿quieres añadir algo más a la cita?",
-            "¿Deseas agregar algo más?",
-            "¿Vas a querer añadir algo?",
-            "¿Sumamos algo más?",
-            "¿Quieres sumar algo al pedido?",
-            "¿Algún otro servicio te interesa?",
-            "¿Algun otro servicio?",
-            "Perfecto. ¿Algo más?",  # minimal trigger
-        ],
-    )
-    def test_dict_shape_positive_matches(self, bot_text: str) -> None:
-        messages = [
-            {"role": "user", "content": "Hola, quiero cortarme el pelo"},
-            {"role": "assistant", "content": "¿Corte Señora o Caballero?"},
-            {"role": "user", "content": "señora!"},
-            {"role": "assistant", "content": bot_text},
-            {"role": "user", "content": "Nada mas"},
-        ]
-        assert _last_ai_message_has_add_more_question(messages) is True
-
-    # --- Negative matches (dict shape) -----------------------------------
-
-    @pytest.mark.parametrize(
-        "bot_text",
-        [
-            "Hola, ¿qué día quieres?",
-            "¿A qué hora te viene bien?",
-            "¿Prefieres la mañana o la tarde?",
-            "Perfecto, te confirmo la cita.",
-            "¿Con qué estilista quieres reservar?",
-        ],
-    )
-    def test_dict_shape_negative_no_match(self, bot_text: str) -> None:
-        messages = [
-            {"role": "user", "content": "Hola"},
-            {"role": "assistant", "content": bot_text},
-            {"role": "user", "content": "nada"},
-        ]
-        assert _last_ai_message_has_add_more_question(messages) is False
-
-    # --- LangChain AIMessage shape ---------------------------------------
-
-    def test_langchain_aimessage_positive(self) -> None:
-        messages = [
-            HumanMessage(content="Hola"),
-            AIMessage(content="¿Quieres añadir algo más a la cita?"),
-            HumanMessage(content="Nada más"),
-        ]
-        assert _last_ai_message_has_add_more_question(messages) is True
-
-    def test_langchain_aimessage_negative(self) -> None:
-        messages = [
-            HumanMessage(content="Hola"),
-            AIMessage(content="¿Qué día prefieres?"),
-            HumanMessage(content="no sé"),
-        ]
-        assert _last_ai_message_has_add_more_question(messages) is False
-
-    # --- Mixed shapes (realistic state) ----------------------------------
-
-    def test_mixed_shapes_last_ai_dict_positive(self) -> None:
-        messages = [
-            HumanMessage(content="Hola"),
-            AIMessage(content="¿Cuándo?"),
-            {"role": "user", "content": "mañana"},
-            {"role": "assistant", "content": "¿Quieres sumar algo más?"},
-            {"role": "user", "content": "nada"},
-        ]
-        assert _last_ai_message_has_add_more_question(messages) is True
-
-    def test_mixed_shapes_last_ai_langchain_negative(self) -> None:
-        messages = [
-            {"role": "assistant", "content": "¿Algo más?"},  # older AI
-            {"role": "user", "content": "sí, un oleo"},
-            AIMessage(content="Perfecto. ¿Con qué estilista?"),  # latest AI
-            HumanMessage(content="me da igual"),
-        ]
-        # Helper must pick the MOST RECENT AIMessage (the LangChain one),
-        # whose content is NOT an "algo más" question.
-        assert _last_ai_message_has_add_more_question(messages) is False
-
-    # --- Edge cases -------------------------------------------------------
-
-    def test_empty_messages(self) -> None:
-        assert _last_ai_message_has_add_more_question([]) is False
-
-    def test_no_ai_messages(self) -> None:
-        messages = [
-            {"role": "user", "content": "Hola"},
-            {"role": "user", "content": "¿Estás ahí?"},
-        ]
-        assert _last_ai_message_has_add_more_question(messages) is False
-
-    def test_case_insensitive(self) -> None:
-        messages = [
-            {"role": "user", "content": "hola"},
-            {"role": "assistant", "content": "¿DESEAS AGREGAR ALGO MÁS?"},
-        ]
-        assert _last_ai_message_has_add_more_question(messages) is True
-
-    def test_no_accent_match(self) -> None:
-        """Substring match must cover 'algo mas' (no accent) as well."""
-        messages = [
-            {"role": "user", "content": "hola"},
-            {"role": "assistant", "content": "¿Quieres algo mas?"},
-        ]
-        assert _last_ai_message_has_add_more_question(messages) is True
-
-
-# ============================================================================
-# Part 2 — Integration tests via BookingModeNode.handle
+# Integration tests via BookingModeNode.handle
 # ============================================================================
 
 
@@ -313,32 +174,6 @@ class TestResolverNewPrecondition:
             result = await node.handle(state, intent=None)
 
         assert result.get("booking_context", {}).get("add_more_asked") is True
-
-    async def test_resolver_does_not_fire_when_last_bot_msg_not_add_more(
-        self, _common_patches
-    ) -> None:
-        """Precondition: if last bot message is NOT an 'algo más' question,
-        the resolver MUST NOT fire (avoids false positives).
-        """
-        node = _make_node()
-
-        booking_ctx = {
-            "last_services": ["Corte"],
-            "add_more_asked": False,
-        }
-        prior = [
-            {"role": "assistant", "content": "Hola, ¿qué día quieres?"},
-        ]
-        state = _make_state("nada", booking_context=booking_ctx, prior_messages=prior)
-
-        agent_mock = _make_scripted_agent()
-
-        with patch("langchain.agents.create_agent", return_value=agent_mock):
-            result = await node.handle(state, intent=None)
-
-        assert not result.get("booking_context", {}).get("add_more_asked"), (
-            "Resolver must NOT fire when last bot message is not an 'algo más' question."
-        )
 
     async def test_resolver_preserves_current_behavior(self, _common_patches) -> None:
         """Regression guard: the classic scenario (no stylist flags, bot asked

@@ -38,56 +38,6 @@ logger = logging.getLogger(__name__)
 
 _HISTORY_LIMIT = 8
 
-# ============================================================================
-# Module-level helpers
-# ============================================================================
-
-
-# Substrings that identify a bot "¿algo más?"-style question.
-# Case-insensitive substring match against the last AIMessage.
-_ADD_MORE_QUESTION_MARKERS: tuple[str, ...] = (
-    "algo más",
-    "algo mas",
-    "añadir algo",
-    "anadir algo",
-    "agregar algo",
-    "sumar algo",
-    "sumamos algo",
-    "algún otro servicio",
-    "algun otro servicio",
-)
-
-
-def _last_ai_message_has_add_more_question(messages: list) -> bool:
-    """Scan ``messages`` from the end; return True iff the most recent assistant
-    message contains an "algo más"-style question.
-
-    Accepts both message shapes used in this codebase:
-      - ``dict`` with ``role == "assistant"`` (state-level messages)
-      - ``langchain_core.messages.AIMessage`` (LangGraph/LangChain transcripts)
-
-    Pure function — no side effects.
-    """
-    from langchain_core.messages import AIMessage
-
-    for msg in reversed(messages or []):
-        content: str | None = None
-        if isinstance(msg, dict):
-            if msg.get("role") == "assistant":
-                raw = msg.get("content", "")
-                content = raw if isinstance(raw, str) else str(raw)
-        elif isinstance(msg, AIMessage):
-            raw = msg.content
-            content = raw if isinstance(raw, str) else str(raw)
-
-        if content is None:
-            continue  # not an assistant message — keep scanning
-
-        lowered = content.lower()
-        return any(marker in lowered for marker in _ADD_MORE_QUESTION_MARKERS)
-
-    return False
-
 
 # ============================================================================
 # BookingModeNode
@@ -377,18 +327,13 @@ class BookingModeNode(BaseModeNode):
         # to audience first) and BEFORE _build_messages (so add_more_asked is set before the
         # LLM loop builds its prompt).
         #
-        # Trigger conditions (ALL must hold — Opción B, robust):
+        # Trigger conditions:
         #   1. last_services is set (user has already specified services)
         #   2. add_more_asked is falsy (question not yet resolved)
-        #   3. the LAST AIMessage in the transcript is an "¿algo más?"-style question
-        #      (contextual check — replaces brittle last_stylist/no_preference_stylist guards,
-        #       which were anti-correlated: the LLM can set a stylist flag in error and the
-        #       customer may still be answering the "¿algo más?" question)
-        #   4. _audience_ambiguity is absent (don't steal turns from disambiguation)
+        #   3. _audience_ambiguity is absent (don't steal turns from disambiguation)
         _negation_active = (
             bool(booking_context.get("last_services"))
             and not booking_context.get("add_more_asked")
-            and _last_ai_message_has_add_more_question(state.get("messages") or [])
             and not booking_context.get("_audience_ambiguity")
         )
         if _negation_active:
