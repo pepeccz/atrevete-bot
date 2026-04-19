@@ -1048,8 +1048,10 @@ class BookingModeNode(BaseModeNode):
         if customer_memories and isinstance(customer_memories, dict):
             from agent.prompts.loader import _build_customer_memory_context
 
-            # Pass service names from cached stylists catalog for ambiguity check
-            all_svc_names = getattr(self, "_cached_service_names", None)
+            # Pass service names from cached catalog for ambiguity check
+            # _cached_service_names is now list[ServiceCatalogEntry]; extract .name for prompt
+            catalog = getattr(self, "_cached_service_names", None) or []
+            all_svc_names = [e.name for e in catalog] if catalog and hasattr(catalog[0], "name") else catalog
             parts.append(_build_customer_memory_context(customer_memories, all_svc_names))
 
         return "\n".join(parts)
@@ -1224,19 +1226,67 @@ class BookingModeNode(BaseModeNode):
             return {}
 
     @staticmethod
-    async def _load_service_names() -> list[str]:
-        """Load all active service names for ambiguity checks. Never raises."""
+    async def _load_service_names() -> list:
+        """Load all active services with audience metadata. Never raises.
+
+        Returns:
+            list[ServiceCatalogEntry]: Expanded entries with name, audience, siblings,
+                has_audience_siblings fields. Required by BookingInvariantMiddleware (R34-R38).
+                Falls back to empty list on DB error.
+        """
         try:
             from sqlalchemy import select as sa_select
 
             from database.connection import get_async_session
             from database.models import Service
 
+            from agent.booking.models import ServiceCatalogEntry
+
             async with get_async_session() as session:
                 result = await session.execute(
-                    sa_select(Service.name).where(Service.is_active == True).order_by(Service.name)
+                    sa_select(Service.name, Service.audience)
+                    .where(Service.is_active == True)
+                    .order_by(Service.name)
                 )
-                return [row[0] for row in result.all()]
+                rows = result.all()
+
+            # Build audience family groups in Python (single query, no N+1)
+            # Group by first token of name (lowercased, accent-stripped) as family key
+            import unicodedata
+
+            def _base_word(name: str) -> str:
+                """Return first token of name, lowercased with accents stripped."""
+                first = name.split()[0] if name else name
+                return "".join(
+                    c for c in unicodedata.normalize("NFKD", first.lower())
+                    if unicodedata.category(c) != "Mn"
+                )
+
+            # family_key -> [(name, audience), ...]
+            family_groups: dict[str, list[tuple[str, str | None]]] = {}
+            for name, audience in rows:
+                key = _base_word(name)
+                family_groups.setdefault(key, []).append((name, audience))
+
+            # Build ServiceCatalogEntry with siblings for audience-variant services
+            entries: list[ServiceCatalogEntry] = []
+            for name, audience in rows:
+                key = _base_word(name)
+                group = family_groups.get(key, [])
+
+                if audience is not None and len(group) > 1:
+                    # Has audience siblings — include all names in the group as siblings
+                    siblings = [g_name for g_name, _ in group]
+                else:
+                    siblings = []
+
+                entries.append(ServiceCatalogEntry(
+                    name=name,
+                    audience=audience,
+                    siblings=siblings,
+                ))
+
+            return entries
         except Exception as exc:
             logger.warning("_load_service_names: failed: %s", exc)
             return []
