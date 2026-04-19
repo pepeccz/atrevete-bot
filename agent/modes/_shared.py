@@ -6,9 +6,26 @@ prepend — they live here so each mode doesn't carry a private copy.
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 from langchain_core.messages import AIMessage
+
+
+def normalize_text(text: str | None) -> str:
+    """Normalize text for keyword matching.
+
+    Strips leading/trailing whitespace, lowercases, applies NFKD unicode
+    decomposition, and drops combining marks (accents, diacritics). NFKD is
+    chosen over NFD because it also folds compatibility forms (ligatures,
+    presentation variants) which gives slightly more forgiving matches with
+    no downside for the ASCII-dominant tokens used across modes.
+    """
+    if not text:
+        return ""
+    raw = text.strip().lower()
+    normalized = unicodedata.normalize("NFKD", raw)
+    return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
 def extract_final_text(result: Any) -> str:
@@ -38,4 +55,4 @@ def extract_final_text(result: Any) -> str:
     return ""
 
 
-__all__ = ["extract_final_text"]
+__all__ = ["extract_final_text", "normalize_text"]

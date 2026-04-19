@@ -27,7 +27,6 @@ node function, plus the original module-level helpers (still imported by
 from __future__ import annotations
 
 import logging
-import unicodedata
 from typing import Any, Callable
 
 from langchain.agents import create_agent
@@ -35,7 +34,7 @@ from langchain_core.messages import SystemMessage
 
 from agent.middleware.token_tracking import TokenTrackingMiddleware
 from agent.modes._intro import FIRST_TURN_INTRO, maybe_prepend_intro
-from agent.modes._shared import extract_final_text
+from agent.modes._shared import extract_final_text, normalize_text
 from agent.prompts.loader import build_layered_messages
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
@@ -87,20 +86,11 @@ _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset(
 # ── Pure helpers (kept as module-level functions so tests import them) ─────
 
 
-def _normalize_text(text: str | None) -> str:
-    """Normalize text for comparison: strip, lowercase, remove accents."""
-    if not text:
-        return ""
-    raw = text.strip().lower()
-    normalized = unicodedata.normalize("NFKD", raw)
-    return "".join(char for char in normalized if not unicodedata.combining(char))
-
-
 def _has_booking_content(message: str | None) -> bool:
     """Return True when the message contains tokens that signal a service request."""
     if not message:
         return False
-    normalized = _normalize_text(message)
+    normalized = normalize_text(message)
     return any(token in normalized for token in _BOOKING_CONTENT_TOKENS)
 
 
@@ -113,7 +103,7 @@ def _build_booking_handoff_context(message: str | None) -> dict:
 
     ctx: dict = {"opening_booking_request": message}
 
-    normalized = _normalize_text(message)
+    normalized = normalize_text(message)
     for token, hint in AUDIENCE_HINT_MAP.items():
         if token in normalized:
             ctx["service_audience_hint"] = hint
@@ -332,7 +322,6 @@ __all__ = [
     "_WELCOME_RETURNING",
     "_build_booking_handoff_context",
     "_has_booking_content",
-    "_normalize_text",
     "_resolve_target_mode",
     "build_greeting_node",
 ]

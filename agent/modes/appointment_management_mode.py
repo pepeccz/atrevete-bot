@@ -18,13 +18,13 @@ Core principle: Python only does:
 import dataclasses
 import json
 import logging
-import unicodedata
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import StructuredTool
 
+from agent.modes._shared import normalize_text
 from agent.modes.appointment_context import AppointmentContext
 from agent.modes.base import BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
@@ -119,14 +119,6 @@ _QUERY_KEYWORDS: frozenset[str] = frozenset(
         "cuándo",
     }
 )
-
-
-def _normalize_text(text: str) -> str:
-    """Normalize text for comparison: lowercase, remove accents."""
-    if not text:
-        return ""
-    normalized = unicodedata.normalize("NFD", text.lower())
-    return "".join(c for c in normalized if not unicodedata.combining(c))
 
 
 # ============================================================================
@@ -242,7 +234,7 @@ class AppointmentManagementMode(BaseModeNode):
             return  # Already determined — preserve across turns
 
         intent_name = self._extract_intent_name(intent)
-        msg_lower = _normalize_text(user_message)
+        msg_lower = normalize_text(user_message)
 
         # Check intent string first
         if any(kw in intent_name for kw in _CANCEL_KEYWORDS):
@@ -349,7 +341,7 @@ class AppointmentManagementMode(BaseModeNode):
         if not user_message:
             return
 
-        msg_lower = _normalize_text(user_message)
+        msg_lower = normalize_text(user_message)
 
         # If pending_confirmation is True and user negates → reset
         if ctx.pending_confirmation:
