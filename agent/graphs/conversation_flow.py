@@ -609,7 +609,7 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
     Routing steps:
     1. Hard gate: escalation_triggered → ESCALATION
     2. Hard gate: error_count >= 3 → ESCALATION
-    3. Classify intent (keyword + LLM hybrid)
+    3. Classify intent (keyword fast-path)
     4. Hard gate: pending_confirmation + confirm/reject/cancel → CONFIRMATION_REPLY
     5. Pre-table: first_interaction + book → GREETING (with booking hints)
     6. Table lookup → resolve callables
