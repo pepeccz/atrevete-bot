@@ -30,7 +30,9 @@ agent/
 ├── graphs/
 │   └── conversation_flow.py     # v6.0 StateGraph factory (preprocess → router → modes → summarize)
 ├── modes/
-│   ├── base.py                  # BaseModeNode (shared patterns for legacy modes still on ABC)
+│   ├── base.py                  # BaseModeNode: abstract surface + _pre/_post_tool_call hooks
+│   │                            #   (consumed by NodeBridgeMiddleware). Only Booking &
+│   │                            #   AppointmentManagement inherit; other modes are factories.
 │   ├── _intro.py                # First-turn EU-AI-Act disclosure + USE_OPTIMIZED_PROMPTS flag (single source)
 │   ├── _shared.py               # normalize_text() + extract_final_text() helpers (consolidated from duplicates)
 │   ├── greeting_mode.py         # GREETING mode (first contact + name collection)
@@ -118,7 +120,18 @@ agent/
 
 ## Mode Node Pattern
 
-All modes extend `BaseModeNode` and implement `handle(state, intent)`:
+Two surfaces coexist today:
+
+1. **Factory-function modes** (GREETING, GENERAL, ESCALATION) — plain async
+   callables wired into the graph. No inheritance. See
+   `agent/modes/greeting_mode.py` for the canonical example.
+2. **Class-based modes** (BOOKING, APPOINTMENT_MANAGEMENT) — inherit from
+   `BaseModeNode` because `NodeBridgeMiddleware` invokes
+   `_pre_tool_call` / `_post_tool_result` on the instance to gate and
+   post-process tool calls. Both drive the LLM loop via `create_agent` +
+   middleware, not a hand-rolled loop.
+
+Class-based skeleton:
 
 ```python
 class MyModeNode(BaseModeNode):
@@ -127,17 +140,14 @@ class MyModeNode(BaseModeNode):
         return "MY_MODE"
 
     async def handle(self, state: ConversationState, intent: object) -> dict:
-        # 1. Build system prompt
-        messages = self._build_messages(state, system_prompt)
+        # 1. Build messages (mode-owned: each mode has its own _build_messages)
+        messages = await self._build_messages(state, mode_context)
 
-        # 2. Get LLM with mode-specific tools
-        tools = self.get_tools()
-        llm = self._get_llm(tools)
+        # 2. Run the agent via create_agent + composed middleware
+        tools = self.get_tools(mode_context)
+        result = await self._invoke_create_agent(messages, tools)
 
-        # 3. Tool calling loop (or direct response)
-        result = await self._run_agentic_loop(messages, tools)
-
-        # 4. Return state updates (MUST include user_message=None)
+        # 3. Return state updates (MUST include user_message=None)
         return {
             **add_message(state, "assistant", result.response_text),
             "mode_context": updated_context,
@@ -145,9 +155,17 @@ class MyModeNode(BaseModeNode):
             "user_message": None,  # CRITICAL: clear after processing
         }
 
-    def get_tools(self):
-        return [tool1, tool2]
+    async def _pre_tool_call(self, tool_name, tool_args):
+        # Gate or transform tool args. Return ToolCallRejection to block.
+        return tool_args
+
+    async def _post_tool_result(self, tool_name, tool_args, result):
+        # Update mode_context from tool results mid-loop.
+        return result
 ```
+
+Prompt assembly, token tracking, and response post-processing are now
+composable middleware (`agent/middleware/`), not methods on `BaseModeNode`.
 
 ---
 
