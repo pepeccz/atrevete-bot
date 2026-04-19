@@ -12,7 +12,6 @@ The LLM guides the booking flow; Python enforces data-integrity gates only.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -28,7 +27,6 @@ from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
 from shared.audience_maps import AUDIENCE_HINT_MAP
-from infra.resolvers.negation import is_negation
 
 logger = logging.getLogger(__name__)
 
@@ -321,38 +319,6 @@ class BookingModeNode(BaseModeNode):
                             _resolved_name,
                             len(_synthetic_msgs),
                         )
-
-        # Pre-loop negation resolver: deterministic classification of "¿algo más?" negations.
-        # Runs AFTER audience extraction (so an audience reply that looks negative is routed
-        # to audience first) and BEFORE _build_messages (so add_more_asked is set before the
-        # LLM loop builds its prompt).
-        #
-        # Trigger conditions:
-        #   1. last_services is set (user has already specified services)
-        #   2. add_more_asked is falsy (question not yet resolved)
-        #   3. _audience_ambiguity is absent (don't steal turns from disambiguation)
-        _negation_active = (
-            bool(booking_context.get("last_services"))
-            and not booking_context.get("add_more_asked")
-            and not booking_context.get("_audience_ambiguity")
-        )
-        if _negation_active:
-            _user_text = get_last_user_message(state)
-            _matched, _canonical, _distance = is_negation(_user_text)
-            if _matched:
-                booking_context["add_more_asked"] = True
-            logger.info(
-                "booking.negation_resolver",
-                extra={
-                    "conversation_id": state.get("conversation_id"),
-                    "turn_number": state.get("total_message_count", 0),
-                    "user_text_hash": hashlib.sha256(_user_text.encode()).hexdigest()[:12],
-                    "matched": _matched,
-                    "matched_phrase": _canonical,
-                    "fuzzy_distance": _distance,
-                    "state": "COLLECTING_SERVICES_EXTRA",
-                },
-            )
 
         # 4. Build messages with dynamic context
         messages = await self._build_messages(state, booking_context)
