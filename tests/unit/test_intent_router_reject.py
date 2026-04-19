@@ -27,4 +27,3 @@ def test_cancelar_is_treated_as_cancellation_intent() -> None:
 
     assert result is not None
     assert result.intent in {"reject", "cancel"}
-    assert result.is_cancellation() is True

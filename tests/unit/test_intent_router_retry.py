@@ -6,7 +6,6 @@ Coverage:
 - T-1.2: KEYWORD_MAP["retry"] matches all Spanish retry phrases
 - T-1.3: _intent_to_mode_hint("retry") returns None (stay in current mode)
 - T-1.3: _LLM_SYSTEM_PROMPT includes retry intent description
-- T-1.4: IntentResult.is_retry() convenience method
 - T-1.5: classify_by_keywords integration tests for retry phrases
 """
 
@@ -95,22 +94,11 @@ class TestRetryModeHint:
 
 
 # ============================================================================
-# T-1.4: IntentResult.is_retry() convenience method
+# T-1.4: IntentResult mode_hint mapping for retry
 # ============================================================================
 
 
-class TestIntentResultIsRetry:
-    """Verify the is_retry() convenience method."""
-
-    def test_is_retry_true(self):
-        result = IntentResult(intent="retry", confidence=0.9, raw_input="otra vez")
-        assert result.is_retry() is True
-
-    def test_is_retry_false_for_other_intents(self):
-        for intent in ("greet", "book", "ask_info", "confirm", "reject", "cancel", "escalate"):
-            result = IntentResult(intent=intent, confidence=0.9, raw_input="test")
-            assert result.is_retry() is False, f"is_retry() should be False for {intent!r}"
-
+class TestRetryIntentResultModeHint:
     def test_retry_result_mode_hint_is_none(self):
         """IntentResult for retry should have mode_hint=None."""
         result = IntentResult(

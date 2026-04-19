@@ -1,15 +1,9 @@
 """
-Intent Router - Routes intents to booking or non-booking handlers.
+Intent Router — v6.0 hybrid keyword + LLM intent classifier.
 
-This module implements the routing logic that separates booking flows
-(FSM-prescribed tools) from non-booking flows (LLM conversational).
-
-Key decision: Does this intent affect booking progress?
-- YES → BookingHandler (prescriptive)
-- NO → NonBookingHandler (conversational)
-
-v6.0 Addition: IntentResult dataclass + hybrid keyword+LLM classifier
-used by v6.0 mode-based architecture.
+Produces an IntentResult (intent, confidence, raw_input, mode_hint) consumed
+by ``router_node`` in ``agent/graphs/conversation_flow.py`` to drive the
+mode-based conversation graph.
 """
 
 import json
@@ -17,8 +11,6 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-
-from agent.fsm.models import Intent, IntentType
 
 # ============================================================================
 # v6.0 IntentResult — Structured output from the v6.0 intent classifier
@@ -46,30 +38,6 @@ class IntentResult:
     def __post_init__(self) -> None:
         """Clamp confidence to [0.0, 1.0] range."""
         self.confidence = max(0.0, min(1.0, self.confidence))
-
-    def is_booking(self) -> bool:
-        """Return True if this intent should route to BOOKING mode."""
-        return self.intent == "book"
-
-    def is_greeting(self) -> bool:
-        """Return True if this intent should route to GREETING mode."""
-        return self.intent == "greet"
-
-    def is_escalation(self) -> bool:
-        """Return True if this intent should route to ESCALATION mode."""
-        return self.intent == "escalate"
-
-    def is_confirmation(self) -> bool:
-        """Return True if user is confirming something."""
-        return self.intent == "confirm"
-
-    def is_cancellation(self) -> bool:
-        """Return True if user wants to cancel."""
-        return self.intent in ("cancel", "reject")
-
-    def is_retry(self) -> bool:
-        """Return True if user wants to retry a failed action."""
-        return self.intent == "retry"
 
 
 if TYPE_CHECKING:
@@ -564,45 +532,11 @@ de gestión de cita. Clasifica como "confirm", NO como "book"."""
 
 class IntentRouter:
     """
-    Routes intents to appropriate handler based on intent type.
+    v6.0 hybrid keyword + LLM intent classifier.
 
-    v5.0 API: @staticmethod route() — routes to BookingHandler or NonBookingHandler
-    v6.0 API: __init__(llm_client) + async classify() — hybrid keyword+LLM classifier
-
-    Both APIs coexist for backward compatibility.
+    Keyword fast-path first; LLM fallback only when no keyword matches above
+    ``_KEYWORD_MATCH_THRESHOLD``.
     """
-
-    # ---- v5.0 constants (backward compatibility) ----
-
-    # Intents that affect booking flow state
-    BOOKING_INTENTS = {
-        IntentType.START_BOOKING,
-        IntentType.SELECT_SERVICE,
-        IntentType.CONFIRM_SERVICES,
-        IntentType.SELECT_STYLIST,
-        IntentType.CHECK_AVAILABILITY,  # Part of booking flow
-        IntentType.SELECT_SLOT,
-        IntentType.PROVIDE_CUSTOMER_DATA,
-        IntentType.CONFIRM_BOOKING,
-        IntentType.CANCEL_BOOKING,
-    }
-
-    # Intents that don't affect booking state
-    NON_BOOKING_INTENTS = {
-        IntentType.GREETING,
-        IntentType.FAQ,
-        IntentType.ESCALATE,
-        IntentType.UNKNOWN,
-        IntentType.UPDATE_NAME,  # Name update in IDLE state
-        # Appointment confirmation intents (48h confirmation flow)
-        IntentType.CONFIRM_APPOINTMENT,
-        IntentType.DECLINE_APPOINTMENT,
-        # Double confirmation intents (decline flow) - v3.5
-        IntentType.CONFIRM_DECLINE,
-        IntentType.ABORT_DECLINE,
-    }
-
-    # ---- v6.0 instance API ----
 
     def __init__(self, llm_client: Any) -> None:
         """
