@@ -13,10 +13,11 @@ Milestone 2 (`refactor/create-agent-migration`) introduces:
 - Deduplication of the ``customer_data_collected`` TypedDict annotation (it was
   declared twice; only the last ever took effect at runtime).
 
-The ``merge_dicts`` reducer and its ``__reset__`` sentinel are retained for
-``mode_context`` and ``draft_contexts`` because the router, modes, and several
-test suites rely on the sentinel to clear stale mode data in place. A full
-migration off ``__reset__`` is scheduled for Milestone 8.
+SDD #2 (P2) completes the migration of ``mode_context`` from ``merge_dicts`` to
+``replace_dict``. ``transition_mode()`` no longer emits the legacy
+``__reset__`` sentinel — callers return the full desired ``mode_context`` on
+every update. ``draft_contexts`` still uses ``merge_dicts`` (it is append-only
+and never reset, so the sentinel path is unused in practice).
 """
 
 from __future__ import annotations
@@ -167,11 +168,9 @@ def merge_dicts(current: dict | None, update: dict | None) -> dict:
     the ``rest`` keys, dropping everything previously in ``current``. Otherwise
     it performs ``{**current, **update}``.
 
-    This reducer is DEPRECATED and will be removed in Milestone 8 once every
-    caller (``mode_context``, ``draft_contexts``, and the router's
-    ``transition_mode`` helper) is migrated to ``replace_dict``. It is kept
-    here so the existing router, modes, and regression tests continue to work
-    unchanged during the create_agent migration.
+    After SDD #2 only ``draft_contexts`` still uses this reducer; the
+    ``__reset__`` branch is kept for backwards compatibility with the legacy
+    reducer unit tests but no production call site emits the sentinel anymore.
     """
     current = current or {}
     update = update or {}
@@ -193,17 +192,17 @@ def transition_mode(
     """
     Build a partial state update for transitioning to ``new_mode``.
 
-    Uses the legacy ``__reset__`` sentinel on ``mode_context`` so that the
-    ``merge_dicts`` reducer clears stale routing metadata from the previous
-    mode. When ``mode_context`` is migrated to ``replace_dict`` in Milestone 8
-    this helper can simply return ``context_update`` (or ``{}``) without a
-    sentinel — the callers will not need to change.
+    Under the ``replace_dict`` reducer (SDD #2, P2) the returned
+    ``mode_context`` IS the full new context — callers do not need to merge
+    with the previous mode's context, and there is no ``__reset__`` sentinel.
+    Stale routing metadata from the outgoing mode is dropped automatically
+    because replace_dict semantics fully overwrite the field.
 
     Returns a partial ``ConversationState`` dict containing:
 
     - ``current_mode``  → ``new_mode``
     - ``previous_mode`` → the previous ``current_mode``
-    - ``mode_context``  → ``{"__reset__": True, ...context_update}``
+    - ``mode_context``  → ``dict(context_update)`` (or ``{}`` when None)
     - ``mode_history``  → list containing the outgoing mode (appended)
     - ``draft_contexts``→ outgoing ``mode_context`` saved under its mode key
       (only when the mode actually changed and the previous context was non-empty)
@@ -216,9 +215,7 @@ def transition_mode(
     history = list(state.get("mode_history", []))
     history.append(old_mode)
 
-    new_mode_context: dict = {"__reset__": True}
-    if context_update:
-        new_mode_context.update(context_update)
+    new_mode_context: dict = dict(context_update) if context_update else {}
 
     old_mode_context = state.get("mode_context") or {}
     existing_drafts = dict(state.get("draft_contexts") or {})
@@ -302,8 +299,12 @@ class ConversationState(TypedDict, total=False):
     # ── Mode-based architecture ─────────────────────────────────────────
     current_mode: str
     previous_mode: str | None
-    mode_context: Annotated[dict[str, Any], merge_dicts]
+    # mode_context uses replace_dict (SDD #2, P2). Callers MUST return the
+    # full desired dict on every update — partial updates no longer merge.
+    mode_context: Annotated[dict[str, Any], replace_dict]
     mode_history: Annotated[list[str], append_unique_list]
+    # draft_contexts keeps merge_dicts for now — it is only appended to, never
+    # reset, and the __reset__ sentinel is never used on this field.
     draft_contexts: Annotated[dict[str, Any], merge_dicts]
 
     # ── Typed booking context (replace-dict reducer) ────────────────────

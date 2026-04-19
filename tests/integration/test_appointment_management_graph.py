@@ -12,7 +12,7 @@ Mock at graph boundary:
 - DB (check_customer_exists): returns a mock customer
 - summarize_conversation: no-op
 - _get_intent_router: returns desired intent result
-- _run_agentic_loop inside the mode: returns canned AgenticLoopResult
+- _invoke_create_agent inside the mode: returns canned AgenticLoopResult
 
 No real DB, Redis, or LLM connections needed.
 """
@@ -152,7 +152,7 @@ class TestCancelFullFlow:
             ),
             patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router,
             patch(
-                "agent.modes.appointment_management_mode.AppointmentManagementMode._run_agentic_loop",
+                "agent.modes.appointment_management_mode.AppointmentManagementMode._invoke_create_agent",
                 new_callable=AsyncMock,
                 return_value=loop_result,
             ),
@@ -228,7 +228,7 @@ class TestCancelWithin48hEscalation:
             ),
             patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router,
             patch(
-                "agent.modes.appointment_management_mode.AppointmentManagementMode._run_agentic_loop",
+                "agent.modes.appointment_management_mode.AppointmentManagementMode._invoke_create_agent",
                 new_callable=AsyncMock,
                 return_value=loop_result,
             ),
@@ -326,7 +326,7 @@ class TestRescheduleIntentRouting:
             ),
             patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router,
             patch(
-                "agent.modes.appointment_management_mode.AppointmentManagementMode._run_agentic_loop",
+                "agent.modes.appointment_management_mode.AppointmentManagementMode._invoke_create_agent",
                 new_callable=AsyncMock,
                 return_value=loop_result,
             ),
@@ -406,7 +406,7 @@ class TestCheckAppointmentsRouting:
             ),
             patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router,
             patch(
-                "agent.modes.appointment_management_mode.AppointmentManagementMode._run_agentic_loop",
+                "agent.modes.appointment_management_mode.AppointmentManagementMode._invoke_create_agent",
                 new_callable=AsyncMock,
                 return_value=loop_result,
             ),
@@ -469,7 +469,7 @@ class TestNoAppointmentsEdgeCase:
             ),
             patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router,
             patch(
-                "agent.modes.appointment_management_mode.AppointmentManagementMode._run_agentic_loop",
+                "agent.modes.appointment_management_mode.AppointmentManagementMode._invoke_create_agent",
                 new_callable=AsyncMock,
                 return_value=loop_result,
             ),
@@ -575,7 +575,7 @@ class TestCancelOutsideBookingRouting:
             ),
             patch("agent.graphs.conversation_flow._get_intent_router") as mock_get_router,
             patch(
-                "agent.modes.appointment_management_mode.AppointmentManagementMode._run_agentic_loop",
+                "agent.modes.appointment_management_mode.AppointmentManagementMode._invoke_create_agent",
                 new_callable=AsyncMock,
                 return_value=loop_result,
             ),
