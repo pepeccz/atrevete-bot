@@ -714,7 +714,7 @@ class BookingModeNode(BaseModeNode):
             parts.append(f"<conversation_summary>\n{summary}\n</conversation_summary>")
 
         # Minimum valid date for appointments (3-day rule)
-        from agent.validators.transaction_validators import MINIMUM_DAYS
+        from agent.transactions.validators.transaction_validators import MINIMUM_DAYS
 
         _DAY_NAMES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
         _MONTH_NAMES = [

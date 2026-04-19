@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
 from zoneinfo import ZoneInfo
 
-from agent.validators.slot_validator import SlotValidator
+from agent.transactions.validators.slot_validator import SlotValidator
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
@@ -24,10 +24,10 @@ class TestSlotValidator:
         }
         
         # Mocks
-        with patch("agent.validators.slot_validator.is_date_closed", new_callable=AsyncMock) as mock_closed:
+        with patch("agent.transactions.validators.slot_validator.is_date_closed", new_callable=AsyncMock) as mock_closed:
             mock_closed.return_value = False
             
-            with patch("agent.validators.slot_validator.validate_3_day_rule", new_callable=AsyncMock) as mock_3day:
+            with patch("agent.transactions.validators.slot_validator.validate_3_day_rule", new_callable=AsyncMock) as mock_3day:
                 mock_3day.return_value = {"valid": True}
                 
                 # Execute
@@ -46,7 +46,7 @@ class TestSlotValidator:
         }
         
         # Mocks
-        with patch("agent.validators.slot_validator.is_date_closed", new_callable=AsyncMock) as mock_closed:
+        with patch("agent.transactions.validators.slot_validator.is_date_closed", new_callable=AsyncMock) as mock_closed:
             mock_closed.return_value = True
             
             # Execute
@@ -67,10 +67,10 @@ class TestSlotValidator:
         }
         
         # Mocks
-        with patch("agent.validators.slot_validator.is_date_closed", new_callable=AsyncMock) as mock_closed:
+        with patch("agent.transactions.validators.slot_validator.is_date_closed", new_callable=AsyncMock) as mock_closed:
             mock_closed.return_value = False
             
-            with patch("agent.validators.slot_validator.validate_3_day_rule", new_callable=AsyncMock) as mock_3day:
+            with patch("agent.transactions.validators.slot_validator.validate_3_day_rule", new_callable=AsyncMock) as mock_3day:
                 mock_3day.return_value = {
                     "valid": False,
                     "error_code": "DATE_TOO_SOON",

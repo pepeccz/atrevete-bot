@@ -25,7 +25,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from agent.services.gcal_push_service import push_appointment_to_gcal
 from agent.utils.calendar_link import generate_google_calendar_link
-from agent.validators.transaction_validators import (
+from agent.transactions.validators.transaction_validators import (
     validate_3_day_rule,
     validate_appointment_limit,
     validate_category_consistency,

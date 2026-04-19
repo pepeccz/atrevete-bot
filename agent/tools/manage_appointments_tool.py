@@ -394,7 +394,7 @@ async def _reschedule_appointment(
         )
         from agent.utils.date_parser import parse_natural_date, DateParseError
         from agent.services.availability_service import get_available_slots
-        from agent.validators.transaction_validators import validate_3_day_rule
+        from agent.transactions.validators.transaction_validators import validate_3_day_rule
 
         # 1. Validate eligibility (ownership + status + 48h window)
         eligibility = await validate_reschedule_eligibility(

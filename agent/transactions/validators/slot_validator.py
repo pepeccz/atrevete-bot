@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-from agent.validators.transaction_validators import validate_3_day_rule
+from agent.transactions.validators.transaction_validators import validate_3_day_rule
 from shared.business_hours_validator import is_date_closed, DAY_NAMES_ES
 
 logger = logging.getLogger(__name__)
