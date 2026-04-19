@@ -184,3 +184,41 @@ def test_is_negation_performance_under_10ms() -> None:
     is_negation("nada más")
     elapsed_ms = (time.perf_counter() - start) * 1000
     assert elapsed_ms < 10, f"is_negation took {elapsed_ms:.2f}ms — must be < 10ms"
+
+
+# ============================================================================
+# C1.3 — Compound phrase matching (T7 canary bug fix — conv 99001)
+# ============================================================================
+# Root cause: is_negation("Nope nada mas") returned False because compound
+# phrases (concatenation of canonicals) weren't handled. Exact lookup fails
+# (not in frozenset) and fuzzy cutoff 0.86 is too strict for multi-token
+# compounds. Fix: composition-of-canonicals matcher.
+
+
+@pytest.mark.parametrize("text", [
+    "Nope nada mas",       # the actual canary bug phrase
+    "nope nada mas",
+    "nah nada mas",
+    "nope nomas",
+    "ya listo",
+    "nada mas listo",
+    "ya esta listo",
+    "nada ya",
+    "listo ya",
+])
+def test_is_negation_compound_phrases_match(text: str) -> None:
+    """Compounds of 2+ canonicals must match (fix for conv 99001 T7 canary)."""
+    matched, _phrase, _distance = is_negation(text)
+    assert matched is True, f"is_negation({text!r}) should match as compound"
+
+
+@pytest.mark.parametrize("text", [
+    "no quiero nada",         # contains "nada" but preceded by non-canonical
+    "quiero nada mas",        # contains "nada mas" but preceded by non-canonical
+    "ya casi listo",          # contains "ya" + "listo" but "casi" is filler
+    "nope pero tal vez si",   # starts with canonical but continues with non-canonical
+])
+def test_is_negation_partial_contains_canonical_does_not_match(text: str) -> None:
+    """Messages where canonicals appear mixed with non-canonical tokens must NOT match."""
+    matched, _phrase, _distance = is_negation(text)
+    assert matched is False, f"is_negation({text!r}) should NOT match (non-canonical filler present)"

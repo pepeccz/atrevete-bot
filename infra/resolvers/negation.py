@@ -114,6 +114,35 @@ def normalize_for_negation(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _is_composition_of_canonicals(normalized: str) -> bool:
+    """True iff `normalized` is a space-joined concatenation of 1+ canonical phrases.
+
+    Greedy longest-match consumption left-to-right. Added to handle compound
+    utterances like "nope nada mas" (conv 99001 T7 canary regression) — the
+    concatenation of two canonicals ("nope" + "nada mas") that neither the
+    exact lookup nor fuzzy cutoff 0.86 could match.
+
+    Composition (not substring) to avoid false positives like "no quiero nada"
+    where a canonical appears mixed with non-canonical filler.
+    """
+    if not normalized:
+        return False
+    sorted_phrases = sorted(NEGATION_PHRASES, key=len, reverse=True)
+    remaining = normalized
+    while remaining:
+        consumed = False
+        for phrase in sorted_phrases:
+            if remaining == phrase:
+                return True
+            if remaining.startswith(phrase + " "):
+                remaining = remaining[len(phrase) + 1 :]
+                consumed = True
+                break
+        if not consumed:
+            return False
+    return True
+
+
 def is_negation(user_text: str) -> tuple[bool, str | None, int]:
     """Classify whether user_text is a negation of "¿algo más?".
 
@@ -123,15 +152,15 @@ def is_negation(user_text: str) -> tuple[bool, str | None, int]:
         - matched: True if the message is a negation utterance.
         - canonical_phrase: the matched canonical phrase string, or None.
         - distance: int((1 - ratio) * 100) for fuzzy matches; -1 for exact
-          matches or when no match is found.
+          or compositional matches; -1 for no match.
 
     Algorithm:
     1. Normalize user_text via normalize_for_negation().
     2. Exact O(1) frozenset lookup → return (True, phrase, -1).
-    3. Token count check: only if len(tokens) <= 3 proceed to fuzzy.
-    4. Fuzzy match via difflib.get_close_matches(cutoff=0.86).
-       Compute distance from SequenceMatcher ratio.
-    5. No match → return (False, None, -1).
+    3. Compositional match: input = concat of 1+ canonicals → return (True, normalized, -1).
+    4. Token count check: only if len(tokens) <= 3 proceed to fuzzy.
+    5. Fuzzy match via difflib.get_close_matches(cutoff=0.86).
+    6. No match → return (False, None, -1).
     """
     normalized = normalize_for_negation(user_text)
 
@@ -139,12 +168,16 @@ def is_negation(user_text: str) -> tuple[bool, str | None, int]:
     if normalized in NEGATION_PHRASES:
         return (True, normalized, -1)
 
-    # Step 3: token window gate — fuzzy only for short utterances
+    # Step 3: compositional match — handles compounds like "nope nada mas"
+    if _is_composition_of_canonicals(normalized):
+        return (True, normalized, -1)
+
+    # Step 4: token window gate — fuzzy only for short utterances
     tokens = normalized.split()
     if len(tokens) > 3:
         return (False, None, -1)
 
-    # Step 4: fuzzy match
+    # Step 5: fuzzy match
     candidates = list(NEGATION_PHRASES)
     matches = difflib.get_close_matches(normalized, candidates, n=1, cutoff=0.86)
     if matches:
