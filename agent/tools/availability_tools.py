@@ -31,7 +31,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from agent.config import get_booking_config
+from shared.booking_config import get_booking_config
 from agent.services.availability_service import (
     get_available_slots,
     is_holiday,

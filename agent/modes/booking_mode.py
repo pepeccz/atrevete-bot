@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from agent.config import get_booking_config, ToolChoicePolicy
+from shared.booking_config import get_booking_config, ToolChoicePolicy
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
