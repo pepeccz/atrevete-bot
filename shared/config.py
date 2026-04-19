@@ -215,18 +215,6 @@ class Settings(BaseSettings):
         description="Groq API key for Whisper audio transcription (console.groq.com)",
     )
 
-    # Status Line Middleware — state delivery via HumanMessage pre-model-call (E2)
-    ENABLE_STATUS_LINE_MIDDLEWARE: bool = Field(
-        default=False,
-        description=(
-            "Feature flag for StatusLineMiddleware in BookingModeNode. "
-            "When True, injects a HumanMessage '[estado]' before each model call "
-            "with live booking state, replacing the stale <flow_hint> XML pattern. "
-            "Default False for safe rollout — flip to True when E2 is validated. "
-            "Emergency rollback: set to False in .env + docker-compose restart agent."
-        ),
-    )
-
     # State Delivery — synthetic message primitive (E1 seed)
     STATE_DELIVERY_SYNTHETIC_ENABLED: bool = Field(
         default=True,
