@@ -155,7 +155,7 @@ class TestNotesOptionalGate:
             "add_more_asked": True,
             "selected_slot": {"date": "2026-05-01", "time": "10:00"},
             "customer_name": "Ana García",
-            "notes_asked": True,
+            "notes_state": "provided",
             "notes": "Tiene alergia al amoniaco",
         }
 
@@ -275,7 +275,7 @@ class TestFlowHintNotasLeak:
             "add_more_asked": True,
             "selected_slot": {"date": "2026-05-01", "time": "10:00"},
             "customer_name": "Ana García",
-            "notes_asked": True,
+            "notes_state": "provided",
             "notes": "Tiene alergia al amoniaco",
         }
 

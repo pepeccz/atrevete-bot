@@ -144,12 +144,17 @@ class TestBookingContextType:
             "preferred_date_hint",
             "add_more_asked",
             "notes",
-            "notes_asked",
+            "notes_state",
             "_booking_completed",
             "_confirmation_shown",
             "_disambiguation_questions_shown",
             "_offered_stylists",
             "_suggested_customer_name",
+            # New fields (booking-flow-complete / E2)
+            "pending_disambiguations",
+            "confirmed",
+            "available_slots",
+            "booked_appointment_id",
         }
         declared = set(BookingContext.__annotations__)
         missing = expected_fields - declared

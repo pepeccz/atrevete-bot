@@ -228,7 +228,7 @@ class BookingModeNode(BaseModeNode):
         - last_stylist OR no_preference_stylist is set
         - selected_slot is set
         - customer_name is set
-        - notes_asked is truthy
+        - notes_state is not "not_asked" (notes step completed, skipped or provided)
         - add_more_asked is truthy
         - _confirmation_shown is NOT already True (gate must not fire twice)
         """
@@ -239,7 +239,8 @@ class BookingModeNode(BaseModeNode):
         has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
         has_slot = bool(ctx.get("selected_slot"))
         has_name = bool(ctx.get("customer_name"))
-        notes_answered = bool(ctx.get("notes_asked"))
+        notes_state = ctx.get("notes_state", "not_asked")
+        notes_answered = notes_state != "not_asked"
         add_more_answered = bool(ctx.get("add_more_asked"))
 
         return has_services and has_stylist and has_slot and has_name and notes_answered and add_more_answered
@@ -601,8 +602,12 @@ class BookingModeNode(BaseModeNode):
             # Step A.3: capture notes from tool args (LLM passes them after Paso 5)
             notes_arg = tool_args.get("notes")
             if notes_arg is not None:
-                mode_context["notes"] = notes_arg if notes_arg.lower() not in ("no", "ninguna", "sin notas") else None
-                mode_context["notes_asked"] = True
+                if notes_arg.lower() in ("no", "ninguna", "sin notas"):
+                    mode_context["notes"] = None
+                    mode_context["notes_state"] = "skipped"
+                else:
+                    mode_context["notes"] = notes_arg
+                    mode_context["notes_state"] = "provided"
 
             # Step B: Confirmation gate — reject book() if required fields are missing.
             # Runs AFTER Steps A/A.1b/A.2/A.3 so selected_slot, customer_name,

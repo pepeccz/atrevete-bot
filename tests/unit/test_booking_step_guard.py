@@ -263,7 +263,7 @@ async def test_book_captures_notes_from_args(booking_node: BookingModeNode):
         "book", {"slot_index": 1, "services": ["Cortar"], "notes": "Alergia al amoniaco"}
     )
     assert booking_node._mode_context["notes"] == "Alergia al amoniaco"
-    assert booking_node._mode_context["notes_asked"] is True
+    assert booking_node._mode_context["notes_state"] in ("provided", "skipped")
 
 
 @pytest.mark.asyncio
@@ -280,7 +280,7 @@ async def test_book_notes_no_clears_to_none(booking_node: BookingModeNode):
         "book", {"slot_index": 1, "services": ["Cortar"], "notes": "no"}
     )
     assert booking_node._mode_context["notes"] is None
-    assert booking_node._mode_context["notes_asked"] is True
+    assert booking_node._mode_context["notes_state"] in ("provided", "skipped")
 
 
 # ===========================================================================

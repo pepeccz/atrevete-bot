@@ -43,7 +43,7 @@ def typical_state() -> dict:
             "selected_slot": {"start_time": "10:00"},
             "_booking_completed": False,
             "_confirmation_shown": False,
-            "notes_asked": False,
+            "notes_state": "not_asked",
             "add_more_asked": False,
         },
     }
@@ -63,7 +63,7 @@ def max_populated_state() -> dict:
             "selected_slot": {"start_time": "14:30"},
             "_booking_completed": True,
             "_confirmation_shown": True,
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "extra_nested": {"deep": "data", "more": "things" * 20},
         },

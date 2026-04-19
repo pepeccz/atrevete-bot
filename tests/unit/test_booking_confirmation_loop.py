@@ -30,7 +30,7 @@ def _base_ctx() -> dict:
         "offered_slots": [{"stylist_id": "abc", "time": "10:00", "date": "miércoles 9"}],
         "selected_slot": {"stylist_id": "abc", "time": "10:00", "date": "miércoles 9"},
         "customer_name": "Pablo García",
-        "notes_asked": True,
+        "notes_state": "provided",
     }
 
 
@@ -75,7 +75,7 @@ def test_flow_hint_notes_not_pending_when_not_asked():
     is set and the hint shows 'Todos los datos recogidos'.
     """
     ctx = _base_ctx()
-    ctx.pop("notes_asked")
+    ctx.pop("notes_state")
 
     hint = BookingModeNode._build_flow_hint(ctx)
 
@@ -152,7 +152,7 @@ def test_confirmation_shown_set_when_required_fields_present_without_notes():
     (services, stylist, slot, name). notes_asked=False must not block the gate.
     """
     ctx = _base_ctx()
-    ctx.pop("notes_asked")
+    ctx.pop("notes_state")
 
     BookingModeNode._build_flow_hint(ctx)
 

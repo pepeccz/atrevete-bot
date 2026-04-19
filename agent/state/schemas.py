@@ -22,7 +22,7 @@ migration off ``__reset__`` is scheduled for Milestone 8.
 from __future__ import annotations
 
 from operator import add as operator_add
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 from uuid import UUID
 
 
@@ -81,11 +81,21 @@ class BookingContext(TypedDict, total=False):
     # ── Flow control / UX flags ─────────────────────────────────────────
     add_more_asked: bool
     notes: str | None
-    notes_asked: bool
+    notes_state: Literal["not_asked", "skipped", "provided"]
     _booking_completed: bool
     _confirmation_shown: bool  # Solo setteable via return path explícito al reducer en _post_tool_result. No mutar in-place fuera de ese bloque.
     _disambiguation_questions_shown: bool
     _suggested_customer_name: str | None
+
+    # ── New fields (booking-flow-complete / E2) ──────────────────────────
+    # Writer: BookingInvariantMiddleware + audience_resolver | Reader: compute_next_prompt, InvariantMiddleware
+    pending_disambiguations: list[dict[str, Any]]
+    # Writer: affirmation_resolver ONLY | Reader: InvariantMiddleware, compute_next_prompt
+    confirmed: bool
+    # Writer: check_availability tool | Reader: compute_next_prompt (ASK_SLOT branch)
+    available_slots: list[dict[str, Any]]
+    # Writer: book tool | Reader: compute_next_prompt (BOOKING_COMPLETE branch)
+    booked_appointment_id: str | None
 
 
 # ============================================================================

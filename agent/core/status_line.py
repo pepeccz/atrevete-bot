@@ -81,8 +81,8 @@ def _flags_csv(bc: dict) -> str:
         flags.append("completed")
     if bc.get("_confirmation_shown"):
         flags.append("confirmation")
-    if bc.get("notes_asked"):
-        flags.append("notes_asked")
+    if bc.get("notes_state") and bc.get("notes_state") != "not_asked":
+        flags.append("notes_state")
     if bc.get("add_more_asked"):
         flags.append("add_more_asked")
     return ",".join(sorted(flags))
