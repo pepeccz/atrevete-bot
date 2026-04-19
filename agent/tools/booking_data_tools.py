@@ -105,6 +105,22 @@ class UpdateBookingSchema(BaseModel):
         default=None,
         description="Pon true para limpiar el horario seleccionado y buscar otro día/hora.",
     )
+    add_more_answered: bool | None = Field(
+        default=None,
+        description=(
+            "TRUE cuando el cliente respondió afirmativamente a '¿algo más?' (quiere agregar otro servicio). "
+            "FALSE cuando respondió negativamente (no quiere agregar más). "
+            "Déjalo None si no hiciste la pregunta aún o si no es relevante para este turno."
+        ),
+    )
+    service_audience_hint: str | None = Field(
+        default=None,
+        description=(
+            "Resuelve ambigüedad de audiencia cuando `_audience_ambiguity` está presente en el contexto. "
+            "Valores canónicos: 'adult_female', 'adult_male', 'child_female', 'child_male', 'baby'. "
+            "Déjalo None si no hay ambigüedad o el cliente no aclaró aún."
+        ),
+    )
 
 
 # ============================================================================
@@ -240,6 +256,11 @@ def _build_response(
 # ============================================================================
 
 
+_CANONICAL_AUDIENCE_HINTS = frozenset(
+    {"adult_female", "adult_male", "child_female", "child_male", "baby"}
+)
+
+
 @tool(args_schema=UpdateBookingSchema)
 async def update_booking(
     services: list[str] | None = None,
@@ -249,6 +270,8 @@ async def update_booking(
     notes: str | None = None,
     slot_index: int | None = None,
     clear_slot: bool | None = None,
+    add_more_answered: bool | None = None,
+    service_audience_hint: str | None = None,
     _current_context: dict | None = None,
 ) -> dict[str, Any]:
     """Persist booking data collected from the conversation.
@@ -479,6 +502,28 @@ async def update_booking(
         patch["offered_slots"] = None
         ctx.pop("selected_slot", None)
         ctx.pop("offered_slots", None)
+
+    # ── add_more_answered branch (tool-driven replacement for pre-loop negation) ──
+    # Either True (wants to add) or False (done). What matters for the
+    # confirmation gate is that the user ANSWERED — not the polarity.
+    # The LLM loops for additional services via new update_booking(services=...) calls.
+    if add_more_answered is not None:
+        patch["add_more_asked"] = True
+        ctx["add_more_asked"] = True
+
+    # ── service_audience_hint branch (tool-driven replacement for _extract_audience_from_reply) ──
+    if service_audience_hint is not None:
+        if service_audience_hint in _CANONICAL_AUDIENCE_HINTS:
+            patch["service_audience_hint"] = service_audience_hint
+            ctx["service_audience_hint"] = service_audience_hint
+            # Clearing the ambiguity signal is atomic with the hint resolution.
+            patch["_audience_ambiguity"] = None
+            ctx.pop("_audience_ambiguity", None)
+        else:
+            errors.append(
+                f"service_audience_hint '{service_audience_hint}' inválido. "
+                f"Valores canónicos: {sorted(_CANONICAL_AUDIENCE_HINTS)}."
+            )
 
     # ── Build response ───────────────────────────────────────────────────
     success = len(errors) == 0
