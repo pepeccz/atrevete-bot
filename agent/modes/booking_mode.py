@@ -783,6 +783,7 @@ class BookingModeNode(BaseModeNode):
         from langchain.agents import create_agent
         from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+        from agent.middleware.dedup import DedupToolCallMiddleware
         from agent.middleware.node_bridge import NodeBridgeMiddleware
         from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
         from agent.middleware.token_tracking import TokenTrackingMiddleware
@@ -809,6 +810,7 @@ class BookingModeNode(BaseModeNode):
 
         middleware: list = [
             NodeBridgeMiddleware(self),
+            DedupToolCallMiddleware(),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="BOOKING"),
         ]
