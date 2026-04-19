@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from agent.fsm.models import IntentType
+from agent.routing.intent_types import IntentType
 from agent.services.confirmation_service import (
     ConfirmationResult,
     check_decline_timeout,
