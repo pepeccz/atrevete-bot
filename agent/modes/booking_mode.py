@@ -22,13 +22,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from agent.config import get_booking_config, ToolChoicePolicy
-from agent.middleware.dynamic_tools import DynamicToolsMiddleware
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
-from shared.audience_maps import AUDIENCE_HINT_MAP, canonicalize_audience
+from shared.audience_maps import AUDIENCE_HINT_MAP
 from infra.resolvers.negation import is_negation
 
 logger = logging.getLogger(__name__)
@@ -38,64 +37,6 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 _HISTORY_LIMIT = 8
-
-# ============================================================================
-# Module-level helpers
-# ============================================================================
-
-
-def _last_message_is_human(state) -> bool:
-    """Predicate for ``ToolChoiceMiddleware``: True when last message is HumanMessage."""
-    from langchain_core.messages import HumanMessage
-
-    messages = state.get("messages") or []
-    return bool(messages) and isinstance(messages[-1], HumanMessage)
-
-
-# Substrings that identify a bot "¿algo más?"-style question.
-# Case-insensitive substring match against the last AIMessage.
-_ADD_MORE_QUESTION_MARKERS: tuple[str, ...] = (
-    "algo más",
-    "algo mas",
-    "añadir algo",
-    "anadir algo",
-    "agregar algo",
-    "sumar algo",
-    "sumamos algo",
-    "algún otro servicio",
-    "algun otro servicio",
-)
-
-
-def _last_ai_message_has_add_more_question(messages: list) -> bool:
-    """Scan ``messages`` from the end; return True iff the most recent assistant
-    message contains an "algo más"-style question.
-
-    Accepts both message shapes used in this codebase:
-      - ``dict`` with ``role == "assistant"`` (state-level messages)
-      - ``langchain_core.messages.AIMessage`` (LangGraph/LangChain transcripts)
-
-    Pure function — no side effects.
-    """
-    from langchain_core.messages import AIMessage
-
-    for msg in reversed(messages or []):
-        content: str | None = None
-        if isinstance(msg, dict):
-            if msg.get("role") == "assistant":
-                raw = msg.get("content", "")
-                content = raw if isinstance(raw, str) else str(raw)
-        elif isinstance(msg, AIMessage):
-            raw = msg.content
-            content = raw if isinstance(raw, str) else str(raw)
-
-        if content is None:
-            continue  # not an assistant message — keep scanning
-
-        lowered = content.lower()
-        return any(marker in lowered for marker in _ADD_MORE_QUESTION_MARKERS)
-
-    return False
 
 
 # ============================================================================
@@ -136,8 +77,6 @@ class BookingModeNode(BaseModeNode):
 
         # check_availability: only when services + stylist are set, no slot yet,
         # AND no audience ambiguity is pending (R7 — hide during disambiguation).
-        # Q G5 POSITIVE: DynamicToolsMiddleware removes BOTH schema AND description
-        # from what the LLM sees — hiding is not cosmetic. design §1.
         if has_services and has_stylist and not has_slot and not ctx.get("_audience_ambiguity"):
             tools.append(check_availability)
 
@@ -388,18 +327,13 @@ class BookingModeNode(BaseModeNode):
         # to audience first) and BEFORE _build_messages (so add_more_asked is set before the
         # LLM loop builds its prompt).
         #
-        # Trigger conditions (ALL must hold — Opción B, robust):
+        # Trigger conditions:
         #   1. last_services is set (user has already specified services)
         #   2. add_more_asked is falsy (question not yet resolved)
-        #   3. the LAST AIMessage in the transcript is an "¿algo más?"-style question
-        #      (contextual check — replaces brittle last_stylist/no_preference_stylist guards,
-        #       which were anti-correlated: the LLM can set a stylist flag in error and the
-        #       customer may still be answering the "¿algo más?" question)
-        #   4. _audience_ambiguity is absent (don't steal turns from disambiguation)
+        #   3. _audience_ambiguity is absent (don't steal turns from disambiguation)
         _negation_active = (
             bool(booking_context.get("last_services"))
             and not booking_context.get("add_more_asked")
-            and _last_ai_message_has_add_more_question(state.get("messages") or [])
             and not booking_context.get("_audience_ambiguity")
         )
         if _negation_active:
@@ -445,9 +379,9 @@ class BookingModeNode(BaseModeNode):
             tool_choice=tool_choice,
         )
 
-        # 6. Build response (LLM-generated text via _sanitize_response)
+        # 6. Build response — LLM text as-is (P3/P5: no compensatory mutation).
         response_text = self._build_response(result, booking_context)
-        response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+        disclosure_sent = False
 
         # Build routing mode_context update — only routing metadata, no booking data
         routing_context = {
@@ -769,12 +703,11 @@ class BookingModeNode(BaseModeNode):
     def _build_response(self, result: AgenticLoopResult, mode_context: dict) -> str:
         """Build the final response text.
 
-        Returns the LLM-generated text as-is (via _sanitize_response).
-        The LLM generates the post-booking confirmation per booking.md instructions,
-        including the Google Calendar link — no code override needed.
+        Returns the LLM-generated text as-is. The LLM generates the post-booking
+        confirmation per booking.md instructions, including the Google Calendar
+        link — no code override needed.
         """
-        response_text = result.response_text or ""
-        return self._sanitize_response(response_text)
+        return result.response_text or ""
 
     # ──────────────────────────────────────────────────────────────────────
     # create_agent integration (M6)
@@ -799,9 +732,6 @@ class BookingModeNode(BaseModeNode):
         from agent.middleware.node_bridge import NodeBridgeMiddleware
         from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
         from agent.middleware.token_tracking import TokenTrackingMiddleware
-        from agent.middleware.tool_choice import ToolChoiceMiddleware
-
-        from shared.config import get_settings
 
         # Split the legacy layered message list into ``system_prompt`` + transcript.
         system_parts: list[str] = []
@@ -819,38 +749,25 @@ class BookingModeNode(BaseModeNode):
             "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
         )
 
+        # Resolve the allowed tool list ONCE per turn (single source of truth).
+        # get_tools() already applies the step-aware filter; no middleware needed.
+        allowed_tools = self.get_tools(getattr(self, "_booking_context", None))
+
         middleware: list = [
-            DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._booking_context)),
             NodeBridgeMiddleware(self),
             DedupToolCallMiddleware(),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="BOOKING"),
         ]
 
-        # StatusLineMiddleware — condicional al feature flag (T1.4).
-        # Posición 1 (después de DynamicTools, antes de NodeBridge) per design §7.
-        if get_settings().ENABLE_STATUS_LINE_MIDDLEWARE:
-            from agent.middleware.status_line import StatusLineMiddleware
-
-            middleware.insert(
-                1,
-                StatusLineMiddleware(
-                    get_state_fn=lambda: self._current_state,
-                    mode_name="BOOKING",
-                ),
-            )
-        if tool_choice:
-            middleware.insert(
-                0,
-                ToolChoiceMiddleware(
-                    when=lambda state: _last_message_is_human(state),
-                    choice=tool_choice,
-                ),
-            )
+        # tool_choice is bound directly on the model (no middleware indirection).
+        # Per P1: one source of truth. get_tools() already limits the visible tool
+        # set — tool_choice='required' only nudges the LLM to call one of them.
+        model = self.llm.bind(tool_choice=tool_choice) if tool_choice else self.llm
 
         agent = create_agent(
-            model=self.llm,
-            tools=tools,
+            model=model,
+            tools=allowed_tools,
             system_prompt=system_prompt,
             middleware=middleware,
         )

@@ -2,7 +2,7 @@
 
 This directory contains the Atrévete Bot conversational agent built with LangGraph v6.0 mode-based architecture.
 
-> **Architecture**: Mode-based conversation flow with 4 independent modes (GREETING, BOOKING, GENERAL, ESCALATION) and keyword + LLM hybrid intent routing.
+> **Architecture**: Mode-based conversation flow with 4 independent modes (GREETING, BOOKING, GENERAL, ESCALATION) and keyword-only intent routing (single LLM call per turn, inside the mode node).
 
 ---
 
@@ -30,13 +30,15 @@ agent/
 ├── graphs/
 │   └── conversation_flow.py     # v6.0 StateGraph factory (preprocess → router → modes → summarize)
 ├── modes/
-│   ├── base.py                  # BaseModeNode (shared patterns for all modes)
+│   ├── base.py                  # BaseModeNode (shared patterns for legacy modes still on ABC)
+│   ├── _intro.py                # First-turn EU-AI-Act disclosure + USE_OPTIMIZED_PROMPTS flag (single source)
+│   ├── _shared.py               # normalize_text() + extract_final_text() helpers (consolidated from duplicates)
 │   ├── greeting_mode.py         # GREETING mode (first contact + name collection)
 │   ├── booking_mode.py          # BOOKING mode (multi-step appointment flow)
 │   ├── general_mode.py          # GENERAL mode (FAQs, info queries)
 │   └── escalation_mode.py       # ESCALATION mode (human handoff)
 ├── routing/
-│   └── intent_router.py         # Keyword + LLM hybrid intent classifier
+│   └── intent_router.py         # Keyword-only intent classifier (no LLM call at routing layer)
 ├── state/
 │   ├── schemas.py               # ConversationState TypedDict + reducers
 │   └── helpers.py               # add_message(), should_summarize(), etc.
@@ -318,10 +320,11 @@ return transition_mode(state, "GENERAL")
 
 ## Intent Router
 
-### Keyword + LLM Hybrid Classification
+### Keyword-Only Classification (single LLM per turn)
 
 ```python
-# 1. Fast keyword matching (9 intents)
+# Fast keyword matching (9 intents). Below the match threshold returns intent="ambiguous"
+# and resolution is deferred to the mode node's own LLM call.
 KEYWORD_PATTERNS = {
     "book": ["reservar", "cita", "turno", "quiero ir"],
     "cancel": ["cancelar", "anular", "no puedo"],
@@ -329,11 +332,12 @@ KEYWORD_PATTERNS = {
     # ... more
 }
 
-# 2. LLM fallback for ambiguous cases
-intent = await intent_router.classify(text=user_message, current_mode=current_mode)
+result = classify(text=user_message, current_mode=current_mode)
 ```
 
-**Confidence threshold**: 0.75 (below → clarification)
+No LLM invocation happens at the routing layer. When keywords don't match above
+`_KEYWORD_MATCH_THRESHOLD`, the router yields `intent="ambiguous"` and the mode
+node (which owns the only LLM call of the turn) handles the ambiguity inline.
 
 ---
 

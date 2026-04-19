@@ -18,13 +18,13 @@ Core principle: Python only does:
 import dataclasses
 import json
 import logging
-import unicodedata
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import StructuredTool
 
+from agent.modes._shared import normalize_text
 from agent.modes.appointment_context import AppointmentContext
 from agent.modes.base import BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
@@ -121,14 +121,6 @@ _QUERY_KEYWORDS: frozenset[str] = frozenset(
 )
 
 
-def _normalize_text(text: str) -> str:
-    """Normalize text for comparison: lowercase, remove accents."""
-    if not text:
-        return ""
-    normalized = unicodedata.normalize("NFD", text.lower())
-    return "".join(c for c in normalized if not unicodedata.combining(c))
-
-
 # ============================================================================
 # AppointmentManagementMode
 # ============================================================================
@@ -207,7 +199,6 @@ class AppointmentManagementMode(BaseModeNode):
 
         # 2. Store ctx for _pre_tool_call and _post_tool_result access
         self._ctx = ctx
-        # Store as plain dict so DynamicToolsMiddleware closure can read it
         self._mode_context = dataclasses.asdict(ctx)
 
         # 3. Build messages
@@ -243,7 +234,7 @@ class AppointmentManagementMode(BaseModeNode):
             return  # Already determined — preserve across turns
 
         intent_name = self._extract_intent_name(intent)
-        msg_lower = _normalize_text(user_message)
+        msg_lower = normalize_text(user_message)
 
         # Check intent string first
         if any(kw in intent_name for kw in _CANCEL_KEYWORDS):
@@ -350,7 +341,7 @@ class AppointmentManagementMode(BaseModeNode):
         if not user_message:
             return
 
-        msg_lower = _normalize_text(user_message)
+        msg_lower = normalize_text(user_message)
 
         # If pending_confirmation is True and user negates → reset
         if ctx.pending_confirmation:
@@ -715,7 +706,6 @@ class AppointmentManagementMode(BaseModeNode):
         from langchain.agents import create_agent
         from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
-        from agent.middleware.dynamic_tools import DynamicToolsMiddleware
         from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
         from agent.middleware.node_bridge import NodeBridgeMiddleware
         from agent.middleware.token_tracking import TokenTrackingMiddleware
@@ -736,8 +726,10 @@ class AppointmentManagementMode(BaseModeNode):
             "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
         )
 
+        # Resolve the allowed tool list ONCE per turn (single source of truth).
+        allowed_tools = self.get_tools(getattr(self, "_mode_context", None))
+
         middleware = [
-            DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._mode_context)),
             NodeBridgeMiddleware(self),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="APPOINTMENT_MANAGEMENT"),
@@ -745,7 +737,7 @@ class AppointmentManagementMode(BaseModeNode):
 
         agent = create_agent(
             model=self.llm,
-            tools=tools,
+            tools=allowed_tools,
             system_prompt=system_prompt,
             middleware=middleware,
         )
@@ -807,9 +799,7 @@ class AppointmentManagementMode(BaseModeNode):
         - First-turn AI disclosure
         """
         response_text = result.response_text or ""
-
-        # First-turn intro (EU AI Act compliance)
-        response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+        disclosure_sent = False
 
         # Check for within_window escalation (48h block)
         escalate_window = getattr(ctx, "_escalate_within_window", False)
@@ -827,9 +817,7 @@ class AppointmentManagementMode(BaseModeNode):
                 f"Para {action_word} una cita tan próxima, te comunico con el equipo. "
                 f"Te ayudarán enseguida. 🙏"
             )
-            escalation_response, disclosure_sent = self._maybe_prepend_intro(
-                escalation_response, state
-            )
+            # disclosure_sent already set above (False); no intro mutation.
 
             stylist_name = snapshot.get("stylist_name", "")
             customer_name = state.get("customer_name", "")

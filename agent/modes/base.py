@@ -5,7 +5,6 @@ Provides shared types and the BaseModeNode abstract class used by all 4 modes.
 """
 
 import logging
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
@@ -79,9 +78,6 @@ class ModeResult(TypedDict, total=False):
 
 
 MAX_TOOL_ROUNDS = 6
-
-# EU AI Act first-turn disclosure enforced in code.
-FIRST_TURN_INTRO = "¡Hola! 🌸 Soy Maite, la asistenta virtual con IA de Atrévete Peluquería."
 
 
 # ============================================================================
@@ -348,103 +344,6 @@ class BaseModeNode(ABC):
             return text
 
         return "\n\n".join(deduped)
-
-    @staticmethod
-    def _sanitize_response(text: str) -> str:
-        """
-        Strip action narration from LLM output before user delivery.
-
-        Removes patterns like:
-        - "Voy a..." (upcoming actions)
-        - "Déjame..." (let me/me deixa)
-        - "Ahora voy a..." (now I'm going to)
-        - "Un momento..." (one moment)
-        - "Permíteme..." (allow me)
-        """
-        cleaned = text
-
-        # Strip action narration sentences (only if at sentence start)
-        # These indicate the LLM is narrating upcoming tool calls instead of executing silently
-        narration_patterns = [
-            r"^Voy a\s+.*?\.\s*",  # Voy a buscar... / Voy a confirmar...
-            r"^Déjame\s+.*?\.\s*",  # Déjame buscar... / Déjame ayudarte...
-            r"^Ahora voy a\s+.*?\.\s*",  # Ahora voy a...
-            r"^Un momento.*?\.\s*",  # Un momento, déjame...
-            r"^Permíteme\s+.*?\.\s*",  # Permíteme...
-            r"^Claro,? voy a\s+.*?\.\s*",  # Claro, voy a...
-        ]
-        for pattern in narration_patterns:
-            cleaned = re.sub(pattern, "", cleaned, flags=re.MULTILINE | re.IGNORECASE)
-
-        # Clean up excess whitespace
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        cleaned = cleaned.strip()
-        return cleaned
-
-    def _maybe_prepend_intro(
-        self,
-        response_text: str,
-        state: ConversationState,
-    ) -> tuple[str, bool]:
-        """Prepend the first-turn disclosure unless it was already handled.
-
-        Uses TWO independent checks to avoid duplication:
-        1. The `ai_disclosure_sent` state flag (set after first delivery)
-        2. A scan of prior assistant messages for the intro text
-
-        Check #2 is the fallback safety net — it catches cases where the
-        state flag didn't persist correctly across checkpoint boundaries.
-        """
-        # Check 1: Explicit state flag
-        if state.get("ai_disclosure_sent", False):
-            return response_text, False
-
-        # Check 2: Scan existing messages for prior disclosure
-        for msg in state.get("messages", []):
-            if msg.get("role") == "assistant" and "soy maite" in (msg.get("content") or "").lower():
-                return response_text, True  # Repair: mark as sent so state flag persists
-
-        # No prior disclosure found — strip any LLM-generated greeting/self-intro
-        # before prepending our canonical disclosure (prevents double greetings).
-        # BUG-006 FIX (v2): use an iterative loop (max 5 passes) so patterns are
-        # stripped in ANY order — handles "Soy Maite... ¡Hola!..." as well as the
-        # more common "¡Hola! Soy Maite...". All patterns are ^-anchored so only
-        # the LEADING portion of the response is ever removed.
-        _GREETING_OPENER_PATTERN = re.compile(
-            r"^[\s\U0001F300-\U0001FAFF]*"  # optional leading emoji/whitespace
-            r"[¡!]?"
-            r"(?:hola|buenas?(?:\s+(?:d[ií]as?|tardes?|noches?))?)"
-            r"[^.!?]*"  # anything up to the first sentence boundary
-            r"[.!?]?\s*"  # optional punctuation + whitespace
-            r"[\U0001F300-\U0001FAFF\s]*",  # optional trailing emoji/whitespace
-            re.IGNORECASE,
-        )
-        _SELF_INTRO_PATTERN = re.compile(
-            r"^(?:soy\s+maite|maite[,.]?\s+(?:tu|la|su)\s+asistent)[^.!?]*[.!?]?\s*",
-            re.IGNORECASE,
-        )
-        _MAX_STRIP_ITERATIONS = 5
-        any_stripped = False
-        for _ in range(_MAX_STRIP_ITERATIONS):
-            prev = response_text
-            response_text = _GREETING_OPENER_PATTERN.sub("", response_text).lstrip()
-            response_text = _SELF_INTRO_PATTERN.sub("", response_text).lstrip()
-            if response_text == prev:
-                break  # stable — nothing more to strip
-            any_stripped = True
-        if any_stripped:
-            self.logger.debug(
-                "_maybe_prepend_intro: stripped LLM self-intro from first-turn response"
-            )
-
-        # Also check if LLM still introduced itself using the canonical intro text
-        if response_text.startswith(FIRST_TURN_INTRO[:20]):
-            return response_text, True
-        if FIRST_TURN_INTRO in response_text:
-            return response_text, True
-
-        # Prepend the mandatory EU AI Act disclosure
-        return f"{FIRST_TURN_INTRO} {response_text}", True
 
     async def _pre_tool_call(
         self,
@@ -735,7 +634,6 @@ class BaseModeNode(ABC):
                 response_text = "\n".join(text_parts)
             else:
                 response_text = str(content)
-            response_text = self._sanitize_response(response_text)
             response_text = self._dedup_response(response_text)
             response_text = self._dedup_paragraphs(response_text)
 
@@ -787,8 +685,7 @@ class BaseModeNode(ABC):
                     recovery_text = "\n".join(recovery_parts)
                 else:
                     recovery_text = str(recovery_content)
-                response_text = self._sanitize_response(recovery_text)
-                response_text = self._dedup_response(response_text)
+                response_text = self._dedup_response(recovery_text)
                 response_text = self._dedup_paragraphs(response_text)
 
             return AgenticLoopResult(

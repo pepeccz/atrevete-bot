@@ -1,19 +1,14 @@
 """
-Unit tests for agent/routing/intent_router.py — keyword + LLM hybrid classifier (v6.0).
+Unit tests for agent/routing/intent_router.py — keyword-only classifier (v7.1).
 
 Coverage:
 - classify_by_keywords() — all intent types, confidence levels, no-match cases
-- IntentRouter.classify() — keyword fast path (LLM NOT called when confidence >= 0.8)
-- IntentRouter.classify() — LLM fallback when no keyword match
-- IntentRouter.classify() — error handling (LLM failure → ambiguous)
+- IntentRouter.classify() — keyword fast path + ambiguous fallthrough (no LLM)
 - IntentResult fields: intent, confidence, raw_input, mode_hint
 - _intent_to_mode_hint mapping
 
 Test naming follows project convention: test_<scenario_description>
 """
-
-import json
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -282,164 +277,94 @@ class TestClassifyByKeywords:
 
 
 # =============================================================================
-# IntentRouter.classify() — hybrid keyword + LLM
+# IntentRouter.classify() — keyword-only (no LLM fallback)
 # =============================================================================
 
 
 class TestIntentRouterClassify:
-    """Tests for the full hybrid IntentRouter.classify() method."""
+    """Tests for the keyword-only IntentRouter.classify() method."""
 
-    def _make_mock_llm(self, response_json: str | None = None) -> AsyncMock:
-        """Build a mock LLM client for IntentRouter."""
-        mock = AsyncMock()
-        if response_json is not None:
-            mock_response = MagicMock()
-            mock_response.content = response_json
-            mock.ainvoke = AsyncMock(return_value=mock_response)
-        return mock
+    # ------ Keyword fast path ------
 
-    # ------ Keyword fast path — LLM must NOT be called ------
-
-    async def test_hola_calls_llm_and_returns_greet(self):
-        """Greet passthrough → keyword returns None → LLM is called."""
-        llm_response = json.dumps({"intent": "greet", "confidence": 0.95})
-        mock_llm = self._make_mock_llm(llm_response)
-        router = IntentRouter(llm_client=mock_llm)
+    async def test_hola_returns_ambiguous(self):
+        """Greet passthrough → keyword returns None → classify returns ambiguous."""
+        router = IntentRouter()
 
         result = await router.classify("hola")
 
-        assert result.intent == "greet"
-        mock_llm.ainvoke.assert_called_once()
+        # Greet is intentionally deferred (keyword classifier returns None),
+        # so the router now surfaces ambiguous and the mode node's LLM resolves
+        # the intent with full conversation context.
+        assert result.intent == "ambiguous"
 
-    async def test_quiero_una_cita_does_not_call_llm(self):
-        mock_llm = self._make_mock_llm()
-        router = IntentRouter(llm_client=mock_llm)
+    async def test_quiero_una_cita_fast_path(self):
+        router = IntentRouter()
 
         result = await router.classify("quiero una cita")
 
         assert result.intent == "book"
-        mock_llm.ainvoke.assert_not_called()
+        assert result.confidence >= _KEYWORD_MATCH_THRESHOLD
 
-    async def test_si_does_not_call_llm(self):
-        mock_llm = self._make_mock_llm()
-        router = IntentRouter(llm_client=mock_llm)
+    async def test_si_fast_path(self):
+        router = IntentRouter()
 
         result = await router.classify("si")
 
         assert result.intent == "confirm"
-        mock_llm.ainvoke.assert_not_called()
 
-    async def test_no_does_not_call_llm(self):
-        mock_llm = self._make_mock_llm()
-        router = IntentRouter(llm_client=mock_llm)
+    async def test_no_fast_path(self):
+        router = IntentRouter()
 
         result = await router.classify("no")
 
         assert result.intent == "reject"
-        mock_llm.ainvoke.assert_not_called()
 
-    async def test_cancelar_does_not_call_llm(self):
-        mock_llm = self._make_mock_llm()
-        router = IntentRouter(llm_client=mock_llm)
+    async def test_cancelar_fast_path(self):
+        router = IntentRouter()
 
         result = await router.classify("cancelar")
 
         assert result.intent == "cancel"
-        mock_llm.ainvoke.assert_not_called()
 
-    async def test_hablar_con_persona_does_not_call_llm(self):
-        mock_llm = self._make_mock_llm()
-        router = IntentRouter(llm_client=mock_llm)
+    async def test_hablar_con_persona_fast_path(self):
+        router = IntentRouter()
 
         result = await router.classify("hablar con una persona")
 
         assert result.intent == "escalate"
-        mock_llm.ainvoke.assert_not_called()
 
-    # ------ LLM fallback — called when no keyword match ------
+    # ------ Ambiguous fallthrough (no keyword match) ------
 
-    async def test_llm_called_when_no_keyword_match(self):
-        """When no keyword matches, the LLM must be called."""
-        llm_response = json.dumps({"intent": "ask_info", "confidence": 0.7})
-        mock_llm = self._make_mock_llm(llm_response)
-        router = IntentRouter(llm_client=mock_llm)
+    async def test_no_keyword_match_returns_ambiguous(self):
+        """When no keyword matches above threshold, classify returns ambiguous
+        (mode node's LLM resolves the turn)."""
+        router = IntentRouter()
 
         result = await router.classify("xyz abc pqr totally unknown text")
 
-        # LLM was called
-        mock_llm.ainvoke.assert_called_once()
-        # Result reflects LLM output
-        assert result.intent == "ask_info"
-        assert result.confidence == 0.7
+        assert result.intent == "ambiguous"
+        assert result.mode_hint is None
 
-    async def test_llm_response_parsed_correctly(self):
-        """Valid LLM JSON response is parsed into IntentResult."""
-        llm_response = json.dumps({"intent": "book", "confidence": 0.85})
-        mock_llm = self._make_mock_llm(llm_response)
-        router = IntentRouter(llm_client=mock_llm)
+    async def test_ambiguous_preserves_keyword_confidence_when_below_threshold(self):
+        """A sub-threshold keyword match still surfaces its confidence for telemetry."""
+        router = IntentRouter()
 
-        result = await router.classify("Quisiera agendar una sesión de peluquería para el martes")
-
-        assert result.intent == "book"
-        assert result.confidence == 0.85
-
-    async def test_llm_response_with_markdown_fences_parsed(self):
-        """LLM responses wrapped in ```json ... ``` are handled."""
-        llm_response = '```json\n{"intent": "ask_info", "confidence": 0.75}\n```'
-        mock_llm = self._make_mock_llm(llm_response)
-        router = IntentRouter(llm_client=mock_llm)
-
-        result = await router.classify("cuéntame más sobre los servicios")
-
-        assert result.intent == "ask_info"
-
-    # ------ Error handling — LLM failure ------
-
-    async def test_llm_failure_returns_ambiguous(self):
-        """If LLM raises an exception, return ambiguous with confidence=0.0."""
-        mock_llm = AsyncMock()
-        mock_llm.ainvoke = AsyncMock(side_effect=ConnectionError("Network error"))
-        router = IntentRouter(llm_client=mock_llm)
-
-        result = await router.classify("completely unknown text that needs llm")
+        # A weak substring match sits below _KEYWORD_MATCH_THRESHOLD; the router
+        # must still return ambiguous without raising.
+        result = await router.classify("esto es otro texto sin intención clara")
 
         assert result.intent == "ambiguous"
-        assert result.confidence == 0.0
-
-    async def test_llm_invalid_json_returns_ambiguous(self):
-        """If LLM returns non-JSON, return ambiguous."""
-        mock_llm = AsyncMock()
-        mock_response = MagicMock()
-        mock_response.content = "not valid json at all"
-        mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-        router = IntentRouter(llm_client=mock_llm)
-
-        result = await router.classify("some unknown text for llm")
-
-        assert result.intent == "ambiguous"
-        assert result.confidence == 0.0
-
-    async def test_llm_unknown_intent_mapped_to_ambiguous(self):
-        """LLM response with unknown intent type → ambiguous."""
-        llm_response = json.dumps({"intent": "totally_unknown", "confidence": 0.9})
-        mock_llm = self._make_mock_llm(llm_response)
-        router = IntentRouter(llm_client=mock_llm)
-
-        result = await router.classify("some text that needs llm classification")
-
-        assert result.intent == "ambiguous"
+        assert 0.0 <= result.confidence < 1.0
 
     # ------ Empty input ------
 
     async def test_empty_text_returns_ambiguous(self):
-        mock_llm = self._make_mock_llm()
-        router = IntentRouter(llm_client=mock_llm)
+        router = IntentRouter()
 
         result = await router.classify("")
 
         assert result.intent == "ambiguous"
         assert result.confidence == 0.0
-        mock_llm.ainvoke.assert_not_called()
 
     # ------ IntentResult clamping ------
 
@@ -455,22 +380,19 @@ class TestIntentRouterClassify:
         r = IntentResult(intent="greet", confidence=0.9, raw_input="test")
         assert r.mode_hint is None
 
-    # ------ current_mode context passed to LLM ------
+    # ------ current_mode context routed to the keyword classifier ------
 
-    async def test_classify_passes_current_mode_to_llm(self):
-        """The current_mode is included in the LLM prompt context."""
-        llm_response = json.dumps({"intent": "confirm", "confidence": 0.8})
-        mock_llm = self._make_mock_llm(llm_response)
-        router = IntentRouter(llm_client=mock_llm)
+    async def test_classify_passes_current_mode_to_keyword_layer(self):
+        """current_mode still drives context shortcuts in classify_by_keywords
+        (e.g. BOOKING slot_selection bare-digit handling)."""
+        router = IntentRouter()
 
-        await router.classify("es que no sé qué quiero hacer", current_mode="BOOKING")
+        # "1" in BOOKING/slot_selection should keyword-classify as confirm(0.95)
+        result = await router.classify(
+            "1", current_mode="BOOKING", booking_step="slot_selection"
+        )
 
-        # LLM was called with messages that include BOOKING context
-        call_args = mock_llm.ainvoke.call_args
-        messages = call_args[0][0]
-        # The human message should include the current_mode
-        human_message = messages[1]
-        assert "BOOKING" in human_message.content
+        assert result.intent == "confirm"
 
 
 # =============================================================================

@@ -290,7 +290,7 @@ user_message = get_last_user_message(state)  # reads reversed(messages) for last
 
 **Key behaviours**:
 - Renders a static welcome message (new vs returning customer variant)
-- Prepends the mandatory EU AI Act disclosure via `_maybe_prepend_intro()` on first turn
+- Prepends the mandatory EU AI Act disclosure via `agent.modes._intro.maybe_prepend_intro()` on first turn
 - Detects booking-content tokens in the greeting message to set `service_audience_hint`
 - Transitions to BOOKING if `last_intent == "book"`, else GENERAL
 - **NO name collection** — does not ask for the customer's name
@@ -439,8 +439,9 @@ class MyMode(BaseModeNode):
         # 2. Run agentic loop (up to MAX_TOOL_ROUNDS=6 iterations)
         result = await self._run_agentic_loop(messages, tools=self.tools)
 
-        # 3. Handle first-turn disclosure
-        response_text, disclosure_sent = self._maybe_prepend_intro(result.response_text, state)
+        # 3. Handle first-turn disclosure (moved off BaseModeNode into agent/modes/_intro.py)
+        from agent.modes._intro import maybe_prepend_intro
+        response_text, disclosure_sent = maybe_prepend_intro(result.response_text, state)
 
         # 4. Return partial state update
         updates = {

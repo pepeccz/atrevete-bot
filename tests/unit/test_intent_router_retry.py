@@ -1,24 +1,19 @@
 """
-Tests for the retry intent in the v6.0 intent router.
+Tests for the retry intent in the v6.0 intent router (keyword-only).
 
 Coverage:
 - T-1.1: "retry" exists in _VALID_INTENTS
 - T-1.2: KEYWORD_MAP["retry"] matches all Spanish retry phrases
 - T-1.3: _intent_to_mode_hint("retry") returns None (stay in current mode)
-- T-1.3: _LLM_SYSTEM_PROMPT includes retry intent description
-- T-1.4: IntentResult.is_retry() convenience method
 - T-1.5: classify_by_keywords integration tests for retry phrases
 """
 
 import pytest
-from unittest.mock import AsyncMock
 
 from agent.routing.intent_router import (
     IntentResult,
-    IntentRouter,
     KEYWORD_MAP,
     _VALID_INTENTS,
-    _LLM_SYSTEM_PROMPT,
     _intent_to_mode_hint,
     classify_by_keywords,
 )
@@ -34,10 +29,6 @@ class TestRetryInValidIntents:
 
     def test_retry_in_valid_intents(self):
         assert "retry" in _VALID_INTENTS
-
-    def test_valid_intents_count(self):
-        """9 intents: greet, book, ask_info, confirm, reject, cancel, escalate, retry, ambiguous."""
-        assert len(_VALID_INTENTS) == 9
 
 
 # ============================================================================
@@ -76,7 +67,7 @@ class TestRetryKeywords:
 
 
 # ============================================================================
-# T-1.3: _intent_to_mode_hint mapping + LLM prompt
+# T-1.3: _intent_to_mode_hint mapping
 # ============================================================================
 
 
@@ -86,31 +77,13 @@ class TestRetryModeHint:
     def test_retry_maps_to_none(self):
         assert _intent_to_mode_hint("retry") is None
 
-    def test_llm_prompt_contains_retry(self):
-        assert "retry" in _LLM_SYSTEM_PROMPT
-
-    def test_llm_prompt_retry_description(self):
-        """LLM system prompt describes what retry means."""
-        assert "volver a intentar" in _LLM_SYSTEM_PROMPT
-
 
 # ============================================================================
-# T-1.4: IntentResult.is_retry() convenience method
+# T-1.4: IntentResult mode_hint mapping for retry
 # ============================================================================
 
 
-class TestIntentResultIsRetry:
-    """Verify the is_retry() convenience method."""
-
-    def test_is_retry_true(self):
-        result = IntentResult(intent="retry", confidence=0.9, raw_input="otra vez")
-        assert result.is_retry() is True
-
-    def test_is_retry_false_for_other_intents(self):
-        for intent in ("greet", "book", "ask_info", "confirm", "reject", "cancel", "escalate"):
-            result = IntentResult(intent=intent, confidence=0.9, raw_input="test")
-            assert result.is_retry() is False, f"is_retry() should be False for {intent!r}"
-
+class TestRetryIntentResultModeHint:
     def test_retry_result_mode_hint_is_none(self):
         """IntentResult for retry should have mode_hint=None."""
         result = IntentResult(
@@ -182,23 +155,3 @@ class TestClassifyByKeywordsRetry:
         result = classify_by_keywords("intentalo de nuevo")
         assert result is not None
         assert result.intent != "book"
-
-
-class TestClassifyRetryWithLLMFallback:
-    """Test IntentRouter.classify() accepts retry from LLM."""
-
-    @pytest.mark.asyncio
-    async def test_llm_returns_retry_intent(self):
-        """When the LLM returns retry, it should be accepted as a valid intent."""
-        mock_llm = AsyncMock()
-        mock_llm.ainvoke.return_value = AsyncMock(
-            content='{"intent": "retry", "confidence": 0.85}'
-        )
-
-        router = IntentRouter(llm_client=mock_llm)
-        # Use a phrase that won't match any keyword above threshold to force LLM path
-        result = await router.classify("hazlo nuevamente por favor")
-
-        assert result.intent == "retry"
-        assert result.confidence == 0.85
-        assert result.mode_hint is None
