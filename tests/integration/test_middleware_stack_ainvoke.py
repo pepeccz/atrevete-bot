@@ -18,7 +18,6 @@ from agent.middleware.dedup import DedupToolCallMiddleware
 from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
 from agent.middleware.node_bridge import NodeBridgeMiddleware
 from agent.middleware.token_tracking import TokenTrackingMiddleware
-from agent.middleware.tool_choice import ToolChoiceMiddleware
 from tests.unit.middleware._offline import ScriptedModel
 
 
@@ -114,28 +113,3 @@ async def test_booking_stack_ainvoke_no_notimplementederror() -> None:
     assert final.content, f"Final AIMessage must have non-empty content, got: {final.content!r}"
 
 
-async def test_booking_stack_with_tool_choice_ainvoke() -> None:
-    """ToolChoiceMiddleware.awrap_model_call must not raise NotImplementedError.
-
-    Covers REQ-2 Scenario: model-call hook parity under ainvoke when
-    ToolChoiceMiddleware is composed at index 0 (as booking_mode.py:656-663 does
-    when tool_choice is truthy).
-    """
-    model = ScriptedModel(responses=_SCRIPTED_RESPONSES[:])
-    node = _FakeNode()
-
-    middleware_with_choice = [
-        ToolChoiceMiddleware(when=lambda state: True, choice="required"),
-        NodeBridgeMiddleware(node),
-        DedupToolCallMiddleware(),
-        FinalTextRecoveryMiddleware(fallback_text="fallback"),
-        TokenTrackingMiddleware(mode_name="BOOKING"),
-    ]
-
-    agent = create_agent(model=model, tools=[echo], middleware=middleware_with_choice)
-    result = await agent.ainvoke({"messages": [HumanMessage("Hola, quiero cortarme el pelo")]})
-
-    messages = result["messages"]
-    final = messages[-1]
-    assert isinstance(final, AIMessage), f"Expected final AIMessage, got {type(final)}"
-    assert final.content, f"Final AIMessage must have non-empty content, got: {final.content!r}"

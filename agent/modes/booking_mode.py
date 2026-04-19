@@ -43,14 +43,6 @@ _HISTORY_LIMIT = 8
 # ============================================================================
 
 
-def _last_message_is_human(state) -> bool:
-    """Predicate for ``ToolChoiceMiddleware``: True when last message is HumanMessage."""
-    from langchain_core.messages import HumanMessage
-
-    messages = state.get("messages") or []
-    return bool(messages) and isinstance(messages[-1], HumanMessage)
-
-
 # Substrings that identify a bot "¿algo más?"-style question.
 # Case-insensitive substring match against the last AIMessage.
 _ADD_MORE_QUESTION_MARKERS: tuple[str, ...] = (
@@ -796,7 +788,6 @@ class BookingModeNode(BaseModeNode):
         from agent.middleware.node_bridge import NodeBridgeMiddleware
         from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
         from agent.middleware.token_tracking import TokenTrackingMiddleware
-        from agent.middleware.tool_choice import ToolChoiceMiddleware
 
         from shared.config import get_settings
 
@@ -839,17 +830,13 @@ class BookingModeNode(BaseModeNode):
                     mode_name="BOOKING",
                 ),
             )
-        if tool_choice:
-            middleware.insert(
-                0,
-                ToolChoiceMiddleware(
-                    when=lambda state: _last_message_is_human(state),
-                    choice=tool_choice,
-                ),
-            )
+        # tool_choice is bound directly on the model (no middleware indirection).
+        # Per P1: one source of truth. get_tools() already limits the visible tool
+        # set — tool_choice='required' only nudges the LLM to call one of them.
+        model = self.llm.bind(tool_choice=tool_choice) if tool_choice else self.llm
 
         agent = create_agent(
-            model=self.llm,
+            model=model,
             tools=allowed_tools,
             system_prompt=system_prompt,
             middleware=middleware,
