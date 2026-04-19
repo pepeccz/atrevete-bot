@@ -193,17 +193,17 @@ def transition_mode(
     """
     Build a partial state update for transitioning to ``new_mode``.
 
-    Uses the legacy ``__reset__`` sentinel on ``mode_context`` so that the
-    ``merge_dicts`` reducer clears stale routing metadata from the previous
-    mode. When ``mode_context`` is migrated to ``replace_dict`` in Milestone 8
-    this helper can simply return ``context_update`` (or ``{}``) without a
-    sentinel — the callers will not need to change.
+    Under the ``replace_dict`` reducer (SDD #2, P2) the returned
+    ``mode_context`` IS the full new context — callers do not need to merge
+    with the previous mode's context, and there is no ``__reset__`` sentinel.
+    Stale routing metadata from the outgoing mode is dropped automatically
+    because replace_dict semantics fully overwrite the field.
 
     Returns a partial ``ConversationState`` dict containing:
 
     - ``current_mode``  → ``new_mode``
     - ``previous_mode`` → the previous ``current_mode``
-    - ``mode_context``  → ``{"__reset__": True, ...context_update}``
+    - ``mode_context``  → ``dict(context_update)`` (or ``{}`` when None)
     - ``mode_history``  → list containing the outgoing mode (appended)
     - ``draft_contexts``→ outgoing ``mode_context`` saved under its mode key
       (only when the mode actually changed and the previous context was non-empty)
@@ -216,9 +216,7 @@ def transition_mode(
     history = list(state.get("mode_history", []))
     history.append(old_mode)
 
-    new_mode_context: dict = {"__reset__": True}
-    if context_update:
-        new_mode_context.update(context_update)
+    new_mode_context: dict = dict(context_update) if context_update else {}
 
     old_mode_context = state.get("mode_context") or {}
     existing_drafts = dict(state.get("draft_contexts") or {})

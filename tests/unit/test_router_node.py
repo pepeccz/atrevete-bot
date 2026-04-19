@@ -745,10 +745,12 @@ class TestRule7NoResetInBooking:
             "booking context would be wiped"
         )
 
-        # booking_step and service_name must be preserved in the result
-        # (router returns only intent_data update, not the full context,
-        # so we check there's no __reset__ and no active wipe)
+        # SDD #2: mode_context uses replace_dict. Same-mode returns must include
+        # the full current context merged with intent_data so existing routing
+        # metadata survives.
         assert "__reset__" not in returned_mc
+        assert returned_mc.get("booking_step") == "slot_selection"
+        assert returned_mc.get("service_name") == "Corte Caballero"
 
     @pytest.mark.asyncio
     async def test_rule7_book_intent_from_booking_does_not_change_mode(self):
