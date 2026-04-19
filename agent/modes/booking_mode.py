@@ -897,37 +897,6 @@ class BookingModeNode(BaseModeNode):
             pass
 
     # ──────────────────────────────────────────────────────────────────────
-    # Mid-loop dynamic context refresh
-    # ──────────────────────────────────────────────────────────────────────
-
-    def _refresh_tools(self) -> list | None:
-        """Refresh tool list based on updated booking state after each tool round."""
-        ctx = getattr(self, "_booking_context", None)
-        if ctx is not None:
-            return self.get_tools(ctx)
-        return None
-
-    def _refresh_dynamic_context(self, working_messages: list) -> None:
-        """Rebuild the dynamic context SystemMessage so the LLM sees fresh state.
-
-        Called by the agentic loop after each tool round. Replaces the
-        SystemMessage at _dynamic_context_index with an updated version
-        reflecting any mode_context changes from tool results.
-        """
-        from langchain_core.messages import SystemMessage
-
-        idx = getattr(self, "_dynamic_context_index", None)
-        mode_context = getattr(self, "_mode_context", None)
-        state = getattr(self, "_dynamic_context_state", None)
-        if idx is None or mode_context is None or state is None:
-            return
-        if idx >= len(working_messages):
-            return
-
-        refreshed = self._build_dynamic_context(mode_context, state)
-        working_messages[idx] = SystemMessage(content=refreshed)
-
-    # ──────────────────────────────────────────────────────────────────────
     # Context helpers
     # ──────────────────────────────────────────────────────────────────────
 
