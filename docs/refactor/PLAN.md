@@ -117,10 +117,10 @@ Out of scope:
 | BaseModeNode class deletion | ⚠️ deferred | still shared for prompt/response helpers |
 
 ### Follow-up tasks (not in this refactor)
-1. Extract `_maybe_prepend_intro`, `_sanitize_response`, `_build_layered_messages`, `_dedup_response` into a shared module so `BookingModeNode` / `AppointmentManagementMode` no longer inherit `BaseModeNode`.
+1. ✅ DONE (agent-rework-surgical branch, Day 1–5) — `_maybe_prepend_intro` moved to `agent/modes/_intro.py:maybe_prepend_intro` (single source), `_sanitize_response` was deleted entirely (no behavioural need), `_extract_final_text` + `_normalize_text` consolidated into `agent/modes/_shared.py`. `BaseModeNode._build_layered_messages` / `_dedup_response` are still class methods — the class survives because of item 2 below.
 2. Rewrite or delete `test_base_mode.py`, `test_base_mode_dedup.py`, `test_token_tracking_hook.py` (all three exercise class internals that `create_agent` obviates).
 3. Delete `_run_agentic_loop`, `ToolCallRejection`, and `AgenticLoopResult` once the above are done.
-4. Update `agent/AGENTS.md` and `CLAUDE.md` guidance away from the `BaseModeNode` pattern.
+4. ✅ PARTIAL DONE (agent-rework-surgical Day 6) — `agent/AGENTS.md` updated to describe `_intro.py` / `_shared.py` and to correct the intent-router section (keyword-only, single LLM per turn). `agent/CLAUDE.md` updated locally (file is gitignored). Full guidance migration away from `BaseModeNode` blocked on item 2 above.
 
 ## Conventions
 
