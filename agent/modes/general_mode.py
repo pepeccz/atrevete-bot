@@ -23,6 +23,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agent.middleware.token_tracking import TokenTrackingMiddleware
 from agent.modes._intro import maybe_prepend_intro, use_optimized_prompts
+from agent.modes._shared import extract_final_text
 from agent.prompts.loader import build_layered_messages
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState
@@ -36,27 +37,6 @@ _LEGACY_SYSTEM_PROMPT = (
     "Responde dudas sobre servicios, horarios, precios y políticas del salón "
     "de forma breve, cálida y útil."
 )
-
-
-def _extract_final_text(result: Any) -> str:
-    """Return the last AIMessage content from a ``create_agent`` result dict."""
-    if not isinstance(result, dict):
-        return ""
-    messages = result.get("messages") or []
-    for msg in reversed(messages):
-        if isinstance(msg, AIMessage):
-            content = msg.content
-            if isinstance(content, str):
-                return content.strip()
-            if isinstance(content, list):
-                parts: list[str] = []
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        parts.append(block.get("text", ""))
-                    elif isinstance(block, str):
-                        parts.append(block)
-                return "\n".join(parts).strip()
-    return ""
 
 
 def _build_legacy_transcript(state: ConversationState) -> tuple[str, list]:
@@ -141,7 +121,7 @@ async def _generate_general_response(
         logger.warning("GeneralMode: create_agent invocation failed: %s", exc)
         return ""
 
-    return _extract_final_text(result)
+    return extract_final_text(result)
 
 
 async def _handle_general(state: ConversationState, llm: Any) -> dict:

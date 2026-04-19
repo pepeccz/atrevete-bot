@@ -31,10 +31,11 @@ import unicodedata
 from typing import Any, Callable
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 
 from agent.middleware.token_tracking import TokenTrackingMiddleware
 from agent.modes._intro import FIRST_TURN_INTRO, maybe_prepend_intro
+from agent.modes._shared import extract_final_text
 from agent.prompts.loader import build_layered_messages
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
@@ -147,28 +148,6 @@ def _use_optimized_prompts() -> bool:
         return True
 
 
-def _extract_final_text(result: Any) -> str:
-    """Extract the final assistant message content from an agent result dict."""
-    if not isinstance(result, dict):
-        return ""
-    messages = result.get("messages") or []
-    # The agent's final response is the last AIMessage in the stream.
-    for msg in reversed(messages):
-        if isinstance(msg, AIMessage):
-            content = msg.content
-            if isinstance(content, str):
-                return content.strip()
-            if isinstance(content, list):
-                parts: list[str] = []
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        parts.append(block.get("text", ""))
-                    elif isinstance(block, str):
-                        parts.append(block)
-                return "\n".join(parts).strip()
-    return ""
-
-
 async def _generate_welcome_response(
     llm: Any,
     state: ConversationState,
@@ -224,7 +203,7 @@ async def _generate_welcome_response(
         logger.warning("GreetingMode: create_agent invocation failed: %s — using fallback", exc)
         return fallback
 
-    text = _extract_final_text(result)
+    text = extract_final_text(result)
     return text or fallback
 
 
