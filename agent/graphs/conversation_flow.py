@@ -17,7 +17,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy import select
 
-from agent.nodes.summarization import summarize_conversation
+from agent.middleware.summarization import summarize_conversation
 from agent.prompts import load_maite_system_prompt
 from agent.services.customer_memory_service import read_customer_memories
 from agent.state.schemas import ConversationState
