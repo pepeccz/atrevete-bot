@@ -785,6 +785,107 @@ class BookingModeNode(BaseModeNode):
     # create_agent integration (M6)
     # ──────────────────────────────────────────────────────────────────────
 
+    def _build_middleware_stack(self, tool_choice: str | None = None) -> list:
+        """Build and return the ordered middleware list for ``create_agent``.
+
+        Dispatches to the capability path or legacy path based on
+        ``USE_CAPABILITY_BOOKING`` feature flag (design §7).
+
+        Middleware ordering per design §5 and §6 Q6:
+        - NEW (capability) path: Grounding → DynamicTools → Invariants → (rest)
+        - LEGACY path:          DynamicTools → (StatusLine?) → (rest)
+
+        Both paths include NodeBridge, Dedup, FinalTextRecovery, TokenTracking.
+        ToolChoiceMiddleware is prepended at position 0 when ``tool_choice`` is set.
+
+        Returns:
+            list of middleware instances in execution order.
+        """
+        from agent.middleware.dedup import DedupToolCallMiddleware
+        from agent.middleware.node_bridge import NodeBridgeMiddleware
+        from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
+        from agent.middleware.token_tracking import TokenTrackingMiddleware
+        from agent.middleware.tool_choice import ToolChoiceMiddleware
+        from shared.config import get_settings
+
+        fallback_text = (
+            "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
+        )
+
+        settings = get_settings()
+
+        if settings.USE_CAPABILITY_BOOKING:
+            # ── NEW capability path (E2) — design §5, §6 Q6 ──────────────────
+            # Order: Grounding → DynamicTools → Invariants → NodeBridge → Dedup
+            #        → FinalTextRecovery → TokenTracking
+            from agent.booking.middleware.grounding import BookingGroundingMiddleware
+            from agent.booking.middleware.invariants import BookingInvariantMiddleware
+
+            middleware: list = [
+                BookingGroundingMiddleware(
+                    get_state_fn=lambda: self._current_state,
+                    mode_name="BOOKING",
+                ),
+                DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._booking_context)),
+                BookingInvariantMiddleware(
+                    get_state_fn=lambda: self._current_state,
+                    get_catalog_fn=lambda: self._cached_service_names,
+                    mode_name="BOOKING",
+                ),
+                NodeBridgeMiddleware(self),
+                DedupToolCallMiddleware(),
+                FinalTextRecoveryMiddleware(fallback_text=fallback_text),
+                TokenTrackingMiddleware(mode_name="BOOKING"),
+            ]
+            logger.info(
+                "feature_flag.booking",
+                extra={
+                    "path": "capability",
+                    "source": "global",
+                    "conversation_id": getattr(self, "_current_state", {}).get("conversation_id"),
+                },
+            )
+        else:
+            # ── LEGACY path — unchanged behavior (T8 will delete this branch) ─
+            middleware = [
+                DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._booking_context)),
+                NodeBridgeMiddleware(self),
+                DedupToolCallMiddleware(),
+                FinalTextRecoveryMiddleware(fallback_text=fallback_text),
+                TokenTrackingMiddleware(mode_name="BOOKING"),
+            ]
+
+            # StatusLineMiddleware — legacy feature flag (T1.4, to be removed in T8).
+            if settings.ENABLE_STATUS_LINE_MIDDLEWARE:
+                from agent.middleware.status_line import StatusLineMiddleware
+
+                middleware.insert(
+                    1,
+                    StatusLineMiddleware(
+                        get_state_fn=lambda: self._current_state,
+                        mode_name="BOOKING",
+                    ),
+                )
+            logger.info(
+                "feature_flag.booking",
+                extra={
+                    "path": "legacy",
+                    "source": "global",
+                    "conversation_id": getattr(self, "_current_state", {}).get("conversation_id"),
+                },
+            )
+
+        if tool_choice:
+            middleware.insert(
+                0,
+                ToolChoiceMiddleware(
+                    when=lambda state: _last_message_is_human(state),
+                    choice=tool_choice,
+                ),
+            )
+
+        return middleware
+
     async def _invoke_create_agent(
         self,
         messages: list,
@@ -799,14 +900,6 @@ class BookingModeNode(BaseModeNode):
         """
         from langchain.agents import create_agent
         from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
-        from agent.middleware.dedup import DedupToolCallMiddleware
-        from agent.middleware.node_bridge import NodeBridgeMiddleware
-        from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
-        from agent.middleware.token_tracking import TokenTrackingMiddleware
-        from agent.middleware.tool_choice import ToolChoiceMiddleware
-
-        from shared.config import get_settings
 
         # Split the legacy layered message list into ``system_prompt`` + transcript.
         system_parts: list[str] = []
@@ -824,34 +917,7 @@ class BookingModeNode(BaseModeNode):
             "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
         )
 
-        middleware: list = [
-            DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._booking_context)),
-            NodeBridgeMiddleware(self),
-            DedupToolCallMiddleware(),
-            FinalTextRecoveryMiddleware(fallback_text=fallback_text),
-            TokenTrackingMiddleware(mode_name="BOOKING"),
-        ]
-
-        # StatusLineMiddleware — condicional al feature flag (T1.4).
-        # Posición 1 (después de DynamicTools, antes de NodeBridge) per design §7.
-        if get_settings().ENABLE_STATUS_LINE_MIDDLEWARE:
-            from agent.middleware.status_line import StatusLineMiddleware
-
-            middleware.insert(
-                1,
-                StatusLineMiddleware(
-                    get_state_fn=lambda: self._current_state,
-                    mode_name="BOOKING",
-                ),
-            )
-        if tool_choice:
-            middleware.insert(
-                0,
-                ToolChoiceMiddleware(
-                    when=lambda state: _last_message_is_human(state),
-                    choice=tool_choice,
-                ),
-            )
+        middleware = self._build_middleware_stack(tool_choice=tool_choice)
 
         agent = create_agent(
             model=self.llm,
