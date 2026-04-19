@@ -207,7 +207,6 @@ class AppointmentManagementMode(BaseModeNode):
 
         # 2. Store ctx for _pre_tool_call and _post_tool_result access
         self._ctx = ctx
-        # Store as plain dict so DynamicToolsMiddleware closure can read it
         self._mode_context = dataclasses.asdict(ctx)
 
         # 3. Build messages
@@ -715,7 +714,6 @@ class AppointmentManagementMode(BaseModeNode):
         from langchain.agents import create_agent
         from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
-        from agent.middleware.dynamic_tools import DynamicToolsMiddleware
         from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
         from agent.middleware.node_bridge import NodeBridgeMiddleware
         from agent.middleware.token_tracking import TokenTrackingMiddleware
@@ -736,8 +734,10 @@ class AppointmentManagementMode(BaseModeNode):
             "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
         )
 
+        # Resolve the allowed tool list ONCE per turn (single source of truth).
+        allowed_tools = self.get_tools(getattr(self, "_mode_context", None))
+
         middleware = [
-            DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._mode_context)),
             NodeBridgeMiddleware(self),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="APPOINTMENT_MANAGEMENT"),
@@ -745,7 +745,7 @@ class AppointmentManagementMode(BaseModeNode):
 
         agent = create_agent(
             model=self.llm,
-            tools=tools,
+            tools=allowed_tools,
             system_prompt=system_prompt,
             middleware=middleware,
         )

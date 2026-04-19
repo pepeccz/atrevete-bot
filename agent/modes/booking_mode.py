@@ -22,7 +22,6 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from agent.config import get_booking_config, ToolChoicePolicy
-from agent.middleware.dynamic_tools import DynamicToolsMiddleware
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
@@ -136,8 +135,6 @@ class BookingModeNode(BaseModeNode):
 
         # check_availability: only when services + stylist are set, no slot yet,
         # AND no audience ambiguity is pending (R7 — hide during disambiguation).
-        # Q G5 POSITIVE: DynamicToolsMiddleware removes BOTH schema AND description
-        # from what the LLM sees — hiding is not cosmetic. design §1.
         if has_services and has_stylist and not has_slot and not ctx.get("_audience_ambiguity"):
             tools.append(check_availability)
 
@@ -819,8 +816,11 @@ class BookingModeNode(BaseModeNode):
             "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
         )
 
+        # Resolve the allowed tool list ONCE per turn (single source of truth).
+        # get_tools() already applies the step-aware filter; no middleware needed.
+        allowed_tools = self.get_tools(getattr(self, "_booking_context", None))
+
         middleware: list = [
-            DynamicToolsMiddleware(get_tools_fn=lambda: self.get_tools(self._booking_context)),
             NodeBridgeMiddleware(self),
             DedupToolCallMiddleware(),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
@@ -850,7 +850,7 @@ class BookingModeNode(BaseModeNode):
 
         agent = create_agent(
             model=self.llm,
-            tools=tools,
+            tools=allowed_tools,
             system_prompt=system_prompt,
             middleware=middleware,
         )
