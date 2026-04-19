@@ -12,11 +12,8 @@ The LLM guides the booking flow; Python enforces data-integrity gates only.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import re
-import unicodedata
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -27,8 +24,6 @@ from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
-from shared.audience_maps import AUDIENCE_HINT_MAP
-from infra.resolvers.negation import is_negation
 
 logger = logging.getLogger(__name__)
 
@@ -113,45 +108,6 @@ class BookingModeNode(BaseModeNode):
         # Notes are optional — the prompt instructs the LLM to ask (Paso 5).
         # No Python gate needed; book() accepts notes=None.
         return (len(missing) == 0, missing)
-
-    def _extract_audience_from_reply(self, messages: list) -> str | None:
-        """Scan the most recent user message for an AUDIENCE_HINT_MAP token.
-
-        Returns the canonical hint value (e.g. ``"adult_female"``) on match, else None.
-        Case-insensitive, accent-normalised, substring match. This is a PURE method —
-        it does NOT read booking_context. Activation logic lives in handle().
-        """
-        def _normalize(text: str) -> str:
-            """NFKD-normalize, strip combining characters, then lowercase."""
-            nfkd = unicodedata.normalize("NFKD", text)
-            return "".join(ch for ch in nfkd if not unicodedata.combining(ch)).lower()
-
-        # Find last user message (dict with role="user" or HumanMessage)
-        last_user_content: str | None = None
-        for msg in reversed(messages):
-            if isinstance(msg, dict):
-                if msg.get("role") == "user":
-                    last_user_content = str(msg.get("content", ""))
-                    break
-            else:
-                from langchain_core.messages import HumanMessage
-
-                if isinstance(msg, HumanMessage):
-                    content = msg.content
-                    last_user_content = content if isinstance(content, str) else str(content)
-                    break
-
-        if not last_user_content:
-            return None
-
-        normalized = _normalize(last_user_content)
-        # Sort tokens by descending length so longer, more specific tokens (e.g. "senora")
-        # are checked before shorter prefixes (e.g. "senor") — avoids false substring matches.
-        for token, canonical in sorted(AUDIENCE_HINT_MAP.items(), key=lambda kv: -len(kv[0])):
-            if token in normalized:
-                return canonical
-
-        return None
 
     @staticmethod
     def _evaluate_confirmation_gate(ctx: dict) -> bool:
@@ -272,105 +228,8 @@ class BookingModeNode(BaseModeNode):
         self._mode_context = booking_context  # alias: both point to booking_context
         self._current_state = state
 
-        # Narrow audience-hint extraction: propagate a mid-flow audience reply
-        # (e.g. "señora") into booking_context so update_booking can proceed
-        # without re-asking. Only runs when no hint is already set.
-        _synthetic_msgs: list = []
-        if not booking_context.get("service_audience_hint"):
-            # state["messages"] already contains the current turn's user message
-            # (preprocess_node adds it before modes run). Pass directly.
-            # Capture _audience_ambiguity BEFORE pop so variants remain available.
-            _audience_ambiguity_snapshot = booking_context.get("_audience_ambiguity")
-            hint = self._extract_audience_from_reply(list(state.get("messages", [])))
-            if hint:
-                booking_context["service_audience_hint"] = hint
-                booking_context.pop("_audience_ambiguity", None)
-                logger.debug(
-                    "BookingModeNode: audience hint extracted from reply: %r", hint
-                )
-
-                # T3 state-delivery: synthesise a fresh tool signal so the LLM
-                # anchors on the resolved service name, not the stale Turn-1
-                # "Audiencia ambigua" next_step. Only fires when _audience_ambiguity
-                # had variants and last_services is set (i.e., we can resolve).
-                if (
-                    _audience_ambiguity_snapshot
-                    and isinstance(_audience_ambiguity_snapshot, dict)
-                    and booking_context.get("last_services")
-                ):
-                    from agent.core import deliver_state_update
-                    from agent.tools import booking_data_tools
-                    from shared.audience_maps import _pick_variant_by_hint
-
-                    _variants = _audience_ambiguity_snapshot.get("variants", [])
-                    _resolved_name = _pick_variant_by_hint(_variants, hint)
-                    if _resolved_name:
-                        booking_context["last_services"] = [_resolved_name]
-                        _synthetic_msgs = deliver_state_update(
-                            tool_name="update_booking",
-                            tool_args={"services": [_resolved_name]},
-                            build_response_fn=booking_data_tools._build_response,
-                            booking_context=booking_context,
-                            context_label="audience-t3",
-                            conversation_id=state.get("conversation_id"),
-                        )
-                        logger.debug(
-                            "BookingModeNode: T3 synthetic delivery — resolved %r → %r "
-                            "(%d messages)",
-                            hint,
-                            _resolved_name,
-                            len(_synthetic_msgs),
-                        )
-
-        # Pre-loop negation resolver: deterministic classification of "¿algo más?" negations.
-        # Runs AFTER audience extraction (so an audience reply that looks negative is routed
-        # to audience first) and BEFORE _build_messages (so add_more_asked is set before the
-        # LLM loop builds its prompt).
-        #
-        # Trigger conditions:
-        #   1. last_services is set (user has already specified services)
-        #   2. add_more_asked is falsy (question not yet resolved)
-        #   3. _audience_ambiguity is absent (don't steal turns from disambiguation)
-        _negation_active = (
-            bool(booking_context.get("last_services"))
-            and not booking_context.get("add_more_asked")
-            and not booking_context.get("_audience_ambiguity")
-        )
-        if _negation_active:
-            _user_text = get_last_user_message(state)
-            _matched, _canonical, _distance = is_negation(_user_text)
-            if _matched:
-                booking_context["add_more_asked"] = True
-            logger.info(
-                "booking.negation_resolver",
-                extra={
-                    "conversation_id": state.get("conversation_id"),
-                    "turn_number": state.get("total_message_count", 0),
-                    "user_text_hash": hashlib.sha256(_user_text.encode()).hexdigest()[:12],
-                    "matched": _matched,
-                    "matched_phrase": _canonical,
-                    "fuzzy_distance": _distance,
-                    "state": "COLLECTING_SERVICES_EXTRA",
-                },
-            )
-
         # 4. Build messages with dynamic context
         messages = await self._build_messages(state, booking_context)
-
-        # Inject synthetic state-delivery messages into the transcript (same-turn delivery).
-        # They are non-SystemMessage objects so _invoke_create_agent routes them to the
-        # transcript, not the system_prompt. Inserted before the last HumanMessage so
-        # the LLM reads them as prior tool context before the current user turn.
-        if _synthetic_msgs:
-            from langchain_core.messages import HumanMessage as _HumanMsg
-
-            # Find insertion point: right before the last HumanMessage in messages.
-            insert_idx = len(messages)
-            for _i in range(len(messages) - 1, -1, -1):
-                if isinstance(messages[_i], _HumanMsg):
-                    insert_idx = _i
-                    break
-            messages = messages[:insert_idx] + list(_synthetic_msgs) + messages[insert_idx:]
 
         # 5. Run the agent loop via ``create_agent`` + composed middleware.
         result = await self._invoke_create_agent(

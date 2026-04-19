@@ -33,6 +33,17 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from agent.modes.booking_mode import BookingModeNode
 from agent.state.schemas import create_initial_state
 
+pytestmark = pytest.mark.xfail(
+    reason=(
+        "tool-contract-extension: T3 synthetic delivery + "
+        "_extract_audience_from_reply hook removed. "
+        "Audience resolution now flows via LLM tool call "
+        "update_booking(service_audience_hint=...). "
+        "Test setup targets the deleted wiring — redesign pending."
+    ),
+    strict=False,
+)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

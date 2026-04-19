@@ -137,6 +137,14 @@ def _common_patches():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(
+    reason=(
+        "tool-contract-extension: pre-loop negation hook removed. "
+        "add_more_asked is now set by the LLM via update_booking(add_more_answered=...). "
+        "This class tests the deleted hook — redesign pending."
+    ),
+    strict=False,
+)
 class TestPreLoopNegationHook:
     """C2.1: The pre-loop hook must fire for 'Nada máß' and set add_more_asked=True."""
 
@@ -218,6 +226,14 @@ class TestPreLoopNegationHook:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(
+    reason=(
+        "tool-contract-extension: pre-loop negation hook removed. "
+        "Telemetry 'booking.negation_resolver' is no longer emitted. "
+        "This class tests the deleted telemetry path."
+    ),
+    strict=False,
+)
 class TestNegationResolverTelemetry:
     """C2.2: Telemetry must be emitted with correct shape when R1 conditions hold.
 
