@@ -215,6 +215,17 @@ class Settings(BaseSettings):
         description="Groq API key for Whisper audio transcription (console.groq.com)",
     )
 
+    # Booking Capability path — feature flag for new middleware-based booking flow (E2)
+    USE_CAPABILITY_BOOKING: bool = Field(
+        default=False,
+        description=(
+            "Feature flag for the capability-style booking flow (E2). "
+            "When True, activates BookingGroundingMiddleware + BookingInvariantMiddleware "
+            "replacing the legacy LLM-narrated flow. Default False for safe rollout. "
+            "Emergency rollback: set to False in .env + docker compose restart agent."
+        ),
+    )
+
     # Status Line Middleware — state delivery via HumanMessage pre-model-call (E2)
     ENABLE_STATUS_LINE_MIDDLEWARE: bool = Field(
         default=False,
