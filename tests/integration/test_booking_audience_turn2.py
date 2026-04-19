@@ -198,16 +198,6 @@ def _common_patches():
             new_callable=AsyncMock,
             return_value=MagicMock(tool_choice_policy=MagicMock(value="NEVER_FORCE")),
         ),
-        # No real AI disclosure — pass through the actual response text
-        patch(
-            "agent.modes.booking_mode.BookingModeNode._maybe_prepend_intro",
-            side_effect=lambda text, state: (text, False),
-        ),
-        # No real sanitization
-        patch(
-            "agent.modes.booking_mode.BookingModeNode._sanitize_response",
-            side_effect=lambda text: text,
-        ),
     ):
         yield
 

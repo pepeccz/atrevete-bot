@@ -807,9 +807,7 @@ class AppointmentManagementMode(BaseModeNode):
         - First-turn AI disclosure
         """
         response_text = result.response_text or ""
-
-        # First-turn intro (EU AI Act compliance)
-        response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+        disclosure_sent = False
 
         # Check for within_window escalation (48h block)
         escalate_window = getattr(ctx, "_escalate_within_window", False)
@@ -827,9 +825,7 @@ class AppointmentManagementMode(BaseModeNode):
                 f"Para {action_word} una cita tan próxima, te comunico con el equipo. "
                 f"Te ayudarán enseguida. 🙏"
             )
-            escalation_response, disclosure_sent = self._maybe_prepend_intro(
-                escalation_response, state
-            )
+            # disclosure_sent already set above (False); no intro mutation.
 
             stylist_name = snapshot.get("stylist_name", "")
             customer_name = state.get("customer_name", "")

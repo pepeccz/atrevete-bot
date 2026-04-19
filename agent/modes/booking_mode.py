@@ -434,9 +434,9 @@ class BookingModeNode(BaseModeNode):
             tool_choice=tool_choice,
         )
 
-        # 6. Build response (LLM-generated text via _sanitize_response)
+        # 6. Build response — LLM text as-is (P3/P5: no compensatory mutation).
         response_text = self._build_response(result, booking_context)
-        response_text, disclosure_sent = self._maybe_prepend_intro(response_text, state)
+        disclosure_sent = False
 
         # Build routing mode_context update — only routing metadata, no booking data
         routing_context = {
@@ -758,12 +758,11 @@ class BookingModeNode(BaseModeNode):
     def _build_response(self, result: AgenticLoopResult, mode_context: dict) -> str:
         """Build the final response text.
 
-        Returns the LLM-generated text as-is (via _sanitize_response).
-        The LLM generates the post-booking confirmation per booking.md instructions,
-        including the Google Calendar link — no code override needed.
+        Returns the LLM-generated text as-is. The LLM generates the post-booking
+        confirmation per booking.md instructions, including the Google Calendar
+        link — no code override needed.
         """
-        response_text = result.response_text or ""
-        return self._sanitize_response(response_text)
+        return result.response_text or ""
 
     # ──────────────────────────────────────────────────────────────────────
     # create_agent integration (M6)

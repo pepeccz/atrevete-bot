@@ -114,14 +114,6 @@ def _common_patches():
             return_value=MagicMock(tool_choice_policy=MagicMock(value="never_force")),
         ),
         patch(
-            "agent.modes.booking_mode.BookingModeNode._maybe_prepend_intro",
-            side_effect=lambda text, state: (text, False),
-        ),
-        patch(
-            "agent.modes.booking_mode.BookingModeNode._sanitize_response",
-            side_effect=lambda text: text,
-        ),
-        patch(
             "agent.modes.booking_mode.BookingModeNode._resolve_service_category",
             new_callable=AsyncMock,
             return_value=None,
