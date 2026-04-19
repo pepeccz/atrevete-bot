@@ -129,25 +129,16 @@ def _get_llm_client():
 
 
 def _get_intent_router():
-    """Get or create the module-level IntentRouter singleton."""
+    """Get or create the module-level IntentRouter singleton.
+
+    v7.1: keyword-only classifier — no LLM client needed. Ambiguous results
+    are resolved by the mode node's main LLM turn.
+    """
     global _intent_router
     if _intent_router is None:
-        from langchain_openai import ChatOpenAI
         from agent.routing.intent_router import IntentRouter
-        from shared.config import get_settings
 
-        settings = get_settings()
-        llm = ChatOpenAI(
-            model=settings.LLM_MODEL,
-            base_url="https://openrouter.ai/api/v1",
-            api_key=settings.OPENROUTER_API_KEY,
-            temperature=0.3,
-            default_headers={
-                "HTTP-Referer": settings.SITE_URL,
-                "X-Title": settings.SITE_NAME,
-            },
-        )
-        _intent_router = IntentRouter(llm_client=llm)
+        _intent_router = IntentRouter()
     return _intent_router
 
 

@@ -1,16 +1,20 @@
 """
-Intent Router — v6.0 hybrid keyword + LLM intent classifier.
+Intent Router — v6.0 keyword-only intent classifier.
 
 Produces an IntentResult (intent, confidence, raw_input, mode_hint) consumed
 by ``router_node`` in ``agent/graphs/conversation_flow.py`` to drive the
 mode-based conversation graph.
+
+Design: when keywords do not match above ``_KEYWORD_MATCH_THRESHOLD`` the
+classifier returns ``intent="ambiguous"`` — resolution is deferred to the mode
+node's own LLM call (single-LLM-per-turn architecture). There is no separate
+LLM invocation at the routing layer.
 """
 
-import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 # ============================================================================
 # v6.0 IntentResult — Structured output from the v6.0 intent classifier
@@ -484,70 +488,22 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
 
 
 # ============================================================================
-# v6.0 IntentRouter — hybrid keyword + LLM classifier
+# v6.0 IntentRouter — keyword-only classifier
 # ============================================================================
-
-# System prompt for the LLM intent classifier (minimal, JSON-only)
-_LLM_SYSTEM_PROMPT = """\
-Eres un clasificador de intenciones para un asistente de reservas de peluquería.
-Clasifica el mensaje del usuario en UNA de estas intenciones:
-greet, book, ask_info, confirm, reject, cancel, escalate, retry, reschedule, check_appointments, ambiguous
-
-Responde ÚNICAMENTE con JSON válido, sin comentarios ni texto extra:
-{"intent": "<intención>", "confidence": <0.0-1.0>}
-
-Intenciones:
-- greet: saludo puro sin otra intención (ej: "Hola", "Buenas tardes")
-- book: quiere hacer o gestionar una reserva/cita
-- ask_info: pregunta sobre precios, servicios, horarios, información general
-- confirm: confirma algo propuesto
-- reject: rechaza algo propuesto
-- cancel: quiere cancelar una cita existente
-- escalate: quiere hablar con una persona real
-- retry: quiere volver a intentar algo que falló (ej: "intentalo de nuevo", "otra vez", "probemos de nuevo")
-- reschedule: el usuario quiere cambiar, mover o reprogramar una cita EXISTENTE (no crear una nueva)
-- check_appointments: el usuario quiere consultar, ver o recordar sus citas próximas
-- ambiguous: no queda claro
-
-Ejemplos de clasificación:
-- "quiero cambiar mi cita" → reschedule
-- "puedo mover el turno al jueves" → reschedule
-- "reagendame para la semana que viene" → reschedule
-- "cuándo tengo turno" → check_appointments
-- "qué citas tengo esta semana" → check_appointments
-- "tengo cita mañana?" → check_appointments
-
-REGLA IMPORTANTE: Si el mensaje contiene un saludo ("hola", "buenas") JUNTO \
-con una intención de acción (reservar, preguntar, cancelar), clasifica según \
-la ACCIÓN, NO como greet. Ejemplo: "Hola, quiero cortarme el pelo" → book.
-
-REGLA DE CONTEXTO: Si el current_mode es BOOKING, las preguntas sobre \
-estilistas, disponibilidad, horarios o el servicio seleccionado son parte \
-de la reserva. Clasifica como "book", NO como "ask_info".
-
-REGLA DE CONTEXTO: Si el current_mode es APPOINTMENT_MANAGEMENT, los números, \
-ordinales, afirmaciones ("sí", "ok", "dale"), y horarios son parte del flujo \
-de gestión de cita. Clasifica como "confirm", NO como "book"."""
 
 
 class IntentRouter:
     """
-    v6.0 hybrid keyword + LLM intent classifier.
+    v6.0 keyword-only intent classifier.
 
-    Keyword fast-path first; LLM fallback only when no keyword matches above
-    ``_KEYWORD_MATCH_THRESHOLD``.
+    If ``classify_by_keywords`` finds a match with confidence >=
+    ``_KEYWORD_MATCH_THRESHOLD`` the router returns that result; otherwise it
+    returns ``intent="ambiguous"`` and the mode node's own LLM resolves the
+    turn (single-LLM-per-turn architecture).
     """
 
-    def __init__(self, llm_client: Any) -> None:
-        """
-        Initialize the v6.0 hybrid classifier.
-
-        Args:
-            llm_client: A LangChain-compatible LLM client with an `ainvoke` method.
-                        Typically a ChatOpenAI instance pointing at OpenRouter.
-        """
-        self._llm = llm_client
-        logger.debug("IntentRouter v6.0 initialized")
+    def __init__(self) -> None:
+        logger.debug("IntentRouter v6.0 initialized (keyword-only)")
 
     async def classify(
         self,
@@ -556,24 +512,21 @@ class IntentRouter:
         booking_step: str | None = None,
     ) -> IntentResult:
         """
-        Classify user message intent using keyword fast-path or LLM fallback.
+        Classify user message intent using the keyword fast-path only.
 
         Algorithm:
-        1. Empty/whitespace → return ambiguous immediately (no LLM call)
-        2. classify_by_keywords() → confidence >= _KEYWORD_MATCH_THRESHOLD → return (no LLM call)
-        3. LLM fallback with system + human prompt (includes current_mode for context)
-        4. Parse LLM response: strip markdown fences, parse JSON, validate intent
-        5. Any failure (invalid JSON, unknown intent, exception) → return ambiguous(0.0)
+        1. Empty/whitespace → return ambiguous
+        2. classify_by_keywords() with confidence >= _KEYWORD_MATCH_THRESHOLD → return it
+        3. Otherwise → return ambiguous (mode node will resolve via its LLM)
 
         Args:
             text: Raw user message
-            current_mode: Active conversation mode (GREETING/BOOKING/GENERAL/ESCALATION),
-                          passed to the LLM for context-dependent classification
-            booking_step: Current booking sub-step (e.g. "slot_selection"), used to
-                          classify bare digit replies as "confirm" at the right substep
+            current_mode: Active conversation mode, passed to the keyword classifier
+                          for context-dependent shortcuts (e.g. BOOKING slot selection)
+            booking_step: Current booking sub-step (e.g. "slot_selection")
 
         Returns:
-            IntentResult — never raises
+            IntentResult — never raises, never calls an LLM
         """
         # Step 1: Empty input fast-path
         if not text or not text.strip():
@@ -601,89 +554,17 @@ class IntentRouter:
             )
             return keyword_result
 
-        # Step 3: LLM fallback
+        # Step 3: Defer to mode node — no separate LLM call here
+        keyword_confidence = keyword_result.confidence if keyword_result is not None else 0.0
         logger.debug(
-            "IntentRouter: LLM fallback | keyword_result=%s | text_preview=%s",
+            "IntentRouter: deferring to mode node | keyword_intent=%s | kw_conf=%.2f | text_preview=%s",
             keyword_result.intent if keyword_result else "None",
+            keyword_confidence,
             text[:60],
         )
-        return await self._classify_with_llm(text, current_mode)
-
-    async def _classify_with_llm(
-        self,
-        text: str,
-        current_mode: str | None,
-    ) -> IntentResult:
-        """
-        Call the LLM to classify intent when keywords are insufficient.
-
-        Handles: invalid JSON, markdown fences, unknown intents, network errors.
-        On any failure returns IntentResult(intent="ambiguous", confidence=0.0).
-        """
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        mode_context = f"\nModo actual de la conversación: {current_mode}" if current_mode else ""
-        human_content = f"Mensaje: {text}{mode_context}"
-
-        try:
-            response = await self._llm.ainvoke(
-                [
-                    SystemMessage(content=_LLM_SYSTEM_PROMPT),
-                    HumanMessage(content=human_content),
-                ]
-            )
-            # Fire-and-forget token tracking
-            try:
-                usage = getattr(response, "usage_metadata", None)
-                if usage and isinstance(usage, dict):
-                    _in = usage.get("input_tokens", 0) or 0
-                    _out = usage.get("output_tokens", 0) or 0
-                    if _in > 0 or _out > 0:
-                        from agent.services.token_tracking import record_token_usage
-
-                        await record_token_usage(
-                            input_tokens=_in,
-                            output_tokens=_out,
-                            mode_name="intent_router",
-                        )
-            except Exception:
-                pass  # Token tracking must never affect intent routing
-            raw_content: str = response.content
-
-            # Strip markdown fences if present (```json ... ```)
-            cleaned = raw_content.strip()
-            fence_match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, re.DOTALL)
-            if fence_match:
-                cleaned = fence_match.group(1).strip()
-
-            data: dict[str, Any] = json.loads(cleaned)
-            intent_value: str = str(data.get("intent", "ambiguous")).lower()
-            confidence_value: float = float(data.get("confidence", 0.5))
-
-            # Reject unknown intents
-            if intent_value not in _VALID_INTENTS:
-                logger.warning(
-                    "IntentRouter LLM returned unknown intent=%s, mapping to ambiguous",
-                    intent_value,
-                )
-                intent_value = "ambiguous"
-                confidence_value = 0.0
-
-            return IntentResult(
-                intent=intent_value,
-                confidence=confidence_value,
-                raw_input=text,
-                mode_hint=_intent_to_mode_hint(intent_value),
-            )
-
-        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-            logger.warning("IntentRouter LLM response parse error: %s", exc)
-        except Exception as exc:
-            logger.error("IntentRouter LLM call failed: %s", exc)
-
         return IntentResult(
             intent="ambiguous",
-            confidence=0.0,
+            confidence=keyword_confidence,
             raw_input=text,
             mode_hint=None,
         )
