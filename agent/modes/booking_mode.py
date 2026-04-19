@@ -30,6 +30,7 @@ from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
 from shared.audience_maps import AUDIENCE_HINT_MAP, canonicalize_audience
 from infra.resolvers.negation import is_negation
+from infra.resolvers.affirmation import is_affirmation
 
 logger = logging.getLogger(__name__)
 
@@ -418,6 +419,35 @@ class BookingModeNode(BaseModeNode):
                     "matched_phrase": _canonical,
                     "fuzzy_distance": _distance,
                     "state": "COLLECTING_SERVICES_EXTRA",
+                },
+            )
+
+        # Pre-loop affirmation resolver: deterministic classification of booking confirmations.
+        # Runs AFTER the negation resolver (so "no" at confirmation gate is caught first)
+        # and BEFORE _build_messages (so confirmed=True is set before the LLM loop runs).
+        #
+        # Trigger conditions (ALL must hold — design §10, R32):
+        #   1. _confirmation_shown is True (the confirmation summary has been shown)
+        #   2. confirmed is False (not yet confirmed — avoid double-firing)
+        _affirmation_active = (
+            bool(booking_context.get("_confirmation_shown"))
+            and not booking_context.get("confirmed")
+        )
+        if _affirmation_active:
+            _aff_text = get_last_user_message(state)
+            _aff_matched, _aff_phrase, _aff_distance = is_affirmation(_aff_text)
+            if _aff_matched:
+                booking_context["confirmed"] = True
+            logger.info(
+                "affirmation_resolver.fired",
+                extra={
+                    "conversation_id": state.get("conversation_id"),
+                    "turn_number": state.get("total_message_count", 0),
+                    "text_hash": hashlib.sha256(_aff_text.encode()).hexdigest()[:12],
+                    "window_tokens": _aff_text.split()[:3],
+                    "matched": _aff_matched,
+                    "matched_phrase": _aff_phrase,
+                    "distance": _aff_distance,
                 },
             )
 
