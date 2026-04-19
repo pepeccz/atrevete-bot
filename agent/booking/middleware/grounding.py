@@ -82,10 +82,15 @@ class BookingGroundingMiddleware(AgentMiddleware):
                 extra={
                     "booking_grounding.exception": str(exc),
                     "booking_grounding.phase": "get_state_fn",
+                    "booking_grounding.conversation_id": None,
+                    "booking_grounding.turn": None,
                 },
                 exc_info=True,
             )
             return request
+
+        _conv_id = state.get("conversation_id")
+        _turn = state.get("total_message_count", 0)
 
         # Mode guard
         if state.get("current_mode") != self._mode_name:
@@ -100,6 +105,8 @@ class BookingGroundingMiddleware(AgentMiddleware):
                     "booking_grounding.exception": str(exc),
                     "booking_grounding.phase": "compute_next_prompt",
                     "booking_grounding.mode": state.get("current_mode"),
+                    "booking_grounding.conversation_id": _conv_id,
+                    "booking_grounding.turn": _turn,
                 },
                 exc_info=True,
             )
@@ -141,14 +148,20 @@ class BookingGroundingMiddleware(AgentMiddleware):
         if not dedup:
             msgs.append(new_msg)
 
+        import hashlib as _hashlib
+
         state_keys = list((state.get("booking_context") or {}).keys())
+        directive_hash = _hashlib.sha256(content.encode()).hexdigest()[:12]
         logger.debug(
             "booking_grounding.injected",
             extra={
+                "booking_grounding.conversation_id": _conv_id,
+                "booking_grounding.turn": _turn,
                 "booking_grounding.action": directive.action,
                 "booking_grounding.next_action": directive.mandatory_next_call,
                 "booking_grounding.mandatory_next_call": directive.mandatory_next_call,
                 "booking_grounding.state_snapshot_keys": state_keys,
+                "booking_grounding.directive_hash": directive_hash,
                 "booking_grounding.dedup": dedup,
             },
         )

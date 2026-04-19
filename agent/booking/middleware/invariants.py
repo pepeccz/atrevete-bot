@@ -214,6 +214,8 @@ class BookingInvariantMiddleware(AgentMiddleware):
         tool_call = request.tool_call
         tool_name = tool_call.get("name", "")
         tool_call_id = tool_call.get("id", "")
+        _conv_id = state.get("conversation_id")
+        _turn = state.get("total_message_count", 0)
 
         try:
             error_code = self._check(tool_call, bc, catalog)
@@ -223,6 +225,8 @@ class BookingInvariantMiddleware(AgentMiddleware):
                 extra={
                     "booking_invariant.phase": "check",
                     "booking_invariant.tool": tool_name,
+                    "booking_invariant.conversation_id": _conv_id,
+                    "booking_invariant.turn": _turn,
                     "exception": str(exc),
                 },
                 exc_info=True,
@@ -236,6 +240,8 @@ class BookingInvariantMiddleware(AgentMiddleware):
             logger.debug(
                 "booking_invariant.rejected",
                 extra={
+                    "booking_invariant.conversation_id": _conv_id,
+                    "booking_invariant.turn": _turn,
                     "booking_invariant.tool": tool_name,
                     "booking_invariant.code": code_key,
                     "booking_invariant.state_context": list(bc.keys()),
@@ -245,7 +251,11 @@ class BookingInvariantMiddleware(AgentMiddleware):
 
         logger.debug(
             "booking_invariant.passed",
-            extra={"booking_invariant.tool": tool_name},
+            extra={
+                "booking_invariant.conversation_id": _conv_id,
+                "booking_invariant.turn": _turn,
+                "booking_invariant.tool": tool_name,
+            },
         )
         return None  # pass through
 
