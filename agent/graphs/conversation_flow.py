@@ -766,8 +766,14 @@ async def router_node(state: ConversationState) -> dict[str, Any]:
         target = "ESCALATION"
 
     # ── Step 8: Same mode → no transition, just update intent data ──
+    # NOTE: mode_context uses replace_dict semantics (P2, SDD #2). Callers must
+    # return the FULL desired dict — merge the current context with intent_data
+    # so we don't accidentally wipe routing metadata on same-mode turns.
     if target == current_mode:
-        return {"mode_context": {**intent_data}, "last_node": "router"}
+        return {
+            "mode_context": {**_mode_context, **intent_data},
+            "last_node": "router",
+        }
 
     # ── Step 9: Different mode → transition with side effects ──
     logger.info(
