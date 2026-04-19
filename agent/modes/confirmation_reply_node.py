@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from agent.fsm.models import IntentType
+from agent.routing.intent_types import IntentType
 from agent.services.confirmation_service import handle_confirmation_response
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState

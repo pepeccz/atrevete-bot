@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from agent.validators.transaction_validators import (
+from agent.transactions.validators.transaction_validators import (
     validate_category_consistency,
     validate_slot_availability,
     validate_3_day_rule,
@@ -50,7 +50,7 @@ class TestValidateCategoryConsistency:
         service_id = uuid4()
 
         # Mock database session
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             mock_session = MagicMock()
             mock_service = MagicMock()
             mock_service.category = ServiceCategory.PELUQUERIA
@@ -72,7 +72,7 @@ class TestValidateCategoryConsistency:
         """Test that multiple services of same category are valid."""
         service_ids = [uuid4(), uuid4(), uuid4()]
 
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             mock_session = MagicMock()
 
             # All services are Peluquería
@@ -99,7 +99,7 @@ class TestValidateCategoryConsistency:
         """Test that mixing Peluquería and Estética is invalid."""
         service_ids = [uuid4(), uuid4()]
 
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             mock_session = MagicMock()
 
             # Mix of Peluquería and Estética
@@ -128,7 +128,7 @@ class TestValidateCategoryConsistency:
         """Test that all Estética services are valid."""
         service_ids = [uuid4(), uuid4()]
 
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             mock_session = MagicMock()
 
             mock_services = [
@@ -483,7 +483,7 @@ class TestLoggingBehavior:
         """Test that category mismatch logs a warning."""
         service_ids = [uuid4(), uuid4()]
 
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             mock_session = MagicMock()
             mock_services = [
                 MagicMock(category=ServiceCategory.PELUQUERIA),
@@ -494,7 +494,7 @@ class TestLoggingBehavior:
             mock_session.execute = AsyncMock(return_value=mock_result)
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
-            with patch("agent.validators.transaction_validators.logger") as mock_logger:
+            with patch("agent.transactions.validators.transaction_validators.logger") as mock_logger:
                 await validate_category_consistency(service_ids)
 
                 mock_logger.warning.assert_called_once()
@@ -504,7 +504,7 @@ class TestLoggingBehavior:
         """Test that 3-day rule violation logs a warning."""
         tomorrow = datetime.now(MADRID_TZ) + timedelta(days=1)
 
-        with patch("agent.validators.transaction_validators.logger") as mock_logger:
+        with patch("agent.transactions.validators.transaction_validators.logger") as mock_logger:
             await validate_3_day_rule(tomorrow)
 
             mock_logger.warning.assert_called_once()
@@ -516,7 +516,7 @@ class TestLoggingBehavior:
         """Test that passing 3-day rule logs info."""
         four_days = datetime.now(MADRID_TZ) + timedelta(days=4)
 
-        with patch("agent.validators.transaction_validators.logger") as mock_logger:
+        with patch("agent.transactions.validators.transaction_validators.logger") as mock_logger:
             await validate_3_day_rule(four_days)
 
             mock_logger.info.assert_called_once()
@@ -537,7 +537,7 @@ class TestEdgeCases:
         leap_date = datetime(2024, 2, 29, 10, 0, 0, tzinfo=MADRID_TZ)
 
         # Mock now to be Feb 26, 2024
-        with patch("agent.validators.transaction_validators.datetime") as mock_datetime:
+        with patch("agent.transactions.validators.transaction_validators.datetime") as mock_datetime:
             mock_datetime.now.return_value = datetime(2024, 2, 26, 0, 0, 0, tzinfo=MADRID_TZ)
             mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
 
@@ -573,7 +573,7 @@ class TestValidateAppointmentLimit:
     @pytest.mark.asyncio
     async def test_under_limit_is_valid(self, customer_id):
         """Test that customer under limit passes validation."""
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             with patch("shared.settings_service.get_settings_service") as mock_settings:
                 mock_service = AsyncMock()
                 mock_service.get = AsyncMock(return_value=3)
@@ -595,7 +595,7 @@ class TestValidateAppointmentLimit:
     @pytest.mark.asyncio
     async def test_at_limit_is_invalid(self, customer_id):
         """Test that customer at limit fails validation."""
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             with patch("shared.settings_service.get_settings_service") as mock_settings:
                 mock_service = AsyncMock()
                 mock_service.get = AsyncMock(return_value=3)
@@ -618,7 +618,7 @@ class TestValidateAppointmentLimit:
     @pytest.mark.asyncio
     async def test_over_limit_is_invalid(self, customer_id):
         """Test that customer over limit fails validation."""
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             with patch("shared.settings_service.get_settings_service") as mock_settings:
                 mock_service = AsyncMock()
                 mock_service.get = AsyncMock(return_value=3)
@@ -639,7 +639,7 @@ class TestValidateAppointmentLimit:
     @pytest.mark.asyncio
     async def test_zero_appointments_is_valid(self, customer_id):
         """Test that new customer with zero appointments is valid."""
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             with patch("shared.settings_service.get_settings_service") as mock_settings:
                 mock_service = AsyncMock()
                 mock_service.get = AsyncMock(return_value=3)
@@ -659,7 +659,7 @@ class TestValidateAppointmentLimit:
     @pytest.mark.asyncio
     async def test_configurable_limit_respected(self, customer_id):
         """Test that configured limit is respected."""
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             with patch("shared.settings_service.get_settings_service") as mock_settings:
                 mock_service = AsyncMock()
                 mock_service.get = AsyncMock(return_value=5)  # Custom limit of 5
@@ -679,7 +679,7 @@ class TestValidateAppointmentLimit:
     @pytest.mark.asyncio
     async def test_error_message_in_spanish(self, customer_id):
         """Test that error message is in Spanish."""
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             with patch("shared.settings_service.get_settings_service") as mock_settings:
                 mock_service = AsyncMock()
                 mock_service.get = AsyncMock(return_value=3)
@@ -700,7 +700,7 @@ class TestValidateAppointmentLimit:
     @pytest.mark.asyncio
     async def test_limit_check_logs_warning_on_exceed(self, customer_id):
         """Test that exceeding limit logs a warning."""
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             with patch("shared.settings_service.get_settings_service") as mock_settings:
                 mock_service = AsyncMock()
                 mock_service.get = AsyncMock(return_value=3)
@@ -712,7 +712,7 @@ class TestValidateAppointmentLimit:
                 mock_session.execute = AsyncMock(return_value=mock_result)
                 mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
-                with patch("agent.validators.transaction_validators.logger") as mock_logger:
+                with patch("agent.transactions.validators.transaction_validators.logger") as mock_logger:
                     await validate_appointment_limit(customer_id)
 
                     mock_logger.warning.assert_called_once()
@@ -720,7 +720,7 @@ class TestValidateAppointmentLimit:
     @pytest.mark.asyncio
     async def test_limit_check_logs_info_on_pass(self, customer_id):
         """Test that passing limit check logs info."""
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             with patch("shared.settings_service.get_settings_service") as mock_settings:
                 mock_service = AsyncMock()
                 mock_service.get = AsyncMock(return_value=3)
@@ -732,7 +732,7 @@ class TestValidateAppointmentLimit:
                 mock_session.execute = AsyncMock(return_value=mock_result)
                 mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
-                with patch("agent.validators.transaction_validators.logger") as mock_logger:
+                with patch("agent.transactions.validators.transaction_validators.logger") as mock_logger:
                     await validate_appointment_limit(customer_id)
 
                     mock_logger.info.assert_called_once()
@@ -740,7 +740,7 @@ class TestValidateAppointmentLimit:
     @pytest.mark.asyncio
     async def test_default_limit_used_when_setting_missing(self, customer_id):
         """Test that default limit (3) is used when setting is not found."""
-        with patch("agent.validators.transaction_validators.get_async_session") as mock_session_ctx:
+        with patch("agent.transactions.validators.transaction_validators.get_async_session") as mock_session_ctx:
             with patch("shared.settings_service.get_settings_service") as mock_settings:
                 mock_service = AsyncMock()
                 # Return default value (simulating missing setting)

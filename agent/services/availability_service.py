@@ -522,7 +522,7 @@ async def get_soonest_slot_any_stylist(
         {"time": "10:00", "stylist_name": "Ana", ...}
     """
     from agent.tools.calendar_tools import get_stylists_by_category
-    from agent.validators.transaction_validators import MINIMUM_DAYS
+    from agent.transactions.validators.transaction_validators import MINIMUM_DAYS
 
     # Spanish day names
     day_names_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]

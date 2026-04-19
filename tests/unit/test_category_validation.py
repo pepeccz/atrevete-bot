@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from agent.validators.transaction_validators import validate_category_consistency
+from agent.transactions.validators.transaction_validators import validate_category_consistency
 from database.connection import engine
 from database.models import Base, Service, ServiceCategory
 from database.seeds.services import seed_services

@@ -32,7 +32,7 @@ from database.models import (
     NotificationType,
     Service,
 )
-from agent.fsm.models import IntentType
+from agent.routing.intent_types import IntentType
 from agent.services.gcal_push_service import (
     update_gcal_event_status,
     delete_gcal_event,

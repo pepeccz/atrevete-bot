@@ -48,7 +48,7 @@ async def test_long_conversation_with_summarization():
         "Seleccionó fecha 15/11 a las 10am. Link de pago enviado, esperando confirmación."
     )
 
-    with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm_class:
+    with patch("agent.middleware.summarization.ChatOpenAI") as mock_llm_class:
         # Configure mock LLM
         mock_llm_instance = AsyncMock()
         mock_llm_instance.ainvoke = AsyncMock(return_value=mock_summary_response)
@@ -135,7 +135,7 @@ async def test_long_conversation_with_summarization():
         }
 
         # Import and call summarization node directly
-        from agent.nodes.summarization import summarize_conversation
+        from agent.middleware.summarization import summarize_conversation
 
         summarized_state = await summarize_conversation(summarization_test_state)
 
@@ -216,13 +216,13 @@ async def test_summarization_combines_multiple_batches():
         else:
             return mock_summary_2
 
-    with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm_class:
+    with patch("agent.middleware.summarization.ChatOpenAI") as mock_llm_class:
         mock_llm_instance = AsyncMock()
         mock_llm_instance.ainvoke = mock_ainvoke
         mock_llm_class.return_value = mock_llm_instance
 
         # Import summarization node
-        from agent.nodes.summarization import summarize_conversation
+        from agent.middleware.summarization import summarize_conversation
 
         # Create initial state at message 19 (first summarization trigger)
         state_19: ConversationState = {

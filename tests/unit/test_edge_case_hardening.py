@@ -241,7 +241,7 @@ class TestReschedule3DayRule:
                 return_value=parsed,
             ),
             patch(
-                "agent.validators.transaction_validators.validate_3_day_rule",
+                "agent.transactions.validators.transaction_validators.validate_3_day_rule",
                 new_callable=AsyncMock,
                 return_value=three_day_result,
             ),
@@ -288,7 +288,7 @@ class TestReschedule3DayRule:
                 return_value=parsed,
             ),
             patch(
-                "agent.validators.transaction_validators.validate_3_day_rule",
+                "agent.transactions.validators.transaction_validators.validate_3_day_rule",
                 new_callable=AsyncMock,
                 return_value=three_day_ok,
             ),

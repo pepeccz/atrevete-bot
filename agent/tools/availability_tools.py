@@ -31,15 +31,15 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from agent.config import get_booking_config
+from shared.booking_config import get_booking_config
 from agent.services.availability_service import (
     get_available_slots,
     is_holiday,
 )
 from agent.utils import parse_natural_date, MADRID_TZ
 from agent.utils.date_parser import DateParseError
-from agent.validators import validate_3_day_rule
-from agent.validators.transaction_validators import MINIMUM_DAYS
+from agent.transactions.validators import validate_3_day_rule
+from agent.transactions.validators.transaction_validators import MINIMUM_DAYS
 from database.connection import get_async_session
 from database.models import Service, ServiceCategory, Stylist
 from shared.business_hours_validator import is_date_closed

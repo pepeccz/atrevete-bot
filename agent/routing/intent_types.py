@@ -1,14 +1,13 @@
 """
-Residual FSM models — IntentType enum only.
+Intent types for routing, confirmation, and cancellation services.
 
-HISTORICAL CONTEXT: This module held the data structures for the v5.0
-prescriptive BookingFSM (BookingState, Intent, FSMResult, CollectedData,
-SlotData, ServiceDetail, ResponseGuidance, CoherenceResult). All of those
-were dead code after the v6.0 mode-based migration and were removed in
-the agent-rework surgical cleanup.
+HISTORICAL CONTEXT: This enum lived in agent/fsm/models.py as the residual
+of the v5.0 prescriptive BookingFSM. All associated models (BookingState,
+Intent, FSMResult, CollectedData, SlotData, ServiceDetail, ResponseGuidance,
+CoherenceResult) were removed in the agent-rework surgical cleanup.
 
-Only IntentType survives because cancellation_service and
-confirmation_service still reference it for intent tagging.
+The enum was moved here during the agent/ folder consolidation — IntentType
+is a routing/intent concept, not an FSM artifact.
 """
 
 from enum import Enum

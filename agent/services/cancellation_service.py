@@ -597,7 +597,7 @@ async def handle_cancellation_response(
     Returns:
         CancellationResult with appropriate response
     """
-    from agent.fsm.models import IntentType
+    from agent.routing.intent_types import IntentType
 
     logger.info(
         f"Handling cancellation | intent={intent_type} | phone={customer_phone} | "

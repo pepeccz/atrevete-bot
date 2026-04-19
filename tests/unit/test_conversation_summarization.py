@@ -13,7 +13,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from langgraph.types import Overwrite
 
-from agent.nodes.summarization import summarize_conversation
+from agent.middleware.summarization import summarize_conversation
 from agent.state.helpers import (
     add_message,
     should_summarize,
@@ -204,7 +204,7 @@ class TestSummarizeConversation:
         mock_response = MagicMock()
         mock_response.content = "Cliente solicita cita para corte de pelo."
 
-        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm:
+        with patch("agent.middleware.summarization.ChatOpenAI") as mock_llm:
             mock_instance = AsyncMock()
             mock_instance.ainvoke = AsyncMock(return_value=mock_response)
             mock_llm.return_value = mock_instance
@@ -232,7 +232,7 @@ class TestSummarizeConversation:
         mock_response = MagicMock()
         mock_response.content = "Cliente confirma cita para mañana 10am."
 
-        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm:
+        with patch("agent.middleware.summarization.ChatOpenAI") as mock_llm:
             mock_instance = AsyncMock()
             mock_instance.ainvoke = AsyncMock(return_value=mock_response)
             mock_llm.return_value = mock_instance
@@ -257,7 +257,7 @@ class TestSummarizeConversation:
         }
 
         # Mock Claude API to raise exception
-        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm:
+        with patch("agent.middleware.summarization.ChatOpenAI") as mock_llm:
             mock_instance = AsyncMock()
             mock_instance.ainvoke = AsyncMock(side_effect=Exception("API error"))
             mock_llm.return_value = mock_instance
@@ -285,8 +285,8 @@ class TestSummarizeConversation:
         mock_response = MagicMock()
         mock_response.content = "Resumen corto."
 
-        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm, patch(
-            "agent.nodes.summarization.check_token_overflow",
+        with patch("agent.middleware.summarization.ChatOpenAI") as mock_llm, patch(
+            "agent.middleware.summarization.check_token_overflow",
             return_value={"overflow": True, "action": "aggressive_summarize"},
         ):
             mock_instance = AsyncMock()
@@ -311,8 +311,8 @@ class TestSummarizeConversation:
         mock_response = MagicMock()
         mock_response.content = "Resumen corto."
 
-        with patch("agent.nodes.summarization.ChatOpenAI") as mock_llm, patch(
-            "agent.nodes.summarization.check_token_overflow",
+        with patch("agent.middleware.summarization.ChatOpenAI") as mock_llm, patch(
+            "agent.middleware.summarization.check_token_overflow",
             return_value={"overflow": True, "action": "escalate"},
         ):
             mock_instance = AsyncMock()

@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from agent.fsm.models import IntentType
+from agent.routing.intent_types import IntentType
 from agent.modes.confirmation_reply_node import confirmation_reply_node
 from agent.services.confirmation_service import ConfirmationResult
 from agent.state.schemas import create_initial_state
