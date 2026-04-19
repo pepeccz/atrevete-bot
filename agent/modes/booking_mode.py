@@ -815,11 +815,18 @@ class BookingModeNode(BaseModeNode):
     # create_agent integration (M6)
     # ──────────────────────────────────────────────────────────────────────
 
-    def _build_middleware_stack(self, tool_choice: str | None = None) -> list:
+    def _build_middleware_stack(
+        self,
+        tool_choice: str | None = None,
+        use_capability_override: bool | None = None,
+        flag_source: str = "global",
+    ) -> list:
         """Build and return the ordered middleware list for ``create_agent``.
 
-        Dispatches to the capability path or legacy path based on
-        ``USE_CAPABILITY_BOOKING`` feature flag (design §7).
+        Dispatches to the capability path or legacy path based on the resolved
+        feature flag (design §7). If ``use_capability_override`` is provided
+        (typically from ``resolve_capability_path``), it takes precedence over
+        the global setting.
 
         Middleware ordering per design §5 and §6 Q6:
         - NEW (capability) path: Grounding → DynamicTools → Invariants → (rest)
@@ -843,8 +850,13 @@ class BookingModeNode(BaseModeNode):
         )
 
         settings = get_settings()
+        use_capability = (
+            use_capability_override
+            if use_capability_override is not None
+            else settings.USE_CAPABILITY_BOOKING
+        )
 
-        if settings.USE_CAPABILITY_BOOKING:
+        if use_capability:
             # ── NEW capability path (E2) — design §5, §6 Q6 ──────────────────
             # Order: Grounding → DynamicTools → Invariants → NodeBridge → Dedup
             #        → FinalTextRecovery → TokenTracking
@@ -871,7 +883,7 @@ class BookingModeNode(BaseModeNode):
                 "feature_flag.booking",
                 extra={
                     "path": "capability",
-                    "source": "global",
+                    "source": flag_source,
                     "conversation_id": getattr(self, "_current_state", {}).get("conversation_id"),
                 },
             )
@@ -900,7 +912,7 @@ class BookingModeNode(BaseModeNode):
                 "feature_flag.booking",
                 extra={
                     "path": "legacy",
-                    "source": "global",
+                    "source": flag_source,
                     "conversation_id": getattr(self, "_current_state", {}).get("conversation_id"),
                 },
             )
@@ -947,7 +959,19 @@ class BookingModeNode(BaseModeNode):
             "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
         )
 
-        middleware = self._build_middleware_stack(tool_choice=tool_choice)
+        # Resolve per-conversation Redis canary override (design §7).
+        from agent.booking.feature_flags import resolve_capability_path
+
+        conversation_id = getattr(self, "_current_state", {}).get("conversation_id")
+        use_capability, flag_source = await resolve_capability_path(
+            str(conversation_id) if conversation_id is not None else None
+        )
+
+        middleware = self._build_middleware_stack(
+            tool_choice=tool_choice,
+            use_capability_override=use_capability,
+            flag_source=flag_source,
+        )
 
         agent = create_agent(
             model=self.llm,
