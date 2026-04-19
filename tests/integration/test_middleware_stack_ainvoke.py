@@ -1,10 +1,6 @@
-"""Integration test: BOOKING middleware stack must not raise NotImplementedError under ainvoke.
+"""Integration test: BOOKING middleware stack must complete ainvoke without errors.
 
-This test is the REGRESSION CANARY for REQ-4.
-It FAILED on master before fix T1-T3 with:
-    NotImplementedError: Asynchronous implementation of awrap_tool_call is not available
-
-The test mirrors the middleware composition at booking_mode.py:650-655 verbatim.
+Mirrors the middleware composition used by BookingModeNode._invoke_create_agent.
 If that section changes, update the mirror here and add a comment.
 """
 
@@ -14,7 +10,6 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
-from agent.middleware.dedup import DedupToolCallMiddleware
 from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
 from agent.middleware.node_bridge import NodeBridgeMiddleware
 from agent.middleware.token_tracking import TokenTrackingMiddleware
@@ -81,20 +76,13 @@ _SCRIPTED_RESPONSES = [
 async def test_booking_stack_ainvoke_no_notimplementederror() -> None:
     """BOOKING middleware stack must complete ainvoke without NotImplementedError.
 
-    This test FAILED on master before fix T1-T3 because DedupToolCallMiddleware
-    only defined wrap_tool_call (sync), not awrap_tool_call (async). Under
-    ainvoke, LangChain 1.2.x pulls both hooks into the async dispatch chain
-    and the base-class awrap_tool_call raises NotImplementedError.
-
-    Mirror of booking_mode.py:650-655 (update comment if source changes):
+    Mirror of BookingModeNode._invoke_create_agent middleware composition.
     """
     model = ScriptedModel(responses=_SCRIPTED_RESPONSES)
     node = _FakeNode()
 
-    # Mirror of booking_mode.py:650-655
     middleware = [
         NodeBridgeMiddleware(node),
-        DedupToolCallMiddleware(),
         FinalTextRecoveryMiddleware(fallback_text="fallback"),
         TokenTrackingMiddleware(mode_name="BOOKING"),
     ]
