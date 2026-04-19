@@ -27,7 +27,6 @@ node function, plus the original module-level helpers (still imported by
 from __future__ import annotations
 
 import logging
-import re
 import unicodedata
 from typing import Any, Callable
 
@@ -35,6 +34,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
 from agent.middleware.token_tracking import TokenTrackingMiddleware
+from agent.modes._intro import FIRST_TURN_INTRO, maybe_prepend_intro
 from agent.prompts.loader import build_layered_messages
 from agent.state.helpers import add_message
 from agent.state.schemas import ConversationState, transition_mode
@@ -49,9 +49,6 @@ logger = logging.getLogger(__name__)
 # Pre-defined greeting messages (ALL name-free)
 _WELCOME_NEW = "¿En qué te puedo ayudar?"
 _WELCOME_RETURNING = "¡Hola de nuevo! 😊 ¿En qué te puedo ayudar?"
-
-# EU AI Act first-turn disclosure enforced in code.
-FIRST_TURN_INTRO = "¡Hola! 🌸 Soy Maite, la asistenta virtual con IA de Atrévete Peluquería."
 
 # Tokens that signal booking intent in the greeting message (F-9).
 _BOOKING_CONTENT_TOKENS: frozenset[str] = frozenset(
@@ -132,59 +129,6 @@ def _resolve_target_mode(mode_context: dict, has_booking_content: bool = False) 
     if has_booking_content:
         return "BOOKING"
     return "GENERAL"
-
-
-# ── Intro prepend helper (ported from BaseModeNode._maybe_prepend_intro) ────
-
-_GREETING_OPENER_PATTERN = re.compile(
-    r"^[\s\U0001F300-\U0001FAFF]*"
-    r"[¡!]?"
-    r"(?:hola|buenas?(?:\s+(?:d[ií]as?|tardes?|noches?))?)"
-    r"[^.!?]*"
-    r"[.!?]?\s*"
-    r"[\U0001F300-\U0001FAFF\s]*",
-    re.IGNORECASE,
-)
-_SELF_INTRO_PATTERN = re.compile(
-    r"^(?:soy\s+maite|maite[,.]?\s+(?:tu|la|su)\s+asistent)[^.!?]*[.!?]?\s*",
-    re.IGNORECASE,
-)
-_MAX_STRIP_ITERATIONS = 5
-
-
-def _maybe_prepend_intro(
-    response_text: str,
-    state: ConversationState,
-) -> tuple[str, bool]:
-    """Prepend the first-turn disclosure unless it was already handled.
-
-    Ported verbatim from ``BaseModeNode._maybe_prepend_intro`` so GreetingMode
-    preserves the canonical EU AI Act first-turn disclosure behaviour.
-    """
-    if state.get("ai_disclosure_sent", False):
-        return response_text, False
-
-    for msg in state.get("messages", []):
-        if msg.get("role") == "assistant" and "soy maite" in (msg.get("content") or "").lower():
-            return response_text, True
-
-    any_stripped = False
-    for _ in range(_MAX_STRIP_ITERATIONS):
-        prev = response_text
-        response_text = _GREETING_OPENER_PATTERN.sub("", response_text).lstrip()
-        response_text = _SELF_INTRO_PATTERN.sub("", response_text).lstrip()
-        if response_text == prev:
-            break
-        any_stripped = True
-    if any_stripped:
-        logger.debug("_maybe_prepend_intro: stripped LLM self-intro from first-turn response")
-
-    if response_text.startswith(FIRST_TURN_INTRO[:20]):
-        return response_text, True
-    if FIRST_TURN_INTRO in response_text:
-        return response_text, True
-
-    return f"{FIRST_TURN_INTRO} {response_text}", True
 
 
 # ── create_agent integration ────────────────────────────────────────────────
@@ -343,7 +287,7 @@ async def _handle_greeting(
 
     fallback = _WELCOME_RETURNING if customer_name else _WELCOME_NEW
     response = await _generate_welcome_response(llm, state, mode_context, fallback=fallback)
-    final_response, disclosure_sent = _maybe_prepend_intro(response, state)
+    final_response, disclosure_sent = maybe_prepend_intro(response, state)
 
     transition_update = transition_mode(state, target_mode)
 
@@ -409,7 +353,6 @@ __all__ = [
     "_WELCOME_RETURNING",
     "_build_booking_handoff_context",
     "_has_booking_content",
-    "_maybe_prepend_intro",
     "_normalize_text",
     "_resolve_target_mode",
     "build_greeting_node",
