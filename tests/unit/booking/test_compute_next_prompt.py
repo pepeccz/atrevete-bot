@@ -16,7 +16,7 @@ import pytest
 
 # This import will raise ModuleNotFoundError in RED phase.
 # Do NOT add @pytest.mark.xfail — the failure IS the test signal.
-from agent.booking.grounding import compute_next_prompt
+from agent.booking.grounding import compute_next_prompt, render_confirmation_summary
 
 
 # Closed set of valid actions per REQ-9 / design §3
@@ -261,3 +261,42 @@ class TestNoIO:
                 state = {"booking_context": bc, "current_mode": "BOOKING"}
                 directive = compute_next_prompt(state)
                 assert directive.action in VALID_ACTIONS
+
+
+# ---------------------------------------------------------------------------
+# TestRenderConfirmationSummary — branch coverage for render_confirmation_summary
+# ---------------------------------------------------------------------------
+
+
+class TestRenderConfirmationSummary:
+    """
+    Branch coverage for render_confirmation_summary — the 'if notes:' branch
+    must be exercised in both directions for 100% branch coverage on grounding.py.
+    """
+
+    _BASE_BC: dict = {
+        "last_services": ["Corte Largo"],
+        "last_stylist": "Ana",
+        "selected_slot": {"date": "2026-04-21", "time": "10:00"},
+        "customer_name": "María García",
+    }
+
+    def test_summary_without_notes(self) -> None:
+        """
+        Given: booking context with no notes key
+        When: render_confirmation_summary is called
+        Then: summary does NOT include a Notas line
+        """
+        bc = dict(self._BASE_BC)
+        summary = render_confirmation_summary(bc)
+        assert "• Notas:" not in summary
+
+    def test_summary_with_notes(self) -> None:
+        """
+        Given: booking context with notes set
+        When: render_confirmation_summary is called
+        Then: summary INCLUDES the Notas line verbatim
+        """
+        bc = {**self._BASE_BC, "notes": "Sin colorante"}
+        summary = render_confirmation_summary(bc)
+        assert "• Notas: Sin colorante" in summary
