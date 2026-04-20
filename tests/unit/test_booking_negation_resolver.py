@@ -14,7 +14,6 @@ import pytest
 
 from infra.resolvers.negation import is_negation, normalize_for_negation
 
-
 # ============================================================================
 # C1.1 — normalize_for_negation tests
 # ============================================================================

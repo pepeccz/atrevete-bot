@@ -15,7 +15,6 @@ import pytest
 # That is the expected failure mode — do NOT add @pytest.mark.xfail.
 from infra.resolvers.affirmation import is_affirmation
 
-
 # ---------------------------------------------------------------------------
 # TestCanonicalAffirmations — REQ-1
 # ---------------------------------------------------------------------------

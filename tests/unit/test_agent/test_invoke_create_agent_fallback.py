@@ -14,11 +14,9 @@ logs via the ``error`` field.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # BookingModeNode — exception branch returns fallback_text

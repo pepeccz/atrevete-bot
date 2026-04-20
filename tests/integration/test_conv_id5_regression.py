@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — conv_id=5 turn sequence
 # ---------------------------------------------------------------------------
@@ -225,8 +224,6 @@ class TestConvId5Regression:
         REQ-35: Permanent regression test for FM-6.
         """
         # Import the capability stack (will fail with ModuleNotFoundError in RED phase)
-        from agent.booking.grounding import compute_next_prompt
-        from agent.booking.feature_flags import resolve_booking_capability_flag
         from infra.resolvers.affirmation import is_affirmation
 
         # Verify the critical "dale" turn is in the fixture
@@ -269,8 +266,9 @@ class TestConvId5Regression:
 
         This is the gate that prevents FM-6 at the tool level.
         """
-        from agent.booking.middleware.invariants import BookingInvariantMiddleware
         import json
+
+        from agent.booking.middleware.invariants import BookingInvariantMiddleware
 
         bc = {
             "confirmed": False,

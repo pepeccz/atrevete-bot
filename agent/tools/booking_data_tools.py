@@ -130,15 +130,16 @@ class UpdateBookingSchema(BaseModel):
 
 async def _find_similar_services(name: str) -> list[str]:
     """Find service names containing the input (for ambiguity guidance)."""
+    from sqlalchemy import select
+
     from agent.utils.fuzzy_resolver import normalize_spanish
     from database.connection import get_async_session
     from database.models import Service
-    from sqlalchemy import select
 
     normalized = normalize_spanish(name)
     async with get_async_session() as session:
         result = await session.execute(
-            select(Service.name).where(Service.is_active == True)
+            select(Service.name).where(Service.is_active.is_(True))
         )
         all_names = [row[0] for row in result.all()]
 
@@ -153,8 +154,9 @@ async def _find_audience_siblings_for_signal(svc: Any) -> list[str]:
     Informational only — never raised as an error. Used by update_booking to populate
     _audience_ambiguity in _booking_context_patch when the user may have under-specified.
     """
-    from database.models import Service
     from sqlalchemy import select
+
+    from database.models import Service
 
     base_word = svc.name.split()[0].lower() if svc.name else ""
     if not base_word:
@@ -299,8 +301,8 @@ async def update_booking(
     # ── Services branch ──────────────────────────────────────────────────
     if services is not None:
         from agent.tools.availability_tools import (
-            _resolve_service_by_name,
             _get_active_stylists_for_category,
+            _resolve_service_by_name,
         )
 
         resolved_services = []

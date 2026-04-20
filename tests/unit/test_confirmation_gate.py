@@ -9,8 +9,6 @@ REQs covered: REQ-13, REQ-20 (confirmation gate behaviour)
 
 import json
 
-import pytest
-
 
 def _make_full_bc(**overrides) -> dict:
     """Return a fully complete booking context (all fields set, confirmed=True)."""
@@ -108,7 +106,7 @@ class TestConfirmationAllows:
         mw = _make_middleware(bc)
         handler_called = []
         expected = MagicMock(content=json.dumps({"success": True}))
-        result = mw.wrap_tool_call(_make_book_call(), lambda tc: (handler_called.append(tc), expected)[1])
+        mw.wrap_tool_call(_make_book_call(), lambda tc: (handler_called.append(tc), expected)[1])
 
         assert len(handler_called) == 1, "Handler MUST be called when confirmed=True"
 

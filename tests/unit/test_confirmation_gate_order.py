@@ -17,8 +17,6 @@ Zero xfail marks. All GREEN.
 
 import json
 
-import pytest
-
 
 def _make_full_bc(**overrides) -> dict:
     """Return a fully complete booking context."""

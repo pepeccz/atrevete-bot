@@ -26,7 +26,6 @@ from operator import add as operator_add
 from typing import Annotated, Any, Literal, TypedDict
 from uuid import UUID
 
-
 # ============================================================================
 # BookingContext — Typed dict for durable booking state
 # ============================================================================
@@ -191,7 +190,7 @@ def merge_dicts(current: dict | None, update: dict | None) -> dict:
 
 
 def transition_mode(
-    state: "ConversationState",
+    state: ConversationState,
     new_mode: str,
     context_update: dict | None = None,
 ) -> dict:
