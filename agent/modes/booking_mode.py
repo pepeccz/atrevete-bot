@@ -29,9 +29,6 @@ from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
-from infra.resolvers.affirmation import is_affirmation
-from infra.resolvers.negation import is_negation
-from infra.resolvers.stylist import resolve_stylist
 from shared.booking_config import ToolChoicePolicy, get_booking_config
 
 logger = logging.getLogger(__name__)
@@ -95,9 +92,15 @@ class BookingModeNode(BaseModeNode):
     # Booking completeness check — GATE for book(), not a flow sequencer
     # ──────────────────────────────────────────────────────────────────────
 
-    _FRESH_START_MARKERS = frozenset({
-        "hola", "hello", "hey", "buenas", "buenos",
-    })
+    _FRESH_START_MARKERS = frozenset(
+        {
+            "hola",
+            "hello",
+            "hey",
+            "buenas",
+            "buenos",
+        }
+    )
 
     @classmethod
     def _is_fresh_booking_start(cls, user_msg: str, ctx: dict) -> bool:
@@ -205,54 +208,106 @@ class BookingModeNode(BaseModeNode):
             booking_context = {}
 
         # 1. Resolve digit selection: map bare digit user reply → selected_slot
-        self._resolve_digit_selection(state, booking_context)
+        # B.3.6: _resolve_digit_selection now uses resolve_digit_selection + apply_resolver_patch
+        _user_msg_raw = get_last_user_message(state).strip()
+        try:
+            from agent.booking.patch_pipeline import (
+                apply_resolver_patch,
+                resolve_digit_selection,
+            )
+
+            _digit_result = resolve_digit_selection(_user_msg_raw, booking_context)
+            apply_resolver_patch(
+                booking_context,
+                _digit_result,
+                conversation_id=str(state.get("conversation_id", "")),
+                turn=state.get("total_message_count", 0),
+            )
+        except Exception as _exc:
+            logger.warning(
+                "booking_digit.resolver_error | conversation=%s | error=%s",
+                state.get("conversation_id", "unknown"),
+                _exc,
+            )
 
         # 1-pre. Affirmation/negation detection — runs BEFORE agentic loop.
         # When a summary has been shown and the user hasn't confirmed yet,
         # detect "dale"/"sí"/etc. and set confirmed=True deterministically.
-        # This is the W4 fix: is_affirmation() was an isolated utility; now wired in.
-        _user_msg_raw = get_last_user_message(state).strip()
-        if booking_context.get("_confirmation_shown") and not booking_context.get("confirmed"):
-            if _user_msg_raw and is_affirmation(_user_msg_raw):
-                booking_context["confirmed"] = True
-                logger.info(
-                    "booking_confirmation.detected | conversation=%s | confirmed=True | msg=%r",
-                    state.get("conversation_id", "unknown"),
-                    _user_msg_raw,
+        # B.3.6: converted to use resolve_confirmation + apply_resolver_patch.
+        if _user_msg_raw:
+            try:
+                from agent.booking.patch_pipeline import (
+                    apply_resolver_patch,
+                    resolve_confirmation,
                 )
-            elif _user_msg_raw and is_negation(_user_msg_raw)[0]:
-                booking_context["confirmed"] = False
-                booking_context["_confirmation_shown"] = False
-                logger.info(
-                    "booking_confirmation.detected | conversation=%s | confirmed=False (negation) | msg=%r",
+
+                _confirm_result = resolve_confirmation(_user_msg_raw, booking_context)
+                apply_resolver_patch(
+                    booking_context,
+                    _confirm_result,
+                    conversation_id=str(state.get("conversation_id", "")),
+                    turn=state.get("total_message_count", 0),
+                )
+            except Exception as _exc:
+                logger.warning(
+                    "booking_confirmation.resolver_error | conversation=%s | error=%s",
                     state.get("conversation_id", "unknown"),
-                    _user_msg_raw,
+                    _exc,
                 )
 
         # 1a. Ensure opening_booking_request is set for disambiguation.
         # The router only sets it on first-interaction→BOOKING transitions.
         # For returning customers or re-entries, populate it from the user message
         # so the LLM has context about what the client originally asked for.
-        if not booking_context.get("opening_booking_request") and not booking_context.get("last_services"):
+        # B.3.6: informational pre-fill via apply_resolver_patch.
+        if not booking_context.get("opening_booking_request") and not booking_context.get(
+            "last_services"
+        ):
             user_msg = get_last_user_message(state).strip()
             if user_msg:
-                booking_context["opening_booking_request"] = user_msg
+                from agent.booking.patch_pipeline import apply_resolver_patch
+
+                apply_resolver_patch(
+                    booking_context,
+                    {
+                        "source": "opening_request_prefill",
+                        "matched": True,
+                        "patch": {"opening_booking_request": user_msg},
+                        "reason": "prefill from user message",
+                    },
+                    conversation_id=str(state.get("conversation_id", "")),
+                    turn=state.get("total_message_count", 0),
+                )
 
         # 1b. Pre-load stylist names by category for dynamic context
         self._cached_stylists_by_category = await self._load_stylists_by_category()
 
         # 1b1. Populate _offered_stylists early — needed by stylist resolver gate below (R12).
-        # _build_dynamic_context also populates this later (idempotent), but the pre-loop
-        # resolver gate must see it NOW, before the LLM call.
+        # The pre-loop resolver gate must see it NOW, before the LLM call.
+        # B.3.6: informational pre-fill via apply_resolver_patch.
         _early_stylists = self._get_stylists_for_services(booking_context)
         if _early_stylists:
-            booking_context["_offered_stylists"] = _early_stylists + ["Sin preferencia"]
+            from agent.booking.patch_pipeline import apply_resolver_patch
+
+            apply_resolver_patch(
+                booking_context,
+                {
+                    "source": "offered_stylists_prefill",
+                    "matched": True,
+                    "patch": {"_offered_stylists": _early_stylists + ["Sin preferencia"]},
+                    "reason": "prefill offered_stylists for resolver gate",
+                },
+                conversation_id=str(state.get("conversation_id", "")),
+                turn=state.get("total_message_count", 0),
+            )
 
         # 1b2. Pre-load service catalog for customer memory ambiguity check + middleware
         self._cached_service_catalog = await self._load_service_names()
 
         # 1c. Resolve service category if services are known but category is not yet cached
-        if booking_context.get("last_services") and not booking_context.get("last_service_category"):
+        if booking_context.get("last_services") and not booking_context.get(
+            "last_service_category"
+        ):
             await self._resolve_service_category(booking_context)
 
         # 1d. Stylist resolver gate — runs AFTER _cached_stylists_by_category is loaded (R12)
@@ -260,6 +315,7 @@ class BookingModeNode(BaseModeNode):
         # - compute_next_prompt says ASK_STYLIST (deterministic action check)
         # - no stylist has been chosen yet
         # - we have a list of offered stylists to match against
+        # B.3.6: converted to use resolve_stylist_selection + apply_resolver_patch.
         _offered_stylists: list[str] = booking_context.get("_offered_stylists") or []
         if (
             _offered_stylists
@@ -267,22 +323,26 @@ class BookingModeNode(BaseModeNode):
             and not booking_context.get("no_preference_stylist")
         ):
             try:
+                from agent.booking.patch_pipeline import (
+                    apply_resolver_patch,
+                    resolve_stylist_selection,
+                )
+
                 _stylist_directive = compute_next_prompt(state)
                 if _stylist_directive.action == "ASK_STYLIST":
-                    _stylist_patch = resolve_stylist(
+                    _stylist_result = resolve_stylist_selection(
                         _user_msg_raw,
                         _offered_stylists,
+                        booking_context,
                         conversation_id=str(state.get("conversation_id", "")),
-                        turn_number=state.get("total_message_count", 0),
+                        turn=state.get("total_message_count", 0),
                     )
-                    if _stylist_patch is not None:
-                        for k, v in _stylist_patch.items():
-                            booking_context[k] = v
-                        logger.info(
-                            "booking_stylist.pre_loop_resolved | conversation=%s | patch=%s",
-                            state.get("conversation_id", "unknown"),
-                            list(_stylist_patch.keys()),
-                        )
+                    apply_resolver_patch(
+                        booking_context,
+                        _stylist_result,
+                        conversation_id=str(state.get("conversation_id", "")),
+                        turn=state.get("total_message_count", 0),
+                    )
             except Exception as _exc:
                 logger.warning(
                     "booking_stylist.pre_loop_resolver_error | conversation=%s | error=%s",
@@ -296,11 +356,24 @@ class BookingModeNode(BaseModeNode):
         # possible from before_model(). Set _confirmation_shown here instead, using
         # the same compute_next_prompt call pattern as the stylist gate above.
         # Idempotent: if already True, skip.
+        # B.3.6: converted to use apply_resolver_patch.
         if not booking_context.get("_confirmation_shown"):
             try:
+                from agent.booking.patch_pipeline import apply_resolver_patch
+
                 _conf_directive = compute_next_prompt(state)
                 if _conf_directive.action == "SHOW_CONFIRMATION":
-                    booking_context["_confirmation_shown"] = True
+                    apply_resolver_patch(
+                        booking_context,
+                        {
+                            "source": "confirmation_shown_gate",
+                            "matched": True,
+                            "patch": {"_confirmation_shown": True},
+                            "reason": "SHOW_CONFIRMATION action detected",
+                        },
+                        conversation_id=str(state.get("conversation_id", "")),
+                        turn=state.get("total_message_count", 0),
+                    )
                     logger.info(
                         "booking_grounding.confirmation_shown | conversation=%s | turn=%s",
                         state.get("conversation_id", "unknown"),
@@ -338,8 +411,28 @@ class BookingModeNode(BaseModeNode):
                     _exc,
                 )
 
-        # 2. Cross-mode customer handoff
-        self._resolve_customer_from_state(state, booking_context)
+        # 2. Cross-mode customer handoff — B.3.6: use resolve_customer_from_state wrapper
+        try:
+            from agent.booking.patch_pipeline import (
+                apply_resolver_patch,
+            )
+            from agent.booking.patch_pipeline import (
+                resolve_customer_from_state as _resolve_customer_patch,
+            )
+
+            _customer_result = _resolve_customer_patch(state, booking_context)
+            apply_resolver_patch(
+                booking_context,
+                _customer_result,
+                conversation_id=str(state.get("conversation_id", "")),
+                turn=state.get("total_message_count", 0),
+            )
+        except Exception as _exc:
+            logger.warning(
+                "booking_customer.resolver_error | conversation=%s | error=%s",
+                state.get("conversation_id", "unknown"),
+                _exc,
+            )
 
         # 3. tool_choice: config-driven policy (default: never force)
         config = await get_booking_config()
@@ -441,12 +534,8 @@ class BookingModeNode(BaseModeNode):
             if not tool_args.get("total_duration_minutes") and mode_context.get(
                 "last_total_duration_minutes"
             ):
-                tool_args["total_duration_minutes"] = mode_context[
-                    "last_total_duration_minutes"
-                ]
-            if not tool_args.get("service_category") and mode_context.get(
-                "last_service_category"
-            ):
+                tool_args["total_duration_minutes"] = mode_context["last_total_duration_minutes"]
+            if not tool_args.get("service_category") and mode_context.get("last_service_category"):
                 tool_args["service_category"] = mode_context["last_service_category"]
             return tool_args
 
@@ -497,10 +586,20 @@ class BookingModeNode(BaseModeNode):
             # Step A.2: customer_name extraction from tool args
             # Step A.2: customer_name — prefer mode_context (from update_booking),
             # fall back to tool args (defense-in-depth).
-            _NAME_BLOCKLIST = frozenset({
-                "cliente", "usuario", "desconocido", "n/a", "nombre",
-                "sin nombre", "no proporcionado", "unknown", "user", "customer",
-            })
+            _NAME_BLOCKLIST = frozenset(
+                {
+                    "cliente",
+                    "usuario",
+                    "desconocido",
+                    "n/a",
+                    "nombre",
+                    "sin nombre",
+                    "no proporcionado",
+                    "unknown",
+                    "user",
+                    "customer",
+                }
+            )
             if not mode_context.get("customer_name"):
                 first = (tool_args.get("customer_first_name") or "").strip()
                 if first:
@@ -526,8 +625,12 @@ class BookingModeNode(BaseModeNode):
             # Step A.3: capture notes from tool args (LLM passes them after Paso 5)
             notes_arg = tool_args.get("notes")
             if notes_arg is not None:
-                mode_context["notes"] = notes_arg if notes_arg.lower() not in ("no", "ninguna", "sin notas") else None
-                mode_context["notes_state"] = "skipped" if mode_context["notes"] is None else "provided"
+                mode_context["notes"] = (
+                    notes_arg if notes_arg.lower() not in ("no", "ninguna", "sin notas") else None
+                )
+                mode_context["notes_state"] = (
+                    "skipped" if mode_context["notes"] is None else "provided"
+                )
 
             # Step B: Confirmation gate — reject book() if required fields are missing.
             # Runs AFTER Steps A/A.1b/A.2/A.3 so selected_slot, customer_name,
@@ -611,7 +714,11 @@ class BookingModeNode(BaseModeNode):
             return result
 
         if tool_name == "check_availability":
-            # Store offered slots from availability result
+            # Store offered slots from availability result.
+            # B.3.8: Only offered_slots and selected_slot clear are written here.
+            # last_services, last_stylist, last_total_duration_minutes must come
+            # via explicit update_booking calls (enforced by BookingInvariantMiddleware
+            # SERVICES_MISSING check at invariants.py:151 before check_availability runs).
             slots = result_dict.get("available_slots") or result_dict.get("slots") or []
             if slots:
                 # Clear stale slot state ONLY when new slots arrive successfully.
@@ -622,18 +729,6 @@ class BookingModeNode(BaseModeNode):
                     "_post_tool_result[check_availability]: cleared stale state, stored %d offered_slots",
                     len(slots),
                 )
-            # Capture service names from args (list)
-            svc_names = tool_args.get("service_names") or []
-            if svc_names:
-                mode_context["last_services"] = svc_names
-            # Capture total duration from result
-            total_dur = result_dict.get("total_duration_minutes")
-            if total_dur:
-                mode_context["last_total_duration_minutes"] = total_dur
-            # Capture stylist name from args
-            stylist_name = tool_args.get("stylist_name")
-            if stylist_name:
-                mode_context["last_stylist"] = stylist_name
 
         elif tool_name == "book":
             status = result_dict.get("status")
@@ -724,9 +819,7 @@ class BookingModeNode(BaseModeNode):
                 transcript.append(msg)
         system_prompt = "\n\n".join(system_parts)
 
-        fallback_text = (
-            "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
-        )
+        fallback_text = "Perdona, tuve un problema procesando tu mensaje. ¿Puedes repetirlo?"
 
         # Resolve the allowed tool list ONCE per turn (single source of truth).
         # get_tools() already applies the step-aware filter; no middleware needed.
@@ -850,42 +943,6 @@ class BookingModeNode(BaseModeNode):
         return "\n".join(lines) if lines else "(ningún dato recogido todavía)"
 
     # ──────────────────────────────────────────────────────────────────────
-    # Digit slot selection — deterministic fast-path
-    # ──────────────────────────────────────────────────────────────────────
-
-    def _resolve_digit_selection(self, state: ConversationState, mode_context: dict) -> None:
-        """Resolve bare digit slot selection — deterministic fast-path only.
-
-        When the user sends a single digit (e.g., "2") and offered_slots exist,
-        maps it to the corresponding slot. All other natural language parsing
-        (times, ordinals, affirmatives, declines) is handled by the LLM.
-
-        Called at the top of handle(), BEFORE the agentic loop.
-        """
-        user_message = get_last_user_message(state).strip()
-        if not user_message:
-            return
-
-        offered_slots: list[dict] = mode_context.get("offered_slots") or []
-        if not offered_slots or mode_context.get("selected_slot"):
-            return
-
-        try:
-            digit = int(user_message.strip())
-            if 1 <= digit <= len(offered_slots):
-                slot_resolved = offered_slots[digit - 1]
-                mode_context["selected_slot"] = slot_resolved
-                if not mode_context.get("last_stylist") and slot_resolved.get("stylist_name"):
-                    mode_context["last_stylist"] = slot_resolved["stylist_name"]
-                logger.info(
-                    "_resolve_digit_selection: slot resolved by digit %d → %r",
-                    digit,
-                    slot_resolved,
-                )
-        except (ValueError, TypeError):
-            pass
-
-    # ──────────────────────────────────────────────────────────────────────
     # Context helpers
     # ──────────────────────────────────────────────────────────────────────
 
@@ -901,7 +958,9 @@ class BookingModeNode(BaseModeNode):
         Priority: customer_first_name > customer_name from state.
         """
         # Only suggest if neither confirmed name nor suggestion already set
-        if not mode_context.get("customer_name") and not mode_context.get("_suggested_customer_name"):
+        if not mode_context.get("customer_name") and not mode_context.get(
+            "_suggested_customer_name"
+        ):
             state_name = state.get("customer_first_name") or state.get("customer_name")
             if state_name:
                 mode_context["_suggested_customer_name"] = str(state_name)
@@ -910,7 +969,6 @@ class BookingModeNode(BaseModeNode):
             state_id = state.get("customer_id")
             if state_id:
                 mode_context["customer_id"] = str(state_id)
-
 
     @staticmethod
     async def _load_stylists_by_category() -> dict[str, list[str]]:
