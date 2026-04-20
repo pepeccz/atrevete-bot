@@ -206,30 +206,35 @@ class TestClassifyByKeywords:
         assert result is not None
         assert result.raw_input == text
 
-    def test_greet_plus_book_defers_to_llm(self):
-        """Multi-intent conflict: greeting + booking → None (LLM fallback).
+    def test_greet_plus_book_prioritises_book(self):
+        """Multi-intent: greet + book → actionable wins (was: defer to LLM).
 
-        'Hola, quiero una cita' contains both greet ('hola') and book ('quiero')
-        keywords. The keyword classifier should return None to defer to the
-        LLM, which is better at classifying the dominant intent.
+        'Hola, quiero una cita' contains greet ('hola') and book ('quiero',
+        'cita'). The v6.0 refactor removed the router-layer LLM, so deferring
+        with None traps the user in GENERAL mode. Actionable intents now
+        win over co-occurring greetings.
         """
         result = classify_by_keywords("Hola, quiero una cita")
-        assert result is None
+        assert result is not None
+        assert result.intent == "book"
 
-    def test_greet_plus_ask_info_defers_to_llm(self):
-        """Multi-intent conflict: greeting + info query → None (LLM fallback)."""
+    def test_greet_plus_ask_info_prioritises_ask_info(self):
+        """Multi-intent: greet + ask_info → ask_info wins (priority over book)."""
         result = classify_by_keywords("Hola, cuánto cuesta un corte")
-        assert result is None
+        assert result is not None
+        assert result.intent == "ask_info"
 
-    def test_greet_plus_cancel_defers_to_llm(self):
-        """Multi-intent conflict: greeting + cancel → None (LLM fallback)."""
+    def test_greet_plus_cancel_prioritises_cancel(self):
+        """Multi-intent: greet + cancel → cancel wins (priority over book)."""
         result = classify_by_keywords("Buenas, quiero cancelar mi cita")
-        assert result is None
+        assert result is not None
+        assert result.intent == "cancel"
 
-    def test_greet_plus_escalate_defers_to_llm(self):
-        """Multi-intent conflict: greeting + escalate → None (LLM fallback)."""
+    def test_greet_plus_escalate_prioritises_escalate(self):
+        """Multi-intent: greet + escalate → escalate wins (highest priority)."""
         result = classify_by_keywords("Hola, necesito hablar con una persona")
-        assert result is None
+        assert result is not None
+        assert result.intent == "escalate"
 
     def test_pure_greet_defers_to_llm(self):
         """Pure greeting without actionable intent defers to LLM (not keyword fast-path)."""
@@ -443,16 +448,16 @@ def test_greet_keywords_defer_to_llm(text):
     assert result is None, f"Expected None for greet text {text!r}, got {result}"
 
 
-def test_classify_keywords_greet_with_typo_returns_none():
-    """Regression: compound greeting with typos must defer to LLM (original bug).
+def test_classify_keywords_greet_with_partial_typo_resolves_to_book():
+    """Compound greeting + book with typos: 'cortarme' survives, book wins.
 
-    'hola queiro cortarme el eplo' — keyword sees 'hola' (greet) but the
-    typo 'queiro'/'eplo' prevents any book keyword from matching.
-    The greet passthrough guard must return None so the LLM correctly
-    classifies this as 'book'.
+    'hola queiro cortarme el eplo' — 'queiro'/'eplo' have typos but 'cortarme'
+    still matches the book keyword list. Multi-intent conflict resolution
+    prioritises the actionable intent over the greeting.
     """
     result = classify_by_keywords("hola queiro cortarme el eplo")
-    assert result is None
+    assert result is not None
+    assert result.intent == "book"
 
 
 def test_classify_keywords_book_still_fast_path():
