@@ -20,7 +20,6 @@ from langchain.agents.middleware import AgentMiddleware
 # ---------------------------------------------------------------------------
 # Eagerly import all submodules so __subclasses__() is populated at collection
 # ---------------------------------------------------------------------------
-
 import agent.middleware as _middleware_pkg
 
 for _mod_info in pkgutil.iter_modules(_middleware_pkg.__path__):

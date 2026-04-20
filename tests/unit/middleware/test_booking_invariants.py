@@ -11,14 +11,11 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 # This import will raise ModuleNotFoundError in RED phase.
 # Do NOT add @pytest.mark.xfail — the failure IS the test signal.
 from agent.booking.middleware.invariants import BookingInvariantMiddleware
-
 
 # ---------------------------------------------------------------------------
 # Error code enum — must match REQ-20
@@ -526,8 +523,6 @@ class TestInvariantFailOpen:
         When: wrap_tool_call is called
         Then: no exception propagates AND the real handler is called
         """
-        call_count = 0
-
         def _raising_state_fn() -> dict:
             raise RuntimeError("State unavailable in test")
 
@@ -546,7 +541,7 @@ class TestInvariantFailOpen:
 
         tc = _make_tool_call("book")
         # Must not raise, must call handler
-        result = middleware.wrap_tool_call(tc, _fake_handler)
+        middleware.wrap_tool_call(tc, _fake_handler)
 
         assert len(handler_called) == 1, (
             "Tool handler must be called in fail-open mode when state raises"

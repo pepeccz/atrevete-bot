@@ -16,8 +16,6 @@ from __future__ import annotations
 import subprocess
 import typing
 
-import pytest
-
 from agent.state.schemas import BookingContext
 
 # The old field name is stored in a variable so rg doesn't find it

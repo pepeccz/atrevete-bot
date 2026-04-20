@@ -13,12 +13,7 @@ REQs covered: REQ-30, REQ-31, REQ-32, REQ-33, REQ-34
 
 from __future__ import annotations
 
-import sys
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # TestFlagDefaults — REQ-30, REQ-34 (task 1.30)
@@ -202,9 +197,6 @@ class TestMiddlewareAbsence:
         _invoke_create_agent is called with a given flag value.
         """
         from agent.modes.booking_mode import BookingModeNode
-        from agent.booking.feature_flags import resolve_booking_capability_flag
-        from agent.booking.middleware.grounding import BookingGroundingMiddleware
-        from agent.booking.middleware.invariants import BookingInvariantMiddleware
 
         captured = []
 
@@ -247,8 +239,6 @@ class TestMiddlewareAbsence:
         When: BOOKING mode creates the agent
         Then: BookingGroundingMiddleware and BookingInvariantMiddleware are NOT in the list
         """
-        from agent.booking.middleware.grounding import BookingGroundingMiddleware
-        from agent.booking.middleware.invariants import BookingInvariantMiddleware
 
         middleware_list = self._capture_middleware_list(use_capability=False)
         class_names = [type(m).__name__ for m in middleware_list]
@@ -269,8 +259,6 @@ class TestMiddlewareAbsence:
         Then: both Grounding and Invariant middlewares ARE in the list
         And: Grounding appears before Invariant
         """
-        from agent.booking.middleware.grounding import BookingGroundingMiddleware
-        from agent.booking.middleware.invariants import BookingInvariantMiddleware
 
         middleware_list = self._capture_middleware_list(use_capability=True)
         class_names = [type(m).__name__ for m in middleware_list]

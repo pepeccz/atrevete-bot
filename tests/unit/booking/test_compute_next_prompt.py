@@ -18,7 +18,6 @@ import pytest
 # Do NOT add @pytest.mark.xfail — the failure IS the test signal.
 from agent.booking.grounding import compute_next_prompt, render_confirmation_summary
 
-
 # Closed set of valid actions per REQ-9 / design §3
 VALID_ACTIONS = frozenset(
     {
@@ -230,8 +229,6 @@ class TestNoIO:
         When: compute_next_prompt is called
         Then: no exception propagates (the function never tries to connect)
         """
-        original_connect = socket.socket.connect
-
         def _raise_on_connect(*args, **kwargs):
             raise ConnectionError("Network I/O is forbidden in pure function compute_next_prompt")
 

@@ -19,19 +19,19 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage
 
-from shared.booking_config import get_booking_config, ToolChoicePolicy
-from agent.middleware.dedup import DedupToolCallMiddleware
-from agent.middleware.node_bridge import NodeBridgeMiddleware
-from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
-from agent.middleware.token_tracking import TokenTrackingMiddleware
 from agent.booking.feature_flags import resolve_booking_capability_flag
+from agent.middleware.dedup import DedupToolCallMiddleware
+from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
+from agent.middleware.node_bridge import NodeBridgeMiddleware
+from agent.middleware.token_tracking import TokenTrackingMiddleware
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
+from shared.booking_config import ToolChoicePolicy, get_booking_config
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +67,8 @@ class BookingModeNode(BaseModeNode):
         only offer tools that are relevant to the current state.
         The LLM naturally follows the flow when it only sees applicable tools.
         """
-        from agent.tools.booking_data_tools import update_booking
         from agent.tools.availability_tools import check_availability
+        from agent.tools.booking_data_tools import update_booking
         from agent.tools.booking_tools import book
 
         ctx = booking_context or {}
@@ -938,12 +938,12 @@ class BookingModeNode(BaseModeNode):
             from sqlalchemy import select as sa_select
 
             from database.connection import get_async_session
-            from database.models import Stylist, ServiceCategory
+            from database.models import ServiceCategory, Stylist
 
             async with get_async_session() as session:
                 result = await session.execute(
                     sa_select(Stylist.name, Stylist.category)
-                    .where(Stylist.is_active == True)
+                    .where(Stylist.is_active.is_(True))
                     .order_by(Stylist.name)
                 )
                 rows = result.all()
@@ -981,7 +981,7 @@ class BookingModeNode(BaseModeNode):
 
             async with get_async_session() as session:
                 result = await session.execute(
-                    sa_select(Service.name, Service.audience).where(Service.is_active == True).order_by(Service.name)
+                    sa_select(Service.name, Service.audience).where(Service.is_active.is_(True)).order_by(Service.name)
                 )
                 rows = result.all()
 
@@ -1026,7 +1026,7 @@ class BookingModeNode(BaseModeNode):
             async with get_async_session() as session:
                 result = await session.execute(
                     sa_select(Service.category).where(
-                        Service.name == service_names[0], Service.is_active == True
+                        Service.name == service_names[0], Service.is_active.is_(True)
                     )
                 )
                 row = result.first()

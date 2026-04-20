@@ -9,7 +9,6 @@ from langchain_core.tools import tool
 from agent.middleware.dedup import DedupToolCallMiddleware, _tool_call_key
 from tests.unit.middleware._offline import ScriptedModel
 
-
 # Global counter so @tool functions can track real executions across tests.
 _counter = {"exec": 0}
 

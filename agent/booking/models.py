@@ -32,7 +32,7 @@ class ServiceCatalogEntry(BaseModel):
     has_audience_siblings: bool = Field(default=False)
 
     @model_validator(mode="after")
-    def _compute_has_siblings(self) -> "ServiceCatalogEntry":
+    def _compute_has_siblings(self) -> ServiceCatalogEntry:
         """Derive has_audience_siblings from the siblings list."""
         object.__setattr__(self, "has_audience_siblings", bool(self.siblings))
         return self

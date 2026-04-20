@@ -18,7 +18,6 @@ import pytest
 # Do NOT add @pytest.mark.xfail — the failure IS the test signal.
 from agent.booking.middleware.grounding import BookingGroundingMiddleware
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
