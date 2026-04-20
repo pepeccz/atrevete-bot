@@ -137,3 +137,73 @@ async def test_stylist_resolver_commits_last_stylist_before_llm_turn(booking_sta
     assert captured_booking_context.get("last_stylist") == "Pilar", (
         f"last_stylist not set before LLM call. booking_context={captured_booking_context}"
     )
+
+
+@pytest.mark.asyncio
+async def test_negation_resolver_commits_add_more_asked_on_nada_mas():
+    """Regression: when directive is ASK_MORE_SERVICES and user says a negation phrase
+    (e.g. 'Nada mas'), booking_context['add_more_asked'] == True is set BEFORE LLM call.
+
+    This closes the gap where is_negation() was only wired inside the
+    `_confirmation_shown=True` branch, leaving the 'algo más?' step without a
+    deterministic resolver — causing the bot to loop on 'Nada mas' in production.
+    """
+    from agent.modes.booking_mode import BookingModeNode
+
+    state = {
+        "conversation_id": "test-conv-nada-mas",
+        "current_mode": "BOOKING",
+        "user_message": "Nada mas",
+        "messages": [{"role": "user", "content": "Nada mas"}],
+        "booking_context": {
+            "last_services": ["Corte"],
+            "last_service_category": "MUJER",
+            "add_more_asked": None,  # NOT yet answered
+            "last_stylist": None,
+            "no_preference_stylist": None,
+            "_confirmation_shown": False,
+        },
+        "mode_context": {},
+        "total_message_count": 4,
+    }
+
+    node = BookingModeNode(tools=[])
+    category_cache = {"MUJER": ["Marta", "Pilar", "Victor"]}
+    service_catalog = ["Corte"]
+
+    captured_booking_context: dict | None = None
+
+    async def fake_invoke_create_agent(**kwargs):
+        nonlocal captured_booking_context
+        captured_booking_context = dict(node._booking_context)
+        result = MagicMock()
+        result.response_text = "test response"
+        result.messages = []
+        return result
+
+    from shared.booking_config import ToolChoicePolicy
+    config_mock = MagicMock()
+    config_mock.tool_choice_policy = ToolChoicePolicy.NEVER_FORCE
+
+    with (
+        patch.object(node, "_load_stylists_by_category", AsyncMock(return_value=category_cache)),
+        patch.object(node, "_load_service_names", AsyncMock(return_value=service_catalog)),
+        patch.object(node, "_resolve_service_category", AsyncMock()),
+        patch.object(node, "_resolve_customer_from_state", MagicMock()),
+        patch.object(node, "_build_messages", AsyncMock(return_value=[])),
+        patch.object(node, "_invoke_create_agent", fake_invoke_create_agent),
+        patch("agent.modes.booking_mode.get_booking_config", AsyncMock(return_value=config_mock)),
+        patch("agent.modes.booking_mode.compute_next_prompt", MagicMock(return_value=MagicMock(
+            action="ASK_MORE_SERVICES"
+        ))),
+    ):
+        try:
+            await node.handle(state, intent=None)
+        except Exception:
+            pass
+
+    assert captured_booking_context is not None, "LLM was never called"
+    assert captured_booking_context.get("add_more_asked") is True, (
+        f"add_more_asked not set to True after 'Nada mas' in ASK_MORE_SERVICES state. "
+        f"booking_context={captured_booking_context}"
+    )

@@ -274,6 +274,27 @@ class BookingModeNode(BaseModeNode):
                     _exc,
                 )
 
+        # 1f. Add-more negation gate — runs when directive is ASK_MORE_SERVICES and user
+        # sends a negation ("Nada mas", "nope", "ya está"). is_negation() was previously
+        # wired only inside the _confirmation_shown branch, leaving the 'algo más?' step
+        # dependent on LLM compliance and causing a production loop on "Nada mas".
+        if not booking_context.get("add_more_asked") and _user_msg_raw:
+            try:
+                _more_directive = compute_next_prompt(state)
+                if _more_directive.action == "ASK_MORE_SERVICES" and is_negation(_user_msg_raw)[0]:
+                    booking_context["add_more_asked"] = True
+                    logger.info(
+                        "booking_negation.add_more_resolved | conversation=%s | msg=%r",
+                        state.get("conversation_id", "unknown"),
+                        _user_msg_raw,
+                    )
+            except Exception as _exc:
+                logger.warning(
+                    "booking_negation.add_more_resolver_error | conversation=%s | error=%s",
+                    state.get("conversation_id", "unknown"),
+                    _exc,
+                )
+
         # 2. Cross-mode customer handoff
         self._resolve_customer_from_state(state, booking_context)
 
