@@ -207,3 +207,80 @@ async def test_negation_resolver_commits_add_more_asked_on_nada_mas():
         f"add_more_asked not set to True after 'Nada mas' in ASK_MORE_SERVICES state. "
         f"booking_context={captured_booking_context}"
     )
+
+
+@pytest.mark.asyncio
+async def test_fresh_start_resets_stale_booking_context():
+    """Regression: when user starts a new booking ("hola quiero cortarme el pelo")
+    but booking_context has advanced fields from a previous incomplete session
+    (customer_name set, notes_state=skipped, etc.), reset booking_context.
+
+    Without this reset, the LLM sees a "near-complete" state and calls update_booking
+    redundantly, triggering cascade clears that corrupt offered_slots and selected_slot
+    in subsequent turns.
+    """
+    from agent.modes.booking_mode import BookingModeNode
+
+    # State contaminated by a previous incomplete session
+    state = {
+        "conversation_id": "test-conv-fresh-start",
+        "current_mode": "BOOKING",
+        "user_message": "hola quiero cortarme el pelo",
+        "messages": [{"role": "user", "content": "hola quiero cortarme el pelo"}],
+        "booking_context": {
+            # Stale advanced fields from a previous session
+            "customer_first_name": "Pablo",
+            "customer_last_name": "García",
+            "customer_name": "Pablo García",
+            "notes_state": "skipped",
+            "last_stylist": "Pilar",
+            "last_services": ["Cortar"],
+            "add_more_asked": True,
+            "_booking_completed": False,  # NOT completed — just abandoned
+        },
+        "mode_context": {},
+        "total_message_count": 1,
+    }
+
+    node = BookingModeNode(tools=[])
+    category_cache = {"MUJER": ["Marta", "Pilar", "Victor"]}
+    service_catalog = ["Corte"]
+
+    captured_booking_context: dict | None = None
+
+    async def fake_invoke_create_agent(**kwargs):
+        nonlocal captured_booking_context
+        captured_booking_context = dict(node._booking_context)
+        result = MagicMock()
+        result.response_text = "test response"
+        result.messages = []
+        return result
+
+    from shared.booking_config import ToolChoicePolicy
+    config_mock = MagicMock()
+    config_mock.tool_choice_policy = ToolChoicePolicy.NEVER_FORCE
+
+    with (
+        patch.object(node, "_load_stylists_by_category", AsyncMock(return_value=category_cache)),
+        patch.object(node, "_load_service_names", AsyncMock(return_value=service_catalog)),
+        patch.object(node, "_resolve_service_category", AsyncMock()),
+        patch.object(node, "_resolve_customer_from_state", MagicMock()),
+        patch.object(node, "_build_messages", AsyncMock(return_value=[])),
+        patch.object(node, "_invoke_create_agent", fake_invoke_create_agent),
+        patch("agent.modes.booking_mode.get_booking_config", AsyncMock(return_value=config_mock)),
+    ):
+        try:
+            await node.handle(state, intent=None)
+        except Exception:
+            pass
+
+    assert captured_booking_context is not None, "LLM was never called"
+    # customer_name must be cleared — user did NOT provide it in this session
+    assert captured_booking_context.get("customer_name") is None, (
+        f"customer_name should be cleared on fresh-start, got {captured_booking_context.get('customer_name')!r}. "
+        f"Full bc={captured_booking_context}"
+    )
+    # Same for notes_state — stale value from previous session
+    assert captured_booking_context.get("notes_state") != "skipped", (
+        f"notes_state should be cleared on fresh-start, got {captured_booking_context.get('notes_state')!r}"
+    )

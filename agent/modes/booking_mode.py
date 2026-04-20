@@ -97,6 +97,38 @@ class BookingModeNode(BaseModeNode):
     # Booking completeness check — GATE for book(), not a flow sequencer
     # ──────────────────────────────────────────────────────────────────────
 
+    _FRESH_START_MARKERS = frozenset({
+        "hola", "hello", "hey", "buenas", "buenos",
+    })
+
+    @classmethod
+    def _is_fresh_booking_start(cls, user_msg: str, ctx: dict) -> bool:
+        """Detect a fresh booking session when stale booking_context from a prior
+        incomplete session is still present.
+
+        Returns True when:
+        - user_msg begins with a greeting marker ("hola", "buenas", etc.)
+        - AND booking_context has advanced fields (customer_name, selected_slot,
+          or notes_state != 'not_asked')
+
+        Rationale: _booking_completed only gets set on successful book(). If the
+        user abandons mid-flow and returns with a fresh greeting, the old state
+        contaminates the new session — LLM sees a near-complete state and issues
+        redundant update_booking calls that cascade-clear offered_slots.
+        """
+        if not user_msg:
+            return False
+        first_word = user_msg.strip().lower().split()[0] if user_msg.strip() else ""
+        first_word = "".join(c for c in first_word if c.isalpha())
+        if first_word not in cls._FRESH_START_MARKERS:
+            return False
+        is_advanced = (
+            bool(ctx.get("customer_name"))
+            or bool(ctx.get("selected_slot"))
+            or ctx.get("notes_state", "not_asked") != "not_asked"
+        )
+        return is_advanced
+
     @staticmethod
     def _booking_complete(ctx: dict) -> tuple[bool, list[str]]:
         """Check if all required booking fields are present.
@@ -161,6 +193,15 @@ class BookingModeNode(BaseModeNode):
         if booking_context.get("_booking_completed"):
             logger.info(
                 "BookingModeNode: clearing completed booking_context | conversation=%s",
+                state.get("conversation_id", "unknown"),
+            )
+            booking_context = {}
+        # Reset stale booking_context on fresh-start ("hola quiero...") when previous
+        # session left advanced fields (customer_name, selected_slot, notes_state).
+        # Prevents checkpoint contamination between incomplete-session → new-session.
+        elif self._is_fresh_booking_start(get_last_user_message(state).strip(), booking_context):
+            logger.info(
+                "booking_context.reset | reason=fresh_start_mid_flow | conversation=%s",
                 state.get("conversation_id", "unknown"),
             )
             booking_context = {}
