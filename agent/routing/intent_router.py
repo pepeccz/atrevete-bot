@@ -489,22 +489,37 @@ def classify_by_keywords(text: str, context: dict | None = None) -> IntentResult
     if best_intent is None:
         return None
 
-    # Multi-intent conflict detection:
-    # When a greeting co-occurs with an actionable intent (book, ask_info,
-    # cancel, escalate), defer to LLM for accurate classification.
-    _ACTIONABLE_INTENTS = {"book", "ask_info", "cancel", "escalate"}
-    if best_intent == "greet" and any(i in matched_intents for i in _ACTIONABLE_INTENTS):
-        logger.debug(
-            "classify_by_keywords: multi-intent conflict detected (greet + %s) — deferring to LLM",
-            [i for i in _ACTIONABLE_INTENTS if i in matched_intents],
-        )
-        return None
-
-    # Greet passthrough: ALWAYS defer greet to LLM — the LLM correctly handles
-    # compound greetings with typos that keywords can't detect.
+    # Multi-intent conflict: when a greeting co-occurs with an actionable
+    # intent, prioritise the actionable one. Priority: escalate > cancel >
+    # ask_info > book. ask_info wins over book because ask_info keywords
+    # ("cuánto cuesta", "precio") are specific intent signals, while many
+    # book keywords ("corte", "pelo") are ambiguous topic nouns that also
+    # appear inside info queries. Pure greetings (no actionable
+    # co-occurrence) still defer to the mode node's LLM
+    # (single-LLM-per-turn architecture).
     if best_intent == "greet":
+        _ACTIONABLE_PRIORITY = ("escalate", "cancel", "ask_info", "book")
+        for actionable in _ACTIONABLE_PRIORITY:
+            if actionable in matched_intents:
+                # Two concurrent signals (greet + actionable) are stronger
+                # evidence of intent than either alone: carry the greeting's
+                # confidence up so the combined match crosses the router
+                # threshold instead of being downgraded to ambiguous.
+                combined_conf = max(matched_intents[actionable], matched_intents["greet"])
+                logger.debug(
+                    "classify_by_keywords: multi-intent (greet + %s) — prioritising actionable "
+                    "(conf=%.2f)",
+                    actionable,
+                    combined_conf,
+                )
+                return IntentResult(
+                    intent=actionable,
+                    confidence=combined_conf,
+                    raw_input=text,
+                    mode_hint=_intent_to_mode_hint(actionable),
+                )
         logger.debug(
-            "classify_by_keywords: greet passthrough — deferring to LLM | text_preview=%s",
+            "classify_by_keywords: greet passthrough | text_preview=%s",
             text[:60],
         )
         return None
