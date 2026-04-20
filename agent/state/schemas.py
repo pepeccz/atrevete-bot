@@ -23,7 +23,7 @@ and never reset, so the sentinel path is unused in practice).
 from __future__ import annotations
 
 from operator import add as operator_add
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 from uuid import UUID
 
 
@@ -79,10 +79,16 @@ class BookingContext(TypedDict, total=False):
     preferred_stylist_name: str | None
     preferred_date_hint: str | None
 
+    # ── Disambiguation / confirmation / capability fields (BookingCapability E2) ──
+    pending_disambiguations: list[dict[str, Any]]
+    confirmed: bool
+    available_slots: list[dict[str, Any]]
+    booked_appointment_id: str | None
+
     # ── Flow control / UX flags ─────────────────────────────────────────
     add_more_asked: bool
     notes: str | None
-    notes_asked: bool
+    notes_state: Literal["not_asked", "skipped", "provided"]
     _booking_completed: bool
     _confirmation_shown: bool  # Solo setteable via return path explícito al reducer en _post_tool_result. No mutar in-place fuera de ese bloque.
     _disambiguation_questions_shown: bool
