@@ -515,7 +515,8 @@ class BookingModeNode(BaseModeNode):
         _pre_tool_call only handles:
         - update_booking: inject _current_context
         - check_availability: inject service/stylist from context
-        - book(): slot_index→UUID injection + completeness gate + services injection
+        - book(): slot_index→UUID injection + services injection
+          (precondition gate removed — BookingInvariantMiddleware enforces it)
         """
         mode_context: dict = getattr(self, "_booking_context", getattr(self, "_mode_context", {}))
 
@@ -583,9 +584,8 @@ class BookingModeNode(BaseModeNode):
                         "start_time", selected.get("start_time") or selected.get("full_datetime")
                     )
 
-            # Step A.2: customer_name extraction from tool args
-            # Step A.2: customer_name — prefer mode_context (from update_booking),
-            # fall back to tool args (defense-in-depth).
+            # Step A.2: customer_name — inject from mode_context into tool_args (read-only).
+            # Never write back to mode_context here; that path belongs to update_booking patch.
             _NAME_BLOCKLIST = frozenset(
                 {
                     "cliente",
@@ -600,22 +600,6 @@ class BookingModeNode(BaseModeNode):
                     "customer",
                 }
             )
-            if not mode_context.get("customer_name"):
-                first = (tool_args.get("customer_first_name") or "").strip()
-                if first:
-                    if first.lower() in _NAME_BLOCKLIST:
-                        logger.warning(
-                            "_pre_tool_call: rejected placeholder customer_name=%r from book() args",
-                            first,
-                        )
-                    else:
-                        last = (tool_args.get("customer_last_name") or "").strip()
-                        full_name = f"{first} {last}" if last else first
-                        mode_context["customer_name"] = full_name
-                        logger.info(
-                            "_pre_tool_call: extracted customer_name=%s from book() args",
-                            full_name,
-                        )
 
             # Inject customer_first_name/last_name into book() args from mode_context
             if not tool_args.get("customer_first_name") and mode_context.get("customer_first_name"):
@@ -632,23 +616,8 @@ class BookingModeNode(BaseModeNode):
                     "skipped" if mode_context["notes"] is None else "provided"
                 )
 
-            # Step B: Confirmation gate — reject book() if required fields are missing.
-            # Runs AFTER Steps A/A.1b/A.2/A.3 so selected_slot, customer_name,
-            # and notes are already persisted to mode_context even when rejected.
-            is_complete, missing_fields = self._booking_complete(mode_context)
-            if not is_complete:
-                missing_hint = ", ".join(missing_fields)
-                return ToolCallRejection(
-                    name="book",
-                    error_code="CONFIRMATION_REQUIRED",
-                    error_message=(
-                        f"RECHAZADO. Faltan: {missing_hint}. "
-                        f"SIGUIENTE ACCIÓN: pregunta al cliente por los datos "
-                        f"faltantes uno a uno."
-                    ),
-                )
-
             # Step C: inject services from mode_context if LLM didn't provide them
+            # (Step B completeness gate removed — BookingInvariantMiddleware enforces preconditions)
             if not tool_args.get("services") and mode_context.get("last_services"):
                 tool_args["services"] = mode_context["last_services"]
 
