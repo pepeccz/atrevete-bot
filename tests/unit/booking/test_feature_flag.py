@@ -1,14 +1,18 @@
 """
-RED tests for USE_CAPABILITY_BOOKING feature flag — Phase 1, tasks 1.30–1.35.
+Tests for booking middleware wiring — Phase 7 (flag removed).
 
-Expected fail modes:
-  - task 1.30: AttributeError: 'Settings' object has no attribute 'USE_CAPABILITY_BOOKING'
-  - tasks 1.31–1.35: ModuleNotFoundError: No module named 'agent.booking.feature_flags'
-    or AttributeError from missing flag on Settings.
+Phase 7: USE_CAPABILITY_BOOKING flag removed. BookingGroundingMiddleware and
+BookingInvariantMiddleware are unconditionally active. Tests verify:
+  - Middleware stack always contains both grounding and invariant middleware (REQ-32).
+  - Grounding appears before invariant (ordering contract).
+  - Other modes (GREETING, GENERAL) are NOT affected (REQ-33).
 
-Do NOT add @pytest.mark.xfail — the failure IS the TDD RED signal.
+Deleted classes:
+  - TestFlagDefaults (flag no longer exists on Settings)
+  - TestFlagResolver (resolve_booking_capability_flag removed)
+  - TestMiddlewareAbsence (flag=False path removed — middleware always present)
 
-REQs covered: REQ-30, REQ-31, REQ-32, REQ-33, REQ-34
+REQs covered: REQ-32, REQ-33
 """
 
 from __future__ import annotations
@@ -16,186 +20,19 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
-# TestFlagDefaults — REQ-30, REQ-34 (task 1.30)
+# TestMiddlewareAlwaysPresent — REQ-32 (replaces TestMiddlewareAbsence)
 # ---------------------------------------------------------------------------
 
 
-class TestFlagDefaults:
+class TestMiddlewareAlwaysPresent:
     """
-    Given USE_CAPABILITY_BOOKING is not set in the environment
-    When Settings() is instantiated
-    Then USE_CAPABILITY_BOOKING defaults to False (REQ-34: safe merge default)
-    """
-
-    def test_flag_defaults_to_false_when_not_set(self) -> None:
-        """
-        Given: no USE_CAPABILITY_BOOKING env var
-        When: Settings() is instantiated with env patched to exclude the key
-        Then: settings.USE_CAPABILITY_BOOKING is False
-        """
-        from shared.config import Settings
-
-        with patch.dict("os.environ", {}, clear=False):
-            # Remove the key if present
-            env_patch = {k: v for k, v in __import__("os").environ.items() if k != "USE_CAPABILITY_BOOKING"}
-            with patch("os.environ", env_patch):
-                settings = Settings()
-                assert settings.USE_CAPABILITY_BOOKING is False, (
-                    f"Expected USE_CAPABILITY_BOOKING=False (default), got {settings.USE_CAPABILITY_BOOKING!r}"
-                )
-
-    def test_flag_true_when_env_set(self) -> None:
-        """
-        Given: USE_CAPABILITY_BOOKING=true in environment
-        When: Settings() is instantiated
-        Then: settings.USE_CAPABILITY_BOOKING is True
-        """
-        from shared.config import Settings
-
-        with patch.dict("os.environ", {"USE_CAPABILITY_BOOKING": "true"}):
-            settings = Settings()
-            assert settings.USE_CAPABILITY_BOOKING is True, (
-                f"Expected USE_CAPABILITY_BOOKING=True when env set to 'true', "
-                f"got {settings.USE_CAPABILITY_BOOKING!r}"
-            )
-
-    def test_flag_attribute_exists_on_settings(self) -> None:
-        """
-        Given: Settings class
-        When: USE_CAPABILITY_BOOKING is accessed
-        Then: no AttributeError — the field exists on the class
-        """
-        from shared.config import Settings
-
-        settings = Settings()
-        # AttributeError is the expected RED fail mode — once field is added, this passes
-        _ = settings.USE_CAPABILITY_BOOKING
-
-
-# ---------------------------------------------------------------------------
-# TestFlagResolver — REQ-31, REQ-32 (tasks 1.31–1.32)
-# ---------------------------------------------------------------------------
-
-
-class TestFlagResolver:
-    """
-    Tests for resolve_booking_capability_flag:
-      - global True path
-      - Redis override "on" path
-    REQ-31: Per-conversation Redis override.
+    Verify that BookingGroundingMiddleware and BookingInvariantMiddleware are
+    ALWAYS in the middleware stack (no flag conditioning).
+    REQ-32: Middleware always active after Phase 7 direct activation.
     """
 
-    def test_global_true(self) -> None:
-        """
-        Given: settings.USE_CAPABILITY_BOOKING=True AND Redis returns None
-        When: resolve_booking_capability_flag("conv_1") is called
-        Then: returns (True, "global")
-        """
-        from agent.booking.feature_flags import resolve_booking_capability_flag
-
-        mock_redis = MagicMock()
-        mock_redis.get = MagicMock(return_value=None)
-
-        with patch("agent.booking.feature_flags.settings") as mock_settings, \
-             patch("agent.booking.feature_flags.get_redis_client", return_value=mock_redis):
-            mock_settings.USE_CAPABILITY_BOOKING = True
-
-            result = resolve_booking_capability_flag("conv_1")
-            assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
-            use_new_path, source = result
-            assert use_new_path is True, f"Expected True, got {use_new_path!r}"
-            assert source == "global", f"Expected source='global', got {source!r}"
-
-    def test_global_false_no_override(self) -> None:
-        """
-        Given: settings.USE_CAPABILITY_BOOKING=False AND Redis returns None (no override)
-        When: resolve_booking_capability_flag("conv_1") is called
-        Then: returns (False, "global")
-        """
-        from agent.booking.feature_flags import resolve_booking_capability_flag
-
-        mock_redis = MagicMock()
-        mock_redis.get = MagicMock(return_value=None)
-
-        with patch("agent.booking.feature_flags.settings") as mock_settings, \
-             patch("agent.booking.feature_flags.get_redis_client", return_value=mock_redis):
-            mock_settings.USE_CAPABILITY_BOOKING = False
-
-            result = resolve_booking_capability_flag("conv_1")
-            use_new_path, source = result
-            assert use_new_path is False, f"Expected False, got {use_new_path!r}"
-
-    def test_redis_override_on(self) -> None:
-        """
-        Given: settings.USE_CAPABILITY_BOOKING=False
-        AND Redis key "booking:capability:conv_42" = "on"
-        When: resolve_booking_capability_flag("conv_42") is called
-        Then: returns (True, "redis-override")
-        """
-        from agent.booking.feature_flags import resolve_booking_capability_flag
-
-        mock_redis = MagicMock()
-        mock_redis.get = MagicMock(return_value="on")
-
-        with patch("agent.booking.feature_flags.settings") as mock_settings, \
-             patch("agent.booking.feature_flags.get_redis_client", return_value=mock_redis):
-            mock_settings.USE_CAPABILITY_BOOKING = False
-
-            result = resolve_booking_capability_flag("conv_42")
-            use_new_path, source = result
-            assert use_new_path is True, (
-                f"Expected True with Redis override 'on', got {use_new_path!r}"
-            )
-            assert source == "redis-override", (
-                f"Expected source='redis-override', got {source!r}"
-            )
-
-    def test_redis_override_on_various_values(self) -> None:
-        """
-        Given: Redis returns various "on" variants ("1", "true", "yes", "on")
-        When: resolve_booking_capability_flag is called
-        Then: all return (True, "redis-override")
-        """
-        from agent.booking.feature_flags import resolve_booking_capability_flag
-
-        on_values = ["1", "on", "true", "yes", "ON", "True"]
-
-        for val in on_values:
-            mock_redis = MagicMock()
-            mock_redis.get = MagicMock(return_value=val)
-
-            with patch("agent.booking.feature_flags.settings") as mock_settings, \
-                 patch("agent.booking.feature_flags.get_redis_client", return_value=mock_redis):
-                mock_settings.USE_CAPABILITY_BOOKING = False
-
-                result = resolve_booking_capability_flag("conv_test")
-                use_new_path, _ = result
-                assert use_new_path is True, (
-                    f"Redis value {val!r} should enable override but returned {use_new_path!r}"
-                )
-
-
-# ---------------------------------------------------------------------------
-# TestMiddlewareAbsence — REQ-10, REQ-32 (tasks 1.33–1.34)
-# ---------------------------------------------------------------------------
-
-
-class TestMiddlewareAbsence:
-    """
-    Tests that middleware is NOT in the stack when flag=False,
-    and IS in the stack (in the correct order) when flag=True.
-    REQ-10: Middleware absent when flag OFF.
-    REQ-32: Middleware conditional on effective flag.
-    """
-
-    def _capture_middleware_list(
-        self,
-        use_capability: bool,
-    ) -> list:
-        """
-        Helper: Mock booking_mode to capture the middleware list built when
-        _invoke_create_agent is called with a given flag value.
-        """
+    def _capture_middleware_list(self) -> list:
+        """Capture the middleware list passed to create_agent."""
         from agent.modes.booking_mode import BookingModeNode
 
         captured = []
@@ -209,14 +46,10 @@ class TestMiddlewareAbsence:
         import asyncio
 
         with patch(
-            "agent.modes.booking_mode.resolve_booking_capability_flag",
-            return_value=(use_capability, "global" if not use_capability else "redis-override"),
-        ), patch(
             "agent.modes.booking_mode.create_agent",
             side_effect=_fake_create_agent,
         ):
             node = BookingModeNode.__new__(BookingModeNode)
-            # Provide minimal stub attributes so _invoke_create_agent reaches create_agent
             node.llm = MagicMock()
             node.llm.bind = MagicMock(return_value=MagicMock())
             try:
@@ -229,48 +62,49 @@ class TestMiddlewareAbsence:
                     )
                 )
             except Exception:
-                pass  # Any error after create_agent is called is OK — we only need the capture
+                pass
 
         return captured
 
-    def test_middleware_absent_when_flag_false(self) -> None:
+    def test_grounding_middleware_always_present(self) -> None:
         """
-        Given: effective flag = False
+        Given: no feature flag (removed)
         When: BOOKING mode creates the agent
-        Then: BookingGroundingMiddleware and BookingInvariantMiddleware are NOT in the list
+        Then: BookingGroundingMiddleware IS always in the stack (REQ-32)
         """
-
-        middleware_list = self._capture_middleware_list(use_capability=False)
-        class_names = [type(m).__name__ for m in middleware_list]
-
-        assert "BookingGroundingMiddleware" not in class_names, (
-            f"BookingGroundingMiddleware should NOT be present when flag=False. "
-            f"Middleware: {class_names}"
-        )
-        assert "BookingInvariantMiddleware" not in class_names, (
-            f"BookingInvariantMiddleware should NOT be present when flag=False. "
-            f"Middleware: {class_names}"
-        )
-
-    def test_middleware_present_flag_true(self) -> None:
-        """
-        Given: effective flag = True
-        When: BOOKING mode creates the agent
-        Then: both Grounding and Invariant middlewares ARE in the list
-        And: Grounding appears before Invariant
-        """
-
-        middleware_list = self._capture_middleware_list(use_capability=True)
+        middleware_list = self._capture_middleware_list()
         class_names = [type(m).__name__ for m in middleware_list]
 
         assert "BookingGroundingMiddleware" in class_names, (
-            f"BookingGroundingMiddleware MUST be present when flag=True. "
+            f"BookingGroundingMiddleware MUST always be present (Phase 7 direct activation). "
             f"Middleware: {class_names}"
         )
+
+    def test_invariant_middleware_always_present(self) -> None:
+        """
+        Given: no feature flag (removed)
+        When: BOOKING mode creates the agent
+        Then: BookingInvariantMiddleware IS always in the stack (REQ-32)
+        """
+        middleware_list = self._capture_middleware_list()
+        class_names = [type(m).__name__ for m in middleware_list]
+
         assert "BookingInvariantMiddleware" in class_names, (
-            f"BookingInvariantMiddleware MUST be present when flag=True. "
+            f"BookingInvariantMiddleware MUST always be present (Phase 7 direct activation). "
             f"Middleware: {class_names}"
         )
+
+    def test_grounding_before_invariant(self) -> None:
+        """
+        Given: Phase 7 unconditional stack
+        When: BOOKING mode creates the agent
+        Then: BookingGroundingMiddleware appears BEFORE BookingInvariantMiddleware
+        """
+        middleware_list = self._capture_middleware_list()
+        class_names = [type(m).__name__ for m in middleware_list]
+
+        assert "BookingGroundingMiddleware" in class_names, f"Middleware: {class_names}"
+        assert "BookingInvariantMiddleware" in class_names, f"Middleware: {class_names}"
 
         grounding_idx = class_names.index("BookingGroundingMiddleware")
         invariant_idx = class_names.index("BookingInvariantMiddleware")
@@ -281,24 +115,18 @@ class TestMiddlewareAbsence:
 
 
 # ---------------------------------------------------------------------------
-# TestOtherModesUnaffected — REQ-33 (task 1.35)
+# TestOtherModesUnaffected — REQ-33 (unchanged)
 # ---------------------------------------------------------------------------
 
 
 class TestOtherModesUnaffected:
     """
-    Given USE_CAPABILITY_BOOKING=True
+    Given Phase 7 (flag removed, middleware always active)
     Then neither BookingGroundingMiddleware nor BookingInvariantMiddleware are
     imported or referenced in GREETING or GENERAL mode source (REQ-33).
-
-    Note: GREETING and GENERAL modes were migrated to builder functions
-    (build_greeting_node / build_general_node) in M3/M4 — no _invoke_create_agent
-    method exists on those modules. Compliance is verified via static source
-    inspection: booking middleware names must NOT appear in those modules.
     """
 
     def _module_source(self, module_path: str) -> str:
-        """Read source of a module file."""
         import importlib.util
         spec = importlib.util.find_spec(module_path)
         assert spec is not None, f"Module {module_path} not found"
@@ -306,14 +134,8 @@ class TestOtherModesUnaffected:
         with open(spec.origin) as f:
             return f.read()
 
-    def test_greeting_mode_unaffected_by_flag(self) -> None:
-        """
-        Given: USE_CAPABILITY_BOOKING=True
-        When: GREETING mode source is inspected
-        Then: BookingGroundingMiddleware and BookingInvariantMiddleware are NOT referenced
-        """
+    def test_greeting_mode_unaffected(self) -> None:
         source = self._module_source("agent.modes.greeting_mode")
-
         assert "BookingGroundingMiddleware" not in source, (
             "BookingGroundingMiddleware MUST NOT appear in greeting_mode source (REQ-33)"
         )
@@ -321,14 +143,8 @@ class TestOtherModesUnaffected:
             "BookingInvariantMiddleware MUST NOT appear in greeting_mode source (REQ-33)"
         )
 
-    def test_general_mode_unaffected_by_flag(self) -> None:
-        """
-        Given: USE_CAPABILITY_BOOKING=True
-        When: GENERAL mode source is inspected
-        Then: BookingGroundingMiddleware and BookingInvariantMiddleware are NOT referenced
-        """
+    def test_general_mode_unaffected(self) -> None:
         source = self._module_source("agent.modes.general_mode")
-
         assert "BookingGroundingMiddleware" not in source, (
             "BookingGroundingMiddleware MUST NOT appear in general_mode source (REQ-33)"
         )
