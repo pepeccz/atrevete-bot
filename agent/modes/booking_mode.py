@@ -21,7 +21,6 @@ from zoneinfo import ZoneInfo
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
-from agent.booking.feature_flags import resolve_booking_capability_flag
 from agent.middleware.dedup import DedupToolCallMiddleware
 from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
 from agent.middleware.node_bridge import NodeBridgeMiddleware
@@ -31,6 +30,8 @@ from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
+from infra.resolvers.affirmation import is_affirmation
+from infra.resolvers.negation import is_negation
 from shared.booking_config import ToolChoicePolicy, get_booking_config
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,28 @@ class BookingModeNode(BaseModeNode):
 
         # 1. Resolve digit selection: map bare digit user reply → selected_slot
         self._resolve_digit_selection(state, booking_context)
+
+        # 1-pre. Affirmation/negation detection — runs BEFORE agentic loop.
+        # When a summary has been shown and the user hasn't confirmed yet,
+        # detect "dale"/"sí"/etc. and set confirmed=True deterministically.
+        # This is the W4 fix: is_affirmation() was an isolated utility; now wired in.
+        _user_msg_raw = get_last_user_message(state).strip()
+        if booking_context.get("_confirmation_shown") and not booking_context.get("confirmed"):
+            if _user_msg_raw and is_affirmation(_user_msg_raw):
+                booking_context["confirmed"] = True
+                logger.info(
+                    "booking_confirmation.detected | conversation=%s | confirmed=True | msg=%r",
+                    state.get("conversation_id", "unknown"),
+                    _user_msg_raw,
+                )
+            elif _user_msg_raw and is_negation(_user_msg_raw)[0]:
+                booking_context["confirmed"] = False
+                booking_context["_confirmation_shown"] = False
+                logger.info(
+                    "booking_confirmation.detected | conversation=%s | confirmed=False (negation) | msg=%r",
+                    state.get("conversation_id", "unknown"),
+                    _user_msg_raw,
+                )
 
         # 1a. Ensure opening_booking_request is set for disambiguation.
         # The router only sets it on first-interaction→BOOKING transitions.
@@ -557,24 +580,11 @@ class BookingModeNode(BaseModeNode):
         ``AgenticLoopResult`` return contract so ``_build_response`` and the
         existing response-building logic keep working unchanged.
 
-        When USE_CAPABILITY_BOOKING is True (or per-conversation Redis override),
-        BookingGroundingMiddleware and BookingInvariantMiddleware are prepended
-        to the middleware stack (design §6.4).
+        BookingGroundingMiddleware and BookingInvariantMiddleware are always active
+        (feature flag removed — direct activation per Phase 7).
         """
         # Resolve conversation_id from state or cached state
         _state = state or getattr(self, "_current_state", {}) or {}
-        conversation_id = _state.get("conversation_id")
-
-        # Resolve the capability flag (Redis override takes precedence over global)
-        use_capability, flag_source = resolve_booking_capability_flag(conversation_id)
-        logger.info(
-            "capability.flag.effective",
-            extra={
-                "conversation_id": conversation_id,
-                "source": flag_source,
-                "on": use_capability,
-            },
-        )
 
         # Split the legacy layered message list into ``system_prompt`` + transcript.
         system_parts: list[str] = []
@@ -596,24 +606,16 @@ class BookingModeNode(BaseModeNode):
         # get_tools() already applies the step-aware filter; no middleware needed.
         allowed_tools = self.get_tools(getattr(self, "_booking_context", None))
 
-        # Base middleware: always included
-        middleware: list = [NodeBridgeMiddleware(self)]
+        from agent.booking.middleware.grounding import BookingGroundingMiddleware
+        from agent.booking.middleware.invariants import BookingInvariantMiddleware
 
-        # Capability middleware: injected only when flag is ON (design §6.4)
-        if use_capability:
-            from agent.booking.middleware.grounding import BookingGroundingMiddleware
-            from agent.booking.middleware.invariants import BookingInvariantMiddleware
-
-            middleware += [
-                BookingGroundingMiddleware(get_state_fn=lambda: getattr(self, "_current_state", {})),
-                BookingInvariantMiddleware(
-                    get_state_fn=lambda: getattr(self, "_current_state", {}),
-                    get_catalog_fn=lambda: getattr(self, "_cached_service_catalog", []),
-                ),
-            ]
-
-        # Always append: dedup, fallback, token tracking
-        middleware += [
+        middleware: list = [
+            NodeBridgeMiddleware(self),
+            BookingGroundingMiddleware(get_state_fn=lambda: getattr(self, "_current_state", {})),
+            BookingInvariantMiddleware(
+                get_state_fn=lambda: getattr(self, "_current_state", {}),
+                get_catalog_fn=lambda: getattr(self, "_cached_service_catalog", []),
+            ),
             DedupToolCallMiddleware(),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="BOOKING"),
