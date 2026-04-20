@@ -109,36 +109,6 @@ class BookingModeNode(BaseModeNode):
         # No Python gate needed; book() accepts notes=None.
         return (len(missing) == 0, missing)
 
-    @staticmethod
-    def _evaluate_confirmation_gate(ctx: dict) -> bool:
-        """Return True iff all required booking fields are present AND _confirmation_shown is False.
-
-        Pure function: reads ctx, does NOT mutate it.
-
-        This is the deterministic Python gate that controls whether _confirmation_shown
-        should be set to True in _post_tool_result[update_booking].
-
-        Conditions for True:
-        - last_services is non-empty
-        - last_stylist OR no_preference_stylist is set
-        - selected_slot is set
-        - customer_name is set
-        - notes_state != 'not_asked'
-        - add_more_asked is truthy
-        - _confirmation_shown is NOT already True (gate must not fire twice)
-        """
-        if ctx.get("_confirmation_shown"):
-            return False
-
-        has_services = bool(ctx.get("last_services"))
-        has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
-        has_slot = bool(ctx.get("selected_slot"))
-        has_name = bool(ctx.get("customer_name"))
-        notes_answered = ctx.get("notes_state", "not_asked") != "not_asked"
-        add_more_answered = bool(ctx.get("add_more_asked"))
-
-        return has_services and has_stylist and has_slot and has_name and notes_answered and add_more_answered
-
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
     # ──────────────────────────────────────────────────────────────────────
@@ -199,8 +169,8 @@ class BookingModeNode(BaseModeNode):
         # 1b. Pre-load stylist names by category for dynamic context
         self._cached_stylists_by_category = await self._load_stylists_by_category()
 
-        # 1b2. Pre-load service names for customer memory ambiguity check
-        self._cached_service_names = await self._load_service_names()
+        # 1b2. Pre-load service catalog for customer memory ambiguity check + middleware
+        self._cached_service_catalog = await self._load_service_names()
 
         # 1c. Resolve service category if services are known but category is not yet cached
         if booking_context.get("last_services") and not booking_context.get("last_service_category"):
@@ -458,15 +428,9 @@ class BookingModeNode(BaseModeNode):
                     list(patch.keys()),
                 )
 
-                # Gate eval: deterministic Python check after patch is applied,
-                # BEFORE cascade clear runs.  The gate is a pure function — it reads
-                # mode_context but does NOT mutate it.  Write path: only this block
-                # may set _confirmation_shown=True.
-                if self._evaluate_confirmation_gate(mode_context):
-                    mode_context["_confirmation_shown"] = True
-                    logger.info(
-                        "_post_tool_result[update_booking]: gate confirmed → _confirmation_shown=True"
-                    )
+                # NOTE: _evaluate_confirmation_gate removed (task 2.10).
+                # _confirmation_shown is now set by BookingInvariantMiddleware.CONFIRMATION_REQUIRED
+                # path in Phase 3 wire-up. Legacy gate code removed to prevent double-firing.
 
                 # Cascade clear: if the update invalidates previously confirmed data
                 # (services changed, slot cleared), reset _confirmation_shown so a new
@@ -819,8 +783,9 @@ class BookingModeNode(BaseModeNode):
         if customer_memories and isinstance(customer_memories, dict):
             from agent.prompts.loader import _build_customer_memory_context
 
-            # Pass service names from cached stylists catalog for ambiguity check
-            all_svc_names = getattr(self, "_cached_service_names", None)
+            # Pass service names from cached catalog for ambiguity check
+            catalog = getattr(self, "_cached_service_catalog", None)
+            all_svc_names = [e.name for e in catalog] if catalog else None
             parts.append(_build_customer_memory_context(customer_memories, all_svc_names))
 
         return "\n".join(parts)
@@ -964,8 +929,14 @@ class BookingModeNode(BaseModeNode):
             return {}
 
     @staticmethod
-    async def _load_service_names() -> list[str]:
-        """Load all active service names for ambiguity checks. Never raises."""
+    async def _load_service_names():  # noqa: ANN201 — returns list[ServiceCatalogEntry]
+        """Load all active service catalog entries for ambiguity checks. Never raises.
+
+        Returns list[ServiceCatalogEntry] (from agent.booking.models). Falls back to []
+        on any DB error to ensure the booking flow always continues.
+        """
+        from agent.booking.models import ServiceCatalogEntry
+
         try:
             from sqlalchemy import select as sa_select
 
@@ -974,9 +945,27 @@ class BookingModeNode(BaseModeNode):
 
             async with get_async_session() as session:
                 result = await session.execute(
-                    sa_select(Service.name).where(Service.is_active == True).order_by(Service.name)
+                    sa_select(Service.name, Service.audience).where(Service.is_active == True).order_by(Service.name)
                 )
-                return [row[0] for row in result.all()]
+                rows = result.all()
+
+            # Build sibling map: family (first word of name) → list of names
+            family_map: dict[str, list[str]] = {}
+            for row in rows:
+                name = row[0]
+                audience = row[1] if len(row) > 1 else None
+                if audience:
+                    family = name.split()[0].lower()
+                    family_map.setdefault(family, []).append(name)
+
+            entries = []
+            for row in rows:
+                name = row[0]
+                audience = row[1] if len(row) > 1 else None
+                family = name.split()[0].lower() if audience else None
+                siblings = family_map.get(family, []) if family else []
+                entries.append(ServiceCatalogEntry(name=name, audience=audience, siblings=siblings))
+            return entries
         except Exception as exc:
             logger.warning("_load_service_names: failed: %s", exc)
             return []
