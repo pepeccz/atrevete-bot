@@ -89,34 +89,32 @@ class TestConfirmationDetection:
         state = _make_state(user_message, booking_context)
 
         async def _run() -> dict:
-            with patch.object(BookingModeNode, "_invoke_create_agent", side_effect=_fake_invoke), \
-                 patch.object(
-                     BookingModeNode,
-                     "_load_stylists_by_category",
-                     new=AsyncMock(return_value={}),
-                 ), \
-                 patch.object(
-                     BookingModeNode,
-                     "_load_service_names",
-                     new=AsyncMock(return_value=[]),
-                 ), \
-                 patch.object(
-                     BookingModeNode,
-                     "_build_messages",
-                     new=AsyncMock(return_value=[]),
-                 ), \
-                 patch(
-                     "agent.modes.booking_mode.get_booking_config",
-                     new=AsyncMock(
-                         return_value=MagicMock(
-                             tool_choice_policy=MagicMock(value="never_force")
-                         )
-                     ),
-                 ):
+            with (
+                patch.object(BookingModeNode, "_invoke_create_agent", side_effect=_fake_invoke),
+                patch.object(
+                    BookingModeNode,
+                    "_load_stylists_by_category",
+                    new=AsyncMock(return_value={}),
+                ),
+                patch.object(
+                    BookingModeNode,
+                    "_load_service_names",
+                    new=AsyncMock(return_value=[]),
+                ),
+                patch.object(
+                    BookingModeNode,
+                    "_build_messages",
+                    new=AsyncMock(return_value=[]),
+                ),
+                patch(
+                    "agent.modes.booking_mode.get_booking_config",
+                    new=AsyncMock(
+                        return_value=MagicMock(tool_choice_policy=MagicMock(value="never_force"))
+                    ),
+                ),
+            ):
                 node = BookingModeNode.__new__(BookingModeNode)
                 node.llm = MagicMock()
-                node._dynamic_context_index = 0
-                node._dynamic_context_state = state
                 updates = await node.handle(state, intent=None)
                 return updates
 
@@ -145,9 +143,9 @@ class TestConfirmationDetection:
         """
         bc = _make_booking_context_with_summary_shown()
         result = self._run_handle("sí", bc)
-        assert result["confirmed"] is True, (
-            f"'sí' must set confirmed=True. Got confirmed={result.get('confirmed')!r}"
-        )
+        assert (
+            result["confirmed"] is True
+        ), f"'sí' must set confirmed=True. Got confirmed={result.get('confirmed')!r}"
 
     def test_ya_esta_leaves_confirmed_false_and_clears_summary(self) -> None:
         """
@@ -160,9 +158,9 @@ class TestConfirmationDetection:
         """
         bc = _make_booking_context_with_summary_shown()
         result = self._run_handle("ya esta", bc)
-        assert result["confirmed"] is False, (
-            f"Negation must leave confirmed=False. Got {result.get('confirmed')!r}"
-        )
+        assert (
+            result["confirmed"] is False
+        ), f"Negation must leave confirmed=False. Got {result.get('confirmed')!r}"
         assert result.get("_confirmation_shown") is False, (
             "Negation must clear _confirmation_shown so a new summary can be shown. "
             f"Got _confirmation_shown={result.get('_confirmation_shown')!r}"

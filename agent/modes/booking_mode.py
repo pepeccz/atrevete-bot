@@ -446,7 +446,7 @@ class BookingModeNode(BaseModeNode):
                 logger.info("BookingModeNode: tool_choice='required' (service known, no slots yet)")
         # else: NEVER_FORCE — tool_choice stays None (LLM decides freely)
 
-        # Store for _pre_tool_call / _post_tool_result / _refresh_dynamic_context access.
+        # Store for _pre_tool_call / _post_tool_result access.
         # _booking_context is the canonical store; _mode_context is kept as an alias
         # so that both attributes resolve to the same dict (defensive programming).
         self._booking_context = booking_context
@@ -540,10 +540,10 @@ class BookingModeNode(BaseModeNode):
                 tool_args["service_category"] = mode_context["last_service_category"]
             return tool_args
 
-        # ── book(): slot resolution → completeness gate → injection ─────
+        # ── book(): slot resolution → UUID injection → services injection ──
         if tool_name == "book":
-            # Step A: slot_index → UUID resolution (runs BEFORE confirmation gate)
-            # Persists selected_slot even when later gates reject the call.
+            # Step A: slot_index → UUID resolution.
+            # Persists selected_slot for subsequent turns.
             slot_index = tool_args.get("slot_index")
             offered_slots = mode_context.get("offered_slots") or []
             if slot_index is not None and offered_slots:
@@ -586,20 +586,6 @@ class BookingModeNode(BaseModeNode):
 
             # Step A.2: customer_name — inject from mode_context into tool_args (read-only).
             # Never write back to mode_context here; that path belongs to update_booking patch.
-            _NAME_BLOCKLIST = frozenset(
-                {
-                    "cliente",
-                    "usuario",
-                    "desconocido",
-                    "n/a",
-                    "nombre",
-                    "sin nombre",
-                    "no proporcionado",
-                    "unknown",
-                    "user",
-                    "customer",
-                }
-            )
 
             # Inject customer_first_name/last_name into book() args from mode_context
             if not tool_args.get("customer_first_name") and mode_context.get("customer_first_name"):
