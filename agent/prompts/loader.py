@@ -363,7 +363,7 @@ async def build_layered_messages(
     include_history: bool = True,
     history_limit: int = 6,
     mode_name: str | None = None,
-    dynamic_context_override: str | None = None,
+    dynamic_context_override: str | None = None,  # TODO(B.1.8): remove once all callers migrated
     include_catalog: bool = True,
 ) -> tuple[list, int]:
     """

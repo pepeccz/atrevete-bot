@@ -11,7 +11,9 @@ Requirements: R1–R8
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 # ---------------------------------------------------------------------------
 # Constants — action values
@@ -130,6 +132,51 @@ def render_confirmation_summary(bc: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Temporal/environmental context helper (B.1.5)
+# ---------------------------------------------------------------------------
+
+_TZ = ZoneInfo("Europe/Madrid")
+
+_DAY_NAMES_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_MONTH_NAMES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
+def _common_data(state: dict[str, Any]) -> dict[str, Any]:
+    """Return temporal and environmental context keys for all 13 grounding branches.
+
+    This helper produces the keys that were previously delivered via
+    _build_dynamic_context() XML injection. After B.1.5, every GroundingInstruction
+    carries these fields in directive.data so BookingGroundingMiddleware can render
+    them in the [grounding] HumanMessage without any XML SystemMessage.
+
+    Returns:
+        dict with: current_datetime, current_datetime_iso, min_valid_date,
+                   min_valid_date_iso, tz, customer_phone, conversation_summary,
+                   customer_memories
+    """
+    from agent.transactions.validators.transaction_validators import MINIMUM_DAYS
+
+    now = datetime.now(_TZ)
+    min_date = (now + timedelta(days=MINIMUM_DAYS)).date()
+    min_day_name = _DAY_NAMES_ES[min_date.weekday()]
+    min_date_label = f"{min_day_name} {min_date.day} de {_MONTH_NAMES_ES[min_date.month - 1]}"
+
+    return {
+        "current_datetime": now.strftime("%A %d de %B de %Y, %H:%M") + f" ({_TZ.key})",
+        "current_datetime_iso": now.isoformat(),
+        "min_valid_date": min_date_label,
+        "min_valid_date_iso": min_date.isoformat(),
+        "tz": _TZ.key,
+        "customer_phone": state.get("customer_phone") or "",
+        "conversation_summary": state.get("conversation_summary") or "",
+        "customer_memories": state.get("customer_memories"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # compute_next_prompt — 13-branch decision tree (R1, R2, R8)
 # ---------------------------------------------------------------------------
 
@@ -159,6 +206,8 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
         GroundingInstruction (immutable).
     """
     bc = _bc(state)
+    # Common temporal/environmental keys — merged into EVERY branch (B.1.5)
+    _cd = _common_data(state)
 
     # ── Branch 1: already booked ────────────────────────────────────────────
     if bc.get("_booking_completed"):
@@ -169,7 +218,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
                 "NO llames book de nuevo. Despedite brevemente."
             ),
             mandatory_next_call=None,
-            data={"booked_appointment_id": bc.get("booked_appointment_id")},
+            data={**_cd, "booked_appointment_id": bc.get("booked_appointment_id")},
         )
 
     # ── Branch 2: confirmed → call book ─────────────────────────────────────
@@ -178,7 +227,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
             action="CALL_BOOK",
             reason="El cliente confirmó. LLAMA `book` AHORA, sin narración previa.",
             mandatory_next_call="book",
-            data={},
+            data={**_cd},
         )
 
     # ── Branch 3: confirmation shown, awaiting answer ───────────────────────
@@ -190,7 +239,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
                 "No repitas el resumen. No llames tools."
             ),
             mandatory_next_call=None,
-            data={},
+            data={**_cd},
         )
 
     # ── Branch 4: disambiguation pending ────────────────────────────────────
@@ -205,7 +254,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
                 "NO llames update_booking todavía."
             ),
             mandatory_next_call=None,
-            data={"pending": pending},
+            data={**_cd, "pending": pending},
         )
 
     # ── Branch 5: no services (only when add_more not yet asked) ────────────
@@ -219,7 +268,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
                 "Si ya lo dijo, LLAMA update_booking con services=[...]."
             ),
             mandatory_next_call=None,
-            data={},
+            data={**_cd},
         )
 
     # ── Branch 6: services set, add_more not asked ───────────────────────────
@@ -232,7 +281,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
                 "Preguntá '¿Algo más o con eso alcanza?'. No llames tools."
             ),
             mandatory_next_call=None,
-            data={"services": bc.get("last_services") or []},
+            data={**_cd, "services": bc.get("last_services") or []},
         )
 
     # ── Branch 7: add_more asked, no stylist ────────────────────────────────
@@ -247,7 +296,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
                 f"Estilistas: {stylists}"
             ),
             mandatory_next_call=None,
-            data={"stylists": stylists},
+            data={**_cd, "stylists": stylists},
         )
 
     # ── Branch 8: stylist set, no offered_slots ─────────────────────────────
@@ -259,7 +308,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
                 "LLAMA check_availability AHORA."
             ),
             mandatory_next_call="check_availability",
-            data={},
+            data={**_cd},
         )
 
     # ── Branch 9: slots offered, none selected ──────────────────────────────
@@ -272,7 +321,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
                 f"Slots: {slots}"
             ),
             mandatory_next_call=None,
-            data={"slots": slots},
+            data={**_cd, "slots": slots},
         )
 
     # ── Branch 10: slot selected, no customer name ───────────────────────────
@@ -281,7 +330,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
             action="ASK_NAME",
             reason="Pedí el nombre completo del cliente.",
             mandatory_next_call=None,
-            data={},
+            data={**_cd},
         )
 
     # ── Branch 11: name set, notes not asked ────────────────────────────────
@@ -294,7 +343,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
                 "Si el cliente dice que no, se marcará como skipped."
             ),
             mandatory_next_call=None,
-            data={},
+            data={**_cd},
         )
 
     # ── Branch 12: all filled, notes done, confirmation not shown ────────────
@@ -305,6 +354,7 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
             reason=f"Mostrá este resumen EXACTO y pedí confirmación:\n{summary}",
             mandatory_next_call=None,
             data={
+                **_cd,
                 "services": bc.get("last_services"),
                 "stylist": bc.get("last_stylist"),
                 "slot": bc.get("selected_slot"),
@@ -322,5 +372,5 @@ def compute_next_prompt(state: dict[str, Any]) -> GroundingInstruction:
             "Preguntá al cliente qué quiere hacer y lográ volver al flow."
         ),
         mandatory_next_call=None,
-        data={"booking_context_keys": list(bc.keys())},
+        data={**_cd, "booking_context_keys": list(bc.keys())},
     )

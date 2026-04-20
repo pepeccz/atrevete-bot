@@ -132,47 +132,60 @@ def test_resolve_injects_customer_id():
 
 
 def test_dynamic_context_with_suggestion_shows_suggested_name_block(booking_node):
-    """Scenario 3: suggestion present → <suggested_name> block appears, NOT in <collected_data>."""
-    state = _make_state()
-    ctx = {
-        "last_services": ["Cortar"],
-        "last_stylist": "Marta",
-        "selected_slot": {"date": "miércoles 18", "time": "10:00"},
-        "_suggested_customer_name": "Pablo García",
+    """After B.1.6, _build_dynamic_context is gone — no XML possible.
+
+    The suggested name travels through BookingContext fields, not XML blocks.
+    This test verifies the booking_context correctly records _suggested_customer_name
+    and that compute_next_prompt returns ASK_NAME (not pre-fill customer_name).
+    """
+    from agent.booking.grounding import compute_next_prompt
+
+    # State with suggestion but no confirmed customer_name → should ask for name
+    state = {
+        "booking_context": {
+            "last_services": ["Cortar"],
+            "last_stylist": "Marta",
+            "add_more_asked": True,
+            "offered_slots": [{"date": "miércoles 18", "time": "10:00"}],
+            "selected_slot": {"date": "miércoles 18", "time": "10:00"},
+            "_suggested_customer_name": "Pablo García",
+            # customer_name NOT set — suggestion requires explicit confirmation
+        },
+        "messages": [],
+        "customer_phone": "+34612345678",
     }
-    booking_node._cached_stylists_by_category = {}
+    directive = compute_next_prompt(state)
 
-    result = booking_node._build_dynamic_context(ctx, state)
-
-    assert "<suggested_name>" in result, "<suggested_name> block must appear when suggestion exists"
-    assert "Pablo García" in result
-    assert "PREGUNTÁ si la reserva va a ese nombre" in result
-
-    # Must NOT appear inside <collected_data>
-    collected_start = result.find("<collected_data>")
-    collected_end = result.find("</collected_data>")
-    if collected_start != -1 and collected_end != -1:
-        collected_section = result[collected_start:collected_end]
-        assert "Pablo García" not in collected_section, (
-            "_suggested_customer_name must NOT appear inside <collected_data>"
-        )
-        assert "✅ Nombre:" not in collected_section
+    # With suggestion but no confirmed name → must ASK_NAME (not skip ahead)
+    assert directive.action == "ASK_NAME", (
+        f"When _suggested_customer_name exists but customer_name not confirmed, "
+        f"must ASK_NAME; got {directive.action!r}"
+    )
 
 
 def test_dynamic_context_without_suggestion_no_suggested_name_block(booking_node):
-    """Scenario 4: no suggestion → no <suggested_name> block."""
-    state = _make_state()
-    ctx = {
-        "last_services": ["Cortar"],
-        "last_stylist": "Marta",
-        "selected_slot": {"date": "miércoles 18", "time": "10:00"},
+    """After B.1.6, _build_dynamic_context is gone.
+
+    Without a suggestion, compute_next_prompt still proceeds to ASK_NAME when
+    all other fields are set and customer_name is absent.
+    """
+    from agent.booking.grounding import compute_next_prompt
+
+    state = {
+        "booking_context": {
+            "last_services": ["Cortar"],
+            "last_stylist": "Marta",
+            "add_more_asked": True,
+            "offered_slots": [{"date": "miércoles 18", "time": "10:00"}],
+            "selected_slot": {"date": "miércoles 18", "time": "10:00"},
+            # no _suggested_customer_name
+        },
+        "messages": [],
+        "customer_phone": "+34612345678",
     }
-    booking_node._cached_stylists_by_category = {}
-
-    result = booking_node._build_dynamic_context(ctx, state)
-
-    assert "<suggested_name>" not in result, (
-        "<suggested_name> block must NOT appear when there is no suggestion"
+    directive = compute_next_prompt(state)
+    assert directive.action == "ASK_NAME", (
+        f"Without suggestion or customer_name, must ASK_NAME; got {directive.action!r}"
     )
 
 
@@ -197,19 +210,31 @@ def test_dynamic_context_confirmed_name_shows_in_flow_hint_not_suggested(booking
 
 
 def test_dynamic_context_suggestion_hidden_when_name_confirmed(booking_node):
-    """If both _suggested_customer_name and customer_name are set, only confirmed name shown."""
-    state = _make_state()
-    ctx = {
-        "last_services": ["Cortar"],
-        "customer_name": "Pablo García",
-        "_suggested_customer_name": "Pablo García",  # same value, but confirmed
+    """After B.1.6, _build_dynamic_context is gone.
+
+    When customer_name is confirmed (set), compute_next_prompt skips ASK_NAME
+    and moves to ASK_NOTES (or further). No XML <suggested_name> block possible.
+    """
+    from agent.booking.grounding import compute_next_prompt
+
+    state = {
+        "booking_context": {
+            "last_services": ["Cortar"],
+            "last_stylist": "Marta",
+            "add_more_asked": True,
+            "offered_slots": [{"date": "miércoles 18", "time": "10:00"}],
+            "selected_slot": {"date": "miércoles 18", "time": "10:00"},
+            "customer_name": "Pablo García",  # confirmed
+            "_suggested_customer_name": "Pablo García",  # irrelevant once confirmed
+            "notes_state": "not_asked",
+        },
+        "messages": [],
+        "customer_phone": "+34612345678",
     }
-    booking_node._cached_stylists_by_category = {}
-
-    result = booking_node._build_dynamic_context(ctx, state)
-
-    assert "<suggested_name>" not in result, (
-        "No <suggested_name> block when customer_name is already confirmed"
+    directive = compute_next_prompt(state)
+    # With customer_name confirmed, must move past ASK_NAME
+    assert directive.action != "ASK_NAME", (
+        f"When customer_name is confirmed, must not be ASK_NAME; got {directive.action!r}"
     )
 
 

@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
@@ -801,161 +799,21 @@ class BookingModeNode(BaseModeNode):
         1. SystemMessage: Cached shared prompt (identity + critical_rules)
         2. SystemMessage: Booking mode overlay (booking.md)
         3. Conversation history (last _HISTORY_LIMIT messages)
-        4. SystemMessage: Dynamic context (collected/missing data, slots) — LAST
-        """
-        dynamic_context = self._build_dynamic_context(mode_context, state)
+        4. SystemMessage: Simple dynamic context (fallback, no XML)
 
-        messages, dynamic_context_index = await build_layered_messages(
+        Note: Temporal/contextual data is now delivered via BookingGroundingMiddleware
+        as a [grounding] HumanMessage (directive.data from compute_next_prompt).
+        The legacy _build_dynamic_context() XML injection path has been removed (B.1.6).
+        """
+        messages, _ = await build_layered_messages(
             state=state,
             mode_context=mode_context,
             mode_name="BOOKING",
-            dynamic_context_override=dynamic_context,
             include_history=True,
             history_limit=_HISTORY_LIMIT,
         )
 
-        # Store index for potential mid-loop refresh (inherited hook)
-        self._dynamic_context_index = dynamic_context_index
-        self._dynamic_context_state = state
-
         return messages
-
-    def _build_dynamic_context(self, mode_context: dict, state: ConversationState) -> str:
-        """Build the dynamic context XML section injected as the last SystemMessage.
-
-        Contains: temporal context, phone, conversation summary, collected data,
-        missing data, offered slots, confirmation status.
-        """
-        parts: list[str] = []
-
-        # Current time
-        now = datetime.now(ZoneInfo("Europe/Madrid"))
-        parts.append(
-            f"Fecha y hora actual: {now.strftime('%A %d de %B de %Y, %H:%M')} (Europa/Madrid)"
-        )
-
-        # Phone
-        phone = state.get("customer_phone", "")
-        if phone:
-            parts.append(f"Teléfono del cliente: {phone}")
-
-        # Conversation summary
-        summary = state.get("conversation_summary", "")
-        if summary:
-            parts.append(f"<conversation_summary>\n{summary}\n</conversation_summary>")
-
-        # Minimum valid date for appointments (3-day rule)
-        from agent.transactions.validators.transaction_validators import MINIMUM_DAYS
-
-        _DAY_NAMES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
-        _MONTH_NAMES = [
-            "enero",
-            "febrero",
-            "marzo",
-            "abril",
-            "mayo",
-            "junio",
-            "julio",
-            "agosto",
-            "septiembre",
-            "octubre",
-            "noviembre",
-            "diciembre",
-        ]
-        min_date = (now + timedelta(days=MINIMUM_DAYS)).date()
-        min_day_name = _DAY_NAMES[min_date.weekday()]
-        min_date_label = f"{min_day_name} {min_date.day} de {_MONTH_NAMES[min_date.month - 1]}"
-
-        # Booking context XML block
-        parts.append("<booking_context>")
-        parts.append(
-            f"<min_valid_date>{min_date_label}</min_valid_date>\n"
-            f"<min_valid_date_iso>{min_date.isoformat()}</min_valid_date_iso>"
-        )
-
-        # Available stylists — shown when services are known, stylist not chosen, and
-        # "algo más?" has already been asked (add_more_asked gate)
-        if (
-            mode_context.get("last_services")
-            and not mode_context.get("last_stylist")
-            and mode_context.get("add_more_asked")
-        ):
-            stylist_names = self._get_stylists_for_services(mode_context)
-            if stylist_names:
-                # Build numbered list with "Sin preferencia" as last option
-                display_list = stylist_names + ["La primera con disponibilidad 👌"]
-                numbered = "\n".join(f"{i + 1}. {name}" for i, name in enumerate(display_list))
-                parts.append(
-                    f"<available_stylists>\n{numbered}\n</available_stylists>"
-                )
-                # Store for digit-based resolution in _resolve_stylist_signal
-                mode_context["_offered_stylists"] = stylist_names + ["Sin preferencia"]
-
-        # Audience ambiguity render — informational only, suppressed once hint is set
-        ambiguity = mode_context.get("_audience_ambiguity")
-        if ambiguity and not mode_context.get("service_audience_hint"):
-            variants_str = "\n    - " + "\n    - ".join(ambiguity["variants"])
-            parts.append(
-                f"<audience_ambiguity>\n"
-                f'  El servicio "{ambiguity["resolved_as"]}" pertenece a una familia con variantes por audiencia:{variants_str}\n'
-                f"  El cliente no ha indicado variante. Pregunta antes de avanzar.\n"
-                f"</audience_ambiguity>"
-            )
-
-        # Audience hint from greeting handoff
-        audience_hint = mode_context.get("service_audience_hint")
-        if audience_hint:
-            _HINT_LABELS = {
-                "adult_male": "Caballero",
-                "adult_female": "Señora",
-                "child_male": "Niño",
-                "child_female": "Niña",
-                "baby": "Bebé",
-            }
-            hint_label = _HINT_LABELS.get(audience_hint, audience_hint)
-            parts.append(
-                f"<audience_hint>El cliente indicó que la cita es para: {hint_label}</audience_hint>"
-            )
-
-        # Opening booking request — informational context (decoupled from disambiguation)
-        opening_request = mode_context.get("opening_booking_request")
-        if opening_request and not mode_context.get("last_services"):
-            parts.append(
-                f"<opening_booking_request>{opening_request}</opening_booking_request>"
-            )
-
-        # Suggested name from DB/state — requires explicit confirmation from the client
-        suggested_name = mode_context.get("_suggested_customer_name")
-        if suggested_name and not mode_context.get("customer_name"):
-            parts.append(
-                f"<suggested_name>\n"
-                f"El cliente podría ser: {suggested_name}. "
-                f"PREGUNTÁ si la reserva va a ese nombre antes de asumirlo.\n"
-                f"</suggested_name>"
-            )
-
-        offered_slots = mode_context.get("offered_slots") or []
-        if offered_slots:
-            slot_lines = "\n".join(
-                f"{i + 1}. {s.get('day_label', '?')} a las {s.get('time', '?')}"
-                f" con {s.get('stylist_name', '?')}"
-                for i, s in enumerate(offered_slots)
-            )
-            parts.append(f"<offered_slots>\n{slot_lines}\n</offered_slots>")
-
-        parts.append("</booking_context>")
-
-        # Cross-conversation customer memories (injected when present)
-        customer_memories = state.get("customer_memories")
-        if customer_memories and isinstance(customer_memories, dict):
-            from agent.prompts.loader import _build_customer_memory_context
-
-            # Pass service names from cached catalog for ambiguity check
-            catalog = getattr(self, "_cached_service_catalog", None)
-            all_svc_names = [e.name for e in catalog] if catalog else None
-            parts.append(_build_customer_memory_context(customer_memories, all_svc_names))
-
-        return "\n".join(parts)
 
     def _build_collected_summary(self, mode_context: dict) -> str:
         """Build collected_data summary from flat mode_context dict."""

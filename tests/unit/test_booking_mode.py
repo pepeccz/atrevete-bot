@@ -637,54 +637,55 @@ async def test_confirmation_gate_persists_slot_on_rejection():
 
 
 def test_build_dynamic_context_includes_available_stylists_at_stylist_selection():
-    """_build_dynamic_context includes <available_stylists> at stylist_selection step."""
-    from agent.modes.booking_mode import BookingModeNode
+    """After B.1.6, stylists are in directive.data['stylists'] when action=ASK_STYLIST."""
+    from agent.booking.grounding import compute_next_prompt
 
-    node = BookingModeNode(tools=[])
-    # Simulate pre-loaded cache
-    node._cached_stylists_by_category = {
-        "HAIRDRESSING": ["Marta", "Victor", "Pilar"],
-        "AESTHETICS": ["Ana"],
+    state = {
+        "booking_context": {
+            "last_services": ["Cortar"],
+            "add_more_asked": True,
+            "_offered_stylists": ["Marta", "Victor", "Pilar", "Sin preferencia"],
+        },
+        "customer_phone": "",
+        "messages": [],
     }
-
-    mode_context = {
-        "last_services": ["Cortar"],
-        "last_service_category": "HAIRDRESSING",
-        "booking_step": "stylist_selection",
-    }
-    state: dict = {"customer_phone": "", "messages": []}
-
-    context = node._build_dynamic_context(mode_context, state)  # type: ignore[arg-type]
-
-    assert "<available_stylists>" in context
-    assert "1. Marta" in context
-    assert "2. Victor" in context
-    assert "3. Pilar" in context
-    assert "La primera con disponibilidad" in context
-    # Ana (AESTHETICS) should NOT appear
-    assert "Ana" not in context
+    directive = compute_next_prompt(state)
+    assert directive.action == "ASK_STYLIST"
+    stylists = directive.data.get("stylists", [])
+    assert "Marta" in stylists
+    assert "Victor" in stylists
+    assert "Pilar" in stylists
 
 
 def test_build_dynamic_context_excludes_available_stylists_at_other_steps():
-    """_build_dynamic_context does NOT include <available_stylists> at non-stylist_selection steps."""
-    from agent.modes.booking_mode import BookingModeNode
+    """When add_more_asked=False or stylist already set, action is NOT ASK_STYLIST."""
+    from agent.booking.grounding import compute_next_prompt
 
-    node = BookingModeNode(tools=[])
-    node._cached_stylists_by_category = {"HAIRDRESSING": ["Marta", "Victor"]}
+    # Not at stylist step: services present but add_more NOT yet asked
+    state_no_add_more = {
+        "booking_context": {"last_services": ["Cortar"]},
+        "messages": [],
+        "customer_phone": "",
+    }
+    directive = compute_next_prompt(state_no_add_more)
+    assert directive.action == "ASK_MORE_SERVICES", (
+        f"Before add_more_asked, must be ASK_MORE_SERVICES, got {directive.action!r}"
+    )
 
-    for step in ("service_selection", "datetime_selection", "name_collection", "confirmation"):
-        mode_context = {
-            "booking_step": step,
+    # Stylist already set: must not be ASK_STYLIST
+    state_with_stylist = {
+        "booking_context": {
             "last_services": ["Cortar"],
-            "last_service_category": "HAIRDRESSING",
+            "add_more_asked": True,
             "last_stylist": "Marta",
-            "selected_slot": {"stylist_id": "x"},
-            "customer_name": "Pablo",
-        }
-        context = node._build_dynamic_context(mode_context, {"customer_phone": "", "messages": []})  # type: ignore[arg-type]
-        assert "<available_stylists>" not in context, (
-            f"<available_stylists> should not appear at step '{step}'"
-        )
+        },
+        "messages": [],
+        "customer_phone": "",
+    }
+    directive2 = compute_next_prompt(state_with_stylist)
+    assert directive2.action != "ASK_STYLIST", (
+        f"With stylist set, must not be ASK_STYLIST, got {directive2.action!r}"
+    )
 
 
 def test_get_stylists_for_services_falls_back_to_all_when_category_unknown():
