@@ -17,6 +17,47 @@ _AUDIENCE_LABELS = {
     None: "General",
 }
 
+# Stable audience token used inside the [PRINCIPAL · dim · audience] tag.
+# Kept machine-readable (matches the values the LLM sees in tool schemas).
+_AUDIENCE_TOKENS = {
+    "adult_female": "adult_female",
+    "adult_male": "adult_male",
+    "child_female": "child_female",
+    "child_male": "child_male",
+    "unisex": "unisex",
+    None: "any",
+}
+
+
+def _build_service_type_tag(svc: Service) -> str:
+    """Return the ``[PRINCIPAL · … ]`` / ``[VARIANTE de X]`` / ``[ADDON · …]``
+    tag for a service, or an empty string when metadata is missing.
+
+    Backward-compatible: if ``metadata_`` is absent / empty / lacks
+    ``service_type``, no tag is emitted and the catalog line keeps the previous
+    shape (``- {name} [INTERNO: …min] — {description}``).
+    """
+    metadata = svc.metadata_ or {}
+    service_type = metadata.get("service_type")
+    if not service_type:
+        return ""
+
+    dimension = metadata.get("dimension") or "unknown"
+
+    if service_type == "principal":
+        audience_token = _AUDIENCE_TOKENS.get(svc.audience, "any")
+        return f" [PRINCIPAL · {dimension} · {audience_token}]"
+
+    if service_type == "variant":
+        parent = metadata.get("parent_service_name") or "?"
+        return f" [VARIANTE de {parent}]"
+
+    if service_type == "addon":
+        return f" [ADDON · {dimension}]"
+
+    # Unknown service_type — skip tag rather than emitting garbage.
+    return ""
+
 _CATEGORY_LABELS = {
     ServiceCategory.HAIRDRESSING: "Peluquería",
     ServiceCategory.AESTHETICS: "Estética",
@@ -84,7 +125,8 @@ async def _build_catalog_from_db() -> str:
         sections.append(f"### {cat_label}\n")
 
         for svc in cat_services:
-            line = f"- {svc.name} [INTERNO: {svc.duration_minutes}min]"
+            type_tag = _build_service_type_tag(svc)
+            line = f"- {svc.name} [INTERNO: {svc.duration_minutes}min]{type_tag}"
             if svc.description:
                 line += f" — {svc.description}"
             sections.append(line)
