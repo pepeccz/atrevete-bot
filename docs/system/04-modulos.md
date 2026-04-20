@@ -265,6 +265,59 @@ Ejemplo: `loyalty` module.
 
 **Test**: si añadir loyalty requiere TOCAR booking, appointment-mgmt o cualquier otro módulo → la arquitectura falló. Stop.
 
+## BookingContext Field Ownership Registry
+
+> Establecido en SDD `booking-migration-cleanup` (B.3.10). Cada campo tiene exactamente UN escritor autorizado.
+> Aplicado via AST lint: `scripts/check_booking_state_writes.py` (unit test: `tests/unit/test_no_direct_booking_context_writes.py`).
+
+### Canal de escritura
+
+| Canal | Descripción |
+|-------|-------------|
+| **pre-loop resolver** | `apply_resolver_patch(bc, resolver_wrapper(...))` — antes del LLM loop, en `handle()` |
+| **update_booking patch** | `_post_tool_result[update_booking]` aplica `result["_booking_context_patch"]` |
+| **_post_tool_result[book]** | Único escritor para campos de confirmación de reserva |
+| **informational pre-fill** | Escrito en `handle()` pre-loop vía `apply_resolver_patch` (fuentes de estado externas) |
+| **async DB cache** | `_resolve_service_category()` — escribe en `_resolve_service_category` (allow-listed) |
+
+### Tabla de propietarios
+
+| Campo | Escritor autorizado | Canal |
+|-------|---------------------|-------|
+| `confirmed` | `resolve_confirmation` | pre-loop resolver |
+| `_confirmation_shown` | gate `SHOW_CONFIRMATION` en `handle()` | informational pre-fill |
+| `add_more_asked` | `resolve_add_more_negation` | pre-loop resolver |
+| `selected_slot` | `resolve_digit_selection` (pre-loop) y `update_booking` (slot_index branch) | pre-loop resolver + update_booking patch |
+| `last_stylist` | `resolve_stylist_selection` (pre-loop) y `update_booking` (stylist_name branch) | pre-loop resolver + update_booking patch |
+| `customer_name` | `update_booking` (customer_first_name branch) | update_booking patch |
+| `customer_first_name` | `update_booking` | update_booking patch |
+| `customer_last_name` | `update_booking` | update_booking patch |
+| `notes` | `update_booking` (notes branch) | update_booking patch |
+| `notes_state` | `update_booking` (notes branch) | update_booking patch |
+| `last_services` | `update_booking` (services branch) | update_booking patch |
+| `last_total_duration_minutes` | `update_booking` (services branch via DB lookup) | update_booking patch |
+| `last_service_category` | `_resolve_service_category()` (async DB cache) | async DB cache |
+| `offered_slots` | `_post_tool_result[check_availability]` (único receptor de slots) | post-tool result |
+| `no_preference_stylist` | `update_booking` (stylist_name = "sin preferencia") | update_booking patch |
+| `service_audience_hint` | `update_booking` (service_audience_hint branch) | update_booking patch |
+| `_audience_ambiguity` | `update_booking` (services branch + audience_hint clear) | update_booking patch |
+| `_booking_completed` | `_post_tool_result[book]` | post-tool result (book) |
+| `booked_appointment_id` | `_post_tool_result[book]` (via `update_booking` patch, si aplica) | post-tool result (book) |
+| `_suggested_customer_name` | `resolve_customer_from_state` | informational pre-fill |
+| `customer_id` | `resolve_customer_from_state` | informational pre-fill |
+| `opening_booking_request` | `handle()` pre-loop via `apply_resolver_patch` | informational pre-fill |
+| `_offered_stylists` | `handle()` pre-loop via `apply_resolver_patch` (from `_get_stylists_for_services`) | informational pre-fill |
+| `pending_disambiguations` | `update_booking` | update_booking patch |
+
+### Reglas de invariante (verificadas por AST lint)
+
+1. **Zero** `booking_context[k] = v` directos en `handle()` fuera de `apply_resolver_patch`.
+2. **Zero** `ctx[k] = v` en `update_booking` tool body — solo `patch[k] = v`.
+3. **Zero** escrituras de `last_services`, `last_stylist`, `last_total_duration_minutes` en `_post_tool_result[check_availability]`.
+4. Funciones allow-listeadas (permitidas por contrato): `apply_resolver_patch`, `_post_tool_result`, `_resolve_customer_from_state`, `_resolve_service_category`, `_pre_tool_call`.
+
+---
+
 ## Referencias
 
 - `01-architecture-principles.md` (P5, P6, P7) — contrato y reglas.

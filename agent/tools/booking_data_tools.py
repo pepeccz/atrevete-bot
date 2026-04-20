@@ -105,14 +105,6 @@ class UpdateBookingSchema(BaseModel):
         default=None,
         description="Pon true para limpiar el horario seleccionado y buscar otro día/hora.",
     )
-    add_more_answered: bool | None = Field(
-        default=None,
-        description=(
-            "TRUE cuando el cliente respondió afirmativamente a '¿algo más?' (quiere agregar otro servicio). "
-            "FALSE cuando respondió negativamente (no quiere agregar más). "
-            "Déjalo None si no hiciste la pregunta aún o si no es relevante para este turno."
-        ),
-    )
     service_audience_hint: str | None = Field(
         default=None,
         description=(
@@ -138,14 +130,10 @@ async def _find_similar_services(name: str) -> list[str]:
 
     normalized = normalize_spanish(name)
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Service.name).where(Service.is_active.is_(True))
-        )
+        result = await session.execute(select(Service.name).where(Service.is_active.is_(True)))
         all_names = [row[0] for row in result.all()]
 
-    return [
-        n for n in all_names if normalized in normalize_spanish(n)
-    ][:5]
+    return [n for n in all_names if normalized in normalize_spanish(n)][:5]
 
 
 async def _find_audience_siblings_for_signal(svc: Any) -> list[str]:
@@ -199,9 +187,6 @@ def _build_response(
         collected.append(f"servicios: {', '.join(ctx['last_services'])}")
     else:
         missing.append("servicio")
-
-    if ctx.get("last_services") and not ctx.get("add_more_asked"):
-        missing.append("preguntar ¿algo más?")
 
     if ctx.get("last_stylist") or ctx.get("no_preference_stylist"):
         stylist = ctx.get("last_stylist", "Sin preferencia")
@@ -276,7 +261,6 @@ async def update_booking(
     notes: str | None = None,
     slot_index: int | None = None,
     clear_slot: bool | None = None,
-    add_more_answered: bool | None = None,
     service_audience_hint: str | None = None,
     _current_context: dict | None = None,
 ) -> dict[str, Any]:
@@ -366,8 +350,8 @@ async def update_booking(
                         patch["_offered_stylists"] = stylist_names + ["Sin preferencia"]
                         patch["available_stylists"] = stylist_names
 
-                # Apply service changes to effective context
-                ctx.update({k: v for k, v in patch.items() if v is not None})
+                # NOTE: ctx is READ-ONLY after B.3.7 — patch is the single write channel.
+                # _post_tool_result[update_booking] in booking_mode.py applies the patch.
 
         # Informational audience ambiguity signal (non-blocking)
         if resolved_services and not ctx.get("service_audience_hint"):
@@ -382,8 +366,6 @@ async def update_booking(
                             "variants": [svc.name, *siblings],
                         }
                         patch["_audience_ambiguity"] = ambiguity_data
-                        # Mirror into ctx so _build_response sees it on this turn
-                        ctx["_audience_ambiguity"] = ambiguity_data
                         break  # first ambiguous service wins
 
     # ── Stylist branch ───────────────────────────────────────────────────
@@ -398,8 +380,6 @@ async def update_booking(
             if ctx.get("last_stylist") and ctx.get("last_stylist") != "Sin preferencia":
                 patch["offered_slots"] = None
                 patch["selected_slot"] = None
-            ctx["last_stylist"] = "Sin preferencia"
-            ctx["no_preference_stylist"] = True
         else:
             resolved = await _resolve_stylist_by_name(name_clean)
             if resolved is None:
@@ -410,10 +390,13 @@ async def update_booking(
 
                 svc_cat_val = ctx.get("last_service_category")
                 if svc_cat_val:
-                    stylist_cat = resolved.category.value if hasattr(resolved.category, "value") else resolved.category
+                    stylist_cat = (
+                        resolved.category.value
+                        if hasattr(resolved.category, "value")
+                        else resolved.category
+                    )
                     compatible = (
-                        stylist_cat == svc_cat_val
-                        or stylist_cat == ServiceCategory.BOTH.value
+                        stylist_cat == svc_cat_val or stylist_cat == ServiceCategory.BOTH.value
                     )
                     if not compatible:
                         errors.append(
@@ -428,7 +411,6 @@ async def update_booking(
                         if old_stylist and old_stylist != resolved.name:
                             patch["offered_slots"] = None
                             patch["selected_slot"] = None
-                        ctx["last_stylist"] = resolved.name
                 else:
                     # No category yet — accept stylist anyway
                     old_stylist = ctx.get("last_stylist")
@@ -437,7 +419,6 @@ async def update_booking(
                     if old_stylist and old_stylist != resolved.name:
                         patch["offered_slots"] = None
                         patch["selected_slot"] = None
-                    ctx["last_stylist"] = resolved.name
 
     # ── Customer name branch ─────────────────────────────────────────────
     if customer_first_name is not None:
@@ -453,9 +434,6 @@ async def update_booking(
             patch["customer_last_name"] = last or None
             full_name = f"{first} {last}" if last else first
             patch["customer_name"] = full_name
-            ctx["customer_name"] = full_name
-            ctx["customer_first_name"] = first
-            ctx["customer_last_name"] = last or None
 
     # ── Notes branch ─────────────────────────────────────────────────────
     if notes is not None:
@@ -465,8 +443,6 @@ async def update_booking(
             patch["notes"] = notes.strip()
         notes_state_value = "skipped" if patch.get("notes") is None else "provided"
         patch["notes_state"] = notes_state_value
-        ctx["notes_state"] = notes_state_value
-        ctx["notes"] = patch.get("notes")
 
     # ── Slot index branch ────────────────────────────────────────────────
     if slot_index is not None:
@@ -490,11 +466,9 @@ async def update_booking(
                         "time": slot.get("time"),
                     }
                     patch["selected_slot"] = selected
-                    ctx["selected_slot"] = selected
                     # Keep last_stylist in sync with selected slot
                     if slot.get("stylist_name") and not ctx.get("last_stylist"):
                         patch["last_stylist"] = slot["stylist_name"]
-                        ctx["last_stylist"] = slot["stylist_name"]
                 else:
                     errors.append(
                         f"slot_index {idx} fuera de rango (1-{len(offered_slots)}). "
@@ -510,22 +484,12 @@ async def update_booking(
         ctx.pop("selected_slot", None)
         ctx.pop("offered_slots", None)
 
-    # ── add_more_answered branch (tool-driven replacement for pre-loop negation) ──
-    # Either True (wants to add) or False (done). What matters for the
-    # confirmation gate is that the user ANSWERED — not the polarity.
-    # The LLM loops for additional services via new update_booking(services=...) calls.
-    if add_more_answered is not None:
-        patch["add_more_asked"] = True
-        ctx["add_more_asked"] = True
-
     # ── service_audience_hint branch (tool-driven replacement for _extract_audience_from_reply) ──
     if service_audience_hint is not None:
         if service_audience_hint in _CANONICAL_AUDIENCE_HINTS:
             patch["service_audience_hint"] = service_audience_hint
-            ctx["service_audience_hint"] = service_audience_hint
             # Clearing the ambiguity signal is atomic with the hint resolution.
             patch["_audience_ambiguity"] = None
-            ctx.pop("_audience_ambiguity", None)
         else:
             errors.append(
                 f"service_audience_hint '{service_audience_hint}' inválido. "

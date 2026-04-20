@@ -151,6 +151,80 @@ if "pydub" not in sys.modules:
     sys.modules["pydub"] = _make_stub_module("pydub", AudioSegment=_AudioSegment_stub)
 
 
+# ---------------------------------------------------------------------------
+# Booking-specific test helpers (B.1.4)
+# ---------------------------------------------------------------------------
+
+# Tags that must NOT appear in any message sent to the LLM after Phase B.1.
+_BANNED_XML_TAGS = (
+    "<booking_context>",
+    "<flow_hint>",
+    "<audience_ambiguity>",
+    "<audience_hint>",
+    "<opening_booking_request>",
+    "<suggested_name>",
+    "<offered_slots>",
+    "<available_stylists>",
+    "<conversation_summary>",
+    "<min_valid_date>",
+)
+
+
+def assert_no_legacy_xml_tags(messages: list) -> None:
+    """Assert that no banned legacy XML tags exist in any message content.
+
+    Use this in tests that capture the messages passed to the LLM to verify
+    _build_dynamic_context() XML output has been fully removed.
+    """
+    from langchain_core.messages import BaseMessage
+
+    for msg in messages:
+        content = getattr(msg, "content", "")
+        if not isinstance(content, str):
+            continue
+        for tag in _BANNED_XML_TAGS:
+            assert tag not in content, (
+                f"Legacy XML tag {tag!r} found in {type(msg).__name__}: "
+                f"{content[:300]!r}"
+            )
+
+
+@pytest.fixture
+def captured_model_request():
+    """Spy middleware fixture that captures messages passed to the LLM.
+
+    Returns (captured_list, SpyMiddlewareClass) tuple.
+    The captured_list is populated in-place by the spy's before_model hook.
+
+    Usage::
+        captured, SpyMiddleware = captured_model_request
+        # ... install SpyMiddleware in the middleware stack ...
+        assert_no_legacy_xml_tags(captured[-1])
+    """
+    from langchain.agents import AgentMiddleware  # noqa: F401 — type reference
+
+    captured: list[list] = []
+
+    class _CaptureMiddleware:
+        """Minimal spy — captures messages before each LLM call."""
+
+        async def before_model(self, state: dict, runtime=None) -> dict | None:
+            msgs = list(state.get("messages", []))
+            captured.append(msgs)
+            return None
+
+        async def after_model(self, state: dict, response, runtime=None) -> dict | None:
+            return None
+
+        async def before_tool(self, tool_name: str, tool_args: dict, runtime=None) -> dict | None:
+            return None
+
+        async def after_tool(self, tool_name: str, tool_args: dict, result, runtime=None):
+            return None
+
+    return captured, _CaptureMiddleware
+
+
 @pytest.fixture(scope="function")
 def event_loop():
     """

@@ -17,7 +17,6 @@ import pytest
 from agent.modes.base import ToolCallRejection
 from agent.modes.booking_mode import BookingModeNode
 
-
 # ===========================================================================
 # Fixtures
 # ===========================================================================
@@ -80,7 +79,11 @@ class TestDisambiguationGateRemoved:
     @pytest.mark.asyncio
     async def test_allowed_with_services(self, booking_node):
         """check_availability allowed when last_services, last_stylist set + date + flag."""
-        booking_node._mode_context = {"last_services": ["Cortar"], "last_stylist": "Pilar", "_date_question_asked": True}
+        booking_node._mode_context = {
+            "last_services": ["Cortar"],
+            "last_stylist": "Pilar",
+            "_date_question_asked": True,
+        }
         result = await booking_node._pre_tool_call(
             "check_availability", {"service_names": ["Cortar"], "date": "mañana"}
         )
@@ -90,7 +93,10 @@ class TestDisambiguationGateRemoved:
 class TestDisambiguationShowOnce:
     """Disambiguation questions shown once, then replaced with hint."""
 
-    @pytest.mark.xfail(strict=True, reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD",
+    )
     def test_questions_shown_on_first_detection(self, booking_node):
         """Current message with service keywords → <required_questions> injected, flag set."""
         mode_context = {"opening_booking_request": "quiero cortarme el pelo y un oleo"}
@@ -102,7 +108,10 @@ class TestDisambiguationShowOnce:
         assert "<required_questions>" in context
         assert mode_context.get("_disambiguation_questions_shown") is True
 
-    @pytest.mark.xfail(strict=True, reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD",
+    )
     def test_hint_shown_on_subsequent_turn(self, booking_node):
         """Flag already True, no last_services → <disambiguation_context> hint."""
         mode_context = {
@@ -118,17 +127,25 @@ class TestDisambiguationShowOnce:
         assert "<required_questions>" not in context
 
     def test_no_disambiguation_when_services_resolved(self, booking_node):
-        """last_services set → neither block appears."""
-        mode_context = {"last_services": ["Cortar"], "last_stylist": "Pilar"}
-        state = {
-            "customer_phone": "+34600000000",
-            "messages": [{"role": "user", "content": "el viernes"}],
-        }
-        context = booking_node._build_dynamic_context(mode_context, state)
-        assert "<required_questions>" not in context
-        assert "<disambiguation_context>" not in context
+        """last_services set → compute_next_prompt does NOT return ASK_AUDIENCE."""
+        # After B.1.6 _build_dynamic_context is removed. Verify via compute_next_prompt.
+        from agent.booking.grounding import compute_next_prompt
 
-    @pytest.mark.xfail(strict=True, reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD")
+        state = {
+            "booking_context": {"last_services": ["Cortar"], "last_stylist": "Pilar"},
+            "messages": [{"role": "user", "content": "el viernes"}],
+            "customer_phone": "+34600000000",
+        }
+        directive = compute_next_prompt(state)
+        assert directive.action != "ASK_AUDIENCE", (
+            "When services are resolved there must be no disambiguation — got "
+            f"{directive.action!r}"
+        )
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD",
+    )
     def test_detection_on_current_message_not_opening_request(self, booking_node):
         """opening_booking_request generic, user_msg has keywords → questions fire."""
         mode_context = {"opening_booking_request": "quiero pedir cita"}
@@ -142,15 +159,20 @@ class TestDisambiguationShowOnce:
         assert "óleo" in context.lower() or "oleo" in context.lower()
 
     def test_answer_message_does_not_retrigger(self, booking_node):
-        """User answer without service keywords → no questions, flag stays False."""
-        mode_context = {"opening_booking_request": "quiero cortarme el pelo"}
+        """User answer without services set → grounding returns ASK_SERVICE, no disambiguation."""
+        # After B.1.6, _build_dynamic_context is gone. Verify via compute_next_prompt.
+        from agent.booking.grounding import compute_next_prompt
+
         state = {
-            "customer_phone": "+34600000000",
+            "booking_context": {"opening_booking_request": "quiero cortarme el pelo"},
             "messages": [{"role": "user", "content": "para señora y por mantenimiento"}],
+            "customer_phone": "+34600000000",
         }
-        context = booking_node._build_dynamic_context(mode_context, state)
-        assert "<required_questions>" not in context
-        assert mode_context.get("_disambiguation_questions_shown") is not True
+        directive = compute_next_prompt(state)
+        # No services set → must ask for service, not audience disambiguation
+        assert (
+            directive.action == "ASK_SERVICE"
+        ), f"Without services, must be ASK_SERVICE, got {directive.action!r}"
 
 
 # ===========================================================================
@@ -195,14 +217,23 @@ class TestBookingComplete:
         assert missing == []
 
     @pytest.mark.asyncio
-    async def test_book_rejected_when_incomplete(self, booking_node):
-        """book() gate rejects when fields are missing."""
+    async def test_book_passthrough_when_incomplete(self, booking_node):
+        """_pre_tool_call no longer rejects for missing fields (Step B removed).
+
+        Completeness gate moved to BookingInvariantMiddleware.  _pre_tool_call
+        only handles injection (slot UUID, services, customer_name from context).
+        When fields are incomplete the call passes through as a plain dict;
+        the middleware enforces preconditions before book() executes.
+        See test_invariants_covers_legacy_gates.py for the coverage anchor.
+        """
         booking_node._mode_context = {"last_services": ["Cortar"]}
         result = await booking_node._pre_tool_call("book", {})
-        assert isinstance(result, ToolCallRejection)
-        assert result.error_code == "CONFIRMATION_REQUIRED"
-        assert "estilista" in result.error_message
-        assert "nombre" in result.error_message
+        # Must NOT be a ToolCallRejection — completeness is the middleware's job now
+        assert not isinstance(result, ToolCallRejection), (
+            "_pre_tool_call must not reject for missing fields — "
+            "BookingInvariantMiddleware handles this gate"
+        )
+        assert isinstance(result, dict)
 
     @pytest.mark.asyncio
     async def test_book_accepted_when_complete(self, booking_node):
@@ -281,14 +312,12 @@ class TestChangeCUiConstraint:
     """<ui_constraint> was moved to booking.md — no longer injected in dynamic context."""
 
     def test_ui_constraint_not_in_dynamic_context(self, booking_node):
-        state = {
-            "messages": [],
-            "customer_phone": "+34612345678",
-            "conversation_summary": None,
-        }
-        mode_context = {}
-        result = booking_node._build_dynamic_context(mode_context, state)
-        assert "<ui_constraint>" not in result
+        """_build_dynamic_context is deleted — BookingModeNode must not have this method."""
+        # After B.1.6 deletion, verify the method does not exist at all.
+        # The legacy XML path is gone; booking.md contains the ui_constraint text.
+        assert not hasattr(
+            booking_node, "_build_dynamic_context"
+        ), "_build_dynamic_context must be removed from BookingModeNode (B.1.6)"
 
 
 # ===========================================================================
@@ -300,16 +329,23 @@ class TestDynamicContextFactual:
     """Dynamic context contains factual data, no imperative directives."""
 
     def test_no_current_step_in_context(self, booking_node):
-        state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
-        result = booking_node._build_dynamic_context({}, state)
-        assert "<current_step>" not in result
+        """_build_dynamic_context is deleted — <current_step> XML no longer possible."""
+        # After B.1.6, _build_dynamic_context is removed.
+        # The [grounding] directive from compute_next_prompt carries structured data, not XML.
+        assert not hasattr(
+            booking_node, "_build_dynamic_context"
+        ), "_build_dynamic_context must not exist — XML path removed in B.1.6"
 
     def test_no_next_action_in_context(self, booking_node):
-        state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
-        result = booking_node._build_dynamic_context({}, state)
-        assert "<next_action>" not in result
+        """_build_dynamic_context is deleted — <next_action> XML no longer possible."""
+        assert not hasattr(
+            booking_node, "_build_dynamic_context"
+        ), "_build_dynamic_context must not exist — XML path removed in B.1.6"
 
-    @pytest.mark.xfail(strict=True, reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD",
+    )
     def test_collected_data_in_flow_hint(self, booking_node):
         """<collected_data> was removed; collected info is now reported via <flow_hint>."""
         state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
@@ -319,36 +355,54 @@ class TestDynamicContextFactual:
         assert "<flow_hint>" in result
         assert "Cortar" in result
 
-    @pytest.mark.xfail(strict=True, reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="state-first-booking Batch 4: _build_flow_hint deleted — test needs rewrite, issue #TBD",
+    )
     def test_flow_hint_present(self, booking_node):
         state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
         result = booking_node._build_dynamic_context({}, state)
         assert "<flow_hint>" in result
 
     def test_no_missing_data_section(self, booking_node):
-        state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
-        result = booking_node._build_dynamic_context({}, state)
-        assert "<missing_data>" not in result
+        """_build_dynamic_context is deleted — <missing_data> XML no longer possible."""
+        assert not hasattr(
+            booking_node, "_build_dynamic_context"
+        ), "_build_dynamic_context must not exist — XML path removed in B.1.6"
 
     def test_stylists_shown_after_algo_mas_asked(self, booking_node):
-        """Stylists visible when last_services is set AND add_more_asked is True."""
-        state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
-        ctx = {"last_services": ["Cortar"], "add_more_asked": True}
-        booking_node._cached_stylists_by_category = {
-            "HAIRDRESSING": ["Marta", "Pilar"],
+        """Stylists available in directive.data when services set AND add_more_asked is True."""
+        from agent.booking.grounding import compute_next_prompt
+
+        state = {
+            "booking_context": {
+                "last_services": ["Cortar"],
+                "add_more_asked": True,
+                "_offered_stylists": ["Marta", "Pilar", "Sin preferencia"],
+            },
+            "messages": [],
+            "customer_phone": "+34612345678",
         }
-        result = booking_node._build_dynamic_context(ctx, state)
-        assert "<available_stylists>" in result
+        directive = compute_next_prompt(state)
+        assert (
+            directive.action == "ASK_STYLIST"
+        ), f"With services + add_more_asked=True, expected ASK_STYLIST, got {directive.action!r}"
+        # Stylists are in directive.data["stylists"] after B.1.5
+        assert "stylists" in directive.data
 
     def test_stylists_hidden_before_algo_mas(self, booking_node):
-        """Stylists NOT visible when services set but add_more_asked is False."""
-        state = {"messages": [], "customer_phone": "+34612345678", "conversation_summary": None}
-        ctx = {"last_services": ["Cortar"]}
-        booking_node._cached_stylists_by_category = {
-            "HAIRDRESSING": ["Marta", "Pilar"],
+        """Before add_more_asked, compute_next_prompt returns ASK_MORE_SERVICES (no stylist prompt)."""
+        from agent.booking.grounding import compute_next_prompt
+
+        state = {
+            "booking_context": {"last_services": ["Cortar"]},
+            "messages": [],
+            "customer_phone": "+34612345678",
         }
-        result = booking_node._build_dynamic_context(ctx, state)
-        assert "<available_stylists>" not in result
+        directive = compute_next_prompt(state)
+        assert (
+            directive.action == "ASK_MORE_SERVICES"
+        ), f"Before add_more_asked, must be ASK_MORE_SERVICES, got {directive.action!r}"
 
 
 # ===========================================================================
@@ -430,13 +484,13 @@ class TestBuildFlowHint:
         # notas must NOT appear in pending segment (notes are optional)
         if "Pendiente:" in result:
             pending_segment = result.split("Pendiente:")[1].split("</flow_hint>")[0]
-            assert "notas" not in pending_segment.lower(), (
-                f"notas must not be in pending when notes_state=not_asked. Got: {pending_segment!r}"
-            )
+            assert (
+                "notas" not in pending_segment.lower()
+            ), f"notas must not be in pending when notes_state=not_asked. Got: {pending_segment!r}"
         # _confirmation_shown must be set since all required fields are present
-        assert ctx.get("_confirmation_shown") is True, (
-            "_confirmation_shown must be set when all required fields are present"
-        )
+        assert (
+            ctx.get("_confirmation_shown") is True
+        ), "_confirmation_shown must be set when all required fields are present"
 
     def test_all_collected_with_stylist_preference(self):
         """Stylist + date hint → fecha/hora in pending, stylist in collected."""
@@ -467,7 +521,9 @@ class TestToolCallRejectionDataClass:
     def test_tool_call_rejection_with_recovery(self):
         """ToolCallRejection accepts recovery_response."""
         r = ToolCallRejection(
-            name="test", error_code="TEST", error_message="test",
+            name="test",
+            error_code="TEST",
+            error_message="test",
             recovery_response="fallback text",
         )
         assert r.recovery_response == "fallback text"
