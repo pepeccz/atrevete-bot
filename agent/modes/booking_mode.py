@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, SystemMessage
 
+from agent.booking.grounding import compute_next_prompt
 from agent.middleware.dedup import DedupToolCallMiddleware
 from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
 from agent.middleware.node_bridge import NodeBridgeMiddleware
@@ -30,7 +31,6 @@ from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
-from agent.booking.grounding import compute_next_prompt
 from infra.resolvers.affirmation import is_affirmation
 from infra.resolvers.negation import is_negation
 from infra.resolvers.stylist import resolve_stylist
@@ -1102,7 +1102,7 @@ class BookingModeNode(BaseModeNode):
         Returns list[ServiceCatalogEntry] (from agent.booking.models). Falls back to []
         on any DB error to ensure the booking flow always continues.
         """
-        from agent.booking.models import ServiceCatalogEntry
+        from agent.booking.models import ServiceCatalogEntry, _family_key
 
         try:
             from sqlalchemy import select as sa_select
@@ -1112,25 +1112,30 @@ class BookingModeNode(BaseModeNode):
 
             async with get_async_session() as session:
                 result = await session.execute(
-                    sa_select(Service.name, Service.audience).where(Service.is_active.is_(True)).order_by(Service.name)
+                    sa_select(Service.name, Service.audience, Service.metadata_)
+                    .where(Service.is_active.is_(True))
+                    .order_by(Service.name)
                 )
                 rows = result.all()
 
-            # Build sibling map: family (first word of name) → list of names
-            family_map: dict[str, list[str]] = {}
+            # Build sibling map keyed on (dimension, "principal"). Services without a
+            # family key (no audience, no dimension, or variants) are excluded.
+            family_map: dict[tuple[str, str], list[str]] = {}
             for row in rows:
                 name = row[0]
                 audience = row[1] if len(row) > 1 else None
-                if audience:
-                    family = name.split()[0].lower()
-                    family_map.setdefault(family, []).append(name)
+                metadata_ = row[2] if len(row) > 2 else None
+                key = _family_key(metadata_, audience)
+                if key is not None:
+                    family_map.setdefault(key, []).append(name)
 
             entries = []
             for row in rows:
                 name = row[0]
                 audience = row[1] if len(row) > 1 else None
-                family = name.split()[0].lower() if audience else None
-                siblings = family_map.get(family, []) if family else []
+                metadata_ = row[2] if len(row) > 2 else None
+                key = _family_key(metadata_, audience)
+                siblings = family_map.get(key, []) if key is not None else []
                 entries.append(ServiceCatalogEntry(name=name, audience=audience, siblings=siblings))
             return entries
         except Exception as exc:

@@ -149,28 +149,32 @@ async def _find_similar_services(name: str) -> list[str]:
 
 
 async def _find_audience_siblings_for_signal(svc: Any) -> list[str]:
-    """Return names of services that share the base word but have different audience.
+    """Return names of principal services in the same `(dimension, principal)` family.
 
+    Families are grouped by `metadata_.dimension` + `metadata_.service_type="principal"`.
     Informational only — never raised as an error. Used by update_booking to populate
-    _audience_ambiguity in _booking_context_patch when the user may have under-specified.
+    _audience_ambiguity in _booking_context_patch when the user may have under-specified
+    (e.g. "cortarme el pelo" without saying señora/caballero/niño).
     """
     from sqlalchemy import select
 
+    from agent.booking.models import _family_key
     from database.models import Service
 
-    base_word = svc.name.split()[0].lower() if svc.name else ""
-    if not base_word:
+    svc_key = _family_key(getattr(svc, "metadata_", None), getattr(svc, "audience", None))
+    if svc_key is None:
         return []
+
     async with get_async_session() as session:
         result = await session.execute(
-            select(Service.id, Service.name, Service.audience).where(
+            select(Service.id, Service.name, Service.audience, Service.metadata_).where(
                 Service.audience.is_not(None),
                 Service.id != svc.id,
                 Service.is_active.is_(True),
             )
         )
         rows = result.all()
-    return [row[1] for row in rows if row[1].split()[0].lower() == base_word]
+    return [row[1] for row in rows if _family_key(row[3], row[2]) == svc_key]
 
 
 def _build_response(

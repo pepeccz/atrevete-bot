@@ -277,28 +277,20 @@ class TestFindAudienceSiblingsForSignal:
         """
         from agent.tools.booking_data_tools import _find_audience_siblings_for_signal
 
-        # Build a mock Service for "Corte Señora" (audience set)
+        # Build a mock Service for "Corte Caballero" (audience set, cut principal)
         svc = MagicMock()
-        svc.id = "uuid-corte-senora"
-        svc.name = "Corte Señora"
-        svc.audience = "adult_female"
+        svc.id = "uuid-corte-caballero"
+        svc.name = "Corte Caballero"
+        svc.audience = "adult_male"
+        svc.metadata_ = {"service_type": "principal", "dimension": "cut"}
 
-        # DB rows returned — siblings sharing "Corte" prefix with audience set
-        sibling_caballero = MagicMock()
-        sibling_caballero.id = "uuid-corte-caballero"
-        sibling_caballero.name = "Corte Caballero"
-        sibling_caballero.audience = "adult_male"
-
-        sibling_nino = MagicMock()
-        sibling_nino.id = "uuid-corte-nino"
-        sibling_nino.name = "Corte Niño"
-        sibling_nino.audience = "child_male"
-
-        # Mock the DB session so no real DB call is made
+        # DB rows returned — siblings in the (cut, principal) family
+        cut_metadata = {"service_type": "principal", "dimension": "cut"}
         mock_result = MagicMock()
         mock_result.all.return_value = [
-            (sibling_caballero.id, sibling_caballero.name, sibling_caballero.audience),
-            (sibling_nino.id, sibling_nino.name, sibling_nino.audience),
+            ("uuid-cortar", "Cortar", "adult_female", cut_metadata),
+            ("uuid-corte-nina", "Corte Niña", "child_female", cut_metadata),
+            ("uuid-corte-nino", "Corte Niño", "child_male", cut_metadata),
         ]
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -312,11 +304,9 @@ class TestFindAudienceSiblingsForSignal:
             siblings = await _find_audience_siblings_for_signal(svc)
 
         assert isinstance(siblings, list), f"Expected list, got {type(siblings)}"
-        assert len(siblings) >= 2, (
-            f"Expected at least 2 siblings for 'Corte Señora', got {siblings!r}"
+        assert set(siblings) == {"Cortar", "Corte Niña", "Corte Niño"}, (
+            f"Expected full cut-principal family for 'Corte Caballero', got {siblings!r}"
         )
-        assert "Corte Caballero" in siblings, f"Expected 'Corte Caballero' in {siblings!r}"
-        assert "Corte Niño" in siblings, f"Expected 'Corte Niño' in {siblings!r}"
 
     @pytest.mark.asyncio
     async def test_find_audience_siblings_no_siblings(self):
@@ -330,10 +320,13 @@ class TestFindAudienceSiblingsForSignal:
         svc.id = "uuid-tinte"
         svc.name = "Tinte Completo"
         svc.audience = "adult_female"
+        svc.metadata_ = {"service_type": "principal", "dimension": "color"}
 
-        # DB returns nothing with matching prefix (only other services with diff prefix)
+        # DB returns rows in OTHER dimensions or without principal service_type
         mock_result = MagicMock()
-        mock_result.all.return_value = []
+        mock_result.all.return_value = [
+            ("uuid-other", "Cortar", "adult_female", {"service_type": "principal", "dimension": "cut"}),
+        ]
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -362,9 +355,8 @@ class TestFindAudienceSiblingsForSignal:
         svc.id = "uuid-lavado"
         svc.name = "Lavado Completo"
         svc.audience = None
+        svc.metadata_ = {"service_type": "principal", "dimension": "wash"}
 
-        # Even if DB had rows, the query filters audience IS NOT NULL —
-        # simulate empty result for this service with no audience siblings
         mock_result = MagicMock()
         mock_result.all.return_value = []
         mock_session = AsyncMock()
@@ -381,6 +373,80 @@ class TestFindAudienceSiblingsForSignal:
         assert siblings == [], (
             f"Expected [] for audience=None service (no audience siblings), got {siblings!r}"
         )
+
+    @pytest.mark.asyncio
+    async def test_find_siblings_for_cortar_returns_full_cut_family(self):
+        """Regression: 'Cortar' (adult_female) must find its 3 cut-principal siblings.
+
+        This is the production bug we are fixing — naive split()[0] matching returns
+        [] because 'cortar' != 'corte'. Dimension-based grouping must find the family.
+        """
+        from agent.tools.booking_data_tools import _find_audience_siblings_for_signal
+
+        svc = MagicMock()
+        svc.id = "uuid-cortar"
+        svc.name = "Cortar"
+        svc.audience = "adult_female"
+        svc.metadata_ = {"service_type": "principal", "dimension": "cut"}
+
+        cut_meta = {"service_type": "principal", "dimension": "cut"}
+        mock_result = MagicMock()
+        mock_result.all.return_value = [
+            ("uuid-corte-nina", "Corte Niña", "child_female", cut_meta),
+            ("uuid-corte-nino", "Corte Niño", "child_male", cut_meta),
+            ("uuid-corte-caballero", "Corte Caballero", "adult_male", cut_meta),
+        ]
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "agent.tools.booking_data_tools.get_async_session",
+            return_value=mock_session,
+        ):
+            siblings = await _find_audience_siblings_for_signal(svc)
+
+        assert set(siblings) == {"Corte Niña", "Corte Niño", "Corte Caballero"}, (
+            f"Expected full cut-principal family for 'Cortar', got {siblings!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_siblings_excludes_variants(self):
+        """Variants (service_type='variant') MUST NOT appear in principal siblings."""
+        from agent.tools.booking_data_tools import _find_audience_siblings_for_signal
+
+        svc = MagicMock()
+        svc.id = "uuid-cortar"
+        svc.name = "Cortar"
+        svc.audience = "adult_female"
+        svc.metadata_ = {"service_type": "principal", "dimension": "cut"}
+
+        cut_principal = {"service_type": "principal", "dimension": "cut"}
+        cut_variant = {
+            "service_type": "variant",
+            "dimension": "cut",
+            "parent_service_name": "Corte Caballero",
+        }
+        mock_result = MagicMock()
+        mock_result.all.return_value = [
+            ("uuid-corte-caballero", "Corte Caballero", "adult_male", cut_principal),
+            # A variant in the SAME dimension with audience — must be excluded
+            ("uuid-barba", "Barba", "adult_male", cut_variant),
+        ]
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "agent.tools.booking_data_tools.get_async_session",
+            return_value=mock_session,
+        ):
+            siblings = await _find_audience_siblings_for_signal(svc)
+
+        assert "Barba" not in siblings, f"Variant should not appear as sibling: {siblings!r}"
+        assert "Corte Caballero" in siblings, f"Principal sibling missing: {siblings!r}"
 
 
 # ---------------------------------------------------------------------------

@@ -747,3 +747,35 @@ class TestToolCallRequestAPI:
         error = _extract_error_from_tool_message(result)
         assert error.get("error") is True
         assert error.get("code") in {"CONFIRMATION_REQUIRED", "CONFIRMATION_PENDING"}
+
+
+# ---------------------------------------------------------------------------
+# Family-by-dimension regression (audience-ambiguity signaling)
+# ---------------------------------------------------------------------------
+
+
+class TestAmbiguousServiceFamilyByDimension:
+    """Guards that _is_ambiguous_service() uses the dimension-based siblings contract."""
+
+    def test_is_ambiguous_service_cortar_true(self):
+        """Regression: Cortar (adult_female) must be detected as ambiguous when
+        the catalog groups haircut principals by (dimension=cut, principal)."""
+        from agent.booking.models import ServiceCatalogEntry
+
+        catalog = [
+            ServiceCatalogEntry(name="Cortar", audience="adult_female",
+                siblings=["Cortar", "Corte Niña", "Corte Niño", "Corte Caballero"]),
+            ServiceCatalogEntry(name="Corte Caballero", audience="adult_male",
+                siblings=["Cortar", "Corte Niña", "Corte Niño", "Corte Caballero"]),
+        ]
+        assert BookingInvariantMiddleware._is_ambiguous_service("Cortar", catalog) is True
+
+    def test_is_ambiguous_service_single_principal_false(self):
+        """A dimension with a single audience-tagged principal MUST NOT signal ambiguity."""
+        from agent.booking.models import ServiceCatalogEntry
+
+        catalog = [
+            ServiceCatalogEntry(name="Bioterapia de Senos",
+                audience="adult_female", siblings=[]),
+        ]
+        assert BookingInvariantMiddleware._is_ambiguous_service("Bioterapia de Senos", catalog) is False

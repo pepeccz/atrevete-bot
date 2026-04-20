@@ -10,6 +10,26 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, model_validator
 
 
+def _family_key(
+    metadata_: dict | None, audience: str | None
+) -> tuple[str, str] | None:
+    """Return the audience-family key for a service, or None if not groupable.
+
+    The key is `(dimension, service_type="principal")`. Services without audience,
+    without a metadata dimension, or that are variants (service_type != "principal")
+    return None — they have no sibling family in the audience-disambiguation sense.
+    """
+    if not audience:
+        return None
+    if not metadata_:
+        return None
+    service_type = metadata_.get("service_type")
+    dimension = metadata_.get("dimension")
+    if service_type != "principal" or not dimension:
+        return None
+    return (dimension, "principal")
+
+
 class ServiceCatalogEntry(BaseModel):
     """Represents a single service from the catalog with audience disambiguation metadata.
 
@@ -17,12 +37,13 @@ class ServiceCatalogEntry(BaseModel):
     audience and sibling information needed by BookingInvariantMiddleware.
 
     Attributes:
-        name: Exact service name as stored in the DB (e.g. "Corte Señora").
+        name: Exact service name as stored in the DB (e.g. "Corte Caballero").
         audience: Audience tag from the DB (e.g. "adult_female", "adult_male", "child").
             None for services that have no audience variants.
-        siblings: Names of other active services that share the same base family
-            (same first word) but differ in audience. Includes self when audience is set.
-            Empty list for services with audience=None (no variants).
+        siblings: Names of other active services in the same `(dimension, principal)`
+            family (per `metadata_.dimension` + `metadata_.service_type="principal"`).
+            Includes self when audience is set and the service is a principal with
+            a declared dimension. Empty list otherwise.
         has_audience_siblings: True when siblings is non-empty. Computed from siblings.
     """
 
