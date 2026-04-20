@@ -273,6 +273,7 @@ class TestConvId5Regression:
         bc = {
             "confirmed": False,
             "last_services": ["Corte"],
+            "last_stylist": "Pilar",
             "stylist_id": "stylist-001",
             "no_preference_stylist": False,
             "selected_slot": {"start": "2026-04-21T10:00:00"},
@@ -328,6 +329,7 @@ class TestConvId5Regression:
             "pending_disambiguations": [],
             "last_services": ["Corte"],
             "add_more_asked": True,
+            "last_stylist": "Pilar",
             "stylist_id": "stylist-001",
             "no_preference_stylist": False,
             "offered_slots": [{"start": "2026-04-21T10:00:00"}],
