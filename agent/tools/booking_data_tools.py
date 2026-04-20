@@ -167,46 +167,58 @@ async def _find_audience_siblings_for_signal(svc: Any) -> list[str]:
 
 def _build_response(
     ctx: dict[str, Any],
+    patch: dict[str, Any] | None,
     success: bool,
     validation_errors: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build a structured response summarising current booking state.
 
+    Reads the effective state (ctx merged with non-None patch entries) so
+    that changes made in the current tool call are visible to the LLM on
+    the SAME turn. Post-B.3 consolidation made ctx read-only, so the patch
+    is the authoritative source for in-flight changes.
+
     Args:
-        ctx: The effective booking context (after applying changes).
+        ctx: Incoming booking context (read-only — NOT mutated in this call).
+        patch: The in-flight patch assembled by update_booking (may be None).
         success: Whether the update was accepted without errors.
         validation_errors: List of human-readable error strings (if any).
 
     Returns:
         Dict with collected, missing, next_step, success, errors.
     """
+    effective: dict[str, Any] = {
+        **ctx,
+        **{k: v for k, v in (patch or {}).items() if v is not None},
+    }
+
     collected: list[str] = []
     missing: list[str] = []
 
-    if ctx.get("last_services"):
-        collected.append(f"servicios: {', '.join(ctx['last_services'])}")
+    if effective.get("last_services"):
+        collected.append(f"servicios: {', '.join(effective['last_services'])}")
     else:
         missing.append("servicio")
 
-    if ctx.get("last_stylist") or ctx.get("no_preference_stylist"):
-        stylist = ctx.get("last_stylist", "Sin preferencia")
+    if effective.get("last_stylist") or effective.get("no_preference_stylist"):
+        stylist = effective.get("last_stylist", "Sin preferencia")
         collected.append(f"estilista: {stylist}")
     else:
         missing.append("estilista")
 
-    if ctx.get("selected_slot"):
-        slot = ctx["selected_slot"]
+    if effective.get("selected_slot"):
+        slot = effective["selected_slot"]
         collected.append(f"horario: {slot.get('date', '?')} a las {slot.get('time', '?')}")
     else:
         missing.append("fecha/hora")
 
-    if ctx.get("customer_name"):
-        collected.append(f"nombre: {ctx['customer_name']}")
+    if effective.get("customer_name"):
+        collected.append(f"nombre: {effective['customer_name']}")
     else:
         missing.append("nombre")
 
-    if ctx.get("notes_state", "not_asked") != "not_asked":
-        notes = ctx.get("notes")
+    if effective.get("notes_state", "not_asked") != "not_asked":
+        notes = effective.get("notes")
         collected.append(f"notas: {notes or '(sin notas)'}")
     # Notes are optional at the gate level (R8).
     # The LLM is instructed to ask for notes via Paso 5 in booking.md — that is
@@ -222,8 +234,8 @@ def _build_response(
     # LLM reads it on the SAME turn (the system_message is cached at construction;
     # the <audience_ambiguity> XML tag only renders on turn N+1 via dynamic context
     # refresh). Using descriptive-state form — no imperative verbs.
-    ambiguity = ctx.get("_audience_ambiguity")
-    if ambiguity and not ctx.get("service_audience_hint"):
+    ambiguity = effective.get("_audience_ambiguity")
+    if ambiguity and not effective.get("service_audience_hint"):
         variants_str = ", ".join(ambiguity.get("variants", []))
         next_step = (
             f"Audiencia ambigua: familia {ambiguity.get('family', '')}, "
@@ -498,6 +510,6 @@ async def update_booking(
 
     # ── Build response ───────────────────────────────────────────────────
     success = len(errors) == 0
-    response = _build_response(ctx, success, errors if errors else None)
+    response = _build_response(ctx, patch, success, errors if errors else None)
     response["_booking_context_patch"] = patch
     return response

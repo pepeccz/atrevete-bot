@@ -19,7 +19,6 @@ import pytest
 
 from agent.tools.booking_data_tools import update_booking
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -107,9 +106,9 @@ async def test_slot_index_syncs_last_stylist_when_empty():
 
     assert result["success"] is True
     patch = result["_booking_context_patch"]
-    assert patch.get("last_stylist") == "Carmen", (
-        "last_stylist should be synced from slot when not previously set"
-    )
+    assert (
+        patch.get("last_stylist") == "Carmen"
+    ), "last_stylist should be synced from slot when not previously set"
 
 
 @pytest.mark.asyncio
@@ -126,9 +125,9 @@ async def test_slot_index_does_not_overwrite_existing_last_stylist():
     assert result["success"] is True
     patch = result["_booking_context_patch"]
     # last_stylist should NOT appear in patch (no overwrite)
-    assert "last_stylist" not in patch, (
-        "last_stylist should not be overwritten if already set in context"
-    )
+    assert (
+        "last_stylist" not in patch
+    ), "last_stylist should not be overwritten if already set in context"
 
 
 # ---------------------------------------------------------------------------
@@ -304,9 +303,11 @@ class TestFindAudienceSiblingsForSignal:
             siblings = await _find_audience_siblings_for_signal(svc)
 
         assert isinstance(siblings, list), f"Expected list, got {type(siblings)}"
-        assert set(siblings) == {"Cortar", "Corte Niña", "Corte Niño"}, (
-            f"Expected full cut-principal family for 'Corte Caballero', got {siblings!r}"
-        )
+        assert set(siblings) == {
+            "Cortar",
+            "Corte Niña",
+            "Corte Niño",
+        }, f"Expected full cut-principal family for 'Corte Caballero', got {siblings!r}"
 
     @pytest.mark.asyncio
     async def test_find_audience_siblings_no_siblings(self):
@@ -325,7 +326,12 @@ class TestFindAudienceSiblingsForSignal:
         # DB returns rows in OTHER dimensions or without principal service_type
         mock_result = MagicMock()
         mock_result.all.return_value = [
-            ("uuid-other", "Cortar", "adult_female", {"service_type": "principal", "dimension": "cut"}),
+            (
+                "uuid-other",
+                "Cortar",
+                "adult_female",
+                {"service_type": "principal", "dimension": "cut"},
+            ),
         ]
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -370,9 +376,9 @@ class TestFindAudienceSiblingsForSignal:
         ):
             siblings = await _find_audience_siblings_for_signal(svc)
 
-        assert siblings == [], (
-            f"Expected [] for audience=None service (no audience siblings), got {siblings!r}"
-        )
+        assert (
+            siblings == []
+        ), f"Expected [] for audience=None service (no audience siblings), got {siblings!r}"
 
     @pytest.mark.asyncio
     async def test_find_siblings_for_cortar_returns_full_cut_family(self):
@@ -407,9 +413,11 @@ class TestFindAudienceSiblingsForSignal:
         ):
             siblings = await _find_audience_siblings_for_signal(svc)
 
-        assert set(siblings) == {"Corte Niña", "Corte Niño", "Corte Caballero"}, (
-            f"Expected full cut-principal family for 'Cortar', got {siblings!r}"
-        )
+        assert set(siblings) == {
+            "Corte Niña",
+            "Corte Niño",
+            "Corte Caballero",
+        }, f"Expected full cut-principal family for 'Cortar', got {siblings!r}"
 
     @pytest.mark.asyncio
     async def test_find_siblings_excludes_variants(self):
@@ -520,9 +528,9 @@ class TestUpdateBookingAudienceAmbiguity:
         assert "resolved_as" in ambiguity, f"Missing 'resolved_as' in {ambiguity!r}"
         assert "resolved_audience" in ambiguity, f"Missing 'resolved_audience' in {ambiguity!r}"
         assert "variants" in ambiguity, f"Missing 'variants' in {ambiguity!r}"
-        assert len(ambiguity["variants"]) >= 2, (
-            f"variants must contain resolved service + siblings (≥2). Got {ambiguity['variants']!r}"
-        )
+        assert (
+            len(ambiguity["variants"]) >= 2
+        ), f"variants must contain resolved service + siblings (≥2). Got {ambiguity['variants']!r}"
         assert ambiguity["resolved_as"] == "Corte Señora"
         assert ambiguity["resolved_audience"] == "adult_female"
 
@@ -614,4 +622,62 @@ class TestUpdateBookingAudienceAmbiguity:
         assert "_audience_ambiguity" not in ctx_patch, (
             f"Expected NO '_audience_ambiguity' in patch when service.audience is None. "
             f"Patch: {ctx_patch!r}"
+        )
+
+
+class TestUpdateBookingAudienceAmbiguitySignaledInResponse:
+    """Regression tests: response sent to the LLM must signal audience ambiguity
+    on the SAME turn it is detected. After B.3 consolidation, the ctx mirror was
+    removed and _build_response stopped seeing _audience_ambiguity, causing the
+    bot to skip the audience disambiguation step in production (conv_id=5,
+    2026-04-21 01:52 UTC).
+    """
+
+    @pytest.mark.asyncio
+    async def test_response_missing_includes_audiencia_when_ambiguity_patched(self):
+        """When update_booking patches _audience_ambiguity, response['missing']
+        must contain 'audiencia' and next_step must describe the ambiguity —
+        otherwise the LLM has no visible signal and proceeds as if fully resolved.
+        """
+        mock_svc = MagicMock()
+        mock_svc.name = "Cortar"
+        mock_svc.audience = "adult_female"
+        mock_svc.category = MagicMock(value="cabello")
+        mock_svc.duration_minutes = 45
+
+        with (
+            patch(
+                "agent.tools.booking_data_tools._find_audience_siblings_for_signal",
+                new_callable=AsyncMock,
+                return_value=["Corte Caballero", "Corte Niño"],
+            ),
+            patch(
+                "agent.tools.availability_tools._resolve_service_by_name",
+                new_callable=AsyncMock,
+                return_value=mock_svc,
+            ),
+            patch(
+                "agent.tools.availability_tools._get_active_stylists_for_category",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await update_booking.coroutine(
+                services=["Cortar"],
+                _current_context={},
+            )
+
+        assert result["success"] is True
+        assert (
+            "_audience_ambiguity" in result["_booking_context_patch"]
+        ), "Pre-condition: patch must contain _audience_ambiguity for this regression test"
+        assert "audiencia" in result["missing"], (
+            f"Regression: response['missing'] must include 'audiencia' when "
+            f"ambiguity is patched. Got missing={result['missing']!r}"
+        )
+        assert (
+            "ambigua" in result["next_step"].lower() or "variante" in result["next_step"].lower()
+        ), (
+            f"Regression: next_step must describe the ambiguity so the LLM asks the "
+            f"customer. Got next_step={result['next_step']!r}"
         )
