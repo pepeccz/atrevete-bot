@@ -36,7 +36,8 @@ Design rules
 from __future__ import annotations
 
 import difflib
-import unicodedata
+
+from infra.resolvers._shared import normalize_text as _normalize_text
 
 # ---------------------------------------------------------------------------
 # Canonical phrases — normalized form (output of normalize_for_negation).
@@ -73,16 +74,8 @@ NEGATION_PHRASES: frozenset[str] = frozenset(
 def normalize_for_negation(text: str) -> str:
     """Normalize a user utterance for negation matching.
 
-    Pipeline:
-    1. NFKD Unicode normalization — decomposes accented chars and compatibility
-       forms (e.g. "ß" → "ss" in compatibility; "á" → "a" + combining acute).
-    2. Strip combining characters — removes accent marks left by step 1.
-    3. Lowercase.
-    4. Strip trailing ASCII punctuation (.,!?¡¿…).
-    5. Collapse internal whitespace.
-
-    This mirrors the _normalize() helper in shared/audience_maps.py:91-94 and
-    agent/modes/booking_mode.py:134-137.
+    Delegates to infra.resolvers._shared.normalize_text — same pipeline,
+    single source of truth (R2).
 
     Examples:
         >>> normalize_for_negation("Nada Máß")
@@ -92,22 +85,7 @@ def normalize_for_negation(text: str) -> str:
         >>> normalize_for_negation("  ya  está  ")
         'ya esta'
     """
-    # Step 1: NFKD decomposition
-    nfkd = unicodedata.normalize("NFKD", text)
-    # Step 2: strip combining characters AND non-ASCII non-space symbols (emoji, etc.)
-    # Keep only ASCII printable chars and spaces — negation phrases are all ASCII after NFKD.
-    stripped = "".join(
-        ch
-        for ch in nfkd
-        if not unicodedata.combining(ch) and (ch.isascii() or ch == " ")
-    )
-    # Step 3: lowercase
-    lowered = stripped.lower()
-    # Step 4: strip trailing ASCII punctuation (including leading for safety)
-    trimmed = lowered.rstrip(".,!?¡¿…").lstrip("¡¿")
-    # Step 5: collapse whitespace
-    collapsed = " ".join(trimmed.split())
-    return collapsed
+    return _normalize_text(text)
 
 
 # ---------------------------------------------------------------------------

@@ -30,8 +30,10 @@ from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
+from agent.booking.grounding import compute_next_prompt
 from infra.resolvers.affirmation import is_affirmation
 from infra.resolvers.negation import is_negation
+from infra.resolvers.stylist import resolve_stylist
 from shared.booking_config import ToolChoicePolicy, get_booking_config
 
 logger = logging.getLogger(__name__)
@@ -200,12 +202,77 @@ class BookingModeNode(BaseModeNode):
         # 1b. Pre-load stylist names by category for dynamic context
         self._cached_stylists_by_category = await self._load_stylists_by_category()
 
+        # 1b1. Populate _offered_stylists early — needed by stylist resolver gate below (R12).
+        # _build_dynamic_context also populates this later (idempotent), but the pre-loop
+        # resolver gate must see it NOW, before the LLM call.
+        _early_stylists = self._get_stylists_for_services(booking_context)
+        if _early_stylists:
+            booking_context["_offered_stylists"] = _early_stylists + ["Sin preferencia"]
+
         # 1b2. Pre-load service catalog for customer memory ambiguity check + middleware
         self._cached_service_catalog = await self._load_service_names()
 
         # 1c. Resolve service category if services are known but category is not yet cached
         if booking_context.get("last_services") and not booking_context.get("last_service_category"):
             await self._resolve_service_category(booking_context)
+
+        # 1d. Stylist resolver gate — runs AFTER _cached_stylists_by_category is loaded (R12)
+        # and AFTER affirmation/negation block (no conflict). Fires only when:
+        # - compute_next_prompt says ASK_STYLIST (deterministic action check)
+        # - no stylist has been chosen yet
+        # - we have a list of offered stylists to match against
+        _offered_stylists: list[str] = booking_context.get("_offered_stylists") or []
+        if (
+            _offered_stylists
+            and not booking_context.get("last_stylist")
+            and not booking_context.get("no_preference_stylist")
+        ):
+            try:
+                _stylist_directive = compute_next_prompt(state)
+                if _stylist_directive.action == "ASK_STYLIST":
+                    _stylist_patch = resolve_stylist(
+                        _user_msg_raw,
+                        _offered_stylists,
+                        conversation_id=str(state.get("conversation_id", "")),
+                        turn_number=state.get("total_message_count", 0),
+                    )
+                    if _stylist_patch is not None:
+                        for k, v in _stylist_patch.items():
+                            booking_context[k] = v
+                        logger.info(
+                            "booking_stylist.pre_loop_resolved | conversation=%s | patch=%s",
+                            state.get("conversation_id", "unknown"),
+                            list(_stylist_patch.keys()),
+                        )
+            except Exception as _exc:
+                logger.warning(
+                    "booking_stylist.pre_loop_resolver_error | conversation=%s | error=%s",
+                    state.get("conversation_id", "unknown"),
+                    _exc,
+                )
+
+        # 1e. _confirmation_shown gate — Option 3 (R14/R15).
+        # BookingGroundingMiddleware.before_model() returns {"messages": [...]} only;
+        # booking_context uses replace_dict (full-replace), so no sub-dict patch is
+        # possible from before_model(). Set _confirmation_shown here instead, using
+        # the same compute_next_prompt call pattern as the stylist gate above.
+        # Idempotent: if already True, skip.
+        if not booking_context.get("_confirmation_shown"):
+            try:
+                _conf_directive = compute_next_prompt(state)
+                if _conf_directive.action == "SHOW_CONFIRMATION":
+                    booking_context["_confirmation_shown"] = True
+                    logger.info(
+                        "booking_grounding.confirmation_shown | conversation=%s | turn=%s",
+                        state.get("conversation_id", "unknown"),
+                        state.get("total_message_count", 0),
+                    )
+            except Exception as _exc:
+                logger.warning(
+                    "booking_grounding.confirmation_shown_error | conversation=%s | error=%s",
+                    state.get("conversation_id", "unknown"),
+                    _exc,
+                )
 
         # 2. Cross-mode customer handoff
         self._resolve_customer_from_state(state, booking_context)

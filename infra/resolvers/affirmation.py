@@ -32,7 +32,8 @@ Design rules
 from __future__ import annotations
 
 import difflib
-import unicodedata
+
+from infra.resolvers._shared import normalize_text as _normalize_text
 
 # ---------------------------------------------------------------------------
 # Canonical phrases — normalized form.
@@ -91,12 +92,8 @@ _BLOCKING_TOKENS: frozenset[str] = frozenset(
 def normalize_for_affirmation(text: str) -> str:
     """Normalize user text for affirmation matching.
 
-    Same pipeline as normalize_for_negation:
-    1. NFKD Unicode normalization.
-    2. Strip combining characters.
-    3. Lowercase.
-    4. Strip trailing/leading ASCII punctuation.
-    5. Collapse whitespace.
+    Delegates to infra.resolvers._shared.normalize_text — same pipeline,
+    single source of truth (R2).
 
     Examples:
         >>> normalize_for_affirmation("Sí!")
@@ -106,21 +103,7 @@ def normalize_for_affirmation(text: str) -> str:
         >>> normalize_for_affirmation("PERFECTO.")
         'perfecto'
     """
-    # Step 1: NFKD decomposition
-    nfkd = unicodedata.normalize("NFKD", text)
-    # Step 2: strip combining characters and non-ASCII non-space symbols
-    stripped = "".join(
-        ch
-        for ch in nfkd
-        if not unicodedata.combining(ch) and (ch.isascii() or ch == " ")
-    )
-    # Step 3: lowercase
-    lowered = stripped.lower()
-    # Step 4: strip trailing/leading ASCII punctuation
-    trimmed = lowered.rstrip(".,!?¡¿…").lstrip("¡¿")
-    # Step 5: collapse whitespace
-    collapsed = " ".join(trimmed.split())
-    return collapsed
+    return _normalize_text(text)
 
 
 # ---------------------------------------------------------------------------
