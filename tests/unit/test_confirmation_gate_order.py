@@ -28,7 +28,7 @@ def _make_complete_ctx(**overrides):
         "last_stylist": "María",
         "selected_slot": {"date": "2026-04-20", "time": "10:00"},
         "customer_name": "Juan",
-        "notes_asked": True,
+        "notes_state": "provided",
         "add_more_asked": True,
         "_confirmation_shown": False,
     }
@@ -61,7 +61,7 @@ class TestPostToolResultOrder:
             "last_stylist": "María",
             "selected_slot": {"date": "2026-04-20", "time": "10:00"},
             "customer_name": "Juan",
-            "notes_asked": True,
+            "notes_state": "provided",
             # add_more_asked missing initially
             "_confirmation_shown": False,
         }
@@ -132,7 +132,7 @@ class TestPostToolResultOrder:
             "last_stylist": "Lucía",
             "selected_slot": {"date": "2026-04-22", "time": "09:00"},
             "customer_name": "Pedro",
-            "notes_asked": True,
+            "notes_state": "provided",
             "_confirmation_shown": False,
             # add_more_asked missing — patch will supply it
         }
@@ -181,8 +181,8 @@ class TestPostToolResultOrder:
         # _build_flow_hint also checks add_more_asked indirectly via "pending" list
         if legacy_ctx.get("last_services") and not legacy_ctx.get("add_more_asked"):
             has_pending = True
-        if not legacy_ctx.get("notes_asked"):
-            pass  # notes_asked doesn't block pending list in _build_flow_hint
+        if legacy_ctx.get("notes_state", "not_asked") == "not_asked":
+            pass  # notes_state not_asked doesn't block pending list in _build_flow_hint
 
         # Both agree: gate returns True AND legacy "not pending" is True
         # (no divergence pre-Batch 4)

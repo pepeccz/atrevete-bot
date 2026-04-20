@@ -104,7 +104,7 @@ SCRIPT = [
     {
         "turn": 8,
         "message": "Sin notas",
-        "condition": "notes_asked",
+        "condition": "notes_state_answered",
         "milestone": "notes_handled",
     },
     # T9 — confirm booking

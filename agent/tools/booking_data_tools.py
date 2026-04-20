@@ -214,12 +214,12 @@ def _build_response(
     else:
         missing.append("nombre")
 
-    if ctx.get("notes_asked"):
+    if ctx.get("notes_state", "not_asked") != "not_asked":
         notes = ctx.get("notes")
         collected.append(f"notas: {notes or '(sin notas)'}")
     # Notes are optional at the gate level (R8).
     # The LLM is instructed to ask for notes via Paso 5 in booking.md — that is
-    # conversational guidance only. No Python gate should block on notes_asked.
+    # conversational guidance only. No Python gate should block on notes_state.
 
     # Determine next step
     if missing:
@@ -457,8 +457,9 @@ async def update_booking(
             patch["notes"] = None
         else:
             patch["notes"] = notes.strip()
-        patch["notes_asked"] = True
-        ctx["notes_asked"] = True
+        notes_state_value = "skipped" if patch.get("notes") is None else "provided"
+        patch["notes_state"] = notes_state_value
+        ctx["notes_state"] = notes_state_value
         ctx["notes"] = patch.get("notes")
 
     # ── Slot index branch ────────────────────────────────────────────────

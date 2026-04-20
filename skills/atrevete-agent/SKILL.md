@@ -215,7 +215,7 @@ class BookingContext(TypedDict, total=False):
     pending_service_options: list[str] | None
     pending_stylist_options: list[str] | None
     notes: str | None
-    notes_asked: bool
+    notes_state: Literal["not_asked", "skipped", "provided"]
 ```
 
 ### Reducers

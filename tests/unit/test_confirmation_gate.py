@@ -21,7 +21,7 @@ class TestEvaluateConfirmationGateTrue:
             "last_stylist": "María",
             "selected_slot": {"date": "2026-04-20", "time": "10:00"},
             "customer_name": "Juan",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }
@@ -36,7 +36,7 @@ class TestEvaluateConfirmationGateTrue:
             "no_preference_stylist": True,
             "selected_slot": {"date": "2026-04-21", "time": "14:00"},
             "customer_name": "Ana",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }
@@ -51,7 +51,7 @@ class TestEvaluateConfirmationGateTrue:
             "last_stylist": "Lucía",
             "selected_slot": {"date": "2026-04-22", "time": "09:00"},
             "customer_name": "Pedro",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }
@@ -71,7 +71,7 @@ class TestEvaluateConfirmationGateFalse:
             "last_stylist": "María",
             "selected_slot": {"date": "2026-04-20", "time": "10:00"},
             "customer_name": "Juan",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": True,  # already shown
         }
@@ -85,7 +85,7 @@ class TestEvaluateConfirmationGateFalse:
             "last_stylist": "María",
             "selected_slot": {"date": "2026-04-20", "time": "10:00"},
             "customer_name": "Juan",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }
@@ -99,7 +99,7 @@ class TestEvaluateConfirmationGateFalse:
             "last_services": ["Corte"],
             "selected_slot": {"date": "2026-04-20", "time": "10:00"},
             "customer_name": "Juan",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }
@@ -113,7 +113,7 @@ class TestEvaluateConfirmationGateFalse:
             "last_services": ["Corte"],
             "last_stylist": "María",
             "customer_name": "Juan",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }
@@ -127,14 +127,14 @@ class TestEvaluateConfirmationGateFalse:
             "last_services": ["Corte"],
             "last_stylist": "María",
             "selected_slot": {"date": "2026-04-20", "time": "10:00"},
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }
         assert BookingModeNode._evaluate_confirmation_gate(ctx) is False
 
     def test_notes_not_asked_returns_false(self):
-        """Without notes_asked → False (notes step not completed)."""
+        """Without notes_state=not_asked → False (notes step not yet answered)."""
         from agent.modes.booking_mode import BookingModeNode
 
         ctx = {
@@ -156,7 +156,7 @@ class TestEvaluateConfirmationGateFalse:
             "last_stylist": "María",
             "selected_slot": {"date": "2026-04-20", "time": "10:00"},
             "customer_name": "Juan",
-            "notes_asked": True,
+            "notes_state": "provided",
             "_confirmation_shown": False,
         }
         assert BookingModeNode._evaluate_confirmation_gate(ctx) is False
@@ -176,7 +176,7 @@ class TestEvaluateConfirmationGateFalse:
             "last_stylist": "Rosa",
             "selected_slot": {"date": "2026-04-23", "time": "11:00"},
             "customer_name": "Carla",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }
@@ -196,7 +196,7 @@ class TestEvaluateConfirmationGatePurity:
             "last_stylist": "María",
             "selected_slot": {"date": "2026-04-20", "time": "10:00"},
             "customer_name": "Juan",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }
@@ -213,7 +213,7 @@ class TestEvaluateConfirmationGatePurity:
             "last_stylist": "María",
             "selected_slot": {"date": "2026-04-20", "time": "10:00"},
             "customer_name": "Juan",
-            "notes_asked": True,
+            "notes_state": "provided",
             "add_more_asked": True,
             "_confirmation_shown": False,
         }

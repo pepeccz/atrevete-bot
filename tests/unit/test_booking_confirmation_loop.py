@@ -30,7 +30,7 @@ def _base_ctx() -> dict:
         "offered_slots": [{"stylist_id": "abc", "time": "10:00", "date": "miércoles 9"}],
         "selected_slot": {"stylist_id": "abc", "time": "10:00", "date": "miércoles 9"},
         "customer_name": "Pablo García",
-        "notes_asked": True,
+        "notes_state": "provided",
     }
 
 
@@ -75,7 +75,7 @@ def test_flow_hint_notes_not_pending_when_not_asked():
     is set and the hint shows 'Todos los datos recogidos'.
     """
     ctx = _base_ctx()
-    ctx.pop("notes_asked")
+    ctx.pop("notes_state", None)
 
     hint = BookingModeNode._build_flow_hint(ctx)
 
@@ -83,7 +83,7 @@ def test_flow_hint_notes_not_pending_when_not_asked():
     if "Pendiente:" in hint:
         pending_segment = hint.split("Pendiente:")[1].split("</flow_hint>")[0]
         assert "notas" not in pending_segment.lower(), (
-            f"notas must NOT be in pending when notes_asked=False. Got: {pending_segment!r}"
+            f"notas must NOT be in pending when notes_state=not_asked. Got: {pending_segment!r}"
         )
     # All required fields are present → hint should indicate completion
     assert "todos los datos" in hint.lower() or "confirmación" in hint.lower(), (
@@ -149,10 +149,10 @@ def test_confirmation_shown_set_when_required_fields_present_without_notes():
     """_confirmation_shown must be set when all required fields are present, even without notes.
 
     After R8/C5: notes are optional. _confirmation_shown is gated on required fields only
-    (services, stylist, slot, name). notes_asked=False must not block the gate.
+    (services, stylist, slot, name). notes_state=not_asked must not block the gate.
     """
     ctx = _base_ctx()
-    ctx.pop("notes_asked")
+    ctx.pop("notes_state", None)
 
     BookingModeNode._build_flow_hint(ctx)
 

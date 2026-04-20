@@ -144,7 +144,7 @@ class TestBookingContextType:
             "preferred_date_hint",
             "add_more_asked",
             "notes",
-            "notes_asked",
+            "notes_state",
             "_booking_completed",
             "_confirmation_shown",
             "_disambiguation_questions_shown",
