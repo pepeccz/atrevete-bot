@@ -41,7 +41,7 @@ async def test_booking_invoke_create_agent_exception_returns_fallback_not_empty(
     def _fake_create_agent(*args, **kwargs):
         return _AsyncRaiser()
 
-    with patch("langchain.agents.create_agent", side_effect=_fake_create_agent):
+    with patch("agent.modes.booking_mode.create_agent", side_effect=_fake_create_agent):
         result = await node._invoke_create_agent(
             messages=[], tools=[], tool_choice=None
         )

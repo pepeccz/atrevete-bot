@@ -33,7 +33,7 @@ CANONICAL_SAMPLES = [
     "nah 🙏",
     "ya está",
     "ya estamos",
-    "listo",
+    # "listo" removed — dual-role word: affirmation takes precedence (REQ-5 mutual exclusivity)
     "ya",
     "basta",
     "es todo",
@@ -110,7 +110,7 @@ def test_normalize_no_extra_whitespace(text: str) -> None:
     "nope",
     "ya está",
     "ya estamos",
-    "listo",
+    # "listo" removed — dual-role word: affirmation takes precedence (REQ-5 mutual exclusivity)
     "ya",
     "basta",
     "es todo",
@@ -200,11 +200,10 @@ def test_is_negation_performance_under_10ms() -> None:
     "nope nada mas",
     "nah nada mas",
     "nope nomas",
-    "ya listo",
-    "nada mas listo",
-    "ya esta listo",
+    # "ya listo", "nada mas listo", "ya esta listo", "listo ya" removed:
+    # "listo" is now an affirmation canonical (REQ-5 mutual exclusivity).
+    # These compounds are correctly handled by the affirmation path.
     "nada ya",
-    "listo ya",
 ])
 def test_is_negation_compound_phrases_match(text: str) -> None:
     """Compounds of 2+ canonicals must match (fix for conv 99001 T7 canary)."""

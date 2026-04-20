@@ -48,9 +48,11 @@ class TestBehavioralSpotChecks:
         assert phrase is None
         assert distance == -1
 
-    def test_is_negation_true_for_listo(self):
+    def test_is_negation_false_for_listo(self):
+        # "listo" removed from negation phrases — dual-role word.
+        # is_affirmation("listo") returns True (REQ-5 mutual exclusivity).
         matched, phrase, distance = is_negation("listo")
-        assert matched is True
+        assert matched is False
 
     def test_is_negation_true_for_ya(self):
         matched, phrase, distance = is_negation("ya")
