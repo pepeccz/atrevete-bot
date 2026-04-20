@@ -18,7 +18,15 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from langchain.agents import create_agent
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
 from shared.booking_config import get_booking_config, ToolChoicePolicy
+from agent.middleware.dedup import DedupToolCallMiddleware
+from agent.middleware.node_bridge import NodeBridgeMiddleware
+from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
+from agent.middleware.token_tracking import TokenTrackingMiddleware
+from agent.booking.feature_flags import resolve_booking_capability_flag
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
@@ -541,20 +549,32 @@ class BookingModeNode(BaseModeNode):
         messages: list,
         tools: list,
         tool_choice: str | None,
+        state: dict | None = None,
     ) -> AgenticLoopResult:
         """Run ``create_agent`` with the composed booking middleware stack.
 
         Replaces the legacy ``_run_agentic_loop`` call. Preserves the
         ``AgenticLoopResult`` return contract so ``_build_response`` and the
         existing response-building logic keep working unchanged.
-        """
-        from langchain.agents import create_agent
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-        from agent.middleware.dedup import DedupToolCallMiddleware
-        from agent.middleware.node_bridge import NodeBridgeMiddleware
-        from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
-        from agent.middleware.token_tracking import TokenTrackingMiddleware
+        When USE_CAPABILITY_BOOKING is True (or per-conversation Redis override),
+        BookingGroundingMiddleware and BookingInvariantMiddleware are prepended
+        to the middleware stack (design §6.4).
+        """
+        # Resolve conversation_id from state or cached state
+        _state = state or getattr(self, "_current_state", {}) or {}
+        conversation_id = _state.get("conversation_id")
+
+        # Resolve the capability flag (Redis override takes precedence over global)
+        use_capability, flag_source = resolve_booking_capability_flag(conversation_id)
+        logger.debug(
+            "capability.flag.effective",
+            extra={
+                "conversation_id": conversation_id,
+                "capability.flag.on": use_capability,
+                "capability.flag.source": flag_source,
+            },
+        )
 
         # Split the legacy layered message list into ``system_prompt`` + transcript.
         system_parts: list[str] = []
@@ -576,8 +596,24 @@ class BookingModeNode(BaseModeNode):
         # get_tools() already applies the step-aware filter; no middleware needed.
         allowed_tools = self.get_tools(getattr(self, "_booking_context", None))
 
-        middleware: list = [
-            NodeBridgeMiddleware(self),
+        # Base middleware: always included
+        middleware: list = [NodeBridgeMiddleware(self)]
+
+        # Capability middleware: injected only when flag is ON (design §6.4)
+        if use_capability:
+            from agent.booking.middleware.grounding import BookingGroundingMiddleware
+            from agent.booking.middleware.invariants import BookingInvariantMiddleware
+
+            middleware += [
+                BookingGroundingMiddleware(get_state_fn=lambda: getattr(self, "_current_state", {})),
+                BookingInvariantMiddleware(
+                    get_state_fn=lambda: getattr(self, "_current_state", {}),
+                    get_catalog_fn=lambda: getattr(self, "_cached_service_catalog", []),
+                ),
+            ]
+
+        # Always append: dedup, fallback, token tracking
+        middleware += [
             DedupToolCallMiddleware(),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="BOOKING"),

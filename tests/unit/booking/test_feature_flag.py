@@ -214,20 +214,30 @@ class TestMiddlewareAbsence:
             result.ainvoke = AsyncMock(return_value=MagicMock(content="ok"))
             return result
 
+        import asyncio
+
         with patch(
-            "agent.booking.feature_flags.resolve_booking_capability_flag",
+            "agent.modes.booking_mode.resolve_booking_capability_flag",
             return_value=(use_capability, "global" if not use_capability else "redis-override"),
         ), patch(
             "agent.modes.booking_mode.create_agent",
             side_effect=_fake_create_agent,
         ):
             node = BookingModeNode.__new__(BookingModeNode)
-            node._invoke_create_agent(
-                messages=[],
-                tools=[],
-                tool_choice="auto",
-                state={"conversation_id": "conv-test"},
-            )
+            # Provide minimal stub attributes so _invoke_create_agent reaches create_agent
+            node.llm = MagicMock()
+            node.llm.bind = MagicMock(return_value=MagicMock())
+            try:
+                asyncio.get_event_loop().run_until_complete(
+                    node._invoke_create_agent(
+                        messages=[],
+                        tools=[],
+                        tool_choice="auto",
+                        state={"conversation_id": "conv-test"},
+                    )
+                )
+            except Exception:
+                pass  # Any error after create_agent is called is OK — we only need the capture
 
         return captured
 
@@ -290,85 +300,50 @@ class TestMiddlewareAbsence:
 class TestOtherModesUnaffected:
     """
     Given USE_CAPABILITY_BOOKING=True
-    When GREETING or GENERAL mode processes a turn
-    Then neither BookingGroundingMiddleware nor BookingInvariantMiddleware appear
-    in those modes' middleware lists (REQ-33).
+    Then neither BookingGroundingMiddleware nor BookingInvariantMiddleware are
+    imported or referenced in GREETING or GENERAL mode source (REQ-33).
+
+    Note: GREETING and GENERAL modes were migrated to builder functions
+    (build_greeting_node / build_general_node) in M3/M4 — no _invoke_create_agent
+    method exists on those modules. Compliance is verified via static source
+    inspection: booking middleware names must NOT appear in those modules.
     """
 
-    def _capture_greeting_middleware(self) -> list:
-        """Capture middleware list for GREETING mode."""
-        captured = []
-
-        def _fake_create_agent(model, tools, system_prompt, middleware=None, **kwargs):
-            captured.extend(middleware or [])
-            result = MagicMock()
-            result.ainvoke = AsyncMock(return_value=MagicMock(content="hola"))
-            return result
-
-        with patch("agent.modes.greeting_mode.create_agent", side_effect=_fake_create_agent):
-            from agent.modes.greeting_mode import GreetingModeNode
-            node = GreetingModeNode.__new__(GreetingModeNode)
-            try:
-                node._invoke_create_agent(messages=[], tools=[], tool_choice="auto", state={})
-            except Exception:
-                pass  # May fail for other reasons (missing state) — we only need the capture
-
-        return captured
-
-    def _capture_general_middleware(self) -> list:
-        """Capture middleware list for GENERAL mode."""
-        captured = []
-
-        def _fake_create_agent(model, tools, system_prompt, middleware=None, **kwargs):
-            captured.extend(middleware or [])
-            result = MagicMock()
-            result.ainvoke = AsyncMock(return_value=MagicMock(content="info"))
-            return result
-
-        with patch("agent.modes.general_mode.create_agent", side_effect=_fake_create_agent):
-            from agent.modes.general_mode import GeneralModeNode
-            node = GeneralModeNode.__new__(GeneralModeNode)
-            try:
-                node._invoke_create_agent(messages=[], tools=[], tool_choice="auto", state={})
-            except Exception:
-                pass
-
-        return captured
+    def _module_source(self, module_path: str) -> str:
+        """Read source of a module file."""
+        import importlib.util
+        spec = importlib.util.find_spec(module_path)
+        assert spec is not None, f"Module {module_path} not found"
+        assert spec.origin is not None, f"Module {module_path} has no origin"
+        with open(spec.origin) as f:
+            return f.read()
 
     def test_greeting_mode_unaffected_by_flag(self) -> None:
         """
         Given: USE_CAPABILITY_BOOKING=True
-        When: GREETING mode builds its middleware list
-        Then: neither booking middleware appears
+        When: GREETING mode source is inspected
+        Then: BookingGroundingMiddleware and BookingInvariantMiddleware are NOT referenced
         """
-        with patch.dict("os.environ", {"USE_CAPABILITY_BOOKING": "true"}):
-            middleware_list = self._capture_greeting_middleware()
-            class_names = [type(m).__name__ for m in middleware_list]
+        source = self._module_source("agent.modes.greeting_mode")
 
-            assert "BookingGroundingMiddleware" not in class_names, (
-                f"BookingGroundingMiddleware must NOT appear in GREETING mode. "
-                f"Middleware: {class_names}"
-            )
-            assert "BookingInvariantMiddleware" not in class_names, (
-                f"BookingInvariantMiddleware must NOT appear in GREETING mode. "
-                f"Middleware: {class_names}"
-            )
+        assert "BookingGroundingMiddleware" not in source, (
+            "BookingGroundingMiddleware MUST NOT appear in greeting_mode source (REQ-33)"
+        )
+        assert "BookingInvariantMiddleware" not in source, (
+            "BookingInvariantMiddleware MUST NOT appear in greeting_mode source (REQ-33)"
+        )
 
     def test_general_mode_unaffected_by_flag(self) -> None:
         """
         Given: USE_CAPABILITY_BOOKING=True
-        When: GENERAL mode builds its middleware list
-        Then: neither booking middleware appears
+        When: GENERAL mode source is inspected
+        Then: BookingGroundingMiddleware and BookingInvariantMiddleware are NOT referenced
         """
-        with patch.dict("os.environ", {"USE_CAPABILITY_BOOKING": "true"}):
-            middleware_list = self._capture_general_middleware()
-            class_names = [type(m).__name__ for m in middleware_list]
+        source = self._module_source("agent.modes.general_mode")
 
-            assert "BookingGroundingMiddleware" not in class_names, (
-                f"BookingGroundingMiddleware must NOT appear in GENERAL mode. "
-                f"Middleware: {class_names}"
-            )
-            assert "BookingInvariantMiddleware" not in class_names, (
-                f"BookingInvariantMiddleware must NOT appear in GENERAL mode. "
-                f"Middleware: {class_names}"
-            )
+        assert "BookingGroundingMiddleware" not in source, (
+            "BookingGroundingMiddleware MUST NOT appear in general_mode source (REQ-33)"
+        )
+        assert "BookingInvariantMiddleware" not in source, (
+            "BookingInvariantMiddleware MUST NOT appear in general_mode source (REQ-33)"
+        )
