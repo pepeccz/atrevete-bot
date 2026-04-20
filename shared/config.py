@@ -240,6 +240,18 @@ class Settings(BaseSettings):
             "When False, falls back to legacy inline prompts for backward compatibility."
         ),
     )
+
+    # BookingCapability feature flag (E2 canary rollout)
+    USE_CAPABILITY_BOOKING: bool = Field(
+        default=False,
+        description=(
+            "Feature flag for the BookingCapability path (E2 architecture). "
+            "When True, enables BookingGroundingMiddleware + BookingInvariantMiddleware "
+            "for deterministic grounding and pre-tool invariant enforcement. "
+            "Per-conversation Redis override: booking:capability:{conversation_id}. "
+            "Set to False (default) for safe merge — legacy booking path unchanged."
+        ),
+    )
     # Application Settings
     TIMEZONE: str = Field(default="Europe/Madrid")
     LOG_LEVEL: str = Field(default="INFO")
