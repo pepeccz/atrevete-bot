@@ -281,11 +281,11 @@ def test_flow_hint_name_collected():
     result = BookingModeNode._build_flow_hint(ctx)
 
     assert "Pablo García" in result, "Confirmed name must appear in collected"
-    # Notes are optional (R8/C5): must NOT appear in pending when notes_asked=False
+    # Notes are optional (R8/C5): must NOT appear in pending when notes_state=not_asked
     if "Pendiente:" in result:
         pending_segment = result.split("Pendiente:")[1].split("</flow_hint>")[0]
         assert "notas" not in pending_segment.lower(), (
-            f"notas must not be in pending when notes_asked=False. Got: {pending_segment!r}"
+            f"notas must not be in pending when notes_state=not_asked. Got: {pending_segment!r}"
         )
 
 

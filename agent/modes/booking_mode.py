@@ -18,12 +18,21 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from shared.booking_config import get_booking_config, ToolChoicePolicy
+from langchain.agents import create_agent
+from langchain_core.messages import AIMessage, SystemMessage
+
+from agent.middleware.dedup import DedupToolCallMiddleware
+from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
+from agent.middleware.node_bridge import NodeBridgeMiddleware
+from agent.middleware.token_tracking import TokenTrackingMiddleware
 from agent.modes.base import AgenticLoopResult, BaseModeNode, ToolCallRejection
 from agent.prompts.loader import build_layered_messages
 from agent.services.customer_memory_service import write_customer_memories
 from agent.state.helpers import add_message, get_last_user_message
 from agent.state.schemas import ConversationState, transition_mode
+from infra.resolvers.affirmation import is_affirmation
+from infra.resolvers.negation import is_negation
+from shared.booking_config import ToolChoicePolicy, get_booking_config
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +68,8 @@ class BookingModeNode(BaseModeNode):
         only offer tools that are relevant to the current state.
         The LLM naturally follows the flow when it only sees applicable tools.
         """
-        from agent.tools.booking_data_tools import update_booking
         from agent.tools.availability_tools import check_availability
+        from agent.tools.booking_data_tools import update_booking
         from agent.tools.booking_tools import book
 
         ctx = booking_context or {}
@@ -108,36 +117,6 @@ class BookingModeNode(BaseModeNode):
         # Notes are optional — the prompt instructs the LLM to ask (Paso 5).
         # No Python gate needed; book() accepts notes=None.
         return (len(missing) == 0, missing)
-
-    @staticmethod
-    def _evaluate_confirmation_gate(ctx: dict) -> bool:
-        """Return True iff all required booking fields are present AND _confirmation_shown is False.
-
-        Pure function: reads ctx, does NOT mutate it.
-
-        This is the deterministic Python gate that controls whether _confirmation_shown
-        should be set to True in _post_tool_result[update_booking].
-
-        Conditions for True:
-        - last_services is non-empty
-        - last_stylist OR no_preference_stylist is set
-        - selected_slot is set
-        - customer_name is set
-        - notes_asked is truthy
-        - add_more_asked is truthy
-        - _confirmation_shown is NOT already True (gate must not fire twice)
-        """
-        if ctx.get("_confirmation_shown"):
-            return False
-
-        has_services = bool(ctx.get("last_services"))
-        has_stylist = bool(ctx.get("last_stylist") or ctx.get("no_preference_stylist"))
-        has_slot = bool(ctx.get("selected_slot"))
-        has_name = bool(ctx.get("customer_name"))
-        notes_answered = bool(ctx.get("notes_asked"))
-        add_more_answered = bool(ctx.get("add_more_asked"))
-
-        return has_services and has_stylist and has_slot and has_name and notes_answered and add_more_answered
 
     # ──────────────────────────────────────────────────────────────────────
     # Main entry point
@@ -187,6 +166,28 @@ class BookingModeNode(BaseModeNode):
         # 1. Resolve digit selection: map bare digit user reply → selected_slot
         self._resolve_digit_selection(state, booking_context)
 
+        # 1-pre. Affirmation/negation detection — runs BEFORE agentic loop.
+        # When a summary has been shown and the user hasn't confirmed yet,
+        # detect "dale"/"sí"/etc. and set confirmed=True deterministically.
+        # This is the W4 fix: is_affirmation() was an isolated utility; now wired in.
+        _user_msg_raw = get_last_user_message(state).strip()
+        if booking_context.get("_confirmation_shown") and not booking_context.get("confirmed"):
+            if _user_msg_raw and is_affirmation(_user_msg_raw):
+                booking_context["confirmed"] = True
+                logger.info(
+                    "booking_confirmation.detected | conversation=%s | confirmed=True | msg=%r",
+                    state.get("conversation_id", "unknown"),
+                    _user_msg_raw,
+                )
+            elif _user_msg_raw and is_negation(_user_msg_raw)[0]:
+                booking_context["confirmed"] = False
+                booking_context["_confirmation_shown"] = False
+                logger.info(
+                    "booking_confirmation.detected | conversation=%s | confirmed=False (negation) | msg=%r",
+                    state.get("conversation_id", "unknown"),
+                    _user_msg_raw,
+                )
+
         # 1a. Ensure opening_booking_request is set for disambiguation.
         # The router only sets it on first-interaction→BOOKING transitions.
         # For returning customers or re-entries, populate it from the user message
@@ -199,8 +200,8 @@ class BookingModeNode(BaseModeNode):
         # 1b. Pre-load stylist names by category for dynamic context
         self._cached_stylists_by_category = await self._load_stylists_by_category()
 
-        # 1b2. Pre-load service names for customer memory ambiguity check
-        self._cached_service_names = await self._load_service_names()
+        # 1b2. Pre-load service catalog for customer memory ambiguity check + middleware
+        self._cached_service_catalog = await self._load_service_names()
 
         # 1c. Resolve service category if services are known but category is not yet cached
         if booking_context.get("last_services") and not booking_context.get("last_service_category"):
@@ -395,7 +396,7 @@ class BookingModeNode(BaseModeNode):
             notes_arg = tool_args.get("notes")
             if notes_arg is not None:
                 mode_context["notes"] = notes_arg if notes_arg.lower() not in ("no", "ninguna", "sin notas") else None
-                mode_context["notes_asked"] = True
+                mode_context["notes_state"] = "skipped" if mode_context["notes"] is None else "provided"
 
             # Step B: Confirmation gate — reject book() if required fields are missing.
             # Runs AFTER Steps A/A.1b/A.2/A.3 so selected_slot, customer_name,
@@ -458,15 +459,9 @@ class BookingModeNode(BaseModeNode):
                     list(patch.keys()),
                 )
 
-                # Gate eval: deterministic Python check after patch is applied,
-                # BEFORE cascade clear runs.  The gate is a pure function — it reads
-                # mode_context but does NOT mutate it.  Write path: only this block
-                # may set _confirmation_shown=True.
-                if self._evaluate_confirmation_gate(mode_context):
-                    mode_context["_confirmation_shown"] = True
-                    logger.info(
-                        "_post_tool_result[update_booking]: gate confirmed → _confirmation_shown=True"
-                    )
+                # NOTE: _evaluate_confirmation_gate removed (task 2.10).
+                # _confirmation_shown is now set by BookingInvariantMiddleware.CONFIRMATION_REQUIRED
+                # path in Phase 3 wire-up. Legacy gate code removed to prevent double-firing.
 
                 # Cascade clear: if the update invalidates previously confirmed data
                 # (services changed, slot cleared), reset _confirmation_shown so a new
@@ -577,20 +572,19 @@ class BookingModeNode(BaseModeNode):
         messages: list,
         tools: list,
         tool_choice: str | None,
+        state: dict | None = None,
     ) -> AgenticLoopResult:
         """Run ``create_agent`` with the composed booking middleware stack.
 
         Replaces the legacy ``_run_agentic_loop`` call. Preserves the
         ``AgenticLoopResult`` return contract so ``_build_response`` and the
         existing response-building logic keep working unchanged.
-        """
-        from langchain.agents import create_agent
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-        from agent.middleware.dedup import DedupToolCallMiddleware
-        from agent.middleware.node_bridge import NodeBridgeMiddleware
-        from agent.middleware.final_text_recovery import FinalTextRecoveryMiddleware
-        from agent.middleware.token_tracking import TokenTrackingMiddleware
+        BookingGroundingMiddleware and BookingInvariantMiddleware are always active
+        (feature flag removed — direct activation per Phase 7).
+        """
+        # Resolve conversation_id from state or cached state
+        _state = state or getattr(self, "_current_state", {}) or {}
 
         # Split the legacy layered message list into ``system_prompt`` + transcript.
         system_parts: list[str] = []
@@ -612,8 +606,16 @@ class BookingModeNode(BaseModeNode):
         # get_tools() already applies the step-aware filter; no middleware needed.
         allowed_tools = self.get_tools(getattr(self, "_booking_context", None))
 
+        from agent.booking.middleware.grounding import BookingGroundingMiddleware
+        from agent.booking.middleware.invariants import BookingInvariantMiddleware
+
         middleware: list = [
             NodeBridgeMiddleware(self),
+            BookingGroundingMiddleware(get_state_fn=lambda: getattr(self, "_current_state", {})),
+            BookingInvariantMiddleware(
+                get_state_fn=lambda: getattr(self, "_current_state", {}),
+                get_catalog_fn=lambda: getattr(self, "_cached_service_catalog", []),
+            ),
             DedupToolCallMiddleware(),
             FinalTextRecoveryMiddleware(fallback_text=fallback_text),
             TokenTrackingMiddleware(mode_name="BOOKING"),
@@ -819,8 +821,9 @@ class BookingModeNode(BaseModeNode):
         if customer_memories and isinstance(customer_memories, dict):
             from agent.prompts.loader import _build_customer_memory_context
 
-            # Pass service names from cached stylists catalog for ambiguity check
-            all_svc_names = getattr(self, "_cached_service_names", None)
+            # Pass service names from cached catalog for ambiguity check
+            catalog = getattr(self, "_cached_service_catalog", None)
+            all_svc_names = [e.name for e in catalog] if catalog else None
             parts.append(_build_customer_memory_context(customer_memories, all_svc_names))
 
         return "\n".join(parts)
@@ -937,12 +940,12 @@ class BookingModeNode(BaseModeNode):
             from sqlalchemy import select as sa_select
 
             from database.connection import get_async_session
-            from database.models import Stylist, ServiceCategory
+            from database.models import ServiceCategory, Stylist
 
             async with get_async_session() as session:
                 result = await session.execute(
                     sa_select(Stylist.name, Stylist.category)
-                    .where(Stylist.is_active == True)
+                    .where(Stylist.is_active.is_(True))
                     .order_by(Stylist.name)
                 )
                 rows = result.all()
@@ -964,8 +967,14 @@ class BookingModeNode(BaseModeNode):
             return {}
 
     @staticmethod
-    async def _load_service_names() -> list[str]:
-        """Load all active service names for ambiguity checks. Never raises."""
+    async def _load_service_names():  # noqa: ANN201 — returns list[ServiceCatalogEntry]
+        """Load all active service catalog entries for ambiguity checks. Never raises.
+
+        Returns list[ServiceCatalogEntry] (from agent.booking.models). Falls back to []
+        on any DB error to ensure the booking flow always continues.
+        """
+        from agent.booking.models import ServiceCatalogEntry
+
         try:
             from sqlalchemy import select as sa_select
 
@@ -974,9 +983,27 @@ class BookingModeNode(BaseModeNode):
 
             async with get_async_session() as session:
                 result = await session.execute(
-                    sa_select(Service.name).where(Service.is_active == True).order_by(Service.name)
+                    sa_select(Service.name, Service.audience).where(Service.is_active.is_(True)).order_by(Service.name)
                 )
-                return [row[0] for row in result.all()]
+                rows = result.all()
+
+            # Build sibling map: family (first word of name) → list of names
+            family_map: dict[str, list[str]] = {}
+            for row in rows:
+                name = row[0]
+                audience = row[1] if len(row) > 1 else None
+                if audience:
+                    family = name.split()[0].lower()
+                    family_map.setdefault(family, []).append(name)
+
+            entries = []
+            for row in rows:
+                name = row[0]
+                audience = row[1] if len(row) > 1 else None
+                family = name.split()[0].lower() if audience else None
+                siblings = family_map.get(family, []) if family else []
+                entries.append(ServiceCatalogEntry(name=name, audience=audience, siblings=siblings))
+            return entries
         except Exception as exc:
             logger.warning("_load_service_names: failed: %s", exc)
             return []
@@ -1001,7 +1028,7 @@ class BookingModeNode(BaseModeNode):
             async with get_async_session() as session:
                 result = await session.execute(
                     sa_select(Service.category).where(
-                        Service.name == service_names[0], Service.is_active == True
+                        Service.name == service_names[0], Service.is_active.is_(True)
                     )
                 )
                 row = result.first()

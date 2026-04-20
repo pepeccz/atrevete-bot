@@ -545,8 +545,8 @@ async def test_confirmation_gate_rejects_at_name_collection():
 
 
 @pytest.mark.asyncio
-async def test_confirmation_gate_allows_without_notes_asked():
-    """book() without notes_asked → allowed (notes are optional, prompt handles them)."""
+async def test_confirmation_gate_allows_without_notes_state():
+    """book() without notes_state → allowed (notes are optional, prompt handles them)."""
     from agent.modes.booking_mode import BookingModeNode
     from agent.modes.base import ToolCallRejection
 

@@ -370,7 +370,7 @@ class TestBuildFlowHint:
         assert "servicio" in result.lower()
         assert "estilista" in result.lower()
         assert "nombre" in result.lower()
-        # Notes are optional (R8/C5): not listed as pending even when notes_asked is False
+        # Notes are optional (R8/C5): not listed as pending even when notes_state=not_asked
         assert "notas" not in result.lower() or "recogido" in result.lower()
 
     def test_services_collected_stylist_pending(self):
@@ -411,8 +411,8 @@ class TestBuildFlowHint:
         assert "nombre" in result.lower()
         assert "pendiente" in result.lower()
 
-    def test_all_required_collected_no_notes_asked(self):
-        """All required fields set, notes_asked=False → no notas in pending (R8/C5 fix).
+    def test_all_required_collected_notes_state_not_asked(self):
+        """All required fields set, notes_state=not_asked → no notas in pending (R8/C5 fix).
 
         Notes are optional: _build_flow_hint must NOT add 'notas' to pending.
         When all required fields are present, _confirmation_shown must be set.
@@ -431,7 +431,7 @@ class TestBuildFlowHint:
         if "Pendiente:" in result:
             pending_segment = result.split("Pendiente:")[1].split("</flow_hint>")[0]
             assert "notas" not in pending_segment.lower(), (
-                f"notas must not be in pending when notes_asked=False. Got: {pending_segment!r}"
+                f"notas must not be in pending when notes_state=not_asked. Got: {pending_segment!r}"
             )
         # _confirmation_shown must be set since all required fields are present
         assert ctx.get("_confirmation_shown") is True, (

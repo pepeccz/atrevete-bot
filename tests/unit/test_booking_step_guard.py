@@ -65,7 +65,7 @@ class TestBookingCompleteGate:
         assert missing == []
 
     def test_notes_not_required_for_complete(self):
-        """notes_asked is NOT a gate — notes are optional, handled by prompt."""
+        """notes_state is NOT a gate — notes are optional, handled by prompt."""
         ctx = {
             "last_services": ["Cortar"],
             "last_stylist": "Ana",
@@ -237,7 +237,7 @@ async def test_book_rejected_missing_name(booking_node: BookingModeNode):
 
 @pytest.mark.asyncio
 async def test_book_allowed_without_notes(booking_node: BookingModeNode):
-    """book() allowed when notes_asked is missing — notes are optional."""
+    """book() allowed when notes_state is missing — notes are optional."""
     booking_node._mode_context = {
         "last_services": ["Cortar"],
         "last_stylist": "Marta",
@@ -263,7 +263,7 @@ async def test_book_captures_notes_from_args(booking_node: BookingModeNode):
         "book", {"slot_index": 1, "services": ["Cortar"], "notes": "Alergia al amoniaco"}
     )
     assert booking_node._mode_context["notes"] == "Alergia al amoniaco"
-    assert booking_node._mode_context["notes_asked"] is True
+    assert booking_node._mode_context["notes_state"] in ("provided", "skipped")
 
 
 @pytest.mark.asyncio
@@ -280,7 +280,7 @@ async def test_book_notes_no_clears_to_none(booking_node: BookingModeNode):
         "book", {"slot_index": 1, "services": ["Cortar"], "notes": "no"}
     )
     assert booking_node._mode_context["notes"] is None
-    assert booking_node._mode_context["notes_asked"] is True
+    assert booking_node._mode_context["notes_state"] in ("provided", "skipped")
 
 
 # ===========================================================================

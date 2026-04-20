@@ -47,18 +47,18 @@ class TestNotesOptionalGate:
         """R8: _build_response must NOT append 'notas' to missing array.
 
         FAILS on master because lines 201-205 of booking_data_tools.py
-        unconditionally append 'notas' when notes_asked is False.
+        unconditionally append 'notas' when notes_state=not_asked.
         """
         from agent.tools.booking_data_tools import _build_response
 
-        # All required fields set, notes_asked=False (default), notes=None
+        # All required fields set, notes_state=not_asked (default), notes=None
         ctx = {
             "last_services": ["Corte Señora"],
             "last_stylist": "Maria",
             "add_more_asked": True,
             "selected_slot": {"date": "2026-05-01", "time": "10:00"},
             "customer_name": "Ana García",
-            # notes_asked NOT set — should NOT block completion
+            # notes_state not set — should NOT block completion
         }
 
         result = _build_response(ctx, success=True)
@@ -101,7 +101,7 @@ class TestNotesOptionalGate:
         """S8: _booking_complete must return True when slot + name are set, no notes.
 
         This gate is already correct on master (booking_mode.py:104-125 does not gate
-        on notes_asked). This test confirms no regression.
+        on notes_state). This test confirms no regression.
         """
         node = _make_node()
 
@@ -111,7 +111,7 @@ class TestNotesOptionalGate:
             "add_more_asked": True,
             "selected_slot": {"date": "2026-05-01", "time": "10:00"},
             "customer_name": "Ana García",
-            # notes_asked NOT set
+            # notes_state not set
         }
 
         is_complete, missing = node._booking_complete(ctx)
@@ -134,7 +134,7 @@ class TestNotesOptionalGate:
             "add_more_asked": True,
             "selected_slot": {"date": "2026-05-01", "time": "10:00"},
             "customer_name": "Ana García",
-            # notes_asked NOT set — booking should still be complete
+            # notes_state not set — booking should still be complete
         }
 
         tools = node.get_tools(ctx)
@@ -145,8 +145,8 @@ class TestNotesOptionalGate:
             f"Got tools: {tool_names}"
         )
 
-    def test_notes_in_collected_when_notes_asked_set(self) -> None:
-        """When notes_asked=True, notes info should still appear in collected (not missing)."""
+    def test_notes_in_collected_when_notes_state_provided(self) -> None:
+        """When notes_state=provided, notes info should still appear in collected (not missing)."""
         from agent.tools.booking_data_tools import _build_response
 
         ctx = {
@@ -155,7 +155,7 @@ class TestNotesOptionalGate:
             "add_more_asked": True,
             "selected_slot": {"date": "2026-05-01", "time": "10:00"},
             "customer_name": "Ana García",
-            "notes_asked": True,
+            "notes_state": "provided",
             "notes": "Tiene alergia al amoniaco",
         }
 
@@ -164,7 +164,7 @@ class TestNotesOptionalGate:
         # Notes info should be in collected, not missing
         collected_str = " ".join(result["collected"])
         assert "notas" in collected_str.lower() or "alergia" in collected_str.lower(), (
-            f"When notes_asked=True and notes are set, notes info should appear in collected. "
+            f"When notes_state=provided and notes are set, notes info should appear in collected. "
             f"Got collected={result['collected']!r}"
         )
         assert "notas" not in result["missing"], (
@@ -179,10 +179,10 @@ class TestNotesOptionalGate:
 
 class TestFlowHintNotasLeak:
     """
-    W1: _build_flow_hint must NOT include "notas" in pending when notes_asked=False.
+    W1: _build_flow_hint must NOT include "notas" in pending when notes_state=not_asked.
 
     Before C5.2 fix, _build_flow_hint always appends "notas" to pending when
-    notes_asked is falsy — even though notes are optional at the gate level (R8).
+    notes_state is not_asked — even though notes are optional at the gate level (R8).
     This causes <flow_hint>Pendiente: notas</flow_hint> on every turn, creating
     LLM behavioral pressure to ask for notes before calling `book`.
 
@@ -198,10 +198,10 @@ class TestFlowHintNotasLeak:
     def test_flow_hint_no_notas_pending_when_complete_without_notes(self) -> None:
         """W1/R8: _build_flow_hint must NOT show 'notas' as pending when booking is complete.
 
-        Given all required fields (services, stylist, slot, name) and notes_asked=False,
+        Given all required fields (services, stylist, slot, name) and notes_state=not_asked,
         the flow hint must not contain 'Pendiente: notas' or 'notas' in the pending list.
         FAILS on master: line 215 of booking_mode.py unconditionally appends "notas" to pending
-        when notes_asked is falsy.
+        when notes_state is not_asked.
         """
         node = _make_node()
 
@@ -211,7 +211,7 @@ class TestFlowHintNotasLeak:
             "add_more_asked": True,
             "selected_slot": {"date": "2026-05-01", "time": "10:00"},
             "customer_name": "Ana García",
-            # notes_asked NOT set — notes are optional
+            # notes_state not set — notes are optional
         }
 
         hint = node._build_flow_hint(ctx)
@@ -250,7 +250,7 @@ class TestFlowHintNotasLeak:
             "add_more_asked": True,
             "selected_slot": {"date": "2026-05-01", "time": "10:00"},
             "customer_name": "Ana García",
-            # notes_asked NOT set
+            # notes_state not set
         }
 
         node._build_flow_hint(ctx)
@@ -265,8 +265,8 @@ class TestFlowHintNotasLeak:
         reason="state-first-booking Batch 4: _build_flow_hint deleted, test needs rewrite — issue #TBD",
         strict=True,
     )
-    def test_flow_hint_notas_in_collected_when_notes_asked_true(self) -> None:
-        """When notes_asked=True, notas should appear in collected (not pending) — no regression."""
+    def test_flow_hint_notas_in_collected_when_notes_state_provided(self) -> None:
+        """When notes_state=provided, notas should appear in collected (not pending) — no regression."""
         node = _make_node()
 
         ctx = {
@@ -275,15 +275,15 @@ class TestFlowHintNotasLeak:
             "add_more_asked": True,
             "selected_slot": {"date": "2026-05-01", "time": "10:00"},
             "customer_name": "Ana García",
-            "notes_asked": True,
+            "notes_state": "provided",
             "notes": "Tiene alergia al amoniaco",
         }
 
         hint = node._build_flow_hint(ctx)
 
         assert "notas" in hint, (
-            f"When notes_asked=True, notas info must appear somewhere in the hint. Got: {hint!r}"
+            f"When notes_state=provided, notas info must appear somewhere in the hint. Got: {hint!r}"
         )
         assert "Recogido:" in hint and "notas" in hint.split("Recogido:")[1].split("Pendiente:")[0] if "Pendiente:" in hint else "notas" in hint.split("Recogido:")[1], (
-            f"When notes_asked=True, notas must be in the Recogido segment. Got: {hint!r}"
+            f"When notes_state=provided, notas must be in the Recogido segment. Got: {hint!r}"
         )

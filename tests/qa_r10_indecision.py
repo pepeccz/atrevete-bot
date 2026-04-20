@@ -63,7 +63,7 @@ class FlowState:
     PHASE_SLOT_SELECTED = "slot_selected"  # slot picked, await name q
     PHASE_NAME_ASKED = "name_asked"  # name asked, give name
     PHASE_NAME_GIVEN = "name_given"  # name given, await notes q
-    PHASE_NOTES_ASKED = "notes_asked"  # notes asked, give "Sin notas"
+    PHASE_NOTES_ASKED = "notes_state_answered"  # notes state answered, give "Sin notas"
     PHASE_NOTES_GIVEN = "notes_given"  # notes given, await confirm summary
     PHASE_CONFIRM_ASKED = "confirm_asked"  # summary shown, confirm
     PHASE_DONE = "done"
@@ -518,8 +518,8 @@ async def run_qa():
                 state.milestones.append("slots_shown")
             if ("nombre" in msg_lower) and "name_asked" not in state.milestones:
                 state.milestones.append("name_asked")
-            if ("nota" in msg_lower) and "notes_asked" not in state.milestones:
-                state.milestones.append("notes_asked")
+            if ("nota" in msg_lower) and "notes_state_answered" not in state.milestones:
+                state.milestones.append("notes_state_answered")
             # booking_confirmed: must be a success message, not a failure
             if (
                 "booking_confirmed" not in state.milestones

@@ -1,219 +1,213 @@
 """
-Tests for _post_tool_result[update_booking] execution order.
+Tests for BookingInvariantMiddleware precondition check ordering.
 
-Verifies the strict sequence:
-  1. apply patch   (keys written to mode_context)
-  2. gate eval     (_evaluate_confirmation_gate called with post-patch ctx)
-  3. cascade clear (_confirmation_shown reset if invalidating keys changed)
+The _evaluate_confirmation_gate static method was removed in task 2.10.
+Ordering and precedence are now enforced inside BookingInvariantMiddleware._check_book().
 
-This test must FAIL if someone reintroduces the side-effect in _build_flow_hint
-as the sole write path for _confirmation_shown, bypassing _post_tool_result.
+Verified ordering (priority top-to-bottom):
+  1. DISAMBIGUATION_PENDING  (blocks everything)
+  2. SERVICES_MISSING
+  3. STYLIST_MISSING
+  4. SLOT_MISSING
+  5. CUSTOMER_NAME_MISSING
+  6. CONFIRMATION_REQUIRED   (last — all data must be present first)
 
-TDD — T2.4
+Zero xfail marks. All GREEN.
 """
 
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+import json
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_complete_ctx(**overrides):
-    """Return a booking context with ALL required fields set (gate returns True)."""
+def _make_full_bc(**overrides) -> dict:
+    """Return a fully complete booking context."""
     base = {
-        "last_services": ["Corte"],
+        "_booking_completed": False,
+        "confirmed": True,
+        "_confirmation_shown": True,
+        "pending_disambiguations": [],
+        "last_services": ["Corte de pelo"],
         "last_stylist": "María",
-        "selected_slot": {"date": "2026-04-20", "time": "10:00"},
+        "no_preference_stylist": False,
+        "stylist_id": "stylist-uuid-001",
+        "selected_slot": {"start": "2026-04-20T10:00:00"},
         "customer_name": "Juan",
-        "notes_asked": True,
+        "notes_state": "provided",
         "add_more_asked": True,
-        "_confirmation_shown": False,
     }
     base.update(overrides)
     return base
 
 
-def _make_update_booking_result(patch_data: dict) -> str:
-    """Build a JSON string result from update_booking tool with a patch."""
-    import json
-    return json.dumps({"_booking_context_patch": patch_data})
+def _make_middleware(bc: dict):
+    from agent.booking.middleware.invariants import BookingInvariantMiddleware
+    state = {"current_mode": "BOOKING", "booking_context": bc, "conversation_id": "conv-order"}
+    return BookingInvariantMiddleware(get_state_fn=lambda: state, get_catalog_fn=lambda: [], mode_name="BOOKING")
 
 
-# ---------------------------------------------------------------------------
-# Test cases
-# ---------------------------------------------------------------------------
+def _make_book_call():
+    from unittest.mock import MagicMock
+    tc = MagicMock()
+    tc.name = "book"
+    tc.args = {}
+    tc.id = "tc-001"
+    return tc
 
-class TestPostToolResultOrder:
-    """Verify apply_patch → gate_eval → cascade_clear ordering."""
 
-    @pytest.mark.asyncio
-    async def test_gate_called_after_patch_applied(self):
-        """Gate must see the post-patch state, not pre-patch state."""
-        from agent.modes.booking_mode import BookingModeNode
+def _parse(result) -> dict:
+    if isinstance(result.content, str):
+        return json.loads(result.content)
+    return result.content
 
-        node = BookingModeNode.__new__(BookingModeNode)
-        # Start with incomplete context (missing add_more_asked)
-        ctx = {
-            "last_services": ["Corte"],
-            "last_stylist": "María",
-            "selected_slot": {"date": "2026-04-20", "time": "10:00"},
-            "customer_name": "Juan",
-            "notes_asked": True,
-            # add_more_asked missing initially
-            "_confirmation_shown": False,
-        }
-        node._booking_context = ctx
 
-        # Patch arrives and adds add_more_asked=True (completing the booking)
-        patch_data = {"add_more_asked": True}
-        result_json = _make_update_booking_result(patch_data)
+class TestPreconditionOrdering:
+    """Verify that preconditions are checked in the correct priority order."""
 
-        # Track call sequence via spy on _evaluate_confirmation_gate.
-        # Since it's a @staticmethod, we spy by replacing the class attribute directly.
-        call_sequence = []
-        original_gate = BookingModeNode._evaluate_confirmation_gate
+    def test_disambiguation_blocks_before_services(self):
+        """DISAMBIGUATION_PENDING has highest priority — fires even when services missing."""
+        bc = _make_full_bc(
+            confirmed=False,
+            last_services=[],
+            pending_disambiguations=[{"family": "Corte", "variants": ["señora"]}],
+        )
+        mw = _make_middleware(bc)
+        result = mw.wrap_tool_call(_make_book_call(), lambda tc: None)
+        error = _parse(result)
 
-        def spy_gate(ctx_arg):
-            # Capture whether add_more_asked is already in ctx when gate is called
-            call_sequence.append({
-                "event": "gate_eval",
-                "add_more_asked": bool(ctx_arg.get("add_more_asked")),
-            })
-            return original_gate(ctx_arg)
-
-        with patch.object(BookingModeNode, "_evaluate_confirmation_gate", staticmethod(spy_gate)):
-            await node._post_tool_result("update_booking", {}, result_json)
-
-        assert len(call_sequence) == 1, "Gate should be called exactly once"
-        assert call_sequence[0]["add_more_asked"] is True, (
-            "Gate must see post-patch ctx with add_more_asked=True, "
-            "not pre-patch ctx where it was missing"
+        assert error.get("code") == "DISAMBIGUATION_PENDING", (
+            f"DISAMBIGUATION_PENDING must fire before SERVICES_MISSING. Got: {error.get('code')!r}"
         )
 
-    @pytest.mark.asyncio
-    async def test_cascade_clear_runs_after_gate(self):
-        """Cascade clear must run AFTER gate eval — if gate set _confirmation_shown=True
-        and an invalidating key was in the patch, cascade clear resets it to False."""
-        from agent.modes.booking_mode import BookingModeNode
+    def test_services_blocks_before_stylist(self):
+        """SERVICES_MISSING fires before STYLIST_MISSING when both are absent."""
+        bc = _make_full_bc(
+            confirmed=True,
+            last_services=[],
+            last_stylist=None,
+            no_preference_stylist=False,
+            pending_disambiguations=[],
+        )
+        mw = _make_middleware(bc)
+        result = mw.wrap_tool_call(_make_book_call(), lambda tc: None)
+        error = _parse(result)
 
-        node = BookingModeNode.__new__(BookingModeNode)
-        # Start with all fields complete so gate would return True
-        ctx = _make_complete_ctx()
-        node._booking_context = ctx
-
-        # Patch that both completes the booking AND includes an invalidating key
-        # (services changing with a complete booking triggers: gate→True, cascade→False)
-        patch_data = {
-            "last_services": ["Tinte"],  # invalidating key
-            "add_more_asked": True,
-        }
-        result_json = _make_update_booking_result(patch_data)
-
-        await node._post_tool_result("update_booking", {}, result_json)
-
-        # Gate fired (set True) but cascade cleared it back to False because
-        # last_services is an invalidating key.
-        assert ctx.get("_confirmation_shown") is False, (
-            "Cascade clear must run AFTER gate eval and reset _confirmation_shown "
-            "when invalidating keys are present in the patch"
+        assert error.get("code") == "SERVICES_MISSING", (
+            f"SERVICES_MISSING must fire before STYLIST_MISSING. Got: {error.get('code')!r}"
         )
 
-    @pytest.mark.asyncio
-    async def test_gate_sets_confirmation_shown_when_complete(self):
-        """When all fields complete and no invalidating keys → _confirmation_shown=True after gate."""
-        from agent.modes.booking_mode import BookingModeNode
+    def test_stylist_blocks_before_slot(self):
+        """STYLIST_MISSING fires before SLOT_MISSING when both are absent."""
+        bc = _make_full_bc(
+            confirmed=True,
+            last_stylist=None,
+            no_preference_stylist=False,
+            stylist_id=None,
+            selected_slot=None,
+            pending_disambiguations=[],
+        )
+        mw = _make_middleware(bc)
+        result = mw.wrap_tool_call(_make_book_call(), lambda tc: None)
+        error = _parse(result)
 
-        node = BookingModeNode.__new__(BookingModeNode)
-        ctx = {
-            "last_services": ["Manicura"],
-            "last_stylist": "Lucía",
-            "selected_slot": {"date": "2026-04-22", "time": "09:00"},
-            "customer_name": "Pedro",
-            "notes_asked": True,
-            "_confirmation_shown": False,
-            # add_more_asked missing — patch will supply it
-        }
-        node._booking_context = ctx
-
-        # Patch adds add_more_asked (non-invalidating) → gate fires, no cascade
-        patch_data = {"add_more_asked": True}
-        result_json = _make_update_booking_result(patch_data)
-
-        await node._post_tool_result("update_booking", {}, result_json)
-
-        assert ctx.get("_confirmation_shown") is True, (
-            "Gate must set _confirmation_shown=True when all fields present "
-            "and no invalidating keys in patch"
+        assert error.get("code") == "STYLIST_MISSING", (
+            f"STYLIST_MISSING must fire before SLOT_MISSING. Got: {error.get('code')!r}"
         )
 
-    @pytest.mark.asyncio
-    async def test_no_duplicate_write_path_via_build_flow_hint(self):
-        """_build_flow_hint side-effect and _post_tool_result gate must not diverge.
-
-        This test verifies that _build_flow_hint:216-217 (legacy side-effect, pending
-        removal in Batch 4) and the new gate produce consistent results when both
-        are called with the same complete context.
-
-        Both paths should set _confirmation_shown=True — no conflicting write.
-        """
-        from agent.modes.booking_mode import BookingModeNode
-
-        # Use the pure gate directly (post-patch simulation)
-        complete_ctx = _make_complete_ctx()
-
-        # Gate result
-        gate_result = BookingModeNode._evaluate_confirmation_gate(complete_ctx)
-        assert gate_result is True, "Gate must return True for complete booking"
-
-        # Legacy _build_flow_hint side-effect simulation:
-        # the legacy code sets _confirmation_shown=True when `not pending` (same conditions)
-        # We simulate the same logic to verify they agree.
-        legacy_ctx = _make_complete_ctx()  # fresh copy
-        has_pending = (
-            not legacy_ctx.get("last_services")
-            or not (legacy_ctx.get("last_stylist") or legacy_ctx.get("no_preference_stylist"))
-            or not legacy_ctx.get("selected_slot")
-            or not legacy_ctx.get("customer_name")
+    def test_slot_blocks_before_name(self):
+        """SLOT_MISSING fires before CUSTOMER_NAME_MISSING when both are absent."""
+        bc = _make_full_bc(
+            confirmed=True,
+            selected_slot=None,
+            customer_name=None,
+            pending_disambiguations=[],
         )
-        # _build_flow_hint also checks add_more_asked indirectly via "pending" list
-        if legacy_ctx.get("last_services") and not legacy_ctx.get("add_more_asked"):
-            has_pending = True
-        if not legacy_ctx.get("notes_asked"):
-            pass  # notes_asked doesn't block pending list in _build_flow_hint
+        mw = _make_middleware(bc)
+        result = mw.wrap_tool_call(_make_book_call(), lambda tc: None)
+        error = _parse(result)
 
-        # Both agree: gate returns True AND legacy "not pending" is True
-        # (no divergence pre-Batch 4)
-        assert not has_pending, (
-            "Legacy _build_flow_hint must also consider booking complete for the same ctx"
+        assert error.get("code") == "SLOT_MISSING", (
+            f"SLOT_MISSING must fire before CUSTOMER_NAME_MISSING. Got: {error.get('code')!r}"
         )
 
-    @pytest.mark.asyncio
-    async def test_gate_not_called_when_patch_is_empty(self):
-        """If patch is empty, the gate must NOT be called (no point evaluating)."""
-        from agent.modes.booking_mode import BookingModeNode
+    def test_name_blocks_before_confirmation(self):
+        """CUSTOMER_NAME_MISSING fires before CONFIRMATION_REQUIRED."""
+        bc = _make_full_bc(
+            confirmed=False,
+            customer_name=None,
+            pending_disambiguations=[],
+        )
+        mw = _make_middleware(bc)
+        result = mw.wrap_tool_call(_make_book_call(), lambda tc: None)
+        error = _parse(result)
 
-        node = BookingModeNode.__new__(BookingModeNode)
-        ctx = _make_complete_ctx()
-        node._booking_context = ctx
+        assert error.get("code") == "CUSTOMER_NAME_MISSING", (
+            f"CUSTOMER_NAME_MISSING must fire before CONFIRMATION_REQUIRED. Got: {error.get('code')!r}"
+        )
 
-        call_count = [0]
-        original_gate = BookingModeNode._evaluate_confirmation_gate
+    def test_confirmation_is_last_check(self):
+        """CONFIRMATION_REQUIRED fires only when all other data is present."""
+        bc = _make_full_bc(confirmed=False)  # all data present, just not confirmed
+        mw = _make_middleware(bc)
+        result = mw.wrap_tool_call(_make_book_call(), lambda tc: None)
+        error = _parse(result)
 
-        def counting_gate(ctx_arg):
-            call_count[0] += 1
-            return original_gate(ctx_arg)
+        assert error.get("code") in {"CONFIRMATION_REQUIRED", "CONFIRMATION_PENDING"}, (
+            f"Last check must be CONFIRMATION_REQUIRED. Got: {error.get('code')!r}"
+        )
 
-        # Empty patch (no _booking_context_patch key)
-        import json
-        result_json = json.dumps({"some_other_key": "value"})
 
-        with patch.object(BookingModeNode, "_evaluate_confirmation_gate", staticmethod(counting_gate)):
-            await node._post_tool_result("update_booking", {}, result_json)
+class TestConfirmationConstant:
+    """BookingInvariantMiddleware.CONFIRMATION_REQUIRED must be a stable class constant."""
 
-        assert call_count[0] == 0, (
-            "Gate must NOT be called when update_booking patch is empty — "
-            "avoid unnecessary evaluation and potential side-effects"
+    def test_confirmation_required_constant_exists(self):
+        """BookingInvariantMiddleware.CONFIRMATION_REQUIRED class attribute must exist."""
+        from agent.booking.middleware.invariants import BookingInvariantMiddleware
+        assert hasattr(BookingInvariantMiddleware, "CONFIRMATION_REQUIRED")
+
+    def test_confirmation_required_constant_value(self):
+        """CONFIRMATION_REQUIRED must equal 'CONFIRMATION_REQUIRED'."""
+        from agent.booking.middleware.invariants import BookingInvariantMiddleware
+        assert BookingInvariantMiddleware.CONFIRMATION_REQUIRED == "CONFIRMATION_REQUIRED"
+
+    def test_confirmation_code_matches_constant(self):
+        """The error code in the rejection must match CONFIRMATION_REQUIRED constant."""
+        from agent.booking.middleware.invariants import BookingInvariantMiddleware
+        bc = _make_full_bc(confirmed=False)
+        mw = _make_middleware(bc)
+        result = mw.wrap_tool_call(_make_book_call(), lambda tc: None)
+        error = _parse(result)
+
+        assert error.get("code") == BookingInvariantMiddleware.CONFIRMATION_REQUIRED
+
+
+class TestNoPendingConflict:
+    """When booking is complete and confirmed=True, NO error code must fire."""
+
+    def test_complete_booking_with_confirmed_passes(self):
+        """All preconditions satisfied → handler is called (no rejection)."""
+        from unittest.mock import MagicMock
+        bc = _make_full_bc(confirmed=True)
+        mw = _make_middleware(bc)
+        handler_called = []
+        expected = MagicMock(content=json.dumps({"booked": True}))
+        mw.wrap_tool_call(_make_book_call(), lambda tc: (handler_called.append(tc), expected)[1])
+
+        assert len(handler_called) == 1, "All preconditions met → handler must be called"
+
+    def test_no_confirmation_spurious_on_non_book_tool(self):
+        """Non-book tools (update_booking) must NOT trigger confirmation check."""
+        from unittest.mock import MagicMock
+        bc = _make_full_bc(confirmed=False)
+        mw = _make_middleware(bc)
+        handler_called = []
+        expected = MagicMock(content=json.dumps({"updated": True}))
+
+        tc = MagicMock()
+        tc.name = "update_booking"
+        tc.args = {}
+        tc.id = "tc-upd-001"
+
+        mw.wrap_tool_call(tc, lambda t: (handler_called.append(t), expected)[1])
+
+        assert len(handler_called) == 1, (
+            "update_booking must always pass through — no confirmation gate for it"
         )

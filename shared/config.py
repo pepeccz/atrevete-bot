@@ -240,6 +240,8 @@ class Settings(BaseSettings):
             "When False, falls back to legacy inline prompts for backward compatibility."
         ),
     )
+
+
     # Application Settings
     TIMEZONE: str = Field(default="Europe/Madrid")
     LOG_LEVEL: str = Field(default="INFO")

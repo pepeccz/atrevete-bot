@@ -17,7 +17,6 @@ from agent.middleware.token_tracking import (
     _extract_token_counts,
 )
 
-
 # ---------------------------------------------------------------------------
 # _extract_token_counts — pure helper
 # ---------------------------------------------------------------------------

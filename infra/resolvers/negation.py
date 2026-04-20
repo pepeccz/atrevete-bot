@@ -55,7 +55,8 @@ NEGATION_PHRASES: frozenset[str] = frozenset(
         "ya esta",
         "ya estamos",
         "ya estamos asi",  # colloquial variant: "ya estamos así"
-        "listo",
+        # "listo" removed — dual-role word: "listo" also means "ready" (affirmation).
+        # is_affirmation takes precedence for mutual exclusivity (REQ-5).
         "ya",
         "basta",
         "es todo",
