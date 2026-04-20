@@ -444,6 +444,36 @@ class TestBeforeModelHook:
             "abefore_model and before_model must produce the same grounding id"
         )
 
+    def test_before_model_uses_closure_state_not_runtime_param(self) -> None:
+        """R14 — the real ConversationState lives in the closure, NOT the runtime state param.
+
+        LangChain 1.x passes its own AgentState (typically just ``messages``) to the hook.
+        The BookingModeNode closure is the only source of truth for ``current_mode`` and
+        ``booking_context``. Regression test for the production bug where the hook read
+        ``current_mode`` from the runtime param (always None) and mode-guard silently
+        rejected every invocation.
+        """
+        real_state = _make_state(_complete_booking_context())
+        real_state["conversation_id"] = "real-conv"
+        # Runtime state mimics LangChain's internal AgentState: no booking fields.
+        runtime_state = {"messages": []}
+
+        middleware = BookingGroundingMiddleware(
+            get_state_fn=lambda: real_state,
+            mode_name="BOOKING",
+        )
+
+        result = middleware.before_model(runtime_state, runtime=None)
+
+        assert result is not None, (
+            "Hook must resolve ConversationState via closure, not via runtime state param. "
+            "If None, mode-guard is reading from runtime_state (which lacks current_mode)."
+        )
+        msg = result["messages"][0]
+        assert msg.id == "booking-grounding-real-conv", (
+            f"Grounding id must come from closure.conversation_id, got {msg.id!r}"
+        )
+
 
 class TestFailOpen:
     """

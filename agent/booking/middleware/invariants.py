@@ -346,7 +346,9 @@ class BookingInvariantMiddleware(AgentMiddleware):
         """Sync entry point — checks preconditions, calls handler(request) if all pass.
 
         Accepts a ``ToolCallRequest`` (AgentMiddleware API) where ``request.tool_call``
-        is the raw tool call dict and ``request.state`` is the current agent state.
+        is the raw tool call dict. State is resolved via ``get_state_fn`` closure
+        (not ``request.state``, which is the LangChain AgentState — missing
+        ``current_mode``, ``booking_context``).
 
         Legacy fallback: if ``request`` is a raw tool_call (old-style, e.g. MagicMock
         without a dict ``.state``), routes through ``_enforce`` (closure-based shim).
@@ -358,7 +360,17 @@ class BookingInvariantMiddleware(AgentMiddleware):
                 return rejection
             return handler(request)
 
-        rejection = self._enforce_core(request.tool_call, request.state)
+        try:
+            state = self._get_state_fn() or {}
+        except Exception as exc:
+            logger.error(
+                "booking_invariant.error",
+                extra={"booking_invariant.phase": "get_state_fn", "exception": str(exc)},
+                exc_info=True,
+            )
+            return handler(request)  # fail-open
+
+        rejection = self._enforce_core(request.tool_call, state)
         if rejection is not None:
             return rejection
         return handler(request)
@@ -368,7 +380,10 @@ class BookingInvariantMiddleware(AgentMiddleware):
         request: Any,
         handler: Callable,
     ) -> Any:
-        """Async entry point — checks preconditions, awaits handler(request) if all pass."""
+        """Async entry point — checks preconditions, awaits handler(request) if all pass.
+
+        State resolved via ``get_state_fn`` closure (see ``wrap_tool_call`` docstring).
+        """
         if not self._is_tool_call_request(request):
             # Legacy path: request IS the raw tool_call
             rejection = self._enforce(request)
@@ -376,7 +391,17 @@ class BookingInvariantMiddleware(AgentMiddleware):
                 return rejection
             return await handler(request)
 
-        rejection = self._enforce_core(request.tool_call, request.state)
+        try:
+            state = self._get_state_fn() or {}
+        except Exception as exc:
+            logger.error(
+                "booking_invariant.error",
+                extra={"booking_invariant.phase": "get_state_fn", "exception": str(exc)},
+                exc_info=True,
+            )
+            return await handler(request)  # fail-open
+
+        rejection = self._enforce_core(request.tool_call, state)
         if rejection is not None:
             return rejection
         return await handler(request)

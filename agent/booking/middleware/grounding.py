@@ -174,31 +174,42 @@ class BookingGroundingMiddleware(AgentMiddleware):
     def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Inject a ``[grounding]`` HumanMessage into state before each LLM call.
 
+        The ``state`` param is the LangChain AgentState (just ``messages``). The real
+        ConversationState (with ``current_mode``, ``booking_context``, etc.) is
+        resolved via the ``get_state_fn`` closure supplied by BookingModeNode.
+
         Returns a state update dict ``{"messages": [HumanMessage(...)]}`` so that
         LangGraph's ``add_messages`` reducer places/replaces the grounding message
         by stable id (dedup across turns). Returns ``None`` when mode-guard fires
         or on any error (fail-open).
-
-        Args:
-            state: Current AgentState dict (contains ``current_mode``, ``conversation_id``,
-                ``booking_context``, etc.).
-            runtime: LangGraph Runtime context (unused — grounding has no I/O).
         """
-        # Mode guard
-        if state.get("current_mode") != self._mode_name:
+        try:
+            real_state = self._get_state_fn() or {}
+        except Exception as exc:
+            logger.error(
+                "booking_grounding.error",
+                extra={
+                    "booking_grounding.exception": str(exc),
+                    "booking_grounding.phase": "get_state_fn",
+                },
+                exc_info=True,
+            )
+            return None
+
+        if real_state.get("current_mode") != self._mode_name:
             return None
 
         try:
-            directive = compute_next_prompt(state)
+            directive = compute_next_prompt(real_state)
         except Exception as exc:
-            _conv_id = state.get("conversation_id")
-            _turn = state.get("total_message_count", 0)
+            _conv_id = real_state.get("conversation_id")
+            _turn = real_state.get("total_message_count", 0)
             logger.error(
                 "booking_grounding.error",
                 extra={
                     "booking_grounding.exception": str(exc),
                     "booking_grounding.phase": "compute_next_prompt",
-                    "booking_grounding.mode": state.get("current_mode"),
+                    "booking_grounding.mode": real_state.get("current_mode"),
                     "booking_grounding.conversation_id": _conv_id,
                     "booking_grounding.turn": _turn,
                 },
@@ -207,25 +218,23 @@ class BookingGroundingMiddleware(AgentMiddleware):
             return None
 
         content = _render_directive(directive)
-        conv_id = state.get("conversation_id", "default")
+        conv_id = real_state.get("conversation_id", "default")
         msg_id = f"booking-grounding-{conv_id}"
         msg = HumanMessage(content=content, id=msg_id)
 
-        # Telemetry — dedup=True iff id already present in state messages
         existing = [
             m for m in state.get("messages", [])
             if getattr(m, "id", None) == msg_id
         ]
         import hashlib
         _directive_hash = hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()[:8]
-        _conv_id = conv_id
-        _turn = state.get("total_message_count", 0)
-        state_keys = list((state.get("booking_context") or {}).keys())
+        _turn = real_state.get("total_message_count", 0)
+        state_keys = list((real_state.get("booking_context") or {}).keys())
 
         logger.info(
             "booking_grounding.injected",
             extra={
-                "conversation_id": _conv_id,
+                "conversation_id": conv_id,
                 "turn": _turn,
                 "action": directive.action,
                 "mandatory_next_call": directive.mandatory_next_call,

@@ -718,3 +718,32 @@ class TestToolCallRequestAPI:
         error = _extract_error_from_tool_message(result)
         assert error.get("error") is True
         assert error.get("code") in {"CONFIRMATION_REQUIRED", "CONFIRMATION_PENDING"}
+
+    def test_wrap_tool_call_uses_closure_state_not_request_state(self) -> None:
+        """R14 — ConversationState lives in the closure, NOT ``request.state``.
+
+        LangChain 1.x exposes its internal AgentState as ``request.state`` (typically
+        just ``messages`` — no ``current_mode`` or ``booking_context``). The invariant
+        middleware must resolve the real ConversationState via the closure. Regression
+        test for the production bug where mode-guard read ``request.state.current_mode``
+        (always None) and silently let every tool call through without enforcement.
+        """
+        # Closure state: BOOKING mode with missing confirmation — invariant MUST reject.
+        closure_state = _booking_state_with_context(confirmed=False)
+        mw = self._make_middleware(closure_state)
+
+        # Request state: LangChain-style AgentState — just messages, no booking fields.
+        tc = _make_tool_call("book")
+        empty_runtime_state = {"messages": []}
+        req = _make_request(tc, empty_runtime_state)
+
+        handler_called = []
+        result = mw.wrap_tool_call(req, lambda r: handler_called.append(r))
+
+        assert len(handler_called) == 0, (
+            "Handler MUST NOT be called — invariant must read closure_state (confirmed=False) "
+            "and reject, not read request.state (empty AgentState, mode-guard pass-through)."
+        )
+        error = _extract_error_from_tool_message(result)
+        assert error.get("error") is True
+        assert error.get("code") in {"CONFIRMATION_REQUIRED", "CONFIRMATION_PENDING"}
