@@ -45,6 +45,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
 
 from agent.booking.models import ServiceCatalogEntry
@@ -71,7 +72,7 @@ def _has_stylist(bc: dict) -> bool:
     return bool(bc.get("last_stylist") or bc.get("no_preference_stylist"))
 
 
-class BookingInvariantMiddleware:
+class BookingInvariantMiddleware(AgentMiddleware):
     """Pre-tool precondition gate for the BOOKING flow.
 
     Args:
@@ -91,6 +92,7 @@ class BookingInvariantMiddleware:
         get_catalog_fn: Callable[[], list[ServiceCatalogEntry]],
         mode_name: str = "BOOKING",
     ) -> None:
+        super().__init__()
         self._get_state_fn = get_state_fn
         self._get_catalog_fn = get_catalog_fn
         self._mode_name = mode_name
@@ -223,18 +225,16 @@ class BookingInvariantMiddleware:
             )
         return f"Precondición fallida: {code}"
 
-    def _enforce(self, tool_call: Any) -> ToolMessage | None:
-        """Run precondition checks. Returns rejection ToolMessage or None on pass."""
-        try:
-            state = self._get_state_fn()
-        except Exception as exc:
-            logger.error(
-                "booking_invariant.error",
-                extra={"booking_invariant.phase": "get_state_fn", "exception": str(exc)},
-                exc_info=True,
-            )
-            return None  # fail-open
+    def _enforce_core(self, tool_call: Any, state: dict) -> ToolMessage | None:
+        """Pure precondition engine. State provided by caller — no closure in hot path.
 
+        Returns rejection ToolMessage or None on pass. Never raises — catches all
+        exceptions and fails open (pass-through).
+
+        Args:
+            tool_call: Dict-like or MagicMock with ``name``, ``args``, ``id`` (duck-typed).
+            state: Current ConversationState dict (mode, booking_context, etc.).
+        """
         # Mode guard
         if state.get("current_mode") != self._mode_name:
             return None
@@ -308,29 +308,78 @@ class BookingInvariantMiddleware:
         )
         return None  # pass through
 
+    def _enforce(self, tool_call: Any) -> ToolMessage | None:
+        """Legacy shim: reads state via ``self._get_state_fn()``, delegates to ``_enforce_core``.
+
+        Kept for backward-compat with existing unit tests that call _enforce/wrap_tool_call
+        with a raw tool_call (not a ToolCallRequest). Tagged for removal after test migration.
+        """
+        try:
+            state = self._get_state_fn()
+        except Exception as exc:
+            logger.error(
+                "booking_invariant.error",
+                extra={"booking_invariant.phase": "get_state_fn", "exception": str(exc)},
+                exc_info=True,
+            )
+            return None  # fail-open
+
+        return self._enforce_core(tool_call, state)
+
     # ── Middleware interface ────────────────────────────────────────────────
+
+    @staticmethod
+    def _is_tool_call_request(request: Any) -> bool:
+        """Return True iff request is a ToolCallRequest-shaped object (has .tool_call and .state as dict).
+
+        MagicMock objects pass hasattr checks but their .state returns a MagicMock, not a dict.
+        SimpleNamespace objects with state=dict(...) also qualify.
+        This allows the legacy callsite path to remain working until Phase E migration.
+        """
+        return isinstance(getattr(request, "state", None), dict)
 
     def wrap_tool_call(
         self,
-        tool_call: Any,
+        request: Any,
         handler: Callable,
     ) -> Any:
-        """Sync entry point — checks preconditions, calls handler if all pass."""
-        rejection = self._enforce(tool_call)
+        """Sync entry point — checks preconditions, calls handler(request) if all pass.
+
+        Accepts a ``ToolCallRequest`` (AgentMiddleware API) where ``request.tool_call``
+        is the raw tool call dict and ``request.state`` is the current agent state.
+
+        Legacy fallback: if ``request`` is a raw tool_call (old-style, e.g. MagicMock
+        without a dict ``.state``), routes through ``_enforce`` (closure-based shim).
+        """
+        if not self._is_tool_call_request(request):
+            # Legacy path: request IS the raw tool_call
+            rejection = self._enforce(request)
+            if rejection is not None:
+                return rejection
+            return handler(request)
+
+        rejection = self._enforce_core(request.tool_call, request.state)
         if rejection is not None:
             return rejection
-        return handler(tool_call)
+        return handler(request)
 
     async def awrap_tool_call(
         self,
-        tool_call: Any,
+        request: Any,
         handler: Callable,
     ) -> Any:
-        """Async entry point — checks preconditions, awaits handler if all pass."""
-        rejection = self._enforce(tool_call)
+        """Async entry point — checks preconditions, awaits handler(request) if all pass."""
+        if not self._is_tool_call_request(request):
+            # Legacy path: request IS the raw tool_call
+            rejection = self._enforce(request)
+            if rejection is not None:
+                return rejection
+            return await handler(request)
+
+        rejection = self._enforce_core(request.tool_call, request.state)
         if rejection is not None:
             return rejection
-        return await handler(tool_call)
+        return await handler(request)
 
 
 __all__ = ["BookingInvariantMiddleware"]

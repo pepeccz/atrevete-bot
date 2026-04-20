@@ -295,6 +295,156 @@ class TestNoStateMutation:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# TestBeforeModelHook — new AgentMiddleware-compatible hook (C1–C8)
+# ---------------------------------------------------------------------------
+
+
+class TestBeforeModelHook:
+    """Tests for the new before_model(state, runtime) -> dict | None hook."""
+
+    def test_before_model_returns_state_update_with_stable_id(self) -> None:
+        """R4 — before_model returns {messages: [HumanMessage]} with stable id.
+
+        RED: current before_model(messages, state) signature will fail with TypeError.
+        GREEN after C2 ports the hook.
+        """
+        state = _make_state(_complete_booking_context())
+        state["conversation_id"] = "abc"
+        middleware = BookingGroundingMiddleware(
+            get_state_fn=lambda: state,
+            mode_name="BOOKING",
+        )
+
+        result = middleware.before_model(state, runtime=None)
+
+        assert result is not None, "before_model must return a dict, not None, in BOOKING mode"
+        assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+        assert "messages" in result, f"Expected 'messages' key in result, got {result.keys()}"
+
+        messages = result["messages"]
+        assert len(messages) == 1, f"Expected exactly 1 message, got {len(messages)}"
+
+        msg = messages[0]
+        assert hasattr(msg, "content"), "Message must have .content attribute"
+        assert msg.content.startswith("[grounding]"), (
+            f"Message content must start with '[grounding]', got: {msg.content[:50]!r}"
+        )
+        assert msg.id == "booking-grounding-abc", (
+            f"Message id must be 'booking-grounding-abc', got: {msg.id!r}"
+        )
+
+    def test_before_model_stable_id_across_turns(self) -> None:
+        """R5 — stable id means add_messages reducer deduplicates grounding messages.
+
+        Two sequential before_model calls → both grounding messages have the same id →
+        after add_messages reduce, only 1 grounding message remains in state.
+        """
+
+        state = _make_state(_complete_booking_context())
+        state["conversation_id"] = "abc"
+        middleware = BookingGroundingMiddleware(
+            get_state_fn=lambda: state,
+            mode_name="BOOKING",
+        )
+
+        result1 = middleware.before_model(state, runtime=None)
+        result2 = middleware.before_model(state, runtime=None)
+
+        assert result1 is not None and result2 is not None
+
+        msg1 = result1["messages"][0]
+        msg2 = result2["messages"][0]
+
+        # Both must have the same stable id
+        assert msg1.id == msg2.id, (
+            f"Grounding ids must be identical across turns: {msg1.id!r} vs {msg2.id!r}"
+        )
+        assert msg1.id == "booking-grounding-abc"
+
+        # Simulate add_messages reducer: messages with same id replace each other
+        accumulated: list = []
+        # Turn 1
+        for m in result1["messages"]:
+            # add_messages: if same id exists, replace; else append
+            replaced = False
+            for i, existing in enumerate(accumulated):
+                if getattr(existing, "id", None) == getattr(m, "id", None):
+                    accumulated[i] = m
+                    replaced = True
+                    break
+            if not replaced:
+                accumulated.append(m)
+        # Turn 2
+        for m in result2["messages"]:
+            replaced = False
+            for i, existing in enumerate(accumulated):
+                if getattr(existing, "id", None) == getattr(m, "id", None):
+                    accumulated[i] = m
+                    replaced = True
+                    break
+            if not replaced:
+                accumulated.append(m)
+
+        grounding_count = sum(
+            1 for m in accumulated
+            if hasattr(m, "content")
+            and isinstance(m.content, str)
+            and m.content.startswith("[grounding]")
+        )
+        assert grounding_count == 1, (
+            f"After two add_messages reduces, expected 1 grounding message, got {grounding_count}"
+        )
+
+    def test_before_model_returns_none_when_mode_not_booking(self) -> None:
+        """R6 — before_model returns None when current_mode != BOOKING."""
+        state = _make_state(_complete_booking_context(), mode="GENERAL")
+        middleware = BookingGroundingMiddleware(
+            get_state_fn=lambda: state,
+            mode_name="BOOKING",
+        )
+        result = middleware.before_model(state, runtime=None)
+        assert result is None, (
+            f"Expected None for non-BOOKING mode, got {result!r}"
+        )
+
+    def test_before_model_returns_none_on_compute_next_prompt_error(self) -> None:
+        """R7 — before_model returns None (fail-open) when compute_next_prompt raises."""
+        state = _make_state(_complete_booking_context())
+        middleware = BookingGroundingMiddleware(
+            get_state_fn=lambda: state,
+            mode_name="BOOKING",
+        )
+        with patch(
+            "agent.booking.middleware.grounding.compute_next_prompt",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = middleware.before_model(state, runtime=None)
+
+        assert result is None, (
+            f"Expected None when compute_next_prompt raises, got {result!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_abefore_model_delegates_to_sync(self) -> None:
+        """R4 — abefore_model async variant delegates to before_model."""
+        state = _make_state(_complete_booking_context())
+        state["conversation_id"] = "abc"
+        middleware = BookingGroundingMiddleware(
+            get_state_fn=lambda: state,
+            mode_name="BOOKING",
+        )
+
+        async_result = await middleware.abefore_model(state, runtime=None)
+        sync_result = middleware.before_model(state, runtime=None)
+
+        assert async_result is not None, "abefore_model must return same as before_model"
+        # Both should produce grounding messages with same id
+        assert async_result["messages"][0].id == sync_result["messages"][0].id, (
+            "abefore_model and before_model must produce the same grounding id"
+        )
+
+
 class TestFailOpen:
     """
     Given compute_next_prompt raises a RuntimeError

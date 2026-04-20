@@ -10,8 +10,11 @@ REQs covered: REQ-13, REQ-14, REQ-15, REQ-16, REQ-17, REQ-18, REQ-19, REQ-20
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 # This import will raise ModuleNotFoundError in RED phase.
 # Do NOT add @pytest.mark.xfail — the failure IS the test signal.
@@ -568,3 +571,150 @@ class TestInvariantFailOpen:
         result = middleware.wrap_tool_call(tc, lambda t: expected_result)
 
         assert result is expected_result
+
+
+# ---------------------------------------------------------------------------
+# TestToolCallRequestAPI — new AgentMiddleware-compatible hook (D2–D6)
+# ---------------------------------------------------------------------------
+
+
+def _make_request(tc, state, runtime=None):
+    """Build a ToolCallRequest-shaped SimpleNamespace for the new wrap_tool_call API."""
+    return SimpleNamespace(tool_call=tc, state=state, runtime=runtime)
+
+
+def _booking_state_with_context(**bc_overrides) -> dict:
+    """Return a minimal BOOKING state with a fully valid booking context."""
+    bc = {
+        "_booking_completed": False,
+        "confirmed": True,
+        "_confirmation_shown": True,
+        "pending_disambiguations": [],
+        "last_services": ["Corte Largo"],
+        "add_more_asked": True,
+        "last_stylist": "Ana",
+        "stylist_id": "stylist-uuid-001",
+        "no_preference_stylist": False,
+        "offered_slots": [{"start": "2026-04-21T10:00:00"}],
+        "selected_slot": {"start": "2026-04-21T10:00:00"},
+        "customer_name": "María García",
+        "notes_state": "skipped",
+    }
+    bc.update(bc_overrides)
+    return {
+        "current_mode": "BOOKING",
+        "booking_context": bc,
+        "conversation_id": "conv-new-api-001",
+        "total_message_count": 2,
+    }
+
+
+class TestToolCallRequestAPI:
+    """R8-R11 — new wrap_tool_call(request, handler) API with ToolCallRequest-shaped objects."""
+
+    def _make_middleware(self, state: dict) -> BookingInvariantMiddleware:
+        return BookingInvariantMiddleware(
+            get_state_fn=lambda: state,
+            get_catalog_fn=lambda: [],
+            mode_name="BOOKING",
+        )
+
+    def test_wrap_tool_call_rejects_book_missing_confirmation(self) -> None:
+        """D2/R8 — wrap_tool_call(ToolCallRequest, handler) rejects book when confirmed=False.
+
+        RED: before D3, new-style requests fall into legacy path (no state dict) and
+             won't use _enforce_core. After D3: _is_tool_call_request returns True
+             for SimpleNamespace with state=dict.
+        GREEN: confirmed rejection with CONFIRMATION_REQUIRED code.
+        """
+        state = _booking_state_with_context(confirmed=False)
+        mw = self._make_middleware(state)
+
+        tc = _make_tool_call("book")
+        req = _make_request(tc, state)
+
+        handler_called = []
+        result = mw.wrap_tool_call(req, lambda r: handler_called.append(r))
+
+        assert len(handler_called) == 0, "Handler must NOT be called when confirmed=False"
+        error = _extract_error_from_tool_message(result)
+        assert error.get("error") is True
+        assert error.get("code") in {"CONFIRMATION_REQUIRED", "CONFIRMATION_PENDING"}, (
+            f"Expected CONFIRMATION_REQUIRED/PENDING, got {error.get('code')!r}"
+        )
+
+    def test_wrap_tool_call_mode_guard_passes_through(self) -> None:
+        """D4/R9 — when current_mode != BOOKING, handler is called (no rejection)."""
+        state = _booking_state_with_context(confirmed=False)
+        state["current_mode"] = "GENERAL"  # not BOOKING
+        mw = self._make_middleware(state)
+
+        tc = _make_tool_call("book")
+        req = _make_request(tc, state)
+
+        handler_called = []
+        expected = MagicMock(content=json.dumps({"success": True}))
+        result = mw.wrap_tool_call(req, lambda r: (handler_called.append(r), expected)[1])
+
+        assert len(handler_called) == 1, (
+            "Handler MUST be called when mode != BOOKING (mode guard pass-through)"
+        )
+        assert result is expected
+
+    def test_wrap_tool_call_all_preconditions_pass(self) -> None:
+        """All preconditions satisfied → handler is called, result propagated."""
+        state = _booking_state_with_context()  # confirmed=True, all fields present
+        mw = self._make_middleware(state)
+
+        tc = _make_tool_call("book")
+        req = _make_request(tc, state)
+
+        handler_called = []
+        expected = MagicMock(content=json.dumps({"booked": True}))
+        result = mw.wrap_tool_call(req, lambda r: (handler_called.append(r), expected)[1])
+
+        assert len(handler_called) == 1, "Handler must be called when all preconditions pass"
+        assert result is expected
+
+    @pytest.mark.asyncio
+    async def test_awrap_tool_call_passes_through_on_no_rejection(self) -> None:
+        """D5/R11 — awrap_tool_call awaits handler when all preconditions pass."""
+        state = _booking_state_with_context()  # confirmed=True, all fields present
+        mw = self._make_middleware(state)
+
+        tc = _make_tool_call("book")
+        req = _make_request(tc, state)
+
+        handler_called = []
+        expected = MagicMock(content=json.dumps({"booked": True}))
+
+        async def _fake_async_handler(r):
+            handler_called.append(r)
+            return expected
+
+        result = await mw.awrap_tool_call(req, _fake_async_handler)
+
+        assert len(handler_called) == 1, "Async handler must be awaited when all preconditions pass"
+        assert result is expected
+
+    @pytest.mark.asyncio
+    async def test_awrap_tool_call_rejects_when_precondition_fails(self) -> None:
+        """D6/R8 — awrap_tool_call returns rejection ToolMessage without calling handler."""
+        state = _booking_state_with_context(confirmed=False)
+        mw = self._make_middleware(state)
+
+        tc = _make_tool_call("book")
+        req = _make_request(tc, state)
+
+        handler_called = []
+
+        async def _fake_async_handler(r):
+            handler_called.append(r)
+            return MagicMock(content=json.dumps({"booked": True}))
+
+        result = await mw.awrap_tool_call(req, _fake_async_handler)
+
+        assert len(handler_called) == 0, "Handler must NOT be called when precondition fails"
+        error = _extract_error_from_tool_message(result)
+        assert error.get("error") is True
+        assert error.get("code") in {"CONFIRMATION_REQUIRED", "CONFIRMATION_PENDING"}

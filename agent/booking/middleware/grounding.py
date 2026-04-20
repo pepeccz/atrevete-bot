@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
 from agent.booking.grounding import compute_next_prompt
@@ -41,7 +42,31 @@ logger = logging.getLogger(__name__)
 _GROUNDING_PREFIX = "[grounding]"
 
 
-class BookingGroundingMiddleware:
+def _render_directive(directive: Any) -> str:
+    """Render a GroundingInstruction directive into a string for the HumanMessage content.
+
+    Extracted so both ``_inject`` (legacy path) and ``before_model`` (hook path)
+    share the same rendering logic without duplication.
+    """
+    import json as _json
+
+    lines = [
+        _GROUNDING_PREFIX,
+        f"action={directive.action}",
+        directive.reason,
+    ]
+    if directive.mandatory_next_call:
+        lines.append(f"NEXT_TOOL_REQUIRED={directive.mandatory_next_call}")
+    if directive.data:
+        try:
+            ctx_str = _json.dumps(directive.data, ensure_ascii=False, default=str)
+            lines.append(f"context={ctx_str}")
+        except Exception:
+            pass  # context rendering is best-effort
+    return "\n".join(lines)
+
+
+class BookingGroundingMiddleware(AgentMiddleware):
     """Inject a fresh ``[grounding]`` HumanMessage before each LLM model call.
 
     Args:
@@ -58,6 +83,7 @@ class BookingGroundingMiddleware:
         get_state_fn: Any,
         mode_name: str = "BOOKING",
     ) -> None:
+        super().__init__()
         self._get_state_fn = get_state_fn
         self._mode_name = mode_name
 
@@ -98,23 +124,8 @@ class BookingGroundingMiddleware:
             )
             return messages
 
-        # Build message content from directive
-        # NOTE: GroundingInstruction uses .reason (not .directive) and .data (not .context)
-        lines = [
-            _GROUNDING_PREFIX,
-            f"action={directive.action}",
-            directive.reason,
-        ]
-        if directive.mandatory_next_call:
-            lines.append(f"NEXT_TOOL_REQUIRED={directive.mandatory_next_call}")
-        if directive.data:
-            import json
-            try:
-                ctx_str = json.dumps(directive.data, ensure_ascii=False, default=str)
-                lines.append(f"context={ctx_str}")
-            except Exception:
-                pass  # context rendering is best-effort
-        content = "\n".join(lines)
+        # Build message content from directive using shared renderer
+        content = _render_directive(directive)
 
         new_msg = HumanMessage(content=content)
         msgs = list(messages)
@@ -160,9 +171,74 @@ class BookingGroundingMiddleware:
 
     # ── AgentMiddleware-compatible interface ────────────────────────────────
 
-    def before_model(self, messages: list, state: dict) -> list:
-        """Alias for _inject — hook called before each LLM invocation."""
-        return self._inject(messages, state)
+    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Inject a ``[grounding]`` HumanMessage into state before each LLM call.
+
+        Returns a state update dict ``{"messages": [HumanMessage(...)]}`` so that
+        LangGraph's ``add_messages`` reducer places/replaces the grounding message
+        by stable id (dedup across turns). Returns ``None`` when mode-guard fires
+        or on any error (fail-open).
+
+        Args:
+            state: Current AgentState dict (contains ``current_mode``, ``conversation_id``,
+                ``booking_context``, etc.).
+            runtime: LangGraph Runtime context (unused — grounding has no I/O).
+        """
+        # Mode guard
+        if state.get("current_mode") != self._mode_name:
+            return None
+
+        try:
+            directive = compute_next_prompt(state)
+        except Exception as exc:
+            _conv_id = state.get("conversation_id")
+            _turn = state.get("total_message_count", 0)
+            logger.error(
+                "booking_grounding.error",
+                extra={
+                    "booking_grounding.exception": str(exc),
+                    "booking_grounding.phase": "compute_next_prompt",
+                    "booking_grounding.mode": state.get("current_mode"),
+                    "booking_grounding.conversation_id": _conv_id,
+                    "booking_grounding.turn": _turn,
+                },
+                exc_info=True,
+            )
+            return None
+
+        content = _render_directive(directive)
+        conv_id = state.get("conversation_id", "default")
+        msg_id = f"booking-grounding-{conv_id}"
+        msg = HumanMessage(content=content, id=msg_id)
+
+        # Telemetry — dedup=True iff id already present in state messages
+        existing = [
+            m for m in state.get("messages", [])
+            if getattr(m, "id", None) == msg_id
+        ]
+        import hashlib
+        _directive_hash = hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()[:8]
+        _conv_id = conv_id
+        _turn = state.get("total_message_count", 0)
+        state_keys = list((state.get("booking_context") or {}).keys())
+
+        logger.info(
+            "booking_grounding.injected",
+            extra={
+                "conversation_id": _conv_id,
+                "turn": _turn,
+                "action": directive.action,
+                "mandatory_next_call": directive.mandatory_next_call,
+                "state_snapshot_keys": state_keys,
+                "directive_hash": _directive_hash,
+                "dedup": bool(existing),
+            },
+        )
+        return {"messages": [msg]}
+
+    async def abefore_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Async delegator — grounding has no I/O, sync body is safe inside coroutine."""
+        return self.before_model(state, runtime)
 
 
 __all__ = ["BookingGroundingMiddleware"]
