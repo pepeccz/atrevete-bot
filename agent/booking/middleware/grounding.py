@@ -139,16 +139,20 @@ class BookingGroundingMiddleware:
         _turn = state.get("total_message_count", 0)
         state_keys = list((state.get("booking_context") or {}).keys())
 
-        logger.debug(
+        # Stable directive hash for dedup / correlation across turns
+        import hashlib
+        _directive_hash = hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()[:8]
+
+        logger.info(
             "booking_grounding.injected",
             extra={
-                "booking_grounding.conversation_id": _conv_id,
-                "booking_grounding.turn": _turn,
-                "booking_grounding.action": directive.action,
-                "booking_grounding.next_action": directive.mandatory_next_call,
-                "booking_grounding.mandatory_next_call": directive.mandatory_next_call,
-                "booking_grounding.state_snapshot_keys": state_keys,
-                "booking_grounding.dedup": dedup,
+                "conversation_id": _conv_id,
+                "turn": _turn,
+                "action": directive.action,
+                "mandatory_next_call": directive.mandatory_next_call,
+                "state_snapshot_keys": state_keys,
+                "directive_hash": _directive_hash,
+                "dedup": dedup,
             },
         )
 

@@ -285,24 +285,24 @@ class BookingInvariantMiddleware:
             message = self._build_rejection_message(error_code, bc)
             # Normalize code (strip payload after : for AUDIENCE_REQUIRED:svc)
             code_key = error_code.split(":")[0]
-            logger.debug(
+            logger.info(
                 "booking_invariant.rejected",
                 extra={
-                    "booking_invariant.conversation_id": _conv_id,
-                    "booking_invariant.turn": _turn,
-                    "booking_invariant.tool": tool_name,
-                    "booking_invariant.code": code_key,
-                    "booking_invariant.state_context": list(bc.keys()),
+                    "conversation_id": _conv_id,
+                    "turn": _turn,
+                    "tool": tool_name,
+                    "code": code_key,
+                    "state_context": list(bc.keys()),
                 },
             )
             return _make_rejection(tool_call_id, code_key, message)
 
-        logger.debug(
+        logger.info(
             "booking_invariant.passed",
             extra={
-                "booking_invariant.conversation_id": _conv_id,
-                "booking_invariant.turn": _turn,
-                "booking_invariant.tool": tool_name,
+                "conversation_id": _conv_id,
+                "turn": _turn,
+                "tool": tool_name,
             },
         )
         return None  # pass through

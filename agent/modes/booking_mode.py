@@ -567,12 +567,12 @@ class BookingModeNode(BaseModeNode):
 
         # Resolve the capability flag (Redis override takes precedence over global)
         use_capability, flag_source = resolve_booking_capability_flag(conversation_id)
-        logger.debug(
+        logger.info(
             "capability.flag.effective",
             extra={
                 "conversation_id": conversation_id,
-                "capability.flag.on": use_capability,
-                "capability.flag.source": flag_source,
+                "source": flag_source,
+                "on": use_capability,
             },
         )
 
