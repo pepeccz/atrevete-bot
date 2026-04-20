@@ -313,20 +313,24 @@ class BookingModeNode(BaseModeNode):
                     _exc,
                 )
 
-        # 1f. Add-more negation gate — runs when directive is ASK_MORE_SERVICES and user
-        # sends a negation ("Nada mas", "nope", "ya está"). is_negation() was previously
-        # wired only inside the _confirmation_shown branch, leaving the 'algo más?' step
-        # dependent on LLM compliance and causing a production loop on "Nada mas".
-        if not booking_context.get("add_more_asked") and _user_msg_raw:
+        # 1f. Add-more negation gate — sole writer for add_more_asked (B.2.6).
+        # Replaced direct mutation with patch_pipeline.resolve_add_more_negation
+        # which returns a metadata-rich ResolverResult and applies it via
+        # apply_resolver_patch (single mutation channel, structured telemetry).
+        if _user_msg_raw:
             try:
-                _more_directive = compute_next_prompt(state)
-                if _more_directive.action == "ASK_MORE_SERVICES" and is_negation(_user_msg_raw)[0]:
-                    booking_context["add_more_asked"] = True
-                    logger.info(
-                        "booking_negation.add_more_resolved | conversation=%s | msg=%r",
-                        state.get("conversation_id", "unknown"),
-                        _user_msg_raw,
-                    )
+                from agent.booking.patch_pipeline import (
+                    apply_resolver_patch,
+                    resolve_add_more_negation,
+                )
+
+                _negation_result = resolve_add_more_negation(_user_msg_raw, state, booking_context)
+                apply_resolver_patch(
+                    booking_context,
+                    _negation_result,
+                    conversation_id=str(state.get("conversation_id", "")),
+                    turn=state.get("total_message_count", 0),
+                )
             except Exception as _exc:
                 logger.warning(
                     "booking_negation.add_more_resolver_error | conversation=%s | error=%s",
@@ -622,11 +626,6 @@ class BookingModeNode(BaseModeNode):
             svc_names = tool_args.get("service_names") or []
             if svc_names:
                 mode_context["last_services"] = svc_names
-                # Auto-skip "algo más?" if opening message had complete intent
-                if not mode_context.get("add_more_asked"):
-                    if mode_context.get("preferred_date_hint") or mode_context.get("preferred_stylist_name"):
-                        mode_context["add_more_asked"] = True
-                        logger.info("_post_tool_result: auto-set add_more_asked (complete-intent shortcut)")
             # Capture total duration from result
             total_dur = result_dict.get("total_duration_minutes")
             if total_dur:

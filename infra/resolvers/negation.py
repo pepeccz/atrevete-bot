@@ -62,6 +62,10 @@ NEGATION_PHRASES: frozenset[str] = frozenset(
         "basta",
         "es todo",
         "eso es todo",
+        # B.2 additions — colloquial refusals common in Rioplatense/Argentine Spanish
+        "ninguna",            # "ninguna más" → normalized "ninguna"
+        "paso",               # "paso" (informal negation, "I'll pass")
+        "no quiero nada mas",  # extended refusal phrase (> 3 tokens; added as exact)
     ]
 )
 
