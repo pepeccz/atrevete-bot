@@ -681,3 +681,121 @@ class TestUpdateBookingAudienceAmbiguitySignaledInResponse:
             f"Regression: next_step must describe the ambiguity so the LLM asks the "
             f"customer. Got next_step={result['next_step']!r}"
         )
+
+
+class TestUpdateBookingPendingDisambiguationsShape:
+    """Phase 2 RED → GREEN: writer must emit pending_disambiguations as list[dict].
+
+    Expected RED on master: writer uses ``_audience_ambiguity`` (scalar dict).
+    Turns GREEN after Phase 2 rename + shape migration.
+    """
+
+    @pytest.mark.asyncio
+    async def test_writer_emits_pending_disambiguations_as_list(self):
+        """update_booking must write patch['pending_disambiguations'] as list[dict],
+        not as a scalar dict under '_audience_ambiguity'.
+
+        Acceptance:
+        - 'pending_disambiguations' key is present in the patch.
+        - Value is a list with at least one item.
+        - First item has required keys: family, resolved_as, resolved_audience, variants.
+        - '_audience_ambiguity' key must NOT be present (old name fully removed).
+        """
+        mock_svc = MagicMock()
+        mock_svc.name = "Corte Señora"
+        mock_svc.audience = "adult_female"
+        mock_svc.category = MagicMock(value="cabello")
+        mock_svc.duration_minutes = 45
+
+        with (
+            patch(
+                "agent.tools.booking_data_tools._find_audience_siblings_for_signal",
+                new_callable=AsyncMock,
+                return_value=["Corte Caballero", "Corte Niño"],
+            ),
+            patch(
+                "agent.tools.availability_tools._resolve_service_by_name",
+                new_callable=AsyncMock,
+                return_value=mock_svc,
+            ),
+            patch(
+                "agent.tools.availability_tools._get_active_stylists_for_category",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await update_booking.coroutine(
+                services=["Corte Señora"],
+                _current_context={},
+            )
+
+        ctx_patch = result["_booking_context_patch"]
+
+        assert "_audience_ambiguity" not in ctx_patch, (
+            f"Old key '_audience_ambiguity' must NOT be present after Phase 2 rename. "
+            f"Patch keys: {list(ctx_patch.keys())}"
+        )
+        assert "pending_disambiguations" in ctx_patch, (
+            f"Expected 'pending_disambiguations' in patch after Phase 2 rename. "
+            f"Patch keys: {list(ctx_patch.keys())}"
+        )
+        disambiguations = ctx_patch["pending_disambiguations"]
+        assert isinstance(disambiguations, list), (
+            f"pending_disambiguations must be list[dict], got {type(disambiguations)!r}: "
+            f"{disambiguations!r}"
+        )
+        assert len(disambiguations) >= 1, (
+            f"pending_disambiguations must contain at least one item. Got {disambiguations!r}"
+        )
+        item = disambiguations[0]
+        for key in ("family", "resolved_as", "resolved_audience", "variants"):
+            assert key in item, (
+                f"pending_disambiguations[0] missing key '{key}'. Item: {item!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_clear_path_emits_empty_list(self):
+        """When service_audience_hint is set, writer must clear pending_disambiguations
+        to [] (empty list), not None (old clear path used None).
+        """
+        mock_svc = MagicMock()
+        mock_svc.name = "Corte Señora"
+        mock_svc.audience = "adult_female"
+        mock_svc.category = MagicMock(value="cabello")
+        mock_svc.duration_minutes = 45
+
+        with (
+            patch(
+                "agent.tools.booking_data_tools._find_audience_siblings_for_signal",
+                new_callable=AsyncMock,
+                return_value=["Corte Caballero"],
+            ),
+            patch(
+                "agent.tools.availability_tools._resolve_service_by_name",
+                new_callable=AsyncMock,
+                return_value=mock_svc,
+            ),
+            patch(
+                "agent.tools.availability_tools._get_active_stylists_for_category",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await update_booking.coroutine(
+                services=["Corte Señora"],
+                service_audience_hint="adult_female",
+                _current_context={},
+            )
+
+        ctx_patch = result["_booking_context_patch"]
+
+        assert "_audience_ambiguity" not in ctx_patch, (
+            "Old key '_audience_ambiguity' must not be present after Phase 2 rename."
+        )
+        assert "pending_disambiguations" in ctx_patch, (
+            f"Clear path must write pending_disambiguations. Patch keys: {list(ctx_patch.keys())}"
+        )
+        assert ctx_patch["pending_disambiguations"] == [], (
+            f"Clear path must set pending_disambiguations=[], got "
+            f"{ctx_patch['pending_disambiguations']!r}"
+        )
