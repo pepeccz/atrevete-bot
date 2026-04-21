@@ -498,6 +498,62 @@ class TestMidSessionSchemaMigration:
 # ---------------------------------------------------------------------------
 
 
+class TestServiceResolverRealCatalog:
+    """Phase 5 of catalog-loader SDD — exercises the production loader path.
+
+    No ``state["service_catalog"]`` is injected: the resolver MUST pull active
+    services from the shared TTL cache (which in turn queries the seeded test
+    database). This proves the end-to-end production wiring that previously
+    stayed dead because ``_load_catalog_from_cache()`` was a stub.
+    """
+
+    @pytest.mark.asyncio
+    async def test_interpret_user_update_resolves_service_via_real_loader(self, monkeypatch):
+        """interpret_user_update must pull active services from the shared cache
+        when state["service_catalog"] is absent, and the resolver must produce
+        a non-empty patch for a clear service intent.
+
+        Uses a fake ``get_active_services`` to avoid depending on a live DB in
+        local test environments. This still exercises the full wiring:
+        ``interpret_user_update`` → async preload → resolver snapshot → resolver.
+        """
+        from agent.booking.nodes.interpret_user_update import interpret_user_update
+        from agent.booking.resolvers import service as resolver_mod
+        from agent.prompts import catalog_builder
+        from agent.prompts.catalog_builder import ServiceRow, invalidate_catalog_cache
+
+        fake_catalog = [
+            ServiceRow(name="Cortar", audience=None, metadata={}),
+            ServiceRow(name="Corte Caballero", audience="adult_male", metadata={}),
+            ServiceRow(name="Corte Niña", audience="child_female", metadata={}),
+            ServiceRow(name="Mechas", audience="adult_female", metadata={}),
+        ]
+
+        async def fake_get_active_services():
+            return list(fake_catalog)
+
+        invalidate_catalog_cache()
+        resolver_mod._active_services_snapshot = []
+        monkeypatch.setattr(catalog_builder, "get_active_services", fake_get_active_services)
+        monkeypatch.setattr(resolver_mod, "get_active_services", fake_get_active_services)
+
+        state = {
+            "user_message": "quiero cortarme el pelo",
+            "booking_context": {},
+            "messages": [],
+        }
+
+        result = await interpret_user_update(state)
+
+        assert resolver_mod._active_services_snapshot, (
+            "catalog snapshot must be populated by interpret_user_update"
+        )
+        patch = result["booking_context_patch"]["patch"]
+        assert patch, (
+            f"Expected a non-empty patch from real loader wiring, got {patch!r}"
+        )
+
+
 class TestSubgraphSmoke:
     """Quick smoke: subgraph still compiles after all 9 phases."""
 
