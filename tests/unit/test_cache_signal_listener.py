@@ -21,6 +21,66 @@ class TestRunCacheSignalListener:
     """Tests for run_cache_signal_listener()."""
 
     @pytest.mark.asyncio
+    async def test_invalidates_catalog_cache_on_services_entity(self):
+        """entity=services MUST call invalidate_catalog_cache."""
+        payload = json.dumps(
+            {"entity": "services", "action": "update", "timestamp": "2026-04-22T10:00:00+00:00"}
+        )
+
+        async def _listen():
+            yield _make_message(payload)
+            raise asyncio.CancelledError
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.listen = _listen
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.close = AsyncMock()
+
+        mock_redis = MagicMock()
+        mock_redis.pubsub.return_value = mock_pubsub
+
+        with (
+            patch("agent.workers.cache_signal_listener.get_redis_client", return_value=mock_redis),
+            patch("agent.workers.cache_signal_listener.clear_stylist_context_cache"),
+            patch("agent.workers.cache_signal_listener.clear_dynamic_context_cache"),
+            patch("agent.workers.cache_signal_listener.invalidate_catalog_cache") as mock_invalidate,
+        ):
+            await run_cache_signal_listener()
+
+        mock_invalidate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_catalog_invalidation_for_non_services_entity(self):
+        """entity=stylists does NOT invalidate the services catalog."""
+        payload = json.dumps(
+            {"entity": "stylists", "action": "update", "timestamp": "2026-04-22T10:00:00+00:00"}
+        )
+
+        async def _listen():
+            yield _make_message(payload)
+            raise asyncio.CancelledError
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.listen = _listen
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.close = AsyncMock()
+
+        mock_redis = MagicMock()
+        mock_redis.pubsub.return_value = mock_pubsub
+
+        with (
+            patch("agent.workers.cache_signal_listener.get_redis_client", return_value=mock_redis),
+            patch("agent.workers.cache_signal_listener.clear_stylist_context_cache"),
+            patch("agent.workers.cache_signal_listener.clear_dynamic_context_cache"),
+            patch("agent.workers.cache_signal_listener.invalidate_catalog_cache") as mock_invalidate,
+        ):
+            await run_cache_signal_listener()
+
+        mock_invalidate.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_clears_both_caches_on_valid_message(self):
         """On a valid cache:invalidate message, both clear functions are called."""
         payload = json.dumps({"entity": "stylists", "action": "update", "timestamp": "2025-12-09T10:00:00+00:00"})

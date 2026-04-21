@@ -34,6 +34,7 @@ import logging
 from shared.redis_client import get_redis_client
 from shared.stylist_cache import clear_stylist_context_cache
 from agent.prompts.dynamic_context import clear_dynamic_context_cache
+from agent.prompts.catalog_builder import invalidate_catalog_cache
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +91,15 @@ async def run_cache_signal_listener() -> None:
                         f"entity={entity}, action={action}"
                     )
 
-                    # Clear both in-memory caches
+                    # Clear the stylist + dynamic caches on every signal.
                     clear_stylist_context_cache()
                     clear_dynamic_context_cache()
+
+                    # Catalog (services + markdown) — invalidate only when the
+                    # services table actually changed, so we don't spam DB hits
+                    # on every unrelated mutation.
+                    if entity == "services":
+                        invalidate_catalog_cache()
 
                     logger.info(
                         "In-memory caches cleared after invalidation signal: "
