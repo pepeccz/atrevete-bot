@@ -38,20 +38,34 @@ RESOLVER_REGISTRY: list = []
 
 
 def _build_registry() -> None:
-    """Import resolver modules and populate RESOLVER_REGISTRY in precedence order."""
+    """Import resolver modules and populate RESOLVER_REGISTRY in precedence order (design D4)."""
     from agent.booking.resolvers import (
+        add_more,
         any_stylist,
+        audience,
         confirmation,
+        customer_name,
         customer_prefill,
+        date_hint,
         digit_selection,
+        notes,
+        service,
+        stylist,
     )
 
     RESOLVER_REGISTRY.extend(
         [
-            digit_selection.resolve,       # 1. digit selection (if offered_slots present)
-            confirmation.resolve,          # 2. confirmation/negation (if _confirmation_shown)
-            any_stylist.resolve,           # 3. ANY_AVAILABLE sentinel
-            customer_prefill.resolve,      # 4. read-only prefill from state (last)
+            digit_selection.resolve,   # 1. digit selection (if offered_slots present)
+            confirmation.resolve,      # 2. confirmation/negation (if _confirmation_shown)
+            any_stylist.resolve,       # 3. ANY_AVAILABLE sentinel
+            date_hint.resolve,         # 4. dateparser-based date extraction
+            stylist.resolve,           # 5. explicit stylist name (not ANY_AVAILABLE)
+            audience.resolve,          # 6. señora/caballero/niño → clears pending_disambiguations
+            service.resolve,           # 7. catalog fuzzy match
+            add_more.resolve,          # 8. context-gated: _last_leaf == "ask_more_services"
+            customer_name.resolve,     # 9. context-gated: _last_leaf == "ask_name"
+            notes.resolve,             # 10. context-gated: _last_leaf == "ask_notes"
+            customer_prefill.resolve,  # 11. read-only suggestion from state
         ]
     )
 
