@@ -93,7 +93,7 @@ ToolResponse:
 Una tool visible es invocable. Una tool oculta no existe desde la perspectiva del LLM (ni schema ni descripción se mandan al modelo, validado en design Q G5).
 
 **Aplicación**:
-- `check_availability` se oculta cuando `_audience_ambiguity` está activo (commit 06a5ba1).
+- `check_availability` se oculta cuando `pending_disambiguations` está activo (commit 06a5ba1, renombrado Phase 2).
 - `book` solo aparece cuando `_booking_complete` retorna true.
 - Cada capability define `get_tools(state) → list[Tool]` que filtra dinámicamente.
 

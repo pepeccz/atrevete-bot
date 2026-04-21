@@ -127,7 +127,7 @@ Tests: cada core ≥90% coverage. Sin LLM, sin Chatwoot, sin Redis. SQLite in-me
 - `modulos/booking/state.py` — `BookingContext` TypedDict (mover de `agent/state/schemas.py`).
 - `modulos/booking/prompt.md` — mover de `agent/prompts/modes/booking.md`.
 - Eliminar `<dynamic_context>` XML del system_message; usar `infra/llm/status_line.py` para inyectar pre-turn HumanMessage.
-- DynamicToolsMiddleware filtering: `check_availability` solo visible si no hay `_audience_ambiguity` y hay servicio + estilista + fecha. `book` solo visible si `completion_predicate` retorna True.
+- DynamicToolsMiddleware filtering: `check_availability` solo visible si no hay `pending_disambiguations` y hay servicio + estilista + fecha. `book` solo visible si `completion_predicate` retorna True.
 
 #### E2.5 — Feature flag wiring (0.5 día)
 
