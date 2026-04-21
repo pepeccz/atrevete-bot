@@ -90,7 +90,7 @@ async def test_ask_service_prompt_contains_system_message():
 
 @pytest.mark.asyncio
 async def test_ask_service_does_not_mutate_booking_context():
-    """ask_service must not modify booking_context."""
+    """ask_service must only write _last_leaf to booking_context — nothing else new."""
     from agent.booking.nodes.leaf_llm import ask_service
 
     bc = {"service": None}
@@ -99,7 +99,12 @@ async def test_ask_service_does_not_mutate_booking_context():
     with patch("agent.booking.nodes.leaf_llm.llm", mock_llm):
         result = await ask_service(state)
 
-    assert "booking_context" not in result
+    # Phase 6: only _last_leaf may be ADDED — existing keys are preserved, not mutated
+    bc_result = result.get("booking_context") or {}
+    original_keys = set(bc.keys())
+    new_keys = set(bc_result.keys()) - original_keys
+    assert new_keys == {"_last_leaf"}, f"unexpected new bc keys from ask_service: {new_keys}"
+    assert bc_result["_last_leaf"] == "ask_service"
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +144,10 @@ async def test_ask_audience_does_not_mutate_booking_context():
     with patch("agent.booking.nodes.leaf_llm.llm", mock_llm):
         result = await ask_audience(_state())
 
-    assert "booking_context" not in result
+    bc_result = result.get("booking_context") or {}
+    new_keys = set(bc_result.keys())  # started with empty bc, so all keys are new
+    assert new_keys == {"_last_leaf"}, f"ask_audience added unexpected bc keys: {new_keys}"
+    assert bc_result["_last_leaf"] == "ask_audience"
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +309,7 @@ async def test_show_confirmation_returns_ai_message():
 
 @pytest.mark.asyncio
 async def test_show_confirmation_does_not_mutate_booking_context():
-    """show_confirmation must never modify booking_context (spec invariant #2)."""
+    """show_confirmation must only write _last_leaf — no other new bc keys."""
     from agent.booking.nodes.leaf_llm import show_confirmation
 
     bc = {"last_services": ["Cortar Señora"], "customer_name": "María"}
@@ -309,7 +317,9 @@ async def test_show_confirmation_does_not_mutate_booking_context():
     with patch("agent.booking.nodes.leaf_llm.llm", mock_llm):
         result = await show_confirmation(_state(bc=dict(bc)))
 
-    assert "booking_context" not in result
+    bc_result = result.get("booking_context") or {}
+    new_keys = set(bc_result.keys()) - set(bc.keys())
+    assert new_keys == {"_last_leaf"}, f"show_confirmation added unexpected bc keys: {new_keys}"
 
 
 # ---------------------------------------------------------------------------

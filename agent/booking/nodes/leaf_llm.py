@@ -80,12 +80,38 @@ def _last_turns(state: dict[str, Any], n: int = 6) -> list:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Leaf purity guard (design D5, INV-2)
+# ---------------------------------------------------------------------------
+
+_ALLOWED_LEAF_KEYS = frozenset({"messages", "total_message_count", "booking_context"})
+
+
+def _assert_leaf_pure(ret: dict) -> None:
+    """Assert that a leaf return dict contains only allowed keys.
+
+    booking_context is allowed ONLY for the _last_leaf sentinel write.
+    Any other unexpected key is a spec violation (INV-2).
+
+    Args:
+        ret: The dict returned by a leaf node before _last_leaf injection.
+
+    Raises:
+        AssertionError if ret contains keys outside _ALLOWED_LEAF_KEYS.
+    """
+    extras = set(ret.keys()) - _ALLOWED_LEAF_KEYS
+    assert not extras, f"leaf must not mutate state: {extras}"
+
+
 async def _invoke(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
     """Shared helper: load prompt, call llm.ainvoke, return messages patch.
 
     Returns messages as dicts ({'role': 'assistant', 'content': ..., 'timestamp': ...})
     to match ConversationState schema (messages: list[dict]) and satisfy the
     publish freshness guard in agent/main.py which checks last_message['role'] == 'assistant'.
+
+    Each invocation writes _last_leaf sentinel to booking_context (design D8)
+    so context-gated resolvers know which leaf ran last.
     """
     prompt = _load_prompt(node_name)
     messages = [SystemMessage(content=prompt)] + _last_turns(state)
@@ -96,10 +122,17 @@ async def _invoke(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
         "content": content,
         "timestamp": datetime.now(ZoneInfo("Europe/Madrid")).isoformat(),
     }
-    return {
+    ret = {
         "messages": [msg],
         "total_message_count": state.get("total_message_count", 0) + 1,
     }
+    # INV-2 guard: assert no unexpected state mutations in ret (before _last_leaf injection)
+    _assert_leaf_pure(ret)
+    # D8: write _last_leaf sentinel into booking_context
+    bc = dict(state.get("booking_context") or {})
+    bc["_last_leaf"] = node_name
+    ret["booking_context"] = bc
+    return ret
 
 
 # ---------------------------------------------------------------------------
