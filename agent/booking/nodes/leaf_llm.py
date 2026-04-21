@@ -1,65 +1,216 @@
 """
-LLM leaf nodes — Stubs (Phase 1 scaffolding).
+LLM leaf nodes — Phase 5 implementation.
 
-Each node loads a per-node prompt and calls llm.ainvoke() with zero tools.
-Implementation in Phase 5.
+Each node:
+  1. Loads its per-node prompt from agent/prompts/modes/booking/<node>.md
+  2. Calls llm.ainvoke([SystemMessage(prompt)] + last_6_turns) — zero tools bound
+  3. Returns {'messages': [AIMessage(...)]} — does NOT mutate booking_context
+
+Design ref: design §D4 — no create_agent, no tools, single LLM call per turn.
+Spec invariant #2: LLM MUST NOT write to booking_context.
+
+await_confirmation is a silent no-op:
+  - User already saw show_confirmation.
+  - This node simply waits for next user input (no LLM call, no state change).
+  - Decision rationale: resolved per orchestrator instruction, 2026-04-21.
+
+error_recovery clears booking_context (state fence):
+  - Resets to {} to ensure schema-incompatible stale state cannot crash subsequent nodes.
+  - Spec: error_recovery §Mid-session state schema migration.
 """
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Any
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+
+from shared.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level LLM instance — no tools bound (design D4).
+# Tests patch this via: patch("agent.booking.nodes.leaf_llm.llm", mock_llm)
+# ---------------------------------------------------------------------------
+
+_settings = get_settings()
+llm = ChatOpenAI(
+    model=_settings.LLM_MODEL,
+    base_url="https://openrouter.ai/api/v1",
+    api_key=_settings.OPENROUTER_API_KEY,
+)
+
+# ---------------------------------------------------------------------------
+# Prompt loader — reads .md files from agent/prompts/modes/booking/
+# ---------------------------------------------------------------------------
+
+_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts" / "modes" / "booking"
+_prompt_cache: dict[str, str] = {}
+
+
+def _load_prompt(node_name: str) -> str:
+    """Load and cache the per-node prompt from <node_name>.md."""
+    if node_name not in _prompt_cache:
+        prompt_path = _PROMPTS_DIR / f"{node_name}.md"
+        _prompt_cache[node_name] = prompt_path.read_text(encoding="utf-8")
+    return _prompt_cache[node_name]
+
+
+def _last_turns(state: dict[str, Any], n: int = 6) -> list:
+    """Return the last n messages from state, as LangChain message objects."""
+    raw = state.get("messages", [])
+    tail = raw[-n:] if len(raw) > n else raw
+    result = []
+    for msg in tail:
+        if isinstance(msg, (HumanMessage, AIMessage, SystemMessage)):
+            result.append(msg)
+        elif isinstance(msg, dict):
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "human":
+                result.append(HumanMessage(content=content))
+            elif role == "assistant":
+                result.append(AIMessage(content=content))
+    return result
+
+
+async def _invoke(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
+    """Shared helper: load prompt, call llm.ainvoke, return messages patch."""
+    prompt = _load_prompt(node_name)
+    messages = [SystemMessage(content=prompt)] + _last_turns(state)
+    response: AIMessage = await llm.ainvoke(messages)
+    return {"messages": [response]}
+
+
+# ---------------------------------------------------------------------------
+# ask_service
+# ---------------------------------------------------------------------------
 
 
 async def ask_service(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """Ask the user what service they want. No tool calls, no booking_context mutation."""
+    return await _invoke("ask_service", state)
+
+
+# ---------------------------------------------------------------------------
+# ask_audience
+# ---------------------------------------------------------------------------
 
 
 async def ask_audience(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """Ask the user for audience qualifier (Señora/Caballero/Infantil). No tools."""
+    return await _invoke("ask_audience", state)
+
+
+# ---------------------------------------------------------------------------
+# ask_more_services
+# ---------------------------------------------------------------------------
 
 
 async def ask_more_services(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """Ask if the user wants to add more services. No tools."""
+    return await _invoke("ask_more_services", state)
+
+
+# ---------------------------------------------------------------------------
+# ask_stylist
+# ---------------------------------------------------------------------------
 
 
 async def ask_stylist(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """Ask the user which stylist they prefer. No tools."""
+    return await _invoke("ask_stylist", state)
+
+
+# ---------------------------------------------------------------------------
+# ask_slot
+# ---------------------------------------------------------------------------
 
 
 async def ask_slot(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """Present available slots from booking_context.offered_slots. No tools."""
+    return await _invoke("ask_slot", state)
+
+
+# ---------------------------------------------------------------------------
+# ask_name
+# ---------------------------------------------------------------------------
 
 
 async def ask_name(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """Ask for the customer name to register the appointment. No tools."""
+    return await _invoke("ask_name", state)
+
+
+# ---------------------------------------------------------------------------
+# ask_notes
+# ---------------------------------------------------------------------------
 
 
 async def ask_notes(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """Ask for optional notes or special requests. No tools."""
+    return await _invoke("ask_notes", state)
+
+
+# ---------------------------------------------------------------------------
+# show_confirmation
+# ---------------------------------------------------------------------------
 
 
 async def show_confirmation(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """
+    Render a human-readable booking summary for confirmation.
+    Uses booking_context data for context but MUST NOT modify it (spec invariant #2).
+    """
+    return await _invoke("show_confirmation", state)
+
+
+# ---------------------------------------------------------------------------
+# await_confirmation — silent no-op
+# ---------------------------------------------------------------------------
 
 
 async def await_confirmation(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
+    """
+    Silent no-op. User already saw show_confirmation.
+    This node waits for the next user input without generating a message.
+    Control returns to resolve_pre_turn on next turn.
+
+    Design decision: silent no-op (orchestrator instruction, 2026-04-21).
+    """
     return {}
+
+
+# ---------------------------------------------------------------------------
+# booking_complete
+# ---------------------------------------------------------------------------
 
 
 async def booking_complete(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """
+    Emit a closing confirmation message referencing the appointment_id.
+    No tool calls, no booking_context modification.
+    """
+    return await _invoke("booking_complete", state)
+
+
+# ---------------------------------------------------------------------------
+# error_recovery
+# ---------------------------------------------------------------------------
 
 
 async def error_recovery(state: dict[str, Any]) -> dict[str, Any]:
-    """No-op stub."""
-    return {}
+    """
+    Emit a recovery message and reset booking_context to a clean state.
+    Handles mid-session schema migration: clears stale fields so subsequent
+    nodes don't crash on unexpected keys.
+
+    Spec: error_recovery §State Fence — booking_context reset to {}.
+    """
+    llm_result = await _invoke("error_recovery", state)
+    # State fence: clear stale booking_context
+    return {**llm_result, "booking_context": {}}
