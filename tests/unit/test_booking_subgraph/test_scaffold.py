@@ -15,21 +15,29 @@ import pytest
 from agent.booking.subgraph import build_booking_subgraph
 
 EXPECTED_NODES = {
+    # Phase 1: new entry pipeline nodes
+    "escape_gate",
+    "interpret_user_update",
+    "reconcile_invalidations",
+    # Legacy node — bypassed, kept until Phase 7 cleanup
     "resolve_pre_turn",
+    # Router
     "route_action",
+    # LLM leaf nodes
     "ask_service",
     "ask_audience",
     "ask_more_services",
     "ask_stylist",
-    "fetch_availability",
     "ask_slot",
     "ask_name",
     "ask_notes",
     "show_confirmation",
     "await_confirmation",
-    "execute_book",
     "booking_complete",
     "error_recovery",
+    # Deterministic action nodes
+    "fetch_availability",
+    "execute_book",
 }
 
 
@@ -41,10 +49,10 @@ def test_build_booking_subgraph_compiles():
     assert isinstance(graph, CompiledStateGraph)
 
 
-def test_booking_subgraph_has_15_nodes():
+def test_booking_subgraph_has_expected_nodes():
     """
-    Compiled graph must expose all 15 nodes (14 defined + __start__ added by LangGraph).
-    The design spec lists 14 named nodes; LangGraph adds __start__ internally.
+    Compiled graph must expose all expected nodes (Phase 1 adds 3 new pipeline nodes;
+    LangGraph adds __start__ internally).
     """
     graph = build_booking_subgraph()
     node_names = set(graph.nodes.keys())

@@ -25,6 +25,9 @@ from agent.booking.nodes.leaf_llm import (
     error_recovery,
     show_confirmation,
 )
+from agent.booking.nodes.escape_gate import escape_gate
+from agent.booking.nodes.interpret_user_update import interpret_user_update
+from agent.booking.nodes.reconcile_invalidations import reconcile_invalidations
 from agent.booking.nodes.resolve_pre_turn import resolve_pre_turn
 from agent.booking.nodes.route_action import route_action
 from agent.state.schemas import ConversationState
@@ -44,7 +47,12 @@ def build_booking_subgraph():
     """
     builder = StateGraph(ConversationState)
 
-    # Entry node — always runs first each turn
+    # New entry pipeline (Phase 1 scaffolding)
+    builder.add_node("escape_gate", escape_gate)
+    builder.add_node("interpret_user_update", interpret_user_update)
+    builder.add_node("reconcile_invalidations", reconcile_invalidations)
+
+    # Legacy node — kept but bypassed until Phase 7 cleanup
     builder.add_node("resolve_pre_turn", resolve_pre_turn)
 
     # Router — pure FSM, no I/O
@@ -67,11 +75,12 @@ def build_booking_subgraph():
     builder.add_node("fetch_availability", fetch_availability)
     builder.add_node("execute_book", execute_book)
 
-    # Entry edge
-    builder.set_entry_point("resolve_pre_turn")
-
-    # resolve_pre_turn → route_action (always)
-    builder.add_edge("resolve_pre_turn", "route_action")
+    # Entry edge — Phase 1: escape_gate → interpret_user_update → reconcile_invalidations → route_action
+    # resolve_pre_turn is bypassed (kept until Phase 7 cleanup)
+    builder.set_entry_point("escape_gate")
+    builder.add_edge("escape_gate", "interpret_user_update")
+    builder.add_edge("interpret_user_update", "reconcile_invalidations")
+    builder.add_edge("reconcile_invalidations", "route_action")
 
     # route_action uses Command(goto=LABEL) — no explicit conditional edges needed.
     # LangGraph resolves Command destinations automatically.
