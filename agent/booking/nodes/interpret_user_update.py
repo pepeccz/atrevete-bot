@@ -27,6 +27,11 @@ async def interpret_user_update(state: dict[str, Any]) -> dict[str, Any]:
     from agent.booking.resolvers import RESOLVER_REGISTRY
 
     user_text: str = state.get("user_message") or ""
+    if not user_text:
+        for msg in reversed(state.get("messages") or []):
+            if msg.get("role") == "user":
+                user_text = msg.get("content", "") or ""
+                break
     bc: dict[str, Any] = dict(state.get("booking_context") or {})
 
     merged_patch: dict[str, Any] = {}

@@ -161,18 +161,16 @@ atrevete-bot/
 
 ---
 
-## Architecture Migration (E1 Scaffolding — 2026-04-18)
+## Architecture Status (2026-04-21)
 
-E1 introduced new abstractions in `agent/core/` and `infra/resolvers/` with zero behavioral changes. These are the foundation for E2 (BookingCapability port):
+StateGraph v6.0 migration complete. Graph: `preprocess → router → [greeting | general | booking | escalation | appointment_management | confirmation_reply] → summarize → END`. All modes, tools, prompts, services wired.
 
-- `agent/core/capability.py` — `Capability` ABC: the 7-property contract every conversational capability must implement (see `docs/system/01-architecture-principles.md` P7).
-- `agent/core/resolvers.py` — resolver registry with P10 structured telemetry.
-- `agent/core/tool_response.py` — Pydantic `ToolResponse` model + AST-lint for imperative verbs in `errors[]`.
-- `agent/core/status_line.py` — pre-turn `HumanMessage` builder (replacement for cached `<dynamic_context>` XML; wired in E2).
-- `infra/resolvers/negation.py` — hard-rename of `shared/negation_phrases.py` per P8.
-- `scripts/check_layers.py` — AST layer-import gate (CI-only in E1).
+E1 scaffolding partially reverted:
+- `agent/core/` — REMOVED (commit 02acbea, 2026-04-20). `state_delivery.py` + `status_line.py` never wired; concepts covered by `ConversationState` TypedDict + mode_context.
+- `infra/resolvers/negation.py` — kept (hard-rename of `shared/negation_phrases.py`, P8).
+- `scripts/check_layers.py` — kept (AST layer-import gate, CI-only).
 
-Full architecture docs: `docs/system/` (see `06-current-vs-target.md` for E1 status and `07-migration-plan.md` for E2-E5 roadmap).
+Full architecture docs: `docs/system/`.
 
 ---
 
