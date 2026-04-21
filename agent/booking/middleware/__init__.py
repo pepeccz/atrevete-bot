@@ -1,6 +1,2 @@
-"""Booking middleware subpackage — pre-model and pre-tool hooks for the booking flow."""
-
-from agent.booking.middleware.grounding import BookingGroundingMiddleware
-from agent.booking.middleware.invariants import BookingInvariantMiddleware
-
-__all__ = ["BookingGroundingMiddleware", "BookingInvariantMiddleware"]
+# Phase 7: BookingGroundingMiddleware and BookingInvariantMiddleware deleted.
+# Middleware enforcement is now handled by the booking subgraph (route_action FSM).

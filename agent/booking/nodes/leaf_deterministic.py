@@ -120,6 +120,7 @@ async def execute_book(state: dict[str, Any]) -> Command:
     stylist_id: str = selected_slot.get("stylist_id", "")
     start_time: str = selected_slot.get("full_datetime", "")
     customer_name: str = bc.get("customer_name", "")
+    customer_last_name: str | None = bc.get("customer_last_name")
     customer_phone: str = bc.get("customer_phone", "")
     notes: str | None = bc.get("notes")
     conversation_id: str | None = bc.get("conversation_id")
@@ -135,6 +136,7 @@ async def execute_book(state: dict[str, Any]) -> Command:
     result = await book_impl(
         customer_phone=customer_phone,
         customer_name=customer_name,
+        customer_last_name=customer_last_name,
         services=services,
         stylist_id=stylist_id,
         start_time=start_time,

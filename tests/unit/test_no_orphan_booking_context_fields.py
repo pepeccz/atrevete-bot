@@ -52,6 +52,7 @@ _KNOWN_ZERO_READERS_OK = frozenset(
     {
         "_suggested_customer_name",  # transient=True; reader is the LLM prompt string, not Python
         "booked_appointment_id",  # declared structurally; zero production writers/readers by design
+        "last_total_duration_minutes",  # Phase 7: update_booking deleted; reserved for Phase 8 prompt migration
     }
 )
 

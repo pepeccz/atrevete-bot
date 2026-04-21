@@ -9,8 +9,6 @@ import subprocess
 from pathlib import Path
 
 _BOOKING_FILES = [
-    "agent/modes/booking_mode.py",
-    "agent/tools/booking_data_tools.py",
     "agent/booking/grounding.py",
     "agent/booking/patch_pipeline.py",
     "agent/prompts/loader.py",

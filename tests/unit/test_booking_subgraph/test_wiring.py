@@ -1,9 +1,9 @@
 """
-Phase 6 — Wiring tests.
+Phase 7 — Wiring tests (post-purge).
 
 Verifies:
-1. The BOOKING node in conversation_flow invokes the compiled booking subgraph,
-   NOT BookingModeNode.
+1. The BOOKING node in conversation_flow invokes the compiled booking subgraph.
+   BookingModeNode is permanently deleted (Phase 7 dead-code purge).
 2. On GREETING→BOOKING transition, booking_context is seeded with entity hints
    extracted during the greeting turn (opening_booking_request, service_audience_hint,
    preferred_stylist_name, preferred_date_hint).
@@ -44,59 +44,32 @@ def _make_state(**overrides) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 6.1a — booking_node_fn does NOT instantiate BookingModeNode
+# 7.1a — booking_mode module is gone (Phase 7 purge confirmation)
 # ---------------------------------------------------------------------------
 
 
 class TestBookingNodeDoesNotUseBookingModeNode:
-    """The BOOKING node must NOT use BookingModeNode after Phase 6."""
+    """The BOOKING node must NOT use BookingModeNode — confirmed by Phase 7 purge."""
 
     def test_booking_node_fn_does_not_import_booking_mode(self):
         """
-        conversation_flow.create_graph must not call BookingMode(...).handle(...)
-        when the booking node is invoked.
+        agent.modes.booking_mode must not exist after Phase 7 dead-code purge.
         """
-        import agent.graphs.conversation_flow as cf_module
-
-        # Patch BookingMode so any instantiation is tracked
-        with patch("agent.modes.booking_mode.BookingMode") as mock_booking_mode_cls:
-            mock_instance = MagicMock()
-            mock_instance.handle = AsyncMock(return_value={"last_node": "booking"})
-            mock_booking_mode_cls.return_value = mock_instance
-
-            # Also patch the subgraph so it returns cleanly
-            mock_subgraph = MagicMock()
-            mock_subgraph.invoke = MagicMock(return_value={"last_node": "booking"})
-            mock_subgraph.ainvoke = AsyncMock(return_value={"last_node": "booking"})
-
-            with patch(
-                "agent.booking.subgraph.build_booking_subgraph",
-                return_value=mock_subgraph,
-            ):
-                # Force re-import so patching takes effect
-                importlib.reload(cf_module)
-
-                # Retrieve the booking_node_fn closure by compiling the graph
-                # and inspecting module state — we do this by directly calling
-                # the node function extracted from a compiled graph.
-                graph = cf_module.create_graph(checkpointer=None, store=None)
-
-            # BookingMode must never have been instantiated during node execution
-            # (it may still be imported for type-checking purposes — that's OK).
-            # The real assertion: calling booking_node_fn must invoke subgraph, not BookingMode.
-
-        # Verify BookingMode.__init__ was NOT called (the graph was compiled only, not invoked)
-        # The important assertion is that mock_booking_mode_cls was NOT called with tools/llm args
-        # during graph compilation — compilation itself doesn't trigger mode nodes.
-        assert mock_booking_mode_cls.call_count == 0, (
-            "BookingMode should not be instantiated at graph compile time in Phase 6"
-        )
+        import importlib
+        import sys
+        # Ensure the module is not cached from before the purge
+        sys.modules.pop("agent.modes.booking_mode", None)
+        try:
+            importlib.import_module("agent.modes.booking_mode")
+            assert False, "agent.modes.booking_mode must NOT exist after Phase 7 purge"
+        except ModuleNotFoundError:
+            pass  # expected — module is deleted
 
     @pytest.mark.asyncio
     async def test_booking_node_fn_calls_subgraph_ainvoke_not_booking_mode(self):
         """
-        When booking_node_fn is called, it must call compiled_subgraph.ainvoke,
-        NOT BookingMode.handle.
+        When booking_node_fn is called, it must call compiled_subgraph.ainvoke.
+        BookingMode.handle no longer exists (Phase 7 purge).
         """
         import agent.graphs.conversation_flow as cf_module
 
@@ -107,35 +80,17 @@ class TestBookingNodeDoesNotUseBookingModeNode:
             "agent.booking.subgraph.build_booking_subgraph",
             return_value=mock_subgraph,
         ):
-            with patch("agent.modes.booking_mode.BookingMode") as mock_booking_mode_cls:
-                mock_instance = MagicMock()
-                mock_instance.handle = AsyncMock(return_value={"last_node": "old_booking"})
-                mock_booking_mode_cls.return_value = mock_instance
+            importlib.reload(cf_module)
+            cf_module.create_graph(checkpointer=None, store=None)
 
-                importlib.reload(cf_module)
-
-                # Extract the booking node function by accessing the graph's compiled node map
-                # We test by directly invoking the node that's registered as "booking"
-                state = _make_state()
-
-                # Call the module-level booking_node_fn via the graph node
-                # The booking node fn is a closure inside create_graph; we test by
-                # calling create_graph and then invoking the node via the graph directly.
-                # Since we can't easily extract closures, we invoke router→booking flow:
-                graph = cf_module.create_graph(checkpointer=None, store=None)
-
-        # subgraph.ainvoke must have been called (graph compilation invokes nothing)
-        # We'll verify by invoking the closure directly via a targeted patch approach.
-        # The definitive assertion is: after Phase 6, BookingMode.handle is NEVER called.
-        assert mock_booking_mode_cls.call_count == 0, (
-            "BookingMode must not be instantiated in Phase 6 wiring"
-        )
-        # Subgraph was at least compiled (build_booking_subgraph called)
-        # Actual ainvoke happens on node execution, tested in integration path below.
+        # Subgraph was compiled (build_booking_subgraph called via create_graph).
+        # Actual ainvoke happens on node execution — tested in TestBookingNodeInvokesSubgraph.
+        # The key invariant: no BookingMode import in conversation_flow (already verified
+        # by test_booking_node_fn_does_not_import_booking_mode above).
 
 
 # ---------------------------------------------------------------------------
-# 6.1b — booking_node_fn invokes subgraph (behavioural, via direct closure call)
+# 7.1b — booking_node_fn invokes subgraph (behavioural, via direct closure call)
 # ---------------------------------------------------------------------------
 
 
@@ -177,23 +132,17 @@ class TestBookingNodeInvokesSubgraph:
         booking_fn = captured_nodes["booking"]
         state = _make_state()
 
-        # In Phase 6: subgraph.ainvoke is called → no DB needed → returns our mock
-        # In Phase 5 (old): BookingMode.handle is called → hits DB → OSError
-        # We patch the catalog builder to prevent any accidental DB calls from old path
+        # subgraph.ainvoke is called → no DB needed → returns our mock
         with patch(
             "agent.prompts.catalog_builder.build_catalog_markdown",
             AsyncMock(return_value="# Catalog\n- Test service"),
         ):
-            with patch(
-                "agent.modes.booking_mode.BookingMode.handle",
-                AsyncMock(return_value={"last_node": "booking_old"}),
-            ):
-                result = await booking_fn(state)
+            result = await booking_fn(state)
 
-        # Phase 6 assertion: subgraph.ainvoke must have been called
+        # Subgraph.ainvoke must have been called once
         assert captured_subgraph.ainvoke.call_count == 1, (
             f"Expected subgraph.ainvoke to be called once, got {captured_subgraph.ainvoke.call_count}. "
-            "Phase 6 must wire booking node to subgraph, not BookingModeNode."
+            "Booking node must wire to subgraph."
         )
         assert result.get("last_node") == "booking", (
             f"Expected last_node='booking', got {result.get('last_node')!r}"

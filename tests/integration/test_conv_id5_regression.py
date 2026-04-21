@@ -258,56 +258,47 @@ class TestConvId5Regression:
     @pytest.mark.asyncio
     async def test_confirmed_required_before_book_call(self) -> None:
         """
-        FM-6 specific: book() MUST NOT be called without confirmed=True.
+        FM-6 specific: execute_book MUST NOT be reached without confirmed=True.
 
-        Given: BookingInvariantMiddleware is active (USE_CAPABILITY_BOOKING=True)
-        When: book() is attempted with confirmed=False
-        Then: it is blocked with CONFIRMATION_REQUIRED error
+        Phase 7: enforcement in route_action FSM — branch 2 requires confirmed is True.
+        Only `confirmed is True` (strict) triggers execute_book; False or None do not.
 
-        This is the gate that prevents FM-6 at the tool level.
+        This is the gate that prevents FM-6 at the subgraph routing level.
         """
-        import json
+        from langgraph.types import Command
 
-        from agent.booking.middleware.invariants import BookingInvariantMiddleware
+        from agent.booking.nodes.route_action import route_action
 
-        bc = {
+        # Scenario: confirmed=False — must NOT trigger execute_book
+        bc_rejected = {
             "confirmed": False,
-            "last_services": ["Corte"],
-            "last_stylist": "Pilar",
-            "stylist_id": "stylist-001",
-            "no_preference_stylist": False,
-            "selected_slot": {"start": "2026-04-21T10:00:00"},
-            "customer_name": "María García",
-            "pending_disambiguations": [],
+            "_booking_completed": False,
         }
-        state = {"current_mode": "BOOKING", "booking_context": bc}
-        middleware = BookingInvariantMiddleware(
-            get_state_fn=lambda: state,
-            get_catalog_fn=lambda: [],
-            mode_name="BOOKING",
-        )
-
-        from unittest.mock import MagicMock
-        handler_called = []
-
-        def _fake_handler(tc):
-            handler_called.append(tc)
-            return MagicMock(content=json.dumps({"appointment_id": "apt-001"}))
-
-        tc = MagicMock()
-        tc.name = "book"
-        tc.args = {}
-        tc.id = "tool-id-001"
-
-        result = middleware.wrap_tool_call(tc, _fake_handler)
-
-        assert len(handler_called) == 0, (
-            "REGRESSION GUARD: book() was called without confirmed=True. "
+        cmd_rejected: Command = route_action({"booking_context": bc_rejected})
+        assert cmd_rejected.goto != "execute_book", (
+            "REGRESSION GUARD: execute_book must NOT be reached when confirmed=False. "
             "This would recreate FM-6."
         )
-        error = json.loads(result.content) if isinstance(result.content, str) else result.content
-        assert error.get("error") is True
-        assert error.get("code") in {"CONFIRMATION_REQUIRED", "CONFIRMATION_PENDING"}
+
+        # Scenario: confirmed=None — must NOT trigger execute_book
+        bc_pending = {
+            "confirmed": None,
+            "_booking_completed": False,
+        }
+        cmd_pending: Command = route_action({"booking_context": bc_pending})
+        assert cmd_pending.goto != "execute_book", (
+            "REGRESSION GUARD: execute_book must NOT be reached when confirmed=None."
+        )
+
+        # Scenario: confirmed=True — MUST trigger execute_book
+        bc_confirmed = {
+            "confirmed": True,
+            "_booking_completed": False,
+        }
+        cmd_confirmed: Command = route_action({"booking_context": bc_confirmed})
+        assert cmd_confirmed.goto == "execute_book", (
+            f"Expected execute_book when confirmed=True, got {cmd_confirmed.goto!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_notes_state_not_asked_transitions_to_skipped(self) -> None:
