@@ -956,7 +956,6 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
     """
     from agent.modes.greeting_mode import build_greeting_node
     from agent.modes.general_mode import build_general_node
-    from agent.modes.booking_mode import BookingMode  # kept importable until Phase 7
     from agent.modes.escalation_mode import build_escalation_node
     from agent.modes.appointment_management_mode import AppointmentManagementMode
     from agent.modes.confirmation_reply_node import confirmation_reply_node
@@ -974,8 +973,7 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
     _general_node_impl = build_general_node(llm_factory=_get_llm)
     _escalation_node_impl = build_escalation_node()
 
-    # Phase 6: compile booking subgraph once per graph build (D1).
-    # BookingModeNode is kept importable above for Phase 7 dead-code purge.
+    # Compile booking subgraph once per graph build (D1).
     _booking_subgraph = build_booking_subgraph()
 
     def mode_dispatcher(state: ConversationState) -> str:
