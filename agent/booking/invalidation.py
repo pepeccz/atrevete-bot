@@ -40,6 +40,22 @@ def reconcile(old_bc: dict[str, Any], new_bc: dict[str, Any]) -> dict[str, Any]:
     Returns:
         new_bc with invalidated downstream fields removed/cleared.
     """
-    # P1 stub: no-op — returns new_bc unchanged.
-    # P4 will replace this with real invalidation logic.
-    return new_bc
+    # Collect all downstream fields to clear (union of all cascades)
+    to_clear: set[str] = set()
+
+    for upstream_key, downstream_keys in INVALIDATION_TABLE.items():
+        old_val = old_bc.get(upstream_key)
+        new_val = new_bc.get(upstream_key)
+        # Only cascade when the value actually changed
+        if old_val != new_val and new_val is not None:
+            to_clear.update(downstream_keys)
+
+    if not to_clear:
+        return new_bc
+
+    # Apply cascades — remove cleared keys from result
+    result = dict(new_bc)
+    for key in to_clear:
+        result.pop(key, None)
+
+    return result
