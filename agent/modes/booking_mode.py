@@ -78,7 +78,7 @@ class BookingModeNode(BaseModeNode):
 
         # check_availability: only when services + stylist are set, no slot yet,
         # AND no audience ambiguity is pending (R7 — hide during disambiguation).
-        if has_services and has_stylist and not has_slot and not ctx.get("_audience_ambiguity"):
+        if has_services and has_stylist and not has_slot and not ctx.get("pending_disambiguations"):
             tools.append(check_availability)
 
         # book: only when all required data is collected
@@ -451,6 +451,14 @@ class BookingModeNode(BaseModeNode):
         # so that both attributes resolve to the same dict (defensive programming).
         self._booking_context = booking_context
         self._mode_context = booking_context  # alias: both point to booking_context
+
+        # REQ-9/10 (snapshot-timing fix): rebind state["booking_context"] to the
+        # post-resolver local dict BEFORE assigning self._current_state.
+        # Without this, BookingGroundingMiddleware.before_model() calls get_state_fn()
+        # which returns self._current_state, whose "booking_context" still points to
+        # the checkpoint dict — pre-loop resolver patches are invisible to grounding
+        # on the same turn. One-line fix: point state["booking_context"] at the live dict.
+        state["booking_context"] = booking_context
         self._current_state = state
 
         # 4. Build messages with dynamic context

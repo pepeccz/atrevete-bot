@@ -463,24 +463,23 @@ class TestFindAudienceSiblingsForSignal:
 
 
 class TestUpdateBookingAudienceAmbiguity:
-    """Detection guard tests for the _audience_ambiguity patch key in update_booking.
+    """Detection guard tests for the pending_disambiguations patch key in update_booking.
 
-    Expected RED: _audience_ambiguity key does not exist yet (detection block missing).
-    After T4 (Batch B), all 3 pass.
+    After Phase 2 rename, writer uses pending_disambiguations as list[dict].
+    All 3 tests pass post-rename.
     """
 
     @pytest.mark.asyncio
     async def test_update_booking_emits_ambiguity_when_service_has_audience_and_no_hint(self):
-        """Tool response patch contains _audience_ambiguity when service has audience and no hint.
+        """Tool response patch contains pending_disambiguations when service has audience and no hint.
 
         Preconditions:
         - Service "Corte Señora" resolved with audience="adult_female"
         - _current_context has NO service_audience_hint
         - At least 1 sibling returned by _find_audience_siblings_for_signal
 
-        Expected patch: contains _audience_ambiguity with family, resolved_as,
-        resolved_audience, variants. success=True always.
-        Expected RED: _audience_ambiguity not in patch (detection block missing).
+        Expected patch: pending_disambiguations is list[dict] with family, resolved_as,
+        resolved_audience, variants.
         """
         # Mock resolved service with audience set
         mock_svc = MagicMock()
@@ -519,12 +518,18 @@ class TestUpdateBookingAudienceAmbiguity:
             f"Got errors: {result.get('errors')}"
         )
         ctx_patch = result["_booking_context_patch"]
-        assert "_audience_ambiguity" in ctx_patch, (
-            f"Expected '_audience_ambiguity' in patch when service has audience and no hint. "
+        assert "pending_disambiguations" in ctx_patch, (
+            f"Expected 'pending_disambiguations' in patch when service has audience and no hint. "
             f"Patch keys: {list(ctx_patch.keys())}"
         )
-        ambiguity = ctx_patch["_audience_ambiguity"]
-        assert "family" in ambiguity, f"Missing 'family' key in _audience_ambiguity: {ambiguity!r}"
+        disambiguations = ctx_patch["pending_disambiguations"]
+        assert (
+            isinstance(disambiguations, list) and len(disambiguations) >= 1
+        ), f"pending_disambiguations must be non-empty list. Got {disambiguations!r}"
+        ambiguity = disambiguations[0]
+        assert (
+            "family" in ambiguity
+        ), f"Missing 'family' key in pending_disambiguations[0]: {ambiguity!r}"
         assert "resolved_as" in ambiguity, f"Missing 'resolved_as' in {ambiguity!r}"
         assert "resolved_audience" in ambiguity, f"Missing 'resolved_audience' in {ambiguity!r}"
         assert "variants" in ambiguity, f"Missing 'variants' in {ambiguity!r}"
@@ -536,7 +541,7 @@ class TestUpdateBookingAudienceAmbiguity:
 
     @pytest.mark.asyncio
     async def test_update_booking_suppresses_ambiguity_when_hint_set(self):
-        """When ctx has service_audience_hint, patch does NOT have _audience_ambiguity.
+        """When ctx has service_audience_hint, patch does NOT have pending_disambiguations.
 
         Expected RED: test may accidentally pass if key is simply absent even in
         positive case — but assertion in previous test will catch that. This test
@@ -575,8 +580,13 @@ class TestUpdateBookingAudienceAmbiguity:
 
         assert result["success"] is True
         ctx_patch = result["_booking_context_patch"]
-        assert "_audience_ambiguity" not in ctx_patch, (
-            f"Expected NO '_audience_ambiguity' in patch when service_audience_hint is set. "
+        assert (
+            "_audience_ambiguity" not in ctx_patch
+        ), f"Old key '_audience_ambiguity' must not be present in any patch. Patch: {ctx_patch!r}"
+        # Detection block is guarded by `not ctx.get("service_audience_hint")`, so
+        # pending_disambiguations must not be set when hint is already provided.
+        assert "pending_disambiguations" not in ctx_patch, (
+            f"Expected NO 'pending_disambiguations' in patch when service_audience_hint is set. "
             f"Patch: {ctx_patch!r}"
         )
 
@@ -619,8 +629,11 @@ class TestUpdateBookingAudienceAmbiguity:
 
         assert result["success"] is True
         ctx_patch = result["_booking_context_patch"]
-        assert "_audience_ambiguity" not in ctx_patch, (
-            f"Expected NO '_audience_ambiguity' in patch when service.audience is None. "
+        assert (
+            "_audience_ambiguity" not in ctx_patch
+        ), f"Old key '_audience_ambiguity' must not be present. Patch: {ctx_patch!r}"
+        assert "pending_disambiguations" not in ctx_patch, (
+            f"Expected NO 'pending_disambiguations' in patch when service.audience is None. "
             f"Patch: {ctx_patch!r}"
         )
 
@@ -628,14 +641,14 @@ class TestUpdateBookingAudienceAmbiguity:
 class TestUpdateBookingAudienceAmbiguitySignaledInResponse:
     """Regression tests: response sent to the LLM must signal audience ambiguity
     on the SAME turn it is detected. After B.3 consolidation, the ctx mirror was
-    removed and _build_response stopped seeing _audience_ambiguity, causing the
+    removed and _build_response stopped seeing pending_disambiguations, causing the
     bot to skip the audience disambiguation step in production (conv_id=5,
     2026-04-21 01:52 UTC).
     """
 
     @pytest.mark.asyncio
     async def test_response_missing_includes_audiencia_when_ambiguity_patched(self):
-        """When update_booking patches _audience_ambiguity, response['missing']
+        """When update_booking patches pending_disambiguations, response['missing']
         must contain 'audiencia' and next_step must describe the ambiguity —
         otherwise the LLM has no visible signal and proceeds as if fully resolved.
         """
@@ -669,8 +682,9 @@ class TestUpdateBookingAudienceAmbiguitySignaledInResponse:
 
         assert result["success"] is True
         assert (
-            "_audience_ambiguity" in result["_booking_context_patch"]
-        ), "Pre-condition: patch must contain _audience_ambiguity for this regression test"
+            "pending_disambiguations" in result["_booking_context_patch"]
+            and result["_booking_context_patch"]["pending_disambiguations"]
+        ), "Pre-condition: patch must contain non-empty pending_disambiguations for this regression test"
         assert "audiencia" in result["missing"], (
             f"Regression: response['missing'] must include 'audiencia' when "
             f"ambiguity is patched. Got missing={result['missing']!r}"
@@ -680,4 +694,120 @@ class TestUpdateBookingAudienceAmbiguitySignaledInResponse:
         ), (
             f"Regression: next_step must describe the ambiguity so the LLM asks the "
             f"customer. Got next_step={result['next_step']!r}"
+        )
+
+
+class TestUpdateBookingPendingDisambiguationsShape:
+    """Phase 2 RED → GREEN: writer must emit pending_disambiguations as list[dict].
+
+    Expected RED on master: writer uses ``_audience_ambiguity`` (scalar dict).
+    Turns GREEN after Phase 2 rename + shape migration.
+    """
+
+    @pytest.mark.asyncio
+    async def test_writer_emits_pending_disambiguations_as_list(self):
+        """update_booking must write patch['pending_disambiguations'] as list[dict],
+        not as a scalar dict under '_audience_ambiguity'.
+
+        Acceptance:
+        - 'pending_disambiguations' key is present in the patch.
+        - Value is a list with at least one item.
+        - First item has required keys: family, resolved_as, resolved_audience, variants.
+        - '_audience_ambiguity' key must NOT be present (old name fully removed).
+        """
+        mock_svc = MagicMock()
+        mock_svc.name = "Corte Señora"
+        mock_svc.audience = "adult_female"
+        mock_svc.category = MagicMock(value="cabello")
+        mock_svc.duration_minutes = 45
+
+        with (
+            patch(
+                "agent.tools.booking_data_tools._find_audience_siblings_for_signal",
+                new_callable=AsyncMock,
+                return_value=["Corte Caballero", "Corte Niño"],
+            ),
+            patch(
+                "agent.tools.availability_tools._resolve_service_by_name",
+                new_callable=AsyncMock,
+                return_value=mock_svc,
+            ),
+            patch(
+                "agent.tools.availability_tools._get_active_stylists_for_category",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await update_booking.coroutine(
+                services=["Corte Señora"],
+                _current_context={},
+            )
+
+        ctx_patch = result["_booking_context_patch"]
+
+        assert "_audience_ambiguity" not in ctx_patch, (
+            f"Old key '_audience_ambiguity' must NOT be present after Phase 2 rename. "
+            f"Patch keys: {list(ctx_patch.keys())}"
+        )
+        assert "pending_disambiguations" in ctx_patch, (
+            f"Expected 'pending_disambiguations' in patch after Phase 2 rename. "
+            f"Patch keys: {list(ctx_patch.keys())}"
+        )
+        disambiguations = ctx_patch["pending_disambiguations"]
+        assert isinstance(disambiguations, list), (
+            f"pending_disambiguations must be list[dict], got {type(disambiguations)!r}: "
+            f"{disambiguations!r}"
+        )
+        assert (
+            len(disambiguations) >= 1
+        ), f"pending_disambiguations must contain at least one item. Got {disambiguations!r}"
+        item = disambiguations[0]
+        for key in ("family", "resolved_as", "resolved_audience", "variants"):
+            assert key in item, f"pending_disambiguations[0] missing key '{key}'. Item: {item!r}"
+
+    @pytest.mark.asyncio
+    async def test_clear_path_emits_empty_list(self):
+        """When service_audience_hint is set, writer must clear pending_disambiguations
+        to [] (empty list), not None (old clear path used None).
+        """
+        mock_svc = MagicMock()
+        mock_svc.name = "Corte Señora"
+        mock_svc.audience = "adult_female"
+        mock_svc.category = MagicMock(value="cabello")
+        mock_svc.duration_minutes = 45
+
+        with (
+            patch(
+                "agent.tools.booking_data_tools._find_audience_siblings_for_signal",
+                new_callable=AsyncMock,
+                return_value=["Corte Caballero"],
+            ),
+            patch(
+                "agent.tools.availability_tools._resolve_service_by_name",
+                new_callable=AsyncMock,
+                return_value=mock_svc,
+            ),
+            patch(
+                "agent.tools.availability_tools._get_active_stylists_for_category",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            result = await update_booking.coroutine(
+                services=["Corte Señora"],
+                service_audience_hint="adult_female",
+                _current_context={},
+            )
+
+        ctx_patch = result["_booking_context_patch"]
+
+        assert (
+            "_audience_ambiguity" not in ctx_patch
+        ), "Old key '_audience_ambiguity' must not be present after Phase 2 rename."
+        assert (
+            "pending_disambiguations" in ctx_patch
+        ), f"Clear path must write pending_disambiguations. Patch keys: {list(ctx_patch.keys())}"
+        assert ctx_patch["pending_disambiguations"] == [], (
+            f"Clear path must set pending_disambiguations=[], got "
+            f"{ctx_patch['pending_disambiguations']!r}"
         )

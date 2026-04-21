@@ -46,10 +46,13 @@ class BookingContext(TypedDict, total=False):
     context. This guarantees that deleted keys (for example, ``offered_slots``
     after a slot is selected) actually disappear from state instead of
     lingering as zombies.
-    """
 
-    # ── Booking step FSM ────────────────────────────────────────────────
-    booking_step: str  # service_selection | stylist_selection | datetime_selection | name_collection | confirmation
+    **Field authority**: every field here has an entry in
+    ``agent/booking/state_contract.BOOKING_STATE_AUTHORITY`` documenting its
+    owner module, readers, and whether it is transient. The unit test
+    ``tests/unit/test_booking_state_contract.py::TestRegistryCoversAllAnnotations``
+    enforces that the two stay in sync.
+    """
 
     # ── Service data ────────────────────────────────────────────────────
     last_services: list[str]  # e.g. ["CORTE LARGO"]
@@ -59,8 +62,10 @@ class BookingContext(TypedDict, total=False):
     # ── Stylist data ────────────────────────────────────────────────────
     last_stylist: str | None
     no_preference_stylist: bool | None
-    available_stylists: list[str] | None
-    _offered_stylists: list[str] | None  # includes "Sin preferencia" sentinel
+    available_stylists: (
+        list[str] | None
+    )  # mirror of _offered_stylists minus sentinel; DO NOT add new readers
+    _offered_stylists: list[str] | None  # canonical — includes "Sin preferencia" sentinel
 
     # ── Slot data ───────────────────────────────────────────────────────
     offered_slots: list[dict[str, Any]] | None
@@ -81,7 +86,6 @@ class BookingContext(TypedDict, total=False):
     # ── Disambiguation / confirmation / capability fields (BookingCapability E2) ──
     pending_disambiguations: list[dict[str, Any]]
     confirmed: bool
-    available_slots: list[dict[str, Any]]
     booked_appointment_id: str | None
 
     # ── Flow control / UX flags ─────────────────────────────────────────
@@ -90,7 +94,6 @@ class BookingContext(TypedDict, total=False):
     notes_state: Literal["not_asked", "skipped", "provided"]
     _booking_completed: bool
     _confirmation_shown: bool  # Solo setteable via return path explícito al reducer en _post_tool_result. No mutar in-place fuera de ese bloque.
-    _disambiguation_questions_shown: bool
     _suggested_customer_name: str | None
 
 

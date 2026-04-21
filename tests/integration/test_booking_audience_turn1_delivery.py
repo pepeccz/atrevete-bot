@@ -37,7 +37,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-
 # ---------------------------------------------------------------------------
 # Scripted LLM that captures the second call's messages
 # ---------------------------------------------------------------------------
@@ -185,7 +184,7 @@ async def test_audience_ambiguity_delivered_via_tool_message(_common_patches):
     Assertion (a): The ToolMessage content in the second LLM call contains
       "audiencia" (in missing list) OR "Audiencia ambigua" (in next_step).
 
-    Assertion (b): booking_context["_audience_ambiguity"] is set (regression guard).
+    Assertion (b): booking_context["pending_disambiguations"] is set (regression guard).
 
     Expected RED before fix: ToolMessage does NOT contain either signal because
     _build_response() in booking_data_tools.py does not yet inject the audience
@@ -213,14 +212,15 @@ async def test_audience_ambiguity_delivered_via_tool_message(_common_patches):
     ):
         result = await node.handle(state, intent=None)
 
-    # ── Assertion (b): booking_context has _audience_ambiguity ───────────────
+    # ── Assertion (b): booking_context has pending_disambiguations ───────────────
     booking_ctx = result.get("booking_context", {})
-    ambiguity = booking_ctx.get("_audience_ambiguity")
-    assert ambiguity is not None, (
-        "Expected booking_context['_audience_ambiguity'] to be set after turn-1. "
+    disambiguations = booking_ctx.get("pending_disambiguations", [])
+    assert disambiguations, (
+        "Expected booking_context['pending_disambiguations'] to be non-empty after turn-1. "
         f"Got booking_context keys={list(booking_ctx.keys())!r}. "
         "Regression guard for the detection block in update_booking."
     )
+    ambiguity = disambiguations[0]
 
     # ── Assertion (a): ToolMessage content carries the ambiguity signal ──────
     # The second call to the LLM should have the ToolMessage in its messages.

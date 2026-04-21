@@ -85,13 +85,13 @@ Paso 8   book() → cita creada
 | Tool | Cuándo se invoca | Qué retorna |
 |------|------------------|-------------|
 | `update_booking` | Después de cada respuesta del usuario, para persistir lo capturado | `{success, collected, missing, next_step, errors, _booking_context_patch}` |
-| `check_availability` | Cuando ya hay servicio + estilista + fecha (visible solo si no hay `_audience_ambiguity`) | `{available_slots, total_duration_minutes, alternative_dates}` |
+| `check_availability` | Cuando ya hay servicio + estilista + fecha (visible solo si no hay `pending_disambiguations`) | `{available_slots, total_duration_minutes, alternative_dates}` |
 | `book` | Cuando `_booking_complete()` retorna True (visible solo entonces) | `{status: "ok", appointment_id, start_time, end_time}` |
 
 ### Resolvers críticos
 
 - **`is_negation`** — `infra/resolvers/negation.py` (movido desde `shared/negation_phrases.py` en E1). Determinista, fuzzy match difflib 0.86. Resuelve "Nada más", "Ya está", "No", "Nope". Pre-loop. **Patrón canónico de P3.**
-- **`_extract_audience_from_reply`** — `booking_mode.py:132-169`. Detecta "señora", "caballero", "niño", "bebé". Setea `service_audience_hint` y limpia `_audience_ambiguity` atómicamente.
+- **`_extract_audience_from_reply`** — `booking_mode.py:132-169`. Detecta "señora", "caballero", "niño", "bebé". Setea `service_audience_hint` y limpia `pending_disambiguations` atómicamente.
 - **`_resolve_digit_selection`** — `booking_mode.py`. Detecta "la 1", "el segundo", "esa". Setea `selected_slot_index`.
 
 ### Middleware stack (orden importa)
@@ -300,7 +300,7 @@ Ejemplo: `loyalty` module.
 | `offered_slots` | `_post_tool_result[check_availability]` (único receptor de slots) | post-tool result |
 | `no_preference_stylist` | `update_booking` (stylist_name = "sin preferencia") | update_booking patch |
 | `service_audience_hint` | `update_booking` (service_audience_hint branch) | update_booking patch |
-| `_audience_ambiguity` | `update_booking` (services branch + audience_hint clear) | update_booking patch |
+| `pending_disambiguations` | `update_booking` (services branch as list[dict] + audience_hint clear as []) | update_booking patch |
 | `_booking_completed` | `_post_tool_result[book]` | post-tool result (book) |
 | `booked_appointment_id` | `_post_tool_result[book]` (via `update_booking` patch, si aplica) | post-tool result (book) |
 | `_suggested_customer_name` | `resolve_customer_from_state` | informational pre-fill |

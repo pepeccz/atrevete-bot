@@ -1,14 +1,14 @@
 """
 Integration tests for audience ambiguity clearance and check_availability visibility gate.
 
-C3.1 — _audience_ambiguity must be cleared after _extract_audience_from_reply sets hint.
+C3.1 — pending_disambiguations must be cleared after _extract_audience_from_reply sets hint.
 C3.2 (in tests/unit/test_dynamic_tools_middleware.py) — check_availability hidden during ambiguity.
 
 TDD cycle:
 - C3.1 tests must FAIL before C3.3+C3.4 implementation.
-  (C3.4 was actually completed in C2 commit — _audience_ambiguity pop() already in place.
-   C3.1 tests may already pass for the pop() assertion but will confirm no regression.)
-- Must PASS after C3.3 (get_tools predicate) and C3.4 (_audience_ambiguity pop).
+  (C3.4 was actually completed in C2 commit — pending_disambiguations clear already in place.
+   C3.1 tests may already pass for the clear assertion but will confirm no regression.)
+- Must PASS after C3.3 (get_tools predicate) and C3.4 (pending_disambiguations clear).
 
 Covers: R6, S6.
 """
@@ -23,7 +23,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.modes.booking_mode import BookingModeNode
 from agent.state.schemas import create_initial_state
-
 
 # ---------------------------------------------------------------------------
 # Scripted agent stub
@@ -135,36 +134,38 @@ def _common_patches():
 @pytest.mark.xfail(
     reason=(
         "tool-contract-extension: _extract_audience_from_reply hook removed. "
-        "_audience_ambiguity is now cleared inside update_booking when the LLM "
+        "pending_disambiguations is now cleared inside update_booking when the LLM "
         "passes service_audience_hint. Test targets the deleted pre-loop path."
     ),
     strict=False,
 )
 class TestAudienceAmbiguityClearance:
     """
-    C3.1: After turn-2 audience reply ('señora'), _audience_ambiguity must be cleared
+    C3.1: After turn-2 audience reply ('señora'), pending_disambiguations must be cleared
     from booking_context atomically with setting service_audience_hint.
 
-    Turn-1: booking_context has _audience_ambiguity set, no service_audience_hint.
+    Turn-1: booking_context has pending_disambiguations set, no service_audience_hint.
     Turn-2: user sends "señora" → _extract_audience_from_reply fires →
-            service_audience_hint must be set AND _audience_ambiguity must be absent.
+            service_audience_hint must be set AND pending_disambiguations must be empty/absent.
     """
 
     async def test_audience_ambiguity_cleared_after_hint_set(self, _common_patches) -> None:
-        """S6: _audience_ambiguity must be absent after turn-2 audience reply.
+        """S6: pending_disambiguations must be absent/empty after turn-2 audience reply.
 
         This test validates that _extract_audience_from_reply atomically clears
-        _audience_ambiguity when setting service_audience_hint.
+        pending_disambiguations when setting service_audience_hint.
         """
         node = _make_node()
 
-        # Turn-1 state: _audience_ambiguity is set, no hint yet
+        # Turn-1 state: pending_disambiguations is set, no hint yet
         turn1_ctx = {
             "last_services": ["Corte"],
-            "_audience_ambiguity": {
-                "family": "Corte",
-                "variants": ["Corte Señora", "Corte Caballero"],
-            },
+            "pending_disambiguations": [
+                {
+                    "family": "Corte",
+                    "variants": ["Corte Señora", "Corte Caballero"],
+                }
+            ],
             # No service_audience_hint — that's why ambiguity is active
         }
 
@@ -172,7 +173,9 @@ class TestAudienceAmbiguityClearance:
         # State carries the booking_context from turn-1
         turn2_state = _make_state("señora", booking_context=turn1_ctx)
 
-        agent_mock = _make_scripted_agent("Perfecto, un corte para señora. ¿Alguna estilista de preferencia?")
+        agent_mock = _make_scripted_agent(
+            "Perfecto, un corte para señora. ¿Alguna estilista de preferencia?"
+        )
 
         with patch("langchain.agents.create_agent", return_value=agent_mock):
             result = await node.handle(turn2_state, intent=None)
@@ -186,59 +189,60 @@ class TestAudienceAmbiguityClearance:
             f"Full booking_context: {result_ctx!r}"
         )
 
-        # Assertion 2: _audience_ambiguity must be absent
-        assert "_audience_ambiguity" not in result_ctx, (
-            f"_audience_ambiguity must be cleared after service_audience_hint is set, "
-            f"but it's still present: {result_ctx.get('_audience_ambiguity')!r}. "
-            "FAILS on master because the atomic pop() is not yet implemented."
+        # Assertion 2: pending_disambiguations must be absent/empty
+        assert not result_ctx.get("pending_disambiguations"), (
+            f"pending_disambiguations must be cleared after service_audience_hint is set, "
+            f"but it's still present: {result_ctx.get('pending_disambiguations')!r}. "
+            "FAILS on master because the atomic clear is not yet implemented."
         )
 
     async def test_audience_ambiguity_not_present_in_second_turn_tools(
         self, _common_patches
     ) -> None:
-        """R7/S7: check_availability must NOT appear in get_tools when _audience_ambiguity is set.
+        """R7/S7: check_availability must NOT appear in get_tools when pending_disambiguations is set.
 
-        After turn-2 clears _audience_ambiguity and sets the hint, subsequent
+        After turn-2 clears pending_disambiguations and sets the hint, subsequent
         get_tools calls (with stylist set) should include check_availability.
         """
         node = _make_node()
 
-        # State: has services, stylist, no slot, AND _audience_ambiguity still set
+        # State: has services, stylist, no slot, AND pending_disambiguations still set
         # (simulates the state before the fix — during ambiguity, check_availability hidden)
         ctx_with_ambiguity = {
             "last_services": ["Corte Señora"],
             "last_stylist": "Maria",
-            "_audience_ambiguity": {
-                "family": "Corte",
-                "variants": ["Corte Señora", "Corte Caballero"],
-            },
+            "pending_disambiguations": [
+                {
+                    "family": "Corte",
+                    "variants": ["Corte Señora", "Corte Caballero"],
+                }
+            ],
         }
         tools_with_ambiguity = node.get_tools(ctx_with_ambiguity)
         tool_names = [t.name if hasattr(t, "name") else str(t) for t in tools_with_ambiguity]
 
-        # With _audience_ambiguity set, check_availability must NOT be in tools
+        # With pending_disambiguations set, check_availability must NOT be in tools
         assert "check_availability" not in tool_names, (
-            f"check_availability must be hidden when _audience_ambiguity is truthy. "
+            f"check_availability must be hidden when pending_disambiguations is truthy. "
             f"Got tools: {tool_names}. "
-            "FAILS on master because the get_tools() predicate doesn't gate on _audience_ambiguity yet."
         )
 
     async def test_check_availability_visible_after_ambiguity_cleared(
         self, _common_patches
     ) -> None:
-        """R7: check_availability must appear in get_tools after _audience_ambiguity is cleared."""
+        """R7: check_availability must appear in get_tools after pending_disambiguations is cleared."""
         node = _make_node()
 
-        # Context: has services, stylist, no slot, NO _audience_ambiguity (cleared)
+        # Context: has services, stylist, no slot, NO pending_disambiguations (cleared)
         ctx_without_ambiguity = {
             "last_services": ["Corte Señora"],
             "last_stylist": "Maria",
-            # No _audience_ambiguity key
+            # No pending_disambiguations key
         }
         tools_without_ambiguity = node.get_tools(ctx_without_ambiguity)
         tool_names = [t.name if hasattr(t, "name") else str(t) for t in tools_without_ambiguity]
 
         assert "check_availability" in tool_names, (
-            f"check_availability must be visible when _audience_ambiguity is absent "
+            f"check_availability must be visible when pending_disambiguations is absent "
             f"and services+stylist are set. Got tools: {tool_names}"
         )

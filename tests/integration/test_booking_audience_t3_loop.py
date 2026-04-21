@@ -7,15 +7,15 @@ TDD cycle: this test MUST FAIL before C6.4.2 implementation.
 Covers R3, S1.
 
 Scenario:
-- Turn 1: user said "quiero un corte" → booking_context has _audience_ambiguity set
+- Turn 1: user said "quiero un corte" → booking_context has pending_disambiguations set
            with variants=["Corte Señora","Corte Caballero"], last_services=["Corte"]
 - Turn 2: user sends "Señora!" → BookingModeNode.handle() extracts hint "adult_female",
-           pops _audience_ambiguity, then:
+           clears pending_disambiguations, then:
            a) resolves "Corte Señora" via _pick_variant_by_hint
            b) updates last_services to ["Corte Señora"]
            c) calls deliver_state_update → [AIMessage, ToolMessage] synthetic pair
            d) injects synthetic pair into create_agent transcript
-           e) assert no _audience_ambiguity in result booking_context
+           e) assert pending_disambiguations empty/absent in result booking_context
            f) assert last_services == ["Corte Señora"] in result booking_context
            g) assert telemetry log with delivered=True, context_label="audience-t3"
 """
@@ -50,7 +50,9 @@ pytestmark = pytest.mark.xfail(
 # ---------------------------------------------------------------------------
 
 
-def _make_scripted_agent(reply: str = "Perfecto, un corte para señora. ¿Qué estilista prefieres?") -> MagicMock:
+def _make_scripted_agent(
+    reply: str = "Perfecto, un corte para señora. ¿Qué estilista prefieres?",
+) -> MagicMock:
     """Create a scripted agent that records the transcript it received."""
     captured_transcript: list = []
 
@@ -108,13 +110,15 @@ def _make_turn2_state(
     return state
 
 
-# Post-Turn-1 booking_context — _audience_ambiguity is set, no hint yet
+# Post-Turn-1 booking_context — pending_disambiguations is set, no hint yet
 _TURN1_BOOKING_CONTEXT: dict[str, Any] = {
     "last_services": ["Corte"],
-    "_audience_ambiguity": {
-        "family": "Corte",
-        "variants": ["Corte Señora", "Corte Caballero"],
-    },
+    "pending_disambiguations": [
+        {
+            "family": "Corte",
+            "variants": ["Corte Señora", "Corte Caballero"],
+        }
+    ],
     # service_audience_hint absent → triggers extraction on Turn 2
 }
 
@@ -181,7 +185,7 @@ class TestT3AudienceResolutionWiring:
         )
 
     async def test_audience_ambiguity_cleared(self, _common_patches) -> None:
-        """R3, S1: _audience_ambiguity must be absent after T3 resolution."""
+        """R3, S1: pending_disambiguations must be empty/absent after T3 resolution."""
         node = _make_node()
         state = _make_turn2_state(booking_context=dict(_TURN1_BOOKING_CONTEXT))
         agent_mock = _make_scripted_agent()
@@ -190,9 +194,9 @@ class TestT3AudienceResolutionWiring:
             result = await node.handle(state, intent=None)
 
         ctx = result.get("booking_context", {})
-        assert "_audience_ambiguity" not in ctx, (
-            f"_audience_ambiguity must be cleared after T3 resolution, "
-            f"but it's still present: {ctx.get('_audience_ambiguity')!r}"
+        assert not ctx.get("pending_disambiguations"), (
+            f"pending_disambiguations must be cleared after T3 resolution, "
+            f"but it's still present: {ctx.get('pending_disambiguations')!r}"
         )
 
     async def test_synthetic_messages_injected_in_transcript(self, _common_patches, caplog) -> None:
@@ -217,7 +221,8 @@ class TestT3AudienceResolutionWiring:
 
         # Find synthetic AIMessage in transcript
         synthetic_ai_msgs = [
-            m for m in captured_transcripts
+            m
+            for m in captured_transcripts
             if isinstance(m, AIMessage)
             and m.content == ""
             and m.tool_calls
@@ -234,12 +239,13 @@ class TestT3AudienceResolutionWiring:
         # Find corresponding ToolMessage
         synth_id = synthetic_ai_msgs[0].tool_calls[0]["id"]
         synthetic_tool_msgs = [
-            m for m in captured_transcripts
+            m
+            for m in captured_transcripts
             if isinstance(m, ToolMessage) and m.tool_call_id == synth_id
         ]
-        assert synthetic_tool_msgs, (
-            f"Expected synthetic ToolMessage with tool_call_id={synth_id!r} in transcript"
-        )
+        assert (
+            synthetic_tool_msgs
+        ), f"Expected synthetic ToolMessage with tool_call_id={synth_id!r} in transcript"
 
     async def test_synthetic_toolmessage_reflects_resolved_state(self, _common_patches) -> None:
         """S1: ToolMessage content reflects resolved booking state (services: ['Corte Señora'])."""
@@ -262,7 +268,11 @@ class TestT3AudienceResolutionWiring:
 
         # Find synthetic ToolMessage
         synth_tool = next(
-            (m for m in captured if isinstance(m, ToolMessage) and m.tool_call_id.startswith("synth-")),
+            (
+                m
+                for m in captured
+                if isinstance(m, ToolMessage) and m.tool_call_id.startswith("synth-")
+            ),
             None,
         )
         assert synth_tool is not None, "Synthetic ToolMessage not found in transcript"
@@ -270,14 +280,14 @@ class TestT3AudienceResolutionWiring:
         content = json.loads(synth_tool.content)
         # The content must show "Corte Señora" as collected service
         collected_str = " ".join(content.get("collected", []))
-        assert "Corte Señora" in collected_str, (
-            f"Expected 'Corte Señora' in ToolMessage collected. Got: {content!r}"
-        )
+        assert (
+            "Corte Señora" in collected_str
+        ), f"Expected 'Corte Señora' in ToolMessage collected. Got: {content!r}"
         # next_step must NOT say "Audiencia ambigua" (that was the T3 bug)
         next_step = content.get("next_step", "")
-        assert "Audiencia ambigua" not in next_step, (
-            f"next_step must not say 'Audiencia ambigua' after resolution. Got: {next_step!r}"
-        )
+        assert (
+            "Audiencia ambigua" not in next_step
+        ), f"next_step must not say 'Audiencia ambigua' after resolution. Got: {next_step!r}"
 
     async def test_telemetry_emitted_with_delivered_true(self, _common_patches, caplog) -> None:
         """R5: booking.synthetic_state_delivery telemetry emitted with delivered=True."""
@@ -299,7 +309,7 @@ class TestT3AudienceResolutionWiring:
         assert getattr(record, "context_label", None) == "audience-t3"
 
     async def test_no_synthetic_delivery_when_no_ambiguity(self, _common_patches, caplog) -> None:
-        """R3: When no _audience_ambiguity, no synthetic messages delivered."""
+        """R3: When no pending_disambiguations, no synthetic messages delivered."""
         node = _make_node()
         # Context without ambiguity
         clean_ctx = {
@@ -325,10 +335,13 @@ class TestT3AudienceResolutionWiring:
 
         # No synthetic messages should appear
         synth_msgs = [
-            m for m in captured
-            if isinstance(m, AIMessage) and m.content == "" and m.tool_calls
+            m
+            for m in captured
+            if isinstance(m, AIMessage)
+            and m.content == ""
+            and m.tool_calls
             and m.tool_calls[0].get("id", "").startswith("synth-")
         ]
-        assert not synth_msgs, (
-            f"Expected no synthetic messages when no _audience_ambiguity, got {synth_msgs!r}"
-        )
+        assert (
+            not synth_msgs
+        ), f"Expected no synthetic messages when no pending_disambiguations, got {synth_msgs!r}"

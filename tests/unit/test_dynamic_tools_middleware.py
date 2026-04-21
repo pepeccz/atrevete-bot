@@ -1,7 +1,7 @@
 """
 Unit tests for BookingModeNode.get_tools() visibility gate during audience ambiguity.
 
-C3.2: check_availability must NOT appear in tool list when _audience_ambiguity is truthy,
+C3.2: check_availability must NOT appear in tool list when pending_disambiguations is truthy,
 even if has_services, has_stylist, and not has_slot all hold.
 
 TDD cycle:
@@ -15,10 +15,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from agent.modes.booking_mode import BookingModeNode
-
 
 # ---------------------------------------------------------------------------
 # Node factory — minimal, no async I/O needed (get_tools is sync)
@@ -43,18 +40,14 @@ def _tool_names(tools: list) -> list[str]:
 
 
 class TestGetToolsAudienceAmbiguityGate:
-    """Unit tests for get_tools() predicate — _audience_ambiguity gates check_availability."""
+    """Unit tests for get_tools() predicate — pending_disambiguations gates check_availability."""
 
     def test_check_availability_hidden_when_audience_ambiguity_set(self) -> None:
-        """S7: check_availability must NOT appear when _audience_ambiguity is truthy.
+        """S7: check_availability must NOT appear when pending_disambiguations is truthy.
 
         Even if has_services=True, has_stylist=True, has_slot=False — which would
-        normally include check_availability — the presence of _audience_ambiguity
+        normally include check_availability — a non-empty pending_disambiguations list
         must block it.
-
-        FAILS on master because the predicate is:
-            if has_services and has_stylist and not has_slot:
-        and does not yet include `and not ctx.get("_audience_ambiguity")`.
         """
         node = _make_node()
 
@@ -62,19 +55,20 @@ class TestGetToolsAudienceAmbiguityGate:
             "last_services": ["Corte Señora"],
             "last_stylist": "Maria",
             # No selected_slot — so has_slot=False
-            "_audience_ambiguity": {
-                "family": "Corte",
-                "variants": ["Corte Señora", "Corte Caballero"],
-            },
+            "pending_disambiguations": [
+                {
+                    "family": "Corte",
+                    "variants": ["Corte Señora", "Corte Caballero"],
+                }
+            ],
         }
 
         tools = node.get_tools(ctx)
         names = _tool_names(tools)
 
         assert "check_availability" not in names, (
-            f"check_availability must be HIDDEN when _audience_ambiguity is truthy. "
-            f"Got tools: {names}. "
-            "FAILS on master — predicate missing `and not ctx.get('_audience_ambiguity')`."
+            f"check_availability must be HIDDEN when pending_disambiguations is truthy. "
+            f"Got tools: {names}."
         )
 
     def test_check_availability_visible_without_audience_ambiguity(self) -> None:
@@ -84,7 +78,7 @@ class TestGetToolsAudienceAmbiguityGate:
         ctx = {
             "last_services": ["Corte Señora"],
             "last_stylist": "Maria",
-            # No selected_slot, No _audience_ambiguity
+            # No selected_slot, No pending_disambiguations
         }
 
         tools = node.get_tools(ctx)
@@ -92,25 +86,25 @@ class TestGetToolsAudienceAmbiguityGate:
 
         assert "check_availability" in names, (
             f"check_availability must be VISIBLE when services+stylist are set, "
-            f"no slot, and no _audience_ambiguity. Got tools: {names}"
+            f"no slot, and no pending_disambiguations. Got tools: {names}"
         )
 
-    def test_check_availability_hidden_when_audience_ambiguity_falsy_empty_dict(self) -> None:
-        """_audience_ambiguity={} (empty dict) is falsy — check_availability should appear."""
+    def test_check_availability_visible_when_pending_disambiguations_empty_list(self) -> None:
+        """pending_disambiguations=[] (empty list) is falsy — check_availability should appear."""
         node = _make_node()
 
         ctx = {
             "last_services": ["Corte Señora"],
             "last_stylist": "Maria",
-            "_audience_ambiguity": {},  # empty dict — falsy in Python
+            "pending_disambiguations": [],  # empty list — falsy in Python
         }
 
         tools = node.get_tools(ctx)
         names = _tool_names(tools)
 
-        # Empty dict is falsy so check_availability should appear
+        # Empty list is falsy so check_availability should appear
         assert "check_availability" in names, (
-            f"_audience_ambiguity={{}} is falsy — check_availability should be visible. "
+            f"pending_disambiguations=[] is falsy — check_availability should be visible. "
             f"Got tools: {names}"
         )
 
@@ -119,15 +113,15 @@ class TestGetToolsAudienceAmbiguityGate:
         node = _make_node()
 
         ctx = {
-            "_audience_ambiguity": {"family": "Corte", "variants": []},
+            "pending_disambiguations": [{"family": "Corte", "variants": []}],
         }
 
         tools = node.get_tools(ctx)
         names = _tool_names(tools)
 
-        assert "update_booking" in names, (
-            f"update_booking must always be present. Got tools: {names}"
-        )
+        assert (
+            "update_booking" in names
+        ), f"update_booking must always be present. Got tools: {names}"
 
     def test_no_services_no_check_availability(self) -> None:
         """check_availability must not appear if last_services is empty."""
@@ -141,24 +135,24 @@ class TestGetToolsAudienceAmbiguityGate:
         tools = node.get_tools(ctx)
         names = _tool_names(tools)
 
-        assert "check_availability" not in names, (
-            f"check_availability should not appear without services. Got: {names}"
-        )
+        assert (
+            "check_availability" not in names
+        ), f"check_availability should not appear without services. Got: {names}"
 
     def test_audience_ambiguity_none_does_not_gate(self) -> None:
-        """_audience_ambiguity=None (explicitly set to None) is falsy — should not gate."""
+        """pending_disambiguations=None (explicitly set to None) is falsy — should not gate."""
         node = _make_node()
 
         ctx = {
             "last_services": ["Corte Señora"],
             "last_stylist": "Maria",
-            "_audience_ambiguity": None,
+            "pending_disambiguations": None,
         }
 
         tools = node.get_tools(ctx)
         names = _tool_names(tools)
 
         assert "check_availability" in names, (
-            f"_audience_ambiguity=None is falsy — check_availability should be visible. "
+            f"pending_disambiguations=None is falsy — check_availability should be visible. "
             f"Got tools: {names}"
         )
