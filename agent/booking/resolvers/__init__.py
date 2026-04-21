@@ -32,7 +32,28 @@ class ResolverResult(TypedDict, total=False):
     user_action: str | None     # PROVIDE_FIELD | CHANGE_DATE | AFFIRM | NEGATE | UNKNOWN
 
 
-# Registry is populated by each resolver module at import time.
-# Modules append themselves on load so order is controlled by import order in subgraph.py.
-# For now, empty until P2/P3 populate it.
+# Registry is defined here in fixed precedence order (design D4).
+# Populated at the bottom of this file after all resolver modules are imported.
 RESOLVER_REGISTRY: list = []
+
+
+def _build_registry() -> None:
+    """Import resolver modules and populate RESOLVER_REGISTRY in precedence order."""
+    from agent.booking.resolvers import (
+        any_stylist,
+        confirmation,
+        customer_prefill,
+        digit_selection,
+    )
+
+    RESOLVER_REGISTRY.extend(
+        [
+            digit_selection.resolve,       # 1. digit selection (if offered_slots present)
+            confirmation.resolve,          # 2. confirmation/negation (if _confirmation_shown)
+            any_stylist.resolve,           # 3. ANY_AVAILABLE sentinel
+            customer_prefill.resolve,      # 4. read-only prefill from state (last)
+        ]
+    )
+
+
+_build_registry()
