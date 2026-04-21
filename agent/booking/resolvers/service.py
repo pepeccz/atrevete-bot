@@ -3,6 +3,11 @@ service resolver — fuzzy catalog match.
 
 R1.3: on single match writes last_services; on multiple matches populates
 pending_disambiguations and defers. Uses audience hint when present.
+
+Phase 2 (catalog-loader SDD) — accepts list[ServiceRow] (production shape) or
+list[str] (legacy test shape). When rows are present, audience filtering reads
+the Service.audience column. When strings are present, the legacy name-keyword
+parse is preserved for backward compatibility.
 """
 
 from __future__ import annotations
@@ -12,24 +17,45 @@ import logging
 from typing import Any
 
 from agent.booking.resolvers import ResolverResult
+from agent.prompts.catalog_builder import ServiceRow
 
 logger = logging.getLogger(__name__)
 
 _CUTOFF = 0.35  # fuzzy match cutoff for service names (generous; audience-hint refines)
 
 
+# Audience-column → allowed row-audience mapping (Phase 2, data-driven).
+_AUDIENCE_MAP: dict[str, set[str | None]] = {
+    "FEMALE": {"adult_female", "unisex", None},
+    "MALE": {"adult_male", "unisex", None},
+    "CHILD": {"child_female", "child_male", "unisex"},
+}
+
+
 def _normalize(text: str) -> str:
     import unicodedata
+
     text = unicodedata.normalize("NFKD", text)
     text = "".join(c for c in text if not unicodedata.combining(c))
     return text.lower().strip()
 
 
-def _audience_matches(service_name: str, audience_hint: str | None) -> bool:
-    """Return True if service_name is consistent with audience_hint."""
+def _audience_matches(item: ServiceRow | str, audience_hint: str | None) -> bool:
+    """Return True when *item* is consistent with *audience_hint*.
+
+    When *item* is a ServiceRow, filters by the ``audience`` DB column using
+    ``_AUDIENCE_MAP`` (Phase 2 — data-driven). When *item* is a plain string,
+    preserves the legacy name-keyword parse for backward compatibility.
+    """
     if not audience_hint:
         return True
-    name_lower = service_name.lower()
+
+    if isinstance(item, ServiceRow):
+        allowed = _AUDIENCE_MAP.get(audience_hint, set())
+        return item.audience in allowed
+
+    # Legacy string path — preserved for existing unit tests.
+    name_lower = item.lower()
     if audience_hint == "FEMALE" and any(
         k in name_lower for k in ("señora", "dama", "mujer", "femenin")
     ):
@@ -42,29 +68,56 @@ def _audience_matches(service_name: str, audience_hint: str | None) -> bool:
         k in name_lower for k in ("niño", "niña", "infantil", "nena")
     ):
         return True
-    # Neutral services (no audience keyword) match any hint
     if not any(
         k in name_lower
-        for k in ("señora", "caballero", "niño", "niña", "dama", "hombre", "infantil", "nena", "mujer")
+        for k in (
+            "señora",
+            "caballero",
+            "niño",
+            "niña",
+            "dama",
+            "hombre",
+            "infantil",
+            "nena",
+            "mujer",
+        )
     ):
         return True
     return False
 
 
+def _score_candidate(normalized_input: str, norm_name: str) -> float:
+    """Compute the fuzzy-match score between a normalized user text and
+    a normalized catalog entry. Extracted for testability."""
+    ratio = difflib.SequenceMatcher(None, normalized_input, norm_name).ratio()
+    input_words = set(normalized_input.split())
+    name_words = set(norm_name.split())
+    fwd_overlap = len(input_words & name_words) / max(len(name_words), 1)
+    root_match = any(
+        nw in iw or iw in nw
+        for nw in name_words
+        for iw in input_words
+        if len(nw) >= 4 and len(iw) >= 4
+    )
+    score = max(ratio, fwd_overlap)
+    if root_match:
+        score = max(score, 0.4)
+    return score
+
+
+def _item_name(item: ServiceRow | str) -> str:
+    return item.name if isinstance(item, ServiceRow) else item
+
+
 def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> ResolverResult | None:
-    """Fuzzy match user_text against service catalog.
+    """Fuzzy match user_text against the active service catalog.
 
-    Catalog sourced from state["service_catalog"] (list of service name strings)
-    or falls back to empty (no match).
-
-    Returns:
-        Single match: patch={"last_services": [name], "add_more_asked": False}
-        Ambiguous: patch={"pending_disambiguations": [...]}
-        No match: None
+    Catalog sourced from ``state["service_catalog"]`` (list of ``ServiceRow`` in
+    prod; list of strings in legacy tests). When absent, falls back to the
+    module-level loader.
     """
-    catalog: list[str] = state.get("service_catalog") or []
+    catalog: list[ServiceRow | str] = state.get("service_catalog") or []
     if not catalog:
-        # Try loading from shared catalog cache
         catalog = _load_catalog_from_cache()
 
     if not catalog:
@@ -73,48 +126,25 @@ def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> Resolv
     audience_hint: str | None = bc.get("service_audience_hint")
     normalized_input = _normalize(user_text)
 
-    # Score each catalog item
-    candidates: list[tuple[str, float]] = []
-    norm_catalog = [_normalize(name) for name in catalog]
-
-    for name, norm_name in zip(catalog, norm_catalog):
-        ratio = difflib.SequenceMatcher(None, normalized_input, norm_name).ratio()
-        # Keyword overlap: check if any word from input appears in service name OR vice versa
-        input_words = set(normalized_input.split())
-        name_words = set(norm_name.split())
-        # Forward overlap: service name words found in user input
-        fwd_overlap = len(input_words & name_words) / max(len(name_words), 1)
-        # Root word match: any name word is a substring of any input word or vice versa
-        root_match = any(
-            nw in iw or iw in nw
-            for nw in name_words
-            for iw in input_words
-            if len(nw) >= 4 and len(iw) >= 4
-        )
-        score = max(ratio, fwd_overlap)
-        if root_match:
-            score = max(score, 0.4)
+    candidates: list[tuple[ServiceRow | str, float]] = []
+    for item in catalog:
+        norm_name = _normalize(_item_name(item))
+        score = _score_candidate(normalized_input, norm_name)
         if score >= _CUTOFF:
-            candidates.append((name, score))
+            candidates.append((item, score))
 
     if not candidates:
         return None
 
-    # Filter by audience hint
     audience_filtered = [
-        (name, score)
-        for name, score in candidates
-        if _audience_matches(name, audience_hint)
+        (item, score) for item, score in candidates if _audience_matches(item, audience_hint)
     ]
 
-    # If audience filter produced results, use them; otherwise use all
     working = audience_filtered if audience_filtered else candidates
-
-    # Sort by score descending
     working.sort(key=lambda x: x[1], reverse=True)
 
     if len(working) == 1 or (audience_hint and len(audience_filtered) == 1):
-        chosen = working[0][0]
+        chosen = _item_name(working[0][0])
         logger.info("resolver.service.single_match | service=%s", chosen)
         return {
             "patch": {"last_services": [chosen]},
@@ -122,8 +152,9 @@ def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> Resolv
             "user_action": "PROVIDE_FIELD",
         }
 
-    # Multiple matches → disambiguate
-    disambig = [{"service_name": name, "score": score} for name, score in working[:5]]
+    disambig = [
+        {"service_name": _item_name(item), "score": score} for item, score in working[:5]
+    ]
     logger.info("resolver.service.ambiguous | count=%d", len(disambig))
     return {
         "patch": {"pending_disambiguations": disambig},
@@ -132,11 +163,11 @@ def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> Resolv
     }
 
 
-def _load_catalog_from_cache() -> list[str]:
-    """Load service names from the shared prompt catalog cache."""
-    try:
-        # The catalog_builder stores a formatted string; we need names.
-        # For now, return empty — tests inject via state["service_catalog"].
-        return []
-    except Exception:
-        return []
+def _load_catalog_from_cache() -> list[ServiceRow]:
+    """Load active services from the shared catalog cache.
+
+    Wired in Phase 3 of the catalog-loader SDD — kept as a stub here so that
+    Phase 2 can land without depending on a synchronous path into the async
+    cache. Phase 3 patches this function to call ``get_active_services()``.
+    """
+    return []
