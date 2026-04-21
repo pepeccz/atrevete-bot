@@ -533,3 +533,144 @@ class TestSubgraphSmoke:
         ]
         for node in nodes:
             assert callable(node), f"{node!r} must be callable"
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — New robustness scenarios
+# ---------------------------------------------------------------------------
+
+
+class TestAudienceLoopFix:
+    """
+    Audience-loop bug scenario: pending_disambiguations non-empty +
+    user sends "señora" → clears + advances past ask_audience.
+
+    This is the core fix for the audience-loop bug that triggered this change.
+    """
+
+    @pytest.mark.asyncio
+    async def test_audience_resolver_clears_pending_disambiguations(self) -> None:
+        """
+        Given: pending_disambiguations is non-empty (service ambiguous)
+               AND _last_leaf == "ask_audience"
+        When:  user sends "señora"
+        Then:  audience resolver sets service_audience_hint=FEMALE
+               AND clears pending_disambiguations
+               AND route_action does NOT go to ask_audience again
+        """
+        from agent.booking.nodes.interpret_user_update import interpret_user_update
+        from agent.booking.nodes.reconcile_invalidations import reconcile_invalidations
+        from agent.booking.nodes.route_action import route_action
+
+        bc = {
+            "last_services": ["Corte Señora"],
+            "add_more_asked": True,
+            "last_stylist": "Laura",
+            "pending_disambiguations": [
+                {"service_name": "Corte Señora", "score": 0.7},
+                {"service_name": "Corte Caballero", "score": 0.65},
+            ],
+            "_last_leaf": "ask_audience",
+        }
+        state = {
+            "booking_context": bc,
+            "user_message": "señora",
+            "messages": [],
+            "total_message_count": 3,
+        }
+
+        # interpret
+        interp = await interpret_user_update(state)
+        state = {**state, **interp}
+
+        # reconcile
+        recon = await reconcile_invalidations(state)
+        new_bc = recon["booking_context"]
+
+        assert new_bc.get("service_audience_hint") == "FEMALE", (
+            "audience resolver must set service_audience_hint=FEMALE"
+        )
+        assert not new_bc.get("pending_disambiguations"), (
+            "pending_disambiguations must be cleared after audience resolved"
+        )
+
+        # route must NOT go to ask_audience
+        cmd = route_action({"booking_context": new_bc})
+        assert cmd.goto != "ask_audience", (
+            f"route_action went to ask_audience even after audience resolved: {cmd.goto!r}"
+        )
+
+
+class TestDateChangeAtAskName:
+    """
+    Date change mid-flow at ask_name step.
+    User provides date instead of name → date_hint overwritten, offered_slots cleared.
+    """
+
+    @pytest.mark.asyncio
+    async def test_date_hint_overwrite_clears_offered_slots(self) -> None:
+        """
+        Given: current _last_leaf == "ask_name", date_hint and offered_slots set
+        When:  user sends "mejor el viernes"
+        Then:  date_hint is overwritten
+               AND offered_slots + selected_slot are cleared by reconciler
+               AND _last_leaf remains "ask_name"
+        """
+        from agent.booking.nodes.interpret_user_update import interpret_user_update
+        from agent.booking.nodes.reconcile_invalidations import reconcile_invalidations
+
+        bc = {
+            "last_services": ["Corte Señora"],
+            "add_more_asked": True,
+            "last_stylist": "Laura",
+            "offered_slots": [{"start_time": "10:00", "stylist_name": "Laura"}],
+            "selected_slot": {"start_time": "10:00"},
+            "date_hint": "2026-04-20",
+            "_last_leaf": "ask_name",
+        }
+        state = {"booking_context": bc, "user_message": "mejor el viernes", "messages": [], "total_message_count": 5}
+
+        interp = await interpret_user_update(state)
+        assert interp["user_action"] == "CHANGE_DATE", (
+            f"Expected CHANGE_DATE action, got {interp['user_action']!r}"
+        )
+
+        state = {**state, **interp}
+        recon = await reconcile_invalidations(state)
+        new_bc = recon["booking_context"]
+
+        assert "date_hint" in new_bc and new_bc["date_hint"] != "2026-04-20", (
+            "date_hint must be overwritten"
+        )
+        assert not new_bc.get("offered_slots"), "offered_slots must be cleared after date change"
+        assert not new_bc.get("selected_slot"), "selected_slot must be cleared after date change"
+
+
+class TestMidFlowEscape:
+    """
+    Mid-flow cancel/escalate via escape gate.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancel_clears_context_mid_booking(self) -> None:
+        from agent.booking.nodes.escape_gate import escape_gate
+        from langgraph.types import Command
+
+        bc = {"last_services": ["Corte Señora"], "last_stylist": "Laura", "date_hint": "2026-04-25"}
+        state = {"booking_context": bc, "user_message": "quiero cancelar", "messages": []}
+        result = await escape_gate(state)
+        assert isinstance(result, Command)
+        assert result.update["current_mode"] == "GENERAL"
+        assert result.update["booking_context"] == {}
+
+    @pytest.mark.asyncio
+    async def test_escalate_preserves_context(self) -> None:
+        from agent.booking.nodes.escape_gate import escape_gate
+        from langgraph.types import Command
+
+        bc = {"last_services": ["Corte Señora"], "last_stylist": "Laura", "date_hint": "2026-04-25"}
+        state = {"booking_context": bc, "user_message": "quiero hablar con una persona", "messages": []}
+        result = await escape_gate(state)
+        assert isinstance(result, Command)
+        assert result.update["current_mode"] == "ESCALATION"
+        assert result.update["booking_context"] == bc
