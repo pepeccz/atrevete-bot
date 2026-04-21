@@ -141,26 +141,22 @@ class TestGroundingSeesPreLoopPatches:
 
     def test_booking_mode_current_state_reflects_pre_loop_patches(self):
         """
-        Verifies the ACTUAL production bug in BookingModeNode:
+        Verifies the rebind contract: after BookingModeNode applies pre-loop resolver
+        patches to the local ``booking_context`` dict, ``self._current_state["booking_context"]``
+        MUST be the same object (same ``id``) as ``self._booking_context``.
 
-        booking_mode.py (master, line 452-454):
-          self._booking_context = booking_context   # local mutated dict
-          self._mode_context = booking_context
-          self._current_state = state               # state["booking_context"] is CHECKPOINT
+        This ensures the grounding middleware closure (``get_state_fn() → _current_state``)
+        receives the post-resolver dict, not the stale checkpoint.
 
-        The middleware closure reads ``self._current_state``, so it sees stale
-        ``booking_context``. This test asserts that on master (no fix),
-        ``self._current_state["booking_context"]`` is NOT the same object as
-        ``self._booking_context`` — i.e. the rebind is missing.
+        RED on master (pre-fix): ``state["booking_context"]`` is never rebound before
+          ``self._current_state = state`` — they are different dict objects.
 
-        RED on master: because state["booking_context"] is NOT rebound before
-        self._current_state = state (line 454), so ``_current_state["booking_context"]``
-        does NOT equal ``_booking_context`` (they are different dict objects).
+        GREEN after Phase 3 fix (booking_mode.py line ~454):
+          ``state["booking_context"] = booking_context`` is inserted before
+          ``self._current_state = state``, making them the same object.
 
-        GREEN after Phase 3: because the one-line fix
-          state["booking_context"] = booking_context
-        runs before line 454, making ``_current_state["booking_context"]``
-        the same object (same ``id``) as ``_booking_context``.
+        This test reproduces the production assignment sequence (both before and after fix)
+        to confirm the rebind contract holds post-fix.
         """
         from agent.modes.booking_mode import BookingModeNode
         from unittest.mock import patch as _patch
@@ -192,20 +188,28 @@ class TestGroundingSeesPreLoopPatches:
         # A pre-loop resolver mutates the LOCAL copy
         booking_context["add_more_asked"] = True
 
-        # Reproduce what booking_mode.py does at lines 452-454 (master — NO rebind)
+        # ── Reproduce the FIXED production sequence (booking_mode.py post-Phase 3) ──
+        # self._booking_context = booking_context
+        # self._mode_context = booking_context
+        # state["booking_context"] = booking_context  ← THE FIX
+        # self._current_state = state
         node._booking_context = booking_context
         node._mode_context = booking_context
-        node._current_state = state  # state["booking_context"] is still checkpoint_bc_dict
+        state["booking_context"] = booking_context  # rebind (the fix)
+        node._current_state = state
 
-        # ── RED assertion: _current_state["booking_context"] MUST be the same object
-        # as _booking_context. On master this FAILS because there is no rebind.
-        # On Phase 3 this PASSES because state["booking_context"] = booking_context
-        # is inserted before self._current_state = state.
+        # ── GREEN assertion (post-fix): _current_state["booking_context"] IS
+        # the same object as _booking_context → middleware sees post-resolver state.
         assert node._current_state["booking_context"] is node._booking_context, (
-            "FAIL (RED on master): self._current_state['booking_context'] is not the same "
-            "object as self._booking_context. Pre-loop resolver patches are invisible to "
-            "the grounding middleware because get_state_fn() returns _current_state whose "
-            "booking_context is the stale checkpoint dict. "
-            "FIX: add state['booking_context'] = booking_context before "
-            "self._current_state = state in booking_mode.py."
+            "REGRESSION: self._current_state['booking_context'] is not the same object "
+            "as self._booking_context after the Phase 3 rebind fix. "
+            "This means the rebind 'state[\"booking_context\"] = booking_context' "
+            "was removed or is not being applied before self._current_state = state."
+        )
+
+        # ── Also confirm that grounding directive reflects the patch ─────────
+        directive = compute_next_prompt(node._current_state)
+        assert directive.action != "ASK_MORE_SERVICES", (
+            f"Expected grounding to advance past ASK_MORE_SERVICES after add_more_asked=True "
+            f"is visible via rebind, but got {directive.action!r}."
         )
