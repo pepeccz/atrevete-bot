@@ -47,15 +47,14 @@ class FieldAuthority(TypedDict):
 BOOKING_STATE_AUTHORITY: dict[str, FieldAuthority] = {
     # ── Service data ─────────────────────────────────────────────────────
     "last_services": {
-        "owner_module": "agent.tools.booking_data_tools",
-        "owner_symbol": "update_booking",
+        "owner_module": "agent.booking.resolvers.service",
+        "owner_symbol": "resolve",
         "readers": [
-            "agent.booking.grounding.compute_next_prompt",
-            "agent.modes.booking_mode.BookingModeNode._post_tool_result",
-            "agent.modes.booking_mode.BookingModeNode.handle",
+            "agent.booking.nodes.route_action.route_action",
+            "agent.booking.nodes.reconcile_invalidations.reconcile_invalidations",
         ],
         "transient": False,
-        "notes": "Set by update_booking when services are resolved.",
+        "notes": "Set by service resolver; cleared when audience or stylist changes.",
     },
     "last_service_category": {
         "owner_module": "agent.tools.booking_data_tools",
@@ -81,16 +80,16 @@ BOOKING_STATE_AUTHORITY: dict[str, FieldAuthority] = {
     },
     # ── Stylist data ──────────────────────────────────────────────────────
     "last_stylist": {
-        "owner_module": "agent.tools.booking_data_tools",
-        "owner_symbol": "update_booking",
+        "owner_module": "agent.booking.resolvers.stylist",
+        "owner_symbol": "resolve",
         "readers": [
-            "agent.booking.grounding.compute_next_prompt",
-            "agent.modes.booking_mode.BookingModeNode._post_tool_result",
+            "agent.booking.nodes.route_action.route_action",
+            "agent.booking.nodes.reconcile_invalidations.reconcile_invalidations",
         ],
         "transient": False,
         "notes": (
-            "Written by update_booking (service selection) and patch_pipeline "
-            "(digit/slot selection resolver) and availability result post-processing."
+            "Written by stylist resolver (explicit name) or any_stylist resolver "
+            "(ANY_AVAILABLE sentinel); also written by digit_selection via slot.stylist_name."
         ),
     },
     "no_preference_stylist": {
@@ -151,13 +150,13 @@ BOOKING_STATE_AUTHORITY: dict[str, FieldAuthority] = {
     },
     # ── Customer data ──────────────────────────────────────────────────────
     "customer_name": {
-        "owner_module": "agent.tools.booking_data_tools",
-        "owner_symbol": "update_booking",
+        "owner_module": "agent.booking.resolvers.customer_name",
+        "owner_symbol": "resolve",
         "readers": [
-            "agent.booking.grounding.compute_next_prompt",
+            "agent.booking.nodes.route_action.route_action",
         ],
         "transient": False,
-        "notes": "Full name (first + last) resolved during name collection step.",
+        "notes": "Verbatim name captured at ask_name step; context-gated resolver.",
     },
     "customer_first_name": {
         "owner_module": "agent.tools.booking_data_tools",
@@ -202,16 +201,17 @@ BOOKING_STATE_AUTHORITY: dict[str, FieldAuthority] = {
         ),
     },
     "service_audience_hint": {
-        "owner_module": "agent.graphs.conversation_flow",
-        "owner_symbol": "_build_initial_booking_context",
+        "owner_module": "agent.booking.resolvers.audience",
+        "owner_symbol": "resolve",
         "readers": [
-            "agent.booking.grounding.compute_next_prompt",
-            "agent.tools.booking_data_tools.update_booking",
+            "agent.booking.resolvers.service",
+            "agent.booking.nodes.route_action.route_action",
         ],
         "transient": False,
         "notes": (
-            "Audience hint (señora/caballero/niño) passed from router or greeting_mode; "
-            "cleared by update_booking when service_audience_hint is accepted."
+            "Set by audience resolver (señora/caballero/niño); "
+            "also set by initial booking context from router handoff. "
+            "Cleared pending_disambiguations when audience is resolved."
         ),
     },
     "preferred_stylist_name": {
@@ -234,23 +234,20 @@ BOOKING_STATE_AUTHORITY: dict[str, FieldAuthority] = {
     },
     # ── Disambiguation / confirmation / capability fields ──────────────────
     "pending_disambiguations": {
-        "owner_module": "agent.tools.booking_data_tools",
-        "owner_symbol": "update_booking",
+        "owner_module": "agent.booking.resolvers.service",
+        "owner_symbol": "resolve",
         "readers": [
-            "agent.booking.grounding.compute_next_prompt",
-            "agent.booking.middleware.invariants.BookingInvariantMiddleware",
-            "agent.tools.booking_data_tools._build_response",
+            "agent.booking.nodes.route_action.route_action",
         ],
         "transient": False,
         "notes": (
-            "List of audience-disambiguation dicts. Renamed from _audience_ambiguity "
-            "in Phase 2 with shape change: single dict → list[dict]. "
-            "Cleared by update_booking when service_audience_hint is accepted."
+            "Populated by service resolver when multiple catalog matches exist. "
+            "Cleared by audience resolver when service_audience_hint is resolved."
         ),
     },
     "confirmed": {
-        "owner_module": "agent.booking.patch_pipeline",
-        "owner_symbol": "resolve_confirmation",
+        "owner_module": "agent.booking.resolvers.confirmation",
+        "owner_symbol": "resolve",
         "readers": [
             "agent.booking.grounding.compute_next_prompt",
             "agent.modes.booking_mode.BookingModeNode.handle",
@@ -275,32 +272,31 @@ BOOKING_STATE_AUTHORITY: dict[str, FieldAuthority] = {
     },
     # ── Flow control / UX flags ────────────────────────────────────────────
     "add_more_asked": {
-        "owner_module": "agent.booking.patch_pipeline",
-        "owner_symbol": "resolve_add_more_negation",
+        "owner_module": "agent.booking.resolvers.add_more",
+        "owner_symbol": "resolve",
         "readers": [
-            "agent.booking.grounding.compute_next_prompt",
-            "agent.modes.booking_mode.BookingModeNode.handle",
+            "agent.booking.nodes.route_action.route_action",
         ],
         "transient": False,
         "notes": (
-            "Sole writer is resolve_add_more_negation (pre-loop resolver). "
-            "Prevents grounding from re-asking for more services after negation."
+            "Written by add_more resolver (context-gated: _last_leaf==ask_more_services). "
+            "Prevents route_action from re-asking for more services after negation."
         ),
     },
     "notes": {
-        "owner_module": "agent.tools.booking_data_tools",
-        "owner_symbol": "update_booking",
+        "owner_module": "agent.booking.resolvers.notes",
+        "owner_symbol": "resolve",
         "readers": [
-            "agent.booking.grounding.compute_next_prompt",
+            "agent.booking.nodes.leaf_deterministic.execute_book",
         ],
         "transient": False,
-        "notes": "Customer appointment notes (allergies, preferences, etc.).",
+        "notes": "Customer appointment notes written by notes resolver.",
     },
     "notes_state": {
-        "owner_module": "agent.tools.booking_data_tools",
-        "owner_symbol": "update_booking",
+        "owner_module": "agent.booking.resolvers.notes",
+        "owner_symbol": "resolve",
         "readers": [
-            "agent.booking.grounding.compute_next_prompt",
+            "agent.booking.nodes.route_action.route_action",
         ],
         "transient": False,
         "notes": "FSM for notes collection: not_asked | skipped | provided.",
@@ -325,6 +321,21 @@ BOOKING_STATE_AUTHORITY: dict[str, FieldAuthority] = {
         "notes": (
             "Set by BookingInvariantMiddleware CONFIRMATION_REQUIRED gate; "
             "cascade-cleared by booking_mode._post_tool_result when services change."
+        ),
+    },
+    "_last_leaf": {
+        "owner_module": "agent.booking.nodes.leaf_llm",
+        "owner_symbol": "_invoke",
+        "readers": [
+            "agent.booking.resolvers.add_more",
+            "agent.booking.resolvers.customer_name",
+            "agent.booking.resolvers.notes",
+        ],
+        "transient": True,
+        "notes": (
+            "Sentinel written by each LLM leaf node via _invoke(). "
+            "Consumed by context-gated resolvers (add_more, customer_name, notes). "
+            "Marked transient — cleared on new subgraph entry."
         ),
     },
     "_suggested_customer_name": {

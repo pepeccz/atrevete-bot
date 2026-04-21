@@ -87,12 +87,21 @@ def route_action(state: dict[str, Any]) -> Command:
     """Pure deterministic router. Maps booking_context → next subgraph node.
 
     Args:
-        state: ConversationState dict (only booking_context is read).
+        state: ConversationState dict (booking_context + user_action are read).
 
     Returns:
         Command(goto=LABEL) where LABEL is one of the 13 node names.
     """
     bc = _bc(state)
+    user_action: str = state.get("user_action") or "UNKNOWN"
+
+    # ── Branch 0: CHANGE_DATE — re-route to fetch_availability when stylist present ─
+    # Detects that user changed date mid-flow; reconciler cleared offered_slots/selected_slot.
+    # If stylist is already set, skip re-asking and go straight to fetch_availability.
+    if user_action == "CHANGE_DATE" and _has_stylist(bc):
+        label = _FETCH_AVAILABILITY
+        logger.info("route_action | goto=%s (CHANGE_DATE fast-path)", label)
+        return Command(goto=label)
 
     # ── Branch 1: booking already completed ────────────────────────────────
     if bc.get("_booking_completed"):

@@ -288,3 +288,34 @@ def test_branch_13_confirmed_false_after_confirmation_clears_flow():
     """confirmed=False (user rejected) → error_recovery to restart."""
     bc = {**_bc_confirmation_shown(), "confirmed": False}
     assert _goto(_state(bc)) == "error_recovery"
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 — CHANGE_DATE branch (R4.3)
+# ---------------------------------------------------------------------------
+
+
+def test_change_date_forces_fetch_availability_over_ask_slot():
+    """user_action=CHANGE_DATE with offered_slots still present → fetch_availability (not ask_slot).
+
+    This tests that route_action explicitly re-routes to fetch_availability when
+    CHANGE_DATE is detected, even if offered_slots is non-empty (stale from prior fetch).
+    The reconciler normally clears offered_slots on date change, but even before that clears,
+    route_action should prefer fetch_availability when CHANGE_DATE signal is present.
+    """
+    # bc has offered_slots present (stale) — without CHANGE_DATE this would go to ask_slot
+    bc = {
+        **_bc_with_stylist(),
+        "offered_slots": _SLOTS,   # stale offered_slots
+        "date_hint": "2026-04-25",
+    }
+    state = {**_state(bc), "user_action": "CHANGE_DATE"}
+    assert _goto(state) == "fetch_availability"
+
+
+def test_change_date_without_stylist_routes_ask_stylist():
+    """user_action=CHANGE_DATE but no stylist yet → ask_stylist (normal flow)."""
+    bc = {"last_services": _SERVICES, "add_more_asked": True, "date_hint": "2026-04-25"}
+    state = {**_state(bc), "user_action": "CHANGE_DATE"}
+    # No stylist → branch 7 (ask_stylist) wins before CHANGE_DATE special casing
+    assert _goto(state) == "ask_stylist"
