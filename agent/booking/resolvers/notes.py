@@ -39,8 +39,8 @@ def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> Resolv
          "no", "nada mas", "ya esta", "sin comentarios", "sin observaciones", "no gracias"]
     )
 
-    from infra.resolvers.negation import is_negation
     from infra.resolvers._shared import normalize_text
+    from infra.resolvers.negation import is_negation
 
     normalized = normalize_text(user_text)
     matched_direct = normalized in _NOTES_NEGATION

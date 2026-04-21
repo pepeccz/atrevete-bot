@@ -33,10 +33,10 @@ def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> Resolv
     if not known:
         return None
 
-    from infra.resolvers._shared import normalize_text
-
     # Skip if text matches any-stylist patterns (ANY_AVAILABLE handled by any_stylist resolver)
     import re
+
+    from infra.resolvers._shared import normalize_text
     _ANY_PAT = re.compile(
         r"cualquier(?:[ae]|\b)|la\s+primera|quien\s+sea|me\s+da\s+igual|no\s+(?:me\s+)?importa",
         re.IGNORECASE,

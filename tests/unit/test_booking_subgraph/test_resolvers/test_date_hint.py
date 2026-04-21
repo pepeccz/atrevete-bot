@@ -7,8 +7,6 @@ overwrite scenario → user_action=CHANGE_DATE.
 
 from __future__ import annotations
 
-import pytest
-
 
 def test_el_viernes_sets_date_hint():
     from agent.booking.resolvers.date_hint import resolve

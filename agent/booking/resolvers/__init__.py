@@ -4,6 +4,10 @@ Booking resolver registry.
 RESOLVER_REGISTRY is the ordered list of resolver callables run by interpret_user_update.
 Each resolver has signature: resolve(user_text, bc, state) -> ResolverResult | None
 
+Constants:
+    ANY_AVAILABLE: sentinel value for "no stylist preference" selection.
+
+
 Precedence order (design D4):
  1. digit_selection       — if offered_slots present
  2. confirmation          — if _confirmation_shown
@@ -21,6 +25,13 @@ Precedence order (design D4):
 from __future__ import annotations
 
 from typing import Any, TypedDict
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+#: Sentinel value for "any available stylist" preference.
+ANY_AVAILABLE = "__ANY_AVAILABLE__"
 
 
 class ResolverResult(TypedDict, total=False):

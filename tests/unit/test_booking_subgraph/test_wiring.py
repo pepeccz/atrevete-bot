@@ -7,15 +7,15 @@ Verifies:
 2. On GREETING→BOOKING transition, booking_context is seeded with entity hints
    extracted during the greeting turn (opening_booking_request, service_audience_hint,
    preferred_stylist_name, preferred_date_hint).
-3. The first tick of the subgraph runs resolve_pre_turn (via the subgraph entry point).
+3. The first tick of the subgraph runs escape_gate (subgraph entry point).
 """
 
 from __future__ import annotations
 
 import importlib
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers

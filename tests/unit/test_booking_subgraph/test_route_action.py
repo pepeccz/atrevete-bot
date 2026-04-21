@@ -22,11 +22,9 @@ Branch priority order (matches compute_next_prompt):
 
 from __future__ import annotations
 
-import pytest
 from langgraph.types import Command
 
 from agent.booking.nodes.route_action import route_action
-
 
 # ---------------------------------------------------------------------------
 # Helpers

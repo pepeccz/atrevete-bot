@@ -40,7 +40,7 @@ def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> Resolv
     if not _ANY_STYLIST_PATTERNS.search(user_text):
         return None
 
-    from agent.booking.nodes.resolve_pre_turn import ANY_AVAILABLE
+    from agent.booking.resolvers import ANY_AVAILABLE
 
     logger.info("resolver.any_stylist.applied")
     return {

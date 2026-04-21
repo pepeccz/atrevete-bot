@@ -130,12 +130,12 @@ async def test_fsm_converges_no_infinite_loop(initial_bc, messages):
 
     It must NEVER revisit the same (bc_hash, message) pair — no infinite loops.
     """
-    from agent.booking.invalidation import reconcile
+    from langgraph.types import Command
+
     from agent.booking.nodes.escape_gate import escape_gate
     from agent.booking.nodes.interpret_user_update import interpret_user_update
     from agent.booking.nodes.reconcile_invalidations import reconcile_invalidations
     from agent.booking.nodes.route_action import route_action
-    from langgraph.types import Command
 
     seen_pairs: set[tuple[str, str]] = set()
     bc = dict(initial_bc)

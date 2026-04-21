@@ -19,8 +19,6 @@ EXPECTED_NODES = {
     "escape_gate",
     "interpret_user_update",
     "reconcile_invalidations",
-    # Legacy node — bypassed, kept until Phase 7 cleanup
-    "resolve_pre_turn",
     # Router
     "route_action",
     # LLM leaf nodes
@@ -70,13 +68,13 @@ async def test_all_stub_nodes_are_callable():
     We test by importing node modules — actual invocation tested per-node in later phases.
     """
     from agent.booking.nodes import (
+        interpret_user_update,
         leaf_deterministic,
         leaf_llm,
-        resolve_pre_turn,
         route_action,
     )
 
-    assert callable(resolve_pre_turn.resolve_pre_turn)
+    assert callable(interpret_user_update.interpret_user_update)
     assert callable(route_action.route_action)
     # leaf_llm exposes one function per node
     assert callable(leaf_llm.ask_service)

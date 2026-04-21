@@ -75,7 +75,8 @@ class TestConvId5FullReplay:
         This is the core regression from conv_id=5: after a 3-day rejection the
         bot must NOT re-ask for audience.
         """
-        from agent.booking.nodes.resolve_pre_turn import resolve_pre_turn
+        from agent.booking.nodes.interpret_user_update import interpret_user_update
+        from agent.booking.nodes.reconcile_invalidations import reconcile_invalidations
         from agent.booking.nodes.route_action import route_action
 
         # State: all resolved except offered_slots (cleared after 3-day rejection)
@@ -102,16 +103,18 @@ class TestConvId5FullReplay:
         }
         state = _make_state(bc, user_message="miércoles 29")
 
-        # resolve_pre_turn should NOT touch audience or last_services
-        result = await resolve_pre_turn(state)
-        updated_bc = result["booking_context"]
+        # interpret_user_update + reconcile should NOT touch audience or last_services
+        interp = await interpret_user_update(state)
+        state = {**state, **interp}
+        recon = await reconcile_invalidations(state)
+        updated_bc = recon["booking_context"]
 
         assert updated_bc["audience"] == "señora", (
             "audience MUST NOT be cleared after a date change. "
             "This was the FM-6 root cause on conv_id=5."
         )
         assert updated_bc["last_services"] == ["Cortar Señora"], (
-            "last_services MUST NOT be cleared by resolve_pre_turn."
+            "last_services MUST NOT be cleared after a date change."
         )
 
         # route_action must NOT route to ask_audience — audience is already resolved
@@ -298,7 +301,9 @@ class TestAnyAvailableStylistSentinel:
         When:  resolve_pre_turn processes them
         Then:  last_stylist == ANY_AVAILABLE and no_preference_stylist == True
         """
-        from agent.booking.nodes.resolve_pre_turn import ANY_AVAILABLE, resolve_pre_turn
+        from agent.booking.nodes.interpret_user_update import interpret_user_update
+        from agent.booking.nodes.reconcile_invalidations import reconcile_invalidations
+        from agent.booking.resolvers import ANY_AVAILABLE
 
         phrases = [
             "cualquiera",
@@ -314,8 +319,10 @@ class TestAnyAvailableStylistSentinel:
                 # No stylist set yet
             }
             state = _make_state(bc, user_message=phrase)
-            result = await resolve_pre_turn(state)
-            updated_bc = result["booking_context"]
+            interp = await interpret_user_update(state)
+            state2 = {**state, **interp}
+            recon = await reconcile_invalidations(state2)
+            updated_bc = recon["booking_context"]
             assert updated_bc.get("last_stylist") == ANY_AVAILABLE, (
                 f"phrase={phrase!r} should set last_stylist=ANY_AVAILABLE, "
                 f"got {updated_bc.get('last_stylist')!r}"
@@ -332,7 +339,7 @@ class TestAnyAvailableStylistSentinel:
         Then:  check_availability_impl is called with stylist_name=None
                (so all stylists are queried)
         """
-        from agent.booking.nodes.resolve_pre_turn import ANY_AVAILABLE
+        from agent.booking.resolvers import ANY_AVAILABLE
 
         slot = {"start": "2026-04-29T09:00:00", "stylist_id": "stylist-001", "stylist_name": "Lucía"}
         mock_result = {"success": True, "available_slots": [slot]}
@@ -372,7 +379,7 @@ class TestAnyAvailableStylistSentinel:
         When:  route_action evaluates
         Then:  routes to fetch_availability (stylist IS considered resolved)
         """
-        from agent.booking.nodes.resolve_pre_turn import ANY_AVAILABLE
+        from agent.booking.resolvers import ANY_AVAILABLE
         from agent.booking.nodes.route_action import route_action
 
         bc = {
@@ -507,6 +514,8 @@ class TestSubgraphSmoke:
 
     def test_all_leaf_nodes_importable(self) -> None:
         """Every deterministic and LLM leaf node must be importable."""
+        from agent.booking.nodes.escape_gate import escape_gate
+        from agent.booking.nodes.interpret_user_update import interpret_user_update
         from agent.booking.nodes.leaf_deterministic import execute_book, fetch_availability
         from agent.booking.nodes.leaf_llm import (
             ask_audience,
@@ -520,12 +529,12 @@ class TestSubgraphSmoke:
             error_recovery,
             show_confirmation,
         )
-        from agent.booking.nodes.resolve_pre_turn import resolve_pre_turn
+        from agent.booking.nodes.reconcile_invalidations import reconcile_invalidations
         from agent.booking.nodes.route_action import route_action
 
         # All references must be callable
         nodes = [
-            resolve_pre_turn, route_action,
+            escape_gate, interpret_user_update, reconcile_invalidations, route_action,
             fetch_availability, execute_book,
             ask_service, ask_audience, ask_more_services, ask_stylist,
             ask_slot, ask_name, ask_notes,

@@ -227,7 +227,7 @@ async def await_confirmation(state: dict[str, Any]) -> dict[str, Any]:
     """
     Silent no-op. User already saw show_confirmation.
     This node waits for the next user input without generating a message.
-    Control returns to resolve_pre_turn on next turn.
+    Control returns to escape_gate on next turn (via new entry pipeline).
 
     Design decision: silent no-op (orchestrator instruction, 2026-04-21).
     """

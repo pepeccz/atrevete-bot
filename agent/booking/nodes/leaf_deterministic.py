@@ -15,9 +15,9 @@ from typing import Any
 
 from langgraph.types import Command
 
+from agent.booking.resolvers import ANY_AVAILABLE
 from agent.tools.availability_tools import check_availability_impl
 from agent.tools.booking_tools import book_impl
-from agent.booking.nodes.resolve_pre_turn import ANY_AVAILABLE
 
 logger = logging.getLogger(__name__)
 

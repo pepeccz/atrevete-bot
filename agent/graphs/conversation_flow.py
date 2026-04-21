@@ -1004,7 +1004,7 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
 
     async def booking_node_fn(state: ConversationState) -> dict[str, Any]:
         # Phase 6: delegate to compiled booking subgraph (D8).
-        # The subgraph entry point is resolve_pre_turn, which runs every turn.
+        # The subgraph entry point is escape_gate → interpret_user_update → reconcile_invalidations → route_action.
         result = await _booking_subgraph.ainvoke(state)
         result = await _maybe_escalate(result, state)
         return {**result, "last_node": "booking"}

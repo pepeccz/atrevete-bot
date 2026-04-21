@@ -7,8 +7,9 @@ Normal return passes. Each leaf writes _last_leaf in booking_context.
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from langchain_core.messages import AIMessage
 
 

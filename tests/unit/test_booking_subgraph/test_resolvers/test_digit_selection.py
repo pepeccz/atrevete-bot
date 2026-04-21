@@ -6,8 +6,6 @@ R1.1: digit 1-9 maps to offered_slots[i]; no-match returns matched=False.
 
 from __future__ import annotations
 
-import pytest
-
 
 def _bc_with_slots(n: int = 3) -> dict:
     return {

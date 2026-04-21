@@ -10,13 +10,12 @@ fetch_availability must use booking_context.last_services, NOT any LLM arg.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from agent.booking.nodes.leaf_deterministic import execute_book, fetch_availability
-from agent.booking.nodes.resolve_pre_turn import ANY_AVAILABLE
-
+from agent.booking.resolvers import ANY_AVAILABLE
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal booking_context builders
