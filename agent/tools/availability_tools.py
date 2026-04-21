@@ -195,6 +195,29 @@ class CheckAvailabilitySchema(BaseModel):
     )
 
 
+async def check_availability_impl(
+    service_names: list[str],
+    date: str | None = None,
+    stylist_name: str | None = None,
+    time_range: str | None = None,
+) -> dict[str, Any]:
+    """
+    Plain async implementation — callable directly by deterministic nodes.
+
+    The booking subgraph's fetch_availability node calls this with args assembled
+    exclusively from booking_context. The LLM never synthesises these args.
+
+    The @tool-decorated check_availability below delegates to this function so
+    the legacy tool surface and the subgraph node share a single implementation.
+    """
+    return await _check_availability_impl(
+        service_names=service_names,
+        date=date,
+        stylist_name=stylist_name,
+        time_range=time_range,
+    )
+
+
 @tool(args_schema=CheckAvailabilitySchema)
 async def check_availability(
     service_names: list[str],
@@ -236,6 +259,21 @@ async def check_availability(
             "error_message": str | None
         }
     """
+    return await _check_availability_impl(
+        service_names=service_names,
+        date=date,
+        stylist_name=stylist_name,
+        time_range=time_range,
+    )
+
+
+async def _check_availability_impl(
+    service_names: list[str],
+    date: str | None = None,
+    stylist_name: str | None = None,
+    time_range: str | None = None,
+) -> dict[str, Any]:
+    """Private core implementation shared by the @tool wrapper and check_availability_impl."""
     base_response: dict[str, Any] = {
         "success": False,
         "service": None,

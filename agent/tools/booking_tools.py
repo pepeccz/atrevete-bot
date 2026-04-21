@@ -390,3 +390,50 @@ async def book(
             "error_message": "Error al procesar la reserva",
             "error_details": {"error": str(e)},
         }
+
+
+async def book_impl(
+    customer_phone: str,
+    customer_name: str,
+    services: list[str],
+    stylist_id: str,
+    start_time: str,
+    customer_last_name: str | None = None,
+    notes: str | None = None,
+    conversation_id: str | None = None,
+) -> dict[str, Any]:
+    """
+    Plain async implementation — callable directly by deterministic nodes.
+
+    The booking subgraph's execute_book node calls this with args assembled
+    exclusively from booking_context (selected_slot, customer_name, last_services).
+    No slot_index resolution needed — stylist_id and start_time come directly
+    from the selected_slot dict that was stored in booking_context after
+    the user chose a slot.
+
+    Args:
+        customer_phone: E.164 phone number
+        customer_name: Customer first name (from booking_context.customer_name)
+        services: Exact service names (from booking_context.last_services)
+        stylist_id: UUID string (from booking_context.selected_slot.stylist_id)
+        start_time: ISO datetime string (from booking_context.selected_slot.full_datetime)
+        customer_last_name: Optional last name
+        notes: Optional appointment notes
+        conversation_id: Optional Chatwoot conversation ID
+    """
+    # Split customer_name into first/last if needed
+    parts = customer_name.strip().split(maxsplit=1)
+    first_name = parts[0]
+    last_name = customer_last_name or (parts[1] if len(parts) > 1 else None)
+
+    return await book.ainvoke({
+        "customer_phone": customer_phone,
+        "customer_first_name": first_name,
+        "customer_last_name": last_name,
+        "services": services,
+        "slot_index": 0,  # not used — stylist_id/start_time provided directly
+        "notes": notes,
+        "conversation_id": conversation_id,
+        "stylist_id": stylist_id,
+        "start_time": start_time,
+    })
