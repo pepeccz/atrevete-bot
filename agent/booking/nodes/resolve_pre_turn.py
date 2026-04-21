@@ -46,7 +46,7 @@ ANY_AVAILABLE = "__ANY_AVAILABLE__"
 # ---------------------------------------------------------------------------
 
 _ANY_STYLIST_PATTERNS = re.compile(
-    r"cualquier[ae]|"
+    r"cualquier(?:[ae]|\b)|"
     r"la\s+primera?\s+(?:con\s+)?disponibilidad|"
     r"quien\s+(?:sea|tenga\s+disponibilidad)|"
     r"la\s+que\s+(?:pueda|est[eé]\s+libre)|"
