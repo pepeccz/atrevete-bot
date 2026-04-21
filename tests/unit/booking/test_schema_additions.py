@@ -2,8 +2,10 @@
 GREEN tests for BookingContext schema additions and notes_state rename — Phase 2, tasks 2.6–2.7.
 
 Verifies:
-  - task 2.6: 4 new fields (pending_disambiguations, confirmed, available_slots,
-    booked_appointment_id) are present in BookingContext TypedDict annotations.
+  - task 2.6: 3 active new fields (pending_disambiguations, confirmed, booked_appointment_id)
+    are present in BookingContext TypedDict annotations.
+    Note: available_slots was added here originally but was purged as a dead field in Phase 4
+    (zero production writers AND readers per booking-tool-grounding-contract SDD).
   - task 2.7: notes_state annotation is Literal["not_asked","skipped","provided"]
     and the old field name is NOT present in the TypedDict annotations.
   - task 2.7 rg: zero occurrences of the old field name in agent/, tests/, skills/.
@@ -65,18 +67,6 @@ class TestNewFields:
             f"Current keys: {sorted(hints.keys())}"
         )
 
-    def test_available_slots_annotation_exists(self) -> None:
-        """
-        Given: BookingContext type hints
-        When: 'available_slots' is looked up
-        Then: it is annotated as a list type
-        """
-        hints = _get_type_hints()
-        assert "available_slots" in hints, (
-            f"'available_slots' not found in BookingContext annotations. "
-            f"Current keys: {sorted(hints.keys())}"
-        )
-
     def test_booked_appointment_id_annotation_exists(self) -> None:
         """
         Given: BookingContext type hints
@@ -92,13 +82,13 @@ class TestNewFields:
     def test_new_fields_default_values(self) -> None:
         """
         Given: an empty dict (simulating a legacy session with no new fields)
-        When: the 4 new fields are read with defaults
-        Then: they return [], False, [], None respectively (REQ-29)
+        When: the active new fields are read with defaults
+        Then: they return [], False, None respectively (REQ-29)
+        Note: available_slots was a dead field and was removed in Phase 4 purge.
         """
         empty_bc: dict = {}
         assert empty_bc.get("pending_disambiguations", []) == []
         assert empty_bc.get("confirmed", False) is False
-        assert empty_bc.get("available_slots", []) == []
         assert empty_bc.get("booked_appointment_id", None) is None
 
 
@@ -150,9 +140,7 @@ class TestNotesStateField:
         """
         empty_bc: dict = {}
         value = empty_bc.get("notes_state", "not_asked")
-        assert value == "not_asked", (
-            f"Expected default 'not_asked', got {value!r}"
-        )
+        assert value == "not_asked", f"Expected default 'not_asked', got {value!r}"
 
     def test_notes_state_literal_type(self) -> None:
         """
@@ -166,9 +154,9 @@ class TestNotesStateField:
         annotation = hints["notes_state"]
         # Literal types have __args__
         args = getattr(annotation, "__args__", None)
-        assert args is not None, (
-            f"notes_state annotation has no __args__ — expected Literal type, got {annotation!r}"
-        )
+        assert (
+            args is not None
+        ), f"notes_state annotation has no __args__ — expected Literal type, got {annotation!r}"
         expected_values = frozenset({"not_asked", "skipped", "provided"})
         actual_values = frozenset(args)
         assert actual_values == expected_values, (
