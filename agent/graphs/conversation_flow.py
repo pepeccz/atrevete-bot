@@ -956,11 +956,12 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
     """
     from agent.modes.greeting_mode import build_greeting_node
     from agent.modes.general_mode import build_general_node
-    from agent.modes.booking_mode import BookingMode
+    from agent.modes.booking_mode import BookingMode  # kept importable until Phase 7
     from agent.modes.escalation_mode import build_escalation_node
     from agent.modes.appointment_management_mode import AppointmentManagementMode
     from agent.modes.confirmation_reply_node import confirmation_reply_node
     from agent.routing.intent_router import IntentResult
+    from agent.booking.subgraph import build_booking_subgraph
 
     def _get_llm():
         return _get_llm_client()
@@ -972,6 +973,10 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
     _greeting_node_impl = build_greeting_node(llm_factory=_get_llm)
     _general_node_impl = build_general_node(llm_factory=_get_llm)
     _escalation_node_impl = build_escalation_node()
+
+    # Phase 6: compile booking subgraph once per graph build (D1).
+    # BookingModeNode is kept importable above for Phase 7 dead-code purge.
+    _booking_subgraph = build_booking_subgraph()
 
     def mode_dispatcher(state: ConversationState) -> str:
         """Conditional edge: current_mode → node name."""
@@ -1000,15 +1005,9 @@ def create_graph(checkpointer: Any = None, store: Any = None) -> "CompiledStateG
         return {**result, "last_node": "general"}
 
     async def booking_node_fn(state: ConversationState) -> dict[str, Any]:
-        mode_context = state.get("mode_context") or {}
-        intent = IntentResult(
-            intent=mode_context.get("last_intent", "book"),
-            confidence=mode_context.get("last_intent_confidence", 0.9),
-            raw_input="",
-            mode_hint="BOOKING",
-        )
-        mode = BookingMode(tools=[], llm_client=_get_llm())
-        result = await mode.handle(state=state, intent=intent)
+        # Phase 6: delegate to compiled booking subgraph (D8).
+        # The subgraph entry point is resolve_pre_turn, which runs every turn.
+        result = await _booking_subgraph.ainvoke(state)
         result = await _maybe_escalate(result, state)
         return {**result, "last_node": "booking"}
 
