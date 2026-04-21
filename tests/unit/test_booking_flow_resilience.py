@@ -81,27 +81,34 @@ class TestStylistUpdateMidFlow:
 
 
 class TestBookingPromptMidFlowSection:
-    def test_cambios_section_exists(self):
-        """booking.md should contain the mid-flow changes section."""
-        content = Path("agent/prompts/modes/booking.md").read_text()
-        assert "### Cambios a mitad de flujo" in content
+    """Mid-flow change handling in the deterministic subgraph architecture.
 
-    def test_cambios_section_covers_service_change(self):
-        content = Path("agent/prompts/modes/booking.md").read_text()
-        assert "Cambio de servicio" in content
-        assert "check_availability" in content
+    Phase 8: booking.md was deleted. Mid-flow changes are now handled by the
+    subgraph's route_action FSM (returns to ask_service/ask_stylist/ask_slot nodes)
+    rather than prompt instructions. These tests verify the subgraph directory exists.
+    """
 
-    def test_cambios_section_covers_stylist_change(self):
-        content = Path("agent/prompts/modes/booking.md").read_text()
-        assert "Cambio de estilista" in content
+    def test_booking_subgraph_prompts_directory_exists(self):
+        """Per-leaf booking prompts directory must exist (replaced booking.md)."""
+        booking_dir = Path("agent/prompts/modes/booking")
+        assert booking_dir.is_dir(), "agent/prompts/modes/booking/ directory must exist"
 
-    def test_cambios_section_covers_restart(self):
-        content = Path("agent/prompts/modes/booking.md").read_text()
-        assert "Reinicio" in content
+    def test_error_recovery_prompt_handles_restart(self):
+        """error_recovery.md must guide the LLM to restart the booking flow."""
+        content = Path("agent/prompts/modes/booking/error_recovery.md").read_text()
+        assert "empezar" in content.lower() or "reinici" in content.lower()
+
+    def test_ask_service_prompt_handles_service_change(self):
+        """ask_service.md is re-entered on service change — must guide service selection."""
+        content = Path("agent/prompts/modes/booking/ask_service.md").read_text()
+        assert "servicio" in content.lower()
+
+    def test_ask_stylist_prompt_handles_stylist_change(self):
+        """ask_stylist.md is re-entered on stylist change — must guide stylist selection."""
+        content = Path("agent/prompts/modes/booking/ask_stylist.md").read_text()
+        assert "estilista" in content.lower()
 
     def test_cambios_after_multiservicio(self):
-        """Cambios section should appear after Multi-servicio."""
-        content = Path("agent/prompts/modes/booking.md").read_text()
-        multi_pos = content.index("### Multi-servicio")
-        cambios_pos = content.index("### Cambios a mitad de flujo")
-        assert cambios_pos > multi_pos
+        """ask_more_services.md handles multi-service — must ask about additional services."""
+        content = Path("agent/prompts/modes/booking/ask_more_services.md").read_text()
+        assert "servicio" in content.lower()

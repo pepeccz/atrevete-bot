@@ -79,7 +79,7 @@ def _get_overlay_cache(mode_name: str) -> _TtlCache:
 
 _MODE_OVERLAY_FILES: dict[str, str] = {
     "GREETING": "modes/greeting.md",
-    "BOOKING": "modes/booking.md",
+    # BOOKING: no overlay — subgraph loads per-leaf prompts via leaf_llm._load_prompt()
     "GENERAL": "modes/general.md",
     "ESCALATION": "modes/escalation.md",
     "APPOINTMENT_MANAGEMENT": "modes/appointment_management.md",

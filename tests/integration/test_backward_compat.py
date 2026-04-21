@@ -122,14 +122,14 @@ class TestModePromptsLoading:
         assert "Modo" in content or "SALUDO" in content or "GREETING" in content.upper()
 
     def test_booking_mode_prompt_exists(self):
-        """Test that booking mode prompt exists and loads."""
-        from agent.prompts.loader import load_markdown
-
-        content = load_markdown("booking.md", "modes")
-
-        assert isinstance(content, str)
-        assert len(content) > 500  # Booking prompt is substantial
-        assert "Modo" in content or "RESERVA" in content or "BOOKING" in content.upper()
+        """Test that booking per-leaf prompts exist (replaced monolithic booking.md in Phase 8)."""
+        from pathlib import Path
+        booking_dir = Path(__file__).parent.parent.parent / "agent" / "prompts" / "modes" / "booking"
+        assert booking_dir.is_dir(), "booking/ prompt subdirectory must exist"
+        leaf_prompts = list(booking_dir.glob("*.md"))
+        assert len(leaf_prompts) >= 9, (
+            f"Expected at least 9 per-leaf prompts, found {len(leaf_prompts)}"
+        )
 
     def test_general_mode_prompt_exists(self):
         """Test that general mode prompt exists and loads."""

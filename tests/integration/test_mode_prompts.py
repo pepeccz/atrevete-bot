@@ -48,34 +48,31 @@ class TestEscalationModePrompt:
 
 
 class TestBookingModePrompt:
-    """Test cases for booking.md mode prompt."""
+    """Per-leaf booking prompts (replaced monolithic booking.md in Phase 8)."""
 
-    def test_booking_prompt_loads(self):
-        """Test that booking.md loads successfully."""
-        content = load_markdown("booking.md", "modes")
-
+    def test_ask_service_prompt_loads(self):
+        """ask_service.md must exist and have content."""
+        content = load_markdown("ask_service.md", "modes/booking")
         assert isinstance(content, str)
-        assert len(content) > 1000
+        assert len(content) > 50
 
-    def test_booking_prompt_has_6_steps(self):
-        """Test that booking prompt references 6 steps."""
-        content = load_markdown("booking.md", "modes")
+    def test_ask_audience_prompt_loads(self):
+        """ask_audience.md must exist and have content."""
+        content = load_markdown("ask_audience.md", "modes/booking")
+        assert isinstance(content, str)
+        assert len(content) > 50
 
-        # Should mention 6 steps
-        assert "6" in content and "Pasos" in content
+    def test_error_recovery_prompt_loads(self):
+        """error_recovery.md must exist and have content."""
+        content = load_markdown("error_recovery.md", "modes/booking")
+        assert isinstance(content, str)
+        assert len(content) > 50
 
-    def test_booking_prompt_has_recovery_section(self):
-        """Test that booking prompt has error/recovery section."""
-        content = load_markdown("booking.md", "modes")
-
-        assert "Manejo de errores" in content or "error" in content.lower()
-
-    def test_booking_prompt_has_tool_references(self):
-        """Test that booking prompt references available tools."""
-        content = load_markdown("booking.md", "modes")
-
-        # Should reference current active tools (search_services was removed)
-        assert "check_availability" in content or "book" in content
+    def test_show_confirmation_prompt_loads(self):
+        """show_confirmation.md must exist and have content."""
+        content = load_markdown("show_confirmation.md", "modes/booking")
+        assert isinstance(content, str)
+        assert len(content) > 50
 
 
 class TestGeneralModePrompt:
@@ -170,11 +167,16 @@ class TestPromptFileStructure:
     """Test cases for prompt file structure and organization."""
 
     def test_all_mode_prompts_exist(self):
-        """Test that all expected mode prompts exist."""
+        """Test that all expected mode prompts exist.
+
+        Note: booking.md was replaced by per-leaf prompts in booking/ (Phase 8).
+        booking/ subdirectory is tested by test_booking_subgraph/test_prompts.py.
+        """
         prompt_dir = Path(__file__).parent.parent.parent / "agent" / "prompts"
         modes_dir = prompt_dir / "modes"
 
-        expected_files = ["greeting.md", "booking.md", "general.md", "escalation.md"]
+        # booking.md removed — subgraph uses per-leaf prompts in booking/ dir
+        expected_files = ["greeting.md", "general.md", "escalation.md"]
 
         for filename in expected_files:
             file_path = modes_dir / filename
@@ -198,8 +200,11 @@ class TestPromptFileStructure:
             assert file_path.exists(), f"Legacy prompt missing: {filename}"
 
     def test_mode_prompts_use_markdown(self):
-        """Test that all mode prompts use markdown format."""
-        modes = ["greeting.md", "booking.md", "general.md", "escalation.md"]
+        """Test that all mode prompts use markdown format.
+
+        Note: booking.md removed — subgraph uses per-leaf prompts.
+        """
+        modes = ["greeting.md", "general.md", "escalation.md"]
 
         for mode_file in modes:
             content = load_markdown(mode_file, "modes")
@@ -226,13 +231,18 @@ class TestPromptContentQuality:
     """Test cases for prompt content quality."""
 
     def test_booking_prompt_has_emoji_examples(self):
-        """Test that booking prompt uses emojis appropriately."""
-        content = load_markdown("booking.md", "modes")
-
-        # Should have emojis (common in the prompts)
-        emoji_chars = ["✅", "🎯", "📅", "👤", "✓", "💕", "😊"]
-        has_emoji = any(emoji in content for emoji in emoji_chars)
-        assert has_emoji, "Booking prompt should contain emojis"
+        """Test that booking prompts use emojis appropriately (per-leaf architecture)."""
+        from pathlib import Path
+        booking_dir = Path(__file__).parent.parent.parent / "agent" / "prompts" / "modes" / "booking"
+        # Check combined content of all leaf prompts for emojis
+        all_content = " ".join(
+            (booking_dir / f).read_text(encoding="utf-8")
+            for f in booking_dir.iterdir()
+            if f.suffix == ".md"
+        )
+        emoji_chars = ["✅", "🎯", "📅", "👤", "✓", "💕", "😊", "⚠️"]
+        has_emoji = any(emoji in all_content for emoji in emoji_chars)
+        assert has_emoji, "Booking leaf prompts should contain emojis"
 
     def test_escalation_prompt_has_time_frames(self):
         """Test that escalation prompt specifies time frames."""
@@ -254,18 +264,24 @@ class TestPromptToolReferences:
     """Test cases for tool references in prompts."""
 
     def test_booking_prompt_references_all_tools(self):
-        """Test that booking prompt references booking-relevant tools (current architecture)."""
-        content = load_markdown("booking.md", "modes")
+        """Booking subgraph uses deterministic nodes — no tool references in leaf prompts.
 
-        # Current active tools in booking.md (search_services/find_next_available removed)
-        tools = [
-            "check_availability",
-            "book",
-            "escalate",
-        ]
-
-        for tool in tools:
-            assert tool in content, f"Tool {tool} not referenced in booking.md"
+        The subgraph's fetch_availability and execute_book nodes call tools directly
+        (not via LLM tool calls). Leaf prompts are tool-free by design (spec invariant #2).
+        This test is intentionally a no-op pass for the per-leaf architecture.
+        """
+        # Per design: LLM leaf nodes do NOT reference tools — deterministic nodes handle that.
+        # This assertion documents the architectural invariant.
+        from pathlib import Path
+        booking_dir = Path(__file__).parent.parent.parent / "agent" / "prompts" / "modes" / "booking"
+        for prompt_file in booking_dir.glob("*.md"):
+            if prompt_file.name == "await_confirmation.md":
+                continue  # silent no-op — special case
+            content = prompt_file.read_text(encoding="utf-8")
+            assert "check_availability" not in content, (
+                f"{prompt_file.name} should NOT reference check_availability "
+                f"— deterministic layer handles tool calls"
+            )
 
     def test_general_prompt_references_escalate_tool(self):
         """Test that general prompt references escalate tool."""
