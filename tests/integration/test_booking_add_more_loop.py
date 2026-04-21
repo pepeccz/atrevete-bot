@@ -23,7 +23,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 from agent.modes.booking_mode import BookingModeNode
 from agent.state.schemas import create_initial_state
 
-
 # ---------------------------------------------------------------------------
 # Scripted agent factory — deterministic single-turn LLM stub
 # ---------------------------------------------------------------------------
@@ -114,9 +113,7 @@ def _common_patches():
         patch(
             "agent.modes.booking_mode.get_booking_config",
             new_callable=AsyncMock,
-            return_value=MagicMock(
-                tool_choice_policy=MagicMock(value="never_force")
-            ),
+            return_value=MagicMock(tool_choice_policy=MagicMock(value="never_force")),
         ),
         patch(
             "agent.modes.booking_mode.BookingModeNode._resolve_service_category",
@@ -156,7 +153,7 @@ class TestPreLoopNegationHook:
         node = _make_node()
 
         # Preconditions from R1: last_services truthy, add_more_asked falsy,
-        # no stylist, no _audience_ambiguity
+        # no stylist, no pending_disambiguations
         booking_ctx = {
             "last_services": ["Corte Señora", "Color Señora"],
             "add_more_asked": False,
@@ -268,8 +265,10 @@ class TestNegationResolverTelemetry:
 
         # Find the telemetry log record
         telemetry_records = [
-            r for r in caplog.records
-            if r.name == "agent.modes.booking_mode" and r.getMessage() == "booking.negation_resolver"
+            r
+            for r in caplog.records
+            if r.name == "agent.modes.booking_mode"
+            and r.getMessage() == "booking.negation_resolver"
         ]
         assert telemetry_records, (
             "Expected a log record with logger='agent.modes.booking_mode' and "
@@ -281,8 +280,13 @@ class TestNegationResolverTelemetry:
 
         # Required fields must be present
         required_fields = {
-            "conversation_id", "turn_number", "user_text_hash",
-            "matched", "matched_phrase", "fuzzy_distance", "state",
+            "conversation_id",
+            "turn_number",
+            "user_text_hash",
+            "matched",
+            "matched_phrase",
+            "fuzzy_distance",
+            "state",
         }
         for field in required_fields:
             assert hasattr(record, field), (
@@ -292,17 +296,17 @@ class TestNegationResolverTelemetry:
 
         # user_text_hash must be 12-char hex string
         user_text_hash = record.user_text_hash
-        assert isinstance(user_text_hash, str) and len(user_text_hash) == 12, (
-            f"user_text_hash must be a 12-char string, got {user_text_hash!r}"
-        )
-        assert all(c in "0123456789abcdef" for c in user_text_hash), (
-            f"user_text_hash must be hex, got {user_text_hash!r}"
-        )
+        assert (
+            isinstance(user_text_hash, str) and len(user_text_hash) == 12
+        ), f"user_text_hash must be a 12-char string, got {user_text_hash!r}"
+        assert all(
+            c in "0123456789abcdef" for c in user_text_hash
+        ), f"user_text_hash must be hex, got {user_text_hash!r}"
 
         # matched must be True for "Nada máß"
-        assert record.matched is True, (
-            f"Expected matched=True for 'Nada máß', got {record.matched!r}"
-        )
+        assert (
+            record.matched is True
+        ), f"Expected matched=True for 'Nada máß', got {record.matched!r}"
 
         # Raw user text must NOT appear in any log field value
         raw_text = "Nada máß"
@@ -334,8 +338,10 @@ class TestNegationResolverTelemetry:
                 await node.handle(state, intent=None)
 
         telemetry_records = [
-            r for r in caplog.records
-            if r.name == "agent.modes.booking_mode" and r.getMessage() == "booking.negation_resolver"
+            r
+            for r in caplog.records
+            if r.name == "agent.modes.booking_mode"
+            and r.getMessage() == "booking.negation_resolver"
         ]
         assert telemetry_records, (
             "Telemetry must be emitted even when matched=False (R4: every attempt). "
@@ -343,6 +349,6 @@ class TestNegationResolverTelemetry:
         )
 
         record = telemetry_records[0]
-        assert record.matched is False, (
-            f"Expected matched=False for 'no sé qué estilista elegir', got {record.matched!r}"
-        )
+        assert (
+            record.matched is False
+        ), f"Expected matched=False for 'no sé qué estilista elegir', got {record.matched!r}"

@@ -78,7 +78,7 @@ class BookingModeNode(BaseModeNode):
 
         # check_availability: only when services + stylist are set, no slot yet,
         # AND no audience ambiguity is pending (R7 — hide during disambiguation).
-        if has_services and has_stylist and not has_slot and not ctx.get("_audience_ambiguity"):
+        if has_services and has_stylist and not has_slot and not ctx.get("pending_disambiguations"):
             tools.append(check_availability)
 
         # book: only when all required data is collected

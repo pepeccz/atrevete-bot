@@ -1,7 +1,7 @@
 """Regression test — conv_id=5 audience disambiguation snapshot bug.
 
 The bug (explore §Part 1, whack-a-mole #7):
-  - update_booking writes ``patch["_audience_ambiguity"]`` (booking_data_tools.py:380)
+  - update_booking used to write ``patch["_audience_ambiguity"]`` (booking_data_tools.py:380)
   - compute_next_prompt reads ``bc.get("pending_disambiguations")`` (grounding.py:246)
   - These are completely different fields. ``pending_disambiguations`` has zero
     production writers → Branch 4 (ASK_AUDIENCE) NEVER fires → bot offers stylists
@@ -34,7 +34,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-
 
 # ---------------------------------------------------------------------------
 # Scripted LLM
@@ -169,9 +168,7 @@ def _common_patches():
         patch(
             "agent.modes.booking_mode.get_booking_config",
             new_callable=AsyncMock,
-            return_value=MagicMock(
-                tool_choice_policy=MagicMock(value="NEVER_FORCE")
-            ),
+            return_value=MagicMock(tool_choice_policy=MagicMock(value="NEVER_FORCE")),
         ),
     ):
         yield

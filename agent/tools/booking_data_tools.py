@@ -108,7 +108,7 @@ class UpdateBookingSchema(BaseModel):
     service_audience_hint: str | None = Field(
         default=None,
         description=(
-            "Resuelve ambigüedad de audiencia cuando `_audience_ambiguity` está presente en el contexto. "
+            "Resuelve ambigüedad de audiencia cuando `pending_disambiguations` está presente en el contexto. "
             "Valores canónicos: 'adult_female', 'adult_male', 'child_female', 'child_male', 'baby'. "
             "Déjalo None si no hay ambigüedad o el cliente no aclaró aún."
         ),
@@ -141,7 +141,7 @@ async def _find_audience_siblings_for_signal(svc: Any) -> list[str]:
 
     Families are grouped by `metadata_.dimension` + `metadata_.service_type="principal"`.
     Informational only — never raised as an error. Used by update_booking to populate
-    _audience_ambiguity in _booking_context_patch when the user may have under-specified
+    pending_disambiguations in _booking_context_patch when the user may have under-specified
     (e.g. "cortarme el pelo" without saying señora/caballero/niño).
     """
     from sqlalchemy import select
@@ -234,7 +234,9 @@ def _build_response(
     # LLM reads it on the SAME turn (the system_message is cached at construction;
     # the <audience_ambiguity> XML tag only renders on turn N+1 via dynamic context
     # refresh). Using descriptive-state form — no imperative verbs.
-    ambiguity = effective.get("_audience_ambiguity")
+    # pending_disambiguations is list[dict]; read first item if present.
+    disambiguations = effective.get("pending_disambiguations") or []
+    ambiguity = disambiguations[0] if disambiguations else None
     if ambiguity and not effective.get("service_audience_hint"):
         variants_str = ", ".join(ambiguity.get("variants", []))
         next_step = (
@@ -377,7 +379,7 @@ async def update_booking(
                             "resolved_audience": svc.audience,
                             "variants": [svc.name, *siblings],
                         }
-                        patch["_audience_ambiguity"] = ambiguity_data
+                        patch["pending_disambiguations"] = [ambiguity_data]
                         break  # first ambiguous service wins
 
     # ── Stylist branch ───────────────────────────────────────────────────
@@ -501,7 +503,7 @@ async def update_booking(
         if service_audience_hint in _CANONICAL_AUDIENCE_HINTS:
             patch["service_audience_hint"] = service_audience_hint
             # Clearing the ambiguity signal is atomic with the hint resolution.
-            patch["_audience_ambiguity"] = None
+            patch["pending_disambiguations"] = []
         else:
             errors.append(
                 f"service_audience_hint '{service_audience_hint}' inválido. "

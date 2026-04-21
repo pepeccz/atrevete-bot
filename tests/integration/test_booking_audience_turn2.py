@@ -35,7 +35,7 @@ LLM: scripted via AsyncMock (2-turn script).
 Additional tests (T2 RED phase):
   test_turn1_generic_corte_emits_audience_ambiguity:
       Verifies that after turn-1 update_booking(services=["Cortar"]) the tool
-      populates booking_context["_audience_ambiguity"] and the next
+      populates booking_context["pending_disambiguations"] and the next
       _build_dynamic_context output contains <audience_ambiguity> XML.
       Expected RED because detection block is not yet in update_booking.
 
@@ -267,7 +267,14 @@ class TestBookingAudienceTurn2:
             {"role": "user", "content": "Hola, quiero cortarme el pelo"},
         ] + [
             # Normalize: LangChain message objects → dicts if needed
-            msg if isinstance(msg, dict) else {"role": getattr(msg, "type", "assistant"), "content": getattr(msg, "content", "")}
+            (
+                msg
+                if isinstance(msg, dict)
+                else {
+                    "role": getattr(msg, "type", "assistant"),
+                    "content": getattr(msg, "content", ""),
+                }
+            )
             for msg in turn1_messages
         ]
 
@@ -297,7 +304,9 @@ class TestBookingAudienceTurn2:
                 if isinstance(content, str) and content.strip():
                     bot_reply = content.strip()
                     break
-            elif isinstance(msg, AIMessage) and isinstance(msg.content, str) and msg.content.strip():
+            elif (
+                isinstance(msg, AIMessage) and isinstance(msg.content, str) and msg.content.strip()
+            ):
                 bot_reply = msg.content.strip()
                 break
 
@@ -381,9 +390,7 @@ class TestAudienceAmbiguitySignal:
     - No real PostgreSQL required
     """
 
-    async def test_turn1_generic_corte_emits_audience_ambiguity(
-        self, _common_patches
-    ) -> None:
+    async def test_turn1_generic_corte_emits_audience_ambiguity(self, _common_patches) -> None:
         """After turn-1 update_booking(services=["Cortar"]), booking_context has
         _audience_ambiguity and _build_dynamic_context output contains <audience_ambiguity>.
 
@@ -441,16 +448,12 @@ class TestAudienceAmbiguitySignal:
                 )
 
             # Inject the tool result into the node's booking_context as _post_tool_result would
-            node._booking_context["_audience_ambiguity"] = tool_result.get(
+            node._booking_context["pending_disambiguations"] = tool_result.get(
                 "_booking_context_patch", {}
-            ).get("_audience_ambiguity")
+            ).get("pending_disambiguations", [])
 
             # Simulated final assistant message
-            final_reply = AI(
-                content=(
-                    "¿El corte es para señora, caballero, niño/a o bebé?"
-                )
-            )
+            final_reply = AI(content=("¿El corte es para señora, caballero, niño/a o bebé?"))
             return {"messages": messages_in + [final_reply]}
 
         agent_mock_turn1 = MagicMock()
@@ -461,23 +464,24 @@ class TestAudienceAmbiguitySignal:
         with patch("langchain.agents.create_agent", return_value=agent_mock_turn1):
             await node.handle(turn1_state, intent=None)
 
-        # ── Assertion 1: booking_context has _audience_ambiguity ─────────────
-        ambiguity = node._booking_context.get("_audience_ambiguity")
-        assert ambiguity is not None, (
-            "Expected booking_context['_audience_ambiguity'] to be set after turn-1. "
+        # ── Assertion 1: booking_context has pending_disambiguations ─────────────
+        disambiguations = node._booking_context.get("pending_disambiguations", [])
+        assert disambiguations, (
+            "Expected booking_context['pending_disambiguations'] to be set after turn-1. "
             "FAILS on master because detection block is missing in update_booking."
         )
-        assert ambiguity.get("family"), (
-            f"_audience_ambiguity.family must be non-empty. Got {ambiguity!r}"
-        )
-        assert len(ambiguity.get("variants", [])) >= 2, (
-            f"variants must contain resolved + siblings (≥2). Got {ambiguity!r}"
-        )
+        ambiguity = disambiguations[0]
+        assert ambiguity.get(
+            "family"
+        ), f"pending_disambiguations[0].family must be non-empty. Got {ambiguity!r}"
+        assert (
+            len(ambiguity.get("variants", [])) >= 2
+        ), f"variants must contain resolved + siblings (≥2). Got {ambiguity!r}"
 
         # ── Assertion 2: _build_dynamic_context renders <audience_ambiguity> ─
         # Simulate the NEXT turn's dynamic context: ambiguity is set, no hint.
         mode_context_with_ambiguity = {
-            "_audience_ambiguity": ambiguity,
+            "pending_disambiguations": disambiguations,
             # no service_audience_hint → render guard should let it through
         }
         dynamic_ctx_str = node._build_dynamic_context(mode_context_with_ambiguity, turn1_state)
@@ -501,14 +505,15 @@ class TestAudienceAmbiguitySignal:
 
         node = _make_node()
 
-        # Pre-seed: previous turn emitted _audience_ambiguity into booking_context
-        pre_existing_ambiguity = {
+        # Pre-seed: previous turn emitted pending_disambiguations into booking_context
+        pre_existing_ambiguity_item = {
             "family": "Corte",
             "resolved_as": "Corte Señora",
             "resolved_audience": "adult_female",
             "variants": ["Corte Señora", "Corte Caballero", "Corte Niño"],
         }
-        node._booking_context["_audience_ambiguity"] = pre_existing_ambiguity
+        pre_existing_ambiguity = [pre_existing_ambiguity_item]
+        node._booking_context["pending_disambiguations"] = pre_existing_ambiguity
 
         # Turn-2 state: user says "señora" — hint extraction should set service_audience_hint
         turn2_state = _make_state(
@@ -519,17 +524,15 @@ class TestAudienceAmbiguitySignal:
             ],
         )
         turn2_state["booking_context"] = {
-            "_audience_ambiguity": pre_existing_ambiguity,
+            "pending_disambiguations": pre_existing_ambiguity,
         }
         turn2_state["mode_context"] = {
-            "_audience_ambiguity": pre_existing_ambiguity,
+            "pending_disambiguations": pre_existing_ambiguity,
         }
 
         async def _mock_ainvoke_turn2(input_: dict, *args, **kwargs) -> dict:
             messages_in = list(input_.get("messages", []))
-            final_reply = AI(
-                content="Perfecto, un corte para señora. ¿Prefieres alguna estilista?"
-            )
+            final_reply = AI(content="Perfecto, un corte para señora. ¿Prefieres alguna estilista?")
             return {"messages": messages_in + [final_reply]}
 
         agent_mock_turn2 = MagicMock()
@@ -549,10 +552,10 @@ class TestAudienceAmbiguitySignal:
 
         # ── Assertion 2: render guard suppresses <audience_ambiguity> ────────
         # When service_audience_hint is set, _build_dynamic_context must NOT
-        # emit <audience_ambiguity> even if _audience_ambiguity key is still present.
+        # emit <audience_ambiguity> even if pending_disambiguations key is still present.
         mode_context_after_turn2 = {
-            "_audience_ambiguity": pre_existing_ambiguity,  # key still in context
-            "service_audience_hint": "adult_female",         # hint now set → guard fires
+            "pending_disambiguations": pre_existing_ambiguity,  # key still in context
+            "service_audience_hint": "adult_female",  # hint now set → guard fires
         }
         dynamic_ctx_str = node._build_dynamic_context(mode_context_after_turn2, turn2_state)
         assert "<audience_ambiguity>" not in dynamic_ctx_str, (
