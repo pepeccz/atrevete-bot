@@ -71,8 +71,8 @@ async def test_ask_service_returns_ai_message():
     assert "messages" in result
     msgs = result["messages"]
     assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
-    assert msgs[0].content == "¿Qué servicio querés?"
+    assert isinstance(msgs[0], dict) and msgs[0]["role"] == "assistant"
+    assert msgs[0]["content"] == "¿Qué servicio querés?"
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_ask_audience_returns_ai_message():
 
     msgs = result["messages"]
     assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
+    assert isinstance(msgs[0], dict) and msgs[0]["role"] == "assistant"
 
 
 @pytest.mark.asyncio
@@ -168,7 +168,7 @@ async def test_ask_stylist_returns_ai_message():
 
     msgs = result["messages"]
     assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
+    assert isinstance(msgs[0], dict) and msgs[0]["role"] == "assistant"
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ async def test_ask_slot_returns_ai_message():
 
     msgs = result["messages"]
     assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
+    assert isinstance(msgs[0], dict) and msgs[0]["role"] == "assistant"
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +226,7 @@ async def test_ask_name_returns_ai_message():
 
     msgs = result["messages"]
     assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
+    assert isinstance(msgs[0], dict) and msgs[0]["role"] == "assistant"
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ async def test_ask_notes_returns_ai_message():
 
     msgs = result["messages"]
     assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
+    assert isinstance(msgs[0], dict) and msgs[0]["role"] == "assistant"
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +296,7 @@ async def test_show_confirmation_returns_ai_message():
 
     msgs = result["messages"]
     assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
+    assert isinstance(msgs[0], dict) and msgs[0]["role"] == "assistant"
 
 
 @pytest.mark.asyncio
@@ -346,8 +346,8 @@ async def test_booking_complete_returns_ai_message():
 
     msgs = result["messages"]
     assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
-    assert msgs[0].content == "¡Tu turno está confirmado!"
+    assert isinstance(msgs[0], dict) and msgs[0]["role"] == "assistant"
+    assert msgs[0]["content"] == "¡Tu turno está confirmado!"
 
 
 @pytest.mark.asyncio
@@ -363,7 +363,7 @@ async def test_booking_complete_does_not_make_tool_calls():
         result = await booking_complete(_state(bc=bc))
 
     msgs = result["messages"]
-    assert len(msgs[0].tool_calls) == 0
+    assert "tool_calls" not in msgs[0]
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +392,7 @@ async def test_error_recovery_returns_ai_message():
 
     msgs = result["messages"]
     assert len(msgs) == 1
-    assert isinstance(msgs[0], AIMessage)
+    assert isinstance(msgs[0], dict) and msgs[0]["role"] == "assistant"
 
 
 @pytest.mark.asyncio
@@ -480,7 +480,7 @@ async def test_error_recovery_with_partial_booking_context():
     mock_llm.ainvoke.assert_called_once()
     # Message still returned
     assert len(result["messages"]) == 1
-    assert isinstance(result["messages"][0], AIMessage)
+    assert isinstance(result["messages"][0], dict) and result["messages"][0]["role"] == "assistant"
 
 
 @pytest.mark.asyncio
@@ -494,7 +494,7 @@ async def test_booking_complete_message_content_returned():
     with patch("agent.booking.nodes.leaf_llm.llm", mock_llm):
         result = await booking_complete(_state(bc=bc))
 
-    assert result["messages"][0].content == expected_text
+    assert result["messages"][0]["content"] == expected_text
 
 
 @pytest.mark.asyncio

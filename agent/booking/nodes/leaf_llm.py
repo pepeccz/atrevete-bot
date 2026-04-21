@@ -22,8 +22,10 @@ error_recovery clears booking_context (state fence):
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -79,11 +81,25 @@ def _last_turns(state: dict[str, Any], n: int = 6) -> list:
 
 
 async def _invoke(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
-    """Shared helper: load prompt, call llm.ainvoke, return messages patch."""
+    """Shared helper: load prompt, call llm.ainvoke, return messages patch.
+
+    Returns messages as dicts ({'role': 'assistant', 'content': ..., 'timestamp': ...})
+    to match ConversationState schema (messages: list[dict]) and satisfy the
+    publish freshness guard in agent/main.py which checks last_message['role'] == 'assistant'.
+    """
     prompt = _load_prompt(node_name)
     messages = [SystemMessage(content=prompt)] + _last_turns(state)
     response: AIMessage = await llm.ainvoke(messages)
-    return {"messages": [response]}
+    content = response.content if isinstance(response.content, str) else str(response.content)
+    msg = {
+        "role": "assistant",
+        "content": content,
+        "timestamp": datetime.now(ZoneInfo("Europe/Madrid")).isoformat(),
+    }
+    return {
+        "messages": [msg],
+        "total_message_count": state.get("total_message_count", 0) + 1,
+    }
 
 
 # ---------------------------------------------------------------------------
