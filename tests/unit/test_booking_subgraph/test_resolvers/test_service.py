@@ -132,6 +132,87 @@ def test_audience_filter_no_hint_retains_all():
         assert _audience_matches(row, None) is True
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 — loader wiring + opening_booking_request fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_load_catalog_from_cache_delegates_to_get_active_services(monkeypatch):
+    """_load_catalog_from_cache MUST call get_active_services()."""
+    from agent.booking.resolvers import service as resolver_mod
+    from agent.prompts import catalog_builder
+
+    fake_rows = [_row("Mechas", audience="adult_female")]
+
+    async def fake_get_active_services():
+        return fake_rows
+
+    monkeypatch.setattr(catalog_builder, "_catalog_cache", catalog_builder._catalog_cache)
+    monkeypatch.setattr(resolver_mod, "get_active_services", fake_get_active_services)
+
+    loaded = await resolver_mod._load_catalog_from_cache_async()
+    assert loaded == fake_rows
+
+
+def test_resolver_uses_loader_when_state_missing_catalog(monkeypatch):
+    """When state has no service_catalog, resolver pulls from the cache loader."""
+    from agent.booking.resolvers import service as resolver_mod
+
+    catalog = [_row("Mechas", audience="adult_female")]
+    monkeypatch.setattr(resolver_mod, "_load_catalog_from_cache", lambda: catalog)
+
+    result = resolver_mod.resolve("mechas", {}, {})
+    assert result is not None and result["matched"]
+    assert result["patch"].get("last_services") == ["Mechas"]
+
+
+def test_fallback_fires_when_no_current_match_and_last_services_empty():
+    """Second pass over opening_booking_request when current user_text fails."""
+    from agent.booking.resolvers import service as resolver_mod
+
+    catalog = _row_catalog()
+    # "xyzzy plop" produces no service match across the row catalog.
+    bc_no_fb = {"last_services": []}
+    baseline = resolver_mod.resolve("xyzzy plop", bc_no_fb, {"service_catalog": catalog})
+    assert baseline is None or not baseline.get("matched"), (
+        "sanity: 'ok dale' must not match any service directly"
+    )
+
+    bc = {
+        "opening_booking_request": "quiero cortarme el pelo",
+        "last_services": [],
+    }
+    result = resolver_mod.resolve("xyzzy plop", bc, {"service_catalog": catalog})
+    assert result is not None and result["matched"], "fallback must produce a match"
+    hit_names = [d["service_name"] for d in result["patch"].get("pending_disambiguations", [])]
+    hit_names += result["patch"].get("last_services", [])
+    assert any("Corte" in n or "Cortar" in n for n in hit_names)
+
+
+def test_fallback_skipped_when_last_services_already_populated(monkeypatch):
+    """If a service was previously resolved, fallback MUST NOT run."""
+    from agent.booking.resolvers import service as resolver_mod
+
+    catalog = _row_catalog()
+    bc = {
+        "opening_booking_request": "quiero cortarme el pelo",
+        "last_services": ["Mechas"],
+    }
+    # user_text "xyz" no match; fallback disabled → returns None
+    result = resolver_mod.resolve("xyz no existe", bc, {"service_catalog": catalog})
+    assert result is None or not result.get("matched")
+
+
+def test_fallback_skipped_when_opening_request_absent(monkeypatch):
+    """No opening request → no fallback possible → returns None on no match."""
+    from agent.booking.resolvers import service as resolver_mod
+
+    catalog = _row_catalog()
+    result = resolver_mod.resolve("xyz no existe", {}, {"service_catalog": catalog})
+    assert result is None or not result.get("matched")
+
+
 def test_female_hint_excludes_male_row():
     """FEMALE hint with row catalog drops adult_male services."""
     from agent.booking.resolvers.service import resolve

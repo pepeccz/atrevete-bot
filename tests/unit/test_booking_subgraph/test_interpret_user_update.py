@@ -36,7 +36,7 @@ async def test_interpret_audience_resolver_fires():
 async def test_interpret_unknown_text_gives_unknown_action():
     from agent.booking.nodes.interpret_user_update import interpret_user_update
 
-    state = _state("hola")
+    state = _state("xyzzy plop")
     result = await interpret_user_update(state)
     assert result["user_action"] == "UNKNOWN"
 

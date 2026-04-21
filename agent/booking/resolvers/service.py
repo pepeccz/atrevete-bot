@@ -17,9 +17,14 @@ import logging
 from typing import Any
 
 from agent.booking.resolvers import ResolverResult
-from agent.prompts.catalog_builder import ServiceRow
+from agent.prompts.catalog_builder import ServiceRow, get_active_services
 
 logger = logging.getLogger(__name__)
+
+# Module-level snapshot of the active catalog, refreshed by
+# `_load_catalog_from_cache_async()` (called from ``interpret_user_update``).
+# The sync resolver entry point reads from this snapshot so it stays fast.
+_active_services_snapshot: list[ServiceRow] = []
 
 _CUTOFF = 0.35  # fuzzy match cutoff for service names (generous; audience-hint refines)
 
@@ -124,6 +129,24 @@ def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> Resolv
         return None
 
     audience_hint: str | None = bc.get("service_audience_hint")
+    result = _match_against_catalog(user_text, catalog, audience_hint)
+
+    # Phase 3 — fallback to opening_booking_request when nothing matched and
+    # no service has been resolved previously in this booking flow.
+    if result is None and not bc.get("last_services"):
+        opening = bc.get("opening_booking_request")
+        if opening and opening != user_text:
+            logger.info("resolver.service.fallback | retrying on opening_booking_request")
+            result = _match_against_catalog(opening, catalog, audience_hint)
+
+    return result
+
+
+def _match_against_catalog(
+    user_text: str,
+    catalog: list[ServiceRow | str],
+    audience_hint: str | None,
+) -> ResolverResult | None:
     normalized_input = _normalize(user_text)
 
     candidates: list[tuple[ServiceRow | str, float]] = []
@@ -164,10 +187,28 @@ def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> Resolv
 
 
 def _load_catalog_from_cache() -> list[ServiceRow]:
-    """Load active services from the shared catalog cache.
+    """Return the latest cached snapshot of active services.
 
-    Wired in Phase 3 of the catalog-loader SDD — kept as a stub here so that
-    Phase 2 can land without depending on a synchronous path into the async
-    cache. Phase 3 patches this function to call ``get_active_services()``.
+    Refreshed asynchronously by ``_load_catalog_from_cache_async()`` which the
+    booking subgraph calls at the top of every turn (``interpret_user_update``).
+    Unit tests may monkeypatch this function directly to inject a fake catalog
+    without going through the async path.
     """
-    return []
+    return list(_active_services_snapshot)
+
+
+async def _load_catalog_from_cache_async() -> list[ServiceRow]:
+    """Refresh the module-level snapshot from the shared catalog cache.
+
+    Called from ``interpret_user_update`` at the start of every booking turn
+    so that the sync ``resolve()`` path always sees fresh rows without needing
+    an event loop inside the resolver itself.
+    """
+    global _active_services_snapshot
+    try:
+        rows = await get_active_services()
+    except Exception as exc:
+        logger.warning("resolver.service.load_failed | error=%s", exc)
+        return list(_active_services_snapshot)
+    _active_services_snapshot = list(rows)
+    return list(_active_services_snapshot)

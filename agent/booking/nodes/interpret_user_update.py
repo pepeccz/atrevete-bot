@@ -25,6 +25,7 @@ async def interpret_user_update(state: dict[str, Any]) -> dict[str, Any]:
         }
     """
     from agent.booking.resolvers import RESOLVER_REGISTRY
+    from agent.booking.resolvers.service import _load_catalog_from_cache_async
 
     user_text: str = state.get("user_message") or ""
     if not user_text:
@@ -33,6 +34,14 @@ async def interpret_user_update(state: dict[str, Any]) -> dict[str, Any]:
                 user_text = msg.get("content", "") or ""
                 break
     bc: dict[str, Any] = dict(state.get("booking_context") or {})
+
+    # Refresh the service resolver's catalog snapshot from the shared TTL
+    # cache. Called here (async context) so the sync resolver path below can
+    # read the latest rows without needing an event loop itself.
+    try:
+        await _load_catalog_from_cache_async()
+    except Exception:  # noqa: BLE001 — fail-open, resolvers handle empty catalog
+        logger.exception("interpret_user_update | catalog preload failed; continuing")
 
     merged_patch: dict[str, Any] = {}
     merged_cleared: list[str] = []
