@@ -178,3 +178,116 @@ def test_seeds_principals_and_addons_have_no_parent():
                 f"Service {svc['name']!r} is {stype} but declares parent_service_name="
                 f"{meta.get('parent_service_name')!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# ServiceRow dataclass + get_active_services — Phase 1 of catalog loader fix
+# ---------------------------------------------------------------------------
+
+
+def test_service_row_is_frozen_dataclass_with_required_fields():
+    """ServiceRow exposes name, audience, metadata and is immutable."""
+    from agent.prompts.catalog_builder import ServiceRow
+
+    row = ServiceRow(name="Corte Señora", audience="adult_female", metadata={"dimension": "cut"})
+    assert row.name == "Corte Señora"
+    assert row.audience == "adult_female"
+    assert row.metadata == {"dimension": "cut"}
+
+    # Frozen: mutation should raise
+    with pytest.raises(Exception):
+        row.name = "Other"  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_get_active_services_returns_service_rows(monkeypatch):
+    """get_active_services returns list[ServiceRow] built from the loader."""
+    from agent.prompts import catalog_builder
+    from agent.prompts.catalog_builder import ServiceRow, get_active_services
+
+    fake_rows = [
+        ServiceRow(name="Cortar", audience=None, metadata={}),
+        ServiceRow(name="Corte Caballero", audience="adult_male", metadata={}),
+    ]
+    fake_markdown = "## Catálogo\n- Cortar\n- Corte Caballero\n"
+
+    async def fake_loader():
+        return (fake_rows, fake_markdown)
+
+    catalog_builder._catalog_cache.invalidate()
+    monkeypatch.setattr(catalog_builder, "_build_catalog_from_db", fake_loader)
+
+    rows = await get_active_services()
+    assert rows == fake_rows
+    assert all(isinstance(r, ServiceRow) for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_get_active_services_uses_cache_within_ttl(monkeypatch):
+    """Second call within TTL does NOT re-invoke the DB loader."""
+    from agent.prompts import catalog_builder
+    from agent.prompts.catalog_builder import ServiceRow, get_active_services
+
+    call_count = {"n": 0}
+
+    async def counting_loader():
+        call_count["n"] += 1
+        return ([ServiceRow(name="X", audience=None, metadata={})], "md")
+
+    catalog_builder._catalog_cache.invalidate()
+    monkeypatch.setattr(catalog_builder, "_build_catalog_from_db", counting_loader)
+
+    await get_active_services()
+    await get_active_services()
+    await get_active_services()
+
+    assert call_count["n"] == 1, "Loader should be invoked ONCE within TTL window"
+
+
+@pytest.mark.asyncio
+async def test_get_active_services_reload_after_invalidate(monkeypatch):
+    """invalidate_catalog_cache forces the next call to re-query the DB."""
+    from agent.prompts import catalog_builder
+    from agent.prompts.catalog_builder import ServiceRow, get_active_services, invalidate_catalog_cache
+
+    call_count = {"n": 0}
+
+    async def counting_loader():
+        call_count["n"] += 1
+        return ([ServiceRow(name="X", audience=None, metadata={})], "md")
+
+    catalog_builder._catalog_cache.invalidate()
+    monkeypatch.setattr(catalog_builder, "_build_catalog_from_db", counting_loader)
+
+    await get_active_services()
+    invalidate_catalog_cache()
+    await get_active_services()
+
+    assert call_count["n"] == 2, "Loader must re-run after invalidation"
+
+
+@pytest.mark.asyncio
+async def test_build_catalog_markdown_and_services_share_cache(monkeypatch):
+    """Both exports read from the same underlying cache entry (one DB query)."""
+    from agent.prompts import catalog_builder
+    from agent.prompts.catalog_builder import (
+        ServiceRow,
+        build_catalog_markdown,
+        get_active_services,
+    )
+
+    call_count = {"n": 0}
+
+    async def counting_loader():
+        call_count["n"] += 1
+        return ([ServiceRow(name="X", audience=None, metadata={})], "MARKDOWN-BODY")
+
+    catalog_builder._catalog_cache.invalidate()
+    monkeypatch.setattr(catalog_builder, "_build_catalog_from_db", counting_loader)
+
+    md = await build_catalog_markdown()
+    rows = await get_active_services()
+
+    assert md == "MARKDOWN-BODY"
+    assert len(rows) == 1 and rows[0].name == "X"
+    assert call_count["n"] == 1, "markdown + services must share ONE cache entry"

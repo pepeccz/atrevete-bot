@@ -1,5 +1,11 @@
-"""Builds the service catalog markdown from DB for LLM prompt injection."""
+"""Builds the service catalog markdown from DB for LLM prompt injection.
+
+Also exposes ``get_active_services()`` returning typed ``ServiceRow`` rows for
+the booking subgraph's deterministic resolvers. Markdown + rows share a single
+TTL cache, so each refresh is ONE DB query that produces both views.
+"""
 import logging
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 
@@ -7,6 +13,19 @@ from database.connection import get_async_session
 from database.models import BusinessHours, Service, ServiceCategory, Stylist
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ServiceRow:
+    """Immutable typed row copied out of the ORM session.
+
+    Consumed by deterministic resolvers (``agent/booking/resolvers/service.py``)
+    and any caller that needs the active catalog without hitting the DB.
+    """
+
+    name: str
+    audience: str | None
+    metadata: dict = field(default_factory=dict)
 
 _AUDIENCE_LABELS = {
     "adult_female": "Señora",
@@ -71,12 +90,19 @@ _DAY_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "
 # (datetime-based, asyncio.Lock for thundering-herd protection)
 from agent.prompts.loader import _TtlCache
 
-_catalog_cache = _TtlCache(ttl_minutes=5)  # 5-minute cache
+_catalog_cache = _TtlCache(ttl_minutes=5)  # 5-minute cache — value: (list[ServiceRow], str)
 
 
 async def build_catalog_markdown() -> str:
     """Build the full catalog markdown from DB. Cached for 5 minutes."""
-    return await _catalog_cache.get_or_load(_build_catalog_from_db)
+    _rows, markdown = await _catalog_cache.get_or_load(_build_catalog_from_db)
+    return markdown
+
+
+async def get_active_services() -> list[ServiceRow]:
+    """Return the active service catalog as typed rows. Shares cache with markdown."""
+    rows, _md = await _catalog_cache.get_or_load(_build_catalog_from_db)
+    return rows
 
 
 def invalidate_catalog_cache() -> None:
@@ -85,8 +111,13 @@ def invalidate_catalog_cache() -> None:
     logger.info("catalog_cache invalidated")
 
 
-async def _build_catalog_from_db() -> str:
-    """Query DB and render markdown."""
+async def _build_catalog_from_db() -> tuple[list[ServiceRow], str]:
+    """Query DB, build both the typed rows and the markdown string.
+
+    Returns a ``(rows, markdown)`` tuple so the shared cache serves both
+    ``get_active_services()`` and ``build_catalog_markdown()`` from a SINGLE
+    query per refresh.
+    """
     async with get_async_session() as session:
         # Fetch active services ordered by category, name
         services_result = await session.execute(
@@ -109,6 +140,17 @@ async def _build_catalog_from_db() -> str:
             select(BusinessHours).order_by(BusinessHours.day_of_week)
         )
         hours = hours_result.scalars().all()
+
+        # Copy active-service fields into typed rows BEFORE the session closes —
+        # prevents DetachedInstanceError for consumers who read lazy attrs later.
+        rows: list[ServiceRow] = [
+            ServiceRow(
+                name=svc.name,
+                audience=svc.audience,
+                metadata=dict(svc.metadata_ or {}),
+            )
+            for svc in services
+        ]
 
     sections: list[str] = []
 
@@ -173,10 +215,12 @@ async def _build_catalog_from_db() -> str:
             "catalog_builder: token estimate %d exceeds 5000 budget", estimated_tokens
         )
 
-    return catalog
+    return rows, catalog
 
 
 __all__ = [
+    "ServiceRow",
     "build_catalog_markdown",
+    "get_active_services",
     "invalidate_catalog_cache",
 ]
