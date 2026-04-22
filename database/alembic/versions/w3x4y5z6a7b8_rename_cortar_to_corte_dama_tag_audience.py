@@ -34,12 +34,12 @@ def upgrade() -> None:
         sa.text(
             """
             UPDATE services
-            SET metadata_ = jsonb_set(
-                metadata_,
+            SET metadata = jsonb_set(
+                metadata,
                 '{parent_service_name}',
                 '"Corte Dama"'
             )
-            WHERE metadata_ ->> 'parent_service_name' = 'Cortar'
+            WHERE metadata ->> 'parent_service_name' = 'Cortar'
             """
         )
     )
@@ -52,7 +52,7 @@ def upgrade() -> None:
             """
             UPDATE services
             SET audience = 'adult_female'
-            WHERE (metadata_ ->> 'audience' = 'adult_female'
+            WHERE (metadata ->> 'audience' = 'adult_female'
                    OR name IN (
                        'Corte Dama', 'Corte + Secado Dama', 'Tinte Completo',
                        'Mechas', 'Balayage', 'Permanente', 'Alisado Keratina',
@@ -77,12 +77,12 @@ def downgrade() -> None:
         sa.text(
             """
             UPDATE services
-            SET metadata_ = jsonb_set(
-                metadata_,
+            SET metadata = jsonb_set(
+                metadata,
                 '{parent_service_name}',
                 '"Cortar"'
             )
-            WHERE metadata_ ->> 'parent_service_name' = 'Corte Dama'
+            WHERE metadata ->> 'parent_service_name' = 'Corte Dama'
             """
         )
     )
