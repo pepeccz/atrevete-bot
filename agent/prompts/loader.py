@@ -89,5 +89,6 @@ def load_system_prompt() -> str:
         _read("identity.md"),
         _read("critical_rules.md"),
         _read("glossary.md"),
+        _read("booking_flow.md"),
     ]
     return "\n\n---\n\n".join(s for s in sections if s)
