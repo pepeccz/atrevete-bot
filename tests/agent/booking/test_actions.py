@@ -161,3 +161,67 @@ async def test_execute_book_rejected_reopens_slot():
     assert result.update["booking"]["step"] == "slot"
     msgs = result.update.get("messages", [])
     assert len(msgs) > 0
+
+
+# ---------------------------------------------------------------------------
+# R6 — Graceful degradation: apology message must be castellano peninsular tuteo
+# ---------------------------------------------------------------------------
+
+_VOSEO_MARKERS = [
+    "elegí", "querés", "Querés", "sos", "Sos", "Respondés",
+    "indicame", "decime", "rioplatense",
+]
+
+
+@pytest.mark.asyncio
+async def test_fetch_availability_node_graceful_degradation_tuteo():
+    """When check_availability raises, the apology message must be in tuteo (no voseo).
+
+    R6: graceful degradation must stay functional and language-correct.
+    """
+    from agent.booking.actions import fetch_availability_node
+
+    mock_tool = AsyncMock(side_effect=RuntimeError("simulated network failure"))
+
+    with patch("agent.booking.actions.check_availability_tool", mock_tool):
+        result = await fetch_availability_node(_make_state())
+
+    msgs = result.update.get("messages", [])
+    assert len(msgs) > 0, "Expected at least one apology message"
+
+    for msg in msgs:
+        content = msg.content if hasattr(msg, "content") else str(msg)
+        for marker in _VOSEO_MARKERS:
+            assert marker not in content, (
+                f"Voseo marker '{marker}' found in apology message: {content!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_execute_book_node_graceful_degradation_tuteo():
+    """When book raises, the error message must be in tuteo (no voseo).
+
+    R6: graceful degradation must stay functional and language-correct.
+    """
+    from agent.booking.actions import execute_book_node
+
+    mock_tool = AsyncMock(side_effect=RuntimeError("simulated DB failure"))
+    state = _make_state(
+        step="confirm",
+        extra_booking={
+            "selected_slot": {"start_iso": "2026-05-01T10:00:00-03:00", "stylist_id": str(uuid4())}
+        },
+    )
+
+    with patch("agent.booking.actions.book_tool", mock_tool):
+        result = await execute_book_node(state)
+
+    msgs = result.update.get("messages", [])
+    assert len(msgs) > 0, "Expected at least one error message"
+
+    for msg in msgs:
+        content = msg.content if hasattr(msg, "content") else str(msg)
+        for marker in _VOSEO_MARKERS:
+            assert marker not in content, (
+                f"Voseo marker '{marker}' found in error message: {content!r}"
+            )

@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _PERSONA = (
-    "Sos Maite, la asistente virtual del salón de belleza Atrévete. "
+    "Eres Maite, la asistente virtual del salón de belleza Atrévete. "
     "Tu rol es guiar al cliente paso a paso para reservar un turno. "
-    "Respondés siempre en español rioplatense, de forma cálida y profesional."
+    "Respondes siempre en español de España (castellano peninsular), de forma cálida y profesional."
 )
 
 # ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ _PERSONA = (
 # ---------------------------------------------------------------------------
 
 _AUDIENCE_TAXONOMY = """
-TAXONOMÍA DE AUDIENCIA (usá estos valores exactos al extraer):
+TAXONOMÍA DE AUDIENCIA (usa estos valores exactos al extraer):
   señora / mujer / femenino     → adult_female
   caballero / hombre / masculino → adult_male
   niña                           → child_female
@@ -51,40 +51,40 @@ TAXONOMÍA DE AUDIENCIA (usá estos valores exactos al extraer):
 
 _STEP_INSTRUCTIONS: dict[str, str] = {
     "ask_service": (
-        "PASO ACTUAL: Identificá qué servicio/s quiere el cliente. "
-        "Extraé los IDs de los servicios del catálogo. "
-        "Si hay ambigüedad preguntá para aclarar. No preguntes por la audiencia en este paso."
+        "PASO ACTUAL: Identifica qué servicio/s quiere el cliente. "
+        "Extrae los IDs de los servicios del catálogo. "
+        "Si hay ambigüedad pregunta para aclarar. No preguntes por la audiencia en este paso."
     ),
     "ask_audience": (
-        "PASO ACTUAL: Identificá para quién es el servicio (audiencia). "
-        "Usá la taxonomía de audiencia para mapear la respuesta del cliente al valor correcto. "
+        "PASO ACTUAL: Identifica para quién es el servicio (audiencia). "
+        "Usa la taxonomía de audiencia para mapear la respuesta del cliente al valor correcto. "
         "Si el cliente dice 'bebé' o 'bebe', el valor es 'baby'."
     ),
     "ask_stylist": (
-        "PASO ACTUAL: Preguntá con qué estilista prefiere el cliente. "
-        "Si el cliente dice que no tiene preferencia, marcá no_preference=true."
+        "PASO ACTUAL: Pregunta con qué estilista prefiere el cliente. "
+        "Si el cliente dice que no tiene preferencia, marca no_preference=true."
     ),
     "ask_date": (
-        "PASO ACTUAL: Identificá la fecha deseada para el turno. "
-        "Convertí referencias relativas (mañana, el jueves, etc.) a una fecha concreta YYYY-MM-DD. "
-        "Consultá el horario de negocio para verificar que el día tiene atención."
+        "PASO ACTUAL: Identifica la fecha deseada para el turno. "
+        "Convierte referencias relativas (mañana, el jueves, etc.) a una fecha concreta YYYY-MM-DD. "
+        "Consulta el horario de negocio para verificar que el día tiene atención."
     ),
     "ask_slot": (
-        "PASO ACTUAL: Mostrá los turnos disponibles al cliente y pedí que elija uno. "
-        "Extraé el índice (0-based) del turno seleccionado de la lista ofrecida."
+        "PASO ACTUAL: Muestra los turnos disponibles al cliente y pide que elija uno. "
+        "Extrae el índice (0-based) del turno seleccionado de la lista ofrecida."
     ),
     "ask_name": (
-        "PASO ACTUAL: Pedí el nombre completo del cliente para registrar el turno. "
-        "Extraé nombre de pila y primer apellido."
+        "PASO ACTUAL: Pide el nombre completo del cliente para registrar el turno. "
+        "Extrae nombre de pila y primer apellido."
     ),
     "ask_notes": (
-        "PASO ACTUAL: Preguntá si el cliente tiene alguna nota o solicitud especial "
+        "PASO ACTUAL: Pregunta si el cliente tiene alguna nota o solicitud especial "
         "(alergias, preferencias de producto, etc.). "
-        "Si no tiene nada especial, marcá user_declined=true."
+        "Si no tiene nada especial, marca user_declined=true."
     ),
 }
 
-_DEFAULT_INSTRUCTION = "PASO ACTUAL: Asistí al cliente en el proceso de reserva."
+_DEFAULT_INSTRUCTION = "PASO ACTUAL: Asiste al cliente en el proceso de reserva."
 
 
 # ---------------------------------------------------------------------------

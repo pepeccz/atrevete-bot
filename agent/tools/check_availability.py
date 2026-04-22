@@ -91,7 +91,9 @@ async def check_availability(
     service_ids: list[str],
     stylist_id: str | None,
     date_iso: str,
-    audience: Literal["MUJER", "HOMBRE", "NINO", "BEBE"] | None = None,
+    audience: (
+        Literal["adult_female", "adult_male", "child_female", "child_male", "baby", "unisex"] | None
+    ) = None,
 ) -> str:
     """
     Check available time slots for the given services on a specific date.

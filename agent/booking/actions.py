@@ -50,8 +50,9 @@ async def fetch_availability_node(state: dict[str, Any]) -> Command:
     booking = state.get("booking") or {}
     args = {
         "service_ids": [str(s) for s in (booking.get("service_ids") or [])],
-        "date": str(booking.get("date") or ""),
+        "date_iso": str(booking.get("date") or ""),
         "stylist_id": str(booking.get("stylist_id") or "") if booking.get("stylist_id") else None,
+        "audience": booking.get("audience"),
     }
 
     try:
@@ -65,7 +66,7 @@ async def fetch_availability_node(state: dict[str, Any]) -> Command:
             update={
                 "messages": [
                     AIMessage(
-                        content="Lo siento, no pude consultar disponibilidad. Por favor indicame otra fecha."
+                        content="Lo siento, no pude consultar disponibilidad. Por favor indícame otra fecha."
                     )
                 ],
                 "booking": updated_booking,
@@ -85,7 +86,7 @@ async def fetch_availability_node(state: dict[str, Any]) -> Command:
             update={
                 "messages": [
                     AIMessage(
-                        content=f"No encontré turnos disponibles: {error_text}. ¿Querés probar otra fecha?"
+                        content=f"No encontré turnos disponibles: {error_text}. ¿Quieres probar otra fecha?"
                     )
                 ],
                 "booking": updated_booking,
@@ -98,16 +99,31 @@ async def execute_book_node(state: dict[str, Any]) -> Command:
     import agent.booking.actions as _self
 
     booking = state.get("booking") or {}
-    selected_slot = booking.get("selected_slot") or {}
+    raw_stylist_id = booking.get("stylist_id")
 
+    # Precondition guard: stylist_id must be set before invoking book
+    if not raw_stylist_id:
+        logger.error("execute_book_node: stylist_id missing from booking state")
+        return Command(
+            goto="route_next",
+            update={
+                "messages": [
+                    AIMessage(
+                        content="Necesito saber con qué estilista quieres reservar. ¿Puedes indicarme cuál prefieres?"
+                    )
+                ],
+                "booking": {**booking, "step": "stylist"},
+            },
+        )
+
+    selected_slot = booking.get("selected_slot") or {}
     args = {
         "service_ids": [str(s) for s in (booking.get("service_ids") or [])],
-        "stylist_id": str(booking.get("stylist_id")) if booking.get("stylist_id") else None,
-        "slot_start": selected_slot.get("start"),
-        "slot_end": selected_slot.get("end"),
+        "stylist_id": str(raw_stylist_id),
+        "start_iso": selected_slot.get("start_iso") or selected_slot.get("start") or "",
         "customer_full_name": booking.get("customer_full_name"),
         "customer_phone": state.get("customer_phone"),
-        "notes": booking.get("notes"),
+        "notes": booking.get("notes") or "",
     }
 
     try:
@@ -121,7 +137,7 @@ async def execute_book_node(state: dict[str, Any]) -> Command:
             update={
                 "messages": [
                     AIMessage(
-                        content="Hubo un error al confirmar la reserva. Por favor elegí un turno nuevamente."
+                        content="Hubo un error al confirmar la reserva. Por favor elige un turno nuevamente."
                     )
                 ],
                 "booking": updated_booking,
@@ -140,7 +156,7 @@ async def execute_book_node(state: dict[str, Any]) -> Command:
             update={
                 "messages": [
                     AIMessage(
-                        content=f"No pude confirmar la cita: {error_text}. Por favor elegí otro turno."
+                        content=f"No pude confirmar la cita: {error_text}. Por favor elige otro turno."
                     )
                 ],
                 "booking": updated_booking,
