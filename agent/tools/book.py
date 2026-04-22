@@ -9,6 +9,7 @@ Returns JSON-serialized ToolResponse.
 
 import logging
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from langchain_core.tools import tool
@@ -16,6 +17,36 @@ from langchain_core.tools import tool
 from agent.tools.schemas import ToolResponse
 
 logger = logging.getLogger(__name__)
+
+
+def _build_gcal_link(
+    start: datetime,
+    end: datetime,
+    service_names: str,
+    stylist_name: str,
+    notes: str | None = None,
+) -> str:
+    """Build a Google Calendar deep-link pre-filled with appointment data.
+
+    Converts start/end to UTC, encodes title/details/location via urllib.parse.quote.
+    Returns a URL the customer can click to add the appointment to their calendar.
+    """
+    fmt = "%Y%m%dT%H%M%SZ"
+    start_utc = start.astimezone(UTC).strftime(fmt)
+    end_utc = end.astimezone(UTC).strftime(fmt)
+    title = quote(f"{service_names} en Atrévete")
+    detail_text = f"Turno con {stylist_name}"
+    if notes:
+        detail_text += f". {notes}"
+    details = quote(detail_text)
+    location = quote("Atrévete Salón de Belleza")
+    return (
+        f"https://calendar.google.com/calendar/render?action=TEMPLATE"
+        f"&text={title}"
+        f"&dates={start_utc}/{end_utc}"
+        f"&details={details}"
+        f"&location={location}"
+    )
 
 
 def _split_full_name(full_name: str) -> tuple[str, str | None]:
@@ -116,7 +147,7 @@ async def book(
 
     from agent.services.gcal_push_service import fire_and_forget_push_appointment
     from database.connection import get_async_session
-    from database.models import Appointment, AppointmentStatus, Service
+    from database.models import Appointment, AppointmentStatus, Service, Stylist
 
     # --- Validate full name ---
     try:
@@ -208,6 +239,8 @@ async def book(
         ).model_dump_json()
 
     # --- GCal push (fire-and-forget, AFTER commit) ---
+    service_names = stylist_id  # fallback — overwritten below on success
+    end_time = start_time + timedelta(minutes=total_duration)
     try:
         # Fetch service names for the GCal event title
         async with get_async_session() as session:
@@ -230,13 +263,32 @@ async def book(
         # GCal push failure does NOT undo the DB commit — fire-and-forget
         logger.error("GCal push failed (appointment already saved): %s", exc, exc_info=True)
 
+    # --- Calendar deep-link (non-critical, always attempted) ---
+    stylist_display_name: str = stylist_id  # fallback to UUID string
+    try:
+        async with get_async_session() as session:
+            sty = await session.get(Stylist, parsed_stylist_id)
+            if sty is not None:
+                stylist_display_name = sty.name
+    except Exception as exc:
+        logger.warning("Could not fetch stylist name for calendar link: %s", exc)
+
+    calendar_link = _build_gcal_link(
+        start=start_time,
+        end=end_time,
+        service_names=service_names,
+        stylist_name=stylist_display_name,
+        notes=notes,
+    )
+
     return ToolResponse(
         status="ok",
         payload={
             "appointment_id": str(appointment_id),
             "customer_id": str(customer_id),
             "start_iso": start_time.isoformat(),
-            "end_iso": (start_time + timedelta(minutes=total_duration)).isoformat(),
+            "end_iso": end_time.isoformat(),
             "stylist_id": stylist_id,
+            "calendar_link": calendar_link,
         },
     ).model_dump_json()
