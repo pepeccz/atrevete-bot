@@ -277,16 +277,20 @@ async def subscribe_to_incoming_messages():
             messages_after = len(result_messages)
             last_message = result_messages[-1] if result_messages else None
 
-            # Determine role of the last message
+            # Determine role of the last message (support dicts and LangChain BaseMessage)
             if last_message is not None:
                 if isinstance(last_message, dict):
-                    last_role = last_message.get("role")
+                    last_role = last_message.get("role") or last_message.get("type")
                 else:
-                    last_role = getattr(last_message, "role", None)
+                    last_role = getattr(last_message, "type", None) or getattr(
+                        last_message, "role", None
+                    )
             else:
                 last_role = None
 
-            freshness_ok = (messages_after > messages_before) and (last_role == "assistant")
+            freshness_ok = (messages_after > messages_before) and (
+                last_role in ("assistant", "ai")
+            )
 
             if not freshness_ok:
                 logger.warning(

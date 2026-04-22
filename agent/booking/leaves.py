@@ -1,9 +1,10 @@
-"""LLM leaves for the booking subgraph — Phase 5.8.
+"""LLM leaves for the booking subgraph — Phase 5.8 + booking-prompts-audit-fix.
 
 Each leaf:
 1. Checks fast-path: if the required field is already set in booking, skip LLM
    and return Command(goto="route_next") to advance to the next step.
-2. Otherwise: calls LLM.with_structured_output(Schema).ainvoke(messages).
+2. Otherwise: calls build_leaf_system_message to build a SystemMessage, then
+   calls LLM.with_structured_output(Schema).ainvoke([SystemMessage, ...messages]).
 3. Merges extracted fields into booking sub-dict.
 4. Returns Command(goto=END, update={messages:[AIMessage(...)], booking:{...}})
    to end the subgraph turn (waiting for next user message).
@@ -26,6 +27,7 @@ from langchain_core.messages import AIMessage
 from langgraph.constants import END
 from langgraph.types import Command
 
+from agent.booking.prompt_builder import build_leaf_system_message
 from agent.booking.schemas import (
     AudienceResponse,
     DateResponse,
@@ -62,20 +64,19 @@ async def ask_service(state: dict[str, Any]) -> Command:
             booking["step"] = "audience"
         return Command(goto="route_next", update={"booking": booking})
 
+    system_msg = await build_leaf_system_message("ask_service", booking, state)
     llm = _self.get_llm()
     chain = llm.with_structured_output(ServiceSelectionResponse)
-    response: ServiceSelectionResponse = await chain.ainvoke(_current_messages(state))
+    messages = [system_msg] + _current_messages(state)
+    response: ServiceSelectionResponse = await chain.ainvoke(messages)
 
     booking.update(
         {
             "service_ids": response.selected_service_ids or [],
         }
     )
-    if response.suggested_audience:
-        booking["audience"] = response.suggested_audience
-    # Advance step so sticky-mode and route_next know where we are next turn
-    if not booking.get("step"):
-        booking["step"] = "audience"
+    # Always advance to 'audience' after ask_service resolves
+    booking["step"] = "audience"
 
     return Command(
         goto=END,
@@ -96,9 +97,11 @@ async def ask_audience(state: dict[str, Any]) -> Command:
         booking["step"] = "stylist"
         return Command(goto="route_next", update={"booking": booking})
 
+    system_msg = await build_leaf_system_message("ask_audience", booking, state)
     llm = _self.get_llm()
     chain = llm.with_structured_output(AudienceResponse)
-    response: AudienceResponse = await chain.ainvoke(_current_messages(state))
+    messages = [system_msg] + _current_messages(state)
+    response: AudienceResponse = await chain.ainvoke(messages)
 
     booking["audience"] = response.inferred_audience
     booking["step"] = "stylist" if response.inferred_audience else "audience"
@@ -122,9 +125,11 @@ async def ask_stylist(state: dict[str, Any]) -> Command:
         booking["step"] = "date"
         return Command(goto="route_next", update={"booking": booking})
 
+    system_msg = await build_leaf_system_message("ask_stylist", booking, state)
     llm = _self.get_llm()
     chain = llm.with_structured_output(StylistResponse)
-    response: StylistResponse = await chain.ainvoke(_current_messages(state))
+    messages = [system_msg] + _current_messages(state)
+    response: StylistResponse = await chain.ainvoke(messages)
 
     booking["stylist_id"] = response.inferred_stylist_id
     booking["no_preference"] = response.no_preference
@@ -153,9 +158,11 @@ async def ask_date(state: dict[str, Any]) -> Command:
         booking["step"] = "slot"
         return Command(goto="route_next", update={"booking": booking})
 
+    system_msg = await build_leaf_system_message("ask_date", booking, state)
     llm = _self.get_llm()
     chain = llm.with_structured_output(DateResponse)
-    response: DateResponse = await chain.ainvoke(_current_messages(state))
+    messages = [system_msg] + _current_messages(state)
+    response: DateResponse = await chain.ainvoke(messages)
 
     booking["date"] = response.inferred_date
     booking["step"] = "slot" if response.inferred_date else "date"
@@ -179,9 +186,11 @@ async def ask_slot(state: dict[str, Any]) -> Command:
         booking["step"] = "name"
         return Command(goto="route_next", update={"booking": booking})
 
+    system_msg = await build_leaf_system_message("ask_slot", booking, state)
     llm = _self.get_llm()
     chain = llm.with_structured_output(SlotResponse)
-    response: SlotResponse = await chain.ainvoke(_current_messages(state))
+    messages = [system_msg] + _current_messages(state)
+    response: SlotResponse = await chain.ainvoke(messages)
 
     offered_slots = booking.get("offered_slots") or []
     idx = response.selected_slot_index
@@ -208,9 +217,11 @@ async def ask_name(state: dict[str, Any]) -> Command:
         booking["step"] = "notes"
         return Command(goto="route_next", update={"booking": booking})
 
+    system_msg = await build_leaf_system_message("ask_name", booking, state)
     llm = _self.get_llm()
     chain = llm.with_structured_output(NameResponse)
-    response: NameResponse = await chain.ainvoke(_current_messages(state))
+    messages = [system_msg] + _current_messages(state)
+    response: NameResponse = await chain.ainvoke(messages)
 
     if response.first_name and response.first_surname:
         booking["customer_full_name"] = f"{response.first_name} {response.first_surname}"
@@ -233,9 +244,11 @@ async def ask_notes(state: dict[str, Any]) -> Command:
 
     booking = dict(state.get("booking") or {})
 
+    system_msg = await build_leaf_system_message("ask_notes", booking, state)
     llm = _self.get_llm()
     chain = llm.with_structured_output(NotesResponse)
-    response: NotesResponse = await chain.ainvoke(_current_messages(state))
+    messages = [system_msg] + _current_messages(state)
+    response: NotesResponse = await chain.ainvoke(messages)
 
     if not response.user_declined and response.notes:
         booking["notes"] = response.notes

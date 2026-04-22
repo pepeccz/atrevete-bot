@@ -29,7 +29,6 @@ class TestServiceSelectionResponse:
         r = ServiceSelectionResponse(message="ok", needs_clarification=False)
         assert r.message == "ok"
         assert r.selected_service_ids is None
-        assert r.suggested_audience is None
         assert r.needs_clarification is False
 
     def test_with_ids(self):
@@ -39,11 +38,9 @@ class TestServiceSelectionResponse:
         )
         assert r.selected_service_ids == [uid]
 
-    def test_with_audience(self):
-        r = ServiceSelectionResponse(
-            message="found", needs_clarification=False, suggested_audience="adult_female"
-        )
-        assert r.suggested_audience == "adult_female"
+    def test_no_suggested_audience_field(self):
+        """suggested_audience was removed per spec: no service/audience collapse."""
+        assert "suggested_audience" not in ServiceSelectionResponse.model_fields
 
     def test_extra_fields_forbidden(self):
         with pytest.raises(ValidationError):

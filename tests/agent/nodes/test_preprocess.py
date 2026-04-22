@@ -9,8 +9,6 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
-GREETING_TEXT = "Hola, soy Maite, la asistente virtual de Atrévete. ¿En qué puedo ayudarte hoy?"
-
 
 @pytest.fixture
 def base_state():
@@ -100,7 +98,10 @@ async def test_truncates_long_message(base_state):
 
 
 @pytest.mark.asyncio
-async def test_first_turn_injects_greeting(base_state):
+async def test_first_turn_no_greeting_injected(base_state):
+    """After booking-prompts-audit-fix: preprocess must NOT inject AIMessage on first turn.
+    The greeting is emitted by the mode node via its system prompt.
+    """
     preprocess_node = _import_preprocess()
     state = {**base_state, "messages": []}  # first turn
 
@@ -115,11 +116,9 @@ async def test_first_turn_injects_greeting(base_state):
         result = await preprocess_node(state)
 
     messages = result.update.get("messages", [])
-    assert len(messages) == 2
-    assert isinstance(messages[0], AIMessage)
-    assert "Maite" in messages[0].content
-    assert isinstance(messages[1], HumanMessage)
-    assert messages[1].content == "hola"
+    assert len(messages) == 1
+    assert isinstance(messages[0], HumanMessage)
+    assert messages[0].content == "hola"
 
 
 @pytest.mark.asyncio

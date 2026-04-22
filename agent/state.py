@@ -22,7 +22,7 @@ def replace_dict(current: dict | None, update: dict | None) -> dict | None:
     return update
 
 
-AudienceTag = Literal["adult_female", "adult_male", "child_female", "child_male", "unisex"]
+AudienceTag = Literal["adult_female", "adult_male", "child_female", "child_male", "unisex", "baby"]
 
 
 class BookingContext(TypedDict, total=False):

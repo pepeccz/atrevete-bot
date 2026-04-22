@@ -194,6 +194,14 @@ def patch_resolvers():
     """Patch resolvers that hit DB/external."""
     with (
         patch(
+            "agent.booking.prompt_builder.build_catalog_prompt_section",
+            new=AsyncMock(return_value="Corte de cabello — 30min"),
+        ),
+        patch(
+            "agent.booking.prompt_builder.load_business_hours_snapshot",
+            new=AsyncMock(return_value={"lunes": "09:00-18:00"}),
+        ),
+        patch(
             "agent.booking.resolvers.stylist._load_active_stylists",
             new=AsyncMock(return_value=_FAKE_STYLISTS),
         ),

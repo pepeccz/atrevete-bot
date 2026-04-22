@@ -1,12 +1,14 @@
-"""Preprocess node — Task 6.2.
+"""Preprocess node — Task 6.2 (updated: booking-prompts-audit-fix).
 
 Responsibilities:
 1. Reject empty/whitespace messages (Command(goto=END)).
 2. Truncate user_message to 2000 chars.
-3. First-turn detection: inject greeting AIMessage when messages list is empty.
-4. Customer lookup by phone → populate customer_id + customer_name.
-5. Append user_message as HumanMessage.
-6. Return Command(goto="router", update={...}).
+3. Customer lookup by phone → populate customer_id + customer_name.
+4. Append user_message as HumanMessage.
+5. Return Command(goto="router", update={...}).
+
+Note: First-turn greeting is emitted by the mode node via its system prompt,
+NOT injected here. Preprocess never adds AIMessage to state.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 from langgraph.constants import END
 from langgraph.types import Command
 
@@ -25,11 +27,9 @@ logger = logging.getLogger(__name__)
 
 _MAX_MESSAGE_LEN = 2000
 
-GREETING_TEXT = "Hola, soy Maite, la asistente virtual de Atrévete. ¿En qué puedo ayudarte hoy?"
-
 
 async def preprocess_node(state: dict[str, Any]) -> Command:
-    """Entry node: validates, truncates, greets on first turn, looks up customer."""
+    """Entry node: validates, truncates, looks up customer, appends HumanMessage."""
     user_message: str = (state.get("user_message") or "").strip()
 
     # 1. Reject empty turns — nothing to process
@@ -42,15 +42,10 @@ async def preprocess_node(state: dict[str, Any]) -> Command:
 
     new_messages: list[Any] = []
 
-    # 3. First-turn greeting (injected before user message)
-    existing_messages = state.get("messages") or []
-    if len(existing_messages) == 0:
-        new_messages.append(AIMessage(content=GREETING_TEXT))
-
-    # 4. Append the (possibly truncated) user message
+    # 3. Append the (possibly truncated) user message
     new_messages.append(HumanMessage(content=user_message))
 
-    # 5. Customer lookup
+    # 4. Customer lookup
     customer_id = None
     customer_name = None
     phone = state.get("customer_phone", "")

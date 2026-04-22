@@ -83,7 +83,6 @@ async def test_subgraph_service_step_invokes_ask_service():
         message="¿Qué servicio te interesa?",
         needs_clarification=False,
         selected_service_ids=[uid],
-        suggested_audience="adult_female",
     )
 
     llm_factory = _make_llm_factory([service_resp])

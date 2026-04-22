@@ -142,6 +142,7 @@ class TestBookingContextShape:
             "child_female",
             "child_male",
             "unisex",
+            "baby",
         }
 
     def test_audience_does_not_contain_old_values(self):
