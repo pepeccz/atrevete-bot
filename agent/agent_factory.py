@@ -3,7 +3,7 @@
 Public API
 ----------
 build_conversation_agent(llm_factory, checkpointer) -> CompiledStateGraph
-    Returns a create_agent graph wired with 4 tools and 4 middleware layers.
+    Returns a create_agent graph wired with 5 tools and 4 middleware layers.
 
 AGENT_TOOLS: list[BaseTool]
     The canonical tool list. Exported for introspection / testing.
@@ -27,9 +27,16 @@ from agent.tools.book import book
 from agent.tools.check_availability import check_availability
 from agent.tools.escalation_tools import escalate
 from agent.tools.manage_appointments_tool import manage_appointments
+from agent.tools.next_available import get_next_available_options
 
-# Canonical 4-tool list — exported for testing.
-AGENT_TOOLS: list[BaseTool] = [check_availability, book, manage_appointments, escalate]
+# Canonical 5-tool list — exported for testing.
+AGENT_TOOLS: list[BaseTool] = [
+    check_availability,
+    get_next_available_options,
+    book,
+    manage_appointments,
+    escalate,
+]
 
 
 def build_conversation_agent(

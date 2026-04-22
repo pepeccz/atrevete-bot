@@ -1,15 +1,8 @@
-"""
-Test suite for prompt hardening constraints.
+"""Focused prompt hardening tests for booking UX copy rules."""
 
-Verifies:
-- Token budget compliance for general.md and escalation.md
-- Dialect consistency (voseo → tuteo in greeting.md)
-- Phantom reference elimination (glossary.md, recovery.md references)
-- Closed-world grounding rule (rule 13 in critical_rules.md)
-"""
+from pathlib import Path
 
 import pytest
-from pathlib import Path
 
 
 @pytest.fixture
@@ -20,37 +13,27 @@ def prompt_dir():
 
 
 class TestTokenBudgets:
-    """Verify token budget compliance for rewritten prompts."""
+    """Verify token budget compliance for rewritten shared prompts."""
 
-    def test_general_md_token_budget(self, prompt_dir):
-        """general.md must be ≤ 900 tokens (~3,600 chars)."""
-        content = (prompt_dir / "modes" / "general.md").read_text()
-        char_count = len(content)
-        token_estimate = char_count // 4
+    def test_identity_md_token_budget(self, prompt_dir):
+        content = (prompt_dir / "shared" / "identity.md").read_text()
+        assert len(content) // 4 <= 350
 
-        assert token_estimate <= 900, (
-            f"general.md exceeds budget: {token_estimate} tokens "
-            f"({char_count} chars, limit ~3,600 chars)"
-        )
+    def test_critical_rules_md_token_budget(self, prompt_dir):
+        content = (prompt_dir / "shared" / "critical_rules.md").read_text()
+        assert len(content) // 4 <= 1100
 
-    def test_escalation_md_token_budget(self, prompt_dir):
-        """escalation.md must be ≤ 700 tokens (~2,800 chars)."""
-        content = (prompt_dir / "modes" / "escalation.md").read_text()
-        char_count = len(content)
-        token_estimate = char_count // 4
-
-        assert token_estimate <= 700, (
-            f"escalation.md exceeds budget: {token_estimate} tokens "
-            f"({char_count} chars, limit ~2,800 chars)"
-        )
+    def test_booking_flow_md_token_budget(self, prompt_dir):
+        content = (prompt_dir / "shared" / "booking_flow.md").read_text()
+        assert len(content) // 4 <= 950
 
 
 class TestDialectConsistency:
-    """Verify voseo → tuteo conversion in greeting.md."""
+    """Verify no-voseo guardrails in shared prompt files."""
 
-    def test_no_voseo_imperatives_in_greeting(self, prompt_dir):
-        """greeting.md must have no voseo imperatives."""
-        content = (prompt_dir / "modes" / "greeting.md").read_text()
+    def test_booking_flow_rejects_voseo(self, prompt_dir):
+        """The executable booking flow must avoid Rioplatense voseo."""
+        content = (prompt_dir / "shared" / "booking_flow.md").read_text()
 
         voseo_patterns = [
             "Usá",
@@ -59,6 +42,13 @@ class TestDialectConsistency:
             "respondé",
             "facilitá",
             "Mantené",
+            "querés",
+            "podés",
+            "decime",
+            "contame",
+            "mostrá",
+            "Preguntá",
+            "Seguí",
         ]
 
         found = []
@@ -66,21 +56,45 @@ class TestDialectConsistency:
             if pattern in content:
                 found.append(pattern)
 
-        assert not found, f"Found voseo imperatives in greeting.md: {found}"
+        assert not found, f"Found voseo patterns in canonical booking prompts: {found}"
 
 
-class TestPhantomReferences:
-    """Verify elimination of phantom references (glossary.md, recovery.md)."""
+class TestBookingCopyRequirements:
+    def test_identity_locks_madrid_tone_and_no_voseo(self, prompt_dir):
+        content = (prompt_dir / "shared" / "identity.md").read_text()
 
-    def test_no_glossary_reference_in_general(self, prompt_dir):
-        """general.md must not reference shared/glossary.md."""
-        content = (prompt_dir / "modes" / "general.md").read_text()
-        assert "glossary.md" not in content, "general.md still references glossary.md"
+        assert "castellano de Madrid" in content
+        assert "Nunca uses voseo" in content
 
-    def test_no_recovery_reference_in_escalation(self, prompt_dir):
-        """escalation.md must not reference legacy/recovery.md."""
-        content = (prompt_dir / "modes" / "escalation.md").read_text()
-        assert "recovery.md" not in content, "escalation.md still references recovery.md"
+    def test_critical_rules_cover_service_labels_and_named_stylist_consent(self, prompt_dir):
+        content = (prompt_dir / "shared" / "critical_rules.md").read_text()
+
+        assert "No expongas títulos internos en bruto como `Corte Dama`" in content
+        assert "Consentimiento antes de ampliar" in content
+        assert "get_next_available_options" in content
+
+    def test_booking_flow_uses_approved_name_and_notes_copy(self, prompt_dir):
+        content = (prompt_dir / "shared" / "booking_flow.md").read_text()
+
+        assert "nombre y primer apellido" in content
+        assert "¿Algo que tengamos que tener en cuenta en tu cita?" in content
+
+    def test_booking_flow_orders_date_before_exact_slots(self, prompt_dir):
+        content = (prompt_dir / "shared" / "booking_flow.md").read_text()
+
+        step_service = content.index("### Paso 1")
+        step_extras = content.index("### Paso 2")
+        step_stylist = content.index("### Paso 3")
+        step_date = content.index("### Paso 4")
+        step_name = content.index("### Paso 5")
+
+        assert step_service < step_extras < step_stylist < step_date < step_name
+        assert "ofrece hasta 3 huecos concretos" in content
+
+    def test_booking_flow_limits_emoji_usage(self, prompt_dir):
+        content = (prompt_dir / "shared" / "booking_flow.md").read_text()
+
+        assert "Usa emojis con mucha moderación" in content
 
 
 class TestClosedWorldGrounding:

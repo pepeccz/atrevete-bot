@@ -26,8 +26,12 @@ _CATEGORY_LABELS: dict[ServiceCategory, str] — human labels for service catego
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import UUID
+
+from agent.prompts.loader import _TtlCache
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +108,13 @@ except Exception:  # pragma: no cover
 
 _SERVICE_TYPE_ORDER = {"principal": 0, "variant": 1, "addon": 2}
 
+_AUDIENCE_SUFFIX_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    (r"\s+dama$", " de mujer"),
+    (r"\s+caballero$", " de caballero"),
+    (r"\s+niña$", " de niña"),
+    (r"\s+niño$", " de niño"),
+)
+
 # ---------------------------------------------------------------------------
 # Tag builder (pure function — easy to test)
 # ---------------------------------------------------------------------------
@@ -128,12 +139,52 @@ def _build_service_type_tag(svc: Any) -> str:
 
     if service_type == "variant":
         parent = metadata.get("parent_service_name") or "?"
-        return f" [VARIANTE de {parent}]"
+        return f" [VARIANTE de {_derive_customer_safe_service_name(parent)}]"
 
     if service_type == "addon":
         return f" [ADDON · {dimension}]"
 
     return ""
+
+
+def _derive_customer_safe_service_name(name: str | None) -> str:
+    """Convert internal service titles into customer-safe labels."""
+    if not name:
+        return ""
+
+    display_name = re.sub(r"\s+", " ", name).strip().lower()
+    for pattern, replacement in _AUDIENCE_SUFFIX_REPLACEMENTS:
+        display_name = re.sub(pattern, replacement, display_name, flags=re.IGNORECASE)
+    return display_name
+
+
+def get_service_display_name(service: Any) -> str:
+    """Return the customer-safe label for a Service-like object."""
+    return _derive_customer_safe_service_name(getattr(service, "name", ""))
+
+
+async def get_service_display_label_by_ids(service_ids: list[UUID]) -> str:
+    """Return a customer-safe joined label for the selected services."""
+    if not service_ids:
+        return ""
+
+    from sqlalchemy import select
+
+    from database.connection import get_async_session
+    from database.models import Service
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service.id, Service.name).where(Service.id.in_(service_ids))
+        )
+        names_by_id = dict(result.fetchall())
+
+    ordered_labels = [
+        _derive_customer_safe_service_name(names_by_id[service_id])
+        for service_id in service_ids
+        if service_id in names_by_id
+    ]
+    return ", ".join(ordered_labels)
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +225,7 @@ def build_catalog_for_prompt(services: list[Any]) -> str:
         tag = _build_service_type_tag(svc)
         desc = getattr(svc, "description", None)
         dur = getattr(svc, "duration_minutes", 0)
-        name = svc.name
+        name = get_service_display_name(svc)
 
         if tag:
             line = f"{tag} {name} — {dur}min"
@@ -197,8 +248,6 @@ def build_catalog_for_prompt(services: list[Any]) -> str:
 # ---------------------------------------------------------------------------
 # Async DB helpers + TTL cache
 # ---------------------------------------------------------------------------
-
-from agent.prompts.loader import _TtlCache
 
 _catalog_cache: _TtlCache[tuple[list[ServiceRow], str]] = _TtlCache(ttl_minutes=5)
 
@@ -253,7 +302,9 @@ async def _build_catalog_from_db() -> tuple[list[ServiceRow], str]:
         sections.append(f"### {cat_label}\n")
         for svc in cat_services:
             type_tag = _build_service_type_tag(svc)
-            line = f"- {svc.name} [INTERNO: {svc.duration_minutes}min]{type_tag}"
+            line = (
+                f"- {get_service_display_name(svc)} [INTERNO: {svc.duration_minutes}min]{type_tag}"
+            )
             if svc.description:
                 line += f" — {svc.description}"
             svc_id = getattr(svc, "id", None)
@@ -314,7 +365,6 @@ async def build_catalog_prompt_section() -> str:
     Appends ## Estilistas disponibles section listing active stylists with their UUIDs.
     """
     try:
-        services = await get_active_services()
         # For prompt injection we use the simple tagged format (not full markdown)
         # We need Service ORM-compatible objects; ServiceRow lacks `id` and other fields.
         # Query directly for the prompt format.
@@ -342,8 +392,7 @@ async def build_catalog_prompt_section() -> str:
         if stylists:
             cat_labels = _get_category_labels()
             roster_lines = [
-                f"- {s.name} — {cat_labels.get(s.category, '')} — id={s.id}"
-                for s in stylists
+                f"- {s.name} — {cat_labels.get(s.category, '')} — id={s.id}" for s in stylists
             ]
             catalog_str += "\n\n## Estilistas disponibles\n" + "\n".join(roster_lines)
 
@@ -365,10 +414,13 @@ __all__ = [
     "build_catalog_markdown",
     "build_catalog_prompt_section",
     "get_active_services",
+    "get_service_display_label_by_ids",
+    "get_service_display_name",
     "load_active_catalog",
     "invalidate_catalog_cache",
     # internal helpers (exported for tests)
     "_build_service_type_tag",
+    "_derive_customer_safe_service_name",
     "_AUDIENCE_LABELS",
     "_CATEGORY_LABELS",
     "_catalog_cache",

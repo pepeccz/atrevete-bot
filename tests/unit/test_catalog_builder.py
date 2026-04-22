@@ -9,6 +9,7 @@ Verifies:
 - seeds populate metadata_ consistently on every service
 """
 
+from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
 import pytest
@@ -43,10 +44,14 @@ def test_audience_labels_are_strings():
 
 def test_category_labels_defined():
     """_CATEGORY_LABELS has entries for all ServiceCategory values."""
-    from database.models import ServiceCategory
     from agent.prompts.catalog_builder import _CATEGORY_LABELS
+    from database.models import ServiceCategory
 
-    for category in (ServiceCategory.HAIRDRESSING, ServiceCategory.AESTHETICS, ServiceCategory.BOTH):
+    for category in (
+        ServiceCategory.HAIRDRESSING,
+        ServiceCategory.AESTHETICS,
+        ServiceCategory.BOTH,
+    ):
         assert category in _CATEGORY_LABELS, (
             f"_CATEGORY_LABELS missing ServiceCategory.{category.name}"
         )
@@ -86,7 +91,11 @@ def test_principal_tag_uses_any_when_audience_is_none():
     from agent.prompts.catalog_builder import _build_service_type_tag
 
     svc = _fake_service(
-        metadata_={"service_type": "principal", "dimension": "manicure", "parent_service_name": None},
+        metadata_={
+            "service_type": "principal",
+            "dimension": "manicure",
+            "parent_service_name": None,
+        },
         audience=None,
     )
     assert _build_service_type_tag(svc) == " [PRINCIPAL · manicure · any]"
@@ -98,7 +107,7 @@ def test_variant_tag_references_parent():
     svc = _fake_service(
         metadata_={"service_type": "variant", "dimension": "cut", "parent_service_name": "Cortar"},
     )
-    assert _build_service_type_tag(svc) == " [VARIANTE de Cortar]"
+    assert _build_service_type_tag(svc) == " [VARIANTE de cortar]"
 
 
 def test_addon_tag_shows_dimension():
@@ -126,6 +135,28 @@ def test_unknown_service_type_yields_no_tag():
     assert _build_service_type_tag(svc) == ""
 
 
+@pytest.mark.parametrize(
+    ("raw_name", "expected"),
+    [
+        ("Corte Dama", "corte de mujer"),
+        ("Corte Caballero", "corte de caballero"),
+        ("Corte Niña", "corte de niña"),
+        ("Tinte Completo", "tinte completo"),
+    ],
+)
+def test_customer_safe_display_name_derivation(raw_name, expected):
+    from agent.prompts.catalog_builder import _derive_customer_safe_service_name
+
+    assert _derive_customer_safe_service_name(raw_name) == expected
+
+
+def test_get_service_display_name_uses_customer_safe_label():
+    from agent.prompts.catalog_builder import get_service_display_name
+
+    svc = SimpleNamespace(name="Corte Dama")
+    assert get_service_display_name(svc) == "corte de mujer"
+
+
 # ---------------------------------------------------------------------------
 # seeds — every seeded service carries consistent metadata_
 # ---------------------------------------------------------------------------
@@ -141,9 +172,7 @@ def test_seeds_populate_metadata_keys_for_every_service():
     for svc in ALL_SERVICES:
         meta = svc.get("metadata_", {})
         missing = required_keys - meta.keys()
-        assert not missing, (
-            f"Service {svc['name']!r} metadata_ is missing keys: {missing}"
-        )
+        assert not missing, f"Service {svc['name']!r} metadata_ is missing keys: {missing}"
         assert meta["service_type"] in valid_types, (
             f"Service {svc['name']!r} has invalid service_type={meta['service_type']!r}"
         )
@@ -161,9 +190,7 @@ def test_seeds_variant_parent_references_are_valid():
             continue
         parent = meta.get("parent_service_name")
         assert parent, f"Variant {svc['name']!r} must declare parent_service_name"
-        assert parent in all_names, (
-            f"Variant {svc['name']!r} points at unknown parent {parent!r}"
-        )
+        assert parent in all_names, f"Variant {svc['name']!r} points at unknown parent {parent!r}"
 
 
 def test_seeds_principals_and_addons_have_no_parent():
@@ -195,7 +222,7 @@ def test_service_row_is_frozen_dataclass_with_required_fields():
     assert row.metadata == {"dimension": "cut"}
 
     # Frozen: mutation should raise
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         row.name = "Other"  # type: ignore[misc]
 
 
@@ -248,7 +275,11 @@ async def test_get_active_services_uses_cache_within_ttl(monkeypatch):
 async def test_get_active_services_reload_after_invalidate(monkeypatch):
     """invalidate_catalog_cache forces the next call to re-query the DB."""
     from agent.prompts import catalog_builder
-    from agent.prompts.catalog_builder import ServiceRow, get_active_services, invalidate_catalog_cache
+    from agent.prompts.catalog_builder import (
+        ServiceRow,
+        get_active_services,
+        invalidate_catalog_cache,
+    )
 
     call_count = {"n": 0}
 

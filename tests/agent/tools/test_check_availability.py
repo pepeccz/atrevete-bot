@@ -101,6 +101,9 @@ async def test_check_availability_returns_ok_when_slots_available():
     assert len(data["payload"]["slots"]) == 1
     assert "total_duration_minutes" in data["payload"]
     assert data["payload"]["total_duration_minutes"] == 60
+    assert data["payload"]["requested_date_iso"] == future_date_iso()
+    assert data["payload"]["is_exact_day"] is True
+    assert data["payload"]["has_availability"] is True
 
 
 @pytest.mark.asyncio
@@ -195,6 +198,118 @@ async def test_check_availability_no_slots_returns_ok_with_empty_slots():
     data = parse_response(raw)
     assert data["status"] == "ok"
     assert data["payload"]["slots"] == []
+    assert data["payload"]["requested_date_iso"] == future_date_iso()
+    assert data["payload"]["is_exact_day"] is True
+    assert data["payload"]["has_availability"] is False
+    assert "options" not in data["payload"]
+
+
+@pytest.mark.asyncio
+async def test_check_availability_keeps_requested_day_in_all_returned_slots():
+    """Exact-day tool must never return cross-day fallback slots."""
+    from agent.tools.check_availability import check_availability
+
+    requested_date = future_date_iso()
+    fake_slots = [
+        {
+            "time": "10:00",
+            "end_time": "11:00",
+            "full_datetime": f"{requested_date}T10:00:00+01:00",
+            "stylist_id": str(FAKE_STYLIST_ID),
+            "adjacent_priority": 1,
+        },
+        {
+            "time": "12:00",
+            "end_time": "13:00",
+            "full_datetime": f"{requested_date}T12:00:00+01:00",
+            "stylist_id": str(FAKE_STYLIST_ID),
+            "adjacent_priority": 0,
+        },
+    ]
+
+    with (
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=fake_slots,
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[FAKE_STYLIST_ID],
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": str(FAKE_STYLIST_ID),
+                "date_iso": requested_date,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert {slot["start_iso"][:10] for slot in data["payload"]["slots"]} == {requested_date}
+    assert data["payload"]["requested_date_iso"] == requested_date
+    assert data["payload"]["is_exact_day"] is True
+
+
+@pytest.mark.asyncio
+async def test_check_availability_queries_all_stylists_for_requested_day_only():
+    """No-preference mode should aggregate exact-day slots, not broaden the date."""
+    from agent.tools.check_availability import check_availability
+
+    requested_date = future_date_iso()
+    stylist_a = uuid4()
+    stylist_b = uuid4()
+
+    async def mock_get_slots(stylist_id, target_date, service_duration_minutes, **kwargs):
+        assert target_date.isoformat() == requested_date
+        if stylist_id == stylist_a:
+            return []
+        return [
+            {
+                "time": "11:00",
+                "end_time": "12:00",
+                "full_datetime": f"{requested_date}T11:00:00+01:00",
+                "stylist_id": str(stylist_b),
+                "adjacent_priority": 1,
+            }
+        ]
+
+    with (
+        patch(
+            "agent.tools.check_availability.get_available_slots", side_effect=mock_get_slots
+        ) as mock_slots,
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[stylist_a, stylist_b],
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": requested_date,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert mock_slots.call_count == 2
+    assert data["payload"]["has_availability"] is True
+    assert "options" not in data["payload"]
 
 
 # ---------------------------------------------------------------------------
@@ -223,9 +338,9 @@ async def test_check_availability_rejects_past_date():
     assert len(data["errors"]) > 0
     # Errors must be non-imperative (no direct commands to user)
     for err in data["errors"]:
-        assert not err.lower().startswith(
-            ("use ", "choose ", "select ", "enter ", "provide ")
-        ), f"Error is imperative: {err!r}"
+        assert not err.lower().startswith(("use ", "choose ", "select ", "enter ", "provide ")), (
+            f"Error is imperative: {err!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

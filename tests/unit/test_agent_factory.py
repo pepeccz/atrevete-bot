@@ -3,9 +3,7 @@
 TDD RED phase — written before agent/agent_factory.py exists.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-from langchain_core.messages import HumanMessage
 
 
 def _fake_llm():
@@ -24,23 +22,23 @@ def test_build_conversation_agent_importable():
 
 def test_build_conversation_agent_returns_compiled_graph():
     """build_conversation_agent(llm_factory, checkpointer=None) returns a runnable graph."""
-    from agent.agent_factory import build_conversation_agent
-
-    # Use a memory checkpointer for unit tests
     from langgraph.checkpoint.memory import MemorySaver
+
+    from agent.agent_factory import build_conversation_agent
 
     graph = build_conversation_agent(llm_factory=_fake_llm, checkpointer=MemorySaver())
     # LangGraph compiled graphs expose ainvoke
     assert hasattr(graph, "ainvoke"), "compiled graph must have ainvoke method"
 
 
-def test_build_conversation_agent_has_four_tools():
-    """The graph is built with exactly 4 tools: check_availability, book, manage_appointments, escalate."""
-    from agent.agent_factory import build_conversation_agent, AGENT_TOOLS
+def test_build_conversation_agent_has_five_tools():
+    """The graph is built with the five canonical booking/general tools."""
+    from agent.agent_factory import AGENT_TOOLS
 
-    assert len(AGENT_TOOLS) == 4
+    assert len(AGENT_TOOLS) == 5
     tool_names = {t.name for t in AGENT_TOOLS}
     assert "check_availability" in tool_names
+    assert "get_next_available_options" in tool_names
     assert "book" in tool_names
     assert "manage_appointments" in tool_names
     assert "escalate" in tool_names
@@ -61,5 +59,5 @@ def test_build_conversation_agent_default_llm_factory():
     with patch("agent.agent_factory.get_llm") as mock_get_llm:
         mock_llm = _fake_llm()
         mock_get_llm.return_value = mock_llm
-        graph = build_conversation_agent()
+        build_conversation_agent()
         mock_get_llm.assert_called_once()

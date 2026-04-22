@@ -192,6 +192,9 @@ async def check_availability(
         payload={
             "slots": clean_slots,
             "total_duration_minutes": total_duration,
+            "requested_date_iso": target_date.isoformat(),
+            "is_exact_day": True,
+            "has_availability": bool(clean_slots),
         },
     ).model_dump_json()
 

@@ -5,14 +5,16 @@ Runs a complete booking conversation against the live bot via Redis.
 
 import asyncio
 import json
-import sys
+import re
 import uuid
 from datetime import UTC, datetime
 
 import redis.asyncio as redis
 
 # ── Config ──────────────────────────────────────────────────────────────────
-REDIS_URL = "redis://:9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda@localhost:6379/0"
+REDIS_URL = (
+    "redis://:9c8dc04af94f95a92896d42d030be7868f60fd5b04aa82d26ae5e9397b7e8eda@localhost:6379/0"
+)
 INCOMING_STREAM = "incoming_messages_stream"
 OUTGOING_CHANNEL = "outgoing_messages"
 
@@ -20,11 +22,111 @@ CONVERSATION_ID = f"qa-booking-maria-{uuid.uuid4().hex[:8]}"
 CUSTOMER_PHONE = "+34600222111"
 SENDER_NAME = "María García"
 
-TIMEOUT_PER_TURN = 60.0   # seconds to wait for bot reply
-BATCH_WINDOW = 3.0         # seconds to collect grouped messages
+TIMEOUT_PER_TURN = 60.0  # seconds to wait for bot reply
+BATCH_WINDOW = 3.0  # seconds to collect grouped messages
+
+_TIME_RE = re.compile(r"\b\d{1,2}:\d{2}\b")
+_SLOT_TERMS = ("hueco", "huecos", "horario", "horarios", "disponible", "disponibles")
+_NAME_TERMS = ("nombre y primer apellido", "nombre completo", "tu nombre", "me dices tu nombre")
+_NOTES_TERMS = ("algo que tengamos que tener en cuenta", "alguna nota", "alguna observación")
+_CONSENT_TERMS = (
+    "¿quieres que mire",
+    "¿te viene bien que mire",
+    "¿prefieres que busque",
+    "si quieres, puedo mirar",
+)
+_ALTERNATIVE_TERMS = (
+    "estas alternativas",
+    "te propongo",
+    "puedo ofrecerte",
+    "tengo estas alternativas",
+)
+
+
+def _contains_slot_offer(message: str) -> bool:
+    normalized = message.lower()
+    return bool(_TIME_RE.search(message)) and any(term in normalized for term in _SLOT_TERMS)
+
+
+def _asks_for_name(message: str) -> bool:
+    normalized = message.lower()
+    return any(term in normalized for term in _NAME_TERMS)
+
+
+def _asks_for_notes(message: str) -> bool:
+    normalized = message.lower()
+    return any(term in normalized for term in _NOTES_TERMS)
+
+
+def _asks_for_broadening_consent(message: str) -> bool:
+    normalized = message.lower()
+    return any(term in normalized for term in _CONSENT_TERMS)
+
+
+def _offers_alternative_options(message: str) -> bool:
+    normalized = message.lower()
+    return _contains_slot_offer(message) or (
+        bool(_TIME_RE.search(message)) and any(term in normalized for term in _ALTERNATIVE_TERMS)
+    )
+
+
+def analyze_booking_trace(trace: list[dict]) -> dict[str, int | bool | None]:
+    first_slot_turn = next(
+        (turn["turn"] for turn in trace if turn.get("bot") and _contains_slot_offer(turn["bot"])),
+        None,
+    )
+    first_name_or_notes_turn = next(
+        (
+            turn["turn"]
+            for turn in trace
+            if turn.get("bot") and (_asks_for_name(turn["bot"]) or _asks_for_notes(turn["bot"]))
+        ),
+        None,
+    )
+    return {
+        "first_slot_turn": first_slot_turn,
+        "first_name_or_notes_turn": first_name_or_notes_turn,
+        "slots_before_name_or_notes": first_slot_turn is not None
+        and (first_name_or_notes_turn is None or first_slot_turn < first_name_or_notes_turn),
+    }
+
+
+def analyze_empty_day_trace(
+    trace: list[dict], *, requires_consent: bool
+) -> dict[str, int | bool | None]:
+    first_consent_turn = next(
+        (
+            turn["turn"]
+            for turn in trace
+            if turn.get("bot") and _asks_for_broadening_consent(turn["bot"])
+        ),
+        None,
+    )
+    first_alternative_turn = next(
+        (
+            turn["turn"]
+            for turn in trace
+            if turn.get("bot") and _offers_alternative_options(turn["bot"])
+        ),
+        None,
+    )
+    if requires_consent:
+        passes = first_consent_turn is not None and (
+            first_alternative_turn is None or first_consent_turn < first_alternative_turn
+        )
+    else:
+        passes = first_alternative_turn is not None and (
+            first_consent_turn is None or first_alternative_turn <= first_consent_turn
+        )
+    return {
+        "first_consent_turn": first_consent_turn,
+        "first_alternative_turn": first_alternative_turn,
+        "passes": passes,
+    }
 
 
 # ── Redis helpers ────────────────────────────────────────────────────────────
+
 
 async def inject_message(r: redis.Redis, message_text: str) -> str:
     payload = {
@@ -108,6 +210,7 @@ TURNS = [
     None,
 ]
 
+
 # LLM reasoning (we ARE the LLM) — inline decision logic per turn
 def decide_next_reply(turn_number: int, bot_reply: str) -> tuple[str, str, bool]:
     """
@@ -120,7 +223,9 @@ def decide_next_reply(turn_number: int, bot_reply: str) -> tuple[str, str, bool]
     if turn_number == 1:
         # Bot likely listed services or confirmed "corte de dama"
         # Look for numbered options → pick "1" or "el primero"
-        if any(c.isdigit() for c in bot_reply) and ("." in bot_reply or ")" in bot_reply or "-" in bot_reply):
+        if any(c.isdigit() for c in bot_reply) and (
+            "." in bot_reply or ")" in bot_reply or "-" in bot_reply
+        ):
             return "1", "service_resolved", False
         # Bot may have confirmed directly
         if "cortar" in normalized or "corte" in normalized:
@@ -130,7 +235,19 @@ def decide_next_reply(turn_number: int, bot_reply: str) -> tuple[str, str, bool]
     # ── Turn 2 response: bot confirmed service, may offer add-ons ─────────────
     if turn_number == 2:
         # Bot offered add-ons (numbered list or keywords)
-        if any(kw in normalized for kw in ["complementario", "adicional", "extra", "sumar", "agregar", "peinado", "barro", "añadir"]):
+        if any(
+            kw in normalized
+            for kw in [
+                "complementario",
+                "adicional",
+                "extra",
+                "sumar",
+                "agregar",
+                "peinado",
+                "barro",
+                "añadir",
+            ]
+        ):
             return "No, gracias.", "addons_handled", False
         # Bot may be asking for stylist already
         if "estilista" in normalized or "profesional" in normalized or "preferis" in normalized:
@@ -154,7 +271,15 @@ def decide_next_reply(turn_number: int, bot_reply: str) -> tuple[str, str, bool]
 
     # ── Turn 4 response: bot should show available slots ─────────────────────
     if turn_number == 4:
-        if "horario" in normalized or "turno" in normalized or "jueves" in normalized or "disponible" in normalized or "marzo" in normalized or "lunes" in normalized or "martes" in normalized:
+        if (
+            "horario" in normalized
+            or "turno" in normalized
+            or "jueves" in normalized
+            or "disponible" in normalized
+            or "marzo" in normalized
+            or "lunes" in normalized
+            or "martes" in normalized
+        ):
             # Use explicit slot selection text instead of just "1"
             return "El martes 24 de marzo a las 10:00, por favor.", "slot_resolved", False
         if any(c.isdigit() for c in bot_reply):
@@ -166,13 +291,32 @@ def decide_next_reply(turn_number: int, bot_reply: str) -> tuple[str, str, bool]
     # ── Turn 5+ response: bot confirmed slot, may ask for notes or name ───────
     if turn_number >= 5:
         # Booking already confirmed!
-        if any(kw in normalized for kw in ["ha sido confirmada", "tu cita ha sido", "te esperamos", "quedaste"]):
+        if any(
+            kw in normalized
+            for kw in ["ha sido confirmada", "tu cita ha sido", "te esperamos", "quedaste"]
+        ):
             return "Muchas gracias! Nos vemos el martes.", "booking_completed", True
         # Bot asking about notes/special preferences or "algo más"
-        if any(kw in normalized for kw in ["algo más", "nota", "preferencia", "saber", "estilista antes", "especial", "condición"]):
+        if any(
+            kw in normalized
+            for kw in [
+                "algo más",
+                "nota",
+                "preferencia",
+                "saber",
+                "estilista antes",
+                "especial",
+                "condición",
+            ]
+        ):
             return "Todo bien, sin notas especiales.", "confirmation_done", False
         # Bot asking for name
-        if "nombre" in normalized or "llamás" in normalized or "llamas" in normalized or "cómo te" in normalized:
+        if (
+            "nombre" in normalized
+            or "llamás" in normalized
+            or "llamas" in normalized
+            or "cómo te" in normalized
+        ):
             return "María García", "confirmation_done", False
         # Bot asking for confirmation
         if "confirmar" in normalized or "confirmas" in normalized or "confirmás" in normalized:
@@ -199,12 +343,12 @@ def decide_next_reply(turn_number: int, bot_reply: str) -> tuple[str, str, bool]
 
 
 async def run_booking_flow():
-    print(f"\n{'='*60}")
-    print(f"QA BOOKING FLOW — María García")
+    print(f"\n{'=' * 60}")
+    print("QA BOOKING FLOW — María García")
     print(f"conversation_id: {CONVERSATION_ID}")
     print(f"phone: {CUSTOMER_PHONE}")
     print(f"started: {datetime.now(UTC).isoformat()}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     r = redis.from_url(REDIS_URL, decode_responses=True, max_connections=5)
     pubsub = r.pubsub()
@@ -221,6 +365,7 @@ async def run_booking_flow():
     last_milestone = None
     consecutive_same_milestone = 0
     flow_status = "in_progress"
+    slot_offer_seen = False
 
     opening_message = "Hola! Quiero un corte de dama para el jueves que viene."
     current_message = opening_message
@@ -228,7 +373,7 @@ async def run_booking_flow():
 
     try:
         for turn_number in range(1, max_turns + 1):
-            print(f"\n{'─'*50}")
+            print(f"\n{'─' * 50}")
             print(f"TURN {turn_number}")
             print(f"[USER] → {current_message}")
 
@@ -244,14 +389,16 @@ async def run_booking_flow():
 
             if response["timed_out"] or not response["message"]:
                 print(f"  ⚠️  TIMEOUT — no response after {elapsed:.1f}s")
-                trace.append({
-                    "turn": turn_number,
-                    "user": current_message,
-                    "bot": None,
-                    "milestone": None,
-                    "timed_out": True,
-                    "latency_ms": int(elapsed * 1000),
-                })
+                trace.append(
+                    {
+                        "turn": turn_number,
+                        "user": current_message,
+                        "bot": None,
+                        "milestone": None,
+                        "timed_out": True,
+                        "latency_ms": int(elapsed * 1000),
+                    }
+                )
                 if turn_number > 1:
                     # Send follow-up
                     current_message = "Hola? Siguen ahi?"
@@ -284,46 +431,75 @@ async def run_booking_flow():
             turn_bugs = []
             normalized_bot = bot_reply.lower()
             # Check for English language
-            if any(word in normalized_bot for word in ["hello", "please select", "thank you", "available"]):
-                turn_bugs.append({
-                    "category": "wrong_language",
-                    "evidence": f"Bot replied with English text: '{bot_reply[:80]}'",
-                    "turns": [turn_number]
-                })
+            if any(
+                word in normalized_bot
+                for word in ["hello", "please select", "thank you", "available"]
+            ):
+                turn_bugs.append(
+                    {
+                        "category": "wrong_language",
+                        "evidence": f"Bot replied with English text: '{bot_reply[:80]}'",
+                        "turns": [turn_number],
+                    }
+                )
             # Check for context loss (asking for audience/gender after already stated)
-            if turn_number > 1 and ("dama o caballero" in normalized_bot or "caballero o dama" in normalized_bot):
-                turn_bugs.append({
-                    "category": "redundant_question",
-                    "evidence": f"Bot asked dama/caballero on turn {turn_number} after user already said 'dama' on turn 1",
-                    "turns": [1, turn_number]
-                })
+            if turn_number > 1 and (
+                "dama o caballero" in normalized_bot or "caballero o dama" in normalized_bot
+            ):
+                turn_bugs.append(
+                    {
+                        "category": "redundant_question",
+                        "evidence": f"Bot asked dama/caballero on turn {turn_number} after user already said 'dama' on turn 1",
+                        "turns": [1, turn_number],
+                    }
+                )
 
             bugs.extend(turn_bugs)
             if turn_bugs:
                 print(f"  🐛 BUGS FOUND: {[b['category'] for b in turn_bugs]}")
 
-            trace.append({
-                "turn": turn_number,
-                "user": current_message,
-                "bot": bot_reply,
-                "milestone": milestone,
-                "timed_out": False,
-                "latency_ms": latency_ms,
-                "bugs": turn_bugs,
-            })
+            if _contains_slot_offer(bot_reply):
+                slot_offer_seen = True
+            elif not slot_offer_seen and (_asks_for_name(bot_reply) or _asks_for_notes(bot_reply)):
+                late_slot_bug = {
+                    "category": "late_slot_reveal",
+                    "evidence": "Bot asked for name/notes before showing concrete exact-day slots.",
+                    "turns": [turn_number],
+                }
+                turn_bugs.append(late_slot_bug)
+                bugs.append(late_slot_bug)
+
+            trace.append(
+                {
+                    "turn": turn_number,
+                    "user": current_message,
+                    "bot": bot_reply,
+                    "milestone": milestone,
+                    "timed_out": False,
+                    "latency_ms": latency_ms,
+                    "bugs": turn_bugs,
+                }
+            )
 
             # Check for booking completion — after turn 3 (past add-ons stage)
             # Look for confirmation messages containing date + stylist
-            is_booking_confirmed = (
-                turn_number >= 4 and
-                any(kw in normalized_bot for kw in [
-                    "reservado", "quedo agendado", "queda agendado",
-                    "turno confirmado", "reserva confirmada", "cita confirmada",
-                    "te esperamos", "quedaste", "ha sido confirmada", "tu cita ha sido"
-                ])
+            is_booking_confirmed = turn_number >= 4 and any(
+                kw in normalized_bot
+                for kw in [
+                    "reservado",
+                    "quedo agendado",
+                    "queda agendado",
+                    "turno confirmado",
+                    "reserva confirmada",
+                    "cita confirmada",
+                    "te esperamos",
+                    "quedaste",
+                    "ha sido confirmada",
+                    "tu cita ha sido",
+                ]
             )
             if is_booking_confirmed:
-                print(f"\n  🎉 BOOKING CONFIRMED in bot message!")
+                print("\n  🎉 BOOKING CONFIRMED in bot message!")
                 booking_created = True
                 flow_status = "completed"
                 should_stop = True
@@ -356,15 +532,16 @@ async def run_booking_flow():
         "trace": trace,
         "bugs": bugs,
         "last_milestone": last_milestone,
+        "booking_ux_checks": analyze_booking_trace(trace),
     }
 
 
 async def main():
     result = await run_booking_flow()
 
-    print(f"\n\n{'='*60}")
+    print(f"\n\n{'=' * 60}")
     print("QA RUN COMPLETE")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Flow Status:      {result['flow_status']}")
     print(f"Booking Created:  {'YES ✅' if result['booking_created'] else 'NO ❌'}")
     print(f"Turns Executed:   {result['turns_executed']}")
@@ -372,14 +549,14 @@ async def main():
     print(f"Bugs Found:       {len(result['bugs'])}")
 
     if result["bugs"]:
-        print(f"\nBUGS:")
+        print("\nBUGS:")
         for bug in result["bugs"]:
             print(f"  [{bug['category']}] {bug['evidence']}")
 
-    print(f"\nFINAL BOT MESSAGE:")
+    print("\nFINAL BOT MESSAGE:")
     print(f"  {result['final_bot_message']}")
 
-    print(f"\nCONVERSATION TRACE:")
+    print("\nCONVERSATION TRACE:")
     for turn in result["trace"]:
         status = "⏱️" if turn.get("timed_out") else "✅"
         print(f"\n  Turn {turn['turn']} {status} [{turn.get('latency_ms', 0)}ms]")
@@ -390,7 +567,7 @@ async def main():
         if turn.get("bugs"):
             print(f"    BUGS: {[b['category'] for b in turn['bugs']]}")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     return result
 
 

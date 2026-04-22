@@ -35,7 +35,7 @@ Usage:
 
 import logging
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -43,12 +43,24 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
-from database.models import Appointment, AppointmentStatus, BlockingEvent, Holiday, Service, Stylist
+from database.models import (
+    Appointment,
+    AppointmentStatus,
+    BlockingEvent,
+    Holiday,
+    Service,
+    ServiceCategory,
+    Stylist,
+)
 from shared.business_hours_validator import get_business_hours_for_day, is_date_closed
 
 logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
+MAX_FALLBACK_SEARCH_DAYS = 7
+MAX_FALLBACK_OPTIONS = 3
+
+FallbackStrategy = Literal["same_stylist_then_any", "any_stylist"]
 
 
 async def is_holiday(target_date: date | datetime) -> str | None:
@@ -481,8 +493,140 @@ async def get_available_slots(
         return []
 
 
+def _normalize_fallback_search_days(search_days: int) -> int:
+    """Clamp fallback search to the product-defined 7-day maximum."""
+    return max(1, min(search_days, MAX_FALLBACK_SEARCH_DAYS))
+
+
+def _normalize_fallback_max_options(max_options: int) -> int:
+    """Clamp returned fallback options to the product-defined maximum."""
+    return max(1, min(max_options, MAX_FALLBACK_OPTIONS))
+
+
+def _build_ranked_fallback_stylists(
+    preferred_stylist_id: UUID | None,
+    candidate_stylist_ids: list[UUID],
+    strategy: FallbackStrategy,
+) -> list[tuple[int, UUID, str]]:
+    """Build stylist search order while preserving same-stylist-first ranking."""
+    unique_candidates: list[UUID] = []
+    for stylist_id in candidate_stylist_ids:
+        if stylist_id not in unique_candidates:
+            unique_candidates.append(stylist_id)
+
+    ranked: list[tuple[int, UUID, str]] = []
+
+    if strategy == "same_stylist_then_any" and preferred_stylist_id is not None:
+        ranked.append((0, preferred_stylist_id, "same_stylist"))
+        for stylist_id in unique_candidates:
+            if stylist_id != preferred_stylist_id:
+                ranked.append((1, stylist_id, "alternate_stylist"))
+        return ranked
+
+    for stylist_id in unique_candidates:
+        ranked.append((0, stylist_id, "any_stylist"))
+
+    return ranked
+
+
+def _compute_slot_end_iso(start_iso: str, duration_minutes: int) -> str:
+    """Compute the slot end timestamp from the slot start ISO string."""
+    try:
+        start_dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+    except ValueError:
+        return start_iso
+
+    return (start_dt + timedelta(minutes=duration_minutes)).isoformat()
+
+
+def _build_rank_reason(base_reason: str, day_offset: int) -> str:
+    """Return a compact rank reason for tool/prompt consumers."""
+    if base_reason == "same_stylist":
+        return "same_stylist_next_day" if day_offset == 1 else "same_stylist_later_week"
+    if base_reason == "alternate_stylist":
+        return "alternate_stylist_next_day" if day_offset == 1 else "alternate_stylist_later_week"
+    return "earliest_any_stylist"
+
+
+async def get_next_available_options(
+    requested_date: date | datetime,
+    service_duration_minutes: int,
+    preferred_stylist_id: UUID | None = None,
+    candidate_stylist_ids: list[UUID] | None = None,
+    strategy: FallbackStrategy = "same_stylist_then_any",
+    max_options: int = MAX_FALLBACK_OPTIONS,
+    search_days: int = MAX_FALLBACK_SEARCH_DAYS,
+) -> dict[str, Any]:
+    """Return bounded fallback options beyond the requested exact day.
+
+    This helper NEVER changes exact-day lookup semantics. It only searches the
+    next bounded window after the requested day and ranks results according to
+    the requested fallback strategy.
+    """
+    if isinstance(requested_date, datetime):
+        base_date = requested_date.date()
+    else:
+        base_date = requested_date
+
+    bounded_search_days = _normalize_fallback_search_days(search_days)
+    bounded_max_options = _normalize_fallback_max_options(max_options)
+
+    ranked_stylists = _build_ranked_fallback_stylists(
+        preferred_stylist_id=preferred_stylist_id,
+        candidate_stylist_ids=candidate_stylist_ids
+        or ([] if preferred_stylist_id is None else [preferred_stylist_id]),
+        strategy=strategy,
+    )
+
+    ranked_options: list[dict[str, Any]] = []
+    for phase_priority, stylist_id, base_reason in ranked_stylists:
+        for day_offset in range(1, bounded_search_days + 1):
+            search_date = base_date + timedelta(days=day_offset)
+            slots = await get_available_slots(
+                stylist_id=stylist_id,
+                target_date=search_date,
+                service_duration_minutes=service_duration_minutes,
+            )
+
+            for slot in slots:
+                start_iso = slot["full_datetime"]
+                ranked_options.append(
+                    {
+                        "start_iso": start_iso,
+                        "end_iso": _compute_slot_end_iso(start_iso, service_duration_minutes),
+                        "date_iso": search_date.isoformat(),
+                        "stylist_id": str(stylist_id),
+                        "adjacent_priority": slot.get("adjacent_priority", 1),
+                        "rank_reason": _build_rank_reason(base_reason, day_offset),
+                        "_priority": (
+                            phase_priority,
+                            day_offset,
+                            slot.get("adjacent_priority", 1),
+                            start_iso,
+                        ),
+                    }
+                )
+
+    ranked_options.sort(key=lambda option: option["_priority"])
+    clean_options = [
+        {
+            key: value
+            for key, value in option.items()
+            if key not in {"_priority", "adjacent_priority"}
+        }
+        for option in ranked_options[:bounded_max_options]
+    ]
+
+    return {
+        "options": clean_options,
+        "searched_until": (base_date + timedelta(days=bounded_search_days)).isoformat(),
+        "search_days": bounded_search_days,
+        "max_options": bounded_max_options,
+    }
+
+
 async def get_soonest_slot_any_stylist(
-    category: "ServiceCategory",
+    category: ServiceCategory,
     service_duration_minutes: int,
     search_days: int = 7,
     excluded_stylist_id: UUID | None = None,
@@ -607,7 +751,7 @@ async def get_stylist_by_id(stylist_id: UUID) -> Stylist | None:
                 select(Stylist).where(
                     and_(
                         Stylist.id == stylist_id,
-                        Stylist.is_active == True,
+                        Stylist.is_active,
                     )
                 )
             )

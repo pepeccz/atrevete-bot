@@ -1,0 +1,54 @@
+{
+  "early_slot_reveal": {
+    "trace": [
+      {
+        "turn": 1,
+        "user": "Hola, quiero un corte de dama para el jueves que viene.",
+        "bot": "Perfecto. Para seguir con la reserva, ¿quieres añadir algo más a la cita?"
+      },
+      {
+        "turn": 2,
+        "user": "No, solo el corte.",
+        "bot": "Genial. ¿Prefieres alguna estilista o te viene bien cualquiera?"
+      },
+      {
+        "turn": 3,
+        "user": "Cualquiera.",
+        "bot": "Para el jueves tengo estos huecos disponibles 🙂\n1. 10:00\n2. 11:30\n3. 16:00"
+      },
+      {
+        "turn": 4,
+        "user": "El de las 11:30, por favor.",
+        "bot": "Perfecto, ¿me dices tu nombre y primer apellido para la reserva?"
+      },
+      {
+        "turn": 5,
+        "user": "María García.",
+        "bot": "Gracias. ¿Algo que tengamos que tener en cuenta en tu cita?"
+      }
+    ]
+  },
+  "empty_day_named_stylist_requires_consent": {
+    "trace": [
+      {
+        "turn": 1,
+        "user": "Quiero un corte con Pilar para el jueves.",
+        "bot": "Con Pilar no me queda hueco ese jueves. Si quieres, puedo mirar otros días con ella o ver otra profesional. ¿Te viene bien que lo mire?"
+      },
+      {
+        "turn": 2,
+        "user": "Sí, mira otros días con ella.",
+        "bot": "Claro. Con Pilar tengo estas alternativas: viernes a las 10:00 o sábado a las 12:00."
+      }
+    ]
+  },
+  "empty_day_any_stylist_can_offer_alternatives_immediately": {
+    "trace": [
+      {
+        "turn": 1,
+        "user": "Quiero un corte para el jueves, me da igual la estilista.",
+        "bot": "Ese jueves ya está completo, pero puedo ofrecerte estas alternativas cercanas: viernes a las 10:00 o sábado a las 12:00."
+      }
+    ]
+  }
+}

@@ -117,27 +117,44 @@ class TestBuildCatalogForPrompt:
         fn = _import()
         result = fn([PRINCIPAL_CORTE_SENORA])
         assert "[PRINCIPAL · cut · adult_female]" in result
-        assert "Corte Señora" in result
+        assert "corte señora" in result
         assert "45min" in result
 
     def test_variant_line_format(self):
         fn = _import()
         result = fn([VARIANT_CORTE_FLEQUILLO])
-        assert "[VARIANTE de Corte Señora]" in result
-        assert "Corte de Flequillo" in result
+        assert "[VARIANTE de corte señora]" in result
+        assert "corte de flequillo" in result
         assert "15min" in result
 
     def test_addon_line_format(self):
         fn = _import()
         result = fn([ADDON_TRATAMIENTO])
         assert "[ADDON · treatment]" in result
-        assert "Oleo Pigmento" in result
+        assert "oleo pigmento" in result
         assert "30min" in result
 
     def test_description_included(self):
         fn = _import()
         result = fn([PRINCIPAL_CORTE_SENORA])
         assert "Corte con lavado y secado" in result
+
+    def test_internal_audience_title_is_naturalized(self):
+        fn = _import()
+        svc = _FakeService(
+            name="Corte Dama",
+            duration_minutes=40,
+            description="Corte con lavado",
+            audience="adult_female",
+            metadata_={
+                "service_type": "principal",
+                "dimension": "cut",
+                "parent_service_name": None,
+            },
+        )
+        result = fn([svc])
+        assert "corte de mujer" in result
+        assert "Corte Dama" not in result
 
     def test_unisex_audience_in_tag(self):
         fn = _import()
@@ -175,8 +192,8 @@ class TestBuildCatalogForPrompt:
     def test_multiple_categories_both_present(self):
         fn = _import()
         result = fn([PRINCIPAL_CORTE_SENORA, PRINCIPAL_MANICURA])
-        assert "Corte Señora" in result
-        assert "Manicura Semipermanente" in result
+        assert "corte señora" in result
+        assert "manicura semipermanente" in result
 
 
 # ---------------------------------------------------------------------------
@@ -210,33 +227,36 @@ class TestAsyncHelpers:
 
     @pytest.mark.asyncio
     async def test_build_catalog_prompt_section_returns_str(self):
-        from agent.prompts.catalog_builder import _catalog_cache, build_catalog_prompt_section
+        from agent.prompts.catalog_builder import build_catalog_prompt_section
 
         fake_row = __import__("agent.prompts.catalog_builder", fromlist=["ServiceRow"]).ServiceRow(
             name="Corte Señora", audience="adult_female", metadata={}
         )
-        fake_markdown = "## Catálogo"
 
         # Patch _catalog_cache so get_active_services returns our fake rows,
         # then patch the inner DB session so build_catalog_prompt_section can query.
         from unittest.mock import MagicMock
+
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [PRINCIPAL_CORTE_SENORA]
         mock_session.execute = AsyncMock(return_value=mock_result)
-        with patch(
-            "agent.prompts.catalog_builder.get_active_services",
-            new=AsyncMock(return_value=[fake_row]),
-        ), patch(
-            "database.connection.get_async_session",
-            return_value=mock_session,
+        with (
+            patch(
+                "agent.prompts.catalog_builder.get_active_services",
+                new=AsyncMock(return_value=[fake_row]),
+            ),
+            patch(
+                "database.connection.get_async_session",
+                return_value=mock_session,
+            ),
         ):
             result = await build_catalog_prompt_section()
         assert isinstance(result, str)
         assert len(result) > 0
-        assert "Corte Señora" in result
+        assert "corte señora" in result
 
 
 # ---------------------------------------------------------------------------

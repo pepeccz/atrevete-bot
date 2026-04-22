@@ -9,5 +9,6 @@ Do NOT add agent-graph logic here — this module is for api/ compat only.
 """
 
 from agent.tools.check_availability import check_availability  # noqa: F401
+from agent.tools.next_available import get_next_available_options  # noqa: F401
 
-__all__ = ["check_availability"]
+__all__ = ["check_availability", "get_next_available_options"]
