@@ -311,6 +311,7 @@ async def build_catalog_prompt_section() -> str:
 
     Used by DynamicPromptMiddleware to inject catalog per-turn.
     Falls back to the simpler build_catalog_for_prompt format (with UUIDs).
+    Appends ## Estilistas disponibles section listing active stylists with their UUIDs.
     """
     try:
         services = await get_active_services()
@@ -320,7 +321,7 @@ async def build_catalog_prompt_section() -> str:
         from sqlalchemy import select
 
         from database.connection import get_async_session
-        from database.models import Service
+        from database.models import Service, Stylist
 
         async with get_async_session() as session:
             result = await session.execute(
@@ -330,7 +331,23 @@ async def build_catalog_prompt_section() -> str:
             )
             orm_services = list(result.scalars().all())
 
-        return build_catalog_for_prompt(orm_services)
+            stylists_result = await session.execute(
+                select(Stylist).where(Stylist.is_active == True).order_by(Stylist.name)  # noqa: E712
+            )
+            stylists = list(stylists_result.scalars().all())
+
+        catalog_str = build_catalog_for_prompt(orm_services)
+
+        # Append stylist roster so the LLM can present names and reference UUIDs
+        if stylists:
+            cat_labels = _get_category_labels()
+            roster_lines = [
+                f"- {s.name} — {cat_labels.get(s.category, '')} — id={s.id}"
+                for s in stylists
+            ]
+            catalog_str += "\n\n## Estilistas disponibles\n" + "\n".join(roster_lines)
+
+        return catalog_str
     except Exception:
         logger.warning("Could not build catalog prompt section", exc_info=True)
         return ""
