@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Callable
 
 # ── Spanish articles and prepositions to strip during normalization ────────────
 _STRIP_WORDS = frozenset(

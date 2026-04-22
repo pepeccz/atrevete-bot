@@ -1,61 +1,75 @@
-"""
-audience resolver — map señora/caballero/niño → service_audience_hint.
+"""Audience resolver — Task 4.2.
 
-R1.2: maps señora/dama/mujer → FEMALE, caballero/hombre/varón → MALE,
-niño/nena/bebé → CHILD; clears pending_disambiguations on match.
+Maps Spanish demographic keywords to DB-aligned audience strings.
+Returns None on ambiguous input (multiple genders found).
 """
 
 from __future__ import annotations
 
-import logging
 import re
+import unicodedata
 from typing import Any
 
-from agent.booking.resolvers import ResolverResult
 
-logger = logging.getLogger(__name__)
-
-_FEMALE_PATTERN = re.compile(
-    r"\b(?:señora|dama|mujer|femenin[ao]|para\s+(?:una?\s+)?(?:mujer|dama|señora))\b",
-    re.IGNORECASE,
-)
-_MALE_PATTERN = re.compile(
-    r"\b(?:caballero|hombre|var[oó]n|masculin[ao]|para\s+(?:un?\s+)?(?:hombre|caballero))\b",
-    re.IGNORECASE,
-)
-_CHILD_PATTERN = re.compile(
-    r"\b(?:ni[ñn][oa]|nena?|beb[eé]|infantil|para\s+(?:un?\s+)?(?:ni[ñn][oa]|nena?|beb[eé]))\b",
-    re.IGNORECASE,
-)
+def _normalize(s: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", s)
+    stripped = "".join(
+        ch for ch in nfkd if not unicodedata.combining(ch) and ch.isascii() or ch == " "
+    )
+    return stripped.lower()
 
 
-def resolve(user_text: str, bc: dict[str, Any], state: dict[str, Any]) -> ResolverResult | None:
-    """Map audience keyword to FEMALE/MALE/CHILD hint.
+# Keyword → audience tag. Keys are accent-stripped, lowercase.
+_KEYWORD_MAP: dict[str, str] = {
+    # adult_female
+    "senora": "adult_female",
+    "senoras": "adult_female",
+    "dama": "adult_female",
+    "mujer": "adult_female",
+    "femenino": "adult_female",
+    # adult_male
+    "senor": "adult_male",
+    "caballero": "adult_male",
+    "hombre": "adult_male",
+    "masculino": "adult_male",
+    # child_female
+    "nina": "child_female",
+    "ninas": "child_female",
+    "nena": "child_female",
+    "hija": "child_female",
+    # child_male
+    "nino": "child_male",
+    "ninos": "child_male",
+    "nene": "child_male",
+    "hijo": "child_male",
+    "bebe": "child_male",
+    # unisex
+    "unisex": "unisex",
+}
 
-    Returns:
-        patch: {"service_audience_hint": "FEMALE"|"MALE"|"CHILD"}
-        cleared: ["pending_disambiguations"]
-        user_action: "PROVIDE_FIELD"
-    or None if no keyword matched.
+# Reverse map: group keywords by audience to detect ambiguity
+_AUDIENCE_GROUPS: dict[str, set[str]] = {}
+for _kw, _aud in _KEYWORD_MAP.items():
+    _AUDIENCE_GROUPS.setdefault(_aud, set()).add(_kw)
+
+
+def _find_audiences(normalized_text: str) -> set[str]:
+    """Find all distinct audience tags mentioned in the text."""
+    found: set[str] = set()
+    words = re.findall(r"\b\w+\b", normalized_text)
+    for word in words:
+        if word in _KEYWORD_MAP:
+            found.add(_KEYWORD_MAP[word])
+    return found
+
+
+async def resolve_audience(text: str, state: Any) -> dict[str, Any] | None:
+    """Return partial state patch with audience tag, or None on miss/ambiguity.
+
+    Ambiguous = text contains keywords from more than one distinct audience group.
     """
-    if _FEMALE_PATTERN.search(user_text):
-        audience = "FEMALE"
-    elif _MALE_PATTERN.search(user_text):
-        audience = "MALE"
-    elif _CHILD_PATTERN.search(user_text):
-        audience = "CHILD"
-    else:
-        return None
-
-    logger.info("resolver.audience.applied | audience=%s", audience)
-
-    cleared: list[str] = []
-    if bc.get("pending_disambiguations"):
-        cleared.append("pending_disambiguations")
-
-    return {
-        "patch": {"service_audience_hint": audience},
-        "cleared": cleared,
-        "matched": True,
-        "user_action": "PROVIDE_FIELD",
-    }
+    normalized = _normalize(text)
+    audiences = _find_audiences(normalized)
+    if len(audiences) == 1:
+        return {"booking": {"audience": audiences.pop()}}
+    return None

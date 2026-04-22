@@ -31,10 +31,10 @@ import asyncio
 import json
 import logging
 
+from agent.prompts.catalog_builder import invalidate_catalog_cache
+from agent.prompts.dynamic_context import clear_dynamic_context_cache
 from shared.redis_client import get_redis_client
 from shared.stylist_cache import clear_stylist_context_cache
-from agent.prompts.dynamic_context import clear_dynamic_context_cache
-from agent.prompts.catalog_builder import invalidate_catalog_cache
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +57,7 @@ async def run_cache_signal_listener() -> None:
     On Redis errors it reconnects with exponential backoff (1s → 2s → 4s → 30s max).
     On successful reconnect the backoff resets to 1s.
     """
-    logger.info(
-        f"Cache signal listener starting | channel={CACHE_INVALIDATE_CHANNEL}"
-    )
+    logger.info(f"Cache signal listener starting | channel={CACHE_INVALIDATE_CHANNEL}")
 
     backoff = _BACKOFF_INITIAL
 
@@ -72,9 +70,7 @@ async def run_cache_signal_listener() -> None:
 
             # Reset backoff on successful connection
             backoff = _BACKOFF_INITIAL
-            logger.info(
-                f"Cache signal listener subscribed | channel={CACHE_INVALIDATE_CHANNEL}"
-            )
+            logger.info(f"Cache signal listener subscribed | channel={CACHE_INVALIDATE_CHANNEL}")
 
             async for raw_message in pubsub.listen():
                 # Skip subscription confirmation and other control messages
@@ -87,8 +83,7 @@ async def run_cache_signal_listener() -> None:
                     action = payload.get("action", "unknown")
 
                     logger.info(
-                        f"Cache invalidation signal received: "
-                        f"entity={entity}, action={action}"
+                        f"Cache invalidation signal received: " f"entity={entity}, action={action}"
                     )
 
                     # Clear the stylist + dynamic caches on every signal.
@@ -109,8 +104,7 @@ async def run_cache_signal_listener() -> None:
                 except json.JSONDecodeError as exc:
                     # Malformed payload — log and skip, do NOT crash the listener
                     logger.warning(
-                        f"Cache signal listener: malformed JSON in message, "
-                        f"skipping: {exc}"
+                        f"Cache signal listener: malformed JSON in message, " f"skipping: {exc}"
                     )
                     continue
 
@@ -122,16 +116,12 @@ async def run_cache_signal_listener() -> None:
                     await pubsub.unsubscribe(CACHE_INVALIDATE_CHANNEL)
                     await pubsub.close()
                 except Exception as cleanup_exc:
-                    logger.warning(
-                        f"Cache signal listener: error during cleanup: {cleanup_exc}"
-                    )
+                    logger.warning(f"Cache signal listener: error during cleanup: {cleanup_exc}")
             return
 
         except Exception as exc:
             # Redis connection error or unexpected failure — reconnect with backoff
-            logger.warning(
-                f"Cache signal listener error (reconnecting in {backoff}s): {exc}"
-            )
+            logger.warning(f"Cache signal listener error (reconnecting in {backoff}s): {exc}")
             if pubsub is not None:
                 try:
                     await pubsub.close()

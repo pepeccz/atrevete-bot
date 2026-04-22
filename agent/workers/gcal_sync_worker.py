@@ -25,16 +25,20 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from sqlalchemy import select, and_, delete, update
+from sqlalchemy import and_, select
 from sqlalchemy.orm import selectinload
 
 from agent.services.gcal_credential_factory import get_google_credentials
+from agent.services.gcal_push_service import (
+    push_appointment_to_gcal,
+    push_blocking_event_to_gcal,
+)
 from database.connection import get_async_session
 from database.models import (
     Appointment,
@@ -47,12 +51,7 @@ from database.models import (
     Service,
     Stylist,
 )
-from shared.config import get_settings
 from shared.settings_service import get_settings_service
-from agent.services.gcal_push_service import (
-    push_appointment_to_gcal,
-    push_blocking_event_to_gcal,
-)
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -125,7 +124,7 @@ async def create_notification(
     notification_type: NotificationType,
     title: str,
     message: str,
-    entity_id: Optional[UUID] = None,
+    entity_id: UUID | None = None,
 ) -> None:
     """Create an admin panel notification."""
     try:
@@ -167,8 +166,8 @@ async def get_or_create_sync_state(session, stylist_id: UUID) -> GCalSyncState:
 
 async def fetch_calendar_events(
     calendar_id: str,
-    sync_token: Optional[str] = None,
-) -> tuple[list[dict], Optional[str]]:
+    sync_token: str | None = None,
+) -> tuple[list[dict], str | None]:
     """
     Fetch events from Google Calendar using sync token for incremental sync.
 
@@ -268,7 +267,7 @@ async def process_gcal_event(
     event: dict,
     appointment_event_ids: set[str],
     blocking_event_ids: set[str],
-) -> tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """
     Process a single Google Calendar event.
 
@@ -308,9 +307,7 @@ async def process_gcal_event(
         return await create_blocking_event_from_gcal(session, stylist.id, event)
 
 
-async def recreate_appointment(
-    session, stylist: Stylist, event_id: str
-) -> tuple[str, Optional[str]]:
+async def recreate_appointment(session, stylist: Stylist, event_id: str) -> tuple[str, str | None]:
     """
     Recreate an appointment in Google Calendar that was deleted externally.
 
@@ -378,9 +375,7 @@ async def recreate_appointment(
         return "error", str(e)
 
 
-async def delete_blocking_event(
-    session, stylist_id: UUID, event_id: str
-) -> tuple[str, Optional[str]]:
+async def delete_blocking_event(session, stylist_id: UUID, event_id: str) -> tuple[str, str | None]:
     """
     Delete a BlockingEvent from DB when deleted in GCal.
 
@@ -415,7 +410,7 @@ async def delete_blocking_event(
 
 async def update_blocking_event_from_gcal(
     session, stylist_id: UUID, event: dict
-) -> tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """
     Update a BlockingEvent from GCal changes.
 
@@ -467,7 +462,7 @@ async def update_blocking_event_from_gcal(
 
 async def create_blocking_event_from_gcal(
     session, stylist_id: UUID, event: dict
-) -> tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """
     Create a new BlockingEvent from an external GCal event.
 
@@ -515,7 +510,7 @@ async def create_blocking_event_from_gcal(
         return "error", str(e)
 
 
-def parse_gcal_datetime(dt_dict: dict) -> Optional[datetime]:
+def parse_gcal_datetime(dt_dict: dict) -> datetime | None:
     """Parse Google Calendar datetime dict to datetime object."""
     if not dt_dict:
         return None

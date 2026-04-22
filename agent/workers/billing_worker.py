@@ -26,8 +26,8 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from database.connection import get_async_session
 from api.services.billing_service import BillingService
+from database.connection import get_async_session
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -135,9 +135,7 @@ async def run_monthly_invoice() -> None:
     now = datetime.now(MADRID_TZ)
 
     if now.day != 1:
-        logger.debug(
-            f"Skipping invoice generation — today is day {now.day}, not the 1st"
-        )
+        logger.debug(f"Skipping invoice generation — today is day {now.day}, not the 1st")
         return
 
     # Calculate previous month (handle January → December edge case)
@@ -148,9 +146,7 @@ async def run_monthly_invoice() -> None:
         prev_year = now.year
         prev_month = now.month - 1
 
-    logger.info(
-        f"Running monthly invoice generation for {prev_year}-{prev_month:02d}"
-    )
+    logger.info(f"Running monthly invoice generation for {prev_year}-{prev_month:02d}")
 
     errors = 0
     try:
@@ -161,14 +157,10 @@ async def run_monthly_invoice() -> None:
                 f"period={prev_year}-{prev_month:02d}"
             )
     except IntegrityError:
-        logger.info(
-            f"Invoice already exists for {prev_year}-{prev_month:02d}, skipping"
-        )
+        logger.info(f"Invoice already exists for {prev_year}-{prev_month:02d}, skipping")
     except HTTPException as exc:
         if exc.status_code == 409:
-            logger.info(
-                f"Invoice already exists for {prev_year}-{prev_month:02d} (409), skipping"
-            )
+            logger.info(f"Invoice already exists for {prev_year}-{prev_month:02d} (409), skipping")
         else:
             logger.error(
                 f"HTTP error generating invoice for {prev_year}-{prev_month:02d}: "
@@ -291,8 +283,8 @@ async def async_main() -> None:
     logger.info("Background heartbeat task started")
 
     # Track last execution dates to avoid running jobs multiple times per day
-    last_invoice_run: str | None = None   # Format: "YYYY-MM-DD"
-    last_overdue_run: str | None = None   # Format: "YYYY-MM-DD"
+    last_invoice_run: str | None = None  # Format: "YYYY-MM-DD"
+    last_overdue_run: str | None = None  # Format: "YYYY-MM-DD"
 
     # Main loop — check every minute
     while not shutdown_requested:

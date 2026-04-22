@@ -17,22 +17,20 @@ Architecture:
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from agent.services.availability_service import check_slot_availability, get_available_slots
+from agent.services.gcal_push_service import update_appointment_in_gcal
 from database.connection import get_async_session
 from database.models import (
     Appointment,
     AppointmentStatus,
-    Customer,
     Service,
 )
-from agent.services.availability_service import check_slot_availability, get_available_slots
-from agent.services.gcal_push_service import update_appointment_in_gcal
 from shared.settings_service import get_settings_service
 
 logger = logging.getLogger(__name__)
@@ -116,7 +114,7 @@ class RescheduleEligibility:
     """
 
     eligible: bool
-    appointment: Optional[Appointment] = None
+    appointment: Appointment | None = None
     reason: str = ""
     hours_until: float = 0.0
     within_window: bool = False
@@ -139,11 +137,11 @@ class RescheduleResult:
     """
 
     success: bool
-    appointment_id: Optional[UUID] = None
-    old_start_time: Optional[datetime] = None
-    new_start_time: Optional[datetime] = None
-    new_stylist_id: Optional[UUID] = None
-    error: Optional[str] = None
+    appointment_id: UUID | None = None
+    old_start_time: datetime | None = None
+    new_start_time: datetime | None = None
+    new_stylist_id: UUID | None = None
+    error: str | None = None
     within_window: bool = False
     slot_taken: bool = False
 
@@ -261,7 +259,7 @@ async def validate_reschedule_eligibility(
 async def find_reschedule_slots(
     appointment_id: UUID,
     target_date: datetime,
-    stylist_id: Optional[UUID] = None,
+    stylist_id: UUID | None = None,
 ) -> list[dict]:
     """
     Get available slots for rescheduling an appointment to a new date.
@@ -317,7 +315,7 @@ async def find_reschedule_slots(
 async def execute_reschedule(
     appointment_id: UUID,
     new_start_time: datetime,
-    new_stylist_id: Optional[UUID] = None,
+    new_stylist_id: UUID | None = None,
 ) -> RescheduleResult:
     """
     Execute an appointment reschedule as an in-place UPDATE.

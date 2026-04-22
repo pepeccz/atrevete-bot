@@ -34,14 +34,12 @@ Usage:
 """
 
 import logging
-from datetime import date, datetime, timedelta
-from typing import Any, Optional
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from datetime import timezone as dt_timezone
-
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
@@ -53,7 +51,7 @@ logger = logging.getLogger(__name__)
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 
-async def is_holiday(target_date: date | datetime) -> Optional[str]:
+async def is_holiday(target_date: date | datetime) -> str | None:
     """
     Check if a date is a salon holiday.
 
@@ -98,7 +96,7 @@ async def get_busy_periods(
     stylist_id: UUID,
     start_time: datetime,
     end_time: datetime,
-    session: Optional[AsyncSession] = None,
+    session: AsyncSession | None = None,
 ) -> list[dict[str, Any]]:
     """
     Get all busy periods for a stylist within a time range.
@@ -155,7 +153,7 @@ async def get_busy_periods(
         # Python-side exact overlap filter: appointment ends after range start.
         # Also exclude expired HOLDs (lazy-expiry pattern) — they are treated as
         # free slots once hold_expires_at <= now().
-        now_utc = datetime.now(dt_timezone.utc)
+        now_utc = datetime.now(UTC)
         appointments = [
             appt
             for appt in all_appointments
@@ -311,7 +309,7 @@ async def check_slot_availability(
                     return {
                         "available": False,
                         "conflict_type": "appointment",
-                        "conflict_details": f"El estilista tiene otra cita a esa hora",
+                        "conflict_details": "El estilista tiene otra cita a esa hora",
                     }
                 else:
                     return {
@@ -593,7 +591,7 @@ async def get_soonest_slot_any_stylist(
         return None
 
 
-async def get_stylist_by_id(stylist_id: UUID) -> Optional[Stylist]:
+async def get_stylist_by_id(stylist_id: UUID) -> Stylist | None:
     """
     Fetch a stylist by ID.
 
@@ -768,9 +766,11 @@ async def get_calendar_events_for_range(
                             "event_type": block.event_type.value,
                             "type": "blocking_event",
                             # Include recurring series info if available
-                            "recurring_series_id": str(block.recurring_series_id)
-                            if block.recurring_series_id
-                            else None,
+                            "recurring_series_id": (
+                                str(block.recurring_series_id)
+                                if block.recurring_series_id
+                                else None
+                            ),
                             "occurrence_index": block.occurrence_index,
                         },
                     }

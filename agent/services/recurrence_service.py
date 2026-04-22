@@ -14,19 +14,18 @@ This service is used by the admin API to:
 """
 
 from datetime import date, datetime, time, timedelta
-from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from dateutil.rrule import rrule, WEEKLY, MONTHLY, MO, TU, WE, TH, FR, SA, SU
-from sqlalchemy import select, and_
+from dateutil.rrule import FR, MO, MONTHLY, SA, SU, TH, TU, WE, WEEKLY, rrule
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
 from database.models import (
-    BlockingEvent,
     Appointment,
     AppointmentStatus,
+    BlockingEvent,
     BusinessHours,
     Stylist,
 )
@@ -179,9 +178,7 @@ async def get_business_hours_summary() -> dict[int, dict | None]:
         - None if closed
     """
     async for session in get_async_session():
-        result = await session.execute(
-            select(BusinessHours).order_by(BusinessHours.day_of_week)
-        )
+        result = await session.execute(select(BusinessHours).order_by(BusinessHours.day_of_week))
         hours_list = result.scalars().all()
         break
 
@@ -236,11 +233,13 @@ async def get_remaining_week_days(
 
         # Only include if salon is open
         if business_hours.get(dow) is not None:
-            remaining_days.append({
-                "date": check_date,
-                "day_of_week": dow,
-                "name": day_names[dow],
-            })
+            remaining_days.append(
+                {
+                    "date": check_date,
+                    "day_of_week": dow,
+                    "name": day_names[dow],
+                }
+            )
 
     return remaining_days
 
@@ -299,9 +298,7 @@ async def _check_conflicts_internal(
     conflicts = []
 
     # Get stylist name for conflict details
-    stylist_result = await session.execute(
-        select(Stylist.name).where(Stylist.id == stylist_id)
-    )
+    stylist_result = await session.execute(select(Stylist.name).where(Stylist.id == stylist_id))
     stylist_name = stylist_result.scalar_one_or_none() or "Unknown"
 
     for check_date in dates:
@@ -314,27 +311,29 @@ async def _check_conflicts_internal(
             select(Appointment).where(
                 and_(
                     Appointment.stylist_id == stylist_id,
-                    Appointment.status.in_([
-                        AppointmentStatus.PENDING,
-                        AppointmentStatus.CONFIRMED
-                    ]),
+                    Appointment.status.in_(
+                        [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]
+                    ),
                     Appointment.start_time < end_dt,
                     # Calculate end time: start_time + duration_minutes
-                    Appointment.start_time + (Appointment.duration_minutes * timedelta(minutes=1)) > start_dt,
+                    Appointment.start_time + (Appointment.duration_minutes * timedelta(minutes=1))
+                    > start_dt,
                 )
             )
         )
         for appt in appt_result.scalars():
             appt_end = appt.start_time + timedelta(minutes=appt.duration_minutes)
-            conflicts.append({
-                "date": check_date.isoformat(),
-                "stylist_id": str(stylist_id),
-                "stylist_name": stylist_name,
-                "conflict_type": "appointment",
-                "conflict_title": f"Cita: {appt.first_name or 'Cliente'}",
-                "start_time": appt.start_time.astimezone(MADRID_TZ).strftime("%H:%M"),
-                "end_time": appt_end.astimezone(MADRID_TZ).strftime("%H:%M"),
-            })
+            conflicts.append(
+                {
+                    "date": check_date.isoformat(),
+                    "stylist_id": str(stylist_id),
+                    "stylist_name": stylist_name,
+                    "conflict_type": "appointment",
+                    "conflict_title": f"Cita: {appt.first_name or 'Cliente'}",
+                    "start_time": appt.start_time.astimezone(MADRID_TZ).strftime("%H:%M"),
+                    "end_time": appt_end.astimezone(MADRID_TZ).strftime("%H:%M"),
+                }
+            )
 
         # Check existing blocking events
         block_result = await session.execute(
@@ -347,15 +346,17 @@ async def _check_conflicts_internal(
             )
         )
         for block in block_result.scalars():
-            conflicts.append({
-                "date": check_date.isoformat(),
-                "stylist_id": str(stylist_id),
-                "stylist_name": stylist_name,
-                "conflict_type": "blocking_event",
-                "conflict_title": block.title,
-                "start_time": block.start_time.astimezone(MADRID_TZ).strftime("%H:%M"),
-                "end_time": block.end_time.astimezone(MADRID_TZ).strftime("%H:%M"),
-            })
+            conflicts.append(
+                {
+                    "date": check_date.isoformat(),
+                    "stylist_id": str(stylist_id),
+                    "stylist_name": stylist_name,
+                    "conflict_type": "blocking_event",
+                    "conflict_title": block.title,
+                    "start_time": block.start_time.astimezone(MADRID_TZ).strftime("%H:%M"),
+                    "end_time": block.end_time.astimezone(MADRID_TZ).strftime("%H:%M"),
+                }
+            )
 
     return conflicts
 
@@ -401,9 +402,15 @@ def validate_time_within_business_hours(
     close_time = time.fromisoformat(hours["close"])
 
     if start_time < open_time:
-        return False, f"La hora de inicio ({start_time.strftime('%H:%M')}) es anterior a la apertura ({hours['open']})"
+        return (
+            False,
+            f"La hora de inicio ({start_time.strftime('%H:%M')}) es anterior a la apertura ({hours['open']})",
+        )
 
     if end_time > close_time:
-        return False, f"La hora de fin ({end_time.strftime('%H:%M')}) es posterior al cierre ({hours['close']})"
+        return (
+            False,
+            f"La hora de fin ({end_time.strftime('%H:%M')}) es posterior al cierre ({hours['close']})",
+        )
 
     return True, None

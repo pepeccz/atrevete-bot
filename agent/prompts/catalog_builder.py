@@ -1,226 +1,151 @@
-"""Builds the service catalog markdown from DB for LLM prompt injection.
+"""Builds the service catalog string for LLM prompt injection.
 
-Also exposes ``get_active_services()`` returning typed ``ServiceRow`` rows for
-the booking subgraph's deterministic resolvers. Markdown + rows share a single
-TTL cache, so each refresh is ONE DB query that produces both views.
+Public API
+----------
+build_catalog_for_prompt(services) -> str
+    Pure function. Accepts any list of objects with the Service ORM attributes
+    (.name, .duration_minutes, .description, .audience, .metadata_). Returns a
+    formatted string with one tagged line per service. Ordering: principals
+    first (sorted by category, name), then variants grouped under their parent,
+    then addons.
+
+load_active_catalog() -> list[Service]
+    Async. Queries DB: WHERE is_active=true ORDER BY category, name.
+
+build_catalog_prompt_section() -> str
+    Async. Composes load_active_catalog + build_catalog_for_prompt.
+
+No caching layer in Phase 4 MVP — each call queries DB. Caching deferred to
+Phase 7 via shared.cache_signals.
 """
+
+from __future__ import annotations
+
 import logging
-from dataclasses import dataclass, field
-
-from sqlalchemy import select
-
-from database.connection import get_async_session
-from database.models import BusinessHours, Service, ServiceCategory, Stylist
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Tag renderers
+# ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
-class ServiceRow:
-    """Immutable typed row copied out of the ORM session.
-
-    Consumed by deterministic resolvers (``agent/booking/resolvers/service.py``)
-    and any caller that needs the active catalog without hitting the DB.
-    """
-
-    name: str
-    audience: str | None
-    metadata: dict = field(default_factory=dict)
-
-_AUDIENCE_LABELS = {
-    "adult_female": "Señora",
-    "adult_male": "Caballero",
-    "child_female": "Niña",
-    "child_male": "Niño",
-    "unisex": "Unisex",
-    None: "General",
-}
-
-# Stable audience token used inside the [PRINCIPAL · dim · audience] tag.
-# Kept machine-readable (matches the values the LLM sees in tool schemas).
-_AUDIENCE_TOKENS = {
-    "adult_female": "adult_female",
-    "adult_male": "adult_male",
-    "child_female": "child_female",
-    "child_male": "child_male",
-    "unisex": "unisex",
-    None: "any",
-}
+_SERVICE_TYPE_ORDER = {"principal": 0, "variant": 1, "addon": 2}
 
 
-def _build_service_type_tag(svc: Service) -> str:
-    """Return the ``[PRINCIPAL · … ]`` / ``[VARIANTE de X]`` / ``[ADDON · …]``
-    tag for a service, or an empty string when metadata is missing.
+def _audience_token(audience: str | None) -> str:
+    """Return the audience token as-is (already DB-aligned strings)."""
+    if audience is None:
+        return "any"
+    return audience
 
-    Backward-compatible: if ``metadata_`` is absent / empty / lacks
-    ``service_type``, no tag is emitted and the catalog line keeps the previous
-    shape (``- {name} [INTERNO: …min] — {description}``).
-    """
-    metadata = svc.metadata_ or {}
-    service_type = metadata.get("service_type")
-    if not service_type:
-        return ""
 
-    dimension = metadata.get("dimension") or "unknown"
+def _render_tag(svc: Any) -> str:
+    """Render the [TYPE · dim · ...] tag from metadata_."""
+    meta = svc.metadata_ or {}
+    service_type = meta.get("service_type")
+    dimension = meta.get("dimension") or "unknown"
 
     if service_type == "principal":
-        audience_token = _AUDIENCE_TOKENS.get(svc.audience, "any")
-        return f" [PRINCIPAL · {dimension} · {audience_token}]"
-
+        aud = _audience_token(getattr(svc, "audience", None))
+        return f"[PRINCIPAL · {dimension} · {aud}]"
     if service_type == "variant":
-        parent = metadata.get("parent_service_name") or "?"
-        return f" [VARIANTE de {parent}]"
-
+        parent = meta.get("parent_service_name") or "?"
+        return f"[VARIANTE de {parent} · {dimension}]"
     if service_type == "addon":
-        return f" [ADDON · {dimension}]"
-
-    # Unknown service_type — skip tag rather than emitting garbage.
+        return f"[ADDON · {dimension}]"
     return ""
 
-_CATEGORY_LABELS = {
-    ServiceCategory.HAIRDRESSING: "Peluquería",
-    ServiceCategory.AESTHETICS: "Estética",
-    ServiceCategory.BOTH: "Peluquería y Estética",
-}
 
-_DAY_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-
-
-# Re-use the same _TtlCache pattern from agent/prompts/loader.py
-# (datetime-based, asyncio.Lock for thundering-herd protection)
-from agent.prompts.loader import _TtlCache
-
-_catalog_cache = _TtlCache(ttl_minutes=5)  # 5-minute cache — value: (list[ServiceRow], str)
+def _sort_key(svc: Any) -> tuple[int, str, str]:
+    """Sort key: (type_order, category_str, name)."""
+    meta = svc.metadata_ or {}
+    service_type = meta.get("service_type", "")
+    order = _SERVICE_TYPE_ORDER.get(service_type, 99)
+    cat = str(getattr(svc, "category", ""))
+    return (order, cat, svc.name)
 
 
-async def build_catalog_markdown() -> str:
-    """Build the full catalog markdown from DB. Cached for 5 minutes."""
-    _rows, markdown = await _catalog_cache.get_or_load(_build_catalog_from_db)
-    return markdown
+def build_catalog_for_prompt(services: list[Any]) -> str:
+    """Build a tagged catalog string from a list of Service-like objects.
 
+    Format per line:
+        [PRINCIPAL · {dim} · {audience}] {name} — {duration_minutes}min — {description}
+        [VARIANTE de {parent} · {dim}] {name} — {duration_minutes}min — {description}
+        [ADDON · {dim}] {name} — {duration_minutes}min — {description}
 
-async def get_active_services() -> list[ServiceRow]:
-    """Return the active service catalog as typed rows. Shares cache with markdown."""
-    rows, _md = await _catalog_cache.get_or_load(_build_catalog_from_db)
-    return rows
-
-
-def invalidate_catalog_cache() -> None:
-    """Force cache refresh on next call. Called by admin panel after service/stylist changes."""
-    _catalog_cache.invalidate()
-    logger.info("catalog_cache invalidated")
-
-
-async def _build_catalog_from_db() -> tuple[list[ServiceRow], str]:
-    """Query DB, build both the typed rows and the markdown string.
-
-    Returns a ``(rows, markdown)`` tuple so the shared cache serves both
-    ``get_active_services()`` and ``build_catalog_markdown()`` from a SINGLE
-    query per refresh.
+    Ordering: principals first (by category then name), then variants, then addons.
+    Description is omitted (not ' — None') when absent.
     """
+    if not services:
+        return ""
+
+    sorted_services = sorted(services, key=_sort_key)
+    lines: list[str] = []
+    for svc in sorted_services:
+        tag = _render_tag(svc)
+        desc = getattr(svc, "description", None)
+        dur = getattr(svc, "duration_minutes", 0)
+        name = svc.name
+
+        if tag:
+            line = f"{tag} {name} — {dur}min"
+        else:
+            line = f"{name} — {dur}min"
+
+        if desc:
+            line += f" — {desc}"
+
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Async DB helpers
+# ---------------------------------------------------------------------------
+
+
+async def _query_active_services() -> list[Any]:
+    """Query DB for active services ordered by category, name."""
+    from sqlalchemy import select
+
+    from database.connection import get_async_session
+    from database.models import Service
+
     async with get_async_session() as session:
-        # Fetch active services ordered by category, name
-        services_result = await session.execute(
+        result = await session.execute(
             select(Service)
             .where(Service.is_active == True)  # noqa: E712
             .order_by(Service.category, Service.name)
         )
-        services = services_result.scalars().all()
+        return list(result.scalars().all())
 
-        # Fetch active stylists ordered by name
-        stylists_result = await session.execute(
-            select(Stylist)
-            .where(Stylist.is_active == True)  # noqa: E712
-            .order_by(Stylist.name)
-        )
-        stylists = stylists_result.scalars().all()
 
-        # Fetch business hours ordered by day
-        hours_result = await session.execute(
-            select(BusinessHours).order_by(BusinessHours.day_of_week)
-        )
-        hours = hours_result.scalars().all()
+async def load_active_catalog() -> list[Any]:
+    """Return active services from DB. No caching (Phase 4 MVP)."""
+    return await _query_active_services()
 
-        # Copy active-service fields into typed rows BEFORE the session closes —
-        # prevents DetachedInstanceError for consumers who read lazy attrs later.
-        rows: list[ServiceRow] = [
-            ServiceRow(
-                name=svc.name,
-                audience=svc.audience,
-                metadata=dict(svc.metadata_ or {}),
-            )
-            for svc in services
-        ]
 
-    sections: list[str] = []
+async def build_catalog_prompt_section() -> str:
+    """Load active catalog from DB and return the tagged prompt string."""
+    services = await load_active_catalog()
+    return build_catalog_for_prompt(services)
 
-    # --- Services Section ---
-    sections.append("## Catálogo de Servicios\n")
 
-    # Group by category (ServiceCategory is str-enum so direct comparison works)
-    categories: dict[str, list[Service]] = {}
-    for svc in services:
-        cat_label = _CATEGORY_LABELS.get(svc.category, str(svc.category))
-        categories.setdefault(cat_label, []).append(svc)
+def invalidate_catalog_cache() -> None:
+    """No-op cache invalidation hook.
 
-    for cat_label, cat_services in categories.items():
-        sections.append(f"### {cat_label}\n")
-
-        for svc in cat_services:
-            type_tag = _build_service_type_tag(svc)
-            line = f"- {svc.name} [INTERNO: {svc.duration_minutes}min]{type_tag}"
-            if svc.description:
-                line += f" — {svc.description}"
-            sections.append(line)
-        sections.append("")
-
-    # --- Stylists Section ---
-    sections.append("## Estilistas\n")
-    for sty in stylists:
-        cat_label = _CATEGORY_LABELS.get(sty.category, str(sty.category))
-        sections.append(f"- {sty.name} — {cat_label}")
-    sections.append("")
-
-    # --- Business Hours Section ---
-    sections.append("## Horario del Salón\n")
-    for h in hours:
-        day_name = _DAY_NAMES[h.day_of_week] if h.day_of_week < len(_DAY_NAMES) else f"Día {h.day_of_week}"
-        if h.is_closed:
-            sections.append(f"- {day_name}: Cerrado")
-        else:
-            start = f"{h.start_hour:02d}:{h.start_minute:02d}"
-            end = f"{h.end_hour:02d}:{h.end_minute:02d}"
-            sections.append(f"- {day_name}: {start} - {end}")
-    sections.append("")
-
-    # --- Policies Section ---
-    sections.append("## Políticas de Reserva\n")
-    sections.append("- Anticipación mínima: 3 días (validado por herramientas — no rechaces fechas)")
-    sections.append("- Cancelación o cambio: hasta 48 horas antes de la cita")
-    sections.append("- La compatibilidad de categorías se valida automáticamente al buscar disponibilidad")
-    sections.append("")
-
-    catalog = "\n".join(sections)
-
-    # Token estimate and logging
-    estimated_tokens = len(catalog) // 4
-    logger.info(
-        "catalog_builder: generated %d services, %d stylists, ~%d tokens",
-        len(services),
-        len(stylists),
-        estimated_tokens,
-    )
-    if estimated_tokens > 5000:
-        logger.warning(
-            "catalog_builder: token estimate %d exceeds 5000 budget", estimated_tokens
-        )
-
-    return rows, catalog
+    Phase 4 MVP has no in-process cache. This function exists so that
+    api/routes/admin.py lazy-import blocks can call it without breaking.
+    A real implementation (e.g., clearing an in-memory LRU cache) can be
+    added here when caching is introduced post-MVP.
+    """
 
 
 __all__ = [
-    "ServiceRow",
-    "build_catalog_markdown",
-    "get_active_services",
+    "build_catalog_for_prompt",
+    "load_active_catalog",
+    "build_catalog_prompt_section",
     "invalidate_catalog_cache",
 ]

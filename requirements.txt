@@ -1,7 +1,7 @@
 # Agent & LLM
-langgraph>=0.6.7
-langgraph-checkpoint-redis
-langchain>=0.3.0
+langgraph==1.1.9
+langgraph-checkpoint-redis==0.4.1  # TODO: venv reinstall before Phase 7
+langchain==1.2.15
 langchain-openai>=0.3.0
 langfuse>=2.0.0
 

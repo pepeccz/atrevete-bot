@@ -27,7 +27,7 @@ Usage:
 
 import logging
 import os
-from typing import Optional, Union
+from typing import Union
 
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
@@ -55,7 +55,7 @@ _oauth_service = GoogleOAuthService()
 
 
 async def get_google_credentials(
-    session: Optional[AsyncSession] = None,
+    session: AsyncSession | None = None,
 ) -> Union[Credentials, "service_account.Credentials"]:
     """
     Resolve Google Calendar credentials using a two-step fallback strategy.
@@ -103,8 +103,7 @@ async def get_google_credentials(
         except GoogleOAuthNotConfiguredError:
             # No active row in google_oauth_credentials — expected during migration.
             logger.debug(
-                "OAuth2 not configured in DB (no active row), "
-                "falling back to service account"
+                "OAuth2 not configured in DB (no active row), " "falling back to service account"
             )
         except GoogleOAuthTokenRevokedError:
             # Token revoked by user — fall back so GCal operations don't break.
@@ -116,8 +115,7 @@ async def get_google_credentials(
         except GoogleOAuthError as exc:
             # Other OAuth2 failure (network, API, encryption issue, etc.)
             logger.warning(
-                "OAuth2 credential resolution failed (%s), "
-                "falling back to service account",
+                "OAuth2 credential resolution failed (%s), " "falling back to service account",
                 exc,
             )
         except Exception as exc:  # noqa: BLE001 — intentional broad catch for fallback
@@ -132,9 +130,7 @@ async def get_google_credentials(
     # -----------------------------------------------------------------------
     sa_path = settings.GOOGLE_SERVICE_ACCOUNT_JSON
     if sa_path and os.path.exists(sa_path):
-        creds = service_account.Credentials.from_service_account_file(
-            sa_path, scopes=SCOPES
-        )
+        creds = service_account.Credentials.from_service_account_file(sa_path, scopes=SCOPES)
         logger.debug("GCal credentials resolved via service account file: %s", sa_path)
         return creds
 

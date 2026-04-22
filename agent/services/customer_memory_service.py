@@ -5,7 +5,8 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
 
 from database.connection import get_async_session
 from database.models import Customer
@@ -120,9 +121,7 @@ async def write_customer_memories(
             stmt = (
                 sa_update(Customer)
                 .where(Customer.phone == phone)
-                .values(
-                    metadata_=Customer.metadata_.op("||")({"memories": merged})
-                )
+                .values(metadata_=Customer.metadata_.op("||")({"memories": merged}))
             )
             await session.execute(stmt)
             await session.commit()
@@ -156,11 +155,11 @@ def _merge_preferences(
         preferred_stylist_name = None
         preferred_stylist_id = None
     else:
-        preferred_stylist_name = (
-            booking_data.get("stylist_name") or existing.get("preferred_stylist_name")
+        preferred_stylist_name = booking_data.get("stylist_name") or existing.get(
+            "preferred_stylist_name"
         )
-        preferred_stylist_id = (
-            booking_data.get("stylist_id") or existing.get("preferred_stylist_id")
+        preferred_stylist_id = booking_data.get("stylist_id") or existing.get(
+            "preferred_stylist_id"
         )
 
     # last_stylist: always reflects the most recent booking

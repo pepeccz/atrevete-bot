@@ -21,11 +21,11 @@ Entry points:
 """
 
 import logging
+import uuid as uuid_module
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
-import uuid as uuid_module
 
 from sqlalchemy import select
 
@@ -90,9 +90,10 @@ async def _check_duplicate_escalation(conversation_id: str, db: Any) -> "Any | N
     """Returns existing Escalation if recent (last 5 min), None otherwise. Fail-open."""
     try:
         from datetime import timedelta
+
         from database.models import Escalation
 
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
+        cutoff = datetime.now(tz=UTC) - timedelta(minutes=5)
         result = await db.execute(
             select(Escalation)
             .where(
@@ -263,8 +264,8 @@ async def perform_escalation(
     Returns:
         EscalationResult with step tracking and user-facing message
     """
-    from shared.config import get_settings
     from shared.chatwoot_client import ChatwootClient
+    from shared.config import get_settings
 
     settings = get_settings()
     result = EscalationResult(success=True)
@@ -339,7 +340,7 @@ async def perform_escalation(
             note_parts.append(f"• Problema: {issue_summary}")
         if contact_preference:
             note_parts.append(f"• Contacto preferido: {contact_preference}")
-        note_parts.append(f"• Timestamp: {datetime.now(tz=timezone.utc).isoformat()}")
+        note_parts.append(f"• Timestamp: {datetime.now(tz=UTC).isoformat()}")
         await client.add_private_note(conv_id_int, "\n".join(note_parts))
         result.steps_completed.append("private_note")
     except Exception as e:
@@ -357,7 +358,7 @@ async def perform_escalation(
 
     # S5 — best-effort: DB record
     try:
-        from database.models import Escalation, EscalationSource, EscalationStatus
+        from database.models import Escalation, EscalationSource
 
         source_enum = (
             EscalationSource(source)

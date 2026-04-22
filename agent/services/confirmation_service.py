@@ -16,13 +16,17 @@ Architecture:
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, and_
+from sqlalchemy import and_, select
 from sqlalchemy.orm import selectinload
 
+from agent.routing.intent_types import IntentType
+from agent.services.gcal_push_service import (
+    delete_gcal_event,
+    update_gcal_event_status,
+)
 from database.connection import get_async_session
 from database.models import (
     Appointment,
@@ -32,11 +36,6 @@ from database.models import (
     NotificationType,
     Service,
 )
-from agent.routing.intent_types import IntentType
-from agent.services.gcal_push_service import (
-    update_gcal_event_status,
-    delete_gcal_event,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -44,27 +43,74 @@ MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 # Keywords for multi-appointment confirmation/cancellation
 CONFIRM_ALL_KEYWORDS = {
-    "todas", "ambas", "las dos", "las tres", "las 2", "las 3",
-    "si todas", "sí todas", "confirmo todas", "confirmo ambas",
-    "confirmar todas", "confirmar ambas", "las confirmo", "confirmalas",
+    "todas",
+    "ambas",
+    "las dos",
+    "las tres",
+    "las 2",
+    "las 3",
+    "si todas",
+    "sí todas",
+    "confirmo todas",
+    "confirmo ambas",
+    "confirmar todas",
+    "confirmar ambas",
+    "las confirmo",
+    "confirmalas",
 }
 CANCEL_ALL_KEYWORDS = {
-    "cancelar todas", "cancela todas", "cancelo todas", "ninguna",
-    "no a todas", "cancelar ambas", "cancelo ambas", "cancelalas",
+    "cancelar todas",
+    "cancela todas",
+    "cancelo todas",
+    "ninguna",
+    "no a todas",
+    "cancelar ambas",
+    "cancelo ambas",
+    "cancelalas",
 }
 # Keywords for specific selection by number
 NUMBER_SELECTION_PATTERNS = {
-    "1": 1, "la 1": 1, "la primera": 1, "primera": 1, "uno": 1, "la uno": 1,
-    "2": 2, "la 2": 2, "la segunda": 2, "segunda": 2, "dos": 2, "la dos": 2,
-    "3": 3, "la 3": 3, "la tercera": 3, "tercera": 3, "tres": 3, "la tres": 3,
-    "4": 4, "la 4": 4, "la cuarta": 4, "cuarta": 4, "cuatro": 4, "la cuatro": 4,
+    "1": 1,
+    "la 1": 1,
+    "la primera": 1,
+    "primera": 1,
+    "uno": 1,
+    "la uno": 1,
+    "2": 2,
+    "la 2": 2,
+    "la segunda": 2,
+    "segunda": 2,
+    "dos": 2,
+    "la dos": 2,
+    "3": 3,
+    "la 3": 3,
+    "la tercera": 3,
+    "tercera": 3,
+    "tres": 3,
+    "la tres": 3,
+    "4": 4,
+    "la 4": 4,
+    "la cuarta": 4,
+    "cuarta": 4,
+    "cuatro": 4,
+    "la cuatro": 4,
 }
 
 # Spanish weekday and month names for date formatting
 WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MONTHS_ES = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
 ]
 
 # Double confirmation timeout in hours
@@ -73,17 +119,38 @@ DECLINE_TIMEOUT_HOURS = 24
 # Emphatic decline patterns - skip double confirmation for clear/certain messages
 EMPHATIC_DECLINE_PATTERNS = {
     # Explicit certainty expressions
-    "estoy seguro", "estoy segura", "seguro que no", "segura que no",
-    "definitivamente no", "definitivamente", "segurísimo", "segurísima",
+    "estoy seguro",
+    "estoy segura",
+    "seguro que no",
+    "segura que no",
+    "definitivamente no",
+    "definitivamente",
+    "segurísimo",
+    "segurísima",
     # Direct cancellation requests
-    "cancelala ya", "cancélala ya", "cancelalo ya", "cancélalo ya",
-    "si cancela", "sí cancela", "confirmo cancelar", "confirmo que no",
+    "cancelala ya",
+    "cancélala ya",
+    "cancelalo ya",
+    "cancélalo ya",
+    "si cancela",
+    "sí cancela",
+    "confirmo cancelar",
+    "confirmo que no",
     # Strong expressions
-    "no voy a poder", "imposible asistir", "imposible ir", "no me es posible",
-    "por favor cancela", "necesito cancelar", "urgente cancelar",
-    "no puedo ir seguro", "no puedo ir segura",
+    "no voy a poder",
+    "imposible asistir",
+    "imposible ir",
+    "no me es posible",
+    "por favor cancela",
+    "necesito cancelar",
+    "urgente cancelar",
+    "no puedo ir seguro",
+    "no puedo ir segura",
     # Multiple confirmation in same message
-    "si estoy seguro", "sí estoy seguro", "si estoy segura", "sí estoy segura",
+    "si estoy seguro",
+    "sí estoy seguro",
+    "si estoy segura",
+    "sí estoy segura",
 }
 
 
@@ -140,7 +207,7 @@ def check_decline_timeout(initiated_at_iso: str) -> bool:
         return True  # Treat invalid timestamp as expired
 
 
-def detect_multi_selection(message: str) -> tuple[bool, bool, Optional[int]]:
+def detect_multi_selection(message: str) -> tuple[bool, bool, int | None]:
     """
     Detect if user wants to confirm/cancel all appointments or a specific one.
 
@@ -193,18 +260,19 @@ class ConfirmationResult:
         state_updates: Dict of state fields to update (for double confirmation flow)
         requires_double_confirm: True if this is a double confirmation prompt
     """
+
     success: bool
-    appointment_id: Optional[UUID] = None
-    appointment_ids: Optional[list[UUID]] = None
+    appointment_id: UUID | None = None
+    appointment_ids: list[UUID] | None = None
     response_type: str = "template"
-    response_text: Optional[str] = None
-    appointment_date: Optional[str] = None
-    appointment_time: Optional[str] = None
-    stylist_name: Optional[str] = None
-    service_names: Optional[str] = None
-    error_message: Optional[str] = None
+    response_text: str | None = None
+    appointment_date: str | None = None
+    appointment_time: str | None = None
+    stylist_name: str | None = None
+    service_names: str | None = None
+    error_message: str | None = None
     multiple_processed: int = 0
-    state_updates: Optional[dict] = None
+    state_updates: dict | None = None
     requires_double_confirm: bool = False
 
 
@@ -245,7 +313,7 @@ async def get_pending_confirmations(customer_id: UUID) -> list[Appointment]:
         return []
 
 
-async def get_pending_confirmation(customer_id: UUID) -> Optional[Appointment]:
+async def get_pending_confirmation(customer_id: UUID) -> Appointment | None:
     """
     Get the appointment awaiting confirmation for a customer.
 
@@ -262,7 +330,7 @@ async def get_pending_confirmation(customer_id: UUID) -> Optional[Appointment]:
     return appointments[0] if appointments else None
 
 
-async def get_customer_by_phone(phone_number: str) -> Optional[Customer]:
+async def get_customer_by_phone(phone_number: str) -> Customer | None:
     """
     Get customer by phone number.
 
@@ -274,9 +342,7 @@ async def get_customer_by_phone(phone_number: str) -> Optional[Customer]:
     """
     try:
         async with get_async_session() as session:
-            result = await session.execute(
-                select(Customer).where(Customer.phone == phone_number)
-            )
+            result = await session.execute(select(Customer).where(Customer.phone == phone_number))
             return result.scalars().first()
 
     except Exception as e:
@@ -412,8 +478,7 @@ async def _execute_cancellation(
             )
         else:
             response_text = (
-                f"Tu cita del {fecha} a las {hora} ha sido cancelada. "
-                f"¡Hasta pronto!"
+                f"Tu cita del {fecha} a las {hora} ha sido cancelada. " f"¡Hasta pronto!"
             )
     else:
         response_text = None
@@ -434,7 +499,7 @@ async def _execute_cancellation(
     )
 
 
-async def get_appointment_by_id(appointment_id: UUID) -> Optional[Appointment]:
+async def get_appointment_by_id(appointment_id: UUID) -> Appointment | None:
     """
     Get appointment by ID with stylist loaded.
 

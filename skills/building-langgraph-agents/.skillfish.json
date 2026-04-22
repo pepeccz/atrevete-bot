@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "building-langgraph-agents",
+  "owner": "fortiumpartners",
+  "repo": "ensemble",
+  "path": "packages/ai/skills/building-langgraph-agents",
+  "branch": "main",
+  "sha": "069031248effe4155e1c97696ce5620f8087a619",
+  "source": "manual"
+}

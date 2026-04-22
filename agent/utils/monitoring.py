@@ -16,7 +16,6 @@ NOTE: Langfuse 3.x uses OpenTelemetry and requires environment variables:
 
 import logging
 import os
-from typing import Optional
 
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
@@ -26,7 +25,7 @@ from shared.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-def get_langfuse_client() -> Optional[Langfuse]:
+def get_langfuse_client() -> Langfuse | None:
     """
     Create a Langfuse client for direct API calls (flush, scoring, etc).
 
@@ -61,8 +60,8 @@ def get_langfuse_client() -> Optional[Langfuse]:
 def get_langfuse_handler(
     conversation_id: str,
     customer_phone: str,
-    customer_name: Optional[str] = None,
-    additional_metadata: Optional[dict] = None,
+    customer_name: str | None = None,
+    additional_metadata: dict | None = None,
 ) -> CallbackHandler:
     """
     Create a Langfuse callback handler for tracing agent conversations.

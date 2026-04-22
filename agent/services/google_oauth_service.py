@@ -30,8 +30,7 @@ Usage:
 import asyncio
 import logging
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from google.auth.exceptions import RefreshError
@@ -132,7 +131,7 @@ class GoogleOAuthService:
     # OAuth2 Flow
     # ------------------------------------------------------------------
 
-    def generate_auth_url(self, state: Optional[str] = None) -> tuple[str, str, str]:
+    def generate_auth_url(self, state: str | None = None) -> tuple[str, str, str]:
         """
         Generate the Google OAuth2 authorization URL with PKCE.
 
@@ -157,7 +156,7 @@ class GoogleOAuthService:
         flow = self._build_flow()
         auth_url, _ = flow.authorization_url(
             access_type="offline",
-            prompt="consent",      # Force refresh token even if previously granted
+            prompt="consent",  # Force refresh token even if previously granted
             include_granted_scopes=False,
             state=state,
         )
@@ -173,7 +172,7 @@ class GoogleOAuthService:
         state: str,
         expected_state: str,
         session: AsyncSession,
-        code_verifier: Optional[str] = None,
+        code_verifier: str | None = None,
     ) -> dict:
         """
         Exchange an authorization code for tokens and persist them in the DB.
@@ -205,9 +204,7 @@ class GoogleOAuthService:
         """
         # 1. CSRF validation
         if state != expected_state:
-            raise GoogleOAuthCSRFError(
-                "OAuth2 state mismatch — possible CSRF attack. Aborting."
-            )
+            raise GoogleOAuthCSRFError("OAuth2 state mismatch — possible CSRF attack. Aborting.")
 
         # 2. Exchange code for tokens (sync — run in thread pool)
         loop = asyncio.get_event_loop()
@@ -235,10 +232,10 @@ class GoogleOAuthService:
         encrypted_access = encrypt_token(google_creds.token)
         encrypted_refresh = encrypt_token(google_creds.refresh_token or "")
 
-        token_expiry: Optional[datetime] = google_creds.expiry
+        token_expiry: datetime | None = google_creds.expiry
         if token_expiry is not None and token_expiry.tzinfo is None:
             # google-auth returns naive UTC datetimes — make them tz-aware
-            token_expiry = token_expiry.replace(tzinfo=timezone.utc)
+            token_expiry = token_expiry.replace(tzinfo=UTC)
 
         scopes = list(google_creds.scopes) if google_creds.scopes else SCOPES
 
@@ -250,7 +247,7 @@ class GoogleOAuthService:
         )
 
         # 6. Insert new active credential
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         new_cred = GoogleOAuthCredential(
             encrypted_access_token=encrypted_access,
             encrypted_refresh_token=encrypted_refresh,
@@ -294,9 +291,7 @@ class GoogleOAuthService:
             GoogleOAuthTokenRevokedError: If the refresh token was revoked.
         """
         result = await session.execute(
-            select(GoogleOAuthCredential).where(
-                GoogleOAuthCredential.is_active.is_(True)
-            )
+            select(GoogleOAuthCredential).where(GoogleOAuthCredential.is_active.is_(True))
         )
         cred_row = result.scalar_one_or_none()
         if cred_row is None:
@@ -339,8 +334,8 @@ class GoogleOAuthService:
             needs_refresh = True  # Unknown expiry — refresh to be safe
         else:
             if expiry.tzinfo is None:
-                expiry = expiry.replace(tzinfo=timezone.utc)
-            needs_refresh = datetime.now(timezone.utc) >= (expiry - _TOKEN_EXPIRY_BUFFER)
+                expiry = expiry.replace(tzinfo=UTC)
+            needs_refresh = datetime.now(UTC) >= (expiry - _TOKEN_EXPIRY_BUFFER)
 
         creds = Credentials(
             token=access_token,
@@ -359,16 +354,14 @@ class GoogleOAuthService:
             # Re-check expiry after acquiring the lock — another coroutine may have
             # already refreshed while we were waiting.
             result = await session.execute(
-                select(GoogleOAuthCredential).where(
-                    GoogleOAuthCredential.id == cred_row.id
-                )
+                select(GoogleOAuthCredential).where(GoogleOAuthCredential.id == cred_row.id)
             )
             fresh_row = result.scalar_one_or_none()
             if fresh_row is not None and fresh_row.token_expiry is not None:
                 fresh_expiry = fresh_row.token_expiry
                 if fresh_expiry.tzinfo is None:
-                    fresh_expiry = fresh_expiry.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) < (fresh_expiry - _TOKEN_EXPIRY_BUFFER):
+                    fresh_expiry = fresh_expiry.replace(tzinfo=UTC)
+                if datetime.now(UTC) < (fresh_expiry - _TOKEN_EXPIRY_BUFFER):
                     # Another coroutine already refreshed — use its tokens
                     logger.debug("Token was refreshed concurrently, using fresh token")
                     fresh_access = decrypt_token(fresh_row.encrypted_access_token)
@@ -385,6 +378,7 @@ class GoogleOAuthService:
             logger.info("Refreshing Google OAuth2 access token")
             loop = asyncio.get_event_loop()
             try:
+
                 def _do_refresh() -> None:
                     creds.refresh(Request())
 
@@ -407,7 +401,7 @@ class GoogleOAuthService:
             # Persist updated tokens
             new_expiry = creds.expiry
             if new_expiry is not None and new_expiry.tzinfo is None:
-                new_expiry = new_expiry.replace(tzinfo=timezone.utc)
+                new_expiry = new_expiry.replace(tzinfo=UTC)
 
             await session.execute(
                 update(GoogleOAuthCredential)
@@ -415,7 +409,7 @@ class GoogleOAuthService:
                 .values(
                     encrypted_access_token=encrypt_token(creds.token),
                     token_expiry=new_expiry,
-                    last_refresh_at=datetime.now(timezone.utc),
+                    last_refresh_at=datetime.now(UTC),
                 )
             )
             await session.commit()
@@ -477,8 +471,8 @@ class GoogleOAuthService:
         self,
         session: AsyncSession,
         summary: str,
-        description: Optional[str] = None,
-        time_zone: Optional[str] = None,
+        description: str | None = None,
+        time_zone: str | None = None,
     ) -> dict:
         """
         Create a new secondary Google Calendar owned by the connected account.
@@ -532,9 +526,9 @@ class GoogleOAuthService:
         self,
         session: AsyncSession,
         calendar_id: str,
-        summary: Optional[str] = None,
-        description: Optional[str] = None,
-        time_zone: Optional[str] = None,
+        summary: str | None = None,
+        description: str | None = None,
+        time_zone: str | None = None,
     ) -> dict:
         """
         Partially update a Google Calendar's metadata.
@@ -666,9 +660,7 @@ class GoogleOAuthService:
             - ``scopes`` (list[str])
         """
         result = await session.execute(
-            select(GoogleOAuthCredential).where(
-                GoogleOAuthCredential.is_active.is_(True)
-            )
+            select(GoogleOAuthCredential).where(GoogleOAuthCredential.is_active.is_(True))
         )
         cred_row = result.scalar_one_or_none()
 
@@ -690,7 +682,7 @@ class GoogleOAuthService:
 
         connected_at = cred_row.connected_at
         if connected_at is not None and connected_at.tzinfo is None:
-            connected_at = connected_at.replace(tzinfo=timezone.utc)
+            connected_at = connected_at.replace(tzinfo=UTC)
 
         return {
             "connected": True,
@@ -754,8 +746,7 @@ class GoogleOAuthService:
                 email = data.get("email")
                 if not email:
                     raise GoogleOAuthError(
-                        "userinfo endpoint did not return an email address. "
-                        f"Response: {data}"
+                        "userinfo endpoint did not return an email address. " f"Response: {data}"
                     )
                 return email
         except httpx.HTTPError as exc:

@@ -20,13 +20,13 @@ Architecture:
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, and_
+from sqlalchemy import and_, select
 from sqlalchemy.orm import selectinload
 
+from agent.services.gcal_push_service import delete_gcal_event
 from database.connection import get_async_session
 from database.models import (
     Appointment,
@@ -36,7 +36,6 @@ from database.models import (
     NotificationType,
     Service,
 )
-from agent.services.gcal_push_service import delete_gcal_event
 from shared.settings_service import get_settings_service
 
 logger = logging.getLogger(__name__)
@@ -100,7 +99,7 @@ def format_date_spanish(dt: datetime) -> str:
     return f"{WEEKDAYS_ES[dt.weekday()]} {dt.day} de {MONTHS_ES[dt.month - 1]}"
 
 
-def detect_number_selection(message: str) -> Optional[int]:
+def detect_number_selection(message: str) -> int | None:
     """
     Detect if user selected a specific appointment by number.
 
@@ -135,14 +134,14 @@ class CancellationResult:
     """
 
     success: bool
-    appointment_id: Optional[UUID] = None
+    appointment_id: UUID | None = None
     response_type: str = "template"
-    response_text: Optional[str] = None
-    error_message: Optional[str] = None
+    response_text: str | None = None
+    error_message: str | None = None
     within_window: bool = False
     multiple_appointments: bool = False
-    appointment_list: Optional[str] = None
-    hours_until_appointment: Optional[int] = None
+    appointment_list: str | None = None
+    hours_until_appointment: int | None = None
 
 
 async def get_cancellation_window_hours() -> int:
@@ -161,7 +160,7 @@ async def get_cancellation_window_hours() -> int:
         return 48
 
 
-async def get_customer_by_phone(phone_number: str) -> Optional[Customer]:
+async def get_customer_by_phone(phone_number: str) -> Customer | None:
     """
     Get customer by phone number.
 
@@ -440,8 +439,8 @@ async def select_appointment_for_cancellation(
 
 async def execute_cancellation(
     appointment_id: UUID,
-    reason: Optional[str] = None,
-    conversation_id: Optional[str] = None,
+    reason: str | None = None,
+    conversation_id: str | None = None,
 ) -> CancellationResult:
     """
     Execute appointment cancellation.
@@ -579,8 +578,8 @@ async def handle_cancellation_response(
     customer_phone: str,
     intent_type: str,
     message_text: str,
-    pending_appointment_id: Optional[str] = None,
-    cancellation_appointments: Optional[list[dict]] = None,
+    pending_appointment_id: str | None = None,
+    cancellation_appointments: list[dict] | None = None,
 ) -> CancellationResult:
     """
     Main entry point for handling cancellation-related intents.

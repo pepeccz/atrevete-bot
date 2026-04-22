@@ -14,11 +14,10 @@ Architecture:
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, and_
+from sqlalchemy import and_, select
 from sqlalchemy.orm import selectinload
 
 from database.connection import get_async_session
@@ -36,8 +35,18 @@ MADRID_TZ = ZoneInfo("Europe/Madrid")
 # Spanish weekday and month names for date formatting
 WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MONTHS_ES = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
 ]
 
 
@@ -58,14 +67,15 @@ class AppointmentQueryResult:
         appointment_count: Number of appointments found
         error_message: Error message if success is False
     """
+
     success: bool
     has_appointments: bool = False
     response_text: str = ""
     appointment_count: int = 0
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
-async def _get_customer_by_phone(phone_number: str) -> Optional[Customer]:
+async def _get_customer_by_phone(phone_number: str) -> Customer | None:
     """
     Get customer by phone number.
 
@@ -77,9 +87,7 @@ async def _get_customer_by_phone(phone_number: str) -> Optional[Customer]:
     """
     try:
         async with get_async_session() as session:
-            result = await session.execute(
-                select(Customer).where(Customer.phone == phone_number)
-            )
+            result = await session.execute(select(Customer).where(Customer.phone == phone_number))
             return result.scalars().first()
     except Exception as e:
         logger.error(f"Error fetching customer by phone {phone_number}: {e}")
@@ -112,10 +120,12 @@ async def _get_upcoming_appointments(customer_id: UUID, limit: int = 5) -> list[
                 .where(
                     and_(
                         Appointment.customer_id == customer_id,
-                        Appointment.status.in_([
-                            AppointmentStatus.PENDING,
-                            AppointmentStatus.CONFIRMED,
-                        ]),
+                        Appointment.status.in_(
+                            [
+                                AppointmentStatus.PENDING,
+                                AppointmentStatus.CONFIRMED,
+                            ]
+                        ),
                         Appointment.start_time > now,
                     )
                 )

@@ -32,7 +32,7 @@ Usage:
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -43,7 +43,6 @@ from sqlalchemy import update
 from agent.services.gcal_credential_factory import get_google_credentials
 from database.connection import get_async_session
 from database.models import Appointment, BlockingEvent, Stylist
-from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +137,7 @@ async def _get_calendar_service():
         raise
 
 
-async def _get_stylist_calendar_id(stylist_id: UUID) -> Optional[str]:
+async def _get_stylist_calendar_id(stylist_id: UUID) -> str | None:
     """
     Get the Google Calendar ID for a stylist.
 
@@ -173,7 +172,7 @@ async def push_appointment_to_gcal(
     status: str = "pending",
     customer_phone: str | None = None,
     notes: str | None = None,
-) -> Optional[str]:
+) -> str | None:
     """
     Push an appointment to Google Calendar as a fire-and-forget operation.
 
@@ -326,11 +325,11 @@ async def push_blocking_event_to_gcal(
     blocking_event_id: UUID,
     stylist_id: UUID,
     title: str,
-    description: Optional[str],
+    description: str | None,
     start_time: datetime,
     end_time: datetime,
     event_type: str = "general",
-) -> Optional[str]:
+) -> str | None:
     """
     Push a blocking event to Google Calendar.
 
@@ -582,7 +581,7 @@ async def update_blocking_event_in_gcal(
     stylist_id: UUID,
     event_id: str,
     title: str,
-    description: Optional[str],
+    description: str | None,
     start_time: datetime,
     end_time: datetime,
     event_type: str = "general",
@@ -856,7 +855,7 @@ async def fire_and_forget_push_blocking_event(
     blocking_event_id: UUID,
     stylist_id: UUID,
     title: str,
-    description: Optional[str],
+    description: str | None,
     start_time: datetime,
     end_time: datetime,
     event_type: str = "general",

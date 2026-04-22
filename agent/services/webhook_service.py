@@ -105,9 +105,7 @@ class SlackWebhookProvider(WebhookProvider):
         # 1. Get SLACK_WEBHOOK_URL from settings if not provided
         # 2. Format payload as Slack Block Kit message
         # 3. POST to webhook URL using httpx
-        logger.info(
-            f"Slack webhook placeholder | payload_keys={list(payload.keys())}"
-        )
+        logger.info(f"Slack webhook placeholder | payload_keys={list(payload.keys())}")
         return False
 
 
@@ -137,9 +135,7 @@ class TeamsWebhookProvider(WebhookProvider):
     async def send(self, payload: dict[str, Any]) -> bool:
         """Send webhook to Teams (placeholder)."""
         # TODO: Implement Teams webhook
-        logger.info(
-            f"Teams webhook placeholder | payload_keys={list(payload.keys())}"
-        )
+        logger.info(f"Teams webhook placeholder | payload_keys={list(payload.keys())}")
         return False
 
 
@@ -267,9 +263,7 @@ async def trigger_webhook(
 
     try:
         result = await provider.send(payload)
-        logger.info(
-            f"Webhook triggered | provider={provider_name} | success={result}"
-        )
+        logger.info(f"Webhook triggered | provider={provider_name} | success={result}")
         return result
     except Exception as e:
         logger.error(

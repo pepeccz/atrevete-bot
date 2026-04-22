@@ -31,11 +31,11 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import schedule
 import redis
+import schedule
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
@@ -123,7 +123,7 @@ async def find_expired_checkpoints(redis_client: Redis) -> list[tuple[str, str, 
                 # Real key format (verified against live Redis):
                 #   checkpoint:{thread_id}:__empty__:{uuid}
                 # where thread_id is the Chatwoot conversation_id (e.g. "1")
-                key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+                key_str = key.decode("utf-8") if isinstance(key, bytes) else key
                 parts = key_str.split(":")
 
                 if len(parts) < 2:
@@ -200,7 +200,11 @@ async def retrieve_and_parse_checkpoint(redis_client: Redis, key: str) -> dict[s
         state: dict[str, Any] | None = None
         try:
             # Attempt JSON deserialization
-            raw = checkpoint_data.decode('utf-8') if isinstance(checkpoint_data, bytes) else checkpoint_data
+            raw = (
+                checkpoint_data.decode("utf-8")
+                if isinstance(checkpoint_data, bytes)
+                else checkpoint_data
+            )
             state = json.loads(raw)
             logger.debug(f"Checkpoint {key} deserialized as JSON")
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -211,7 +215,7 @@ async def retrieve_and_parse_checkpoint(redis_client: Redis, key: str) -> dict[s
             except Exception as e:
                 logger.error(
                     f"Failed to deserialize checkpoint {key} (tried JSON and pickle): {e}",
-                    exc_info=True
+                    exc_info=True,
                 )
                 return None
 
@@ -222,15 +226,15 @@ async def retrieve_and_parse_checkpoint(redis_client: Redis, key: str) -> dict[s
 
         # LangGraph checkpoint structure: {"v": 1, "ts": timestamp, "data": state_dict, ...}
         # Extract actual state from 'data' field if present
-        if 'data' in state and isinstance(state['data'], dict):
-            state = state['data']
+        if "data" in state and isinstance(state["data"], dict):
+            state = state["data"]
 
         # Validate required fields for archival
-        if 'conversation_id' not in state:
+        if "conversation_id" not in state:
             logger.warning(f"Checkpoint {key} missing 'conversation_id' field, skipping")
             return None
 
-        if 'messages' not in state or not isinstance(state['messages'], list):
+        if "messages" not in state or not isinstance(state["messages"], list):
             logger.warning(f"Checkpoint {key} missing or invalid 'messages' field, skipping")
             return None
 
@@ -295,10 +299,10 @@ async def upsert_conversation_to_db(
     Raises:
         Exception: If database operations fail (caller handles retries).
     """
-    conversation_id: str = state['conversation_id']
-    customer_id = state.get('customer_id')
-    messages: list[dict[str, Any]] = state.get('messages', [])
-    conversation_summary: str | None = state.get('conversation_summary')
+    conversation_id: str = state["conversation_id"]
+    customer_id = state.get("customer_id")
+    messages: list[dict[str, Any]] = state.get("messages", [])
+    conversation_summary: str | None = state.get("conversation_summary")
 
     if not messages and not conversation_summary:
         logger.warning(f"No messages or summary to archive for conversation {conversation_id}")
@@ -308,9 +312,7 @@ async def upsert_conversation_to_db(
     # Step 1: Get-or-create ConversationHistory parent
     # -------------------------------------------------------------------------
     result = await session.execute(
-        select(ConversationHistory).where(
-            ConversationHistory.conversation_id == conversation_id
-        )
+        select(ConversationHistory).where(ConversationHistory.conversation_id == conversation_id)
     )
     parent: ConversationHistory | None = result.scalar_one_or_none()
 
@@ -340,8 +342,7 @@ async def upsert_conversation_to_db(
         ).where(ConversationMessage.conversation_history_id == parent.id)
     )
     existing_fingerprints: set[tuple[str, str, str]] = {
-        (row.role, row.content, row.created_at.isoformat())
-        for row in existing_result.all()
+        (row.role, row.content, row.created_at.isoformat()) for row in existing_result.all()
     }
 
     # -------------------------------------------------------------------------
@@ -351,9 +352,9 @@ async def upsert_conversation_to_db(
     all_timestamps: list[datetime] = []
 
     for message in messages:
-        role = message.get('role', '')
-        content = message.get('content', '')
-        timestamp = _parse_message_timestamp(message.get('timestamp'))
+        role = message.get("role", "")
+        content = message.get("content", "")
+        timestamp = _parse_message_timestamp(message.get("timestamp"))
 
         if not role or not content:
             logger.warning(f"Skipping message with missing role or content: {message}")
@@ -364,7 +365,9 @@ async def upsert_conversation_to_db(
 
         fingerprint = (role, content, timestamp.isoformat())
         if fingerprint in existing_fingerprints:
-            logger.debug(f"Skipping duplicate message for {conversation_id} at {timestamp.isoformat()}")
+            logger.debug(
+                f"Skipping duplicate message for {conversation_id} at {timestamp.isoformat()}"
+            )
             all_timestamps.append(timestamp)
             continue
 
@@ -393,9 +396,9 @@ async def upsert_conversation_to_db(
 
     # Update message_count to reflect the full count (existing + newly inserted)
     total_count_result = await session.execute(
-        select(func.count()).select_from(ConversationMessage).where(
-            ConversationMessage.conversation_history_id == parent.id
-        )
+        select(func.count())
+        .select_from(ConversationMessage)
+        .where(ConversationMessage.conversation_history_id == parent.id)
     )
     current_db_count = total_count_result.scalar() or 0
     parent.message_count = current_db_count + inserted_count
@@ -431,16 +434,16 @@ async def archive_checkpoint(
         }
     """
     result: dict[str, Any] = {
-        'success': False,
-        'messages_archived': 0,
-        'error': None,
+        "success": False,
+        "messages_archived": 0,
+        "error": None,
     }
 
     # Step 1: Retrieve and parse checkpoint
     state = await retrieve_and_parse_checkpoint(redis_client, key)
 
     if state is None:
-        result['error'] = 'Failed to retrieve or parse checkpoint'
+        result["error"] = "Failed to retrieve or parse checkpoint"
         return result
 
     # Step 2: Upsert to database (with retry)
@@ -448,8 +451,8 @@ async def archive_checkpoint(
         try:
             async with get_async_session() as session:
                 messages_archived = await upsert_conversation_to_db(session, state)
-                result['messages_archived'] = messages_archived
-                result['success'] = True
+                result["messages_archived"] = messages_archived
+                result["success"] = True
             break  # Success, exit retry loop
 
         except Exception as e:
@@ -461,14 +464,14 @@ async def archive_checkpoint(
             else:
                 logger.error(
                     f"Failed to archive {conversation_id} after {MAX_RETRY_ATTEMPTS} attempts, skipping: {e}",
-                    exc_info=True
+                    exc_info=True,
                 )
-                result['error'] = f'Database upsert failed after {MAX_RETRY_ATTEMPTS} attempts'
+                result["error"] = f"Database upsert failed after {MAX_RETRY_ATTEMPTS} attempts"
                 return result  # Skip deletion from Redis
 
     # Step 3: Delete ALL Redis keys for this conversation_id (only if DB upsert succeeded)
     # Cleans: checkpoint:*, checkpoint_write:*, write_keys_zset:*
-    if result['success']:
+    if result["success"]:
         try:
             patterns = [
                 f"checkpoint:{conversation_id}:*",
@@ -487,8 +490,7 @@ async def archive_checkpoint(
                 logger.warning(f"No Redis keys found for conversation {conversation_id}")
         except Exception as e:
             logger.error(
-                f"Error deleting Redis keys for conversation {conversation_id}: {e}",
-                exc_info=True
+                f"Error deleting Redis keys for conversation {conversation_id}: {e}", exc_info=True
             )
             # Don't mark as failure - messages are archived, Redis cleanup is secondary
 
@@ -513,19 +515,19 @@ async def update_health_check(
         errors: Number of errors encountered
     """
     health_data = {
-        'last_heartbeat': time.time(),
-        'last_run': last_run.isoformat(),
-        'status': status,
-        'checkpoints_archived': checkpoints_archived,
-        'messages_archived': messages_archived,
-        'errors': errors,
+        "last_heartbeat": time.time(),
+        "last_run": last_run.isoformat(),
+        "status": status,
+        "checkpoints_archived": checkpoints_archived,
+        "messages_archived": messages_archived,
+        "errors": errors,
     }
 
     # Write health check file atomically (temp file + rename)
-    health_dir = Path('/tmp/health')
+    health_dir = Path("/tmp/health")
     health_dir.mkdir(parents=True, exist_ok=True)
-    health_file = health_dir / 'archiver_health.json'
-    temp_file = health_dir / f'archiver_health.{int(time.time())}.tmp'
+    health_file = health_dir / "archiver_health.json"
+    temp_file = health_dir / f"archiver_health.{int(time.time())}.tmp"
 
     try:
         temp_file.write_text(json.dumps(health_data, indent=2))
@@ -570,7 +572,7 @@ async def archive_expired_conversations() -> None:
             logger.info("No expired checkpoints to archive")
             await update_health_check(
                 last_run=datetime.now(TIMEZONE),
-                status='healthy',
+                status="healthy",
                 checkpoints_archived=0,
                 messages_archived=0,
                 errors=0,
@@ -586,14 +588,12 @@ async def archive_expired_conversations() -> None:
 
             result = await archive_checkpoint(redis_client, key, conversation_id)
 
-            if result['success']:
+            if result["success"]:
                 checkpoints_archived += 1
-                messages_archived += result['messages_archived']
+                messages_archived += result["messages_archived"]
             else:
                 errors += 1
-                logger.error(
-                    f"Failed to archive {conversation_id}: {result['error']}"
-                )
+                logger.error(f"Failed to archive {conversation_id}: {result['error']}")
 
         # Step 3: Log summary statistics
         end_time = datetime.now(TIMEZONE)
@@ -602,16 +602,16 @@ async def archive_expired_conversations() -> None:
         logger.info(
             f"Completed archival run in {duration:.2f}s",
             extra={
-                'checkpoints_found': checkpoints_found,
-                'checkpoints_archived': checkpoints_archived,
-                'messages_archived': messages_archived,
-                'errors': errors,
-                'duration_seconds': duration,
-            }
+                "checkpoints_found": checkpoints_found,
+                "checkpoints_archived": checkpoints_archived,
+                "messages_archived": messages_archived,
+                "errors": errors,
+                "duration_seconds": duration,
+            },
         )
 
         # Step 4: Update health check file
-        status = 'healthy' if errors == 0 else 'unhealthy'
+        status = "healthy" if errors == 0 else "unhealthy"
         await update_health_check(
             last_run=end_time,
             status=status,
@@ -622,12 +622,11 @@ async def archive_expired_conversations() -> None:
 
     except RedisConnectionError as e:
         logger.critical(
-            f"Redis connection failed, archival worker cannot proceed: {e}",
-            exc_info=True
+            f"Redis connection failed, archival worker cannot proceed: {e}", exc_info=True
         )
         await update_health_check(
             last_run=datetime.now(TIMEZONE),
-            status='unhealthy',
+            status="unhealthy",
             checkpoints_archived=checkpoints_archived,
             messages_archived=messages_archived,
             errors=errors + 1,
@@ -638,7 +637,7 @@ async def archive_expired_conversations() -> None:
         logger.exception(f"Unexpected error in archival worker: {e}")
         await update_health_check(
             last_run=datetime.now(TIMEZONE),
-            status='unhealthy',
+            status="unhealthy",
             checkpoints_archived=checkpoints_archived,
             messages_archived=messages_archived,
             errors=errors + 1,
@@ -656,10 +655,10 @@ def run_archival_worker() -> None:
     # Configure logging
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
-        ]
+        ],
     )
 
     logger.info("Conversation archiver worker starting...")
@@ -678,9 +677,7 @@ def run_archival_worker() -> None:
     logger.info("Initial health check file written")
 
     # Schedule hourly execution at :00
-    schedule.every().hour.at(":00").do(
-        lambda: asyncio.run(archive_expired_conversations())
-    )
+    schedule.every().hour.at(":00").do(lambda: asyncio.run(archive_expired_conversations()))
 
     logger.info("Archival worker scheduled (hourly at :00)")
 
