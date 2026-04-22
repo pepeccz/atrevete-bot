@@ -12,10 +12,25 @@ setup_checkpointer() expects an already-entered saver instance.
 """
 
 from contextlib import AbstractAsyncContextManager
+from urllib.parse import quote, urlparse, urlunparse
 
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 
 from shared.config import get_settings
+
+
+def _inject_password(url: str, password: str | None) -> str:
+    """Rewrite ``redis://host:port/db`` to ``redis://:pass@host:port/db`` when a
+    password is configured and the URL does not already carry auth."""
+    if not password:
+        return url
+    parsed = urlparse(url)
+    if parsed.username or parsed.password:
+        return url
+    netloc = f":{quote(password, safe='')}@{parsed.hostname or ''}"
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 def get_checkpointer(redis_url: str | None = None) -> AbstractAsyncContextManager[AsyncRedisSaver]:
@@ -25,7 +40,9 @@ def get_checkpointer(redis_url: str | None = None) -> AbstractAsyncContextManage
         async with get_checkpointer() as saver:
             await setup_checkpointer(saver)
     """
-    url = redis_url or get_settings().REDIS_URL
+    settings = get_settings()
+    url = redis_url or settings.REDIS_URL
+    url = _inject_password(url, settings.REDIS_PASSWORD)
     return AsyncRedisSaver.from_conn_string(url)
 
 

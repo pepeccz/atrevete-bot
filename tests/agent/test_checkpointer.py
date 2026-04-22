@@ -32,6 +32,7 @@ def test_get_checkpointer_uses_settings_when_no_url():
     """get_checkpointer() with no arg reads REDIS_URL from shared.config.get_settings()."""
     fake_settings = MagicMock()
     fake_settings.REDIS_URL = "redis://redis:6379/0"
+    fake_settings.REDIS_PASSWORD = ""
 
     with patch("agent.checkpointer.get_settings", return_value=fake_settings):
         cm = get_checkpointer()
@@ -41,18 +42,37 @@ def test_get_checkpointer_uses_settings_when_no_url():
 
 
 def test_get_checkpointer_passes_url_to_from_conn_string():
-    """get_checkpointer(url) calls AsyncRedisSaver.from_conn_string with that url."""
+    """get_checkpointer(url) calls AsyncRedisSaver.from_conn_string with that url (no password configured)."""
     url = "redis://custom:6380/1"
-    with patch.object(AsyncRedisSaver, "from_conn_string") as mock_fcs:
+    fake_settings = MagicMock()
+    fake_settings.REDIS_PASSWORD = ""
+    with (
+        patch("agent.checkpointer.get_settings", return_value=fake_settings),
+        patch.object(AsyncRedisSaver, "from_conn_string") as mock_fcs,
+    ):
         mock_fcs.return_value = MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())
         get_checkpointer(url)
         mock_fcs.assert_called_once_with(url)
+
+
+def test_get_checkpointer_injects_password_into_url():
+    """When REDIS_PASSWORD is set and URL has no auth, password is injected into netloc."""
+    fake_settings = MagicMock()
+    fake_settings.REDIS_PASSWORD = "s3cret"
+    with (
+        patch("agent.checkpointer.get_settings", return_value=fake_settings),
+        patch.object(AsyncRedisSaver, "from_conn_string") as mock_fcs,
+    ):
+        mock_fcs.return_value = MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())
+        get_checkpointer("redis://custom:6380/1")
+        mock_fcs.assert_called_once_with("redis://:s3cret@custom:6380/1")
 
 
 def test_get_checkpointer_passes_settings_url_to_from_conn_string():
     """get_checkpointer() passes settings.REDIS_URL to from_conn_string."""
     fake_settings = MagicMock()
     fake_settings.REDIS_URL = "redis://settings-host:6379/2"
+    fake_settings.REDIS_PASSWORD = ""
 
     with (
         patch("agent.checkpointer.get_settings", return_value=fake_settings),
