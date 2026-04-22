@@ -75,9 +75,12 @@ async def ask_service(state: dict[str, Any]) -> Command:
             "service_ids": response.selected_service_ids or [],
         }
     )
-    # Always advance to 'audience' after ask_service resolves
-    booking["step"] = "audience"
 
+    if booking["service_ids"]:
+        booking["step"] = "audience"
+        return Command(goto="route_next", update={"booking": booking})
+
+    booking["step"] = "service"
     return Command(
         goto=END,
         update={
@@ -104,8 +107,11 @@ async def ask_audience(state: dict[str, Any]) -> Command:
     response: AudienceResponse = await chain.ainvoke(messages)
 
     booking["audience"] = response.inferred_audience
-    booking["step"] = "stylist" if response.inferred_audience else "audience"
+    if response.inferred_audience:
+        booking["step"] = "stylist"
+        return Command(goto="route_next", update={"booking": booking})
 
+    booking["step"] = "audience"
     return Command(
         goto=END,
         update={
@@ -133,12 +139,12 @@ async def ask_stylist(state: dict[str, Any]) -> Command:
 
     booking["stylist_id"] = response.inferred_stylist_id
     booking["no_preference"] = response.no_preference
-    # Only advance step if stylist resolved; otherwise wait for user to provide it
+
     if response.inferred_stylist_id or response.no_preference:
         booking["step"] = "date"
-    else:
-        booking["step"] = "stylist"
+        return Command(goto="route_next", update={"booking": booking})
 
+    booking["step"] = "stylist"
     return Command(
         goto=END,
         update={
@@ -165,8 +171,11 @@ async def ask_date(state: dict[str, Any]) -> Command:
     response: DateResponse = await chain.ainvoke(messages)
 
     booking["date"] = response.inferred_date
-    booking["step"] = "slot" if response.inferred_date else "date"
+    if response.inferred_date:
+        booking["step"] = "slot"
+        return Command(goto="route_next", update={"booking": booking})
 
+    booking["step"] = "date"
     return Command(
         goto=END,
         update={
@@ -197,6 +206,7 @@ async def ask_slot(state: dict[str, Any]) -> Command:
     if idx is not None and 0 <= idx < len(offered_slots):
         booking["selected_slot"] = offered_slots[idx]
         booking["step"] = "name"
+        return Command(goto="route_next", update={"booking": booking})
 
     return Command(
         goto=END,
@@ -227,8 +237,12 @@ async def ask_name(state: dict[str, Any]) -> Command:
         booking["customer_full_name"] = f"{response.first_name} {response.first_surname}"
     elif response.first_name:
         booking["customer_full_name"] = response.first_name
-    booking["step"] = "notes" if booking.get("customer_full_name") else "name"
 
+    if booking.get("customer_full_name"):
+        booking["step"] = "notes"
+        return Command(goto="route_next", update={"booking": booking})
+
+    booking["step"] = "name"
     return Command(
         goto=END,
         update={

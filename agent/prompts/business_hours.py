@@ -35,12 +35,12 @@ async def load_business_hours_snapshot() -> dict[str, str]:
         snapshot: dict[str, str] = {}
         for row in rows:
             day_name = _DAY_NAMES.get(row.day_of_week, str(row.day_of_week))
-            if row.is_open:
-                open_str = row.open_time.strftime("%H:%M") if row.open_time else "?"
-                close_str = row.close_time.strftime("%H:%M") if row.close_time else "?"
-                snapshot[day_name] = f"{open_str}-{close_str}"
-            else:
+            if row.is_closed or row.start_hour is None or row.end_hour is None:
                 snapshot[day_name] = "cerrado"
+            else:
+                open_str = f"{row.start_hour:02d}:{row.start_minute:02d}"
+                close_str = f"{row.end_hour:02d}:{row.end_minute:02d}"
+                snapshot[day_name] = f"{open_str}-{close_str}"
         return snapshot
     except Exception:
         logger.warning("Could not load business hours snapshot", exc_info=True)
