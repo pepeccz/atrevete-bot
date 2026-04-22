@@ -1,30 +1,14 @@
-"""Interrupt resume handler — Phase 7.2.
+"""Interrupt resume handler — v2 (create_agent rewrite).
 
-build_invoke_input() inspects the current checkpoint snapshot and decides
-whether to resume an interrupted subgraph or invoke normally.
+For the create_agent MVP, there are no HITL interrupts at the top-level graph.
+build_invoke_input() always returns (state_seed, False).
 
-Interrupt detection:
-  - graph.aget_state(config) returns a StateSnapshot.
-  - snapshot.next is a tuple of node names waiting to run.
-  - If any node in snapshot.next is in INTERRUPT_NODES, the graph is paused
-    at a human-in-the-loop interrupt and we must resume with Command(resume=...).
-
-Usage in main.py:
-
-    payload, interrupted = await build_invoke_input(
-        graph, config, combined_text, state_seed
-    )
-    result = await graph.ainvoke(payload, config=config)
+The function signature is preserved so that agent/main.py requires no changes.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-from langgraph.types import Command
-
-# Node names that use interrupt() and therefore require Command(resume=...) to continue
-INTERRUPT_NODES: frozenset[str] = frozenset({"await_confirmation"})
 
 
 async def build_invoke_input(
@@ -32,24 +16,20 @@ async def build_invoke_input(
     config: dict,
     user_message: str,
     state_seed: dict,
-) -> tuple[dict | Command, bool]:
+) -> tuple[dict, bool]:
     """Determine the correct payload to pass to graph.ainvoke().
 
+    In the create_agent v2 architecture, there are no HITL interrupt nodes at
+    the top-level graph — the agent handles confirmation in natural language.
+    This function always returns (state_seed, False).
+
     Args:
-        graph: Compiled LangGraph StateGraph (must support aget_state).
-        config: LangGraph run config (must contain configurable.thread_id).
-        user_message: Raw user message text for this turn.
-        state_seed: Full initial-state dict for a normal (non-resume) invocation.
+        graph: Compiled LangGraph graph (unused in v2, kept for interface compat).
+        config: LangGraph run config (unused in v2, kept for interface compat).
+        user_message: Raw user message text (unused in v2, kept for interface compat).
+        state_seed: Full initial-state dict for this invocation.
 
     Returns:
-        (payload, interrupted) where:
-          - payload is Command(resume=user_message) if interrupted, else state_seed.
-          - interrupted is True iff the graph is paused at an INTERRUPT_NODES node.
+        (state_seed, False) — always a normal (non-resume) invocation.
     """
-    snapshot = await graph.aget_state(config)
-    interrupted = bool(snapshot.next) and any(n in INTERRUPT_NODES for n in snapshot.next)
-
-    if interrupted:
-        return Command(resume=user_message), True
-
     return state_seed, False

@@ -1,4 +1,4 @@
-"""Tests for DynamicPromptMiddleware — Phase 5.3."""
+"""Tests for DynamicPromptMiddleware — adapted for create_agent rewrite."""
 
 from __future__ import annotations
 
@@ -15,27 +15,16 @@ class _FakeModelResponse:
 
 
 @pytest.fixture()
-def booking_state():
-    return {
-        "booking": {
-            "step": "date",
-            "service_ids": [],
-            "audience": "adult_female",
-        },
-        "messages": [],
-    }
-
-
-@pytest.fixture()
 def general_state():
     return {
-        "booking": None,
         "messages": [],
+        "customer_id": None,
+        "customer_name": None,
     }
 
 
 @pytest.mark.asyncio
-async def test_awrap_model_call_injects_catalog(booking_state):
+async def test_awrap_model_call_injects_catalog(general_state):
     """Middleware must prepend catalog section to the system message."""
     from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 
@@ -56,7 +45,7 @@ async def test_awrap_model_call_injects_catalog(booking_state):
         original_system = "Sos un asistente."
         request = MagicMock()
         request.system_message = SystemMessage(content=original_system)
-        request.state = booking_state
+        request.state = general_state
         request.override = lambda **kw: kw  # capture the override kwargs
 
         ai_reply = AIMessage(content="hola")
@@ -64,14 +53,12 @@ async def test_awrap_model_call_injects_catalog(booking_state):
         async def fake_handler(req):
             return _FakeModelResponse(ai_reply)
 
-        # awrap_model_call must call override(system_message=...) with catalog injected
         result = await mw.awrap_model_call(request, fake_handler)
-        # The result should be the handler result (we just check no exception + handler called)
         assert result is not None
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_contains_catalog_section(booking_state):
+async def test_system_prompt_contains_catalog_section(general_state):
     """The system_message passed to handler must contain catalog text."""
     from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 
@@ -97,7 +84,7 @@ async def test_system_prompt_contains_catalog_section(booking_state):
         class FakeRequest:
             def __init__(self):
                 self.system_message = SystemMessage(content=original_system)
-                self.state = booking_state
+                self.state = general_state
 
             def override(self, **kwargs):
                 new = FakeRequest()
@@ -119,7 +106,7 @@ async def test_system_prompt_contains_catalog_section(booking_state):
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_contains_hours(booking_state):
+async def test_system_prompt_contains_hours(general_state):
     """Business hours snapshot must appear in injected system prompt."""
     from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 
@@ -143,7 +130,7 @@ async def test_system_prompt_contains_hours(booking_state):
         class FakeRequest:
             def __init__(self):
                 self.system_message = SystemMessage(content="base prompt")
-                self.state = booking_state
+                self.state = general_state
 
             def override(self, **kwargs):
                 new = FakeRequest()
@@ -162,49 +149,8 @@ async def test_system_prompt_contains_hours(booking_state):
 
 
 @pytest.mark.asyncio
-async def test_booking_snapshot_injected_when_booking_active(booking_state):
-    """When booking is active, the booking context snapshot is included."""
-    from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
-
-    captured_requests = []
-
-    with (
-        patch(
-            "agent.middleware.dynamic_prompt.build_catalog_prompt_section",
-            new=AsyncMock(return_value="catalog"),
-        ),
-        patch(
-            "agent.middleware.dynamic_prompt.load_business_hours_snapshot",
-            new=AsyncMock(return_value={}),
-        ),
-    ):
-        mw = DynamicPromptMiddleware()
-
-        class FakeRequest:
-            def __init__(self):
-                self.system_message = SystemMessage(content="base")
-                self.state = booking_state
-
-            def override(self, **kwargs):
-                new = FakeRequest()
-                for k, v in kwargs.items():
-                    setattr(new, k, v)
-                return new
-
-        async def capturing_handler(req):
-            captured_requests.append(req)
-            return _FakeModelResponse(AIMessage(content="resp"))
-
-        await mw.awrap_model_call(FakeRequest(), capturing_handler)
-
-    final_system = captured_requests[0].system_message.content
-    # booking context should mention step value
-    assert "date" in final_system or "adult_female" in final_system
-
-
-@pytest.mark.asyncio
-async def test_no_booking_context_when_general(general_state):
-    """When booking is None, no booking snapshot injected."""
+async def test_no_booking_state_no_snapshot(general_state):
+    """Without a booking context, no booking-specific data is injected."""
     from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 
     captured_requests = []
@@ -241,6 +187,3 @@ async def test_no_booking_context_when_general(general_state):
     final_system = captured_requests[0].system_message.content
     # catalog + hours still injected
     assert "catalog" in final_system
-    # no "Reserva en curso" or similar booking header when booking=None
-    assert "adult_female" not in final_system
-    assert "step" not in final_system

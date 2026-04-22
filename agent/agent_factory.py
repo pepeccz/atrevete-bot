@@ -1,0 +1,62 @@
+"""agent_factory — build_conversation_agent() entry point.
+
+Public API
+----------
+build_conversation_agent(llm_factory, checkpointer) -> CompiledStateGraph
+    Returns a create_agent graph wired with 4 tools and 4 middleware layers.
+
+AGENT_TOOLS: list[BaseTool]
+    The canonical tool list. Exported for introspection / testing.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from langchain.agents import create_agent
+from langchain_core.tools import BaseTool
+
+from agent.llm import get_llm
+from agent.middleware.customer_resolve import CustomerResolveMiddleware
+from agent.middleware.disclosure import DisclosureMiddleware
+from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
+from agent.middleware.summarize import SummarizeMiddleware
+from agent.prompts.loader import load_system_prompt
+from agent.state import AgentState
+from agent.tools.book import book
+from agent.tools.check_availability import check_availability
+from agent.tools.escalation_tools import escalate
+from agent.tools.manage_appointments_tool import manage_appointments
+
+# Canonical 4-tool list — exported for testing.
+AGENT_TOOLS: list[BaseTool] = [check_availability, book, manage_appointments, escalate]
+
+
+def build_conversation_agent(
+    llm_factory: Any = None,
+    checkpointer: Any = None,
+) -> Any:
+    """Build and compile the create_agent conversation graph.
+
+    Args:
+        llm_factory: Zero-arg callable → BaseChatModel. Defaults to get_llm().
+        checkpointer: Optional LangGraph checkpointer (AsyncRedisSaver / MemorySaver).
+
+    Returns:
+        CompiledStateGraph — same interface as old create_graph() output.
+    """
+    model = (llm_factory or get_llm)()
+
+    return create_agent(
+        model=model,
+        tools=AGENT_TOOLS,
+        system_prompt=load_system_prompt(),
+        middleware=[
+            DisclosureMiddleware(),
+            CustomerResolveMiddleware(),
+            DynamicPromptMiddleware(),
+            SummarizeMiddleware(window=20, keep_tail=10),
+        ],
+        checkpointer=checkpointer,
+        state_schema=AgentState,
+    )

@@ -263,6 +263,23 @@ cp .env.example .env
 # Edit .env with real API keys - see docs/external-services-setup.md
 ```
 
+### Deploy Runbook (create_agent v2)
+
+After deploying the create_agent rewrite, flush old Redis checkpoints so stale
+`BookingContext` state doesn't pollute new conversations:
+
+```bash
+# Flush all old checkpoint keys (v1 thread_ids — they don't have the "v2:" prefix)
+redis-cli --scan --pattern 'checkpoint:*' | xargs redis-cli del
+
+# Apply the data migration (rename Cortar → Corte Dama, tag audiences)
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic upgrade head
+```
+
+New conversations use thread_id `v2:{conversation_id}` — they start clean.
+
+---
+
 ### Running Services
 
 ```bash

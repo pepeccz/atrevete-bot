@@ -9,7 +9,6 @@ import logging
 import os
 import signal
 import sys
-from datetime import UTC, datetime
 
 from agent.batching.message_batcher import MessageBatcher
 from agent.checkpointer import get_checkpointer, setup_checkpointer
@@ -151,15 +150,17 @@ async def subscribe_to_incoming_messages():
                 },
             )
 
-            # Create runtime ConversationState.
+            # Truncate incoming message to avoid context overflow
+            truncated_text = combined_text[:2000] if combined_text else ""
+
+            # Create runtime state seed for the create_agent graph.
             # `sender_name` from Chatwoot webhook is stored in `pending_whatsapp_name`
             # for silent customer creation (name is never mentioned in bot responses).
             state = {
                 "conversation_id": conversation_id,
                 "customer_phone": customer_phone or "",
-                "user_message": combined_text,
+                "user_message": truncated_text,
                 "pending_whatsapp_name": sender_name,
-                "updated_at": datetime.now(UTC).isoformat(),
             }
 
             # Create Langfuse handler for tracing and token monitoring
@@ -180,7 +181,7 @@ async def subscribe_to_incoming_messages():
 
             # Invoke graph with checkpointing and Langfuse callbacks
             config = {
-                "configurable": {"thread_id": conversation_id},
+                "configurable": {"thread_id": f"v2:{conversation_id}"},
                 "callbacks": [langfuse_handler] if langfuse_handler else [],
             }
             logger.info(
@@ -288,9 +289,7 @@ async def subscribe_to_incoming_messages():
             else:
                 last_role = None
 
-            freshness_ok = (messages_after > messages_before) and (
-                last_role in ("assistant", "ai")
-            )
+            freshness_ok = (messages_after > messages_before) and (last_role in ("assistant", "ai"))
 
             if not freshness_ok:
                 logger.warning(

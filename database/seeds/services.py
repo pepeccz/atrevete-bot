@@ -94,7 +94,7 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 15,
         "description": "Recorte y modelado del flequillo. Sin lavado ni secado, ideal para un retoque rápido (15 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "cut", "parent_service_name": "Cortar"},
+        "metadata_": {"service_type": "variant", "dimension": "cut", "parent_service_name": "Corte Dama"},
     },
     {
         "name": "Perilla",
@@ -273,7 +273,7 @@ HAIRDRESSING_SERVICES = [
         "metadata_": {"service_type": "addon", "dimension": "color", "parent_service_name": None},
     },
     {
-        "name": "Cortar",
+        "name": "Corte Dama",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 40,
         "description": "Corte para dama con lavado, corte y secado incluidos. Longitud estándar (40 min)",
