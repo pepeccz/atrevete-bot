@@ -278,6 +278,15 @@ DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@
 
 New conversations use thread_id `v2:{conversation_id}` — they start clean.
 
+### Deploy Runbook (booking-flow-scripted)
+
+Additive prompt + tool enrichment change. No DB migration, no thread_id bump, no checkpoint flush required. In-flight conversations pick up the new `booking_flow.md` system-prompt section and `calendar_link` payload on their next turn without state conflict.
+
+```bash
+# Restart only the agent container (api and archiver unaffected)
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart agent
+```
+
 ---
 
 ### Running Services
