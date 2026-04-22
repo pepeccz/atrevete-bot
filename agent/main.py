@@ -10,6 +10,8 @@ import os
 import signal
 import sys
 
+from langchain_core.messages import HumanMessage
+
 from agent.batching.message_batcher import MessageBatcher
 from agent.checkpointer import get_checkpointer, setup_checkpointer
 from agent.graph import create_graph
@@ -161,6 +163,7 @@ async def subscribe_to_incoming_messages():
                 "customer_phone": customer_phone or "",
                 "user_message": truncated_text,
                 "pending_whatsapp_name": sender_name,
+                "messages": [HumanMessage(content=truncated_text)] if truncated_text else [],
             }
 
             # Create Langfuse handler for tracing and token monitoring
