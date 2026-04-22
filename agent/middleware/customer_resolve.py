@@ -70,7 +70,12 @@ class CustomerResolveMiddleware(AgentMiddleware):
         customer = await _lookup_customer(phone)
 
         if customer is None:
-            return await handler(request)
+            # Inject phone-only ## Cliente block for new (unknown) customers
+            phone_block = f"\n\n## Cliente\n- Teléfono: {phone}"
+            original_content = request.system_message.content if request.system_message else ""
+            new_system = SystemMessage(content=original_content + phone_block)
+            modified_request = request.override(system_message=new_system)
+            return await handler(modified_request)
 
         # Build ## Cliente block for the system prompt
         returning_label = "Sí" if customer["is_returning"] else "No"
