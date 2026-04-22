@@ -31,6 +31,7 @@ from agent.booking.prompt_builder import build_leaf_system_message
 from agent.booking.schemas import (
     AudienceResponse,
     DateResponse,
+    MoreServicesResponse,
     NameResponse,
     NotesResponse,
     ServiceSelectionResponse,
@@ -108,10 +109,50 @@ async def ask_audience(state: dict[str, Any]) -> Command:
 
     booking["audience"] = response.inferred_audience
     if response.inferred_audience:
-        booking["step"] = "stylist"
+        booking["step"] = "more_services"
         return Command(goto="route_next", update={"booking": booking})
 
     booking["step"] = "audience"
+    return Command(
+        goto=END,
+        update={
+            "messages": [AIMessage(content=response.message)],
+            "booking": booking,
+        },
+    )
+
+
+async def ask_more_services(state: dict[str, Any]) -> Command:
+    """Ask user if they want to add more services."""
+    import agent.booking.leaves as _self
+
+    booking = dict(state.get("booking") or {})
+
+    # Fast-path: already asked and user declined — advance
+    if booking.get("_more_services_asked"):
+        booking["step"] = "stylist"
+        return Command(goto="route_next", update={"booking": booking})
+
+    system_msg = await build_leaf_system_message("ask_more_services", booking, state)
+    llm = _self.get_llm()
+    chain = llm.with_structured_output(MoreServicesResponse)
+    messages = [system_msg] + _current_messages(state)
+    response: MoreServicesResponse = await chain.ainvoke(messages)
+
+    if response.additional_service_ids:
+        existing = list(booking.get("service_ids") or [])
+        for sid in response.additional_service_ids:
+            if sid not in existing:
+                existing.append(sid)
+        booking["service_ids"] = existing
+
+    if response.user_declined:
+        booking["_more_services_asked"] = True
+        booking["step"] = "stylist"
+        return Command(goto="route_next", update={"booking": booking})
+
+    # Added services but not declined — ask again next turn
+    booking["step"] = "more_services"
     return Command(
         goto=END,
         update={

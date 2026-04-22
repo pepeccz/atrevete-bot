@@ -60,6 +60,12 @@ _STEP_INSTRUCTIONS: dict[str, str] = {
         "Usa la taxonomía de audiencia para mapear la respuesta del cliente al valor correcto. "
         "Si el cliente dice 'bebé' o 'bebe', el valor es 'baby'."
     ),
+    "ask_more_services": (
+        "PASO ACTUAL: Pregunta al cliente si desea añadir algún servicio más a la cita "
+        "(por ejemplo, tinte, manicura, tratamiento, etc.). "
+        "Si responde 'no', 'nada más' o similar, marca user_declined=true. "
+        "Si menciona servicios adicionales, extrae sus UUIDs del catálogo en additional_service_ids."
+    ),
     "ask_stylist": (
         "PASO ACTUAL: Pregunta con qué estilista prefiere el cliente. "
         "Si el cliente dice que no tiene preferencia, marca no_preference=true."

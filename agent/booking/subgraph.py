@@ -37,6 +37,7 @@ from agent.booking.interpret_user_update import interpret_user_update
 from agent.booking.leaves import (
     ask_audience,
     ask_date,
+    ask_more_services,
     ask_name,
     ask_notes,
     ask_service,
@@ -54,6 +55,7 @@ _ESCAPE = "escape_gate"
 _ROUTE = "route_next"
 _ASK_SERVICE = "ask_service"
 _ASK_AUDIENCE = "ask_audience"
+_ASK_MORE_SERVICES = "ask_more_services"
 _ASK_STYLIST = "ask_stylist"
 _ASK_DATE = "ask_date"
 _FETCH_AVAIL = "fetch_availability"
@@ -91,6 +93,7 @@ def build_booking_subgraph(
     builder.add_node(_ROUTE, _route_next_node)
     builder.add_node(_ASK_SERVICE, ask_service)
     builder.add_node(_ASK_AUDIENCE, ask_audience)
+    builder.add_node(_ASK_MORE_SERVICES, ask_more_services)
     builder.add_node(_ASK_STYLIST, ask_stylist)
     builder.add_node(_ASK_DATE, ask_date)
     builder.add_node(_FETCH_AVAIL, fetch_availability_node)

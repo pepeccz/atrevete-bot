@@ -57,29 +57,24 @@ async def resolve_stylist(text: str, state: Any) -> dict[str, Any] | None:
 
     stylists = await _load_active_stylists()
 
-    # Extract candidate name from patterns
-    candidate: str | None = None
-
-    # "con {name}", "prefiero a {name}", "que sea {name}"
+    # Pattern-based candidate (explicit): "con X", "prefiero a X", "que sea X"
     m = re.search(
         r"(?:con|prefiero a|que sea)\s+([A-Za-záéíóúñüÁÉÍÓÚÑÜ]+)",
         text,
         re.IGNORECASE,
     )
     if m:
-        candidate = m.group(1)
-    elif len(text.split()) < 3:
-        # Short bare input — treat the whole thing as a potential name
-        candidate = text.strip()
+        candidate_norm = _normalize(m.group(1))
+        for stylist in stylists:
+            if _normalize(stylist["name"]) == candidate_norm:
+                return {"booking": {"stylist_id": stylist["id"]}}
 
-    if candidate is None:
-        return None
-
-    candidate_norm = _normalize(candidate)
-
+    # Token-level match: any whole word in text equal to an active stylist first name.
+    # Handles trailing phrases like "Pilar a ser posible" / "Pilar si se puede".
+    tokens = {_normalize(tok) for tok in re.findall(r"[A-Za-záéíóúñüÁÉÍÓÚÑÜ]+", text)}
     for stylist in stylists:
         stylist_norm = _normalize(stylist["name"])
-        if stylist_norm == candidate_norm:
+        if stylist_norm in tokens:
             return {"booking": {"stylist_id": stylist["id"]}}
 
     return None

@@ -17,6 +17,7 @@ from langgraph.constants import END
 _STEP_TO_NODE: dict[str, str] = {
     "service": "ask_service",
     "audience": "ask_audience",
+    "more_services": "ask_more_services",
     "stylist": "ask_stylist",
     "date": "ask_date",
     "name": "ask_name",

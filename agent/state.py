@@ -36,7 +36,16 @@ class BookingContext(TypedDict, total=False):
     customer_full_name: str | None
     notes: str | None
     step: Literal[
-        "service", "audience", "stylist", "date", "slot", "name", "notes", "confirm", "done"
+        "service",
+        "audience",
+        "more_services",
+        "stylist",
+        "date",
+        "slot",
+        "name",
+        "notes",
+        "confirm",
+        "done",
     ]
     _escape_intent: (
         Literal["cancel", "start_over", "change_date", "change_service", "change_stylist"] | None

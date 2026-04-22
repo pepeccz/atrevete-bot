@@ -59,6 +59,31 @@ class AudienceResponse(BaseModel):
     )
 
 
+class MoreServicesResponse(BaseModel):
+    """Respuesta del LLM al preguntar si el cliente desea añadir más servicios.
+
+    El LLM extrae IDs de servicios adicionales o confirma que no quiere más.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(description="Mensaje en español para enviar al usuario.")
+    additional_service_ids: list[UUID] | None = Field(
+        default=None,
+        description=(
+            "Lista de UUIDs de servicios adicionales que el usuario quiere añadir. "
+            "Null si no añadió ninguno nuevo."
+        ),
+    )
+    user_declined: bool = Field(
+        default=False,
+        description=(
+            "True si el usuario indicó explícitamente que no quiere añadir más servicios "
+            "(por ejemplo 'no', 'así está bien', 'nada más')."
+        ),
+    )
+
+
 class StylistResponse(BaseModel):
     """Respuesta del LLM para el paso de selección de estilista.
 
