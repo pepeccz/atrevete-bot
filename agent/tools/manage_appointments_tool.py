@@ -26,8 +26,11 @@ MADRID_TZ = ZoneInfo("Europe/Madrid")
 class ManageAppointmentsSchema(BaseModel):
     """Input schema for manage_appointments tool."""
 
-    action: Literal["list", "cancel", "reschedule"] = Field(
-        description="Action to perform: list (view upcoming), cancel, or reschedule."
+    action: Literal["list", "cancel", "reschedule", "confirm", "decline"] = Field(
+        description=(
+            "Action to perform: list (view upcoming), cancel, reschedule, "
+            "confirm (accept a pending confirmation), or decline (reject a pending confirmation)."
+        )
     )
     customer_phone: str = Field(description="Customer phone number (E.164 format).")
     appointment_id: str | None = Field(
@@ -323,6 +326,71 @@ async def _reschedule_appointment(
         }
 
 
+async def _confirm_or_decline(
+    customer_phone: str,
+    appointment_id: str,
+    *,
+    confirm: bool,
+) -> dict:
+    """Shared helper for tool-driven confirm/decline actions."""
+    error_label = "confirmar" if confirm else "rechazar"
+    if not appointment_id:
+        return {
+            "success": False,
+            "appointment_id": appointment_id or "",
+            "message": f"Para {error_label} necesito el ID de la cita.",
+            "error_code": "APPOINTMENT_ID_REQUIRED",
+        }
+    try:
+        appt_uuid = UUID(appointment_id)
+    except ValueError:
+        return {
+            "success": False,
+            "appointment_id": appointment_id,
+            "message": "El identificador de la cita no es válido.",
+            "error_code": "INVALID_UUID",
+        }
+
+    try:
+        from agent.routing.intent_types import IntentType
+        from agent.services.confirmation_service import handle_tool_action
+
+        decision = IntentType.CONFIRM_APPOINTMENT if confirm else IntentType.DECLINE_APPOINTMENT
+        result = await handle_tool_action(appt_uuid, decision)
+
+        error_code: str | None = None
+        if not result.success and result.state_updates:
+            error_code = result.state_updates.get("error_code")
+
+        message = (
+            result.response_text
+            or result.error_message
+            or ("Cita confirmada." if confirm else "Cita cancelada.")
+        )
+        return {
+            "success": result.success,
+            "appointment_id": appointment_id,
+            "message": message,
+            "error_code": error_code,
+        }
+    except Exception as exc:
+        logger.error("_confirm_or_decline error for %s: %s", appointment_id, exc, exc_info=True)
+        return {
+            "success": False,
+            "appointment_id": appointment_id,
+            "message": f"Hubo un problema al {error_label} la cita.",
+            "error_code": "SERVICE_ERROR",
+        }
+
+
+async def _confirm_appointment(customer_phone: str, appointment_id: str) -> dict:
+    return await _confirm_or_decline(customer_phone, appointment_id, confirm=True)
+
+
+async def _decline_appointment(customer_phone: str, appointment_id: str) -> dict:
+    return await _confirm_or_decline(customer_phone, appointment_id, confirm=False)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public @tool wrapper
 # ─────────────────────────────────────────────────────────────────────────────
@@ -330,17 +398,19 @@ async def _reschedule_appointment(
 
 @tool(args_schema=ManageAppointmentsSchema)
 async def manage_appointments(
-    action: Literal["list", "cancel", "reschedule"],
+    action: Literal["list", "cancel", "reschedule", "confirm", "decline"],
     customer_phone: str,
     appointment_id: str | None = None,
     new_date: str | None = None,
     new_time: str | None = None,
 ) -> str:
-    """Manage customer appointments: list upcoming, cancel, or reschedule.
+    """Manage customer appointments: list, cancel, reschedule, confirm or decline.
 
-    Use 'list' to show upcoming appointments, 'cancel' to cancel one (requires
-    appointment_id), or 'reschedule' to change date/time (requires appointment_id,
-    new_date, new_time).
+    Use 'list' to show upcoming appointments, 'cancel' to cancel (requires
+    appointment_id), 'reschedule' to change date/time (requires appointment_id,
+    new_date, new_time), 'confirm' to accept a pending 48h confirmation
+    (requires appointment_id), or 'decline' to reject a pending confirmation
+    (requires appointment_id).
 
     Reprogramar solo cambia fecha y hora. El cambio de estilista no está
     disponible por chat; si el cliente lo pide, escala a un humano.
@@ -367,6 +437,20 @@ async def manage_appointments(
                 customer_phone=customer_phone,
                 appointment_id=appointment_id or "",
                 reason=None,
+            )
+            return result["message"]
+
+        if action == "confirm":
+            result = await _confirm_appointment(
+                customer_phone=customer_phone,
+                appointment_id=appointment_id or "",
+            )
+            return result["message"]
+
+        if action == "decline":
+            result = await _decline_appointment(
+                customer_phone=customer_phone,
+                appointment_id=appointment_id or "",
             )
             return result["message"]
 

@@ -22,8 +22,13 @@ def _make_mock_appointment(
     hours_from_now: float = 72.0,
     stylist_name: str = "María",
     service_names: str = "Corte Dama",
+    status: str = "PENDING",
+    confirmation_sent_at: datetime | None = None,
+    reminder_sent_at: datetime | None = None,
 ) -> MagicMock:
     """Build a minimal mock Appointment for middleware tests."""
+    from database.models import AppointmentStatus
+
     appt = MagicMock()
     appt.id = uuid4()
     appt.start_time = datetime.now(MADRID_TZ) + timedelta(hours=hours_from_now)
@@ -31,6 +36,9 @@ def _make_mock_appointment(
     appt.stylist.name = stylist_name
     appt.service_ids = [uuid4()]
     appt._service_names = service_names  # used by mock
+    appt.status = AppointmentStatus[status]
+    appt.confirmation_sent_at = confirmation_sent_at
+    appt.reminder_sent_at = reminder_sent_at
     return appt
 
 
@@ -158,7 +166,13 @@ class TestAppointmentContextMiddlewareWithAppointments:
 
         # Spanish date keywords (day-of-week)
         spanish_weekdays = [
-            "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"
+            "lunes",
+            "martes",
+            "miércoles",
+            "jueves",
+            "viernes",
+            "sábado",
+            "domingo",
         ]
         assert any(day in new_content for day in spanish_weekdays)
 
@@ -191,4 +205,162 @@ class TestAppointmentContextMiddlewareDbError:
         # No override (passes through original)
         request.override.assert_not_called()
         # Warning should be logged
-        assert any("DB timeout" in r.message or "timeout" in r.message.lower() for r in caplog.records)
+        assert any(
+            "DB timeout" in r.message or "timeout" in r.message.lower() for r in caplog.records
+        )
+
+
+class TestFormatRelativeHelper:
+    """Unit tests for _format_relative — pure function."""
+
+    def test_minutes_ago(self):
+        from agent.middleware.appointment_context import _format_relative
+
+        now = datetime.now(MADRID_TZ)
+        dt = now - timedelta(minutes=45)
+        result = _format_relative(dt, now)
+        assert "45" in result
+        assert "minut" in result
+
+    def test_hours_ago(self):
+        from agent.middleware.appointment_context import _format_relative
+
+        now = datetime.now(MADRID_TZ)
+        dt = now - timedelta(hours=3)
+        result = _format_relative(dt, now)
+        assert "3" in result
+        assert "h" in result or "hora" in result
+
+    def test_days_ago(self):
+        from agent.middleware.appointment_context import _format_relative
+
+        now = datetime.now(MADRID_TZ)
+        dt = now - timedelta(days=2, hours=3)
+        result = _format_relative(dt, now)
+        assert "2" in result
+        assert "día" in result
+
+
+class TestAppointmentContextLifecycleFields:
+    """Block must include Estado, confirmation/reminder status per appointment."""
+
+    @pytest.mark.asyncio
+    async def test_pending_with_confirmation_sent(self):
+        from agent.middleware.appointment_context import AppointmentContextMiddleware
+
+        middleware = AppointmentContextMiddleware()
+        customer_id = uuid4()
+        request = _make_request(customer_id=customer_id)
+        handler = AsyncMock(return_value=MagicMock())
+
+        confirmation_time = datetime.now(MADRID_TZ) - timedelta(hours=1)
+        appt = _make_mock_appointment(
+            hours_from_now=48,
+            status="PENDING",
+            confirmation_sent_at=confirmation_time,
+            reminder_sent_at=None,
+        )
+
+        async def _fake_fetch(cid, limit=5):
+            return [appt]
+
+        async def _fake_service_names(service_ids):
+            return "Corte Dama"
+
+        with (
+            patch(
+                "agent.middleware.appointment_context._fetch_upcoming_appointments",
+                side_effect=_fake_fetch,
+            ),
+            patch(
+                "agent.middleware.appointment_context._get_service_names_for_middleware",
+                side_effect=_fake_service_names,
+            ),
+        ):
+            await middleware.awrap_model_call(request, handler)
+
+        content = handler.call_args[0][0].system_message.content
+        assert "Estado:" in content
+        assert "PENDIENTE" in content
+        assert "confirmación pedida" in content
+        assert "recordatorio pendiente" in content
+
+    @pytest.mark.asyncio
+    async def test_confirmed_with_reminder_sent(self):
+        from agent.middleware.appointment_context import AppointmentContextMiddleware
+
+        middleware = AppointmentContextMiddleware()
+        customer_id = uuid4()
+        request = _make_request(customer_id=customer_id)
+        handler = AsyncMock(return_value=MagicMock())
+
+        reminder_time = datetime.now(MADRID_TZ) - timedelta(hours=2)
+        appt = _make_mock_appointment(
+            hours_from_now=24,
+            status="CONFIRMED",
+            confirmation_sent_at=datetime.now(MADRID_TZ) - timedelta(days=1),
+            reminder_sent_at=reminder_time,
+        )
+
+        async def _fake_fetch(cid, limit=5):
+            return [appt]
+
+        async def _fake_service_names(service_ids):
+            return "Manicura"
+
+        with (
+            patch(
+                "agent.middleware.appointment_context._fetch_upcoming_appointments",
+                side_effect=_fake_fetch,
+            ),
+            patch(
+                "agent.middleware.appointment_context._get_service_names_for_middleware",
+                side_effect=_fake_service_names,
+            ),
+        ):
+            await middleware.awrap_model_call(request, handler)
+
+        content = handler.call_args[0][0].system_message.content
+        assert "Estado:" in content
+        assert "CONFIRMADA" in content
+        assert "recordatorio enviado" in content
+
+    @pytest.mark.asyncio
+    async def test_pending_no_flags_yet(self):
+        """Brand new appointment — no reminder, no confirmation asked."""
+        from agent.middleware.appointment_context import AppointmentContextMiddleware
+
+        middleware = AppointmentContextMiddleware()
+        customer_id = uuid4()
+        request = _make_request(customer_id=customer_id)
+        handler = AsyncMock(return_value=MagicMock())
+
+        appt = _make_mock_appointment(
+            hours_from_now=72,
+            status="PENDING",
+            confirmation_sent_at=None,
+            reminder_sent_at=None,
+        )
+
+        async def _fake_fetch(cid, limit=5):
+            return [appt]
+
+        async def _fake_service_names(service_ids):
+            return "Corte Dama"
+
+        with (
+            patch(
+                "agent.middleware.appointment_context._fetch_upcoming_appointments",
+                side_effect=_fake_fetch,
+            ),
+            patch(
+                "agent.middleware.appointment_context._get_service_names_for_middleware",
+                side_effect=_fake_service_names,
+            ),
+        ):
+            await middleware.awrap_model_call(request, handler)
+
+        content = handler.call_args[0][0].system_message.content
+        assert "PENDIENTE" in content
+        assert "confirmación pendiente" in content
+        assert "recordatorio pendiente" in content

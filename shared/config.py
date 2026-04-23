@@ -123,19 +123,11 @@ class Settings(BaseSettings):
 
     # Fiscal compliance — Spain B2B invoicing
     COMPANY_NIF: str = Field(default="", description="NIF del proveedor (emisor de facturas)")
-    COMPANY_LEGAL_NAME: str = Field(
-        default="", description="Nombre/Razón social del proveedor"
-    )
-    COMPANY_FISCAL_ADDRESS: str = Field(
-        default="", description="Domicilio fiscal del proveedor"
-    )
+    COMPANY_LEGAL_NAME: str = Field(default="", description="Nombre/Razón social del proveedor")
+    COMPANY_FISCAL_ADDRESS: str = Field(default="", description="Domicilio fiscal del proveedor")
     CLIENT_NIF: str = Field(default="", description="NIF del cliente (receptor de facturas)")
-    CLIENT_COMPANY_NAME: str = Field(
-        default="", description="Nombre/Razón social del cliente"
-    )
-    CLIENT_FISCAL_ADDRESS: str = Field(
-        default="", description="Domicilio fiscal del cliente"
-    )
+    CLIENT_COMPANY_NAME: str = Field(default="", description="Nombre/Razón social del cliente")
+    CLIENT_FISCAL_ADDRESS: str = Field(default="", description="Domicilio fiscal del cliente")
     STRIPE_TAX_RATE_ID: str = Field(
         default="", description="Stripe TaxRate ID para IVA 21% (txr_...)"
     )
@@ -241,7 +233,6 @@ class Settings(BaseSettings):
         ),
     )
 
-
     # Application Settings
     TIMEZONE: str = Field(default="Europe/Madrid")
     LOG_LEVEL: str = Field(default="INFO")
@@ -293,6 +284,35 @@ class Settings(BaseSettings):
         ge=1,
         le=24,
         description="Hours before appointment to send reminder for confirmed appointments",
+    )
+
+    # Notifications Worker (appointment reminders + 48h confirmations)
+    NOTIFICATIONS_WORKER_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Feature flag for the notifications worker. When True, the worker polls "
+            "for appointments needing a 24h reminder or 48h confirmation and sends "
+            "WhatsApp templates via Chatwoot. Default False until Meta approves templates."
+        ),
+    )
+    NOTIFICATIONS_POLL_INTERVAL_SECONDS: int = Field(
+        default=60,
+        ge=10,
+        description="Polling interval between notifications-worker ticks.",
+    )
+    WHATSAPP_TEMPLATE_REMINDER_24H: str = Field(
+        default="",
+        description=(
+            "Meta-approved WhatsApp template name for the 24h-before-appointment reminder. "
+            "Populated post template approval."
+        ),
+    )
+    WHATSAPP_TEMPLATE_CONFIRM_48H: str = Field(
+        default="",
+        description=(
+            "Meta-approved WhatsApp template name for the 48h confirmation request. "
+            "Populated post template approval."
+        ),
     )
 
     # Admin Panel Authentication

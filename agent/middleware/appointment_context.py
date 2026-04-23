@@ -52,6 +52,50 @@ def _format_date_spanish(dt: datetime) -> str:
     return f"{_WEEKDAYS_ES[dt.weekday()]} {dt.day} de {_MONTHS_ES[dt.month - 1]}"
 
 
+def _format_relative(past_dt: datetime, now: datetime) -> str:
+    """Format a past datetime relative to now in natural Spanish.
+
+    Returns strings like 'hace 5 minutos', 'hace 3h', 'hace 2 días'.
+    Assumes past_dt <= now.
+    """
+    delta = now - past_dt
+    total_seconds = int(delta.total_seconds())
+    if total_seconds < 60:
+        return "hace unos segundos"
+    minutes = total_seconds // 60
+    if minutes < 60:
+        return f"hace {minutes} minutos" if minutes != 1 else "hace 1 minuto"
+    hours = minutes // 60
+    if hours < 24:
+        return f"hace {hours}h"
+    days = hours // 24
+    return f"hace {days} días" if days != 1 else "hace 1 día"
+
+
+def _format_lifecycle_line(appt, now: datetime) -> str:
+    """Render 'Estado: <STATUS> · confirmación <...> · recordatorio <...>' line."""
+    from database.models import AppointmentStatus
+
+    status_label = {
+        AppointmentStatus.PENDING: "PENDIENTE",
+        AppointmentStatus.CONFIRMED: "CONFIRMADA",
+    }.get(appt.status, str(appt.status.name if hasattr(appt.status, "name") else appt.status))
+
+    confirmation_sent_at = getattr(appt, "confirmation_sent_at", None)
+    if confirmation_sent_at is None:
+        confirmation_part = "confirmación pendiente"
+    else:
+        confirmation_part = f"confirmación pedida {_format_relative(confirmation_sent_at, now)}"
+
+    reminder_sent_at = getattr(appt, "reminder_sent_at", None)
+    if reminder_sent_at is None:
+        reminder_part = "recordatorio pendiente"
+    else:
+        reminder_part = f"recordatorio enviado {_format_relative(reminder_sent_at, now)}"
+
+    return f"Estado: {status_label} · {confirmation_part} · {reminder_part}"
+
+
 async def _get_service_names_for_middleware(service_ids: list[UUID]) -> str:
     """Fetch service names joined with ' + '. Returns 'servicios' on error."""
     if not service_ids:
@@ -112,6 +156,7 @@ def _format_block(appointments: list) -> str:
     Note: service_names must have been pre-fetched by the caller (async context).
     This helper is called with pre-fetched _service_names attribute per appointment.
     """
+    now = datetime.now(MADRID_TZ)
     lines = ["\n\n## Citas próximas"]
     for appt in appointments:
         appt_time = appt.start_time.astimezone(MADRID_TZ)
@@ -119,12 +164,14 @@ def _format_block(appointments: list) -> str:
         hora = appt_time.strftime("%H:%M")
         stylist_name = appt.stylist.name if appt.stylist else "estilista"
         service_names = getattr(appt, "_injected_service_names", "servicios")
+        lifecycle = _format_lifecycle_line(appt, now)
         lines.append(
             f"- ID: {appt.id}\n"
             f"  Fecha: {fecha}\n"
             f"  Hora: {hora}\n"
             f"  Estilista: {stylist_name}\n"
-            f"  Servicio: {service_names}"
+            f"  Servicio: {service_names}\n"
+            f"  {lifecycle}"
         )
     return "\n".join(lines)
 

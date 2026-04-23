@@ -1124,3 +1124,188 @@ async def handle_confirmation_response(
         message_text=message_text,
         now=now,
     )
+
+
+async def handle_tool_action(
+    appointment_id: UUID,
+    decision: IntentType,
+) -> ConfirmationResult:
+    """Tool-driven entry point. Bypasses keyword parsing and dispatches to
+    confirm/decline on a specific appointment identified by UUID.
+
+    Args:
+        appointment_id: UUID of the appointment to confirm or decline.
+        decision: IntentType.CONFIRM_APPOINTMENT or IntentType.DECLINE_APPOINTMENT.
+
+    Returns:
+        ConfirmationResult. On failure, `state_updates` carries an `error_code`:
+        - APPOINTMENT_NOT_FOUND
+        - ALREADY_FINAL
+        - UNSUPPORTED_DECISION
+    """
+    now = datetime.now(MADRID_TZ)
+
+    if decision not in (IntentType.CONFIRM_APPOINTMENT, IntentType.DECLINE_APPOINTMENT):
+        return ConfirmationResult(
+            success=False,
+            response_text="Acción no soportada.",
+            error_message="Acción no soportada.",
+            state_updates={"error_code": "UNSUPPORTED_DECISION"},
+        )
+
+    try:
+        async with get_async_session() as session:
+            result = await session.execute(
+                select(Appointment)
+                .options(
+                    selectinload(Appointment.stylist),
+                    selectinload(Appointment.customer),
+                )
+                .where(Appointment.id == appointment_id)
+            )
+            appt = result.scalars().first()
+
+            if appt is None:
+                logger.warning(f"handle_tool_action: appointment {appointment_id} not found")
+                return ConfirmationResult(
+                    success=False,
+                    appointment_id=None,
+                    response_text="No encontré esa cita.",
+                    error_message="No encontré esa cita.",
+                    state_updates={"error_code": "APPOINTMENT_NOT_FOUND"},
+                )
+
+            if appt.status not in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
+                logger.info(
+                    f"handle_tool_action: appointment {appointment_id} already final "
+                    f"(status={appt.status})"
+                )
+                return ConfirmationResult(
+                    success=False,
+                    appointment_id=appt.id,
+                    response_text="Esa cita ya no está activa.",
+                    error_message="Esa cita ya no está activa.",
+                    state_updates={"error_code": "ALREADY_FINAL"},
+                )
+
+            appt_time = appt.start_time.astimezone(MADRID_TZ)
+            fecha = format_date_spanish(appt_time)
+            hora = appt_time.strftime("%H:%M")
+            stylist_name = appt.stylist.name if appt.stylist else "tu estilista"
+            service_names = await _get_service_names(appt.service_ids)
+            customer_first_name = (
+                (appt.customer.first_name if appt.customer else None)
+                or appt.first_name
+                or "Cliente"
+            )
+
+            if decision == IntentType.CONFIRM_APPOINTMENT:
+                appt.status = AppointmentStatus.CONFIRMED
+                await session.commit()
+
+                if appt.google_calendar_event_id:
+                    try:
+                        await update_gcal_event_status(
+                            stylist_id=appt.stylist_id,
+                            event_id=appt.google_calendar_event_id,
+                            new_status="confirmed",
+                            customer_name=customer_first_name,
+                            service_names=service_names,
+                        )
+                    except Exception as gcal_error:
+                        logger.warning(
+                            f"GCal update failed for appointment {appt.id} "
+                            f"(DB already CONFIRMED): {gcal_error}"
+                        )
+
+                notification = Notification(
+                    type=NotificationType.CONFIRMATION_RECEIVED,
+                    title=f"{customer_first_name} confirmó su cita",
+                    message=f"Cita del {fecha} a las {hora} confirmada.",
+                    entity_type="appointment",
+                    entity_id=appt.id,
+                )
+                session.add(notification)
+                await session.commit()
+
+                response_text = (
+                    f"¡Perfecto! Tu cita del {fecha} a las {hora} con {stylist_name} "
+                    f"queda confirmada. ¡Te esperamos!"
+                )
+                return ConfirmationResult(
+                    success=True,
+                    appointment_id=appt.id,
+                    response_type="template",
+                    response_text=response_text,
+                    appointment_date=fecha,
+                    appointment_time=hora,
+                    stylist_name=stylist_name,
+                    service_names=service_names,
+                )
+
+            # DECLINE_APPOINTMENT — enforce 48h cancellation window.
+            hours_until = (appt.start_time.astimezone(MADRID_TZ) - now).total_seconds() / 3600
+            if hours_until < 48:
+                logger.info(
+                    f"handle_tool_action: decline rejected for {appointment_id} "
+                    f"(only {hours_until:.1f}h until appointment, <48h window)"
+                )
+                return ConfirmationResult(
+                    success=False,
+                    appointment_id=appt.id,
+                    response_text=(
+                        "Fuera de la ventana de 48h. Escalamos a un humano para ayudarte."
+                    ),
+                    error_message="Cancellation outside 48h window",
+                    state_updates={"error_code": "WINDOW"},
+                )
+
+            appt.status = AppointmentStatus.CANCELLED
+            appt.cancelled_at = now
+            await session.commit()
+
+            if appt.google_calendar_event_id:
+                try:
+                    await delete_gcal_event(
+                        stylist_id=appt.stylist_id,
+                        event_id=appt.google_calendar_event_id,
+                    )
+                except Exception as gcal_error:
+                    logger.warning(
+                        f"GCal delete failed for appointment {appt.id} "
+                        f"(DB already CANCELLED): {gcal_error}"
+                    )
+
+            notification = Notification(
+                type=NotificationType.APPOINTMENT_CANCELLED,
+                title=f"{customer_first_name} canceló su cita",
+                message=f"Cita del {fecha} a las {hora} cancelada por el cliente.",
+                entity_type="appointment",
+                entity_id=appt.id,
+            )
+            session.add(notification)
+            await session.commit()
+
+            response_text = (
+                f"Entendido. Tu cita del {fecha} a las {hora} ha sido cancelada. "
+                f"Si quieres agendar otra, dímelo."
+            )
+            return ConfirmationResult(
+                success=True,
+                appointment_id=appt.id,
+                response_type="template",
+                response_text=response_text,
+                appointment_date=fecha,
+                appointment_time=hora,
+                stylist_name=stylist_name,
+                service_names=service_names,
+            )
+
+    except Exception as exc:
+        logger.exception(f"handle_tool_action failed for {appointment_id}: {exc}")
+        return ConfirmationResult(
+            success=False,
+            response_text="Ocurrió un error al procesar la cita.",
+            error_message="Ocurrió un error al procesar la cita.",
+            state_updates={"error_code": "SERVICE_ERROR"},
+        )
