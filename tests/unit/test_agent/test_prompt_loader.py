@@ -2,7 +2,24 @@
 
 Asserts that load_system_prompt() contains "Flujo de reserva" and
 all 7 step anchors from the booking_flow.md script.
+
+Also verifies appointment_management_flow.md is included.
 """
+
+
+def test_includes_appointment_management_flow():
+    """load_system_prompt() must include the ## Citas próximas guidance marker."""
+    from agent.prompts.loader import load_system_prompt
+
+    load_system_prompt.cache_clear()
+    prompt = load_system_prompt()
+
+    assert "## Citas próximas" in prompt, (
+        "System prompt must contain '## Citas próximas' guidance from appointment_management_flow.md"
+    )
+    assert "manage_appointments" in prompt, (
+        "System prompt must reference 'manage_appointments' tool"
+    )
 
 
 def test_includes_booking_flow():

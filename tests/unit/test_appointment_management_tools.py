@@ -37,16 +37,17 @@ class TestManageAppointmentsImportable:
 
     def test_manage_appointments_schema_has_action(self):
         """ManageAppointmentsSchema must have an 'action' field."""
+
         from agent.tools.manage_appointments_tool import ManageAppointmentsSchema
-        import inspect
 
         fields = ManageAppointmentsSchema.model_fields
         assert "action" in fields, "ManageAppointmentsSchema missing 'action' field"
 
     def test_manage_appointments_schema_action_has_literal_type(self):
         """action field must be a Literal with list/cancel/reschedule values."""
-        from agent.tools.manage_appointments_tool import ManageAppointmentsSchema
         import typing
+
+        from agent.tools.manage_appointments_tool import ManageAppointmentsSchema
 
         annotation = ManageAppointmentsSchema.model_fields["action"].annotation
         origin = typing.get_origin(annotation)

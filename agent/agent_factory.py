@@ -17,6 +17,7 @@ from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
 
 from agent.llm import get_llm
+from agent.middleware.appointment_context import AppointmentContextMiddleware
 from agent.middleware.customer_resolve import CustomerResolveMiddleware
 from agent.middleware.disclosure import DisclosureMiddleware
 from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
@@ -61,6 +62,7 @@ def build_conversation_agent(
         middleware=[
             DisclosureMiddleware(),
             CustomerResolveMiddleware(),
+            AppointmentContextMiddleware(),  # runs after CustomerResolve (reads customer_id)
             DynamicPromptMiddleware(),
             SummarizeMiddleware(window=20, keep_tail=10),
         ],
