@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import SystemMessage
@@ -30,7 +31,14 @@ def _format_hours(hours: dict[str, str]) -> str:
 
 
 class DynamicPromptMiddleware(AgentMiddleware):
-    """Injects catalog, business hours, and active booking snapshot into system prompt."""
+    """Injects catalog, business hours, and active booking snapshot into system prompt.
+
+    Async-only: catalog and business-hours loaders are async I/O against the
+    DB. Sync variant would require a duplicate sync DB path that the runtime
+    never exercises. Opt out of the parity guardrail.
+    """
+
+    _allow_single_variant: ClassVar[bool] = True
 
     async def awrap_model_call(
         self,

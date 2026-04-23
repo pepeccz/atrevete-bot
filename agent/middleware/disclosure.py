@@ -9,6 +9,7 @@ Hook: awrap_model_call — intercepts after model produces response.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage
@@ -21,7 +22,15 @@ DISCLOSURE_TEXT = (
 
 
 class DisclosureMiddleware(AgentMiddleware):
-    """Prepend EU AI Act disclosure text on the first turn only."""
+    """Prepend EU AI Act disclosure text on the first turn only.
+
+    Async-only: the agent runtime invokes this middleware exclusively via
+    ``ainvoke()``. Implementing a sync ``wrap_model_call`` variant would be
+    dead code (no sync dispatch path exists in production). Opt out of the
+    parity guardrail via ``_allow_single_variant``.
+    """
+
+    _allow_single_variant: ClassVar[bool] = True
 
     async def awrap_model_call(
         self,

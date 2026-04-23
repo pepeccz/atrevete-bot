@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import AnyMessage, SystemMessage
@@ -41,7 +42,14 @@ async def _summarize_messages(messages: list[AnyMessage]) -> str:
 
 
 class SummarizeMiddleware(AgentMiddleware):
-    """Collapse old messages into a summary when history grows too long."""
+    """Collapse old messages into a summary when history grows too long.
+
+    Async-only: the summarizer calls ``llm.ainvoke()`` against the auxiliary
+    LLM. A sync variant would require a sync LLM client that the runtime
+    never uses. Opt out of the parity guardrail.
+    """
+
+    _allow_single_variant: ClassVar[bool] = True
 
     def __init__(self, window: int = 20, keep_tail: int = 10) -> None:
         self.window = window

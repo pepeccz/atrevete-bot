@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import SystemMessage
@@ -50,7 +51,14 @@ async def _lookup_customer(phone: str) -> dict | None:
 
 
 class CustomerResolveMiddleware(AgentMiddleware):
-    """Resolve customer from phone and inject into state + system prompt."""
+    """Resolve customer from phone and inject into state + system prompt.
+
+    Async-only: the customer lookup is async SQLAlchemy against the DB. A
+    sync variant would require a duplicate sync DB path that the runtime
+    never exercises. Opt out of the parity guardrail.
+    """
+
+    _allow_single_variant: ClassVar[bool] = True
 
     async def awrap_model_call(
         self,
