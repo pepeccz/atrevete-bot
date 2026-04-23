@@ -59,14 +59,12 @@ class CustomerResolveMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         state = request.state or {}
 
-        # Skip if customer_id already resolved
-        if state.get("customer_id") is not None:
-            return await handler(request)
-
         phone = state.get("customer_phone", "")
         if not phone:
             return await handler(request)
 
+        # Always do lookup when phone exists — ensures ## Cliente block is present for booking_flow.md
+        # (previously skipped if customer_id already set, but the flow depends on the block being there)
         customer = await _lookup_customer(phone)
 
         if customer is None:
@@ -77,7 +75,7 @@ class CustomerResolveMiddleware(AgentMiddleware):
             modified_request = request.override(system_message=new_system)
             return await handler(modified_request)
 
-        # Build ## Cliente block for the system prompt
+        # Build ## Cliente block for known customers
         returning_label = "Sí" if customer["is_returning"] else "No"
         customer_block = (
             f"\n\n## Cliente\n"
@@ -88,12 +86,12 @@ class CustomerResolveMiddleware(AgentMiddleware):
         original_content = request.system_message.content if request.system_message else ""
         new_system = SystemMessage(content=original_content + customer_block)
 
-        # Inject state delta
-        new_state = {
-            **state,
-            "customer_id": customer["id"],
-            "customer_name": customer["name"],
-        }
+        # Inject state delta only if not already set
+        new_state = {**state}
+        if state.get("customer_id") is None:
+            new_state["customer_id"] = customer["id"]
+        if state.get("customer_name") is None:
+            new_state["customer_name"] = customer["name"]
         modified_request = request.override(system_message=new_system, state=new_state)
 
         return await handler(modified_request)
