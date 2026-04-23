@@ -48,6 +48,9 @@ async def manage_appointments(
     Use 'list' to show upcoming appointments, 'cancel' to cancel one (requires
     appointment_id), or 'reschedule' to change date/time (requires appointment_id,
     new_date, new_time).
+
+    Reprogramar solo cambia fecha y hora. El cambio de estilista no está
+    disponible por chat; si el cliente lo pide, escala a un humano.
     """
     try:
         if action == "list":

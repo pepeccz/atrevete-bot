@@ -42,6 +42,39 @@ shutdown_event = asyncio.Event()
 # Global batcher instance (initialized in subscribe_to_incoming_messages)
 batcher: MessageBatcher | None = None
 
+_PHONE_GUARD_REPLY = "No pude identificar tu número. Un compañero te contactará en breve."
+
+
+def _is_phone_empty(phone: str | None) -> bool:
+    """Treat None, empty, and whitespace-only phone as empty."""
+    return not (phone or "").strip()
+
+
+async def _maybe_reject_empty_phone(conversation_id: str, customer_phone: str | None) -> bool:
+    """Short-circuit batch processing when phone is missing.
+
+    Returns True and sends a canned outgoing reply when phone is empty;
+    returns False when phone is valid and the caller should continue.
+    """
+    if not _is_phone_empty(customer_phone):
+        return False
+    logger.warning(
+        "Phone guard tripped — skipping graph invoke",
+        extra={
+            "event": "phone_guard_tripped",
+            "conversation_id": conversation_id,
+        },
+    )
+    await publish_to_channel(
+        "outgoing_messages",
+        {
+            "conversation_id": conversation_id,
+            "customer_phone": customer_phone or "",
+            "message": _PHONE_GUARD_REPLY,
+        },
+    )
+    return True
+
 
 async def subscribe_to_incoming_messages():
     """
@@ -128,6 +161,10 @@ async def subscribe_to_incoming_messages():
             customer_phone = last_msg.get("customer_phone")
             # Prefer sender_name (new field) over customer_name (deprecated)
             sender_name = last_msg.get("sender_name") or last_msg.get("customer_name")
+
+            # Pre-graph phone guard: reject empty/whitespace phone before invoke.
+            if await _maybe_reject_empty_phone(conversation_id, customer_phone):
+                return
 
             # Check if any message was from audio transcription
             has_audio = any(msg.get("is_audio_transcription") for msg in messages)

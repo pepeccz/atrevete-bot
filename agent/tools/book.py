@@ -8,6 +8,7 @@ Returns JSON-serialized ToolResponse.
 """
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 from uuid import UUID, uuid4
@@ -17,6 +18,27 @@ from langchain_core.tools import tool
 from agent.tools.schemas import ToolResponse
 
 logger = logging.getLogger(__name__)
+
+_NOTES_MAX_LEN = 280
+_NOTES_CTRL_RE = re.compile(r"[\x00-\x08\x0B-\x1F\x7F-\x9F]")
+_NOTES_WS_RE = re.compile(r"\s+")
+
+
+def _sanitize_notes(raw: str | None) -> str | None:
+    """Strip control chars, collapse whitespace, cap length at 280 with ellipsis.
+
+    Returns None for None/empty/whitespace-only input. Preserves \\t and \\n so
+    they collapse to a single space via _NOTES_WS_RE rather than vanish silently.
+    """
+    if raw is None:
+        return None
+    without_ctrl = _NOTES_CTRL_RE.sub("", raw)
+    collapsed = _NOTES_WS_RE.sub(" ", without_ctrl).strip()
+    if not collapsed:
+        return None
+    if len(collapsed) > _NOTES_MAX_LEN:
+        return collapsed[: _NOTES_MAX_LEN - 1] + "…"
+    return collapsed
 
 
 def _build_gcal_link(
@@ -148,6 +170,9 @@ async def book(
     from agent.services.gcal_push_service import fire_and_forget_push_appointment
     from database.connection import get_async_session
     from database.models import Appointment, AppointmentStatus, Service, Stylist
+
+    # --- Sanitize customer-provided notes before any downstream use ---
+    notes = _sanitize_notes(notes)
 
     # --- Validate full name ---
     try:

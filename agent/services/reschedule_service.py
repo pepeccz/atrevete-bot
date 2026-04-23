@@ -131,6 +131,8 @@ class RescheduleResult:
         old_start_time: Original start time before the update.
         new_start_time: New start time after the update.
         new_stylist_id: The stylist UUID after the update (may be unchanged).
+            Reserved for admin-panel callers. The chat tool ``manage_appointments``
+            does NOT expose this parameter.
         error: Spanish-language error message when success=False.
         within_window: True when blocked by the 48h advance-notice rule.
         slot_taken: True when the requested slot is no longer available.
@@ -334,6 +336,8 @@ async def execute_reschedule(
         appointment_id: UUID of the appointment to reschedule.
         new_start_time: New start time (timezone-aware).
         new_stylist_id: New stylist UUID. When None, the existing stylist is kept.
+            Reserved for admin-panel callers. The chat tool ``manage_appointments``
+            does NOT expose this parameter.
 
     Returns:
         RescheduleResult with success=True on DB commit, success=False otherwise.
