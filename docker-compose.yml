@@ -237,7 +237,10 @@ services:
         condition: service_healthy
     networks:
       - atrevete-network
-    restart: unless-stopped
+    # on-failure so an intentional exit 0 (feature flag OFF) stays stopped
+    # instead of looping under `unless-stopped`. When flag flips to true the
+    # worker runs main_loop forever and this policy keeps it restarting on crash.
+    restart: on-failure
     healthcheck:
       test: ["CMD", "python3", "-c", "import json,time,pathlib,sys; p=pathlib.Path('/tmp/notifications_worker_heartbeat.json'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime<180 else 1)"]
       interval: 60s
