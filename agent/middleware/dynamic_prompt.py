@@ -15,7 +15,6 @@ from collections.abc import Awaitable, Callable
 from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
-from langchain_core.messages import SystemMessage
 
 from agent.prompts.business_hours import load_business_hours_snapshot
 from agent.prompts.catalog_builder import build_catalog_prompt_section
@@ -27,7 +26,14 @@ def _format_hours(hours: dict[str, str]) -> str:
     if not hours:
         return ""
     lines = "\n".join(f"  {day}: {val}" for day, val in sorted(hours.items()))
-    return f"## Horarios\n{lines}"
+    body = f"## Horarios\n{lines}"
+    return f"<business_hours>\n{body}\n</business_hours>"
+
+
+def _format_catalog(catalog: str) -> str:
+    if not catalog:
+        return ""
+    return f"<catalog>\n{catalog}\n</catalog>"
 
 
 class DynamicPromptMiddleware(AgentMiddleware):
@@ -54,20 +60,22 @@ class DynamicPromptMiddleware(AgentMiddleware):
 
         try:
             hours = await load_business_hours_snapshot()
-            hours_section = _format_hours(hours)
         except Exception:
             logger.warning("Could not load business hours", exc_info=True)
-            hours_section = ""
+            hours = {}
 
-        # --- Compose new system message ---
-        original_content = request.system_message.content if request.system_message else ""
-        injected_parts = [p for p in [catalog_section, hours_section] if p]
-        if injected_parts:
-            injected_block = "\n\n".join(injected_parts)
-            new_content = f"{original_content}\n\n{injected_block}"
-        else:
-            new_content = original_content
+        # --- Write _slot_* keys (no system_message mutation) ---
+        state = request.state or {}
+        new_state = {**state}
 
-        modified_request = request.override(system_message=SystemMessage(content=new_content))
+        catalog_slot = _format_catalog(catalog_section)
+        if catalog_slot:
+            new_state["_slot_catalog"] = catalog_slot
+
+        hours_slot = _format_hours(hours)
+        if hours_slot:
+            new_state["_slot_business_hours"] = hours_slot
+
+        modified_request = request.override(state=new_state)
 
         return await handler(modified_request)

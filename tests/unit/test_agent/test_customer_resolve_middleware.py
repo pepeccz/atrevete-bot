@@ -60,13 +60,13 @@ async def test_injects_phone_when_db_miss():
 
     assert len(received_requests) == 1, "handler must be called exactly once"
     passed_req = received_requests[0]
-    system_content = passed_req.system_message.content
+    slot = passed_req.state.get("_slot_customer", "")
 
-    assert "## Cliente" in system_content, (
-        "System prompt must contain '## Cliente' block for new customers"
+    assert "<customer>" in slot, (
+        "_slot_customer must contain <customer> XML tag for new customers"
     )
-    assert f"Teléfono: {phone}" in system_content, (
-        f"System prompt must contain 'Teléfono: {phone}'"
+    assert f"Teléfono: {phone}" in slot, (
+        f"_slot_customer must contain 'Teléfono: {phone}'"
     )
 
 
@@ -94,9 +94,9 @@ async def test_does_not_inject_phone_block_when_phone_absent():
         await middleware.awrap_model_call(request, handler)
 
     passed_req = received_requests[0]
-    system_content = passed_req.system_message.content
-    assert "## Cliente" not in system_content, (
-        "## Cliente block must NOT be injected when phone is absent"
+    slot = passed_req.state.get("_slot_customer", "")
+    assert "<customer>" not in slot, (
+        "_slot_customer must NOT be written when phone is absent"
     )
 
 

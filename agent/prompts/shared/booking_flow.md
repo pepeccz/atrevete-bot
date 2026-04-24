@@ -20,7 +20,7 @@ Si el nombre coincide con más de una variante, pregunta UNA vez para quién es.
 
 ### Paso 3 — Estilista
 **Entrada**: Paso 2 resuelto.
-**Acción**: Lista los nombres del bloque `## Estilistas` del catálogo filtrados por categoría (Peluquería vs Estética). Solo se recoge preferencia; NO afirmes disponibilidad.
+**Acción**: Lista los nombres del bloque `## Estilistas` dentro de `<catalog>` filtrados por categoría (Peluquería vs Estética). Solo se recoge preferencia; NO afirmes disponibilidad.
 Si no tiene preferencia, ofrece "la estilista con disponibilidad más próxima" y usa `stylist_id=null`.
 **Gate al paso 4**: preferencia registrada.
 

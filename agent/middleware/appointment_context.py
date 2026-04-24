@@ -24,7 +24,6 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
-from langchain_core.messages import SystemMessage
 
 from shared.date_format import format_date_spanish as _format_date_spanish
 
@@ -132,13 +131,13 @@ async def _fetch_upcoming_appointments(customer_id: UUID, limit: int = 5) -> lis
 
 
 def _format_block(appointments: list) -> str:
-    """Build the ## Citas próximas prompt block from a list of Appointment objects.
+    """Build the <upcoming_appointments> XML slot from a list of Appointment objects.
 
     Note: service_names must have been pre-fetched by the caller (async context).
     This helper is called with pre-fetched _service_names attribute per appointment.
     """
     now = datetime.now(MADRID_TZ)
-    lines = ["\n\n## Citas próximas"]
+    lines = []
     for appt in appointments:
         appt_time = appt.start_time.astimezone(MADRID_TZ)
         fecha = _format_date_spanish(appt_time)
@@ -154,7 +153,8 @@ def _format_block(appointments: list) -> str:
             f"  Servicio: {service_names}\n"
             f"  {lifecycle}"
         )
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    return f"<upcoming_appointments>\n{body}\n</upcoming_appointments>"
 
 
 class AppointmentContextMiddleware(AgentMiddleware):
@@ -198,10 +198,9 @@ class AppointmentContextMiddleware(AgentMiddleware):
             )
             appt._injected_service_names = service_names
 
-        block = _format_block(appointments)
-        original_content = request.system_message.content if request.system_message else ""
-        new_system = SystemMessage(content=original_content + block)
-        modified_request = request.override(system_message=new_system)
+        slot = _format_block(appointments)
+        new_state = {**state, "_slot_upcoming_appointments": slot}
+        modified_request = request.override(state=new_state)
 
         logger.info(
             "AppointmentContextMiddleware: injected %d appointments for customer_id=%s",

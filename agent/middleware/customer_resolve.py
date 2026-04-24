@@ -15,7 +15,6 @@ from collections.abc import Awaitable, Callable
 from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
-from langchain_core.messages import SystemMessage
 
 logger = logging.getLogger(__name__)
 
@@ -76,30 +75,28 @@ class CustomerResolveMiddleware(AgentMiddleware):
         customer = await _lookup_customer(phone)
 
         if customer is None:
-            # Inject phone-only ## Cliente block for new (unknown) customers
-            phone_block = f"\n\n## Cliente\n- Teléfono: {phone}"
-            original_content = request.system_message.content if request.system_message else ""
-            new_system = SystemMessage(content=original_content + phone_block)
-            modified_request = request.override(system_message=new_system)
+            # Phone-only <customer> block for new (unknown) customers
+            body = f"- Teléfono: {phone}"
+            slot = f"<customer>\n{body}\n</customer>"
+            new_state = {**state, "_slot_customer": slot}
+            modified_request = request.override(state=new_state)
             return await handler(modified_request)
 
-        # Build ## Cliente block for known customers
+        # Build <customer> block for known customers
         returning_label = "Sí" if customer["is_returning"] else "No"
-        customer_block = (
-            f"\n\n## Cliente\n"
+        body = (
             f"- Nombre: {customer['name']}\n"
             f"- Teléfono: {phone}\n"
             f"- Cliente recurrente: {returning_label}"
         )
-        original_content = request.system_message.content if request.system_message else ""
-        new_system = SystemMessage(content=original_content + customer_block)
+        slot = f"<customer>\n{body}\n</customer>"
 
         # Inject state delta only if not already set
-        new_state = {**state}
+        new_state = {**state, "_slot_customer": slot}
         if state.get("customer_id") is None:
             new_state["customer_id"] = customer["id"]
         if state.get("customer_name") is None:
             new_state["customer_name"] = customer["name"]
-        modified_request = request.override(system_message=new_system, state=new_state)
+        modified_request = request.override(state=new_state)
 
         return await handler(modified_request)

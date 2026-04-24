@@ -1,4 +1,4 @@
-"""DynamicPromptMiddleware freshness test — Task 8.3.
+"""DynamicPromptMiddleware freshness test — updated for slot-based architecture (Tranche B).
 
 Verifies that catalog_builder is called EACH turn (per-invocation),
 NOT cached at graph compile time. The catalog content must differ
@@ -19,6 +19,21 @@ class _FakeResponse:
         self.structured_response = None
 
 
+class FakeRequest:
+    def __init__(self, base="base prompt", state=None):
+        self.system_message = SystemMessage(content=base)
+        self._state = dict(state or {"booking": None, "messages": []})
+
+    @property
+    def state(self):
+        return self._state
+
+    def override(self, **kwargs):
+        new = FakeRequest(state=kwargs.get("state", self._state))
+        new.system_message = kwargs.get("system_message", self.system_message)
+        return new
+
+
 @pytest.mark.asyncio
 async def test_catalog_called_per_turn_not_cached():
     """catalog_builder must be called on EACH middleware invocation (not cached)."""
@@ -33,21 +48,10 @@ async def test_catalog_called_per_turn_not_cached():
         call_count += 1
         return val
 
-    captured_systems = []
-
-    class FakeRequest:
-        def __init__(self, base="base prompt"):
-            self.system_message = SystemMessage(content=base)
-            self.state = {"booking": None, "messages": []}
-
-        def override(self, **kwargs):
-            new = FakeRequest()
-            for k, v in kwargs.items():
-                setattr(new, k, v)
-            return new
+    captured_states: list[dict] = []
 
     async def capturing_handler(req):
-        captured_systems.append(req.system_message.content)
+        captured_states.append(dict(req.state))
         return _FakeResponse(AIMessage(content="ok"))
 
     with (
@@ -68,18 +72,14 @@ async def test_catalog_called_per_turn_not_cached():
         await mw.awrap_model_call(FakeRequest(), capturing_handler)
 
     assert call_count == 2, f"catalog_builder should be called twice, got {call_count}"
+    assert len(captured_states) == 2
 
-    assert len(captured_systems) == 2
-    first_system = captured_systems[0]
-    second_system = captured_systems[1]
+    first_catalog = captured_states[0].get("_slot_catalog", "")
+    second_catalog = captured_states[1].get("_slot_catalog", "")
 
-    assert (
-        "CATALOG_V1" in first_system
-    ), f"First call should inject CATALOG_V1. Got: {first_system!r}"
-    assert (
-        "CATALOG_V2" in second_system
-    ), f"Second call should inject CATALOG_V2. Got: {second_system!r}"
-    assert first_system != second_system, "System prompts must differ between turns (not cached)"
+    assert "CATALOG_V1" in first_catalog, f"First call should inject CATALOG_V1. Got: {first_catalog!r}"
+    assert "CATALOG_V2" in second_catalog, f"Second call should inject CATALOG_V2. Got: {second_catalog!r}"
+    assert first_catalog != second_catalog, "Catalog slots must differ between turns (not cached)"
 
 
 @pytest.mark.asyncio
@@ -94,21 +94,10 @@ async def test_middleware_not_stateful_between_instances():
         call_count += 1
         return f"CATALOG_CALL_{call_count}"
 
-    captured = []
-
-    class FakeRequest:
-        def __init__(self):
-            self.system_message = SystemMessage(content="base")
-            self.state = {"booking": None, "messages": []}
-
-        def override(self, **kwargs):
-            new = FakeRequest()
-            for k, v in kwargs.items():
-                setattr(new, k, v)
-            return new
+    captured: list[str] = []
 
     async def handler(req):
-        captured.append(req.system_message.content)
+        captured.append(req.state.get("_slot_catalog", ""))
         return _FakeResponse(AIMessage(content="ok"))
 
     with (

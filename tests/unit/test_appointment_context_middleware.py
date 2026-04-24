@@ -152,29 +152,23 @@ class TestAppointmentContextMiddlewareWithAppointments:
         handler.assert_called_once()
         called_request = handler.call_args[0][0]
 
-        # The system_message content should include the block header
-        new_content = called_request.system_message.content
-        assert "## Citas próximas" in new_content
+        # The slot must contain the upcoming_appointments XML block
+        slot = called_request.state.get("_slot_upcoming_appointments", "")
+        assert "<upcoming_appointments>" in slot
 
         # Both appointment UUIDs should appear
-        assert str(appt1_id) in new_content
-        assert str(appt2_id) in new_content
+        assert str(appt1_id) in slot
+        assert str(appt2_id) in slot
 
         # Stylist names appear
-        assert "María" in new_content
-        assert "Ana" in new_content
+        assert "María" in slot
+        assert "Ana" in slot
 
         # Spanish date keywords (day-of-week)
         spanish_weekdays = [
-            "lunes",
-            "martes",
-            "miércoles",
-            "jueves",
-            "viernes",
-            "sábado",
-            "domingo",
+            "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo",
         ]
-        assert any(day in new_content for day in spanish_weekdays)
+        assert any(day in slot for day in spanish_weekdays)
 
 
 class TestAppointmentContextMiddlewareDbError:
@@ -279,7 +273,7 @@ class TestAppointmentContextLifecycleFields:
         ):
             await middleware.awrap_model_call(request, handler)
 
-        content = handler.call_args[0][0].system_message.content
+        content = handler.call_args[0][0].state.get("_slot_upcoming_appointments", "")
         assert "Estado:" in content
         assert "PENDIENTE" in content
         assert "confirmación pedida" in content
@@ -320,7 +314,7 @@ class TestAppointmentContextLifecycleFields:
         ):
             await middleware.awrap_model_call(request, handler)
 
-        content = handler.call_args[0][0].system_message.content
+        content = handler.call_args[0][0].state.get("_slot_upcoming_appointments", "")
         assert "Estado:" in content
         assert "CONFIRMADA" in content
         assert "recordatorio enviado" in content
@@ -360,7 +354,7 @@ class TestAppointmentContextLifecycleFields:
         ):
             await middleware.awrap_model_call(request, handler)
 
-        content = handler.call_args[0][0].system_message.content
+        content = handler.call_args[0][0].state.get("_slot_upcoming_appointments", "")
         assert "PENDIENTE" in content
         assert "confirmación pendiente" in content
         assert "recordatorio pendiente" in content

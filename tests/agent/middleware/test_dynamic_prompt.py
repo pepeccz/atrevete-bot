@@ -1,4 +1,4 @@
-"""Tests for DynamicPromptMiddleware — adapted for create_agent rewrite."""
+"""Tests for DynamicPromptMiddleware — updated for slot-based architecture (Tranche B)."""
 
 from __future__ import annotations
 
@@ -23,13 +23,32 @@ def general_state():
     }
 
 
+class FakeRequest:
+    """Minimal request stub that captures override() calls."""
+
+    def __init__(self, system_content: str = "base", state: dict | None = None):
+        self.system_message = SystemMessage(content=system_content)
+        self._state = dict(state or {})
+        self._captured: dict = {}
+
+    @property
+    def state(self):
+        return self._state
+
+    def override(self, **kwargs):
+        self._captured.update(kwargs)
+        new = FakeRequest(state=kwargs.get("state", self._state))
+        new.system_message = kwargs.get("system_message", self.system_message)
+        new._captured = {}
+        return new
+
+
 @pytest.mark.asyncio
-async def test_awrap_model_call_injects_catalog(general_state):
-    """Middleware must prepend catalog section to the system message."""
+async def test_awrap_model_call_writes_catalog_slot(general_state):
+    """Middleware must write catalog content to _slot_catalog state key."""
     from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 
     catalog_content = "## Catálogo\n- Corte: 30min"
-    hours_content = {"lunes": "cerrado", "martes": "10:00-20:00"}
 
     with (
         patch(
@@ -38,34 +57,33 @@ async def test_awrap_model_call_injects_catalog(general_state):
         ),
         patch(
             "agent.middleware.dynamic_prompt.load_business_hours_snapshot",
-            new=AsyncMock(return_value=hours_content),
+            new=AsyncMock(return_value={}),
         ),
     ):
         mw = DynamicPromptMiddleware()
-        original_system = "Sos un asistente."
-        request = MagicMock()
-        request.system_message = SystemMessage(content=original_system)
-        request.state = general_state
-        request.override = lambda **kw: kw  # capture the override kwargs
+        req = FakeRequest(state=general_state)
 
-        ai_reply = AIMessage(content="hola")
+        final_state: dict = {}
 
-        async def fake_handler(req):
-            return _FakeModelResponse(ai_reply)
+        async def fake_handler(r):
+            final_state.update(r.state)
+            return _FakeModelResponse(AIMessage(content="hola"))
 
-        result = await mw.awrap_model_call(request, fake_handler)
-        assert result is not None
+        await mw.awrap_model_call(req, fake_handler)
+
+    assert "_slot_catalog" in final_state, "_slot_catalog must be written to state"
+    assert catalog_content in final_state["_slot_catalog"]
+    assert "<catalog>" in final_state["_slot_catalog"]
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_contains_catalog_section(general_state):
-    """The system_message passed to handler must contain catalog text."""
+async def test_catalog_slot_contains_catalog_section(general_state):
+    """The _slot_catalog key must contain the catalog text wrapped in <catalog> tags."""
     from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 
     catalog_content = "## Catálogo\n- Tinte: 90min"
-    hours_content = {"martes": "10:00-20:00"}
 
-    captured_requests = []
+    final_state: dict = {}
 
     with (
         patch(
@@ -74,51 +92,36 @@ async def test_system_prompt_contains_catalog_section(general_state):
         ),
         patch(
             "agent.middleware.dynamic_prompt.load_business_hours_snapshot",
-            new=AsyncMock(return_value=hours_content),
+            new=AsyncMock(return_value={"martes": "10:00-20:00"}),
         ),
     ):
         mw = DynamicPromptMiddleware()
+        req = FakeRequest(state=general_state)
 
-        original_system = "Sos un asistente."
-
-        class FakeRequest:
-            def __init__(self):
-                self.system_message = SystemMessage(content=original_system)
-                self.state = general_state
-
-            def override(self, **kwargs):
-                new = FakeRequest()
-                for k, v in kwargs.items():
-                    setattr(new, k, v)
-                return new
-
-        async def capturing_handler(req):
-            captured_requests.append(req)
+        async def capturing_handler(r):
+            final_state.update(r.state)
             return _FakeModelResponse(AIMessage(content="resp"))
 
-        req = FakeRequest()
         await mw.awrap_model_call(req, capturing_handler)
 
-    assert len(captured_requests) == 1
-    final_system = captured_requests[0].system_message.content
-    assert catalog_content in final_system
-    assert original_system in final_system
+    assert catalog_content in final_state.get("_slot_catalog", "")
+    # System message must NOT be mutated
+    assert catalog_content not in req.system_message.content
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_contains_hours(general_state):
-    """Business hours snapshot must appear in injected system prompt."""
+async def test_hours_slot_contains_hours(general_state):
+    """Business hours snapshot must appear in _slot_business_hours state key."""
     from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 
-    catalog_content = "## Catálogo\n- Corte: 30min"
     hours_content = {"martes": "10:00-20:00", "sabado": "09:00-14:00"}
 
-    captured_requests = []
+    final_state: dict = {}
 
     with (
         patch(
             "agent.middleware.dynamic_prompt.build_catalog_prompt_section",
-            new=AsyncMock(return_value=catalog_content),
+            new=AsyncMock(return_value="## Catálogo"),
         ),
         patch(
             "agent.middleware.dynamic_prompt.load_business_hours_snapshot",
@@ -126,34 +129,25 @@ async def test_system_prompt_contains_hours(general_state):
         ),
     ):
         mw = DynamicPromptMiddleware()
+        req = FakeRequest(state=general_state)
 
-        class FakeRequest:
-            def __init__(self):
-                self.system_message = SystemMessage(content="base prompt")
-                self.state = general_state
-
-            def override(self, **kwargs):
-                new = FakeRequest()
-                for k, v in kwargs.items():
-                    setattr(new, k, v)
-                return new
-
-        async def capturing_handler(req):
-            captured_requests.append(req)
+        async def capturing_handler(r):
+            final_state.update(r.state)
             return _FakeModelResponse(AIMessage(content="resp"))
 
-        await mw.awrap_model_call(FakeRequest(), capturing_handler)
+        await mw.awrap_model_call(req, capturing_handler)
 
-    final_system = captured_requests[0].system_message.content
-    assert "10:00-20:00" in final_system or "martes" in final_system
+    hours_slot = final_state.get("_slot_business_hours", "")
+    assert "10:00-20:00" in hours_slot or "martes" in hours_slot
+    assert "<business_hours>" in hours_slot
 
 
 @pytest.mark.asyncio
-async def test_no_booking_state_no_snapshot(general_state):
-    """Without a booking context, no booking-specific data is injected."""
+async def test_system_message_not_mutated(general_state):
+    """DynamicPromptMiddleware must NOT mutate system_message.content."""
     from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 
-    captured_requests = []
+    original_system = "base general prompt"
 
     with (
         patch(
@@ -166,24 +160,15 @@ async def test_no_booking_state_no_snapshot(general_state):
         ),
     ):
         mw = DynamicPromptMiddleware()
+        req = FakeRequest(system_content=original_system, state=general_state)
 
-        class FakeRequest:
-            def __init__(self):
-                self.system_message = SystemMessage(content="base general prompt")
-                self.state = general_state
+        received_systems: list[str] = []
 
-            def override(self, **kwargs):
-                new = FakeRequest()
-                for k, v in kwargs.items():
-                    setattr(new, k, v)
-                return new
-
-        async def capturing_handler(req):
-            captured_requests.append(req)
+        async def capturing_handler(r):
+            received_systems.append(r.system_message.content)
             return _FakeModelResponse(AIMessage(content="resp"))
 
-        await mw.awrap_model_call(FakeRequest(), capturing_handler)
+        await mw.awrap_model_call(req, capturing_handler)
 
-    final_system = captured_requests[0].system_message.content
-    # catalog + hours still injected
-    assert "catalog" in final_system
+    # system_message.content must be unchanged — slots carry the data
+    assert received_systems[0] == original_system
