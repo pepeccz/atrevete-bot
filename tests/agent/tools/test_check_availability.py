@@ -632,3 +632,365 @@ async def test_fails_closed_when_settings_service_raises():
     data = parse_response(raw)
     assert data["status"] == "rejected"
     assert len(data["errors"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Payload Enrichment (V2 + V3 spec)
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_slot(date_iso: str, time: str = "10:00", stylist_id: str | None = None) -> dict:
+    sid = stylist_id or str(FAKE_STYLIST_ID)
+    return {
+        "time": time,
+        "end_time": "11:00",
+        "full_datetime": f"{date_iso}T{time}:00+02:00",
+        "stylist_id": sid,
+        "adjacent_priority": 1,
+    }
+
+
+STYLIST_A = uuid4()
+STYLIST_B = uuid4()
+
+
+@pytest.mark.asyncio
+async def test_each_slot_has_label_in_spanish():
+    """V3-FR-01/02: every slot must have a 'label' field in Spanish format."""
+    import re
+    from agent.tools.check_availability import check_availability
+
+    date_iso = future_date_iso(5)
+    fake_slots = [_make_fake_slot(date_iso, "10:00")]
+
+    with (
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=fake_slots,
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[FAKE_STYLIST_ID],
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": date_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "ok"
+    slots = data["payload"]["slots"]
+    assert len(slots) == 1
+    assert "label" in slots[0], "slot must have 'label' field"
+    label = slots[0]["label"]
+    assert re.match(r"^[a-záéíóú]+ \d{1,2} de [a-záéíóú]+$", label), (
+        f"label {label!r} does not match Spanish date pattern"
+    )
+
+
+@pytest.mark.asyncio
+async def test_label_has_no_year():
+    """V3-FR-02: label must not contain the year."""
+    import re
+    from agent.tools.check_availability import check_availability
+
+    date_iso = future_date_iso(5)
+    fake_slots = [_make_fake_slot(date_iso)]
+
+    with (
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=fake_slots,
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[FAKE_STYLIST_ID],
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": date_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    label = data["payload"]["slots"][0]["label"]
+    assert not re.search(r"\d{4}", label), f"Year found in label: {label!r}"
+
+
+@pytest.mark.asyncio
+async def test_requested_date_label_matches_date_iso():
+    """V3: payload must include requested_date_label matching the requested date."""
+    from agent.tools.check_availability import check_availability
+    from shared.date_format import format_date_spanish
+    from datetime import date as dt_date
+
+    date_iso = future_date_iso(5)
+    expected_label = format_date_spanish(dt_date.fromisoformat(date_iso))
+
+    with (
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[FAKE_STYLIST_ID],
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": date_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert "requested_date_label" in data["payload"], "payload must have requested_date_label"
+    assert data["payload"]["requested_date_label"] == expected_label
+
+
+@pytest.mark.asyncio
+async def test_payload_contains_available_stylists_filtered_by_category():
+    """V2-FR-01: payload must include available_stylists list."""
+    from agent.tools.check_availability import check_availability
+
+    date_iso = future_date_iso(5)
+    fake_slots = [
+        _make_fake_slot(date_iso, "10:00", str(STYLIST_A)),
+        _make_fake_slot(date_iso, "11:00", str(STYLIST_B)),
+    ]
+
+    with (
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=fake_slots,
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[STYLIST_A, STYLIST_B],
+        ),
+        patch(
+            "agent.tools.check_availability._get_stylist_names_map",
+            new_callable=AsyncMock,
+            return_value={STYLIST_A: "Ana", STYLIST_B: "María"},
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": date_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "ok"
+    assert "available_stylists" in data["payload"], "payload must have available_stylists"
+    stylists = data["payload"]["available_stylists"]
+    assert len(stylists) == 2
+    names = {s["name"] for s in stylists}
+    assert names == {"Ana", "María"}
+
+
+@pytest.mark.asyncio
+async def test_available_stylists_sorted_by_name():
+    """V2: available_stylists must be sorted alphabetically by name."""
+    from agent.tools.check_availability import check_availability
+
+    date_iso = future_date_iso(5)
+    fake_slots = [_make_fake_slot(date_iso, "10:00", str(STYLIST_A))]
+
+    with (
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=fake_slots,
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[STYLIST_A, STYLIST_B],
+        ),
+        patch(
+            "agent.tools.check_availability._get_stylist_names_map",
+            new_callable=AsyncMock,
+            return_value={STYLIST_A: "Zoë", STYLIST_B: "Ana"},
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": date_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    names = [s["name"] for s in data["payload"]["available_stylists"]]
+    assert names == sorted(names), f"available_stylists not sorted: {names}"
+
+
+@pytest.mark.asyncio
+async def test_rejected_when_zero_stylists_for_category():
+    """V2-FR-02: when no active stylists for category, reject."""
+    from agent.tools.check_availability import check_availability
+
+    date_iso = future_date_iso(5)
+
+    with (
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[],  # zero stylists
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": date_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert len(data["errors"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_single_stylist_when_stylist_id_provided():
+    """V2: when stylist_id provided, available_stylists contains only that stylist."""
+    from agent.tools.check_availability import check_availability
+
+    date_iso = future_date_iso(5)
+    fake_slots = [_make_fake_slot(date_iso, "10:00", str(STYLIST_A))]
+
+    with (
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=fake_slots,
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_stylist_names_map",
+            new_callable=AsyncMock,
+            return_value={STYLIST_A: "Ana"},
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": str(STYLIST_A),
+                "date_iso": date_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "ok"
+    stylists = data["payload"]["available_stylists"]
+    assert len(stylists) == 1
+    assert stylists[0]["id"] == str(STYLIST_A)
+    assert stylists[0]["name"] == "Ana"
+
+
+@pytest.mark.asyncio
+async def test_legacy_fields_still_present():
+    """Additive contract: existing fields must remain in slot dicts."""
+    from agent.tools.check_availability import check_availability
+
+    date_iso = future_date_iso(5)
+    fake_slots = [_make_fake_slot(date_iso, "10:00", str(STYLIST_A))]
+
+    with (
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=fake_slots,
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[STYLIST_A],
+        ),
+        patch(
+            "agent.tools.check_availability._get_stylist_names_map",
+            new_callable=AsyncMock,
+            return_value={STYLIST_A: "Ana"},
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": date_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    slot = data["payload"]["slots"][0]
+    for field in ("start_iso", "end_iso", "stylist_id", "stylist_name"):
+        assert field in slot, f"Legacy field '{field}' missing from slot"

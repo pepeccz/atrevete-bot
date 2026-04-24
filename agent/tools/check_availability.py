@@ -101,6 +101,34 @@ async def _get_stylist_name(stylist_id: UUID) -> str:
         return row[0] if row else str(stylist_id)
 
 
+async def _get_stylist_names_map(stylist_ids: list[UUID]) -> dict[UUID, str]:
+    """Fetch names for a list of stylist UUIDs. Returns {id: name}."""
+    from sqlalchemy import select
+
+    from database.connection import get_async_session
+    from database.models import Stylist
+
+    if not stylist_ids:
+        return {}
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Stylist.id, Stylist.name).where(Stylist.id.in_(stylist_ids))
+        )
+        return {row[0]: row[1] for row in result.fetchall()}
+
+
+def _build_available_stylists(
+    stylist_ids: list[UUID], names_map: dict[UUID, str]
+) -> list[dict]:
+    """Build sorted available_stylists list from IDs + names map."""
+    entries = [
+        {"id": str(sid), "name": names_map.get(sid, str(sid))}
+        for sid in stylist_ids
+    ]
+    return sorted(entries, key=lambda e: e["name"])
+
+
 @tool
 async def check_availability(
     service_ids: list[str],
@@ -202,6 +230,9 @@ async def check_availability(
                 errors=["No hay estilistas activos disponibles para los servicios solicitados."],
             ).model_dump_json()
 
+    # --- Fetch stylist names for available_stylists payload field ---
+    names_map = await _get_stylist_names_map(stylist_ids)
+
     # --- Aggregate slots across stylists ---
     all_slots = []
     for sid in stylist_ids:
@@ -211,12 +242,14 @@ async def check_availability(
             service_duration_minutes=total_duration,
         )
         for slot in slots:
+            full_dt = slot["full_datetime"]
             all_slots.append(
                 {
-                    "start_iso": slot["full_datetime"],
-                    "end_iso": _compute_end_iso(slot["full_datetime"], total_duration),
+                    "start_iso": full_dt,
+                    "end_iso": _compute_end_iso(full_dt, total_duration),
                     "stylist_id": str(sid),
-                    "stylist_name": slot.get("stylist_name", ""),
+                    "stylist_name": slot.get("stylist_name", names_map.get(sid, "")),
+                    "label": _slot_label(full_dt),
                     "adjacent_priority": slot.get("adjacent_priority", 1),
                 }
             )
@@ -232,10 +265,23 @@ async def check_availability(
             "slots": clean_slots,
             "total_duration_minutes": total_duration,
             "requested_date_iso": target_date.isoformat(),
+            "requested_date_label": format_date_spanish(target_date),
             "is_exact_day": True,
             "has_availability": bool(clean_slots),
+            "available_stylists": _build_available_stylists(stylist_ids, names_map),
         },
     ).model_dump_json()
+
+
+def _slot_label(full_datetime: str) -> str:
+    """Return Spanish date label for a slot's full_datetime ISO string."""
+    from datetime import datetime
+
+    try:
+        dt = datetime.fromisoformat(full_datetime.replace("Z", "+00:00"))
+    except ValueError:
+        return full_datetime[:10]  # fallback to ISO date prefix
+    return format_date_spanish(dt)
 
 
 def _compute_end_iso(start_iso: str, duration_minutes: int) -> str:

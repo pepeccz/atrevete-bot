@@ -37,3 +37,17 @@ def auto_patch_settings_service():
         return_value=_make_settings_service(min_days=0),
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def auto_patch_stylist_names_map():
+    """Patch _get_stylist_names_map to return empty dict by default.
+
+    Individual tests that need real names must override this patch explicitly.
+    """
+    with patch(
+        "agent.tools.check_availability._get_stylist_names_map",
+        new_callable=AsyncMock,
+        return_value={},
+    ):
+        yield
