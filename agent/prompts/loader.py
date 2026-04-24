@@ -78,9 +78,13 @@ def load_system_prompt() -> str:
     """Assemble and cache the static system prompt.
 
     Concatenates (in order):
-        1. shared/identity.md    — Maite persona
-        2. shared/critical_rules.md — EU-AI-Act disclosure, UUID rule, Spanish-only
-        3. shared/glossary.md    — audience taxonomy + service tag glossary
+        1. shared/identity.md           — Maite persona
+        2. shared/critical_rules.md     — EU-AI-Act disclosure, UUID rule, Spanish-only
+        3. shared/examples.md           — bad/good exemplars for variant disambiguation
+        4. shared/glossary.md           — audience taxonomy + service tag glossary
+        5. shared/booking_flow.md       — step-by-step booking protocol
+        6. shared/tools_contract.md     — tool call rules for all 5 tools
+        7. shared/appointment_management_flow.md — appointment lifecycle flow
 
     Returns:
         str: Full system prompt, newline-separated sections.
@@ -88,8 +92,10 @@ def load_system_prompt() -> str:
     sections = [
         _read("identity.md"),
         _read("critical_rules.md"),
+        _read("examples.md"),
         _read("glossary.md"),
         _read("booking_flow.md"),
+        _read("tools_contract.md"),
         _read("appointment_management_flow.md"),
     ]
     return "\n\n---\n\n".join(s for s in sections if s)
