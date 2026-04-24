@@ -448,3 +448,187 @@ async def test_check_availability_returns_json_string():
     assert isinstance(raw, str)
     data = json.loads(raw)
     assert isinstance(data, dict)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — Lead-time guard (V1 spec)
+# ---------------------------------------------------------------------------
+
+
+def _mock_settings_service(min_days: int, buffer_hours: int = 0):
+    """Build an AsyncMock SettingsService that returns the given lead-time values."""
+    service = AsyncMock()
+
+    async def fake_get(key: str, default=None):
+        if key == "minimum_booking_days_advance":
+            return min_days
+        if key == "same_day_buffer_hours":
+            return buffer_hours
+        return default
+
+    service.get = fake_get
+    return service
+
+
+def _patch_settings(min_days: int, buffer_hours: int = 0):
+    """Context-manager patch for get_settings_service."""
+    return patch(
+        "shared.settings_service.get_settings_service",
+        new_callable=AsyncMock,
+        return_value=_mock_settings_service(min_days, buffer_hours),
+    )
+
+
+def _patch_db_calls(
+    service_duration: int = 60,
+    stylist_ids: list | None = None,
+    slots: list | None = None,
+):
+    """Patch all DB-touching helpers so lead-time tests don't need a live DB."""
+    if stylist_ids is None:
+        stylist_ids = [FAKE_STYLIST_ID]
+    if slots is None:
+        slots = []
+
+    from unittest.mock import patch as _patch
+
+    return (
+        _patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: service_duration},
+        ),
+        _patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=stylist_ids,
+        ),
+        _patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=slots,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_rejects_same_day_when_min_days_positive():
+    """V1-FR-01: same-day booking rejected when min_days=3."""
+    from agent.tools.check_availability import check_availability
+
+    today_iso = date.today().isoformat()
+    dur_patch, stylist_patch, slots_patch = _patch_db_calls()
+
+    with _patch_settings(min_days=3), dur_patch, stylist_patch, slots_patch:
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": today_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert len(data["errors"]) > 0
+    assert any("antelación" in e or "días" in e for e in data["errors"]), (
+        f"Expected lead-time message, got: {data['errors']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rejects_day_plus_1_when_min_3():
+    """V1-FR-02: today+1 rejected when min_days=3."""
+    from agent.tools.check_availability import check_availability
+
+    tomorrow_iso = (date.today() + timedelta(days=1)).isoformat()
+    dur_patch, stylist_patch, slots_patch = _patch_db_calls()
+
+    with _patch_settings(min_days=3), dur_patch, stylist_patch, slots_patch:
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": tomorrow_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_accepts_boundary_day_plus_3_when_min_3():
+    """V1-FR-03: today+3 accepted when min_days=3."""
+    from agent.tools.check_availability import check_availability
+
+    boundary_iso = (date.today() + timedelta(days=3)).isoformat()
+    dur_patch, stylist_patch, slots_patch = _patch_db_calls()
+
+    with _patch_settings(min_days=3), dur_patch, stylist_patch, slots_patch:
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": boundary_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_allows_same_day_when_min_0():
+    """V1-FR-05: same-day allowed when min_days=0."""
+    from agent.tools.check_availability import check_availability
+
+    today_iso = date.today().isoformat()
+    dur_patch, stylist_patch, slots_patch = _patch_db_calls()
+
+    with _patch_settings(min_days=0), dur_patch, stylist_patch, slots_patch:
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": today_iso,
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    # Should pass the lead-time gate (may still be ok with empty slots or rejected
+    # for other reasons, but NOT because of lead-time)
+    assert data["status"] != "rejected" or not any(
+        "antelación" in e for e in data.get("errors", [])
+    ), f"Should not reject same-day when min_days=0, got: {data}"
+
+
+@pytest.mark.asyncio
+async def test_fails_closed_when_settings_service_raises():
+    """D3: when SettingsService raises, tool returns rejected (fail-closed)."""
+    from agent.tools.check_availability import check_availability
+
+    failing_service = AsyncMock()
+    failing_service.get = AsyncMock(side_effect=Exception("DB connection lost"))
+
+    with patch(
+        "shared.settings_service.get_settings_service",
+        new_callable=AsyncMock,
+        return_value=failing_service,
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": future_date_iso(5),
+                "audience": None,
+            }
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert len(data["errors"]) > 0

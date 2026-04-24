@@ -15,8 +15,23 @@ from langchain_core.tools import tool
 
 from agent.services.availability_service import get_available_slots
 from agent.tools.schemas import ToolResponse
+from shared.date_format import format_date_spanish
 
 logger = logging.getLogger(__name__)
+
+
+async def _load_lead_time_settings() -> tuple[int, int]:
+    """Return (minimum_booking_days_advance, same_day_buffer_hours).
+
+    Raises any exception on DB/settings failure (caller handles fail-closed).
+    Imported lazily inside function so tests can patch get_settings_service.
+    """
+    from shared.settings_service import get_settings_service
+
+    service = await get_settings_service()
+    min_days = await service.get("minimum_booking_days_advance", default=0)
+    buffer_hours = await service.get("same_day_buffer_hours", default=0)
+    return int(min_days or 0), int(buffer_hours or 0)
 
 
 async def _get_service_durations(service_ids: list[UUID]) -> dict[UUID, int]:
@@ -117,12 +132,36 @@ async def check_availability(
             errors=[f"El formato de fecha '{date_iso}' no es válido (se esperaba YYYY-MM-DD)."],
         ).model_dump_json()
 
-    if target_date < date.today():
+    # --- Lead-time guard (fail-closed on SettingsService error) ---
+    try:
+        min_days, _buffer_hours = await _load_lead_time_settings()
+    except Exception as exc:
+        logger.warning("check_availability: SettingsService unavailable: %s", exc)
+        return ToolResponse(
+            status="rejected",
+            errors=[
+                "No pudimos validar el tiempo mínimo de reserva. "
+                "Intenta de nuevo en unos minutos."
+            ],
+        ).model_dump_json()
+
+    today = date.today()
+    if target_date < today:
         return ToolResponse(
             status="rejected",
             errors=[
                 f"La fecha solicitada ({date_iso}) ya ha pasado. "
                 "La disponibilidad solo puede consultarse para fechas futuras."
+            ],
+        ).model_dump_json()
+
+    if min_days > 0 and target_date < today + timedelta(days=min_days):
+        days_word = "día" if min_days == 1 else "días"
+        return ToolResponse(
+            status="rejected",
+            errors=[
+                f"Solo podemos reservar con al menos {min_days} {days_word} de antelación. "
+                "Por favor elige una fecha más adelante."
             ],
         ).model_dump_json()
 
