@@ -43,7 +43,7 @@ class TestTokenBudgets:
     def test_booking_flow_limits_emoji_usage(self, prompt_dir):
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()
 
-        assert "Usa emojis con mucha moderación" in content
+        assert "Emojis con mucha moderación" in content
 
 
 class TestClosedWorldGrounding:
@@ -58,8 +58,10 @@ class TestClosedWorldGrounding:
 
         # Check for key phrases
         assert "fuente cerrada" in content, "Rule 13 missing 'fuente cerrada'"
-        assert "<available_stylists>" in content, "Rule 13 missing XML tag names"
-        assert "<offered_slots>" in content, "Rule 13 missing XML tag names"
+        assert "<customer>" in content, "Rule 13 missing XML tag names"
+        assert "<upcoming_appointments>" in content, "Rule 13 missing XML tag names"
+        assert "<catalog>" in content, "Rule 13 missing XML tag names"
+        assert "<business_hours>" in content, "Rule 13 missing XML tag names"
 
 
 class TestPromptContracts:
@@ -94,12 +96,12 @@ class TestPromptContracts:
         """Paso 3 must not affirm availability without checking."""
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()
         step3_section = content[content.find("### Paso 3") : content.find("### Paso 4")]
-        assert "NO se debe afirmar disponibilidad" in step3_section, (
+        assert "NO afirmes disponibilidad" in step3_section, (
             "Paso 3 must prohibit affirming availability"
         )
 
-    def test_booking_flow_step4_prohibits_esa_dia(self, prompt_dir):
-        """Paso 4 must prohibit 'ese día' without explicit date."""
+    def test_booking_flow_step4_requires_explicit_date(self, prompt_dir):
+        """Paso 4 must require a concrete date before mentioning availability."""
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()
         step4_section = content[content.find("### Paso 4") : content.find("### Paso 5")]
-        assert "ese día" in step4_section, "Paso 4 must prohibit 'ese día' expressions"
+        assert "sin fecha concreta" in step4_section, "Paso 4 must require explicit date"
