@@ -21,6 +21,7 @@ from agent.middleware.appointment_context import AppointmentContextMiddleware
 from agent.middleware.customer_resolve import CustomerResolveMiddleware
 from agent.middleware.disclosure import DisclosureMiddleware
 from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
+from agent.middleware.prompt_assembly import PromptAssemblyMiddleware
 from agent.middleware.summarize import SummarizeMiddleware
 from agent.prompts.loader import load_system_prompt
 from agent.state import AgentState
@@ -64,6 +65,7 @@ def build_conversation_agent(
             CustomerResolveMiddleware(),
             AppointmentContextMiddleware(),  # runs after CustomerResolve (reads customer_id)
             DynamicPromptMiddleware(),
+            PromptAssemblyMiddleware(),  # assembles _slot_* keys into system_message
             SummarizeMiddleware(window=20, keep_tail=10),
         ],
         checkpointer=checkpointer,
