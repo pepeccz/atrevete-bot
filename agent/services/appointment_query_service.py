@@ -32,27 +32,7 @@ logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
-# Spanish weekday and month names for date formatting
-WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
-MONTHS_ES = [
-    "enero",
-    "febrero",
-    "marzo",
-    "abril",
-    "mayo",
-    "junio",
-    "julio",
-    "agosto",
-    "septiembre",
-    "octubre",
-    "noviembre",
-    "diciembre",
-]
-
-
-def format_date_spanish(dt: datetime) -> str:
-    """Format datetime to Spanish date string."""
-    return f"{WEEKDAYS_ES[dt.weekday()]} {dt.day} de {MONTHS_ES[dt.month - 1]}"
+from shared.date_format import format_date_spanish
 
 
 @dataclass

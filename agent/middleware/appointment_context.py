@@ -26,30 +26,11 @@ from zoneinfo import ZoneInfo
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import SystemMessage
 
+from shared.date_format import format_date_spanish as _format_date_spanish
+
 logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
-
-_WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
-_MONTHS_ES = [
-    "enero",
-    "febrero",
-    "marzo",
-    "abril",
-    "mayo",
-    "junio",
-    "julio",
-    "agosto",
-    "septiembre",
-    "octubre",
-    "noviembre",
-    "diciembre",
-]
-
-
-def _format_date_spanish(dt: datetime) -> str:
-    """Format datetime to Spanish weekday + day + month (e.g. 'viernes 2 de mayo')."""
-    return f"{_WEEKDAYS_ES[dt.weekday()]} {dt.day} de {_MONTHS_ES[dt.month - 1]}"
 
 
 def _format_relative(past_dt: datetime, now: datetime) -> str:
