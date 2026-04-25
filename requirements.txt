@@ -19,6 +19,7 @@ alembic>=1.13.0
 
 # Cache & Messaging
 redis>=5.0.0
+fakeredis>=2.20.0  # testing
 
 # Data Validation
 pydantic>=2.9.0

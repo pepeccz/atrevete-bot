@@ -579,3 +579,158 @@ async def test_upsert_conversation_to_db_returns_zero_when_no_messages():
 
     # session.add should NOT be called
     mock_session.add.assert_not_called()
+
+
+# ============================================================================
+# Phase 6: archive_checkpoint Redis cleanup
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_archive_checkpoint_cleanup_deletes_all_4_families_including_checkpoint_latest():
+    """
+    GIVEN a successful DB archive for conversation_id "archivetest"
+    AND fakeredis seeded with all 4 checkpoint families under v2: prefix
+    WHEN archive_checkpoint runs
+    THEN all 4 families are deleted; batcher:pending is NOT deleted.
+
+    Phase 6 spec requirement: archiver must delete checkpoint_latest: (was missing before),
+    use async Redis, and NOT delete batcher:pending.
+    """
+    import fakeredis.aioredis as fakeredis_async
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from agent.workers.conversation_archiver import archive_checkpoint
+
+    redis_async = fakeredis_async.FakeRedis()
+    cid = "archivetest"
+
+    # Seed all 4 checkpoint families (v2 prefix)
+    await redis_async.set(f"checkpoint_latest:v2:{cid}:__empty__", "1")
+    await redis_async.set(f"checkpoint:v2:{cid}:__empty__:uuid1", "1")
+    await redis_async.set(f"checkpoint_write:v2:{cid}:__empty__:uuid1:0", "1")
+    await redis_async.set(f"write_keys_zset:v2:{cid}:__empty__:uuid1", "1")
+    # Batcher key should survive
+    await redis_async.set(f"batcher:pending:{cid}", "BATCH_DATA")
+
+    # Minimal state that upsert_conversation_to_db will accept (1 message → success)
+    state = {
+        "conversation_id": cid,
+        "customer_id": None,
+        "messages": [
+            {
+                "role": "user",
+                "content": "hello",
+                "timestamp": datetime.now(TIMEZONE).isoformat(),
+            }
+        ],
+    }
+
+    # Sync redis mock for TTL scan (the checkpoint retrieval step is patched away)
+    mock_sync_redis = MagicMock()
+    ckpt_key = f"checkpoint:v2:{cid}:__empty__:uuid1"
+
+    # Mock the DB session so upsert_conversation_to_db succeeds without real DB
+    mock_exec_result = MagicMock()
+    mock_exec_result.scalar_one_or_none.return_value = None
+    mock_exec_result.all.return_value = []
+    mock_exec_result.scalar.return_value = 0
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=mock_exec_result)
+
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        # Bypass the checkpoint retrieval (sync redis GET) — we supply state directly
+        patch(
+            "agent.workers.conversation_archiver.retrieve_and_parse_checkpoint",
+            new=AsyncMock(return_value=state),
+        ),
+        patch("agent.workers.conversation_archiver.get_async_session", return_value=mock_session_ctx),
+        patch(
+            "shared.redis_client.get_redis_client",
+            return_value=redis_async,
+        ),
+    ):
+        result = await archive_checkpoint(mock_sync_redis, ckpt_key, cid)
+
+    assert result.get("success") is True, f"archive_checkpoint failed: {result}"
+
+    # All 4 checkpoint families deleted
+    for key in [
+        f"checkpoint_latest:v2:{cid}:__empty__",
+        f"checkpoint:v2:{cid}:__empty__:uuid1",
+        f"checkpoint_write:v2:{cid}:__empty__:uuid1:0",
+        f"write_keys_zset:v2:{cid}:__empty__:uuid1",
+    ]:
+        assert await redis_async.exists(key) == 0, f"Key {key} should be deleted"
+
+    # Batcher key preserved
+    assert await redis_async.exists(f"batcher:pending:{cid}") == 1, "batcher:pending must NOT be deleted by archiver"
+
+
+@pytest.mark.asyncio
+async def test_archive_checkpoint_cleanup_no_checkpoint_latest_keys_no_error():
+    """
+    GIVEN a conversation archived before checkpoint_latest was introduced
+    AND only 3 legacy families exist (no checkpoint_latest keys)
+    WHEN archive_checkpoint runs
+    THEN the 3 existing families are deleted, no error raised.
+    """
+    import fakeredis.aioredis as fakeredis_async
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from agent.workers.conversation_archiver import archive_checkpoint
+
+    redis_async = fakeredis_async.FakeRedis()
+    cid = "legacyarchive"
+
+    # Only 3 legacy families — no checkpoint_latest
+    await redis_async.set(f"checkpoint:v2:{cid}:__empty__:uuid-old", "1")
+    await redis_async.set(f"checkpoint_write:v2:{cid}:__empty__:uuid-old:0", "1")
+    await redis_async.set(f"write_keys_zset:v2:{cid}:__empty__:uuid-old", "1")
+
+    state = {
+        "conversation_id": cid,
+        "messages": [
+            {
+                "role": "user",
+                "content": "legacy",
+                "timestamp": datetime.now(TIMEZONE).isoformat(),
+            }
+        ],
+    }
+
+    mock_sync_redis = MagicMock()
+    ckpt_key = f"checkpoint:v2:{cid}:__empty__:uuid-old"
+
+    mock_exec_result = MagicMock()
+    mock_exec_result.scalar_one_or_none.return_value = None
+    mock_exec_result.all.return_value = []
+    mock_exec_result.scalar.return_value = 0
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=mock_exec_result)
+
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch(
+            "agent.workers.conversation_archiver.retrieve_and_parse_checkpoint",
+            new=AsyncMock(return_value=state),
+        ),
+        patch("agent.workers.conversation_archiver.get_async_session", return_value=mock_session_ctx),
+        patch("shared.redis_client.get_redis_client", return_value=redis_async),
+    ):
+        result = await archive_checkpoint(mock_sync_redis, ckpt_key, cid)
+
+    assert result.get("success") is True
+
+    # 3 present families deleted
+    for key in [
+        f"checkpoint:v2:{cid}:__empty__:uuid-old",
+        f"checkpoint_write:v2:{cid}:__empty__:uuid-old:0",
+        f"write_keys_zset:v2:{cid}:__empty__:uuid-old",
+    ]:
+        assert await redis_async.exists(key) == 0

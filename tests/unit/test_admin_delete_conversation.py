@@ -134,27 +134,26 @@ def _make_delete_result(
 @pytest.mark.asyncio
 async def test_delete_redis_conversation_keys_found():
     """
-    GIVEN a redis:{thread_id} conversation with 3 Redis keys
+    GIVEN a redis:{thread_id} conversation with checkpoint keys in Redis
     WHEN the endpoint is called
     THEN it deletes all keys and returns db_deleted=False, redis_status='cleaned', error=None.
+
+    Updated to use fakeredis (route now delegates to cleanup_conversation_redis_keys
+    which does dual-scan v2+bare; the old MagicMock scan_iter approach is insufficient).
     """
+    import fakeredis.aioredis as fakeredis_async
     from api.routes.admin import delete_conversation_endpoint
 
     thread_id = "conv-abc-123"
     conversation_uuid = f"redis:{thread_id}"
     mock_user = {"sub": "admin"}
 
-    # One key per pattern (3 patterns × 1 key each = 3 total)
-    key_ckpt = f"checkpoint:{thread_id}:__empty__:aaa".encode()
-    key_write = f"checkpoint_write:{thread_id}:__empty__:bbb".encode()
-    key_zset = f"write_keys_zset:{thread_id}:__empty__:ccc".encode()
-    redis_keys = [key_ckpt, key_write, key_zset]
+    redis = fakeredis_async.FakeRedis()
+    await redis.set(f"checkpoint:{thread_id}:__empty__:aaa", "1")
+    await redis.set(f"checkpoint_write:{thread_id}:__empty__:bbb", "1")
+    await redis.set(f"write_keys_zset:{thread_id}:__empty__:ccc", "1")
 
-    # keys_per_pattern: one list per scan_iter call (3 patterns in the endpoint)
-    mock_redis = _build_redis_mock(keys_per_pattern=[[key_ckpt], [key_write], [key_zset]])
-
-    # get_redis_client is lazily imported inside the endpoint body — patch at source
-    with patch("shared.redis_client.get_redis_client", return_value=mock_redis):
+    with patch("shared.redis_client.get_redis_client", return_value=redis):
         result = await delete_conversation_endpoint(
             conversation_uuid=conversation_uuid,
             current_user=mock_user,
@@ -165,8 +164,9 @@ async def test_delete_redis_conversation_keys_found():
     assert result["thread_id"] == thread_id
     assert result["error"] is None
     assert result["redis_keys_deleted"] == 3
-    # Verify delete was called once with all 3 accumulated keys
-    mock_redis.delete.assert_awaited_once_with(*redis_keys)
+
+    remaining = await redis.keys("*")
+    assert len(remaining) == 0
 
 
 @pytest.mark.asyncio
@@ -262,3 +262,232 @@ async def test_delete_redis_conversation_not_in_redis_or_db_raises_404():
 
     assert exc_info.value.status_code == 404
     assert "not found" in exc_info.value.detail.lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: delete_conversation service — uses cleanup helper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_service_uuid_path_v2_keys_deleted():
+    """
+    GIVEN a ConversationHistory record with conversation_id="testconv"
+    AND fakeredis seeded with v2 checkpoint keys + batcher
+    WHEN delete_conversation() is called
+    THEN all v2 keys and batcher are deleted, redis_keys_deleted >= 5.
+    """
+    import fakeredis.aioredis as fakeredis_async
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+    from api.services.conversation_delete_service import delete_conversation
+
+    redis = fakeredis_async.FakeRedis()
+    cid = "testconv"
+
+    # Seed v2 keys + batcher
+    await redis.set(f"checkpoint_latest:v2:{cid}:__empty__", "1")
+    await redis.set(f"checkpoint:v2:{cid}:__empty__:uuid1", "1")
+    await redis.set(f"checkpoint:v2:{cid}:__empty__:uuid2", "1")
+    await redis.set(f"checkpoint_write:v2:{cid}:__empty__:uuid1:0", "1")
+    await redis.set(f"write_keys_zset:v2:{cid}:__empty__:uuid1", "1")
+    await redis.set(f"batcher:pending:{cid}", "1")
+
+    conv_uuid = uuid4()
+
+    # Build SQLAlchemy session mock
+    mock_record = MagicMock()
+    mock_record.conversation_id = cid
+    mock_session = AsyncMock()
+    mock_session.get = AsyncMock(return_value=mock_record)
+    mock_session.delete = AsyncMock()
+    mock_session.commit = AsyncMock()
+
+    result = await delete_conversation(conv_uuid, mock_session, redis)
+
+    assert result.db_deleted is True
+    assert result.redis_keys_deleted >= 5
+    assert result.redis_status == "cleaned"
+    assert result.error is None
+
+    # All seeded keys must be gone
+    remaining = await redis.keys("*")
+    assert len(remaining) == 0, f"Keys still present: {remaining}"
+
+
+@pytest.mark.asyncio
+async def test_delete_service_v1_compat_bare_keys():
+    """
+    GIVEN a ConversationHistory with conversation_id="legacyconv"
+    AND fakeredis seeded with bare (v1) checkpoint keys only
+    WHEN delete_conversation() is called
+    THEN bare keys are deleted, no error raised.
+    """
+    import fakeredis.aioredis as fakeredis_async
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+    from api.services.conversation_delete_service import delete_conversation
+
+    redis = fakeredis_async.FakeRedis()
+    cid = "legacyconv"
+
+    await redis.set(f"checkpoint:{cid}:__empty__:old-uuid", "1")
+    await redis.set(f"checkpoint_write:{cid}:__empty__:old-uuid:0", "1")
+    await redis.set(f"write_keys_zset:{cid}:__empty__:old-uuid", "1")
+    await redis.set(f"checkpoint_latest:{cid}:__empty__", "1")
+
+    conv_uuid = uuid4()
+    mock_record = MagicMock()
+    mock_record.conversation_id = cid
+    mock_session = AsyncMock()
+    mock_session.get = AsyncMock(return_value=mock_record)
+    mock_session.delete = AsyncMock()
+    mock_session.commit = AsyncMock()
+
+    result = await delete_conversation(conv_uuid, mock_session, redis)
+
+    assert result.db_deleted is True
+    assert result.redis_keys_deleted == 4
+    assert result.error is None
+
+    remaining = await redis.keys("*")
+    assert len(remaining) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_service_helper_error_maps_to_redis_status_error():
+    """
+    GIVEN the cleanup helper returns errors (e.g. Redis failure during scan)
+    WHEN delete_conversation() is called
+    THEN redis_status="error" is returned and db_deleted remains True.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from uuid import uuid4
+    from api.services.conversation_delete_service import delete_conversation
+    from shared.redis_conversation_cleanup import CleanupResult
+
+    cid = "err-conv"
+    conv_uuid = uuid4()
+    mock_record = MagicMock()
+    mock_record.conversation_id = cid
+    mock_session = AsyncMock()
+    mock_session.get = AsyncMock(return_value=mock_record)
+    mock_session.delete = AsyncMock()
+    mock_session.commit = AsyncMock()
+
+    mock_redis = MagicMock()
+
+    bad_cleanup = CleanupResult(total_deleted=0, errors=["scan error"])
+
+    with patch(
+        "api.services.conversation_delete_service.cleanup_conversation_redis_keys",
+        new=AsyncMock(return_value=bad_cleanup),
+    ):
+        result = await delete_conversation(conv_uuid, mock_session, mock_redis)
+
+    assert result.db_deleted is True
+    assert result.redis_status == "error"
+    assert result.redis_keys_deleted == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Admin route — redis:v2:{cid} and redis:{cid} strip prefix correctly
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_route_redis_v2_prefix_stripped_and_helper_called_with_bare_cid():
+    """
+    GIVEN conversation_uuid="redis:v2:myconv"
+    WHEN the endpoint is called
+    THEN the helper is called with bare cid "myconv" (not "v2:myconv").
+    AND redis_status='cleaned' is returned.
+    """
+    import fakeredis.aioredis as fakeredis_async
+    from api.routes.admin import delete_conversation_endpoint
+
+    redis = fakeredis_async.FakeRedis()
+    cid = "myconv"
+
+    # Seed keys under v2: prefix
+    await redis.set(f"checkpoint:v2:{cid}:__empty__:uuid1", "1")
+    await redis.set(f"checkpoint_latest:v2:{cid}:__empty__", "1")
+    await redis.set(f"batcher:pending:{cid}", "1")
+
+    mock_user = {"sub": "admin"}
+
+    with patch("shared.redis_client.get_redis_client", return_value=redis):
+        result = await delete_conversation_endpoint(
+            conversation_uuid=f"redis:v2:{cid}",
+            current_user=mock_user,
+        )
+
+    assert result["redis_status"] == "cleaned"
+    assert result["redis_keys_deleted"] >= 3
+    assert result["db_deleted"] is False
+
+    remaining = await redis.keys("*")
+    assert len(remaining) == 0
+
+
+@pytest.mark.asyncio
+async def test_route_redis_bare_cid_still_works():
+    """
+    GIVEN conversation_uuid="redis:bareconv" (no v2: prefix)
+    WHEN the endpoint is called
+    THEN the helper is called with bare cid "bareconv".
+    AND redis_status='cleaned' is returned.
+    """
+    import fakeredis.aioredis as fakeredis_async
+    from api.routes.admin import delete_conversation_endpoint
+
+    redis = fakeredis_async.FakeRedis()
+    cid = "bareconv"
+
+    await redis.set(f"checkpoint:{cid}:__empty__:uuid-bare", "1")
+    await redis.set(f"batcher:pending:{cid}", "1")
+
+    mock_user = {"sub": "admin"}
+
+    with patch("shared.redis_client.get_redis_client", return_value=redis):
+        result = await delete_conversation_endpoint(
+            conversation_uuid=f"redis:{cid}",
+            current_user=mock_user,
+        )
+
+    assert result["redis_status"] == "cleaned"
+    assert result["redis_keys_deleted"] >= 2
+
+    remaining = await redis.keys("*")
+    assert len(remaining) == 0
+
+
+@pytest.mark.asyncio
+async def test_route_redis_zero_keys_still_returns_200():
+    """
+    GIVEN conversation_uuid="redis:ghostconv" with NO Redis keys
+    AND no DB record found
+    WHEN the endpoint is called
+    THEN 404 is raised (conversation not found anywhere).
+    """
+    import fakeredis.aioredis as fakeredis_async
+    from fastapi import HTTPException
+    from api.routes.admin import delete_conversation_endpoint
+
+    redis = fakeredis_async.FakeRedis()
+
+    # DB returns nothing either
+    session_ctx = _build_session_ctx(record=None)
+    mock_user = {"sub": "admin"}
+
+    with (
+        patch("shared.redis_client.get_redis_client", return_value=redis),
+        patch("api.routes.admin.get_async_session", return_value=session_ctx),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_conversation_endpoint(
+                conversation_uuid="redis:ghostconv",
+                current_user=mock_user,
+            )
+
+    assert exc_info.value.status_code == 404

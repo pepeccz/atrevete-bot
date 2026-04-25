@@ -26,24 +26,9 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import ConversationHistory
+from shared.redis_conversation_cleanup import CleanupResult, cleanup_conversation_redis_keys
 
 logger = logging.getLogger(__name__)
-
-# LangGraph AsyncRedisSaver key families — NO "langgraph:" prefix.
-# Verified against running Redis instance: actual key patterns are:
-#   checkpoint_latest:{thread_id}:__empty__          (latest checkpoint pointer)
-#   checkpoint:{thread_id}:__empty__:{uuid}          (checkpoint states)
-#   checkpoint_write:{thread_id}:__empty__:{uuid}:{uuid}:{step}  (write records)
-#   write_keys_zset:{thread_id}:__empty__:{uuid}     (sorted set index)
-_REDIS_KEY_FAMILIES = [
-    "checkpoint_latest:{thread_id}:*",
-    "checkpoint:{thread_id}:*",
-    "checkpoint_write:{thread_id}:*",
-    "write_keys_zset:{thread_id}:*",
-]
-
-# Number of keys to request per SCAN cursor iteration
-_SCAN_COUNT = 200
 
 
 @dataclass
@@ -141,7 +126,11 @@ async def delete_conversation(
         await session.rollback()
         logger.error(
             "conversation_delete_service: DB delete failed",
-            extra={"conversation_uuid": str(conversation_uuid), "thread_id": thread_id, "error": str(exc)},
+            extra={
+                "conversation_uuid": str(conversation_uuid),
+                "thread_id": thread_id,
+                "error": str(exc),
+            },
             exc_info=True,
         )
         return DeleteResult(
@@ -154,51 +143,22 @@ async def delete_conversation(
         )
 
     # -------------------------------------------------------------------------
-    # Step 3: SCAN + DELETE all Redis checkpoint key families for this thread_id
+    # Step 3: Delete all Redis checkpoint key families via shared helper.
+    # The helper accepts the BARE conversation_id (no "v2:" prefix) and
+    # dual-scans both v2:{cid} and bare {cid} forms for full v1/v2 compat.
     # -------------------------------------------------------------------------
-    redis_keys_deleted = 0
+    cleanup: CleanupResult = await cleanup_conversation_redis_keys(
+        redis_client,
+        thread_id,
+        include_batcher=True,
+    )
 
-    try:
-        all_keys: list[bytes | str] = []
+    redis_keys_deleted = cleanup.total_deleted
 
-        for family_template in _REDIS_KEY_FAMILIES:
-            pattern = family_template.replace("{thread_id}", thread_id)
-            cursor = 0
-            while True:
-                cursor, keys = await redis_client.scan(cursor, match=pattern, count=_SCAN_COUNT)
-                if keys:
-                    all_keys.extend(keys)
-                if cursor == 0:
-                    break
-
-        if all_keys:
-            # Pipeline batch delete for efficiency
-            pipe = redis_client.pipeline(transaction=False)
-            for key in all_keys:
-                pipe.delete(key)
-            results = await pipe.execute()
-            redis_keys_deleted = sum(int(r) for r in results if r)
-            redis_status = "cleaned"
-            logger.info(
-                "conversation_delete_service: Redis keys deleted",
-                extra={
-                    "thread_id": thread_id,
-                    "keys_found": len(all_keys),
-                    "keys_deleted": redis_keys_deleted,
-                },
-            )
-        else:
-            redis_status = "no_keys_found"
-            logger.debug(
-                "conversation_delete_service: no Redis keys found",
-                extra={"thread_id": thread_id},
-            )
-
-    except Exception as exc:
+    if cleanup.errors:
         logger.error(
-            "conversation_delete_service: Redis cleanup failed (DB already deleted)",
-            extra={"thread_id": thread_id, "error": str(exc)},
-            exc_info=True,
+            "conversation_delete_service: Redis cleanup had errors (DB already deleted)",
+            extra={"thread_id": thread_id, "errors": cleanup.errors},
         )
         return DeleteResult(
             conversation_uuid=conversation_uuid,
@@ -206,7 +166,20 @@ async def delete_conversation(
             db_deleted=True,
             redis_keys_deleted=0,
             redis_status="error",
-            error=f"Redis cleanup failed: {exc}",
+            error="; ".join(cleanup.errors),
+        )
+
+    if redis_keys_deleted > 0:
+        redis_status = "cleaned"
+        logger.info(
+            "conversation_delete_service: Redis keys deleted",
+            extra={"thread_id": thread_id, "keys_deleted": redis_keys_deleted},
+        )
+    else:
+        redis_status = "no_keys_found"
+        logger.debug(
+            "conversation_delete_service: no Redis keys found",
+            extra={"thread_id": thread_id},
         )
 
     return DeleteResult(

@@ -266,6 +266,59 @@ def _resolve_conversation_list_item(row: Any) -> dict[str, Any]:
     }
 
 
+def _parse_thread_id_from_key(key_str: str) -> str | None:
+    """Extract full thread_id from a checkpoint key.
+
+    Key format: ``checkpoint:{thread_id}:{checkpoint_ns}:{checkpoint_id}``.
+    ``thread_id`` may itself contain ``:`` (e.g. ``v2:42``), so drop the
+    ``checkpoint:`` prefix and the trailing ``:ns:id`` suffix instead of
+    splitting on the first colon.
+    """
+    if not key_str.startswith("checkpoint:"):
+        return None
+    inner = key_str[len("checkpoint:") :]
+    # Drop last two segments: checkpoint_ns and checkpoint_id.
+    parts = inner.rsplit(":", 2)
+    if len(parts) < 3:
+        return None
+    return parts[0] or None
+
+
+def _bare_conversation_id(thread_id: str) -> str:
+    """Return the Chatwoot conversation_id stripped of the ``v2:`` prefix."""
+    return thread_id.removeprefix("v2:")
+
+
+def _is_visible_turn(msg: Any) -> bool:
+    """Count only user turns and final assistant replies for admin display.
+
+    Filters out tool-call AIMessages, ToolMessages, and SystemMessages that
+    inflate the message list once the agent runs under ``create_agent``.
+    """
+    if isinstance(msg, dict):
+        if msg.get("lc") == 1 and isinstance(msg.get("id"), list):
+            cls = msg["id"][-1]
+            kwargs = msg.get("kwargs") or {}
+            if cls == "HumanMessage":
+                return True
+            if cls == "AIMessage":
+                return not kwargs.get("tool_calls") and not kwargs.get("tool_call_chunks")
+            return False
+        role = msg.get("role") or msg.get("type")
+        if role in ("user", "human"):
+            return True
+        if role in ("assistant", "ai"):
+            return not msg.get("tool_calls")
+        return False
+    tool_calls = getattr(msg, "tool_calls", None)
+    type_name = type(msg).__name__
+    if type_name == "HumanMessage":
+        return True
+    if type_name == "AIMessage":
+        return not tool_calls
+    return False
+
+
 async def _get_latest_checkpoint_state(redis_client: Any, thread_id: str) -> dict[str, Any] | None:
     """Return the checkpoint state with the highest message count for a thread."""
     thread_keys: list[str | bytes] = []
@@ -4889,13 +4942,14 @@ async def list_conversations(
                     seen_thread_ids: set[str] = set()
                     async for key in redis_client.scan_iter(match="checkpoint:*", count=500):
                         key_str = key.decode("utf-8") if isinstance(key, bytes) else key
-                        parts = key_str.split(":")
-                        if len(parts) >= 2:
-                            seen_thread_ids.add(parts[1])
+                        tid = _parse_thread_id_from_key(key_str)
+                        if tid:
+                            seen_thread_ids.add(tid)
 
                     # For each active thread_id not already in DB, synthesize a summary
                     for thread_id in seen_thread_ids:
-                        if thread_id in db_conv_ids:
+                        bare_cid = _bare_conversation_id(thread_id)
+                        if bare_cid in db_conv_ids:
                             continue  # Already shown from DB
 
                         state = await _get_latest_checkpoint_state(redis_client, thread_id)
@@ -4903,7 +4957,7 @@ async def list_conversations(
                             continue
 
                         messages = state.get("messages", [])
-                        msg_count = len(messages)
+                        msg_count = sum(1 for m in messages if _is_visible_turn(m))
                         customer_name = state.get("customer_name") or state.get(
                             "pending_whatsapp_name"
                         )
@@ -4930,7 +4984,7 @@ async def list_conversations(
                         redis_items.append(
                             {
                                 "id": f"redis:{thread_id}",  # Synthetic ID — no DB row yet
-                                "conversation_id": thread_id,
+                                "conversation_id": bare_cid,
                                 "customer_id": str(customer_id) if customer_id else None,
                                 "customer_name": customer_name,
                                 "started_at": started_at,
@@ -4997,7 +5051,7 @@ async def get_conversation(
         messages = [
             _deserialize_langchain_message(m)
             for m in raw_messages
-            if isinstance(m, dict)
+            if isinstance(m, dict) and _is_visible_turn(m)
         ]
 
         customer_name = state.get("customer_name") or state.get("pending_whatsapp_name")
@@ -5091,25 +5145,27 @@ async def delete_conversation_endpoint(
 
     # --- Redis-only delete (active conversation not yet archived) ---
     if conversation_uuid.startswith("redis:"):
-        thread_id = conversation_uuid[len("redis:") :]
+        from shared.redis_conversation_cleanup import cleanup_conversation_redis_keys
+
+        raw_thread_id = conversation_uuid[len("redis:") :]
+        # Strip optional "v2:" prefix to get the bare conversation_id.
+        # The cleanup helper handles dual-scan (v2: + bare) internally.
+        bare_cid = raw_thread_id[len("v2:") :] if raw_thread_id.startswith("v2:") else raw_thread_id
+        thread_id = raw_thread_id  # keep original for response field
+
         try:
             redis_client = get_redis_client()
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Redis unavailable: {exc}")
 
         try:
-            patterns = [
-                f"checkpoint_latest:{thread_id}:*",
-                f"checkpoint:{thread_id}:*",
-                f"checkpoint_write:{thread_id}:*",
-                f"write_keys_zset:{thread_id}:*",
-            ]
-            all_keys = []
-            for pattern in patterns:
-                async for k in redis_client.scan_iter(match=pattern, count=200):
-                    all_keys.append(k)
+            cleanup = await cleanup_conversation_redis_keys(
+                redis_client,
+                bare_cid,
+                include_batcher=True,
+            )
 
-            if not all_keys:
+            if cleanup.total_deleted == 0:
                 # Redis keys not found — conversation may have been archived already.
                 # Fall back to DB lookup and delete.
                 from sqlalchemy import select as _select
@@ -5117,7 +5173,7 @@ async def delete_conversation_endpoint(
 
                 async with get_async_session() as session:
                     db_result = await session.execute(
-                        _select(_ConvHistory).where(_ConvHistory.conversation_id == thread_id)
+                        _select(_ConvHistory).where(_ConvHistory.conversation_id == bare_cid)
                     )
                     record = db_result.scalar_one_or_none()
 
@@ -5147,12 +5203,11 @@ async def delete_conversation_endpoint(
                     "error": del_result.error,
                 }
 
-            deleted = await redis_client.delete(*all_keys)
             return {
                 "conversation_uuid": conversation_uuid,
                 "thread_id": thread_id,
                 "db_deleted": False,
-                "redis_keys_deleted": deleted,
+                "redis_keys_deleted": cleanup.total_deleted,
                 "redis_status": "cleaned",
                 "error": None,
             }

@@ -124,15 +124,22 @@ async def find_expired_checkpoints(redis_client: Redis) -> list[tuple[str, str, 
                 #   checkpoint:{thread_id}:__empty__:{uuid}
                 # where thread_id is the Chatwoot conversation_id (e.g. "1")
                 key_str = key.decode("utf-8") if isinstance(key, bytes) else key
-                parts = key_str.split(":")
 
-                if len(parts) < 2:
+                # Key format: checkpoint:{thread_id}:{checkpoint_ns}:{checkpoint_id}
+                # thread_id may itself contain ":" (e.g. "v2:1"), so strip the
+                # "checkpoint:" prefix and the trailing ":ns:id" suffix.
+                if not key_str.startswith("checkpoint:"):
                     logger.warning(f"Unexpected key format: {key_str}, skipping")
                     continue
-
-                # Extract thread_id: second part after "checkpoint"
-                # Format: checkpoint:{thread_id}:...
-                conversation_id = parts[1]
+                inner = key_str[len("checkpoint:") :]
+                inner_parts = inner.rsplit(":", 2)
+                if len(inner_parts) < 3 or not inner_parts[0]:
+                    logger.warning(f"Unexpected key format: {key_str}, skipping")
+                    continue
+                thread_id = inner_parts[0]
+                # Strip v2: prefix so logs and expired_keys carry the bare
+                # Chatwoot conversation_id consistent with state["conversation_id"].
+                conversation_id = thread_id.removeprefix("v2:")
 
                 # Age estimation via TTL (24h total TTL set by AsyncRedisSaver)
                 try:
@@ -469,25 +476,29 @@ async def archive_checkpoint(
                 result["error"] = f"Database upsert failed after {MAX_RETRY_ATTEMPTS} attempts"
                 return result  # Skip deletion from Redis
 
-    # Step 3: Delete ALL Redis keys for this conversation_id (only if DB upsert succeeded)
-    # Cleans: checkpoint:*, checkpoint_write:*, write_keys_zset:*
+    # Step 3: Delete ALL Redis checkpoint key families for this conversation_id.
+    # Uses the shared async helper for dual-scan (v2: + bare) including checkpoint_latest:.
+    # Does NOT delete batcher:pending — that belongs to the delete endpoint, not the archiver.
     if result["success"]:
         try:
-            patterns = [
-                f"checkpoint:{conversation_id}:*",
-                f"checkpoint_write:{conversation_id}:*",
-                f"write_keys_zset:{conversation_id}:*",
-            ]
-            keys_to_delete = []
-            for pattern in patterns:
-                keys_to_delete.extend(list(redis_client.scan_iter(match=pattern, count=200)))
-            if keys_to_delete:
-                deleted_count = redis_client.delete(*keys_to_delete)
+            from shared.redis_client import get_redis_client
+            from shared.redis_conversation_cleanup import cleanup_conversation_redis_keys
+
+            async_redis = get_redis_client()
+            cleanup = await cleanup_conversation_redis_keys(
+                async_redis,
+                conversation_id,
+                include_batcher=False,
+            )
+            if cleanup.total_deleted > 0:
                 logger.info(
-                    f"Deleted {deleted_count} Redis keys for conversation {conversation_id}"
+                    f"Deleted {cleanup.total_deleted} Redis keys for conversation {conversation_id}",
+                    extra={"by_family": cleanup.by_family},
                 )
             else:
                 logger.warning(f"No Redis keys found for conversation {conversation_id}")
+            if cleanup.errors:
+                logger.error(f"Redis cleanup errors for {conversation_id}: {cleanup.errors}")
         except Exception as e:
             logger.error(
                 f"Error deleting Redis keys for conversation {conversation_id}: {e}", exc_info=True
