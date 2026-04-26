@@ -333,25 +333,35 @@ async def test_s4_off_topic_faq_mid_booking():
         config=thread_config,
     )
 
-    await agent.ainvoke(
+    result2 = await agent.ainvoke(
         {"messages": [{"role": "user", "content": "con marta"}]},
         config=thread_config,
     )
+
+    # Snapshot booking-tool count AFTER turn 2 (baseline for turn 3 check)
+    booking_tool_names = {"update_booking", "check_availability", "book"}
+    booking_tool_ids_before_t3 = {
+        m.id
+        for m in result2["messages"]
+        if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") in booking_tool_names
+    }
 
     # Turn 3 — off-topic FAQ; must NOT call booking tools
     result3 = await agent.ainvoke(
         {"messages": [{"role": "user", "content": "¿abren los domingos?"}]},
         config=thread_config,
     )
-    booking_tool_names = {"update_booking", "check_availability", "book"}
-    booking_calls3 = [
+    new_booking_calls3 = [
         m
         for m in result3["messages"]
-        if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") in booking_tool_names
+        if hasattr(m, "type")
+        and m.type == "tool"
+        and getattr(m, "name", "") in booking_tool_names
+        and m.id not in booking_tool_ids_before_t3
     ]
-    assert not booking_calls3, (
-        "Turn 3 (off-topic FAQ) must NOT call any booking tool. "
-        f"Got tool calls: {[m.name for m in booking_calls3]}"
+    assert not new_booking_calls3, (
+        "Turn 3 (off-topic FAQ) must NOT call any NEW booking tool. "
+        f"Got new tool calls: {[m.name for m in new_booking_calls3]}"
     )
 
     # Turn 4 — booking resumes with preserved state
@@ -424,8 +434,19 @@ async def test_s5_confirmation_gate():
     agent = build_conversation_agent(checkpointer=MemorySaver())
     thread_config = {"configurable": {"thread_id": "test-s5-confirmation-gate"}}
     # Turn 1 — all slots in one shot; agent reaches summary
+    # Use explicit future date to avoid vague "el sábado" being resolved to a past date.
+    # Provide customer_phone so CustomerResolveMiddleware injects <customer> block
+    # (required for book() — the prompt forbids asking for phone).
     result1 = await agent.ainvoke(
-        {"messages": [{"role": "user", "content": "quiero corte de mujer el sábado con marta"}]},
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "quiero corte de mujer el sábado 3 de mayo con marta",
+                }
+            ],
+            "customer_phone": "+34600000001",
+        },
         config=thread_config,
     )
     book_calls1 = [
