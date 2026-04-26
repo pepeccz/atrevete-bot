@@ -44,9 +44,10 @@ agent/
 ├── state/
 │   ├── schemas.py               # ConversationState TypedDict + reducers
 │   └── helpers.py               # add_message(), should_summarize(), etc.
-├── tools/                       # 4 LangChain tools
+├── tools/                       # 5 LangChain tools
 │   ├── availability_tools.py    # check_availability
 │   ├── booking_tools.py         # book (atomic transaction)
+│   ├── update_booking.py        # update_booking (slot collector — NEW)
 │   ├── manage_appointments_tool.py  # manage_appointments (view/cancel/reschedule)
 │   └── escalation_tools.py     # escalate
 ├── prompts/
@@ -112,7 +113,7 @@ agent/
 | Mode | Purpose | Tools | Entry Condition |
 |------|---------|-------|-----------------|
 | **GREETING** | First contact + name collection | `manage_customer` (customer_tools) | `is_first_interaction=True` or `customer_name=None` |
-| **BOOKING** | Multi-step appointment booking | `check_availability`, `book`, `manage_appointments` | `intent=book` or already in BOOKING |
+| **BOOKING** | Multi-step appointment booking | `update_booking`, `check_availability`, `book`, `manage_appointments` | `intent=book` or already in BOOKING |
 | **GENERAL** | FAQs, business hours, services (catalog in prompt) | `manage_appointments` (read), `escalate` | Default mode |
 | **ESCALATION** | Human handoff | `escalate` | `intent=escalate` or `error_count>=3` |
 
