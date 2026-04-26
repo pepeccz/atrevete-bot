@@ -97,7 +97,8 @@ def vcr_config() -> dict[str, Any]:
         ],
         "before_record_request": _normalize_body,
         "decode_compressed_response": True,
-        "record_mode": "none",
+        # record_mode intentionally omitted: pytest-recording derives it from
+        # the --record-mode CLI flag (default "none" for safe CI playback).
     }
 
 
