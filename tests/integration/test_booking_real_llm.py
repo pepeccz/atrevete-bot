@@ -200,23 +200,25 @@ async def test_s2_nada_mas_loop_break():
     )
 
     # Turn 4's update_booking call must carry accumulated services
+    # (check the LAST update_booking result — accumulated state includes results from earlier turns)
     import json
 
-    tool_messages4 = [
+    all_update_msgs = [
         m
         for m in result4["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "update_booking"
     ]
-    for tm in tool_messages4:
-        try:
-            payload = json.loads(tm.content)
-            collected = payload.get("collected", {})
-            services = collected.get("services") or collected.get("service_ids") or []
-            assert (
-                len(services) >= 2
-            ), f"Turn 4 update_booking must preserve both services. Got collected: {collected}"
-        except (json.JSONDecodeError, AttributeError):
-            pass
+    assert all_update_msgs, "Turn 4 must have at least one update_booking tool result"
+    last_tm = all_update_msgs[-1]
+    try:
+        payload = json.loads(last_tm.content)
+        collected = payload.get("collected", {})
+        services = collected.get("services") or collected.get("service_ids") or []
+        assert (
+            len(services) >= 2
+        ), f"Turn 4's last update_booking must preserve both services. Got collected: {collected}"
+    except (json.JSONDecodeError, AttributeError):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +259,10 @@ async def test_s3_one_shot_all_slots():
     result = await agent.ainvoke(
         {
             "messages": [
-                {"role": "user", "content": "quiero turno el viernes con marta para corte de mujer"}
+                {
+                    "role": "user",
+                    "content": "quiero turno el viernes 2 de mayo con marta para corte de mujer",
+                }
             ]
         },
         config=thread_config,
@@ -357,25 +362,25 @@ async def test_s4_off_topic_faq_mid_booking():
 
     import json
 
-    update_calls4 = [
+    all_update_calls4 = [
         m
         for m in result4["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "update_booking"
     ]
-    assert update_calls4, "Turn 4 must call update_booking to set the date"
+    assert all_update_calls4, "Turn 4 must have at least one update_booking tool result"
 
-    # The call must carry previously-collected services and stylist
-    for tm in update_calls4:
-        try:
-            payload = json.loads(tm.content)
-            collected = payload.get("collected", {})
-            # Check that services are still present (as IDs or names)
-            has_services = bool(collected.get("services") or collected.get("service_ids"))
-            assert (
-                has_services
-            ), f"Turn 4 update_booking must preserve accumulated services. collected={collected}"
-        except (json.JSONDecodeError, AttributeError):
-            pass
+    # Check the LAST update_booking result — it should include the date and accumulated slots
+    last_update4 = all_update_calls4[-1]
+    try:
+        payload = json.loads(last_update4.content)
+        collected = payload.get("collected", {})
+        # Check that services are still present (as IDs or names)
+        has_services = bool(collected.get("services") or collected.get("service_ids"))
+        assert (
+            has_services
+        ), f"Turn 4 update_booking must preserve accumulated services. collected={collected}"
+    except (json.JSONDecodeError, AttributeError):
+        pass
 
 
 # ---------------------------------------------------------------------------
