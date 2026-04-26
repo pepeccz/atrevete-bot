@@ -261,7 +261,7 @@ async def test_s3_one_shot_all_slots():
             "messages": [
                 {
                     "role": "user",
-                    "content": "quiero turno el viernes 2 de mayo con marta para corte de mujer",
+                    "content": "quiero turno el viernes 1 de mayo con marta para corte de mujer",
                 }
             ]
         },
@@ -442,7 +442,7 @@ async def test_s5_confirmation_gate():
             "messages": [
                 {
                     "role": "user",
-                    "content": "quiero corte de mujer el sábado 3 de mayo con marta",
+                    "content": "quiero corte de mujer el sábado 2 de mayo con marta",
                 }
             ],
             "customer_phone": "+34600000001",
