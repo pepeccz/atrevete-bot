@@ -91,6 +91,44 @@ class TestUpsertConversationHistoryInsert:
         assert obj.metadata_["sender_name"] == "María López"
 
     @pytest.mark.asyncio
+    async def test_insert_links_existing_customer_by_phone(self):
+        """If sender phone matches Customer in DB, customer_id is linked on INSERT."""
+        from uuid import uuid4
+
+        customer_uuid = uuid4()
+        customer_result = MagicMock(scalar_one_or_none=MagicMock(return_value=customer_uuid))
+        conv_result = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+
+        session = _make_db_session()
+        session.execute = AsyncMock(side_effect=[customer_result, conv_result])
+
+        added_objects = []
+        session.add = MagicMock(side_effect=lambda obj: added_objects.append(obj))
+        payload = _make_payload(conversation_id=55, phone="+34600000001")
+
+        await upsert_conversation_history(session, payload)
+
+        assert len(added_objects) == 1
+        assert added_objects[0].customer_id == customer_uuid
+
+    @pytest.mark.asyncio
+    async def test_insert_customer_id_null_when_phone_unknown(self):
+        """If sender phone doesn't match any Customer, customer_id stays None."""
+        customer_result = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        conv_result = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+
+        session = _make_db_session()
+        session.execute = AsyncMock(side_effect=[customer_result, conv_result])
+
+        added_objects = []
+        session.add = MagicMock(side_effect=lambda obj: added_objects.append(obj))
+        payload = _make_payload(conversation_id=56)
+
+        await upsert_conversation_history(session, payload)
+
+        assert added_objects[0].customer_id is None
+
+    @pytest.mark.asyncio
     async def test_insert_sets_started_at_not_ended_at(self):
         """On INSERT started_at is set; ended_at should be None."""
         session = _make_db_session()
@@ -149,6 +187,30 @@ class TestUpsertConversationHistoryUpdate:
         await upsert_conversation_history(session, payload)
 
         assert existing.ended_at is not None
+
+    @pytest.mark.asyncio
+    async def test_update_backfills_customer_id_when_null(self):
+        """If existing row has customer_id=None and phone resolves, backfill."""
+        from uuid import uuid4
+
+        existing = MagicMock()
+        existing.conversation_id = "42"
+        existing.message_count = 1
+        existing.customer_id = None
+        existing.metadata_ = {}
+        existing.started_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+        customer_uuid = uuid4()
+        customer_result = MagicMock(scalar_one_or_none=MagicMock(return_value=customer_uuid))
+        conv_result = MagicMock(scalar_one_or_none=MagicMock(return_value=existing))
+
+        session = _make_db_session()
+        session.execute = AsyncMock(side_effect=[customer_result, conv_result])
+
+        payload = _make_payload(conversation_id=42)
+        await upsert_conversation_history(session, payload)
+
+        assert existing.customer_id == customer_uuid
 
     @pytest.mark.asyncio
     async def test_update_does_not_change_started_at(self):

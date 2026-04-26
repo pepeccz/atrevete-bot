@@ -47,14 +47,22 @@ async def upsert_conversation_history(
     UPSERT a ConversationHistory row for the incoming Chatwoot message.
 
     - INSERT on first message: sets started_at=now(), stores sender_name in metadata_.
+      If sender phone matches an existing Customer, links customer_id immediately.
     - UPDATE on subsequent messages: increments message_count, sets ended_at=now().
-
-    customer_id is left NULL (populated later by the agent when the customer is identified).
+      Backfills customer_id if still NULL and the phone now resolves to a Customer.
     """
-    from database.models import ConversationHistory
+    from database.models import ConversationHistory, Customer
 
     conversation_id_str = str(payload.conversation.id)
     sender_name = payload.sender.name or ""
+    sender_phone = payload.sender.phone_number
+
+    customer_id = None
+    if sender_phone:
+        customer_result = await session.execute(
+            select(Customer.id).where(Customer.phone == sender_phone)
+        )
+        customer_id = customer_result.scalar_one_or_none()
 
     result = await session.execute(
         select(ConversationHistory).where(
@@ -68,7 +76,7 @@ async def upsert_conversation_history(
         # INSERT — new conversation
         row = ConversationHistory(
             conversation_id=conversation_id_str,
-            customer_id=None,
+            customer_id=customer_id,
             started_at=now,
             ended_at=None,
             message_count=1,
@@ -79,6 +87,8 @@ async def upsert_conversation_history(
         # UPDATE — existing conversation
         existing.message_count = existing.message_count + 1
         existing.ended_at = now
+        if existing.customer_id is None and customer_id is not None:
+            existing.customer_id = customer_id
         # Preserve existing metadata; only update sender_name if not already set
         if not existing.metadata_.get("sender_name") and sender_name:
             existing.metadata_ = {**existing.metadata_, "sender_name": sender_name}
