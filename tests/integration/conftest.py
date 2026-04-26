@@ -62,8 +62,10 @@ def _json_body_matcher(r1: Any, r2: Any) -> None:
                 return body.encode()
         return str(body).encode()
 
-    b1 = _canon(r1.body)
-    b2 = _canon(r2.body)
+    # Use vcrpy's read_body which handles iterator/file-like bodies safely.
+    from vcr.matchers import read_body  # local import: vcr is a runtime dep of pytest-recording
+    b1 = _canon(read_body(r1))
+    b2 = _canon(read_body(r2))
     if b1 != b2:
         # Debug aid: dump live + cassette canonical bodies for the first mismatch
         try:
@@ -89,7 +91,7 @@ def _json_body_matcher(r1: Any, r2: Any) -> None:
 def vcr_config() -> dict[str, Any]:
     """Shared VCR configuration for all integration tests."""
     return {
-        "match_on": ["method", "scheme", "host", "path", "query", "json_body"],
+        "match_on": ["method", "scheme", "host", "path", "query", "body"],
         "filter_headers": [
             ("Authorization", "REDACTED"),
             ("X-Api-Key", "REDACTED"),
