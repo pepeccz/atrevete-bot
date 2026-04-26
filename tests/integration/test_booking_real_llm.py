@@ -17,14 +17,7 @@ The vcr_config fixture in conftest.py sets record_mode="none" (CI-safe).
 from __future__ import annotations
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Module-level skip — remove after cassettes are recorded on server
-# ---------------------------------------------------------------------------
-
-pytestmark = pytest.mark.skip(
-    reason="awaiting cassette recording on server — see tests/integration/cassettes/README.md"
-)
+from langgraph.checkpoint.memory import MemorySaver
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +65,7 @@ async def test_s1_advance_policy_violation():
 
     from agent.agent_factory import build_conversation_agent
 
-    agent = build_conversation_agent()
+    agent = build_conversation_agent(checkpointer=MemorySaver())
     thread_config = {"configurable": {"thread_id": "test-s1-advance-policy"}}
 
     # Turn 1 — services without date/stylist
@@ -176,7 +169,7 @@ async def test_s2_nada_mas_loop_break():
     """
     from agent.agent_factory import build_conversation_agent
 
-    agent = build_conversation_agent()
+    agent = build_conversation_agent(checkpointer=MemorySaver())
     thread_config = {"configurable": {"thread_id": "test-s2-nada-mas"}}
 
     await agent.ainvoke(
@@ -256,7 +249,7 @@ async def test_s3_one_shot_all_slots():
     """
     from agent.agent_factory import build_conversation_agent
 
-    agent = build_conversation_agent()
+    agent = build_conversation_agent(checkpointer=MemorySaver())
     thread_config = {"configurable": {"thread_id": "test-s3-one-shot"}}
 
     result = await agent.ainvoke(
@@ -325,7 +318,7 @@ async def test_s4_off_topic_faq_mid_booking():
     """
     from agent.agent_factory import build_conversation_agent
 
-    agent = build_conversation_agent()
+    agent = build_conversation_agent(checkpointer=MemorySaver())
     thread_config = {"configurable": {"thread_id": "test-s4-faq"}}
 
     await agent.ainvoke(
@@ -421,7 +414,7 @@ async def test_s5_confirmation_gate():
     """
     from agent.agent_factory import build_conversation_agent
 
-    agent = build_conversation_agent()
+    agent = build_conversation_agent(checkpointer=MemorySaver())
     thread_config = {"configurable": {"thread_id": "test-s5-confirmation-gate"}}
     # Turn 1 — all slots in one shot; agent reaches summary
     result1 = await agent.ainvoke(
