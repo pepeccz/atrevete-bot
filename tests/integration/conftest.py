@@ -107,3 +107,44 @@ def pytest_recording_configure(config: Any, vcr: Any) -> None:
     pytest-recording calls this hook once when the VCR object is created.
     """
     vcr.register_matcher("json_body", _json_body_matcher)
+
+
+# ---------------------------------------------------------------------------
+# Test-data isolation — wipe stale appointments for the S5 test phone
+# ---------------------------------------------------------------------------
+#
+# S5 (test_s5_confirmation_gate) records a real book() call against +34600000001
+# which writes a row to `appointments`. Subsequent playbacks then see that row
+# in DB state and check_availability returns DIFFERENT slots than at record
+# time. The cassette becomes invalid because tool-result content (slots list)
+# fed back into the LLM differs byte-for-byte.
+#
+# Fix: before each S5 invocation (record OR playback), delete every appointment
+# attached to phone +34600000001. This guarantees the salon calendar is empty
+# for that phone, matching the state captured during the original recording.
+
+
+@pytest.fixture(autouse=True)
+async def _wipe_test_phone_appointments(request: pytest.FixtureRequest) -> None:
+    """Delete appointments for phone +34600000001 before each integration test.
+
+    Only active for tests in ``tests/integration/test_booking_real_llm.py``.
+    Uses an async SQLAlchemy session so it cooperates with pytest-asyncio.
+    """
+    if "test_booking_real_llm" not in str(request.fspath):
+        return
+    try:
+        from sqlalchemy import text
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            await session.execute(
+                text(
+                    "DELETE FROM appointments WHERE customer_id IN ("
+                    "SELECT id FROM customers WHERE phone LIKE '%600000001')"
+                )
+            )
+            await session.commit()
+    except Exception:
+        # Best-effort: do not block tests if DB is unreachable.
+        pass
