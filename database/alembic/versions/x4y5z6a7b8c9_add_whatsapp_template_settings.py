@@ -1,7 +1,7 @@
 """add whatsapp template settings
 
 Revision ID: x4y5z6a7b8c9
-Revises: w3x4y5z6a7b8
+Revises: b539712e93f0
 Create Date: 2026-04-26
 
 Inserts 3 WhatsApp HSM template name keys into system_settings:
@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "x4y5z6a7b8c9"
-down_revision: str | None = "w3x4y5z6a7b8"
+down_revision: str | None = "b539712e93f0"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
