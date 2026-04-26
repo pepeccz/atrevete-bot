@@ -15,6 +15,7 @@ from agent.workers.notification_handlers._retry import next_retry_at
 from agent.workers.notification_handlers.base import NotificationHandler
 from database.models import Appointment, AppointmentStatus
 from shared.config import get_settings
+from shared.settings_service import get_settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,11 @@ def _build_body_params(appt: Appointment) -> dict[str, str]:
 
 async def send_fn(appt: Appointment, chatwoot_client: Any) -> bool:
     settings = get_settings()
-    template = settings.WHATSAPP_TEMPLATE_CONFIRM_48H
+    svc = await get_settings_service()
+    template = await svc.get(
+        "whatsapp_template_confirm_48h",
+        settings.WHATSAPP_TEMPLATE_CONFIRM_48H,
+    )
     if not template:
         logger.warning(
             "WHATSAPP_TEMPLATE_CONFIRM_48H is empty — skipping appointment %s",

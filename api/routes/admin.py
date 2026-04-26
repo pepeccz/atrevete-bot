@@ -57,6 +57,7 @@ from database.models import (
 )
 from shared.config import get_settings
 from shared.cache_signals import publish_cache_invalidation
+from shared.settings_service import get_settings_service
 from agent.services.recurrence_service import (
     expand_recurrence,
     check_conflicts_for_dates,
@@ -2855,10 +2856,15 @@ async def create_appointment(
             }
 
             settings = get_settings()
+            _svc = await get_settings_service()
+            _admin_template = await _svc.get(
+                "whatsapp_template_admin_booking",
+                settings.ADMIN_APPOINTMENT_TEMPLATE_NAME,
+            )
             asyncio.create_task(
                 _safe_send_admin_appointment_template(
                     customer_phone=customer.phone,
-                    template_name=settings.ADMIN_APPOINTMENT_TEMPLATE_NAME,
+                    template_name=_admin_template,
                     body_params=body_params,
                     customer_name=display_name,
                     conversation_id=conv_id,

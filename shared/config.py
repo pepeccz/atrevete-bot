@@ -256,10 +256,6 @@ class Settings(BaseSettings):
         default="appointment_auto_cancelled",
         description="WhatsApp template name for auto-cancellation notification",
     )
-    CUSTOMER_CANCEL_TEMPLATE_NAME: str = Field(
-        default="appointment_cancelled_by_customer",
-        description="WhatsApp template name when customer declines appointment",
-    )
     REMINDER_TEMPLATE_NAME: str = Field(
         default="appointment_reminder_2h", description="WhatsApp template name for 2h reminder"
     )

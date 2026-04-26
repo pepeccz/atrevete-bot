@@ -27,9 +27,8 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, str(__file__).rsplit("/database", 1)[0])
 sys.path.insert(0, str(__file__).rsplit("\\database", 1)[0])
 
-from database.models import SystemSetting, SettingValueType, SettingCategory
+from database.models import SettingCategory, SettingValueType, SystemSetting
 from shared.config import get_settings
-
 
 # All system settings organized by category
 SYSTEM_SETTINGS = [
@@ -477,6 +476,56 @@ SYSTEM_SETTINGS = [
         "description": "Número máximo de reintentos para archivar una conversación.",
         "requires_restart": False,
         "display_order": 28,
+    },
+    # ========== WHATSAPP TEMPLATE SETTINGS (3) ==========
+    {
+        "category": SettingCategory.CONFIRMATION.value,
+        "key": "whatsapp_template_confirm_48h",
+        "value": "atrevete_confirm_48h",
+        "value_type": SettingValueType.STRING.value,
+        "default_value": "atrevete_confirm_48h",
+        "min_value": None,
+        "max_value": None,
+        "allowed_values": None,
+        "label": "Plantilla WhatsApp — Confirmación 48h",
+        "description": (
+            "Nombre de la plantilla HSM aprobada en Chatwoot para el envío de confirmación 48h antes."
+        ),
+        "requires_restart": False,
+        "display_order": 50,
+    },
+    {
+        "category": SettingCategory.CONFIRMATION.value,
+        "key": "whatsapp_template_reminder_24h",
+        "value": "atrevete_reminder_24h",
+        "value_type": SettingValueType.STRING.value,
+        "default_value": "atrevete_reminder_24h",
+        "min_value": None,
+        "max_value": None,
+        "allowed_values": None,
+        "label": "Plantilla WhatsApp — Recordatorio 24h",
+        "description": (
+            "Nombre de la plantilla HSM aprobada en Chatwoot para el recordatorio 24h antes de la cita."
+        ),
+        "requires_restart": False,
+        "display_order": 51,
+    },
+    {
+        "category": SettingCategory.CONFIRMATION.value,
+        "key": "whatsapp_template_admin_booking",
+        "value": "appointment_booked_by_admin",
+        "value_type": SettingValueType.STRING.value,
+        "default_value": "appointment_booked_by_admin",
+        "min_value": None,
+        "max_value": None,
+        "allowed_values": None,
+        "label": "Plantilla WhatsApp — Reserva por Admin",
+        "description": (
+            "Nombre de la plantilla HSM aprobada en Chatwoot para notificar al cliente "
+            "cuando el admin crea una cita."
+        ),
+        "requires_restart": False,
+        "display_order": 52,
     },
     # ========== GCAL SYNC SETTINGS (2) ==========
     {
