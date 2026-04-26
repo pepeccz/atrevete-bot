@@ -6,7 +6,7 @@ errors[] must never start with imperative verbs (P5-aligned lint enforced in tes
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,8 +26,10 @@ class ToolResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["ok", "partial", "rejected"]
-    payload: dict = {}
-    next_step: str | None = None
+    collected: dict[str, Any] = {}
+    missing: list[str] = []
+    next_step: str | None = None  # tightened to NextStep|None after T2 adds next_steps.py
+    payload: dict[str, Any] = {}
     errors: list[str] = []
 
     @classmethod

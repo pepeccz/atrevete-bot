@@ -61,7 +61,7 @@ class TestToolResponseSerialization:
     def test_model_dump_json_contains_all_fields(self):
         tr = ToolResponse(status="rejected", errors=["no hay turnos"])
         parsed = json.loads(tr.model_dump_json())
-        assert set(parsed.keys()) == {"status", "payload", "next_step", "errors"}
+        assert set(parsed.keys()) == {"status", "collected", "missing", "payload", "next_step", "errors"}
 
 
 # ---------------------------------------------------------------------------
