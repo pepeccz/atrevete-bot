@@ -28,7 +28,7 @@ class ToolResponse(BaseModel):
     status: Literal["ok", "partial", "rejected"]
     collected: dict[str, Any] = {}
     missing: list[str] = []
-    next_step: str | None = None  # tightened to NextStep|None after T2 adds next_steps.py
+    next_step: str | None = None  # str keeps compat with non-booking tools; booking tools use NextStep values
     payload: dict[str, Any] = {}
     errors: list[str] = []
 
