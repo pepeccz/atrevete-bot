@@ -118,14 +118,9 @@ async def _get_stylist_names_map(stylist_ids: list[UUID]) -> dict[UUID, str]:
         return {row[0]: row[1] for row in result.fetchall()}
 
 
-def _build_available_stylists(
-    stylist_ids: list[UUID], names_map: dict[UUID, str]
-) -> list[dict]:
+def _build_available_stylists(stylist_ids: list[UUID], names_map: dict[UUID, str]) -> list[dict]:
     """Build sorted available_stylists list from IDs + names map."""
-    entries = [
-        {"id": str(sid), "name": names_map.get(sid, str(sid))}
-        for sid in stylist_ids
-    ]
+    entries = [{"id": str(sid), "name": names_map.get(sid, str(sid))} for sid in stylist_ids]
     return sorted(entries, key=lambda e: e["name"])
 
 

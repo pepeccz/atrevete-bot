@@ -13,10 +13,10 @@ Each test uses @pytest.mark.vcr which loads the cassette from:
 
 The vcr_config fixture in conftest.py sets record_mode="none" (CI-safe).
 """
+
 from __future__ import annotations
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Module-level skip — remove after cassettes are recorded on server
@@ -69,15 +69,19 @@ async def test_s1_advance_policy_violation():
         - The advance_policy_violated ToolMessage payload contains "first_valid_date".
         - The final bot message mentions a future date in ISO-like format.
     """
+
     from agent.agent_factory import build_conversation_agent
-    from agent.state.schemas import AgentState
 
     agent = build_conversation_agent()
     thread_config = {"configurable": {"thread_id": "test-s1-advance-policy"}}
 
     # Turn 1 — services without date/stylist
     result1 = await agent.ainvoke(
-        {"messages": [{"role": "user", "content": "hola, quiero cortarme el pelo y también un peinado"}]},
+        {
+            "messages": [
+                {"role": "user", "content": "hola, quiero cortarme el pelo y también un peinado"}
+            ]
+        },
         config=thread_config,
     )
     messages1 = result1["messages"]
@@ -101,7 +105,8 @@ async def test_s1_advance_policy_violation():
 
     # book() must never have been called
     all_tool_messages = [
-        m for batch in [messages1, messages2, messages3]
+        m
+        for batch in [messages1, messages2, messages3]
         for m in batch
         if hasattr(m, "type") and m.type == "tool"
     ]
@@ -110,23 +115,24 @@ async def test_s1_advance_policy_violation():
 
     # Final message must mention advance policy and a future date
     import re
-    assert re.search(r"(antelaci[oó]n|al menos \d+ d[ií]as|\d{4}-\d{2}-\d{2})", final_bot_message), (
-        f"Final message must mention advance policy and/or a future date. Got: {final_bot_message!r}"
-    )
+
+    assert re.search(
+        r"(antelaci[oó]n|al menos \d+ d[ií]as|\d{4}-\d{2}-\d{2})", final_bot_message
+    ), f"Final message must mention advance policy and/or a future date. Got: {final_bot_message!r}"
 
     # advance_policy_violated ToolMessage must carry first_valid_date
     import json
+
     advance_rejected = [
-        m for m in all_tool_messages
-        if getattr(m, "name", "") in ("check_availability",)
+        m for m in all_tool_messages if getattr(m, "name", "") in ("check_availability",)
     ]
     for tm in advance_rejected:
         try:
             payload = json.loads(tm.content)
             if payload.get("next_step") == "advance_policy_violated":
-                assert "first_valid_date" in payload.get("payload", {}), (
-                    "advance_policy_violated ToolMessage must carry payload.first_valid_date"
-                )
+                assert "first_valid_date" in payload.get(
+                    "payload", {}
+                ), "advance_policy_violated ToolMessage must carry payload.first_valid_date"
         except (json.JSONDecodeError, AttributeError):
             pass
 
@@ -173,12 +179,12 @@ async def test_s2_nada_mas_loop_break():
     agent = build_conversation_agent()
     thread_config = {"configurable": {"thread_id": "test-s2-nada-mas"}}
 
-    result1 = await agent.ainvoke(
+    await agent.ainvoke(
         {"messages": [{"role": "user", "content": "quiero corte de mujer"}]},
         config=thread_config,
     )
 
-    result2 = await agent.ainvoke(
+    await agent.ainvoke(
         {"messages": [{"role": "user", "content": "y peinado"}]},
         config=thread_config,
     )
@@ -189,9 +195,9 @@ async def test_s2_nada_mas_loop_break():
     )
     # Turn 3 bot response must NOT echo "¿algo más?"
     bot3 = result3["messages"][-1].content if result3["messages"] else ""
-    assert "algo más" not in bot3.lower(), (
-        f"Bot should NOT ask '¿algo más?' after user said 'nada más'. Got: {bot3!r}"
-    )
+    assert (
+        "algo más" not in bot3.lower()
+    ), f"Bot should NOT ask '¿algo más?' after user said 'nada más'. Got: {bot3!r}"
 
     result4 = await agent.ainvoke(
         {"messages": [{"role": "user", "content": "con pilar"}]},
@@ -200,8 +206,10 @@ async def test_s2_nada_mas_loop_break():
 
     # Turn 4's update_booking call must carry accumulated services
     import json
+
     tool_messages4 = [
-        m for m in result4["messages"]
+        m
+        for m in result4["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "update_booking"
     ]
     for tm in tool_messages4:
@@ -209,9 +217,9 @@ async def test_s2_nada_mas_loop_break():
             payload = json.loads(tm.content)
             collected = payload.get("collected", {})
             services = collected.get("services") or collected.get("service_ids") or []
-            assert len(services) >= 2, (
-                f"Turn 4 update_booking must preserve both services. Got collected: {collected}"
-            )
+            assert (
+                len(services) >= 2
+            ), f"Turn 4 update_booking must preserve both services. Got collected: {collected}"
         except (json.JSONDecodeError, AttributeError):
             pass
 
@@ -252,13 +260,19 @@ async def test_s3_one_shot_all_slots():
     thread_config = {"configurable": {"thread_id": "test-s3-one-shot"}}
 
     result = await agent.ainvoke(
-        {"messages": [{"role": "user", "content": "quiero turno el viernes con marta para corte de mujer"}]},
+        {
+            "messages": [
+                {"role": "user", "content": "quiero turno el viernes con marta para corte de mujer"}
+            ]
+        },
         config=thread_config,
     )
 
     import json
+
     update_booking_calls = [
-        m for m in result["messages"]
+        m
+        for m in result["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "update_booking"
     ]
 
@@ -331,7 +345,8 @@ async def test_s4_off_topic_faq_mid_booking():
     )
     booking_tool_names = {"update_booking", "check_availability", "book"}
     booking_calls3 = [
-        m for m in result3["messages"]
+        m
+        for m in result3["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") in booking_tool_names
     ]
     assert not booking_calls3, (
@@ -346,8 +361,10 @@ async def test_s4_off_topic_faq_mid_booking():
     )
 
     import json
+
     update_calls4 = [
-        m for m in result4["messages"]
+        m
+        for m in result4["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "update_booking"
     ]
     assert update_calls4, "Turn 4 must call update_booking to set the date"
@@ -358,12 +375,10 @@ async def test_s4_off_topic_faq_mid_booking():
             payload = json.loads(tm.content)
             collected = payload.get("collected", {})
             # Check that services are still present (as IDs or names)
-            has_services = bool(
-                collected.get("services") or collected.get("service_ids")
-            )
-            assert has_services, (
-                f"Turn 4 update_booking must preserve accumulated services. collected={collected}"
-            )
+            has_services = bool(collected.get("services") or collected.get("service_ids"))
+            assert (
+                has_services
+            ), f"Turn 4 update_booking must preserve accumulated services. collected={collected}"
         except (json.JSONDecodeError, AttributeError):
             pass
 
@@ -408,15 +423,14 @@ async def test_s5_confirmation_gate():
 
     agent = build_conversation_agent()
     thread_config = {"configurable": {"thread_id": "test-s5-confirmation-gate"}}
-    booking_tool_names = {"update_booking", "check_availability", "book"}
-
     # Turn 1 — all slots in one shot; agent reaches summary
     result1 = await agent.ainvoke(
         {"messages": [{"role": "user", "content": "quiero corte de mujer el sábado con marta"}]},
         config=thread_config,
     )
     book_calls1 = [
-        m for m in result1["messages"]
+        m
+        for m in result1["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "book"
     ]
     assert not book_calls1, "book() must NOT be called before the user confirms (turn 1)"
@@ -427,7 +441,8 @@ async def test_s5_confirmation_gate():
         config=thread_config,
     )
     book_calls2 = [
-        m for m in result2["messages"]
+        m
+        for m in result2["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "book"
     ]
     assert not book_calls2, (
@@ -441,10 +456,11 @@ async def test_s5_confirmation_gate():
         config=thread_config,
     )
     book_calls3 = [
-        m for m in result3["messages"]
+        m
+        for m in result3["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "book"
     ]
     assert book_calls3, "book() MUST be called after an explicit affirmation ('sí, dale')"
-    assert len(book_calls3) == 1, (
-        f"book() must be called exactly once after affirmation. Got {len(book_calls3)} calls."
-    )
+    assert (
+        len(book_calls3) == 1
+    ), f"book() must be called exactly once after affirmation. Got {len(book_calls3)} calls."

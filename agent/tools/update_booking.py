@@ -16,9 +16,8 @@ Refs: R2, R3, design §5
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import date, datetime
+from datetime import datetime
 from typing import Literal
 
 from langchain_core.tools import tool
@@ -78,12 +77,12 @@ async def _update_booking_impl(
     date_iso: str | None,
     audience: str | None,
 ) -> str:
-    from database.connection import get_async_session
     from agent.tools._booking_helpers import (
         _resolve_audience_variants,
         _resolve_service_ids,
         _resolve_stylist,
     )
+    from database.connection import get_async_session
 
     async with get_async_session() as session:
         collected: dict = {}
@@ -107,7 +106,11 @@ async def _update_booking_impl(
             errors.extend([f"No reconozco el servicio: {n}" for n in unknown_names])
             logger.info(
                 "tool.response.rejected",
-                extra={"tool_name": "update_booking", "next_step": "service_required", "errors": errors},
+                extra={
+                    "tool_name": "update_booking",
+                    "next_step": "service_required",
+                    "errors": errors,
+                },
             )
             return ToolResponse(
                 status="rejected",

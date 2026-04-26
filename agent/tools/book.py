@@ -145,6 +145,7 @@ async def book(
     start_iso: str,
     customer_phone: str,
     customer_full_name: str,
+    confirmed: bool = False,
     notes: str | None = None,
 ) -> str:
     """
@@ -159,12 +160,49 @@ async def book(
         start_iso: Appointment start time in ISO 8601 format (timezone-aware).
         customer_phone: Customer phone in E.164 format.
         customer_full_name: Full name in 'FirstName LastName' format (surname required).
+        confirmed: Must be True — the customer has explicitly confirmed the booking.
         notes: Optional appointment notes.
 
     Returns:
         JSON-serialized ToolResponse with payload containing:
         appointment_id, customer_id, start_iso, end_iso, stylist_id.
     """
+    # --- Guard 1: confirmation required ---
+    if not confirmed:
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "book", "next_step": "confirmation_required"},
+        )
+        return ToolResponse(
+            status="rejected",
+            next_step="confirmation_required",
+            errors=["El cliente aún no ha confirmado la reserva explícitamente."],
+        ).model_dump_json()
+
+    # --- Guard 2: slot completeness ---
+    missing: list[str] = []
+    if not service_ids:
+        missing.append("service_ids")
+    if not stylist_id:
+        missing.append("stylist_id")
+    if not start_iso:
+        missing.append("start_iso")
+    if not customer_phone:
+        missing.append("customer_phone")
+    if not customer_full_name:
+        missing.append("customer_full_name")
+    if missing:
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "book", "next_step": "incomplete_booking", "missing": missing},
+        )
+        return ToolResponse(
+            status="rejected",
+            next_step="incomplete_booking",
+            payload={"missing": missing},
+            errors=[f"Faltan datos para completar la reserva: {', '.join(missing)}."],
+        ).model_dump_json()
+
     from sqlalchemy import select
 
     from agent.services.gcal_push_service import fire_and_forget_push_appointment
