@@ -133,10 +133,11 @@ def _build_available_stylists(
 async def check_availability(
     service_ids: list[str],
     stylist_id: str | None,
-    date_iso: str,
+    date_iso: str | None = None,
     audience: (
         Literal["adult_female", "adult_male", "child_female", "child_male", "baby", "unisex"] | None
     ) = None,
+    no_preference: bool = True,
 ) -> str:
     """
     Check available time slots for the given services on a specific date.
@@ -146,11 +147,38 @@ async def check_availability(
         stylist_id: Stylist UUID string, or None for "no preference" (aggregates all).
         date_iso: Target date in ISO format (YYYY-MM-DD).
         audience: Customer audience filter (optional).
+        no_preference: True if the customer has no stylist preference (skips stylist guard).
 
     Returns:
         JSON-serialized ToolResponse with payload.slots list and
         payload.total_duration_minutes.
     """
+    from agent.tools._booking_helpers import _compute_first_valid_date
+
+    # --- Precondition: date required ---
+    if not date_iso:
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "check_availability", "next_step": "date_required"},
+        )
+        return ToolResponse(
+            status="rejected",
+            next_step="date_required",
+            errors=["Se necesita una fecha para consultar disponibilidad."],
+        ).model_dump_json()
+
+    # --- Precondition: stylist required (unless no_preference) ---
+    if stylist_id is None and not no_preference:
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "check_availability", "next_step": "stylist_required"},
+        )
+        return ToolResponse(
+            status="rejected",
+            next_step="stylist_required",
+            errors=["Se necesita un estilista o indicar 'sin preferencia' para consultar."],
+        ).model_dump_json()
+
     # --- Parse + validate date ---
     try:
         target_date = date.fromisoformat(date_iso)
@@ -184,12 +212,27 @@ async def check_availability(
         ).model_dump_json()
 
     if min_days > 0 and target_date < today + timedelta(days=min_days):
+        first_valid = _compute_first_valid_date(today, min_days)
         days_word = "día" if min_days == 1 else "días"
+        logger.info(
+            "tool.response.rejected",
+            extra={
+                "tool_name": "check_availability",
+                "next_step": "advance_policy_violated",
+                "first_valid_date": first_valid.isoformat(),
+                "policy_min_days": min_days,
+            },
+        )
         return ToolResponse(
             status="rejected",
+            next_step="advance_policy_violated",
+            payload={
+                "first_valid_date": first_valid.isoformat(),
+                "policy_min_days": min_days,
+            },
             errors=[
                 f"Solo podemos reservar con al menos {min_days} {days_word} de antelación. "
-                "Por favor elige una fecha más adelante."
+                f"La fecha más próxima disponible es {first_valid.isoformat()}."
             ],
         ).model_dump_json()
 
