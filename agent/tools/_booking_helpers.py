@@ -92,26 +92,39 @@ async def _resolve_audience_variants(
 async def _resolve_service_ids(
     session: AsyncSession, service_names: list[str]
 ) -> tuple[list[str], list[str]]:
-    """Resolve service names to UUIDs via exact (normalized) name match.
+    """Resolve service names to UUIDs via normalized name match.
+
+    Matches against BOTH the internal Service.name (e.g. "Corte Dama") AND the
+    customer-safe display name (e.g. "corte de mujer") computed by
+    `_derive_customer_safe_service_name`. The LLM uses display names from the
+    catalog block, while the DB stores internal names.
 
     Returns (resolved_ids, unknown_names).
-    resolved_ids: list of str UUIDs for found services.
-    unknown_names: list of names that could not be matched.
     """
+    from agent.prompts.catalog_builder import _derive_customer_safe_service_name
     from database.models import Service
 
     result = await session.execute(
         select(Service.id, Service.name).where(Service.is_active.is_(True))
     )
-    all_services = {_normalize_name(row[1]): str(row[0]) for row in result.fetchall()}
+
+    by_internal: dict[str, str] = {}
+    by_display: dict[str, str] = {}
+    for service_id, service_name in result.fetchall():
+        sid = str(service_id)
+        by_internal[_normalize_name(service_name)] = sid
+        display = _derive_customer_safe_service_name(service_name)
+        by_display[_normalize_name(display)] = sid
 
     resolved_ids: list[str] = []
     unknown: list[str] = []
 
     for name in service_names:
         normalized = _normalize_name(name)
-        if normalized in all_services:
-            resolved_ids.append(all_services[normalized])
+        if normalized in by_internal:
+            resolved_ids.append(by_internal[normalized])
+        elif normalized in by_display:
+            resolved_ids.append(by_display[normalized])
         else:
             unknown.append(name)
 
