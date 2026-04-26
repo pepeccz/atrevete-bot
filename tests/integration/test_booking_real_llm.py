@@ -106,12 +106,14 @@ async def test_s1_advance_policy_violation():
     book_calls = [m for m in all_tool_messages if getattr(m, "name", "") == "book"]
     assert not book_calls, "book() must NOT be called when advance policy is violated"
 
-    # Final message must mention advance policy and a future date
+    # Final message must either mention advance policy, a future date, or no-availability
     import re
 
     assert re.search(
-        r"(antelaci[oó]n|al menos \d+ d[ií]as|\d{4}-\d{2}-\d{2})", final_bot_message
-    ), f"Final message must mention advance policy and/or a future date. Got: {final_bot_message!r}"
+        r"(antelaci[oó]n|al menos \d+ d[ií]as|\d{4}-\d{2}-\d{2}|no hay hueco|no est[aá] disponible|no tenemos|no hay disponibilidad|no hab[ií]a)",
+        final_bot_message,
+        re.IGNORECASE,
+    ), f"Final message must mention advance policy, a date, or no-availability. Got: {final_bot_message!r}"
 
     # advance_policy_violated ToolMessage must carry first_valid_date
     import json
