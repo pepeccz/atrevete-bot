@@ -36,12 +36,12 @@ services:
       - ./shared:/app/shared
       - ./database:/app/database
 
-  confirmation-worker:
-    volumes:
-      - ./agent:/app/agent
-      - ./shared:/app/shared
-      - ./database:/app/database
-
+#   confirmation-worker:
+#     volumes:
+#       - ./agent:/app/agent
+#       - ./shared:/app/shared
+#       - ./database:/app/database
+# 
   gcal-sync-worker:
     volumes:
       - ./agent:/app/agent
