@@ -433,10 +433,9 @@ async def test_s5_confirmation_gate():
 
     agent = build_conversation_agent(checkpointer=MemorySaver())
     thread_config = {"configurable": {"thread_id": "test-s5-confirmation-gate"}}
-    # Turn 1 — all slots in one shot; agent reaches summary
-    # Use explicit future date to avoid vague "el sábado" being resolved to a past date.
-    # Provide customer_phone so CustomerResolveMiddleware injects <customer> block
-    # (required for book() — the prompt forbids asking for phone).
+    # Turn 1 — all slots in one shot; bot presents available times
+    # Use explicit future date. Provide customer_phone so CustomerResolveMiddleware
+    # injects <customer> block (required for book() — the prompt forbids asking for phone).
     result1 = await agent.ainvoke(
         {
             "messages": [
@@ -454,11 +453,11 @@ async def test_s5_confirmation_gate():
         for m in result1["messages"]
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "book"
     ]
-    assert not book_calls1, "book() must NOT be called before the user confirms (turn 1)"
+    assert not book_calls1, "book() must NOT be called before the user selects a slot (turn 1)"
 
-    # Turn 2 — non-affirmation
+    # Turn 2 — user picks a slot; bot should confirm and ask for final go-ahead
     result2 = await agent.ainvoke(
-        {"messages": [{"role": "user", "content": "un momento"}]},
+        {"messages": [{"role": "user", "content": "las 9:00"}]},
         config=thread_config,
     )
     book_calls2 = [
@@ -467,21 +466,36 @@ async def test_s5_confirmation_gate():
         if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "book"
     ]
     assert not book_calls2, (
-        "book() must NOT be called after a non-affirmation ('un momento'). "
+        "book() must NOT be called after slot selection ('las 9:00') without explicit confirmation. "
         f"Got {len(book_calls2)} call(s)."
     )
 
-    # Turn 3 — explicit affirmation
+    # Turn 3 — non-affirmation; book must still NOT be called
     result3 = await agent.ainvoke(
+        {"messages": [{"role": "user", "content": "un momento"}]},
+        config=thread_config,
+    )
+    # Count book calls before turn 3 for baseline
+    book_ids_before_t3 = {
+        m.id
+        for m in result3["messages"]
+        if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "book"
+    }
+
+    # Turn 4 — explicit affirmation; book MUST be called
+    result4 = await agent.ainvoke(
         {"messages": [{"role": "user", "content": "sí, dale"}]},
         config=thread_config,
     )
-    book_calls3 = [
+    new_book_calls4 = [
         m
-        for m in result3["messages"]
-        if hasattr(m, "type") and m.type == "tool" and getattr(m, "name", "") == "book"
+        for m in result4["messages"]
+        if hasattr(m, "type")
+        and m.type == "tool"
+        and getattr(m, "name", "") == "book"
+        and m.id not in book_ids_before_t3
     ]
-    assert book_calls3, "book() MUST be called after an explicit affirmation ('sí, dale')"
+    assert new_book_calls4, "book() MUST be called after an explicit affirmation ('sí, dale')"
     assert (
-        len(book_calls3) == 1
-    ), f"book() must be called exactly once after affirmation. Got {len(book_calls3)} calls."
+        len(new_book_calls4) == 1
+    ), f"book() must be called exactly once after affirmation. Got {len(new_book_calls4)} calls."
