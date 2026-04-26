@@ -64,6 +64,19 @@ def _json_body_matcher(r1: Any, r2: Any) -> None:
 
     b1 = _canon(r1.body)
     b2 = _canon(r2.body)
+    if b1 != b2:
+        # Debug aid: dump live + cassette canonical bodies for the first mismatch
+        try:
+            import os
+            dbg_dir = "/tmp/vcr-debug"
+            os.makedirs(dbg_dir, exist_ok=True)
+            n = len(os.listdir(dbg_dir))
+            with open(f"{dbg_dir}/live_{n:03d}.json", "wb") as f:
+                f.write(b1)
+            with open(f"{dbg_dir}/cass_{n:03d}.json", "wb") as f:
+                f.write(b2)
+        except Exception:
+            pass
     assert b1 == b2, "JSON body mismatch (canonical compare)"
 
 
