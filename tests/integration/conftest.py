@@ -27,12 +27,22 @@ def _normalize_body(request: Any) -> Any:
     written in canonical sorted-keys form. Playback uses the ``json_body``
     matcher below to canonicalize the live request before comparing.
     """
-    if request.body and request.headers.get("Content-Type", "").startswith("application/json"):
-        try:
-            body = json.loads(request.body)
-            request.body = json.dumps(body, sort_keys=True).encode()
-        except (json.JSONDecodeError, TypeError):
-            pass
+    body = request.body
+    if not body:
+        return request
+    # Coerce to bytes if needed (httpcore may pass an iterator/list)
+    if hasattr(body, "read"):
+        body = body.read()
+    elif isinstance(body, list):
+        body = b"".join(b if isinstance(b, bytes) else b.encode() for b in body)
+    elif isinstance(body, str):
+        body = body.encode()
+    try:
+        parsed = json.loads(body)
+        request.body = json.dumps(parsed, sort_keys=True).encode()
+    except (json.JSONDecodeError, TypeError, ValueError):
+        # Not JSON — leave as-is.
+        pass
     return request
 
 
