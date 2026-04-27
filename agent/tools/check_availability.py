@@ -29,9 +29,9 @@ async def _load_lead_time_settings() -> tuple[int, int]:
     from shared.settings_service import get_settings_service
 
     service = await get_settings_service()
-    min_days = await service.get("minimum_booking_days_advance", default=0)
+    min_days = await service.get("minimum_booking_days_advance", default=3)
     buffer_hours = await service.get("same_day_buffer_hours", default=0)
-    return int(min_days or 0), int(buffer_hours or 0)
+    return int(min_days or 3), int(buffer_hours or 0)
 
 
 async def _get_service_durations(service_ids: list[UUID]) -> dict[UUID, int]:
@@ -133,6 +133,7 @@ async def check_availability(
         Literal["adult_female", "adult_male", "child_female", "child_male", "baby", "unisex"] | None
     ) = None,
     no_preference: bool = True,
+    slot_time: str | None = None,
 ) -> str:
     """
     Check available time slots for the given services on a specific date.
@@ -143,6 +144,11 @@ async def check_availability(
         date_iso: Target date in ISO format (YYYY-MM-DD).
         audience: Customer audience filter (optional).
         no_preference: True if the customer has no stylist preference (skips stylist guard).
+        slot_time: Optional HH:MM time string for pre-book exact-match validation.
+            When set, filters slots to an exact time match:
+            - If found → returns status="ok" with payload.exact_match=True and a single slot.
+            - If not found → returns status="rejected", next_step="slot_no_longer_available",
+              and payload.alternatives with up to 3 available slots.
 
     Returns:
         JSON-serialized ToolResponse with payload.slots list and
@@ -322,6 +328,38 @@ async def check_availability(
                     "service_ids": service_ids,
                 },
                 errors=[f"El salón está cerrado el {date_iso}."],
+            ).model_dump_json()
+
+    # --- slot_time exact-match filter (pre-book re-validation, ADR-7) ---
+    if slot_time is not None:
+        matched = [s for s in clean_slots if s.get("start_iso", "").find(f"T{slot_time}:") != -1]
+        if matched:
+            return ToolResponse(
+                status="ok",
+                payload={
+                    "slots": matched[:1],
+                    "exact_match": True,
+                    "total_duration_minutes": total_duration,
+                    "requested_date_iso": target_date.isoformat(),
+                    "requested_date_label": format_date_spanish(target_date),
+                    "available_stylists": _build_available_stylists(stylist_ids, names_map),
+                },
+            ).model_dump_json()
+        else:
+            alternatives = clean_slots[:3]
+            return ToolResponse(
+                status="rejected",
+                next_step="slot_no_longer_available",
+                payload={
+                    "requested_slot_time": slot_time,
+                    "alternatives": alternatives,
+                    "total_duration_minutes": total_duration,
+                    "requested_date_iso": target_date.isoformat(),
+                },
+                errors=[
+                    f"El hueco de las {slot_time} ya no está disponible. "
+                    "Aquí tienes alternativas para el mismo día."
+                ],
             ).model_dump_json()
 
     return ToolResponse(

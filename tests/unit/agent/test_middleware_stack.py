@@ -5,6 +5,7 @@ R-IDs: R17
 from __future__ import annotations
 
 from agent.middleware.appointment_context import AppointmentContextMiddleware
+from agent.middleware.availability_context import AvailabilityContextMiddleware
 from agent.middleware.customer_resolve import CustomerResolveMiddleware
 from agent.middleware.disclosure import DisclosureMiddleware
 from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
@@ -18,13 +19,14 @@ EXPECTED_MIDDLEWARE_CLASSES = [
     CustomerResolveMiddleware,
     AppointmentContextMiddleware,
     DynamicPromptMiddleware,
+    AvailabilityContextMiddleware,  # injected after DynamicPrompt (ADR-1)
     PromptAssemblyMiddleware,
     SummarizeMiddleware,
 ]
 
 
 def test_middleware_stack_order() -> None:
-    """The middleware list in agent_factory must have exactly 6 entries in the expected order."""
+    """The middleware list in agent_factory must have exactly 7 entries in the expected order."""
     import agent.agent_factory as factory_module
     import inspect, ast, pathlib
 

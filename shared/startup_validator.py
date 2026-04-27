@@ -20,6 +20,7 @@ import logging
 from pathlib import Path
 
 from shared.config import get_settings
+from shared.settings_service import get_settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,31 @@ async def validate_startup_config(require_google_calendar: bool = False) -> dict
         )
 
     return results
+
+
+_REQUIRED_BOOKING_SETTINGS = [
+    "minimum_booking_days_advance",
+    "same_day_buffer_hours",
+]
+
+
+async def validate_booking_settings() -> None:
+    """Assert that required booking-policy rows exist in system_settings.
+
+    Raises StartupValidationError if any required key is absent (value is None).
+    Must be called at agent startup (R3.4).
+    """
+    service = await get_settings_service()
+    missing: list[str] = []
+    for key in _REQUIRED_BOOKING_SETTINGS:
+        value = await service.get(key, default=None)
+        if value is None:
+            missing.append(key)
+
+    if missing:
+        msg = f"Missing required system_settings rows: {', '.join(missing)}"
+        logger.critical(msg)
+        raise StartupValidationError(msg)
 
 
 async def validate_database_connection() -> bool:

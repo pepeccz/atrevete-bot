@@ -18,6 +18,7 @@ from langchain_core.tools import BaseTool
 
 from agent.llm import get_llm
 from agent.middleware.appointment_context import AppointmentContextMiddleware
+from agent.middleware.availability_context import AvailabilityContextMiddleware
 from agent.middleware.customer_resolve import CustomerResolveMiddleware
 from agent.middleware.disclosure import DisclosureMiddleware
 from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
@@ -67,6 +68,7 @@ def build_conversation_agent(
             CustomerResolveMiddleware(),
             AppointmentContextMiddleware(),  # runs after CustomerResolve (reads customer_id)
             DynamicPromptMiddleware(),
+            AvailabilityContextMiddleware(),  # injects _slot_availability after DynamicPrompt
             PromptAssemblyMiddleware(),  # assembles _slot_* keys into system_message
             SummarizeMiddleware(window=20, keep_tail=10),
         ],

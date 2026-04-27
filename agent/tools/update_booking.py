@@ -17,6 +17,7 @@ Refs: R2, R3, design §5
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Literal
@@ -29,6 +30,62 @@ from agent.tools.schemas import ToolResponse
 _MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 logger = logging.getLogger(__name__)
+
+
+def _get_recent_messages() -> list:
+    """Return recent messages for pre-book validation scanning.
+
+    Returns empty list by default — tests patch this function to inject message history.
+    In production, LangGraph checkpointer state is not directly accessible inside tools.
+    The gate is conservative: no messages → pre_book_validation_required.
+    """
+    return []
+
+
+def _find_matching_check_availability(
+    messages: list,
+    slot_iso: str | None,
+    stylist_id: str | None,
+) -> bool:
+    """Scan the last 6 messages for a check_availability ToolMessage confirming the slot.
+
+    Returns True if a matching confirmation is found, False otherwise.
+    A message matches if:
+    - name == "check_availability"
+    - status == "ok"
+    - payload.exact_match == True OR slot.start_iso contains slot_iso
+    - slot.stylist_id matches stylist_id (when both are provided)
+    """
+    if not messages or not slot_iso:
+        return False
+
+    recent = messages[-6:]
+    for msg in reversed(recent):
+        if not hasattr(msg, "name") or msg.name != "check_availability":
+            continue
+        try:
+            data = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        if data.get("status") != "ok":
+            continue
+
+        payload = data.get("payload", {})
+        slots = payload.get("slots", [])
+        for s in slots:
+            s_dt = s.get("start_iso", "")
+            s_stylist = s.get("stylist_id", "")
+            dt_match = slot_iso in s_dt or s_dt in slot_iso or s_dt == slot_iso
+            stylist_match = (
+                stylist_id is None
+                or s_stylist is None
+                or str(s_stylist) == str(stylist_id)
+            )
+            if dt_match and stylist_match:
+                return True
+
+    return False
 
 
 @tool
@@ -47,6 +104,7 @@ async def update_booking(
     extras_asked: bool = False,
     notes_asked: bool = False,
     customer_known: bool = False,
+    slot_iso: str | None = None,
 ) -> str:
     """Slot collector for the booking flow.
 
@@ -73,13 +131,16 @@ async def update_booking(
         extras_asked: Round-trip flag. Pass back the value from previous collected.extras_asked.
         notes_asked: Round-trip flag. Pass back the value from previous collected.notes_asked.
         customer_known: Set True when <customer> block contains a 'Nombre:' line (returning customer).
+        slot_iso: Optional full ISO datetime of the slot the customer has chosen (e.g.
+            "2026-05-01T10:00:00+02:00"). Required to activate the pre_book_validation_required
+            gate. Pass when the customer has selected a specific slot and you are ready to book.
 
     Returns:
         JSON-serialized ToolResponse with status, collected, missing, next_step.
         Valid next_step values: service_required | category_mix_required |
         audience_required | variant_required | stylist_required | offer_slots |
         date_required | closed_day_required | name_required | extras_loop_required |
-        notes_optional | date_clarification_required | booking_ready.
+        notes_optional | pre_book_validation_required | date_clarification_required | booking_ready.
     """
     try:
         return await _update_booking_impl(
@@ -95,6 +156,7 @@ async def update_booking(
             extras_asked=extras_asked,
             notes_asked=notes_asked,
             customer_known=customer_known,
+            slot_iso=slot_iso,
         )
     except Exception as exc:
         logger.error("update_booking unhandled exception: %s", exc, exc_info=True)
@@ -118,6 +180,7 @@ async def _update_booking_impl(
     extras_asked: bool = False,
     notes_asked: bool = False,
     customer_known: bool = False,
+    slot_iso: str | None = None,
 ) -> str:
     from agent.tools._booking_helpers import (
         _resolve_active_stylists,
@@ -429,6 +492,43 @@ async def _update_booking_impl(
         collected["notes_asked"] = True
         if notes is not None:
             collected["notes"] = notes
+
+        # ── Step 8b: pre-book validation gate (ADR-6) ─────────────────────────
+        # Activated only when slot_iso is provided (LLM has chosen a specific slot).
+        # Without slot_iso, returns booking_ready so LLM can call check_availability
+        # with slot_time=HH:MM to confirm the slot, then re-call update_booking with slot_iso.
+        if slot_iso is not None:
+            recent_msgs = _get_recent_messages()
+            resolved_stylist_id = collected.get("stylist_id")
+            validated = _find_matching_check_availability(
+                recent_msgs, slot_iso, resolved_stylist_id
+            )
+        else:
+            validated = True  # gate not active — no slot chosen yet
+
+        if not validated:
+                logger.info(
+                    "tool.response.partial",
+                    extra={
+                        "tool_name": "update_booking",
+                        "next_step": "pre_book_validation_required",
+                    },
+                )
+                return ToolResponse(
+                    status="partial",
+                    collected=collected,
+                    missing=[],
+                    next_step="pre_book_validation_required",
+                    payload={
+                        "hint": (
+                            "Llama a check_availability con slot_time exacto antes de book(). "
+                            f"Slot solicitado: {slot_iso}"
+                        ),
+                    },
+                ).model_dump_json()
+        collected["pre_book_validated"] = True
+        if slot_iso is not None:
+            collected["slot_iso"] = slot_iso
 
         # ── Step 9: all gates pass → booking_ready ────────────────────────────
         logger.info(

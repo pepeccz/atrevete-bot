@@ -9,6 +9,7 @@ Refs: R2, R3, design §8
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from datetime import date, timedelta
 from uuid import UUID
@@ -17,6 +18,34 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ServiceCategory imported lazily inside functions to avoid circular imports at module load.
+
+# ---------------------------------------------------------------------------
+# Diminutive normalization helpers (ADR-10)
+# ---------------------------------------------------------------------------
+
+_DIMINUTIVE_RE = re.compile(r"(c?it[oa]s?)$")
+"""Matches Spanish diminutive suffixes: -ito, -ita, -itos, -itas, -cito, -cita, -citos, -citas."""
+
+
+def _strip_diminutive(normalized: str) -> str | None:
+    """Return the stem if the word ends in a Spanish diminutive suffix, else None.
+
+    Only strips if the resulting stem is >= 4 characters to avoid over-stripping
+    short words (e.g. 'café' → 'ca' would be wrong).
+
+    Args:
+        normalized: Accent-stripped lowercase string.
+
+    Returns:
+        Stem string (without suffix) if diminutive detected, or None.
+    """
+    m = _DIMINUTIVE_RE.search(normalized)
+    if not m:
+        return None
+    stem = normalized[: m.start()]
+    if len(stem) < 4:
+        return None
+    return stem
 
 
 def _validate_full_name(name: str | None) -> tuple[str, str] | None:
@@ -297,11 +326,27 @@ async def _resolve_service_ids(
 
     for name in service_names:
         normalized = _normalize_name(name)
+        # Step 1: exact internal or display match (existing behavior)
         if normalized in by_internal:
             resolved_ids.append(by_internal[normalized])
         elif normalized in by_display:
             resolved_ids.append(by_display[normalized])
         else:
-            unknown.append(name)
+            # Step 2: try diminutive stripping (ADR-10)
+            stem = _strip_diminutive(normalized)
+            found = False
+            if stem is not None:
+                # Try stem + common vowel endings that Spanish services use
+                for candidate in [stem, stem + "o", stem + "a", stem + "e"]:
+                    if candidate in by_internal:
+                        resolved_ids.append(by_internal[candidate])
+                        found = True
+                        break
+                    if candidate in by_display:
+                        resolved_ids.append(by_display[candidate])
+                        found = True
+                        break
+            if not found:
+                unknown.append(name)
 
     return resolved_ids, unknown

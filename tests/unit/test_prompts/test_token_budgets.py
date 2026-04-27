@@ -40,10 +40,14 @@ BUDGETS: dict[str, int] = {
     #   notes personalisation with stylist name (was 1900)
     # examples.md: +650 for Ejemplo 8 slot-first happy path (was 1950)
     # tools_contract.md: +400 for offer_slots routing table + closed_day/advance_policy entries (was 950)
-    "critical_rules.md": 2200,
-    "booking_flow.md": 2700,
+    # Budgets updated for SDD change availability-context-injection-and-grounding:
+    # critical_rules.md: +200 for R-28 (dia_semana from <today>) + R-29 (no-hallucinated-slots)
+    # booking_flow.md: +350 for <availability> block primary source section
+    # tools_contract.md: +400 for slot_time param description + pre-book gate mandate
+    "critical_rules.md": 2400,
+    "booking_flow.md": 3050,
     "examples.md": 2600,
-    "tools_contract.md": 1350,
+    "tools_contract.md": 1750,
 }
 
 

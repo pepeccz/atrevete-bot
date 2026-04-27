@@ -960,3 +960,138 @@ async def get_calendar_events_for_range(
     except Exception as e:
         logger.error(f"Error fetching calendar events: {e}", exc_info=True)
         return []
+
+
+# ---------------------------------------------------------------------------
+# Availability window aggregator — T3 (ADR-2)
+# ---------------------------------------------------------------------------
+
+_WEEKDAYS_ES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+
+
+async def _load_lead_time_min_days() -> int:
+    """Return minimum_booking_days_advance from settings, defaulting to 3."""
+    try:
+        from shared.settings_service import get_settings_service
+
+        service = await get_settings_service()
+        value = await service.get("minimum_booking_days_advance", default=3)
+        return int(value or 3)
+    except Exception:
+        return 3
+
+
+async def _get_active_stylists_for_window(
+    service_ids: list[UUID],
+    audience: str | None,
+) -> list[tuple[UUID, str, str]]:
+    """Return list of (stylist_id, stylist_name, category) eligible for the given services."""
+    async with get_async_session() as session:
+        svc_result = await session.execute(
+            select(Service.category).where(Service.id.in_(service_ids))
+        )
+        categories = {row[0] for row in svc_result.fetchall()}
+
+        has_hair = ServiceCategory.HAIRDRESSING in categories
+        has_aesth = ServiceCategory.AESTHETICS in categories
+        has_both = ServiceCategory.BOTH in categories
+
+        # Mixed HAIRDRESSING+AESTHETICS without BOTH bridge → no eligible stylists
+        if has_hair and has_aesth and not has_both:
+            return []
+
+        if has_both and not has_hair and not has_aesth:
+            stylist_filter = Stylist.is_active.is_(True)
+        elif has_hair or (has_both and not has_aesth):
+            stylist_filter = Stylist.category.in_(
+                [ServiceCategory.HAIRDRESSING, ServiceCategory.BOTH]
+            )
+        else:
+            stylist_filter = Stylist.category.in_(
+                [ServiceCategory.AESTHETICS, ServiceCategory.BOTH]
+            )
+
+        result = await session.execute(
+            select(Stylist.id, Stylist.name, Stylist.category)
+            .where(Stylist.is_active.is_(True))
+            .where(stylist_filter)
+            .order_by(Stylist.name.asc())
+        )
+        return [(row[0], row[1], str(row[2])) for row in result.fetchall()]
+
+
+async def _get_total_duration_for_window(service_ids: list[UUID]) -> int:
+    """Return total duration in minutes for the given service IDs."""
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service.duration_minutes).where(Service.id.in_(service_ids))
+        )
+        durations = [row[0] for row in result.fetchall()]
+        return sum(durations) if durations else 60
+
+
+async def get_availability_window(
+    service_ids: list[UUID],
+    audience: str | None,
+    days: int = 7,
+    max_slots_per_day: int = 4,
+) -> dict[str, list[dict]]:
+    """Aggregate available slots across all eligible stylists for a rolling date window.
+
+    Reuses get_available_slots to avoid duplicating holiday/hours/blocking logic.
+    Applies lead-time floor from settings (default 3 days).
+
+    Args:
+        service_ids: List of service UUIDs to check.
+        audience: Optional audience filter (passed through to stylist eligibility).
+        days: Number of days in the window (default 7).
+        max_slots_per_day: Maximum slots to include per day per stylist (default 4).
+
+    Returns:
+        Dict keyed by stylist_name. Each value is a list of day entries:
+        [{"date_iso": "2026-04-30", "weekday_es": "jueves", "slots": ["10:00", "11:00"]}, ...]
+        Days with no slots are excluded. Stylists with no availability are excluded.
+    """
+    eligible_stylists = await _get_active_stylists_for_window(service_ids, audience)
+    if not eligible_stylists:
+        return {}
+
+    total_duration = await _get_total_duration_for_window(service_ids)
+    min_days = await _load_lead_time_min_days()
+
+    today = date.today()
+    start_date = today + timedelta(days=min_days)
+
+    result: dict[str, list[dict]] = {}
+
+    for stylist_id, stylist_name, _category in eligible_stylists:
+        day_entries: list[dict] = []
+
+        for offset in range(days):
+            target_date = start_date + timedelta(days=offset)
+            slots = await get_available_slots(
+                stylist_id=stylist_id,
+                target_date=target_date,
+                service_duration_minutes=total_duration,
+            )
+
+            if not slots:
+                continue
+
+            # Sort by adjacent_priority then time, cap at max_slots_per_day
+            sorted_slots = sorted(
+                slots, key=lambda s: (s.get("adjacent_priority", 1), s.get("time", ""))
+            )[:max_slots_per_day]
+
+            day_entries.append(
+                {
+                    "date_iso": target_date.isoformat(),
+                    "weekday_es": _WEEKDAYS_ES[target_date.weekday()],
+                    "slots": [s["time"] for s in sorted_slots],
+                }
+            )
+
+        if day_entries:
+            result[stylist_name] = day_entries
+
+    return result

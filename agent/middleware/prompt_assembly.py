@@ -27,6 +27,7 @@ _SLOT_ORDER = [
     "_slot_customer",
     "_slot_upcoming_appointments",
     "_slot_business_hours",
+    "_slot_availability",  # ADR-1: after business_hours, before catalog
     "_slot_catalog",
 ]
 

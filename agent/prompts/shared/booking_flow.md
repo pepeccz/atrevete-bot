@@ -1,5 +1,17 @@
 # Flujo de reserva guiado por herramientas
 
+## Bloque `<availability>` — fuente primaria de huecos
+
+Cuando el bloque `<availability>` está presente en el prompt, contiene los próximos huecos reales para los servicios resueltos en la conversación. Es generado automáticamente a partir de la base de datos cada ~60 segundos.
+
+- **Uso correcto**: usa `<availability>` para proponer huecos al cliente sin hacer ninguna llamada de herramienta adicional.
+- **Cuándo llamar `check_availability`**: únicamente para re-validar el hueco exacto que el cliente ha elegido (verificación justo antes de reservar), o cuando la información de `<availability>` ya no es suficiente (fecha fuera de ventana, dato incierto).
+- `<availability>` muestra los huecos en formato: `weekday D mes (YYYY-MM-DD): HH:MM, HH:MM, …`.
+
+Si `<availability>` no está presente (servicio aún no resuelto), sigue el flujo normal con `check_availability` o `get_next_available_options`.
+
+---
+
 ## Paso 0 — Saludo y audiencia inicial
 
 En el primer turno de reserva, si el cliente no ha indicado para quién es el servicio,
