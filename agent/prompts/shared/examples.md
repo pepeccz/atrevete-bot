@@ -103,3 +103,56 @@ Puntos clave de este ejemplo:
 - `name_required` dispara solo cuando el cliente es nuevo (sin `Nombre:` en `<customer>`).
 - `notes_optional` ofrece notas una sola vez; si el cliente declina, `notes=null` es válido.
 - `book` se llama solo en turno B, con `confirmed=true`.
+
+---
+
+### Ejemplo 7 — Flujo ideal Maite: audiencia → variante por longitud → fecha vaga → opciones
+
+Este ejemplo ilustra el flujo completo con citas de reglas para facilitar la lectura.
+
+```
+[booking_flow Paso 0]
+Cliente: "Hola, quiero un peinado"
+Bot:     "¡Claro! ¿El peinado es para ti (señora, caballero) o para alguien más?"
+
+[glossary:audience-map]
+Cliente: "Para mí, soy mujer"
+
+[booking_flow Paso 1]
+Bot:     → update_booking(services=["peinado"], audience="adult_female")
+         ← next_step="variant_required"
+Bot:     "¿Qué longitud de pelo tienes? Tengo Peinado (corto/normal), Peinado Largo o Moldeado Extra."
+
+[glossary:length-map]
+Cliente: "Tengo el pelo largo"
+Bot:     → update_booking(services=["Peinado Largo"], audience="adult_female")
+         ← next_step="stylist_required"
+
+[booking_flow § Elección de estilista]
+Bot:     "¿Con qué estilista quieres la cita?
+         0. La primera con disponibilidad (mín. 3 días de antelación)
+         1. Pilar
+         2. María
+         3. Luz"
+
+Cliente: "La primera que haya"
+
+[tools_contract:routing — frase de fecha vaga → get_next_available_options]
+Bot:     → get_next_available_options(service_ids=[...], requested_date_iso="<hoy>", stylist_id=null)
+         ← opciones: [jue 30 abr 10:00 Pilar, vie 1 may 11:30 María, lun 4 may 9:00 Luz]
+Bot:     "Estas son las próximas opciones disponibles:
+         1. Jueves 30 de abril a las 10:00 con Pilar
+         2. Viernes 1 de mayo a las 11:30 con María
+         3. Lunes 4 de mayo a las 9:00 con Luz
+         ¿Cuál te viene mejor?"
+
+[booking_flow § Puerta de confirmación — turno A]
+Cliente: "La 1"
+Bot:     "Perfecto, te lo dejo el jueves 30 de abril a las 10:00 con Pilar para Peinado Largo. ¿Te lo confirmo?"
+
+[booking_flow § Puerta de confirmación — turno B]
+Cliente: "Sí, adelante"
+Bot:     → book(confirmed=True, ...)
+         ← status=ok
+Bot:     "¡Listo! Reserva confirmada para el jueves 30 de abril a las 10:00. 🌸"
+```

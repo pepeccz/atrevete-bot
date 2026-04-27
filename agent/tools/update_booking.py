@@ -55,6 +55,8 @@ async def update_booking(
 
     Args:
         services: List of service names requested (e.g. ["corte dama", "peinado"]).
+            Para servicios con variantes por longitud (peinados, recogidos),
+            ver `agent/prompts/shared/glossary.md § Mapeo longitud → variante`.
         stylist_name: Human-readable stylist name (e.g. "Marta"). Resolved to ID internally.
         no_preference_stylist: Set True if customer has no stylist preference.
         date_iso: Desired appointment date as ISO date string (YYYY-MM-DD).
@@ -73,6 +75,9 @@ async def update_booking(
 
     Returns:
         JSON-serialized ToolResponse with status, collected, missing, next_step.
+        Valid next_step values: service_required | audience_required | variant_required |
+        stylist_required | date_required | name_required | extras_loop_required |
+        notes_optional | date_clarification_required | booking_ready.
     """
     try:
         return await _update_booking_impl(

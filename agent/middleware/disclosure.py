@@ -15,9 +15,9 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 from langchain_core.messages import AIMessage
 
 DISCLOSURE_TEXT = (
-    "Soy Maite, un asistente de inteligencia artificial de Atrévete. "
-    "Puedo ayudarte a reservar citas y responder tus preguntas, pero soy una IA, no una persona. "
-    "En cualquier momento puedes pedir hablar con alguien del equipo. 💕"
+    "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸 "
+    "Estoy aquí para ayudarte con tus reservas. "
+    "Soy una IA, no una persona, pero en cualquier momento puedes pedir hablar con alguien del equipo. 💕"
 )
 
 

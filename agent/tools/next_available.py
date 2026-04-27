@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -14,6 +14,7 @@ from agent.services.availability_service import (
 )
 from agent.tools.check_availability import (
     _get_active_stylists_for_services,
+    _load_lead_time_settings,
     _get_service_durations,
     _get_stylist_name,
 )
@@ -51,6 +52,16 @@ async def get_next_available_options(
                 "La disponibilidad solo puede consultarse para fechas futuras."
             ],
         ).model_dump_json()
+
+    # Apply minimum lead-time floor (sourced from settings, fallback = 3 days).
+    try:
+        min_days, _ = await _load_lead_time_settings()
+    except Exception:
+        min_days = 3
+
+    floor_date = date.today() + timedelta(days=min_days)
+    effective_from = max(requested_date, floor_date)
+    floor_was_applied = effective_from != requested_date
 
     try:
         parsed_service_ids = [UUID(service_id) for service_id in service_ids]
@@ -90,7 +101,7 @@ async def get_next_available_options(
         ).model_dump_json()
 
     fallback_result = await get_next_available_options_service(
-        requested_date=requested_date,
+        requested_date=effective_from,
         service_duration_minutes=total_duration,
         preferred_stylist_id=preferred_stylist_id,
         candidate_stylist_ids=compatible_stylist_ids,
@@ -110,13 +121,17 @@ async def get_next_available_options(
             }
         )
 
+    payload: dict = {
+        "options": enriched_options,
+        "searched_until": fallback_result["searched_until"],
+        "requested_date_iso": requested_date_iso,
+        "total_duration_minutes": total_duration,
+        "strategy": strategy,
+    }
+    if floor_was_applied:
+        payload["effective_from_iso"] = effective_from.isoformat()
+
     return ToolResponse(
         status="ok",
-        payload={
-            "options": enriched_options,
-            "searched_until": fallback_result["searched_until"],
-            "requested_date_iso": requested_date_iso,
-            "total_duration_minutes": total_duration,
-            "strategy": strategy,
-        },
+        payload=payload,
     ).model_dump_json()

@@ -1,6 +1,17 @@
 # Flujo de reserva guiado por herramientas
 
-## Paso 0 — Identificación de servicio (obligatorio)
+## Paso 0 — Saludo y audiencia inicial
+
+En el primer turno de reserva, si el cliente no ha indicado para quién es el servicio,
+pregunta la audiencia antes de continuar. Usa los valores exactos del glosario
+(ver `glossary.md § Taxonomía de Audiencia`). Una sola pregunta por turno.
+
+Una vez conocida la audiencia, llama a `update_booking(services=[...])` con los datos
+disponibles para iniciar el flujo.
+
+---
+
+## Paso 1 — Identificación de servicio (obligatorio)
 
 En el primer turno donde el cliente menciona un servicio, llama a
 `update_booking(services=[<término del cliente>])` ANTES de pedir fecha,
@@ -10,13 +21,20 @@ horario o cualquier otro dato. Si la respuesta trae un `next_step` con
 
 ---
 
-## Paso 1 — Recogida de fecha
+## Paso 2 — Recogida de fecha
 
 Una vez resuelto el servicio (sin `*_required` pendiente), pide la fecha al cliente.
 
+**Triage de especificidad de fecha**:
+
+- Si el cliente da una fecha concreta (ej. "el martes 29", "el 5 de mayo") → llama `check_availability`.
+- Si el cliente usa una frase de fecha vaga → llama `get_next_available_options` y presenta 3–4 opciones enumeradas.
+
+Para la lista completa de frases de fecha vaga, consulta `glossary.md § Frases de fecha vaga`.
+
 ---
 
-## Paso 1.5 — Bucle de servicios adicionales (`extras_loop_required`)
+## Paso 2.5 — Bucle de servicios adicionales (`extras_loop_required`)
 
 Cuando `update_booking` devuelve `next_step="extras_loop_required"`, pregunta al cliente si quiere agregar otro servicio a la cita. Una pregunta, un turno.
 
@@ -24,6 +42,25 @@ Cuando `update_booking` devuelve `next_step="extras_loop_required"`, pregunta al
 - Si el cliente no quiere más: llama `update_booking` con `no_more_services=True`.
 
 Pasa siempre de vuelta `extras_asked=true` en las llamadas siguientes (recibido en `collected.extras_asked`).
+
+---
+
+## § Elección de estilista
+
+Cuando el cliente deba elegir estilista, preséntala como lista numerada. Incluye siempre la opción
+"primera con disponibilidad" (ver `glossary.md § Lista canónica de estilistas`).
+
+Ejemplo de presentación obligatoria:
+
+```
+¿Con qué estilista quieres la cita?
+0. La primera con disponibilidad (mín. 3 días de antelación)
+1. [Estilista 1]
+2. [Estilista 2]
+...
+```
+
+Nunca inventes estilistas. Usa solo las que devuelva el catálogo activo.
 
 ---
 

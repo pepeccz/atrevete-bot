@@ -96,3 +96,34 @@ async def test_no_disclosure_on_subsequent_turn():
     # Disclosure must NOT be in the subsequent turn response
     assert DISCLOSURE_TEXT not in ai_msg.content
     assert ai_msg.content == base_content
+
+
+# --- T1: New assertions for Maite identity spec ---
+
+
+def test_disclosure_text_contains_maite():
+    """DISCLOSURE_TEXT must identify the assistant as 'Maite'."""
+    from agent.middleware.disclosure import DISCLOSURE_TEXT
+
+    assert "Maite" in DISCLOSURE_TEXT
+
+
+def test_disclosure_text_contains_ia_no_persona():
+    """DISCLOSURE_TEXT must state 'IA, no una persona' (EU AI Act identity)."""
+    from agent.middleware.disclosure import DISCLOSURE_TEXT
+
+    assert "IA, no una persona" in DISCLOSURE_TEXT
+
+
+def test_disclosure_text_contains_hablar_con_alguien():
+    """DISCLOSURE_TEXT must offer the option to 'hablar con alguien'."""
+    from agent.middleware.disclosure import DISCLOSURE_TEXT
+
+    assert "hablar con alguien" in DISCLOSURE_TEXT
+
+
+def test_disclosure_text_does_not_contain_asistente_ia():
+    """DISCLOSURE_TEXT must NOT use generic 'asistente IA' label (spec §1, ADR-1)."""
+    from agent.middleware.disclosure import DISCLOSURE_TEXT
+
+    assert "asistente IA" not in DISCLOSURE_TEXT

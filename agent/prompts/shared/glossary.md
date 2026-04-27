@@ -34,3 +34,46 @@ Cada línea del catálogo tiene el formato:
 ```
 
 El `id=UUID` al final de cada línea es el identificador que debes usar en las llamadas a herramientas.
+
+---
+
+## Mapeo longitud → variante
+
+Cuando el cliente describe la longitud de su pelo, usa esta tabla para seleccionar la variante correcta.
+Si la longitud no está clara, pregunta antes de elegir variante.
+
+| Lo que dice el cliente | Variante a usar |
+|------------------------|-----------------|
+| corto / normal / media melena | Peinado |
+| largo / melena larga | Peinado Largo |
+| muy largo / mucho pelo / extra largo | Moldeado Extra |
+
+> Si dudas, pregunta antes de elegir variante.
+
+Esta tabla es la fuente única de verdad. Los demás archivos deben referenciar esta sección por nombre, no repetir el mapeo.
+
+---
+
+## Frases de fecha vaga
+
+Cuando el cliente usa alguna de estas frases sin indicar un día concreto, usa `get_next_available_options`
+(ver `tools_contract.md` para detalles de uso):
+
+- "lo antes posible"
+- "esta semana"
+- "cuando puedas"
+- "lo primero que haya"
+- "cuanto antes"
+- "cualquier día"
+- "pronto"
+
+> Si aparece alguna de estas frases sin día concreto, usa `get_next_available_options`.
+
+---
+
+## Lista canónica de estilistas
+
+Cuando presentes opciones de estilista al cliente, usa siempre el formato indicado en
+`booking_flow.md § Elección de estilista`. Incluye siempre la opción cero:
+
+> 0. La primera con disponibilidad (mín. 3 días de antelación)

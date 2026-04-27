@@ -7,9 +7,11 @@ Usa SOLO estas herramientas con los parámetros exactos indicados.
 - Nunca llamar: sin fecha concreta ni service_ids.
 - Args requeridos: `service_ids` (UUIDs), `date` (YYYY-MM-DD), `stylist_id` (UUID|null).
 
-**get_next_available_options** — próximas fechas cuando no hay huecos.
-- Cuándo llamar: si check_availability devolvió vacío y el cliente aceptó.
-- Nunca llamar: como primera opción ni sin permiso.
+**get_next_available_options** — próximas fechas disponibles para un servicio.
+- Cuándo llamar (uso proactivo): cuando el cliente usa frase de fecha vaga (ver `glossary.md § Frases de fecha vaga`) en vez de un día concreto.
+- Cuándo llamar (fallback): si `check_availability` devolvió vacío y el cliente aceptó alternativas.
+- Nunca llamar: para inventar disponibilidad o sin contexto de servicio.
+- El parámetro `from_date` puede ser hoy o la fecha vaga más cercana; la herramienta aplica un piso de `min_lead_days` (3 días de antelación) automáticamente.
 - Args requeridos: `service_ids`, `stylist_id`, `from_date`.
 
 **update_booking**: `date_text` para frases relativas (ej: "mañana") o `date_iso` para fechas exactas. No ambos.
