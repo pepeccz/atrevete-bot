@@ -20,26 +20,17 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from agent.tools.schemas import ToolResponse
 
 _MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 logger = logging.getLogger(__name__)
-
-
-def _get_recent_messages() -> list:
-    """Return recent messages for pre-book validation scanning.
-
-    Returns empty list by default — tests patch this function to inject message history.
-    In production, LangGraph checkpointer state is not directly accessible inside tools.
-    The gate is conservative: no messages → pre_book_validation_required.
-    """
-    return []
 
 
 def _find_matching_check_availability(
@@ -105,6 +96,7 @@ async def update_booking(
     notes_asked: bool = False,
     customer_known: bool = False,
     slot_iso: str | None = None,
+    state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Slot collector for the booking flow.
 
@@ -142,6 +134,7 @@ async def update_booking(
         date_required | closed_day_required | advance_policy_violated | name_required | extras_loop_required |
         notes_optional | pre_book_validation_required | date_clarification_required | booking_ready.
     """
+    messages = (state or {}).get("messages", [])
     try:
         return await _update_booking_impl(
             services=services,
@@ -157,6 +150,7 @@ async def update_booking(
             notes_asked=notes_asked,
             customer_known=customer_known,
             slot_iso=slot_iso,
+            messages=messages,
         )
     except Exception as exc:
         logger.error("update_booking unhandled exception: %s", exc, exc_info=True)
@@ -181,6 +175,7 @@ async def _update_booking_impl(
     notes_asked: bool = False,
     customer_known: bool = False,
     slot_iso: str | None = None,
+    messages: list | None = None,
 ) -> str:
     from agent.tools._booking_helpers import (
         _resolve_active_stylists,
@@ -523,17 +518,33 @@ async def _update_booking_impl(
             collected["notes"] = notes
 
         # ── Step 8b: pre-book validation gate (ADR-6) ─────────────────────────
-        # Activated only when slot_iso is provided (LLM has chosen a specific slot).
-        # Without slot_iso, returns booking_ready so LLM can call check_availability
-        # with slot_time=HH:MM to confirm the slot, then re-call update_booking with slot_iso.
-        if slot_iso is not None:
-            recent_msgs = _get_recent_messages()
-            resolved_stylist_id = collected.get("stylist_id")
-            validated = _find_matching_check_availability(
-                recent_msgs, slot_iso, resolved_stylist_id
+        # slot_iso=None means the LLM hasn't chosen a slot yet — gate always blocks.
+        # slot_iso provided → must have a matching check_availability ToolMessage.
+        if slot_iso is None:
+            logger.info(
+                "tool.response.partial",
+                extra={
+                    "tool_name": "update_booking",
+                    "next_step": "pre_book_validation_required",
+                },
             )
-        else:
-            validated = True  # gate not active — no slot chosen yet
+            return ToolResponse(
+                status="partial",
+                collected=collected,
+                missing=[],
+                next_step="pre_book_validation_required",
+                payload={
+                    "hint": (
+                        "Llama a check_availability con slot_time exacto antes de book(). "
+                        "No se ha proporcionado slot_iso."
+                    ),
+                },
+            ).model_dump_json()
+
+        resolved_stylist_id = collected.get("stylist_id")
+        validated = _find_matching_check_availability(
+            messages or [], slot_iso, resolved_stylist_id
+        )
 
         if not validated:
                 logger.info(

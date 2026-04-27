@@ -12,7 +12,11 @@ Usa SOLO estas herramientas con los parámetros exactos indicados.
 
 **Puerta de pre-revalidación (obligatoria antes de `book`)**
 
-Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, …)` para confirmar que el hueco exacto sigue disponible. Solo si `status="ok"` y `exact_match=true` puedes avanzar a `update_booking(slot_iso=…, notes_asked=true, …)` y luego a `book`. Este paso protege contra reservas sobre huecos ya ocupados. `next_step="pre_book_validation_required"` indica que esta revalidación está pendiente.
+Orden de llamada obligatorio: `check_availability(slot_time=HH:MM, …)` → `update_booking(slot_iso=…)` → `book()`.
+
+Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, …)` para confirmar que el hueco exacto sigue disponible. Solo si `status="ok"` y `exact_match=true` puedes avanzar a `update_booking(slot_iso=…, notes_asked=true, …)` y luego a `book`. Este paso protege contra reservas sobre huecos ya ocupados.
+
+`update_booking` bloquea con `next_step="pre_book_validation_required"` hasta que un ToolMessage de `check_availability` con `status="ok"` y `slot.start_iso` coincidente (igualdad exacta de cadena) y `slot.stylist_id` coincidente esté presente en los últimos 6 mensajes del historial. Si `slot_iso` no se ha proporcionado, también bloquea con `pre_book_validation_required`.
 
 **get_next_available_options** — próximas fechas disponibles para un servicio.
 - Cuándo llamar (señal `offer_slots`): cuando `update_booking` devuelve `next_step="offer_slots"`, llama INMEDIATAMENTE con `service_ids=payload.service_ids`, `stylist_id=payload.stylist_id` (null si `no_preference_stylist=true`), `from_date=payload.from_date`. No hagas ninguna pregunta al cliente antes de esta llamada.

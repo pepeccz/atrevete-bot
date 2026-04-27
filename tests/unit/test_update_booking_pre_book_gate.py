@@ -1,6 +1,9 @@
 """T5 — update_booking pre_book_validation_required gate.
 
 Tests spec R2.1, R2.2, R2.3, R2.5 / ADR-6.
+
+Migrated (T4): patches on _get_recent_messages replaced with messages= kwarg
+passed directly to _update_booking_impl.
 """
 from __future__ import annotations
 
@@ -74,12 +77,21 @@ def _build_check_avail_tool_message(
     return msg
 
 
+def _make_session_ctx():
+    session_mock = AsyncMock()
+    ctx_mock = MagicMock()
+    ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
+    ctx_mock.__aexit__ = AsyncMock(return_value=False)
+    return ctx_mock
+
+
 @pytest.mark.asyncio
 async def test_booking_ready_blocked_without_pre_book_validation():
     """notes_asked=True but no check_availability ToolMessage → pre_book_validation_required."""
     from agent.tools.update_booking import _update_booking_impl
 
     patches = _base_patches()
+    ctx = _make_session_ctx()
 
     with (
         patch(
@@ -114,11 +126,7 @@ async def test_booking_ready_blocked_without_pre_book_validation():
             "shared.business_hours_validator.is_date_closed",
             patches["shared.business_hours_validator.is_date_closed"],
         ),
-        # No recent_messages → no check_availability ToolMessage
-        patch(
-            "agent.tools.update_booking._get_recent_messages",
-            MagicMock(return_value=[]),
-        ),
+        patch("database.connection.get_async_session", return_value=ctx),
     ):
         result_json = await _update_booking_impl(
             services=["corte"],
@@ -133,6 +141,7 @@ async def test_booking_ready_blocked_without_pre_book_validation():
             notes_asked=True,
             customer_known=True,
             slot_iso=f"{FAKE_DATE}T10:00:00+02:00",  # slot_iso activates the gate
+            messages=[],  # No recent messages → no check_availability ToolMessage
         )
 
     result = json.loads(result_json)
@@ -149,6 +158,7 @@ async def test_booking_ready_unblocked_with_matching_validation():
     slot_dt = f"{FAKE_DATE}T10:00:00+02:00"
     stylist_uuid = str(uuid4())
     patches = _base_patches(stylist_id=stylist_uuid)
+    ctx = _make_session_ctx()
 
     tool_msg = _build_check_avail_tool_message(
         slot_datetime=slot_dt,
@@ -188,10 +198,7 @@ async def test_booking_ready_unblocked_with_matching_validation():
             "shared.business_hours_validator.is_date_closed",
             patches["shared.business_hours_validator.is_date_closed"],
         ),
-        patch(
-            "agent.tools.update_booking._get_recent_messages",
-            MagicMock(return_value=[tool_msg]),
-        ),
+        patch("database.connection.get_async_session", return_value=ctx),
     ):
         result_json = await _update_booking_impl(
             services=["corte"],
@@ -206,6 +213,7 @@ async def test_booking_ready_unblocked_with_matching_validation():
             notes_asked=True,
             customer_known=True,
             slot_iso=slot_dt,
+            messages=[tool_msg],  # Matching ToolMessage present
         )
 
     result = json.loads(result_json)
@@ -223,6 +231,7 @@ async def test_booking_ready_blocked_mismatched_slot():
     different_slot_dt = f"{FAKE_DATE}T14:00:00+02:00"
     stylist_uuid = str(uuid4())
     patches = _base_patches(stylist_id=stylist_uuid)
+    ctx = _make_session_ctx()
 
     # Message confirms 10:00 but booking is for 14:00
     tool_msg = _build_check_avail_tool_message(
@@ -263,10 +272,7 @@ async def test_booking_ready_blocked_mismatched_slot():
             "shared.business_hours_validator.is_date_closed",
             patches["shared.business_hours_validator.is_date_closed"],
         ),
-        patch(
-            "agent.tools.update_booking._get_recent_messages",
-            MagicMock(return_value=[tool_msg]),
-        ),
+        patch("database.connection.get_async_session", return_value=ctx),
     ):
         result_json = await _update_booking_impl(
             services=["corte"],
@@ -281,6 +287,7 @@ async def test_booking_ready_blocked_mismatched_slot():
             notes_asked=True,
             customer_known=True,
             slot_iso=different_slot_dt,  # different from tool_msg
+            messages=[tool_msg],
         )
 
     result = json.loads(result_json)

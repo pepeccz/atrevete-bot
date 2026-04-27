@@ -431,3 +431,146 @@ async def test_stylist_required_payload_on_unknown_stylist():
     assert data["next_step"] == "stylist_required"
     payload = data.get("payload", {})
     assert payload.get("stylists") == active_first_names
+
+
+# ---------------------------------------------------------------------------
+# T1 — Pre-book gate: S1–S7 scenarios
+# Tests call _update_booking_impl directly with messages= kwarg.
+# No patch on _get_recent_messages (will not exist after T2).
+# ---------------------------------------------------------------------------
+
+_FAKE_STYLIST_ID_PB = "bbbbcccc-0001-0002-0003-000000000001"
+_FAKE_SERVICE_ID_PB = "bbbbcccc-0001-0002-0003-000000000002"
+_FAKE_DATE_PB = (
+    __import__("datetime").date.today() + __import__("datetime").timedelta(days=5)
+).isoformat()
+_SLOT_ISO_PB = f"{_FAKE_DATE_PB}T10:00:00+02:00"
+
+
+def _pb_patches(stylist_id=_FAKE_STYLIST_ID_PB) -> dict:
+    """Patches that pass Steps 1-7 of update_booking (notes_asked=True bypasses steps 1-7)."""
+    from database.models import ServiceCategory
+
+    session_mock = AsyncMock()
+    ctx_mock = AsyncMock()
+    ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
+    ctx_mock.__aexit__ = AsyncMock(return_value=False)
+
+    return {
+        "agent.tools._booking_helpers._resolve_service_ids": AsyncMock(
+            return_value=([_FAKE_SERVICE_ID_PB], [])
+        ),
+        "agent.tools._booking_helpers._resolve_service_categories": AsyncMock(
+            return_value={ServiceCategory.HAIRDRESSING}
+        ),
+        "agent.tools._booking_helpers._resolve_audience_variants": AsyncMock(
+            return_value=("none", None, [])
+        ),
+        "agent.tools._booking_helpers._resolve_stylist": AsyncMock(return_value=stylist_id),
+        "agent.tools._booking_helpers._resolve_active_stylists": AsyncMock(return_value=[]),
+        "agent.tools._booking_helpers._resolve_service_id_to_category_map": AsyncMock(
+            return_value={}
+        ),
+        "agent.tools._booking_helpers._validate_full_name": MagicMock(
+            return_value=("Juan", "García")
+        ),
+        "shared.business_hours_validator.is_date_closed": AsyncMock(return_value=False),
+        "database.connection.get_async_session": MagicMock(return_value=ctx_mock),
+    }
+
+
+def _build_avail_message(slot_iso: str, stylist_id: str, status: str = "ok") -> MagicMock:
+    msg = MagicMock()
+    msg.name = "check_availability"
+    msg.content = json.dumps({
+        "status": status,
+        "payload": {
+            "slots": [{"start_iso": slot_iso, "stylist_id": stylist_id}],
+            "exact_match": True,
+        },
+    })
+    return msg
+
+
+async def _call_pb_impl(slot_iso, messages=None, stylist_id=_FAKE_STYLIST_ID_PB, **extra):
+    from agent.tools.update_booking import _update_booking_impl
+
+    patches = _pb_patches(stylist_id=stylist_id)
+
+    with (
+        patch("agent.tools._booking_helpers._resolve_service_ids", patches["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_categories", patches["agent.tools._booking_helpers._resolve_service_categories"]),
+        patch("agent.tools._booking_helpers._resolve_audience_variants", patches["agent.tools._booking_helpers._resolve_audience_variants"]),
+        patch("agent.tools._booking_helpers._resolve_stylist", patches["agent.tools._booking_helpers._resolve_stylist"]),
+        patch("agent.tools._booking_helpers._resolve_active_stylists", patches["agent.tools._booking_helpers._resolve_active_stylists"]),
+        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", patches["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
+        patch("agent.tools._booking_helpers._validate_full_name", patches["agent.tools._booking_helpers._validate_full_name"]),
+        patch("shared.business_hours_validator.is_date_closed", patches["shared.business_hours_validator.is_date_closed"]),
+        patch("database.connection.get_async_session", patches["database.connection.get_async_session"]),
+    ):
+        raw = await _update_booking_impl(
+            services=["Corte Dama"],
+            stylist_name="Test Stylist",
+            no_preference_stylist=False,
+            date_iso=_FAKE_DATE_PB,
+            date_text=None,
+            audience=None,
+            customer_full_name="Juan García",
+            notes=None,
+            no_more_services=True,
+            extras_asked=True,
+            notes_asked=True,
+            customer_known=True,
+            slot_iso=slot_iso,
+            messages=messages or [],
+            **extra,
+        )
+    return json.loads(raw)
+
+
+@pytest.mark.asyncio
+async def test_pre_book_gate_passes_with_matching_message():
+    """S1/R1: matching ToolMessage present → booking_ready + pre_book_validated=True."""
+    msg = _build_avail_message(_SLOT_ISO_PB, _FAKE_STYLIST_ID_PB)
+    data = await _call_pb_impl(slot_iso=_SLOT_ISO_PB, messages=[msg])
+    assert data["next_step"] == "booking_ready", f"Expected booking_ready, got: {data['next_step']}"
+    assert data.get("collected", {}).get("pre_book_validated") is True
+
+
+@pytest.mark.asyncio
+async def test_pre_book_gate_blocks_when_slot_iso_none():
+    """S2/R3: slot_iso=None → pre_book_validation_required (no rubber-stamp)."""
+    data = await _call_pb_impl(slot_iso=None, messages=[])
+    assert data["next_step"] == "pre_book_validation_required", (
+        f"slot_iso=None must NOT rubber-stamp; got: {data['next_step']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pre_book_gate_blocks_without_check_availability_msg():
+    """S3/R2: slot_iso provided but no matching ToolMessage → pre_book_validation_required."""
+    data = await _call_pb_impl(slot_iso=_SLOT_ISO_PB, messages=[])
+    assert data["next_step"] == "pre_book_validation_required", (
+        f"Without ToolMessage gate must block; got: {data['next_step']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pre_book_gate_blocks_on_stylist_mismatch():
+    """S4/R5: ToolMessage has correct slot but wrong stylist → pre_book_validation_required."""
+    msg = _build_avail_message(_SLOT_ISO_PB, "different-stylist-uuid")
+    data = await _call_pb_impl(slot_iso=_SLOT_ISO_PB, messages=[msg])
+    assert data["next_step"] == "pre_book_validation_required", (
+        f"Stylist mismatch must block; got: {data['next_step']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pre_book_gate_blocks_on_slot_iso_mismatch():
+    """S7/R4: ToolMessage has different time in same day → pre_book_validation_required."""
+    different_slot = f"{_FAKE_DATE_PB}T14:00:00+02:00"
+    msg = _build_avail_message(different_slot, _FAKE_STYLIST_ID_PB)
+    data = await _call_pb_impl(slot_iso=_SLOT_ISO_PB, messages=[msg])
+    assert data["next_step"] == "pre_book_validation_required", (
+        f"Slot mismatch must block; got: {data['next_step']}"
+    )
