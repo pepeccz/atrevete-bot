@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Check, ExternalLink, Loader2, X } from "lucide-react";
+import { toast } from "sonner";
 import {
   Popover,
   PopoverContent,
@@ -99,7 +100,7 @@ export function AppointmentPopover({
       onClose();
       onCancelSuccess(); // reuses the same refresh callback
     } catch {
-      // silently fail — user can retry or use detail page
+      toast.error("Error al confirmar la cita. Inténtalo de nuevo.");
     } finally {
       setIsConfirming(false);
     }
@@ -230,11 +231,11 @@ export function AppointmentPopover({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="flex-1"
                   onClick={() => onNavigate(data.appointmentId)}
+                  aria-label="Ver detalle"
+                  title="Ver detalle"
                 >
-                  <ExternalLink className="h-3 w-3 mr-1" />
-                  Detalle
+                  <ExternalLink className="h-3 w-3" />
                 </Button>
                 {data.status === "pending" && (
                   <Button
@@ -251,18 +252,19 @@ export function AppointmentPopover({
                     Confirmar
                   </Button>
                 )}
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => {
-                    setCancelError(null);
-                    setCancelDialogOpen(true);
-                  }}
-                  disabled={data.status === "cancelled"}
-                >
-                  Cancelar
-                </Button>
+                {data.status !== "cancelled" && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => {
+                      setCancelError(null);
+                      setCancelDialogOpen(true);
+                    }}
+                  >
+                    Cancelar
+                  </Button>
+                )}
               </div>
             </>
           )}

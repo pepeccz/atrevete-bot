@@ -110,20 +110,21 @@ export function PendingActionsCard() {
                   </div>
                 )}
               </div>
-              <div className="flex gap-2 ml-4">
+              <div className="flex gap-2 ml-4 shrink-0">
                 <Button
                   size="sm"
                   variant="outline"
                   className="text-green-600 hover:bg-green-50 hover:text-green-700 hover:border-green-300"
                   onClick={() => handleMarkStatus(appt.id, "completed")}
                   disabled={updating === appt.id}
+                  aria-label="Marcar como completada"
                 >
                   {updating === appt.id ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <>
-                      <Check className="h-4 w-4 mr-1" />
-                      Completada
+                      <Check className="h-4 w-4 sm:mr-1" />
+                      <span className="hidden sm:inline">Completada</span>
                     </>
                   )}
                 </Button>
@@ -133,13 +134,14 @@ export function PendingActionsCard() {
                   className="text-orange-600 hover:bg-orange-50 hover:text-orange-700 hover:border-orange-300"
                   onClick={() => handleMarkStatus(appt.id, "no_show")}
                   disabled={updating === appt.id}
+                  aria-label="Marcar como no asistió"
                 >
                   {updating === appt.id ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <>
-                      <X className="h-4 w-4 mr-1" />
-                      No asistió
+                      <X className="h-4 w-4 sm:mr-1" />
+                      <span className="hidden sm:inline">No asistió</span>
                     </>
                   )}
                 </Button>
