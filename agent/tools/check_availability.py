@@ -297,6 +297,33 @@ async def check_availability(
     # Strip internal priority field before returning
     clean_slots = [{k: v for k, v in s.items() if k != "adjacent_priority"} for s in all_slots]
 
+    # --- Closed-day detection (REQ-P2A-2) ---
+    # When no slots were returned, check if the absence is due to closure rather than
+    # genuine unavailability. This allows the prompt to give the correct apology message.
+    if not clean_slots:
+        from shared.business_hours_validator import is_date_closed
+
+        if await is_date_closed(target_date):
+            logger.info(
+                "tool.response.rejected",
+                extra={
+                    "tool_name": "check_availability",
+                    "next_step": "closed_day",
+                    "date_iso": date_iso,
+                },
+            )
+            return ToolResponse(
+                status="rejected",
+                next_step="closed_day",
+                payload={
+                    "closed_date": date_iso,
+                    "weekday": target_date.strftime("%A").lower(),
+                    "stylist_id": stylist_id,
+                    "service_ids": service_ids,
+                },
+                errors=[f"El salón está cerrado el {date_iso}."],
+            ).model_dump_json()
+
     return ToolResponse(
         status="ok",
         payload={

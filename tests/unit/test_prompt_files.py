@@ -21,13 +21,13 @@ class TestTokenBudgets:
 
     def test_critical_rules_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "critical_rules.md").read_text()
-        # Extended budget for rule 19 (customer_full_name / customer_known — booking-flow-name-notes-extras-loop)
-        assert len(content) // 4 <= 1300
+        # Updated for booking-ideal-flow-completion: +450 for R-22 expansion + R-26/R-27 (was 1300)
+        assert len(content) // 4 <= 2200
 
     def test_booking_flow_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()
-        # Extended budget for Paso 1.5/4/4b + confirmation template (booking-flow-name-notes-extras-loop)
-        assert len(content) // 4 <= 1400
+        # Updated for booking-ideal-flow-completion: +800 for Paso 2 slot-first rewrite (was 1400)
+        assert len(content) // 4 <= 2700
 
     def test_booking_flow_orders_date_before_exact_slots(self, prompt_dir):
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()

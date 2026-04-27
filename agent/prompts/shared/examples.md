@@ -156,3 +156,53 @@ Bot:     → book(confirmed=True, ...)
          ← status=ok
 Bot:     "¡Listo! Reserva confirmada para el jueves 30 de abril a las 10:00. 🌸"
 ```
+
+---
+
+### Ejemplo 8 — Flujo slot-first: estilista resuelto → `offer_slots` → menú numerado → reserva
+
+Ilustra la ruta más habitual: estilista elegido antes que la fecha. El bot NUNCA pregunta "¿qué día?".
+
+```
+Cliente: "quiero un corte con Marta"
+Bot:     → update_booking(services=["corte dama"], stylist_name="Marta", extras_asked=true, no_more_services=true)
+         ← next_step="offer_slots", payload={stylist_id="<uuid>", service_ids=[...], from_date="2026-04-27", ...}
+
+[critical_rules R-22: offer_slots → llamar get_next_available_options INMEDIATAMENTE, no preguntar fecha]
+Bot:     → get_next_available_options(service_ids=[...], stylist_id="<uuid>", from_date="2026-04-27")
+         ← opciones: [mar 30 abr 10:00, mié 6 may 11:00, vie 8 may 09:30]
+Bot:     "Estas son las próximas citas disponibles con Marta:
+         1. Martes 30 de abril a las 10:00
+         2. Miércoles 6 de mayo a las 11:00
+         3. Viernes 8 de mayo a las 9:30
+         ¿Cuál te viene mejor?"
+
+Cliente: "La 2"
+
+[booking_flow § Puerta de confirmación — turno A]
+Bot:     → update_booking(..., date_iso="2026-05-06", ...)
+         ← next_step="name_required"
+Bot:     "Para registrar la cita, ¿me das tu nombre y apellido?"
+
+Cliente: "Ana García"
+Bot:     → update_booking(..., customer_full_name="Ana García")
+         ← next_step="notes_optional"
+Bot:     "¿Alguna nota para Marta?"
+
+Cliente: "no, nada"
+Bot:     → update_booking(..., notes_asked=true)
+         ← next_step="booking_ready"
+Bot:     → check_availability(service_ids=[...], stylist_id="<uuid>", date_iso="2026-05-06")
+         ← slots: [{start_iso: "2026-05-06T11:00:00+02:00", label: "miércoles 6 de mayo", ...}]
+Bot:     "Perfecto, Ana, te lo dejo el miércoles 6 de mayo a las 11:00 con Marta para corte de mujer. ¿Te lo confirmo?"
+
+Cliente: "sí"
+Bot:     → book(confirmed=True, ...)
+         ← status=ok
+Bot:     "¡Listo! Reserva confirmada."
+```
+
+Puntos clave:
+- Tras `offer_slots`, el bot llama `get_next_available_options` SIN preguntar fecha.
+- La nota de las notas usa el nombre de pila de la estilista: "¿Alguna nota para Marta?"
+- El flujo de confirmación (dos turnos) aplica igual que siempre.

@@ -69,6 +69,12 @@ async def _call_with_mocks(resolved_ids=None, unknown=None, audience_kind="none"
             "agent.tools._booking_helpers._resolve_stylist",
             new=AsyncMock(return_value="stylist-uuid-1"),
         ),
+        # Patch is_date_closed so tests don't hit the DB and always assume an open day.
+        # Tests that need closed-day behaviour should use test_update_booking.py.
+        patch(
+            "shared.business_hours_validator.is_date_closed",
+            new=AsyncMock(return_value=False),
+        ),
     ):
         return await _call_update_booking(**booking_kwargs)
 

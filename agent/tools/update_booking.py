@@ -77,9 +77,9 @@ async def update_booking(
     Returns:
         JSON-serialized ToolResponse with status, collected, missing, next_step.
         Valid next_step values: service_required | category_mix_required |
-        audience_required | variant_required | stylist_required | date_required |
-        name_required | extras_loop_required | notes_optional |
-        date_clarification_required | booking_ready.
+        audience_required | variant_required | stylist_required | offer_slots |
+        date_required | closed_day_required | name_required | extras_loop_required |
+        notes_optional | date_clarification_required | booking_ready.
     """
     try:
         return await _update_booking_impl(
@@ -324,9 +324,30 @@ async def _update_booking_impl(
                     errors=[f"No pude entender la fecha: {date_text}"],
                 ).model_dump_json()
 
-        # ── Step 6b: no date ──────────────────────────────────────────────────
+        # ── Step 6b: no date — offer_slots when stylist is resolved ──────────
+        # When a stylist (or no-preference) is set and no date is provided, signal the LLM
+        # to call get_next_available_options immediately using the payload below.
+        # next_step="date_required" is only the 0-options fallback, driven by prompt rules.
         if not date_iso:
             missing.append("date_iso")
+            stylist_resolved = bool(collected.get("stylist_id")) or bool(
+                collected.get("no_preference_stylist")
+            )
+            if stylist_resolved:
+                today_iso = datetime.now(_MADRID_TZ).date().isoformat()
+                return ToolResponse(
+                    status="partial",
+                    collected=collected,
+                    missing=missing,
+                    next_step="offer_slots",
+                    payload={
+                        "stylist_id": collected.get("stylist_id"),
+                        "no_preference_stylist": bool(collected.get("no_preference_stylist")),
+                        "service_ids": collected.get("service_ids", []),
+                        "from_date": today_iso,
+                        "min_advance_days": MIN_BOOKING_DAYS,
+                    },
+                ).model_dump_json()
             return ToolResponse(
                 status="partial",
                 collected=collected,
@@ -347,7 +368,34 @@ async def _update_booking_impl(
                 errors=[f"Fecha inválida: {date_iso}"],
             ).model_dump_json()
 
-        # ── Step 7: name required — after stylist+date, after extras loop ─────
+        # ── Step 6c: closed-day pre-validation ───────────────────────────────
+        # Check BEFORE name/notes/booking_ready so we never proceed on a closed day.
+        # Fails-closed on DB error (is_date_closed returns True) — safer than booking on
+        # a closed day at the cost of an occasional false-closure message.
+        from shared.business_hours_validator import is_date_closed
+
+        _parsed_date = datetime.fromisoformat(date_iso).date()
+        if await is_date_closed(_parsed_date):
+            logger.info(
+                "tool.response.rejected",
+                extra={"tool_name": "update_booking", "next_step": "closed_day_required"},
+            )
+            return ToolResponse(
+                status="rejected",
+                collected=collected,
+                missing=["date_iso"],
+                next_step="closed_day_required",
+                payload={
+                    "rejected_date": date_iso,
+                    "weekday": _parsed_date.strftime("%A").lower(),
+                    "stylist_id": collected.get("stylist_id"),
+                    "service_ids": collected.get("service_ids", []),
+                },
+                errors=[f"El salón está cerrado el {date_iso}"],
+            ).model_dump_json()
+
+        # ── Step 7: name required — after stylist+date+closed-day-check ──────
+        # name_required intentionally fires AFTER date_iso is resolved AND closed-day-validated.
         name_resolved = bool(_validate_full_name(customer_full_name)) or customer_known
         if not name_resolved:
             logger.info(

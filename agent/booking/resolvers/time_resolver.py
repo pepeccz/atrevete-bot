@@ -76,8 +76,15 @@ _RE_PROXIMO = re.compile(
 )
 
 # el miércoles que viene / miércoles que viene / lunes que viene
+# Also matches: "el viernes de la semana que viene" (optional filler "de la semana")
 _RE_QUE_VIENE = re.compile(
-    r"^(?:el\s+)?([a-záéíóúüñ]+)\s+que\s+viene$"
+    r"^(?:el\s+)?([a-záéíóúüñ]+)\s+(?:de\s+la\s+semana\s+)?que\s+viene$"
+)
+
+# viernes próximo / el viernes próximo / viernes proximo (post-positioned modifier)
+# Inserted after _RE_PROXIMO (5a) so post-positioned is tried before bare-weekday (7).
+_RE_PROXIMO_POST = re.compile(
+    r"^(?:el\s+)?([a-záéíóúüñ]+)\s+pr[oó]xim[oa]$"
 )
 
 # el miércoles / el lunes / bare weekday with or without article
@@ -179,6 +186,16 @@ def _resolve(text: str, today: date) -> date | None:  # noqa: C901
 
     # 5a. próximo weekday
     m = _RE_PROXIMO.match(norm)
+    if m:
+        weekday_name = m.group(1)
+        weekday = _WEEKDAYS_ES.get(weekday_name)
+        if weekday is None:
+            return None
+        return _next_weekday(today, weekday, min_delta=1)
+
+    # 5a'. weekday próximo — post-positioned (e.g. "viernes próximo", "el lunes proximo")
+    # Same min_delta=1 semantics as pre-positioned _RE_PROXIMO (branch 5a).
+    m = _RE_PROXIMO_POST.match(norm)
     if m:
         weekday_name = m.group(1)
         weekday = _WEEKDAYS_ES.get(weekday_name)

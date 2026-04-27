@@ -69,6 +69,11 @@ def mock_helpers():
         patch(
             "database.connection.get_async_session",
         ) as mock_get_session,
+        # Patch is_date_closed so tests don't hit the DB and assume an open day.
+        patch(
+            "shared.business_hours_validator.is_date_closed",
+            new=AsyncMock(return_value=False),
+        ),
     ):
         session_mock = AsyncMock()
         mock_get_session.return_value = _mock_session_ctx(session_mock)

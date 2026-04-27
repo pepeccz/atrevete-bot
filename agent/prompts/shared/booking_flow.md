@@ -34,14 +34,43 @@ Acción:
 
 ---
 
-## Paso 2 — Recogida de fecha
+## Paso 2 — Recogida de fecha (o presentación de huecos si `offer_slots`)
 
-Una vez resuelto el servicio (sin `*_required` pendiente), pide la fecha al cliente.
+### Cuando `next_step="offer_slots"` (flujo preferido)
 
-**Triage de especificidad de fecha**:
+Cuando `update_booking` devuelve `next_step="offer_slots"`, el estilista ya está resuelto y NO hay fecha todavía. Acción obligatoria:
 
-- Si el cliente da una fecha concreta (ej. "el martes 29", "el 5 de mayo") → llama `check_availability`.
-- Si el cliente usa una frase de fecha vaga → llama `get_next_available_options` y presenta 3–4 opciones enumeradas.
+1. **Llama `get_next_available_options` INMEDIATAMENTE** con los args del payload:
+   `get_next_available_options(service_ids=payload.service_ids, stylist_id=payload.stylist_id, from_date=payload.from_date)`.
+   Si `payload.no_preference_stylist=true`, pasa `stylist_id=null`.
+2. Presenta los huecos devueltos como **menú numerado** (mínimo 3 opciones si hay).
+3. **NUNCA hagas la pregunta "¿qué día te viene bien?" en este punto.** La primera acción es la llamada a la herramienta, no una pregunta abierta.
+
+Si `get_next_available_options` devuelve 0 opciones:
+- No presentes un menú vacío.
+- Di al cliente que no hay disponibilidad próxima y pregunta si prefiere elegir una fecha concreta.
+- Cuando el cliente dé una fecha, usa `date_text`/`date_iso` en la siguiente llamada a `update_booking` — el flujo retoma por `date_required`.
+
+### Cuando `next_step="closed_day_required"` o `next_step="closed_day"`
+
+El día solicitado es un día de cierre del salón. Acción:
+1. Disculpate brevemente indicando que el salón cierra ese día (usa `payload.weekday` traducido al español si está disponible).
+2. Re-presenta el último menú de huecos que ofreciste (el LLM lo tiene en el contexto reciente). **NO hagas una pregunta abierta de fecha.**
+3. Si el menú previo ya no está en contexto, llama `get_next_available_options` de nuevo con los mismos args y re-preséntalo.
+
+### Cuando `next_step="advance_policy_violated"`
+
+La fecha elegida infringe la política de antelación mínima. Acción:
+1. Disculpate indicando que la primera fecha disponible es `payload.first_valid_date`.
+2. Re-presenta el último menú de huecos (contexto reciente) sin preguntar fecha abierta.
+3. Si el menú previo ya no está en contexto, llama `get_next_available_options` y re-preséntalo.
+
+### Flujo ordinario (sin `offer_slots` previo)
+
+Si no hubo señal `offer_slots` y el cliente da una fecha:
+
+- Fecha concreta (ej. "el martes 29", "el 5 de mayo") → llama `check_availability`.
+- Frase de fecha vaga → llama `get_next_available_options` y presenta 3–4 opciones enumeradas.
 
 Para la lista completa de frases de fecha vaga, consulta `glossary.md § Frases de fecha vaga`.
 
@@ -92,7 +121,15 @@ Si el bloque `<customer>` ya tiene `- Nombre: …`, usa ese valor como `customer
 
 ## Paso 4b — Oferta de notas (`notes_optional`)
 
-Cuando `update_booking` devuelve `next_step="notes_optional"`, pregunta al cliente si tiene algo a tener en cuenta para la cita (alergias, preferencias, etc.):
+Cuando `update_booking` devuelve `next_step="notes_optional"`, pregunta al cliente si tiene algo a tener en cuenta para la cita (alergias, preferencias, etc.).
+
+Usa el nombre de pila del estilista (primer token de `collected.stylist_name`) para personalizar la pregunta:
+
+> "¿Alguna nota para {nombre_estilista}?"
+
+Ejemplos: "¿Alguna nota para Marta?" · "¿Alguna nota para Laura?"
+
+Si `collected.no_preference_stylist=true` (no hay estilista concreto), usa:
 
 > "¿Hay algo que deba tener en cuenta para tu cita?"
 

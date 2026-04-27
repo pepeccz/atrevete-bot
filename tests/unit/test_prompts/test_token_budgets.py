@@ -33,10 +33,17 @@ BUDGETS: dict[str, int] = {
     # critical_rules.md: +250 for R-23 (slot-mutation rule), R-24 (stylist list rule),
     #   and 9b-trigger strengthening (was 1450)
     # booking_flow.md: no net increase (stylist section replaced, not appended)
-    "critical_rules.md": 1750,
-    "booking_flow.md": 1900,
-    "examples.md": 1950,
-    "tools_contract.md": 950,
+    #
+    # Budgets updated for SDD change booking-ideal-flow-completion:
+    # critical_rules.md: +450 for R-22 expansion + new R-26/R-27 closed_day + advance_policy (was 1750)
+    # booking_flow.md: +800 for Paso 2 slot-first rewrite, offer_slots/closed_day/advance handlers,
+    #   notes personalisation with stylist name (was 1900)
+    # examples.md: +650 for Ejemplo 8 slot-first happy path (was 1950)
+    # tools_contract.md: +400 for offer_slots routing table + closed_day/advance_policy entries (was 950)
+    "critical_rules.md": 2200,
+    "booking_flow.md": 2700,
+    "examples.md": 2600,
+    "tools_contract.md": 1350,
 }
 
 

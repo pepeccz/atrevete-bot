@@ -108,7 +108,7 @@ def test_critical_rules_token_budget():
 
     content = _read("critical_rules.md")
     count = len(enc.encode(content))
-    # Budget: 1750 (updated for booking-disambiguation-hardening: +250 for R-23, R-24, 9b)
-    assert count <= 1750, (
-        f"critical_rules.md exceeds token budget: {count} tokens > 1600 allowed"
+    # Budget: 2200 (updated for booking-ideal-flow-completion: +450 for R-22 expansion + R-26/R-27)
+    assert count <= 2200, (
+        f"critical_rules.md exceeds token budget: {count} tokens > 2200 allowed"
     )

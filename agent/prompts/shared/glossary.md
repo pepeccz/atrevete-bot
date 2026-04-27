@@ -74,6 +74,12 @@ Cuando el cliente usa alguna de estas frases sin indicar un día concreto, usa `
 ## Lista canónica de estilistas
 
 Cuando presentes opciones de estilista al cliente, usa siempre el formato indicado en
-`booking_flow.md § Elección de estilista`. Incluye siempre la opción cero:
+`booking_flow.md § Elección de estilista`. Presenta primero los nombres reales y al final
+la opción de "primera con disponibilidad":
 
-> 0. La primera con disponibilidad (mín. 3 días de antelación)
+> 1. {nombre estilista 1}
+> 2. {nombre estilista 2}
+> …
+> N. La primera con disponibilidad (mín. 3 días de antelación)
+
+La opción "primera con disponibilidad" va SIEMPRE al final de la lista, después de todos los nombres reales de estilistas. Esto refleja el flujo preferido: primero elegir una persona concreta; solo si ninguna conviene, el cliente opta por "la primera que haya".

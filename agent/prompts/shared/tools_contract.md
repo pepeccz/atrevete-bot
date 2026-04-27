@@ -8,11 +8,23 @@ Usa SOLO estas herramientas con los parámetros exactos indicados.
 - Args requeridos: `service_ids` (UUIDs), `date` (YYYY-MM-DD), `stylist_id` (UUID|null).
 
 **get_next_available_options** — próximas fechas disponibles para un servicio.
+- Cuándo llamar (señal `offer_slots`): cuando `update_booking` devuelve `next_step="offer_slots"`, llama INMEDIATAMENTE con `service_ids=payload.service_ids`, `stylist_id=payload.stylist_id` (null si `no_preference_stylist=true`), `from_date=payload.from_date`. No hagas ninguna pregunta al cliente antes de esta llamada.
 - Cuándo llamar (uso proactivo): cuando el cliente usa frase de fecha vaga (ver `glossary.md § Frases de fecha vaga`) en vez de un día concreto.
 - Cuándo llamar (fallback): si `check_availability` devolvió vacío y el cliente aceptó alternativas.
+- Cuándo llamar (recuperación de menú): tras `next_step="closed_day_required"`, `closed_day"` o `advance_policy_violated"`, si el menú previo ya no está en contexto.
 - Nunca llamar: para inventar disponibilidad o sin contexto de servicio.
 - El parámetro `from_date` puede ser hoy o la fecha vaga más cercana; la herramienta aplica un piso de `min_lead_days` (3 días de antelación) automáticamente.
 - Args requeridos: `service_ids`, `stylist_id`, `from_date`.
+
+**Tabla de routing `next_step` → acción**
+
+| `next_step` | Acción inmediata |
+|---|---|
+| `offer_slots` | Llamar `get_next_available_options(service_ids, stylist_id, from_date)` del payload |
+| `closed_day_required` | Disculparse + re-presentar menú previo (o llamar `get_next_available_options` si no hay contexto) |
+| `closed_day` | Ídem |
+| `advance_policy_violated` | Disculparse citando `first_valid_date` + re-presentar menú previo |
+| `date_required` | Preguntar fecha al cliente (solo tras `get_next_available_options` devolvió 0 opciones) |
 
 **update_booking**: `date_text` para frases relativas (ej: "mañana") o `date_iso` para fechas exactas. No ambos.
 - Cuándo llamar: en el primer turno donde aparece un servicio, ANTES de `check_availability`/`book`.
