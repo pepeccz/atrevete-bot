@@ -424,3 +424,116 @@ async def test_book_calls_gcal_push_after_db_commit(test_stylist, test_service):
             await sess.commit()
             await sess.delete(cust)
             await sess.commit()
+
+
+# ---------------------------------------------------------------------------
+# T5 — book inviolable preconditions (R7, R8)
+# ---------------------------------------------------------------------------
+
+FAKE_SERVICE_ID = uuid4()
+FAKE_STYLIST_ID = uuid4()
+
+
+def _book_args(**overrides):
+    """Return a minimal valid book call dict."""
+    base = {
+        "service_ids": [str(FAKE_SERVICE_ID)],
+        "stylist_id": str(FAKE_STYLIST_ID),
+        "start_iso": future_start_iso(5),
+        "customer_phone": "+34600000001",
+        "customer_full_name": "Ana López",
+        "confirmed": True,
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_confirmation_gate_false():
+    """R7: confirmed=False → rejected, next_step=confirmation_required, no DB write."""
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from agent.tools.book import book
+
+    mock_session = MagicMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    raw = await book.ainvoke(_book_args(confirmed=False))
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "confirmation_required"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_gate_omitted():
+    """R7: confirmed not passed (defaults to False) → same rejection."""
+    from agent.tools.book import book
+
+    args = _book_args()
+    del args["confirmed"]  # omit — should default to False
+    raw = await book.ainvoke(args)
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "confirmation_required"
+
+
+@pytest.mark.asyncio
+async def test_incomplete_missing_customer_name():
+    """R8: confirmed=True but customer_full_name absent → incomplete_booking,
+    payload.missing contains customer_full_name."""
+    from agent.tools.book import book
+
+    raw = await book.ainvoke(_book_args(customer_full_name=""))
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "incomplete_booking"
+    assert "customer_full_name" in data.get("payload", {}).get("missing", [])
+
+
+@pytest.mark.asyncio
+async def test_incomplete_missing_phone():
+    """R8: confirmed=True but customer_phone absent → incomplete_booking,
+    payload.missing contains customer_phone."""
+    from agent.tools.book import book
+
+    raw = await book.ainvoke(_book_args(customer_phone=""))
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "incomplete_booking"
+    assert "customer_phone" in data.get("payload", {}).get("missing", [])
+
+
+@pytest.mark.asyncio
+async def test_incomplete_missing_service_ids():
+    """R8: confirmed=True but service_ids empty → incomplete_booking."""
+    from agent.tools.book import book
+
+    raw = await book.ainvoke(_book_args(service_ids=[]))
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "incomplete_booking"
+    assert "service_ids" in data.get("payload", {}).get("missing", [])
+
+
+@pytest.mark.asyncio
+async def test_incomplete_missing_stylist():
+    """R8: confirmed=True but stylist_id empty → incomplete_booking."""
+    from agent.tools.book import book
+
+    raw = await book.ainvoke(_book_args(stylist_id=""))
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "incomplete_booking"
+    assert "stylist_id" in data.get("payload", {}).get("missing", [])
+
+
+@pytest.mark.asyncio
+async def test_incomplete_missing_start_iso():
+    """R8: confirmed=True but start_iso empty → incomplete_booking."""
+    from agent.tools.book import book
+
+    raw = await book.ainvoke(_book_args(start_iso=""))
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "incomplete_booking"
+    assert "start_iso" in data.get("payload", {}).get("missing", [])

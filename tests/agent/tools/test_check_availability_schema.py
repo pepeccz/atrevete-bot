@@ -72,7 +72,7 @@ def test_check_availability_schema_exposes_only_exact_day_fields():
     schema = check_availability.args_schema.model_json_schema()
     properties = schema.get("properties", {})
 
-    assert set(properties) == {"service_ids", "stylist_id", "date_iso", "audience"}
+    assert set(properties) == {"service_ids", "stylist_id", "date_iso", "audience", "no_preference"}
     assert "requested_date_iso" not in properties
     assert "strategy" not in properties
     assert "search_days" not in properties

@@ -30,14 +30,16 @@ from agent.tools.check_availability import check_availability
 from agent.tools.escalation_tools import escalate
 from agent.tools.manage_appointments_tool import manage_appointments
 from agent.tools.next_available import get_next_available_options
+from agent.tools.update_booking import update_booking
 
-# Canonical 5-tool list — exported for testing.
+# Canonical 6-tool list — exported for testing.
 AGENT_TOOLS: list[BaseTool] = [
     check_availability,
     get_next_available_options,
     book,
     manage_appointments,
     escalate,
+    update_booking,
 ]
 
 

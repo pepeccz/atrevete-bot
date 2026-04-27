@@ -138,7 +138,7 @@ function ConversationDetailModal({
                   key={index}
                   role={msg.role}
                   content={msg.content}
-                  timestamp={msg.timestamp}
+                  timestamp={msg.created_at ?? msg.timestamp}
                 />
               ))
             )}

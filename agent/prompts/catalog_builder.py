@@ -332,8 +332,17 @@ async def _build_catalog_from_db() -> tuple[list[ServiceRow], str]:
             sections.append(f"- {day_name}: {start} - {end}")
     sections.append("")
 
+    # Fetch advance policy from DB — source of truth, never hardcode
+    try:
+        from shared.settings_service import get_settings_service
+
+        settings_svc = await get_settings_service()
+        min_days = await settings_svc.get("minimum_booking_days_advance", default=3)
+    except Exception:
+        min_days = 3  # fail-open with safe default; avoids breaking catalog build
+
     sections.append("## Políticas de Reserva\n")
-    sections.append("- Anticipación mínima: 3 días")
+    sections.append(f"- Anticipación mínima: {min_days} días")
     sections.append("- Cancelación: hasta 48 horas antes")
     sections.append("")
 

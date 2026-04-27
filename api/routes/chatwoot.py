@@ -41,17 +41,22 @@ router = APIRouter()
 
 
 async def upsert_conversation_history(
-    session: AsyncSession, payload: ChatwootWebhookPayload
+    session: AsyncSession,
+    payload: ChatwootWebhookPayload,
+    message_text: str | None = None,
+    chatwoot_message_id: int | None = None,
 ) -> None:
     """
-    UPSERT a ConversationHistory row for the incoming Chatwoot message.
+    UPSERT a ConversationHistory row + ConversationMessage child for inbound message.
 
-    - INSERT on first message: sets started_at=now(), stores sender_name in metadata_.
-      If sender phone matches an existing Customer, links customer_id immediately.
-    - UPDATE on subsequent messages: increments message_count, sets ended_at=now().
-      Backfills customer_id if still NULL and the phone now resolves to a Customer.
+    - INSERT parent on first message; UPDATE ended_at on subsequent.
+    - Inserts a ConversationMessage child (role='user') with idempotency by
+      chatwoot_message_id when present, else by (role, content) within the conversation.
+    - Recomputes parent.message_count from actual children to stay consistent
+      with the archiver fallback.
     """
-    from database.models import ConversationHistory, Customer
+    from database.models import ConversationHistory, ConversationMessage, Customer
+    from sqlalchemy import func
 
     conversation_id_str = str(payload.conversation.id)
     sender_name = payload.sender.name or ""
@@ -73,25 +78,63 @@ async def upsert_conversation_history(
     now = datetime.now(tz=timezone.utc)
 
     if existing is None:
-        # INSERT — new conversation
-        row = ConversationHistory(
+        parent = ConversationHistory(
             conversation_id=conversation_id_str,
             customer_id=customer_id,
             started_at=now,
-            ended_at=None,
-            message_count=1,
-            metadata_={"sender_name": sender_name},
+            ended_at=now,
+            message_count=0,
+            metadata_={"sender_name": sender_name} if sender_name else {},
         )
-        session.add(row)
+        session.add(parent)
+        await session.flush()
     else:
-        # UPDATE — existing conversation
-        existing.message_count = existing.message_count + 1
-        existing.ended_at = now
-        if existing.customer_id is None and customer_id is not None:
-            existing.customer_id = customer_id
-        # Preserve existing metadata; only update sender_name if not already set
-        if not existing.metadata_.get("sender_name") and sender_name:
-            existing.metadata_ = {**existing.metadata_, "sender_name": sender_name}
+        parent = existing
+        parent.ended_at = now
+        if parent.customer_id is None and customer_id is not None:
+            parent.customer_id = customer_id
+        if not parent.metadata_.get("sender_name") and sender_name:
+            parent.metadata_ = {**parent.metadata_, "sender_name": sender_name}
+
+    # Insert user child idempotently
+    if message_text:
+        is_dup = False
+        if chatwoot_message_id is not None:
+            dup_result = await session.execute(
+                select(ConversationMessage.id).where(
+                    ConversationMessage.conversation_history_id == parent.id,
+                    ConversationMessage.chatwoot_message_id == chatwoot_message_id,
+                )
+            )
+            is_dup = dup_result.scalar_one_or_none() is not None
+        else:
+            dup_result = await session.execute(
+                select(ConversationMessage.id).where(
+                    ConversationMessage.conversation_history_id == parent.id,
+                    ConversationMessage.role == "user",
+                    ConversationMessage.content == message_text,
+                )
+            )
+            is_dup = dup_result.scalar_one_or_none() is not None
+
+        if not is_dup:
+            session.add(
+                ConversationMessage(
+                    conversation_history_id=parent.id,
+                    role="user",
+                    content=message_text,
+                    chatwoot_message_id=chatwoot_message_id,
+                    created_at=now,
+                )
+            )
+            await session.flush()
+
+    count_result = await session.execute(
+        select(func.count())
+        .select_from(ConversationMessage)
+        .where(ConversationMessage.conversation_history_id == parent.id)
+    )
+    parent.message_count = count_result.scalar() or 0
 
 
 # Idempotency constants
@@ -557,7 +600,18 @@ async def receive_chatwoot_webhook(
         from database.connection import get_async_session
 
         async with get_async_session() as db_session:
-            await upsert_conversation_history(db_session, payload)
+            cw_msg_id = None
+            try:
+                if payload.conversation.messages:
+                    cw_msg_id = payload.conversation.messages[-1].id
+            except Exception:
+                cw_msg_id = None
+            await upsert_conversation_history(
+                db_session,
+                payload,
+                message_text=message_text,
+                chatwoot_message_id=cw_msg_id,
+            )
             await db_session.commit()
     except Exception as e:
         logger.warning(

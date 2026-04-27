@@ -951,6 +951,182 @@ async def test_single_stylist_when_stylist_id_provided():
     assert stylists[0]["name"] == "Ana"
 
 
+# ---------------------------------------------------------------------------
+# T4 — Precondition guards (R4, R5, R6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_date_required_when_date_iso_none():
+    """R6: missing date_iso → rejected, next_step=date_required."""
+    from agent.tools.check_availability import check_availability
+
+    raw = await check_availability.ainvoke(
+        {
+            "service_ids": [str(FAKE_SERVICE_ID)],
+            "stylist_id": str(FAKE_STYLIST_ID),
+            "date_iso": None,
+            "audience": None,
+        }
+    )
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "date_required"
+
+
+@pytest.mark.asyncio
+async def test_date_required_when_date_iso_empty_string():
+    """R6: empty date_iso → rejected, next_step=date_required."""
+    from agent.tools.check_availability import check_availability
+
+    raw = await check_availability.ainvoke(
+        {
+            "service_ids": [str(FAKE_SERVICE_ID)],
+            "stylist_id": str(FAKE_STYLIST_ID),
+            "date_iso": "",
+            "audience": None,
+        }
+    )
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "date_required"
+
+
+@pytest.mark.asyncio
+async def test_stylist_required_no_preference_not_set():
+    """R5: no stylist_id + no_preference=False (default) → rejected, next_step=stylist_required."""
+    from agent.tools.check_availability import check_availability
+
+    raw = await check_availability.ainvoke(
+        {
+            "service_ids": [str(FAKE_SERVICE_ID)],
+            "stylist_id": None,
+            "date_iso": future_date_iso(5),
+            "audience": None,
+            "no_preference": False,
+        }
+    )
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "stylist_required"
+
+
+@pytest.mark.asyncio
+async def test_no_preference_bypasses_stylist_guard():
+    """R5: no_preference=True bypasses stylist guard even with no stylist_id."""
+    from agent.tools.check_availability import check_availability
+
+    with (
+        patch(
+            "agent.tools.check_availability._load_lead_time_settings",
+            new_callable=AsyncMock,
+            return_value=(0, 0),
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            new_callable=AsyncMock,
+            return_value={FAKE_SERVICE_ID: 60},
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            new_callable=AsyncMock,
+            return_value=[FAKE_STYLIST_ID],
+        ),
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+    ):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": None,
+                "date_iso": future_date_iso(5),
+                "audience": None,
+                "no_preference": True,
+            }
+        )
+    data = parse_response(raw)
+    assert data.get("next_step") != "stylist_required"
+
+
+@pytest.mark.asyncio
+async def test_advance_policy_violated_payload():
+    """R4: date < today+min_days → rejected, next_step=advance_policy_violated,
+    payload.first_valid_date and payload.policy_min_days present."""
+    from datetime import date as dt_date
+
+    from agent.tools.check_availability import check_availability
+
+    tomorrow_iso = (dt_date.today() + timedelta(days=1)).isoformat()
+
+    with _patch_settings(min_days=3):
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": str(FAKE_STYLIST_ID),
+                "date_iso": tomorrow_iso,
+                "audience": None,
+                "no_preference": False,
+            }
+        )
+    data = parse_response(raw)
+    assert data["status"] == "rejected"
+    assert data.get("next_step") == "advance_policy_violated"
+    assert "first_valid_date" in data.get("payload", {})
+    assert data["payload"]["policy_min_days"] == 3
+    # first_valid_date must be today+3
+    expected = (dt_date.today() + timedelta(days=3)).isoformat()
+    assert data["payload"]["first_valid_date"] == expected
+
+
+@pytest.mark.asyncio
+async def test_advance_policy_boundary_not_violated():
+    """R4: date == today+min_days is NOT rejected with advance_policy_violated."""
+    from datetime import date as dt_date
+
+    from agent.tools.check_availability import check_availability
+
+    boundary_iso = (dt_date.today() + timedelta(days=3)).isoformat()
+    dur_patch, stylist_patch, slots_patch = _patch_db_calls()
+
+    with _patch_settings(min_days=3), dur_patch, stylist_patch, slots_patch:
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": str(FAKE_STYLIST_ID),
+                "date_iso": boundary_iso,
+                "audience": None,
+                "no_preference": False,
+            }
+        )
+    data = parse_response(raw)
+    assert data.get("next_step") != "advance_policy_violated"
+
+
+@pytest.mark.asyncio
+async def test_advance_policy_future_date_not_violated():
+    """R4: date = today+30 is never rejected for advance policy."""
+    from agent.tools.check_availability import check_availability
+
+    far_future = future_date_iso(30)
+    dur_patch, stylist_patch, slots_patch = _patch_db_calls()
+
+    with _patch_settings(min_days=3), dur_patch, stylist_patch, slots_patch:
+        raw = await check_availability.ainvoke(
+            {
+                "service_ids": [str(FAKE_SERVICE_ID)],
+                "stylist_id": str(FAKE_STYLIST_ID),
+                "date_iso": far_future,
+                "audience": None,
+                "no_preference": False,
+            }
+        )
+    data = parse_response(raw)
+    assert data.get("next_step") != "advance_policy_violated"
+
+
 @pytest.mark.asyncio
 async def test_legacy_fields_still_present():
     """Additive contract: existing fields must remain in slot dicts."""

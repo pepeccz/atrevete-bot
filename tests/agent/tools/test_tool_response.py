@@ -52,16 +52,16 @@ class TestToolResponseValidation:
 
 class TestToolResponseSerialization:
     def test_model_dump_json_is_valid_json(self):
-        tr = ToolResponse(status="ok", payload={"slot": "10:00"}, next_step="confirm")
+        tr = ToolResponse(status="ok", payload={"slot": "10:00"}, next_step="booking_ready")
         raw = tr.model_dump_json()
         parsed = json.loads(raw)
         assert parsed["status"] == "ok"
-        assert parsed["next_step"] == "confirm"
+        assert parsed["next_step"] == "booking_ready"  # valid NextStep value
 
     def test_model_dump_json_contains_all_fields(self):
         tr = ToolResponse(status="rejected", errors=["no hay turnos"])
         parsed = json.loads(tr.model_dump_json())
-        assert set(parsed.keys()) == {"status", "payload", "next_step", "errors"}
+        assert set(parsed.keys()) == {"status", "collected", "missing", "payload", "next_step", "errors"}
 
 
 # ---------------------------------------------------------------------------
