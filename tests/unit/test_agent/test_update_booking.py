@@ -45,6 +45,8 @@ async def test_variant_gate_fires_with_known_audience():
     """
     ctx, _ = _make_session_ctx()
 
+    from database.models import ServiceCategory
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
@@ -56,6 +58,14 @@ async def test_variant_gate_fires_with_known_audience():
             new=AsyncMock(
                 return_value=("variant", "Peinado", ["Peinado", "Peinado Novia", "Peinado Fiesta"])
             ),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            new=AsyncMock(return_value={}),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_stylist",
@@ -87,6 +97,8 @@ async def test_stylist_required_payload_populated():
 
     active_first_names = ["Ana", "Marta", "Pilar"]
 
+    from database.models import ServiceCategory
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
@@ -96,6 +108,14 @@ async def test_stylist_required_payload_populated():
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            new=AsyncMock(return_value={}),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_stylist",
@@ -130,6 +150,8 @@ async def test_stylist_required_payload_empty_when_no_active_stylists():
     """No active stylists → payload.stylists == []."""
     ctx, _ = _make_session_ctx()
 
+    from database.models import ServiceCategory
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
@@ -139,6 +161,14 @@ async def test_stylist_required_payload_empty_when_no_active_stylists():
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            new=AsyncMock(return_value={}),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_stylist",
@@ -169,6 +199,8 @@ async def test_stylist_required_payload_on_unknown_stylist():
 
     active_first_names = ["Ana", "Marta"]
 
+    from database.models import ServiceCategory
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
@@ -178,6 +210,14 @@ async def test_stylist_required_payload_on_unknown_stylist():
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            new=AsyncMock(return_value={}),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_stylist",

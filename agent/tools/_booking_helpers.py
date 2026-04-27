@@ -16,6 +16,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# ServiceCategory imported lazily inside functions to avoid circular imports at module load.
+
 
 def _validate_full_name(name: str | None) -> tuple[str, str] | None:
     """Return (first_name, last_name) if name has >= 2 non-empty tokens after strip; else None.
@@ -162,18 +164,103 @@ async def _resolve_audience_variants(
     return ("none", "", [])
 
 
-async def _resolve_active_stylists(session: AsyncSession) -> list[str]:
-    """Return first names of all active stylists, ordered alphabetically by full name.
+async def _resolve_service_id_to_category_map(
+    session: AsyncSession, service_ids: list[str]
+) -> dict[str, object]:
+    """Return {service_id_str: ServiceCategory} for the given IDs.
 
-    First name = token before the first whitespace in Stylist.name.
-    Filters: is_active=True only. No category filter — service-agnostic gate.
-
-    Design: ADR-3 (booking-disambiguation-hardening).
+    Used by the category_mix_required gate to build the payload.
     """
-    from database.models import Stylist
+    from database.models import Service
+
+    if not service_ids:
+        return {}
 
     result = await session.execute(
-        select(Stylist.name).where(Stylist.is_active.is_(True)).order_by(Stylist.name.asc())
+        select(Service.id, Service.category).where(Service.id.in_(service_ids))
+    )
+    return {str(row[0]): row[1] for row in result.fetchall()}
+
+
+async def _resolve_service_categories(
+    session: AsyncSession, service_ids: list[str]
+) -> set:
+    """Return the distinct ServiceCategory values for the given service IDs.
+
+    Empty set if no rows match or service_ids is empty.
+    UUID strings or UUID objects accepted (SQLAlchemy coerces both).
+
+    Used by _resolve_active_stylists and the category_mix_required gate in update_booking.
+    """
+    from database.models import Service
+
+    if not service_ids:
+        return set()
+
+    result = await session.execute(
+        select(Service.category).where(Service.id.in_(service_ids))
+    )
+    return {row[0] for row in result.fetchall()}
+
+
+async def _resolve_active_stylists(
+    session: AsyncSession, service_ids: list[str] | None = None
+) -> list[str]:
+    """Return first names of active stylists, ordered alphabetically by full name.
+
+    First name = token before the first whitespace in Stylist.name.
+    Filters: is_active=True only.
+
+    When service_ids is None (DEPRECATED — legacy path), all active stylists are returned.
+    When service_ids is provided, applies the category filter matrix:
+      - {HAIRDRESSING} → stylists with category IN (HAIRDRESSING, BOTH)
+      - {AESTHETICS}   → stylists with category IN (AESTHETICS, BOTH)
+      - {BOTH}         → all active stylists
+      - {HAIR, AESTH}  → [] (mixed, fail-closed)
+      - empty set      → [] (fail-closed — unresolved IDs)
+
+    Design: ADR-2, ADR-3 (stylist-category-filtering-fix-v2).
+    """
+    from database.models import ServiceCategory, Stylist
+
+    if service_ids is None:
+        # Legacy path — unchanged behavior
+        result = await session.execute(
+            select(Stylist.name).where(Stylist.is_active.is_(True)).order_by(Stylist.name.asc())
+        )
+        return [row[0].split(None, 1)[0] for row in result.fetchall()]
+
+    # Resolve category set for the given service IDs
+    categories = await _resolve_service_categories(session, service_ids)
+
+    if not categories:
+        # Empty service_ids or no DB rows — fail-closed
+        return []
+
+    has_hair = ServiceCategory.HAIRDRESSING in categories
+    has_aesth = ServiceCategory.AESTHETICS in categories
+    has_both = ServiceCategory.BOTH in categories
+
+    # Mixed non-BOTH categories → fail-closed
+    if has_hair and has_aesth:
+        return []
+
+    # Build the WHERE clause
+    if has_both and not has_hair and not has_aesth:
+        # All-BOTH → any active stylist can serve
+        category_filter = Stylist.is_active.is_(True)
+    elif has_hair or (has_both and not has_aesth):
+        # HAIRDRESSING (possibly with BOTH) → hair + BOTH stylists
+        category_filter = Stylist.category.in_([ServiceCategory.HAIRDRESSING, ServiceCategory.BOTH])
+    else:
+        # AESTHETICS (possibly with BOTH) → aesth + BOTH stylists
+        category_filter = Stylist.category.in_([ServiceCategory.AESTHETICS, ServiceCategory.BOTH])
+
+    result = await session.execute(
+        select(Stylist.name)
+        .where(Stylist.is_active.is_(True))
+        .where(category_filter)
+        .order_by(Stylist.name.asc())
     )
     return [row[0].split(None, 1)[0] for row in result.fetchall()]
 

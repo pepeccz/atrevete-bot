@@ -21,6 +21,19 @@ horario o cualquier otro dato. Si la respuesta trae un `next_step` con
 
 ---
 
+## Paso 1.5 — Mezcla de categorías (`category_mix_required`)
+
+Cuando `update_booking` devuelve `next_step="category_mix_required"`, el cliente ha pedido servicios de peluquería y estética en la misma cita, lo que no es posible.
+
+Acción:
+1. Presenta los dos grupos usando `payload.hairdressing_services` y `payload.aesthetics_services`.
+2. Pregunta cuál cita quiere reservar primero: "¿Qué cita prefieres reservar primero — peluquería o estética?"
+3. La otra cita se gestiona en una conversación posterior, no en este turno.
+
+**Nunca llames a `book` ni a `check_availability` con servicios de ambas categorías.**
+
+---
+
 ## Paso 2 — Recogida de fecha
 
 Una vez resuelto el servicio (sin `*_required` pendiente), pide la fecha al cliente.

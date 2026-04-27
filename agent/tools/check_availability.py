@@ -79,8 +79,8 @@ async def _get_active_stylists_for_services(
         elif has_aesthetics and not has_hair:
             stylist_filter = Stylist.category == ServiceCategory.AESTHETICS
         else:
-            # Mixed or empty — return all active
-            stylist_filter = Stylist.is_active.is_(True)
+            # Mixed or empty — fail-closed (defense in depth; update_booking blocks upstream)
+            return []
 
         result = await session.execute(
             select(Stylist.id).where(Stylist.is_active.is_(True)).where(stylist_filter)

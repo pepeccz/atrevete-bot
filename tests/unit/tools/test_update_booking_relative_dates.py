@@ -43,6 +43,8 @@ def _make_session_with_service(service_id="svc-uuid-001", service_name="corte da
 @pytest.fixture
 def mock_helpers():
     """Patch all DB helpers so update_booking runs without a real DB."""
+    from database.models import ServiceCategory
+
     with (
         patch(
             "agent.tools._booking_helpers._resolve_service_ids",
@@ -51,6 +53,14 @@ def mock_helpers():
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),  # no ambiguity → no disambiguation
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            new=AsyncMock(return_value={}),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_stylist",

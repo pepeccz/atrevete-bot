@@ -5,8 +5,9 @@ a ToolResponse describing which slots were collected and which are still missing
 Idempotent: safe to call repeatedly. Does NOT create appointments.
 
 Priority matrix (first matching rule wins):
-1. Ambiguous service family + no audience → rejected, audience_required
-2. No services → partial, service_required
+1. No services → partial, service_required
+1.5. Mixed HAIRDRESSING + AESTHETICS services → rejected, category_mix_required  [NEW]
+2. Ambiguous service family + no audience → rejected, audience_required
 3. Services present + no stylist + no_preference=False → partial, stylist_required
 4. Services + stylist + no date → partial, date_required
 5. All present → ok, booking_ready
@@ -75,9 +76,10 @@ async def update_booking(
 
     Returns:
         JSON-serialized ToolResponse with status, collected, missing, next_step.
-        Valid next_step values: service_required | audience_required | variant_required |
-        stylist_required | date_required | name_required | extras_loop_required |
-        notes_optional | date_clarification_required | booking_ready.
+        Valid next_step values: service_required | category_mix_required |
+        audience_required | variant_required | stylist_required | date_required |
+        name_required | extras_loop_required | notes_optional |
+        date_clarification_required | booking_ready.
     """
     try:
         return await _update_booking_impl(
@@ -120,6 +122,8 @@ async def _update_booking_impl(
     from agent.tools._booking_helpers import (
         _resolve_active_stylists,
         _resolve_audience_variants,
+        _resolve_service_categories,
+        _resolve_service_id_to_category_map,
         _resolve_service_ids,
         _resolve_stylist,
         _validate_full_name,
@@ -160,6 +164,43 @@ async def _update_booking_impl(
                 missing=["services"],
                 next_step="service_required",
                 errors=errors,
+            ).model_dump_json()
+
+        # ── Step 1.5: category-mix gate ──────────────────────────────────────
+        # Runs AFTER service resolution (needs UUIDs) and BEFORE audience/variant gates.
+        # Fails-closed when services span HAIRDRESSING + AESTHETICS (no BOTH override).
+        from database.models import ServiceCategory as _SC
+
+        _service_categories = await _resolve_service_categories(session, resolved_ids)
+        _has_hair = _SC.HAIRDRESSING in _service_categories
+        _has_aesth = _SC.AESTHETICS in _service_categories
+        if _has_hair and _has_aesth:
+            # Build payload: map each input service name to its category via bulk query.
+            _id_to_cat = await _resolve_service_id_to_category_map(session, resolved_ids)
+            _hair_services: list[str] = []
+            _aesth_services: list[str] = []
+            _both_services: list[str] = []
+            for _svc_name, _svc_id in zip(services, resolved_ids):
+                _cat = _id_to_cat.get(_svc_id)
+                if _cat == _SC.HAIRDRESSING:
+                    _hair_services.append(_svc_name)
+                elif _cat == _SC.AESTHETICS:
+                    _aesth_services.append(_svc_name)
+                else:  # BOTH or unknown — include in both groups per ADR-4
+                    _both_services.append(_svc_name)
+            logger.info(
+                "tool.response.rejected",
+                extra={"tool_name": "update_booking", "next_step": "category_mix_required"},
+            )
+            return ToolResponse(
+                status="rejected",
+                next_step="category_mix_required",
+                payload={
+                    "hairdressing_services": _hair_services + _both_services,
+                    "aesthetics_services": _aesth_services + _both_services,
+                    "categories": ["HAIRDRESSING", "AESTHETICS"],
+                },
+                errors=["No puedo combinar peluquería y estética en una misma cita."],
             ).model_dump_json()
 
         # ── Step 1: audience disambiguation (only when audience unknown) ─────
@@ -236,7 +277,9 @@ async def _update_booking_impl(
                     next_step="stylist_required",
                     errors=[f"No encontré a la estilista: {stylist_name}"],
                     payload={
-                        "stylists": await _resolve_active_stylists(session),
+                        "stylists": await _resolve_active_stylists(
+                            session, service_ids=resolved_ids
+                        ),
                         "first_available_label": _first_available_label,
                     },
                 ).model_dump_json()
@@ -254,7 +297,9 @@ async def _update_booking_impl(
                 missing=missing,
                 next_step="stylist_required",
                 payload={
-                    "stylists": await _resolve_active_stylists(session),
+                    "stylists": await _resolve_active_stylists(
+                        session, service_ids=resolved_ids
+                    ),
                     "first_available_label": _first_available_label,
                 },
             ).model_dump_json()

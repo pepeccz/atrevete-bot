@@ -45,6 +45,8 @@ async def _call_with_mocks(resolved_ids=None, unknown=None, audience_kind="none"
 
     ctx, _ = _make_session_ctx()
 
+    from database.models import ServiceCategory
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
@@ -54,6 +56,14 @@ async def _call_with_mocks(resolved_ids=None, unknown=None, audience_kind="none"
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
             new=AsyncMock(return_value=(audience_kind, "", [])),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            new=AsyncMock(return_value={}),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_stylist",
