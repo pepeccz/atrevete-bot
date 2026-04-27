@@ -19,11 +19,7 @@ from typing import ClassVar
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage
 
-DISCLOSURE_TEXT = (
-    "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸 "
-    "Estoy aquí para ayudarte con tus reservas. "
-    "Soy una IA, no una persona, pero en cualquier momento puedes pedir hablar con alguien del equipo. 💕"
-)
+DISCLOSURE_TEXT = "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸"
 
 
 def _has_textual_ai_message(msgs: list) -> bool:

@@ -88,7 +88,8 @@ class TestDateTextResolves:
         with (
             patch(
                 "agent.booking.resolvers.time_resolver.resolve_relative_date",
-                return_value=date(2026, 4, 28),
+                # Use today+3 (2026-04-30) so the new lead-time gate passes (MIN_BOOKING_DAYS=3).
+                return_value=date(2026, 4, 30),
             ),
             patch(
                 "agent.tools.update_booking.datetime"
@@ -105,7 +106,7 @@ class TestDateTextResolves:
                     stylist_name="Marta",
                     no_preference_stylist=False,
                     date_iso=None,
-                    date_text="mañana",
+                    date_text="en tres días",
                     audience=None,
                     # New gates must be pre-satisfied so the test reaches date resolution
                     no_more_services=True,
@@ -117,7 +118,7 @@ class TestDateTextResolves:
             )
 
         assert result["status"] == "ok"
-        assert result["collected"]["date_iso"] == "2026-04-28"
+        assert result["collected"]["date_iso"] == "2026-04-30"
         assert result["next_step"] == "booking_ready"
 
 

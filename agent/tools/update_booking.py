@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -139,7 +139,7 @@ async def update_booking(
         JSON-serialized ToolResponse with status, collected, missing, next_step.
         Valid next_step values: service_required | category_mix_required |
         audience_required | variant_required | stylist_required | offer_slots |
-        date_required | closed_day_required | name_required | extras_loop_required |
+        date_required | closed_day_required | advance_policy_violated | name_required | extras_loop_required |
         notes_optional | pre_book_validation_required | date_clarification_required | booking_ready.
     """
     try:
@@ -455,6 +455,35 @@ async def _update_booking_impl(
                     "service_ids": collected.get("service_ids", []),
                 },
                 errors=[f"El salón está cerrado el {date_iso}"],
+            ).model_dump_json()
+
+        # ── Step 6d: advance-policy (lead-time) pre-validation ───────────────
+        # Mirror Step 6c shape. Reject BEFORE name/notes capture so we don't
+        # collect PII for an unbookable slot. Contract documented in
+        # critical_rules.md rule 27 + booking_flow.md Paso 2.
+        _today_madrid = datetime.now(_MADRID_TZ).date()
+        _first_valid = _today_madrid + timedelta(days=MIN_BOOKING_DAYS)
+        if _parsed_date < _first_valid:
+            logger.info(
+                "tool.response.rejected",
+                extra={"tool_name": "update_booking", "next_step": "advance_policy_violated"},
+            )
+            return ToolResponse(
+                status="rejected",
+                collected=collected,
+                missing=["date_iso"],
+                next_step="advance_policy_violated",
+                payload={
+                    "rejected_date": date_iso,
+                    "first_valid_date": _first_valid.isoformat(),
+                    "policy_min_days": MIN_BOOKING_DAYS,
+                    "stylist_id": collected.get("stylist_id"),
+                    "service_ids": collected.get("service_ids", []),
+                },
+                errors=[
+                    f"La fecha {date_iso} viola la política de antelación mínima "
+                    f"({MIN_BOOKING_DAYS} días). Primera fecha válida: {_first_valid.isoformat()}."
+                ],
             ).model_dump_json()
 
         # ── Step 7: name required — after stylist+date+closed-day-check ──────
