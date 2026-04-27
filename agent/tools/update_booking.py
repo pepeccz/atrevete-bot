@@ -118,11 +118,13 @@ async def _update_booking_impl(
     customer_known: bool = False,
 ) -> str:
     from agent.tools._booking_helpers import (
+        _resolve_active_stylists,
         _resolve_audience_variants,
         _resolve_service_ids,
         _resolve_stylist,
         _validate_full_name,
     )
+    from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
     from database.connection import get_async_session
 
     async with get_async_session() as session:
@@ -160,9 +162,8 @@ async def _update_booking_impl(
                 errors=errors,
             ).model_dump_json()
 
-        # ── Steps 1+2: audience / variant disambiguation ──────────────────────
+        # ── Step 1: audience disambiguation (only when audience unknown) ─────
         # kind=="audience" → multi-PRINCIPAL same-dimension, ask for audience.
-        # kind=="variant"  → multi-VARIANT same-parent, ask for variant.
         if audience is None:
             for service_name in services:
                 kind, family, candidates = await _resolve_audience_variants(session, service_name)
@@ -176,16 +177,23 @@ async def _update_booking_impl(
                         next_step="audience_required",
                         payload={"variants": candidates, "family": family},
                     ).model_dump_json()
-                if kind == "variant":
-                    logger.info(
-                        "tool.response.rejected",
-                        extra={"tool_name": "update_booking", "next_step": "variant_required"},
-                    )
-                    return ToolResponse(
-                        status="rejected",
-                        next_step="variant_required",
-                        payload={"variants": candidates, "family": family},
-                    ).model_dump_json()
+
+        # ── Step 2: variant disambiguation — UNGATED (independent of audience) ─
+        # kind=="variant" → principal with active children OR child with siblings.
+        # Must run regardless of audience state — the two axes are orthogonal.
+        # Design: ADR-2 ordering (booking-disambiguation-hardening).
+        for service_name in services:
+            kind, family, candidates = await _resolve_audience_variants(session, service_name)
+            if kind == "variant":
+                logger.info(
+                    "tool.response.rejected",
+                    extra={"tool_name": "update_booking", "next_step": "variant_required"},
+                )
+                return ToolResponse(
+                    status="rejected",
+                    next_step="variant_required",
+                    payload={"variants": candidates, "family": family},
+                ).model_dump_json()
 
         collected["services"] = services
         collected["service_ids"] = resolved_ids
@@ -218,23 +226,37 @@ async def _update_booking_impl(
                     "tool.response.rejected",
                     extra={"tool_name": "update_booking", "next_step": "stylist_required"},
                 )
+                _first_available_label = (
+                    f"La primera con disponibilidad (mín. {MIN_BOOKING_DAYS} días de antelación)"
+                )
                 return ToolResponse(
                     status="rejected",
                     collected=collected,
                     missing=["stylist"],
                     next_step="stylist_required",
                     errors=[f"No encontré a la estilista: {stylist_name}"],
+                    payload={
+                        "stylists": await _resolve_active_stylists(session),
+                        "first_available_label": _first_available_label,
+                    },
                 ).model_dump_json()
             collected["stylist_id"] = str(stylist_id)
             collected["stylist_name"] = stylist_name
 
         if not no_preference_stylist and stylist_id is None:
             missing.append("stylist")
+            _first_available_label = (
+                f"La primera con disponibilidad (mín. {MIN_BOOKING_DAYS} días de antelación)"
+            )
             return ToolResponse(
                 status="partial",
                 collected=collected,
                 missing=missing,
                 next_step="stylist_required",
+                payload={
+                    "stylists": await _resolve_active_stylists(session),
+                    "first_available_label": _first_available_label,
+                },
             ).model_dump_json()
 
         if no_preference_stylist:

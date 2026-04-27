@@ -28,10 +28,15 @@ BUDGETS: dict[str, int] = {
     # booking_flow.md: +400 for Paso 1.5, Paso 4, Paso 4b, updated confirmation template
     # examples.md: +700 for Ejemplo 6 (complete-flow happy-path example)
     # tools_contract.md: +300 for new update_booking args + round-trip mandate
-    "critical_rules.md": 1450,
-    "booking_flow.md": 1550,
-    "examples.md": 1400,
-    "tools_contract.md": 900,
+    #
+    # Budgets updated for SDD change booking-disambiguation-hardening:
+    # critical_rules.md: +250 for R-23 (slot-mutation rule), R-24 (stylist list rule),
+    #   and 9b-trigger strengthening (was 1450)
+    # booking_flow.md: no net increase (stylist section replaced, not appended)
+    "critical_rules.md": 1750,
+    "booking_flow.md": 1900,
+    "examples.md": 1950,
+    "tools_contract.md": 950,
 }
 
 

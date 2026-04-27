@@ -26,6 +26,10 @@ import re
 import unicodedata
 from datetime import date, timedelta
 
+# Minimum advance booking days — single source of truth.
+# Referenced by update_booking (payload label) and next_available_options.
+MIN_BOOKING_DAYS: int = 3
+
 # ---------------------------------------------------------------------------
 # Lookup tables
 # ---------------------------------------------------------------------------

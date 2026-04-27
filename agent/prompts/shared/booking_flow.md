@@ -47,20 +47,21 @@ Pasa siempre de vuelta `extras_asked=true` en las llamadas siguientes (recibido 
 
 ## § Elección de estilista
 
-Cuando el cliente deba elegir estilista, preséntala como lista numerada. Incluye siempre la opción
-"primera con disponibilidad" (ver `glossary.md § Lista canónica de estilistas`).
+Cuando `update_booking` devuelva `next_step="stylist_required"`, presenta la pregunta como lista
+numerada usando **exclusivamente** `payload.stylists` como fuente de nombres. No hagas consulta
+al catálogo para obtener estilistas.
 
-Ejemplo de presentación obligatoria:
+Plantilla obligatoria (presentación como lista):
 
 ```
 ¿Con qué estilista quieres la cita?
-0. La primera con disponibilidad (mín. 3 días de antelación)
-1. [Estilista 1]
-2. [Estilista 2]
+- opción 0: {payload.first_available_label}
+- opción 1: {payload.stylists[0]}
+- opción 2: {payload.stylists[1]}
 ...
 ```
 
-Nunca inventes estilistas. Usa solo las que devuelva el catálogo activo.
+Nunca inventes estilistas. Nunca reordenes ni omitas nombres de `payload.stylists`.
 
 ---
 
