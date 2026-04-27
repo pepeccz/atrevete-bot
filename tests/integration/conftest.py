@@ -101,7 +101,7 @@ def _json_body_matcher(r1: Any, r2: Any) -> None:
 def vcr_config() -> dict[str, Any]:
     """Shared VCR configuration for all integration tests."""
     return {
-        "match_on": ["method", "scheme", "host", "path", "query", "body"],
+        "match_on": ["method", "scheme", "host", "path", "query", "json_body"],
         "filter_headers": [
             ("Authorization", "REDACTED"),
             ("X-Api-Key", "REDACTED"),
