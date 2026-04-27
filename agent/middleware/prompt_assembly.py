@@ -23,6 +23,7 @@ from langchain_core.messages import SystemMessage
 logger = logging.getLogger(__name__)
 
 _SLOT_ORDER = [
+    "_slot_today",
     "_slot_customer",
     "_slot_upcoming_appointments",
     "_slot_business_hours",

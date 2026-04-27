@@ -19,10 +19,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
 
 from agent.tools.schemas import ToolResponse
+
+_MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,7 @@ async def update_booking(
     stylist_name: str | None = None,
     no_preference_stylist: bool = False,
     date_iso: str | None = None,
+    date_text: str | None = None,
     audience: (
         Literal["adult_female", "adult_male", "child_female", "child_male", "baby", "unisex"] | None
     ) = None,
@@ -48,6 +52,10 @@ async def update_booking(
         stylist_name: Human-readable stylist name (e.g. "Marta"). Resolved to ID internally.
         no_preference_stylist: Set True if customer has no stylist preference.
         date_iso: Desired appointment date as ISO date string (YYYY-MM-DD).
+        date_text: Literal relative date phrase from the user (e.g. "mañana",
+            "el miércoles que viene"). Use when date_iso is not available.
+            The backend resolves it against the current Europe/Madrid date.
+            Use one or the other — if date_iso is set, date_text is ignored.
         audience: Audience qualifier for ambiguous service families.
 
     Returns:
@@ -59,6 +67,7 @@ async def update_booking(
             stylist_name=stylist_name,
             no_preference_stylist=no_preference_stylist,
             date_iso=date_iso,
+            date_text=date_text,
             audience=audience,
         )
     except Exception as exc:
@@ -76,6 +85,7 @@ async def _update_booking_impl(
     no_preference_stylist: bool,
     date_iso: str | None,
     audience: str | None,
+    date_text: str | None = None,
 ) -> str:
     from agent.tools._booking_helpers import (
         _resolve_audience_variants,
@@ -167,6 +177,23 @@ async def _update_booking_impl(
 
         if no_preference_stylist:
             collected["no_preference_stylist"] = True
+
+        # ── date_text resolution (only when date_iso not provided) ──────────────
+        if not date_iso and date_text:
+            from agent.booking.resolvers.time_resolver import resolve_relative_date
+
+            today_local = datetime.now(_MADRID_TZ).date()
+            resolved = resolve_relative_date(date_text, today_local)
+            if resolved is not None:
+                date_iso = resolved.isoformat()
+            else:
+                return ToolResponse(
+                    status="partial",
+                    collected=collected,
+                    missing=["date_iso"],
+                    next_step="date_clarification_required",
+                    errors=[f"No pude entender la fecha: {date_text}"],
+                ).model_dump_json()
 
         # ── Rule 4: no date ───────────────────────────────────────────────────
         if not date_iso:
