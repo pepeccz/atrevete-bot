@@ -50,6 +50,64 @@ def _is_phone_empty(phone: str | None) -> bool:
     return not (phone or "").strip()
 
 
+async def _persist_assistant_message(conversation_id: str | None, content: str | None) -> None:
+    """Insert an assistant ConversationMessage child row for live admin visibility.
+
+    Idempotent: skips when an identical (role, content) row already exists for
+    this conversation. Falls back silently if DB or parent row is unavailable.
+    """
+    if not conversation_id or not content:
+        return
+
+    from datetime import datetime, timezone
+    from sqlalchemy import func, select
+
+    from database.connection import get_async_session
+    from database.models import ConversationHistory, ConversationMessage
+
+    conv_id_str = str(conversation_id)
+
+    async with get_async_session() as session:
+        parent_result = await session.execute(
+            select(ConversationHistory).where(
+                ConversationHistory.conversation_id == conv_id_str
+            )
+        )
+        parent = parent_result.scalar_one_or_none()
+        if parent is None:
+            return  # Webhook hasn't created the parent yet — skip
+
+        dup_result = await session.execute(
+            select(ConversationMessage.id).where(
+                ConversationMessage.conversation_history_id == parent.id,
+                ConversationMessage.role == "assistant",
+                ConversationMessage.content == content,
+            )
+        )
+        if dup_result.scalar_one_or_none() is not None:
+            return
+
+        now = datetime.now(tz=timezone.utc)
+        session.add(
+            ConversationMessage(
+                conversation_history_id=parent.id,
+                role="assistant",
+                content=content,
+                created_at=now,
+            )
+        )
+        await session.flush()
+
+        count_result = await session.execute(
+            select(func.count())
+            .select_from(ConversationMessage)
+            .where(ConversationMessage.conversation_history_id == parent.id)
+        )
+        parent.message_count = count_result.scalar() or 0
+        parent.ended_at = now
+        await session.commit()
+
+
 async def _maybe_reject_empty_phone(conversation_id: str, customer_phone: str | None) -> bool:
     """Short-circuit batch processing when phone is missing.
 
@@ -694,6 +752,16 @@ async def subscribe_to_outgoing_messages():
                             "customer_phone": customer_phone,
                         },
                     )
+                    try:
+                        await _persist_assistant_message(
+                            conversation_id=conversation_id,
+                            content=message_text,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to persist assistant message for {conversation_id}: {e}",
+                            extra={"conversation_id": conversation_id},
+                        )
                 else:
                     logger.error(
                         f"Message sent to {customer_phone}: success=False",

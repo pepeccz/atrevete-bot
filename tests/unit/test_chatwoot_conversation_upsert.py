@@ -129,8 +129,8 @@ class TestUpsertConversationHistoryInsert:
         assert added_objects[0].customer_id is None
 
     @pytest.mark.asyncio
-    async def test_insert_sets_started_at_not_ended_at(self):
-        """On INSERT started_at is set; ended_at should be None."""
+    async def test_insert_sets_started_at_and_ended_at(self):
+        """On INSERT both started_at and ended_at are set to now (parent has a child message)."""
         session = _make_db_session()
         session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
@@ -140,17 +140,18 @@ class TestUpsertConversationHistoryInsert:
 
         await upsert_conversation_history(session, payload)
 
-        obj = added_objects[0]
-        assert obj.started_at is not None
-        assert obj.ended_at is None
+        # First added object is the ConversationHistory parent
+        parent = added_objects[0]
+        assert parent.started_at is not None
+        assert parent.ended_at is not None
 
 
 class TestUpsertConversationHistoryUpdate:
     """Existing conversation → UPDATE ended_at + message_count."""
 
     @pytest.mark.asyncio
-    async def test_update_increments_message_count(self):
-        """On existing conversation, message_count is incremented by 1."""
+    async def test_update_recomputes_message_count_from_children(self):
+        """message_count is recomputed from actual ConversationMessage rows."""
         existing = MagicMock()
         existing.conversation_id = "42"
         existing.message_count = 3
@@ -159,14 +160,23 @@ class TestUpsertConversationHistoryUpdate:
         existing.ended_at = None
 
         session = _make_db_session()
+        # Sequence: SELECT customer (None), SELECT conv (existing), SELECT dup (None),
+        # SELECT count (returns 7).
         session.execute = AsyncMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing))
+            side_effect=[
+                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                MagicMock(scalar_one_or_none=MagicMock(return_value=existing)),
+                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                MagicMock(scalar=MagicMock(return_value=7)),
+            ]
         )
 
         payload = _make_payload(conversation_id=42)
-        await upsert_conversation_history(session, payload)
+        await upsert_conversation_history(
+            session, payload, message_text="Hola", chatwoot_message_id=None
+        )
 
-        assert existing.message_count == 4
+        assert existing.message_count == 7
 
     @pytest.mark.asyncio
     async def test_update_sets_ended_at(self):

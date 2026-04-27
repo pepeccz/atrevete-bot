@@ -345,11 +345,12 @@ async def upsert_conversation_to_db(
         select(
             ConversationMessage.role,
             ConversationMessage.content,
-            ConversationMessage.created_at,
         ).where(ConversationMessage.conversation_history_id == parent.id)
     )
-    existing_fingerprints: set[tuple[str, str, str]] = {
-        (row.role, row.content, row.created_at.isoformat()) for row in existing_result.all()
+    # Dedupe by (role, content) only — webhook + outbound subscriber may have
+    # already inserted children with timestamps that differ from checkpoint state.
+    existing_fingerprints: set[tuple[str, str]] = {
+        (row.role, row.content) for row in existing_result.all()
     }
 
     # -------------------------------------------------------------------------
@@ -370,7 +371,7 @@ async def upsert_conversation_to_db(
         # Normalise role to lowercase for storage consistency
         role = role.lower()
 
-        fingerprint = (role, content, timestamp.isoformat())
+        fingerprint = (role, content)
         if fingerprint in existing_fingerprints:
             logger.debug(
                 f"Skipping duplicate message for {conversation_id} at {timestamp.isoformat()}"
