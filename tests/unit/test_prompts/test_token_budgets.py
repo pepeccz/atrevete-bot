@@ -17,10 +17,15 @@ _SHARED = Path(__file__).parent.parent.parent.parent / "agent" / "prompts" / "sh
 _ENC = tiktoken.get_encoding("cl100k_base")
 
 BUDGETS: dict[str, int] = {
-    "critical_rules.md": 1100,
+    # Budgets updated for SDD change prompt-audience-regression-fix-generic:
+    # critical_rules.md: +150 for dual-axis 9b-trigger clause (was 1100)
+    # booking_flow.md: unchanged (1200; Paso 0 + Paso 1 fit within)
+    # examples.md: +200 for examples 4 and 5 (was 400)
+    # tools_contract.md: +80 for update_booking _required clause (was 400)
+    "critical_rules.md": 1300,
     "booking_flow.md": 1200,
-    "examples.md": 400,
-    "tools_contract.md": 400,
+    "examples.md": 650,
+    "tools_contract.md": 550,
 }
 
 

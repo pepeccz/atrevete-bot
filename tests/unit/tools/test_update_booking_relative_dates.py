@@ -50,7 +50,7 @@ def mock_helpers():
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
-            new=AsyncMock(return_value=("corte", [])),  # no variants → no disambiguation
+            new=AsyncMock(return_value=("none", "", [])),  # no ambiguity → no disambiguation
         ),
         patch(
             "agent.tools._booking_helpers._resolve_stylist",

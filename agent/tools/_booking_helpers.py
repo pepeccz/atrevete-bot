@@ -51,42 +51,70 @@ async def _resolve_stylist(session: AsyncSession, name: str) -> UUID | None:
 
 async def _resolve_audience_variants(
     session: AsyncSession, service_name: str
-) -> tuple[str, list[str]]:
-    """Check if service has siblings (shared parent_service_name in metadata).
+) -> tuple[str, str, list[str]]:
+    """Detect whether a service belongs to an ambiguous family.
 
-    Returns (family_name, [variant_names]) where variant_names is the list of
-    sibling service names (includes the passed service itself).
-    Returns ("", []) if the service is unambiguous (no parent metadata).
+    Returns a 3-tuple (kind, family_label, candidates):
+      - kind ∈ {"none", "audience", "variant"}
+      - family_label: the dimension (audience axis) or parent_service_name (variant axis)
+      - candidates: sorted list of sibling service names
 
-    Used to detect when LLM should ask for audience clarification.
+    Axis (a) — audience: PRINCIPAL services sharing the same `dimension` metadata key
+    but differing by `audience` column value.
+
+    Axis (b) — variant: services sharing `parent_service_name` in metadata (pre-existing
+    behaviour, preserved).
+
+    Returns ("none", "", []) when the service is unambiguous.
+
+    Used by update_booking Rule 1 to trigger audience_required / variant_required.
     """
     from database.models import Service
 
-    # Look up the service to get its metadata
+    # Fetch the service row (metadata + audience)
     result = await session.execute(
-        select(Service.metadata_).where(
+        select(Service.metadata_, Service.audience).where(
             Service.name == service_name,
             Service.is_active.is_(True),
         )
     )
     row = result.first()
     if row is None:
-        return ("", [])
+        return ("none", "", [])
 
     metadata = row[0] or {}
-    parent_name = metadata.get("parent_service_name")
-    if not parent_name:
-        return ("", [])
+    audience = row[1]
 
-    # Find all services with the same parent
-    siblings_result = await session.execute(
-        select(Service.name).where(
-            Service.metadata_["parent_service_name"].as_string() == parent_name,
-            Service.is_active.is_(True),
+    # ── Case (b): variant axis — has parent_service_name ─────────────────────
+    parent_name = metadata.get("parent_service_name")
+    if parent_name:
+        siblings_result = await session.execute(
+            select(Service.name).where(
+                Service.metadata_["parent_service_name"].as_string() == parent_name,
+                Service.is_active.is_(True),
+            )
         )
-    )
-    sibling_names = [r[0] for r in siblings_result.fetchall()]
-    return (parent_name, sibling_names)
+        sibling_names = sorted(r[0] for r in siblings_result.fetchall())
+        if len(sibling_names) > 1:
+            return ("variant", parent_name, sibling_names)
+
+    # ── Case (a): audience axis — PRINCIPAL peers sharing dimension ───────────
+    service_type = metadata.get("service_type", "")
+    dimension = metadata.get("dimension")
+    if service_type == "principal" and dimension:
+        peers_result = await session.execute(
+            select(Service.name, Service.audience).where(
+                Service.metadata_["service_type"].as_string() == "principal",
+                Service.metadata_["dimension"].as_string() == dimension,
+                Service.is_active.is_(True),
+            )
+        )
+        peers = peers_result.fetchall()
+        distinct_audiences = {p[1] for p in peers if p[1] is not None}
+        if len(peers) > 1 and len(distinct_audiences) > 1:
+            return ("audience", dimension, sorted(p[0] for p in peers))
+
+    return ("none", "", [])
 
 
 async def _resolve_service_ids(

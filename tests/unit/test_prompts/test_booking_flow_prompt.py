@@ -24,8 +24,10 @@ def _content_lines(text: str) -> list[str]:
 def test_line_count() -> None:
     text = BOOKING_FLOW_PATH.read_text(encoding="utf-8")
     lines = _content_lines(text)
-    assert len(lines) <= 10, (
-        f"booking_flow.md has {len(lines)} content lines; expected ≤10.\n"
+    # Budget raised to accommodate Paso 0 and Paso 1 blocks (SDD change
+    # prompt-audience-regression-fix-generic). Previous budget was 10.
+    assert len(lines) <= 60, (
+        f"booking_flow.md has {len(lines)} content lines; expected ≤60.\n"
         f"Content lines:\n" + "\n".join(f"  {l}" for l in lines)
     )
 
@@ -36,7 +38,7 @@ def test_no_numbered_steps() -> None:
         assert not re.match(r"^\s*\d+\.", line), (
             f"Found numbered step: {line!r}"
         )
-        assert "Paso" not in line, f"Found 'Paso' in line: {line!r}"
+        # "Step" (English) is still forbidden; "Paso" is now allowed (Paso 0/Paso 1 sections added).
         assert "Step" not in line, f"Found 'Step' in line: {line!r}"
 
 

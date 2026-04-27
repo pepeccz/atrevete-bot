@@ -26,8 +26,9 @@ def test_examples_appears_after_critical_rules() -> None:
 def test_tools_contract_appears_after_booking_flow() -> None:
     m = _reload_loader()
     prompt = m.load_system_prompt()
-    idx_flow = prompt.find("Paso 7")  # unique string in booking_flow
-    idx_tools = prompt.find("check_availability")  # tools_contract mentions it too, but also in prompt
+    # Anchor updated: "Paso 7" was removed; use "Paso 0" which is present after
+    # SDD change prompt-audience-regression-fix-generic.
+    idx_flow = prompt.find("Paso 0")  # unique string in booking_flow (Paso 0 section)
     # Use a more unique string from tools_contract
     idx_tools = prompt.find("Nunca llamar")  # unique to tools_contract
     assert idx_flow != -1, "booking_flow content not found in assembled prompt"

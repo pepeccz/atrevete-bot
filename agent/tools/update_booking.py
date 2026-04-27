@@ -129,11 +129,14 @@ async def _update_booking_impl(
                 errors=errors,
             ).model_dump_json()
 
-        # ── Rule 1: audience disambiguation ───────────────────────────────────
+        # ── Rule 1: audience / variant disambiguation ─────────────────────────
+        # _resolve_audience_variants returns (kind, family, candidates).
+        # kind=="audience" → multi-PRINCIPAL same-dimension, ask for audience.
+        # kind=="variant"  → multi-VARIANT same-parent, ask for variant.
         if audience is None:
             for service_name in services:
-                family, variants = await _resolve_audience_variants(session, service_name)
-                if len(variants) > 1:
+                kind, family, candidates = await _resolve_audience_variants(session, service_name)
+                if kind == "audience":
                     logger.info(
                         "tool.response.rejected",
                         extra={"tool_name": "update_booking", "next_step": "audience_required"},
@@ -141,7 +144,17 @@ async def _update_booking_impl(
                     return ToolResponse(
                         status="rejected",
                         next_step="audience_required",
-                        payload={"variants": variants, "family": family},
+                        payload={"variants": candidates, "family": family},
+                    ).model_dump_json()
+                if kind == "variant":
+                    logger.info(
+                        "tool.response.rejected",
+                        extra={"tool_name": "update_booking", "next_step": "variant_required"},
+                    )
+                    return ToolResponse(
+                        status="rejected",
+                        next_step="variant_required",
+                        payload={"variants": candidates, "family": family},
                     ).model_dump_json()
 
         collected["services"] = services

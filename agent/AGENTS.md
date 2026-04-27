@@ -56,7 +56,7 @@ agent/
 ├── routing/
 │   └── intent_types.py      # IntentType enum (legacy, no live router)
 ├── booking/
-│   └── resolvers/           # service / stylist / time resolvers used by tools
+│   └── resolvers/           # time_resolver (relative date resolution)
 ├── batching/
 │   └── message_batcher.py   # WhatsApp message batcher (consumer side)
 ├── services/                # Business logic (availability, GCal push, escalation)
@@ -220,7 +220,7 @@ async def check_availability(...) -> dict:
     }
 ```
 
-Booking helpers (resolvers for service / stylist / time) live in `agent/booking/resolvers/`.
+Booking helper `resolve_relative_date` lives in `agent/booking/resolvers/time_resolver.py`.
 
 ---
 

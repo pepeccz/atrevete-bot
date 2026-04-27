@@ -13,6 +13,8 @@ Usa SOLO estas herramientas con los parámetros exactos indicados.
 - Args requeridos: `service_ids`, `stylist_id`, `from_date`.
 
 **update_booking**: `date_text` para frases relativas (ej: "mañana") o `date_iso` para fechas exactas. No ambos.
+- Cuándo llamar: en el primer turno donde aparece un servicio, ANTES de `check_availability`/`book`.
+- Si devuelve `next_step` terminado en `_required` (ej. `audience_required`, `variant_required`), formula la pregunta correspondiente al cliente y NO avances con fecha/booking hasta resolverlo.
 
 **book** — crear la reserva.
 - Cuándo llamar: con datos confirmados.
