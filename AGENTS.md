@@ -87,29 +87,34 @@ atrevete-bot/
 │   ├── services/          # Business logic
 │   └── middleware/        # CORS, logging, rate limiting
 │
-├── agent/                 # LangGraph orchestrator
+├── agent/                 # create_agent + middleware orchestrator
 │   ├── AGENTS.md          # Agent-specific guidance
 │   ├── main.py            # Redis Streams consumer
-│   ├── graphs/            # StateGraph definitions
-│   │   └── conversation_flow.py   # v6.0 mode-based graph
-│   ├── modes/             # Mode nodes (v6.0)
-│   │   ├── greeting_mode.py       # GREETING mode
-│   │   ├── booking_mode.py        # BOOKING mode
-│   │   ├── general_mode.py        # GENERAL mode
-│   │   └── escalation_mode.py     # ESCALATION mode
-│   ├── routing/           # Intent router
-│   │   └── intent_router.py       # Keyword + LLM hybrid classifier
-│   ├── tools/             # 4 LangChain tools
-│   │   ├── availability_tools.py  # check_availability
-│   │   ├── booking_tools.py       # book
-│   │   ├── manage_appointments_tool.py  # manage_appointments
-│   │   └── escalation_tools.py    # escalate
-│   ├── prompts/           # System prompts
-│   │   ├── shared/        # Core prompts (identity, rules, glossary)
-│   │   └── modes/         # Mode-specific overlays
-│   ├── state/             # State schemas and checkpointer
-│   ├── services/          # Business logic (availability, GCal push)
-│   └── workers/           # Background workers (archiver)
+│   ├── graph.py           # Thin wrapper → build_conversation_agent()
+│   ├── agent_factory.py   # build_conversation_agent: create_agent + tools + middleware
+│   ├── llm.py             # get_llm() — OpenRouter gpt-5.4-mini
+│   ├── checkpointer.py    # AsyncRedisSaver wiring
+│   ├── state.py           # AgentState TypedDict (slim)
+│   ├── middleware/        # 6 composed middlewares
+│   │   ├── disclosure.py
+│   │   ├── customer_resolve.py
+│   │   ├── appointment_context.py
+│   │   ├── dynamic_prompt.py
+│   │   ├── prompt_assembly.py
+│   │   └── summarize.py
+│   ├── tools/             # 6 LangChain tools
+│   │   ├── check_availability.py
+│   │   ├── next_available.py          # get_next_available_options
+│   │   ├── book.py                    # atomic create + GCal push
+│   │   ├── update_booking.py          # mutate active draft
+│   │   ├── manage_appointments_tool.py # view/cancel/reschedule
+│   │   └── escalation_tools.py
+│   ├── prompts/           # Base prompt + dynamic loaders
+│   ├── routing/           # intent_types.py only (legacy enum, no live router)
+│   ├── booking/resolvers/ # service / stylist / time resolvers
+│   ├── batching/          # WhatsApp message batcher
+│   ├── services/          # Business logic (availability, GCal push, escalation)
+│   └── workers/           # Background workers (archiver, confirmation)
 │
 ├── database/              # SQLAlchemy models & Alembic migrations
 │   ├── AGENTS.md          # Database-specific guidance
@@ -167,7 +172,7 @@ Each component has its own AGENTS.md with specific guidance:
 
 | Component | Location | AGENTS.md | Purpose |
 |-----------|----------|-----------|---------|
-| **Agent** | `agent/` | [agent/AGENTS.md](agent/AGENTS.md) | LangGraph orchestrator, modes, routing, tools |
+| **Agent** | `agent/` | [agent/AGENTS.md](agent/AGENTS.md) | `create_agent` + middleware stack, tools, prompts |
 | **API** | `api/` | [api/AGENTS.md](api/AGENTS.md) | FastAPI routes, webhooks, services |
 | **Database** | `database/` | [database/AGENTS.md](database/AGENTS.md) | SQLAlchemy models, migrations |
 | **Shared** | `shared/` | N/A (use `atrevete-shared` skill) | Config, clients, utilities |
@@ -182,7 +187,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Action | Skill |
 |--------|-------|
 | After creating/modifying a skill | `skill-sync` |
-| Choosing a QA persona | `atrevete-qa-context` |
+| Building tester sub-agent prompt | `atrevete-qa-context` |
 | Creating React components | `atrevete-admin` |
 | Creating UI components | `atrevete-admin` |
 | Creating agent tools | `atrevete-agent` |
@@ -190,7 +195,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Creating new prompt module | `atrevete-prompts` |
 | Creating utilities | `atrevete-shared` |
 | Creating webhooks | `atrevete-api` |
-| Creating/modifying mode nodes | `atrevete-agent` |
+| Creating/modifying middleware | `atrevete-agent` |
 | Creating/modifying models | `atrevete-database` |
 | Creating/modifying services | `atrevete-api` |
 | Editing agent system prompts | `atrevete-prompts` |
@@ -199,36 +204,39 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Executing a conversational QA run | `atrevete-qa-tester` |
 | General Atrévete Bot development questions | `atrevete` |
 | Generating a QA report | `atrevete-qa-evaluator` |
-| Loading QA context | `atrevete-qa-context` |
+| Investigating QA test failures | `atrevete-qa-evaluator` |
 | Modifying core prompt rules | `atrevete-prompts` |
 | Modifying files in agent/prompts/ | `atrevete-prompts` |
 | Modifying mode prompt instructions | `atrevete-prompts` |
-| Preparing a conversational QA scenario | `atrevete-qa-context` |
+| Preparing a QA testing scenario | `atrevete-qa-context` |
 | Project overview and architecture | `atrevete` |
 | Regenerate AGENTS.md Auto-invoke tables | `skill-sync` |
 | Reviewing prompt quality | `atrevete-prompts` |
+| Root cause analysis of bot behavior | `atrevete-qa-evaluator` |
+| Running a QA tester sub-agent | `atrevete-qa-tester` |
 | Scoring a conversational flow | `atrevete-qa-evaluator` |
+| Selecting a QA persona | `atrevete-qa-context` |
 | Simulating a WhatsApp user | `atrevete-qa-tester` |
+| Testing the live bot as a customer | `atrevete-qa-tester` |
 | Troubleshoot missing skill in auto-invoke | `skill-sync` |
 | Validating a QA flow end to end | `atrevete-qa-tester` |
 | Working on API routes | `atrevete-api` |
 | Working on Chatwoot | `atrevete-api` |
 | Working on Chatwoot client | `atrevete-shared` |
 | Working on FastAPI | `atrevete-api` |
-| Working on LangGraph | `atrevete-agent` |
 | Working on Next.js | `atrevete-admin` |
 | Working on Redis | `atrevete-shared` |
 | Working on admin-panel/ | `atrevete-admin` |
 | Working on agent/ | `atrevete-agent` |
 | Working on atrevete-bot | `atrevete` |
 | Working on config | `atrevete-shared` |
+| Working on create_agent wiring | `atrevete-agent` |
 | Working on database models | `atrevete-database` |
 | Working on prompt .md files | `atrevete-prompts` |
 | Working on prompts | `atrevete-agent` |
-| Working on routing | `atrevete-agent` |
 | Working on shared/ | `atrevete-shared` |
-| Working on state management | `atrevete-agent` |
 | Working on system prompts | `atrevete-prompts` |
+| Working with AgentState | `atrevete-agent` |
 | Working with SQLAlchemy | `atrevete-database` |
 
 ---

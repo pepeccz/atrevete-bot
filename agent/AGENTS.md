@@ -1,8 +1,8 @@
 # Agent Component Guidelines
 
-This directory contains the Atrévete Bot conversational agent built with LangGraph v6.0 mode-based architecture.
+Conversational agent built on **LangChain `create_agent` + middleware stack**. No custom StateGraph, no mode nodes, no intent router. Single LLM tool-calling loop wrapped by 6 middlewares that hydrate state and assemble the system prompt.
 
-> **Architecture**: Mode-based conversation flow with 4 independent modes (GREETING, BOOKING, GENERAL, ESCALATION) and keyword-only intent routing (single LLM call per turn, inside the mode node).
+> **Architecture**: `create_agent` (langchain.agents) loop with 6 tools and 6 composed middlewares. Each turn: middleware chain hydrates customer + appointments + catalog + business hours into XML-fenced slots, assembles into the system prompt, then the LLM picks tools.
 
 ---
 
@@ -12,12 +12,12 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 
 | Action | Skill |
 |--------|-------|
-| Creating/modifying mode nodes | `atrevete-agent` |
+| Creating/modifying middleware | `atrevete-agent` |
 | Creating agent tools | `atrevete-agent` |
-| Working on LangGraph graphs/nodes | `atrevete-agent` |
+| Working on `create_agent` wiring | `atrevete-agent` |
 | Working on conversation flow | `atrevete-agent` |
-| Working on prompts | `atrevete-agent` |
-| Working with ConversationState | `atrevete-agent` |
+| Working on prompts | `atrevete-prompts` |
+| Working with `AgentState` | `atrevete-agent` |
 | Writing Python tests | `pytest` |
 
 ---
@@ -26,348 +26,212 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 
 ```
 agent/
-├── main.py                      # Redis Streams consumer entry point
-├── graphs/
-│   └── conversation_flow.py     # v6.0 StateGraph factory (preprocess → router → modes → summarize)
-├── modes/
-│   ├── base.py                  # BaseModeNode: abstract surface + _pre/_post_tool_call hooks
-│   │                            #   (consumed by NodeBridgeMiddleware). Only Booking &
-│   │                            #   AppointmentManagement inherit; other modes are factories.
-│   ├── _intro.py                # First-turn EU-AI-Act disclosure + USE_OPTIMIZED_PROMPTS flag (single source)
-│   ├── _shared.py               # normalize_text() + extract_final_text() helpers (consolidated from duplicates)
-│   ├── greeting_mode.py         # GREETING mode (first contact + name collection)
-│   ├── booking_mode.py          # BOOKING mode (multi-step appointment flow)
-│   ├── general_mode.py          # GENERAL mode (FAQs, info queries)
-│   └── escalation_mode.py       # ESCALATION mode (human handoff)
-├── routing/
-│   └── intent_router.py         # Keyword-only intent classifier (no LLM call at routing layer)
-├── state/
-│   ├── schemas.py               # ConversationState TypedDict + reducers
-│   └── helpers.py               # add_message(), should_summarize(), etc.
-├── tools/                       # 5 LangChain tools
-│   ├── availability_tools.py    # check_availability
-│   ├── booking_tools.py         # book (atomic transaction)
-│   ├── update_booking.py        # update_booking (slot collector — NEW)
-│   ├── manage_appointments_tool.py  # manage_appointments (view/cancel/reschedule)
-│   └── escalation_tools.py     # escalate
+├── main.py                  # Redis Streams consumer entry point
+├── graph.py                 # Thin wrapper → build_conversation_agent()
+├── agent_factory.py         # build_conversation_agent: create_agent + tools + middleware
+├── llm.py                   # get_llm() factory (OpenRouter gpt-5.4-mini)
+├── checkpointer.py          # AsyncRedisSaver wiring
+├── resume_handler.py        # Resume helpers for interrupted runs
+├── state.py                 # AgentState TypedDict (slim, 7 fields)
+├── middleware/              # 6 composed middlewares (order matters)
+│   ├── disclosure.py        # First-turn EU AI Act disclosure prepend
+│   ├── customer_resolve.py  # phone → Customer DB lookup, writes _slot_customer
+│   ├── appointment_context.py # upcoming PENDING/CONFIRMED appts → _slot_upcoming_appointments
+│   ├── dynamic_prompt.py    # catalog + business hours → _slot_catalog, _slot_business_hours
+│   ├── prompt_assembly.py   # collapse _slot_* keys into system_message in fixed order
+│   └── summarize.py         # collapse history > window into [Resumen previo] SystemMessage
+├── tools/                   # 6 LangChain tools
+│   ├── check_availability.py
+│   ├── next_available.py    # get_next_available_options
+│   ├── book.py              # atomic booking (create + GCal push)
+│   ├── update_booking.py    # mutate active booking draft
+│   ├── manage_appointments_tool.py # view/cancel/reschedule
+│   └── escalation_tools.py  # escalate
 ├── prompts/
-│   ├── loader.py                # Dynamic prompt assembly
-│   ├── catalog_builder.py       # Builds service catalog string injected into prompt
-│   ├── shared/                  # Core prompts (identity, rules, glossary)
-│   └── modes/                   # Mode-specific prompt overlays
-├── services/                    # Business logic
-│   ├── availability_service.py
-│   ├── gcal_push_service.py
-│   └── escalation_service.py
-└── workers/                     # Background workers
-    ├── conversation_archiver.py
-    └── confirmation_worker.py
+│   ├── loader.py            # load_system_prompt() — base prompt loader
+│   ├── catalog_builder.py   # build_catalog_prompt_section()
+│   ├── business_hours.py    # load_business_hours_snapshot()
+│   ├── shared/              # identity, rules, glossary, booking_flow
+│   └── modes/               # legacy mode overlays still used as prompt fragments
+├── routing/
+│   └── intent_types.py      # IntentType enum (legacy, no live router)
+├── booking/
+│   └── resolvers/           # service / stylist / time resolvers used by tools
+├── batching/
+│   └── message_batcher.py   # WhatsApp message batcher (consumer side)
+├── services/                # Business logic (availability, GCal push, escalation)
+└── workers/                 # Background workers (archiver, confirmation)
 ```
 
 ---
 
 ## Architecture Overview
 
-### State Diagram
+### Pipeline (per turn)
 
 ```
-┌──────────────┐
-│    START     │ (user message arrives via Redis Streams)
-└──────┬───────┘
-       │
-┌──────▼───────┐
-│  preprocess  │ (add message, check customer, detect first interaction)
-└──────┬───────┘
-       │
-┌──────▼───────┐
-│    router    │ (intent classification + mode selection)
-└──────┬───────┘
-       │ (conditional edge based on current_mode)
-       │
-   ┌───┴───────────┬───────────────┬───────────────┐
-   │               │               │               │
-   ▼               ▼               ▼               ▼
-┌────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
-│GREETING│   │ BOOKING  │   │ GENERAL  │   │ESCALATION│
-└────┬───┘   └────┬─────┘   └────┬─────┘   └────┬─────┘
-     │            │              │              │
-     └────────────┴──────────────┴──────────────┘
-                  │
-         ┌────────▼────────┐
-         │    summarize    │ (conversation summarization)
-         └────────┬────────┘
-                  │
-         ┌────────▼────────┐
-         │       END       │
-         └─────────────────┘
+Redis Streams message
+        │
+        ▼
+┌───────────────────┐
+│ build_conversation│  create_agent(model, tools, system_prompt, middleware, state_schema)
+│      _agent       │
+└────────┬──────────┘
+         │
+         ▼  awrap_model_call chain (composed)
+┌─────────────────────────────────────────────────────────┐
+│ 1. DisclosureMiddleware                                 │  prepend EU-AI-Act on first turn
+│ 2. CustomerResolveMiddleware                            │  phone → DB → _slot_customer + customer_id
+│ 3. AppointmentContextMiddleware  (after CustomerResolve)│  upcoming appts → _slot_upcoming_appointments
+│ 4. DynamicPromptMiddleware                              │  catalog + hours → _slot_catalog, _slot_business_hours
+│ 5. PromptAssemblyMiddleware                             │  fold _slot_* into system_message (fixed order)
+│ 6. SummarizeMiddleware (window=20, keep_tail=10)        │  compress old messages
+└─────────────────────────────────────────────────────────┘
+         │
+         ▼
+   model.invoke (LLM tool-calling loop)
+         │
+         ▼
+       checkpoint → AsyncRedisSaver (thread_id v2:{conversation_id})
 ```
 
-### Mode-Based Architecture
+### Tools (6)
 
-**Modes** are self-contained conversation contexts with:
-- **Dedicated prompt** (core + mode-specific instructions)
-- **Filtered tools** (only relevant tools per mode)
-- **LLM-driven flow** (system prompt guides the LLM, not hardcoded Python logic)
-- **Automatic transitions** (via `transition_mode()` helper)
+| Tool | Purpose |
+|------|---------|
+| `check_availability` | Probe slots for service + stylist + day |
+| `get_next_available_options` | Return next N free slots |
+| `book` | Atomic create appointment + push to GCal |
+| `update_booking` | Mutate active booking draft (slot collector) |
+| `manage_appointments` | List / cancel / reschedule existing appointments |
+| `escalate` | Hand off to human agent |
 
-| Mode | Purpose | Tools | Entry Condition |
-|------|---------|-------|-----------------|
-| **GREETING** | First contact + name collection | `manage_customer` (customer_tools) | `is_first_interaction=True` or `customer_name=None` |
-| **BOOKING** | Multi-step appointment booking | `update_booking`, `check_availability`, `book`, `manage_appointments` | `intent=book` or already in BOOKING |
-| **GENERAL** | FAQs, business hours, services (catalog in prompt) | `manage_appointments` (read), `escalate` | Default mode |
-| **ESCALATION** | Human handoff | `escalate` | `intent=escalate` or `error_count>=3` |
+LLM picks tools directly. No keyword router gates the model — the system prompt and middleware-injected slots provide the steering.
+
+### Slot Order (PromptAssemblyMiddleware)
+
+Fixed order appended to base `system_message.content`:
+
+1. `_slot_customer` → `<customer>...</customer>`
+2. `_slot_upcoming_appointments` → `<upcoming_appointments>...</upcoming_appointments>`
+3. `_slot_business_hours` → `<business_hours>...</business_hours>`
+4. `_slot_catalog` → `<catalog>...</catalog>`
+
+Missing slots silently skipped.
 
 ---
 
-## Mode Node Pattern
+## Middleware Pattern
 
-Two surfaces coexist today:
-
-1. **Factory-function modes** (GREETING, GENERAL, ESCALATION) — plain async
-   callables wired into the graph. No inheritance. See
-   `agent/modes/greeting_mode.py` for the canonical example.
-2. **Class-based modes** (BOOKING, APPOINTMENT_MANAGEMENT) — inherit from
-   `BaseModeNode` because `NodeBridgeMiddleware` invokes
-   `_pre_tool_call` / `_post_tool_result` on the instance to gate and
-   post-process tool calls. Both drive the LLM loop via `create_agent` +
-   middleware, not a hand-rolled loop.
-
-Class-based skeleton:
+All middlewares subclass `langchain.agents.middleware.AgentMiddleware` and override `awrap_model_call` only. Sync variant intentionally absent (`_allow_single_variant = True`) — runtime is async-only.
 
 ```python
-class MyModeNode(BaseModeNode):
-    @property
-    def mode_name(self) -> str:
-        return "MY_MODE"
+class MyMiddleware(AgentMiddleware):
+    _allow_single_variant: ClassVar[bool] = True
 
-    async def handle(self, state: ConversationState, intent: object) -> dict:
-        # 1. Build messages (mode-owned: each mode has its own _build_messages)
-        messages = await self._build_messages(state, mode_context)
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        # 1. Read state
+        state = request.state or {}
 
-        # 2. Run the agent via create_agent + composed middleware
-        tools = self.get_tools(mode_context)
-        result = await self._invoke_create_agent(messages, tools)
+        # 2. Compute slot / mutate state
+        new_state = {**state, "_slot_my_block": "<my_block>...</my_block>"}
 
-        # 3. Return state updates (MUST include user_message=None)
-        return {
-            **add_message(state, "assistant", result.response_text),
-            "mode_context": updated_context,
-            "last_node": "my_mode",
-            "user_message": None,  # CRITICAL: clear after processing
-        }
-
-    async def _pre_tool_call(self, tool_name, tool_args):
-        # Gate or transform tool args. Return ToolCallRejection to block.
-        return tool_args
-
-    async def _post_tool_result(self, tool_name, tool_args, result):
-        # Update mode_context from tool results mid-loop.
-        return result
+        # 3. Call handler with override
+        modified = request.override(state=new_state)
+        return await handler(modified)
 ```
 
-Prompt assembly, token tracking, and response post-processing are now
-composable middleware (`agent/middleware/`), not methods on `BaseModeNode`.
+**Slot-writer middlewares** (CustomerResolve, AppointmentContext, DynamicPrompt) write `_slot_*` keys ONLY. They do NOT mutate `system_message` directly — assembly is centralized in `PromptAssemblyMiddleware`.
+
+**Response-mutating middlewares** (Disclosure) wrap `await handler(request)` and edit the returned `ModelResponse.result`.
 
 ---
 
-## Tool-Driven State Management
+## State Schema
 
-**Pattern**: Tools explicitly declare state changes via return values:
+`agent/state.py` — slim `TypedDict`:
 
 ```python
-# In a tool
-return {
-    "success": True,
-    "appointment_id": str(appointment.id),
-    "_internal_flags": {
-        "appointment_created": True,
-    }
-}
-
-# In mode node
-if tool_result.get("_internal_flags", {}).get("appointment_created"):
-    updates["appointment_created"] = True
+class AgentState(TypedDict):
+    conversation_id: str
+    customer_phone: str
+    user_message: str | None
+    pending_whatsapp_name: str | None
+    messages: Annotated[list[AnyMessage], add_messages]   # std reducer
+    customer_id: UUID | None
+    customer_name: str | None
 ```
 
-**Why**: Eliminates fragile pattern matching on LLM responses. State changes are explicit and testable.
+`add_messages` from `langgraph.graph.message` is the only reducer. Slot keys (`_slot_*`) are added at runtime by middlewares and not part of the static schema.
+
+No `mode_context`, no `current_mode`, no `transition_mode`, no `merge_dicts`. All gone with the rework.
 
 ---
 
 ## Critical Rules
 
-### 1. ALWAYS use `add_message()` helper
-```python
-# ❌ WRONG - mutates state directly
-state["messages"].append({"role": "assistant", "content": text})
-
-# ✅ CORRECT - returns partial update
-return add_message(state, "assistant", text)
-```
-
-### 2. NEVER use `{**state}` spread in node returns
-```python
-# ❌ WRONG - causes message duplication
-return {**state, "current_mode": "BOOKING"}
-
-# ✅ CORRECT - return only changes
-return {"current_mode": "BOOKING"}
-```
-
-### 3. ALWAYS use `Annotated[T, reducer_fn]` for custom reducers
-```python
-# In state/schemas.py
-mode_context: Annotated[dict[str, Any], merge_dicts]
-mode_history: Annotated[list[str], append_unique_list]
-```
-
-### 4. ALWAYS use `transition_mode()` for mode transitions
-```python
-# Clears mode_context via __reset__ sentinel
-return {
-    **transition_mode(state, "BOOKING"),
-    **add_message(state, "assistant", response),
-}
-```
-
-### 5. ALWAYS clear `user_message` at end of pipeline
-```python
-# In every mode node return:
-return {
-    # ... other updates
-    "user_message": None,  # Cleared by summarize_node (FIX-001)
-}
-```
-
-### 6. ALWAYS use async/await for I/O operations
+### 1. Use `request.override(state=...)` — never mutate `request.state` in place
 ```python
 # ❌ WRONG
-result = some_io_operation()  # blocking!
+request.state["_slot_x"] = "..."  # silent failure
 
 # ✅ CORRECT
-result = await some_io_operation()
+new_state = {**(request.state or {}), "_slot_x": "..."}
+return await handler(request.override(state=new_state))
 ```
+
+### 2. Write `_slot_*` keys, never edit `system_message` directly in slot-writer middlewares
+PromptAssemblyMiddleware owns assembly. Bypassing it breaks slot order and double-assembly bugs.
+
+### 3. Async-only middlewares set `_allow_single_variant = True`
+Required to opt out of the sync-parity guardrail. Otherwise the test suite flags missing sync variant.
+
+### 4. New middlewares: register in `agent_factory.py` middleware list with explicit order
+```python
+middleware=[
+    DisclosureMiddleware(),
+    CustomerResolveMiddleware(),
+    AppointmentContextMiddleware(),  # MUST run after CustomerResolve (reads customer_id)
+    DynamicPromptMiddleware(),
+    PromptAssemblyMiddleware(),      # MUST run AFTER all slot-writers, BEFORE Summarize
+    SummarizeMiddleware(window=20, keep_tail=10),
+]
+```
+
+### 5. Always `async/await` for I/O — no sync DB calls
+DB lookups in `customer_resolve` / `appointment_context` use async SQLAlchemy.
 
 ---
 
-## State Mutation Guardrails
+## Tools Pattern
 
-### The `merge_dicts` Reducer
-
-```python
-def merge_dicts(current: dict | None, update: dict | None) -> dict:
-    """
-    If update contains {"__reset__": True, ...rest}, returns ONLY rest.
-    Otherwise performs standard shallow merge.
-    """
-    current = current or {}
-    update = update or {}
-    if update.get("__reset__"):
-        return {k: v for k, v in update.items() if k != "__reset__"}
-    return {**current, **update}
-```
-
-**Usage in `transition_mode()`**:
-```python
-new_mode_context = {"__reset__": True, "booking_step": "service_selection"}
-# Results in: {"booking_step": "service_selection"} (stale data cleared)
-```
-
-### The `add_message()` Helper
+Tools are plain `@tool`-decorated async functions returning JSON-serializable dicts. State plumbing happens through middleware and tool returns — there is no `mode_context` to mutate.
 
 ```python
-def add_message(state, role, content):
-    """
-    Returns partial state update with new message.
-    Uses `operator.add` reducer to accumulate messages.
-    """
+@tool
+async def check_availability(...) -> dict:
     return {
-        "messages": [{"role": role, "content": content, "timestamp": ...}],
-        "total_message_count": state.get("total_message_count", 0) + 1,
+        "success": True,
+        "options": [...],
     }
 ```
 
----
-
-## Anti-patterns
-
-### NEVER Mutate State Directly
-```python
-# ❌ WRONG
-state["current_mode"] = "BOOKING"
-state["messages"].append(new_message)
-
-# ✅ CORRECT
-return {
-    "current_mode": "BOOKING",
-    **add_message(state, "assistant", text),
-}
-```
-
-### NEVER Return Full State Copy
-```python
-# ❌ WRONG - causes message duplication
-updated = dict(state)
-updated["current_mode"] = "BOOKING"
-return updated
-
-# ✅ CORRECT - return only what changed
-return {"current_mode": "BOOKING"}
-```
-
-### NEVER Forget to Parse Tool Results
-```python
-# ❌ WRONG - assumes dict, could be JSON string
-result = await tool.ainvoke(...)
-_apply_tool_flags(mode_context, result, logger)  # BUG if result is string!
-
-# ✅ CORRECT - parse explicitly
-result = await tool.ainvoke(...)
-result_dict = json.loads(result) if isinstance(result, str) else result
-_apply_tool_flags(mode_context, result_dict, logger)
-```
-
-### NEVER Block Mode Transition with Stale Data
-```python
-# ❌ WRONG - old booking data leaks into new mode
-return {"current_mode": "GENERAL"}  # mode_context still has old booking_step!
-
-# ✅ CORRECT - use transition_mode to clear context
-return transition_mode(state, "GENERAL")
-```
-
----
-
-## Intent Router
-
-### Keyword-Only Classification (single LLM per turn)
-
-```python
-# Fast keyword matching (9 intents). Below the match threshold returns intent="ambiguous"
-# and resolution is deferred to the mode node's own LLM call.
-KEYWORD_PATTERNS = {
-    "book": ["reservar", "cita", "turno", "quiero ir"],
-    "cancel": ["cancelar", "anular", "no puedo"],
-    "escalate": ["humano", "persona", "ayuda"],
-    # ... more
-}
-
-result = classify(text=user_message, current_mode=current_mode)
-```
-
-No LLM invocation happens at the routing layer. When keywords don't match above
-`_KEYWORD_MATCH_THRESHOLD`, the router yields `intent="ambiguous"` and the mode
-node (which owns the only LLM call of the turn) handles the ambiguity inline.
+Booking helpers (resolvers for service / stylist / time) live in `agent/booking/resolvers/`.
 
 ---
 
 ## Testing
 
 ```bash
-# Run agent tests
+# All agent tests
 DATABASE_URL="postgresql+asyncpg://..." pytest tests/unit/test_agent/
 
-# Run specific mode test
-DATABASE_URL="postgresql+asyncpg://..." pytest tests/unit/test_agent/test_greeting_mode.py -v
+# Specific middleware
+pytest tests/unit/test_agent/test_middleware_customer_resolve.py -v
 ```
 
 ---
@@ -376,10 +240,10 @@ DATABASE_URL="postgresql+asyncpg://..." pytest tests/unit/test_agent/test_greeti
 
 - [Root AGENTS.md](../AGENTS.md) — Repository governance
 - [atrevete-agent skill](../skills/atrevete-agent/SKILL.md) — Detailed patterns
-- `agent/graphs/conversation_flow.py` — Graph definition
-- `agent/state/schemas.py` — State schema and reducers
+- `agent/agent_factory.py` — Single source of truth for graph wiring
+- `agent/state.py` — State schema
 
-**Last Updated**: March 2026
+**Last Updated**: 2026-04-27 (post create_agent rework, v2 thread_id)
 
 ### Auto-invoke Skills
 
@@ -389,17 +253,16 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 |--------|-------|
 | Creating agent tools | `atrevete-agent` |
 | Creating new prompt module | `atrevete-prompts` |
-| Creating/modifying mode nodes | `atrevete-agent` |
+| Creating/modifying middleware | `atrevete-agent` |
 | Editing agent system prompts | `atrevete-prompts` |
 | Editing identity.md or critical_rules.md | `atrevete-prompts` |
 | Modifying core prompt rules | `atrevete-prompts` |
 | Modifying files in agent/prompts/ | `atrevete-prompts` |
 | Modifying mode prompt instructions | `atrevete-prompts` |
 | Reviewing prompt quality | `atrevete-prompts` |
-| Working on LangGraph | `atrevete-agent` |
 | Working on agent/ | `atrevete-agent` |
+| Working on create_agent wiring | `atrevete-agent` |
 | Working on prompt .md files | `atrevete-prompts` |
 | Working on prompts | `atrevete-agent` |
-| Working on routing | `atrevete-agent` |
-| Working on state management | `atrevete-agent` |
 | Working on system prompts | `atrevete-prompts` |
+| Working with AgentState | `atrevete-agent` |
