@@ -169,6 +169,8 @@ async def test_book_returns_calendar_link_on_success():
                 "start_iso": "2026-05-01T10:00:00+00:00",
                 "customer_phone": "+5491112345678",
                 "customer_full_name": "Ana García",
+                "confirmed": True,
+                "pre_book_validated": True,
                 "notes": "Sin fragancia",
             }
         )

@@ -146,6 +146,7 @@ async def book(
     customer_phone: str,
     customer_full_name: str,
     confirmed: bool = False,
+    pre_book_validated: bool = False,
     notes: str | None = None,
 ) -> str:
     """
@@ -161,6 +162,7 @@ async def book(
         customer_phone: Customer phone in E.164 format.
         customer_full_name: Full name in 'FirstName LastName' format (surname required).
         confirmed: Must be True — the customer has explicitly confirmed the booking.
+        pre_book_validated: Must be True — check_availability(slot_time=…) returned exact_match=True.
         notes: Optional appointment notes.
 
     Returns:
@@ -168,6 +170,32 @@ async def book(
         appointment_id, customer_id, start_iso, end_iso, stylist_id.
     """
     # --- Guard 1: confirmation required ---
+    if not confirmed:
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "book", "next_step": "confirmation_required"},
+        )
+        return ToolResponse(
+            status="rejected",
+            next_step="confirmation_required",
+            errors=["El cliente aún no ha confirmado la reserva explícitamente."],
+        ).model_dump_json()
+
+    # --- Guard 2: pre-book validation required ---
+    if not pre_book_validated:
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "book", "next_step": "pre_book_validation_required"},
+        )
+        return ToolResponse(
+            status="rejected",
+            next_step="pre_book_validation_required",
+            errors=[
+                "Debes verificar que el hueco sigue disponible antes de reservar. "
+                "Llama a check_availability(slot_time=…) y confirma exact_match=true."
+            ],
+        ).model_dump_json()
+
     if not confirmed:
         logger.info(
             "tool.response.rejected",

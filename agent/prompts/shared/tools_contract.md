@@ -49,8 +49,9 @@ Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, �
 
 **book** — crear la reserva.
 - Cuándo llamar: con datos confirmados y `next_step="booking_ready"` ya alcanzado.
-- Nunca llamar: sin confirmación del cliente.
-- Args requeridos: `service_ids`, `stylist_id`, `start_iso`, `customer_phone`, `customer_full_name`, `confirmed=true`.
+- Nunca llamar: sin confirmación del cliente ni sin haber re-validado el hueco.
+- Args requeridos: `service_ids`, `stylist_id`, `start_iso`, `customer_phone`, `customer_full_name`, `confirmed=true`, `pre_book_validated=true`.
+- `pre_book_validated=true` SOLO se puede pasar si `check_availability(slot_time=HH:MM, …)` devolvió `exact_match=true` en este turno o el inmediatamente anterior. Sin esa re-validación, `book` rechaza con `next_step="pre_book_validation_required"`.
 - Args opcionales: `notes` (str|null).
 
 **manage_appointments** — ver, cancelar o reprogramar citas existentes.

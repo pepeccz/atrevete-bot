@@ -22,6 +22,7 @@ async def test_book_rejects_single_token_name():
             "customer_phone": "+34600000001",
             "customer_full_name": "Maite",
             "confirmed": True,
+            "pre_book_validated": True,
         }
     )
     data = json.loads(raw)
@@ -70,6 +71,7 @@ async def test_book_rejects_whitespace_only_name():
             "customer_phone": "+34600000001",
             "customer_full_name": "   ",
             "confirmed": True,
+            "pre_book_validated": True,
         }
     )
     data = json.loads(raw)
@@ -90,6 +92,7 @@ async def test_book_single_token_name_returns_name_required_message():
             "customer_phone": "+34600000001",
             "customer_full_name": "Maite",
             "confirmed": True,
+            "pre_book_validated": True,
         }
     )
     data = json.loads(raw)
