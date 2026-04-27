@@ -26,7 +26,9 @@ def test_line_count() -> None:
     lines = _content_lines(text)
     # Budget raised to accommodate Paso 0 and Paso 1 blocks (SDD change
     # prompt-audience-regression-fix-generic). Previous budget was 10.
-    assert len(lines) <= 60, (
+    # Budget raised again for Paso 1.5, Paso 4, Paso 4b, updated confirmation
+    # template (SDD change booking-flow-name-notes-extras-loop). Previous was 60.
+    assert len(lines) <= 75, (
         f"booking_flow.md has {len(lines)} content lines; expected ≤60.\n"
         f"Content lines:\n" + "\n".join(f"  {l}" for l in lines)
     )

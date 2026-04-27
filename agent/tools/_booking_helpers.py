@@ -17,6 +17,28 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+def _validate_full_name(name: str | None) -> tuple[str, str] | None:
+    """Return (first_name, last_name) if name has >= 2 non-empty tokens after strip; else None.
+
+    Semantics: first token = first_name, remaining tokens joined = last_name.
+    Used by update_booking gate (presence check) and book.py (rejection path).
+    Spec refs: SPEC-6.1 → 6.4, ADR-4.
+    """
+    if name is None:
+        return None
+    stripped = name.strip()
+    if not stripped:
+        return None
+    parts = stripped.split(None, 1)  # split on first whitespace — same as _split_full_name
+    if len(parts) < 2:
+        return None
+    first_name = parts[0]
+    last_name = parts[1].strip()
+    if not last_name:
+        return None
+    return first_name, last_name
+
+
 def _normalize_name(text: str) -> str:
     """Lowercase + strip accents for fuzzy name matching."""
     nfkd = unicodedata.normalize("NFKD", text)

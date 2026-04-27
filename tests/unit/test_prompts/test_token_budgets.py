@@ -22,10 +22,16 @@ BUDGETS: dict[str, int] = {
     # booking_flow.md: unchanged (1200; Paso 0 + Paso 1 fit within)
     # examples.md: +200 for examples 4 and 5 (was 400)
     # tools_contract.md: +80 for update_booking _required clause (was 400)
-    "critical_rules.md": 1300,
-    "booking_flow.md": 1200,
-    "examples.md": 650,
-    "tools_contract.md": 550,
+    #
+    # Budgets updated for SDD change booking-flow-name-notes-extras-loop:
+    # critical_rules.md: +100 for rule 19 (customer_full_name / customer_known guidance)
+    # booking_flow.md: +400 for Paso 1.5, Paso 4, Paso 4b, updated confirmation template
+    # examples.md: +700 for Ejemplo 6 (complete-flow happy-path example)
+    # tools_contract.md: +300 for new update_booking args + round-trip mandate
+    "critical_rules.md": 1450,
+    "booking_flow.md": 1550,
+    "examples.md": 1400,
+    "tools_contract.md": 900,
 }
 
 

@@ -21,12 +21,13 @@ class TestTokenBudgets:
 
     def test_critical_rules_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "critical_rules.md").read_text()
-        assert len(content) // 4 <= 1100
+        # Extended budget for rule 19 (customer_full_name / customer_known — booking-flow-name-notes-extras-loop)
+        assert len(content) // 4 <= 1300
 
     def test_booking_flow_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()
-        # Extended budget due to hardening rules for date/stylist ambiguity (Apr 2026)
-        assert len(content) // 4 <= 1200
+        # Extended budget for Paso 1.5/4/4b + confirmation template (booking-flow-name-notes-extras-loop)
+        assert len(content) // 4 <= 1400
 
     def test_booking_flow_orders_date_before_exact_slots(self, prompt_dir):
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()

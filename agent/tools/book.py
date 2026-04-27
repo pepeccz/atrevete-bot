@@ -212,14 +212,21 @@ async def book(
     # --- Sanitize customer-provided notes before any downstream use ---
     notes = _sanitize_notes(notes)
 
-    # --- Validate full name ---
-    try:
-        first_name, last_name = _split_full_name(customer_full_name)
-    except ValueError as exc:
+    # --- Validate full name (ADR-5: structured rejection instead of ValueError) ---
+    from agent.tools._booking_helpers import _validate_full_name
+
+    name_parts = _validate_full_name(customer_full_name)
+    if name_parts is None:
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "book", "next_step": "name_required"},
+        )
         return ToolResponse(
             status="rejected",
-            errors=[str(exc)],
+            next_step="name_required",
+            errors=["Se requiere nombre y apellido para registrar la cita."],
         ).model_dump_json()
+    first_name, last_name = name_parts
 
     # --- Parse UUIDs ---
     try:

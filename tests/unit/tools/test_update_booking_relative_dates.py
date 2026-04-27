@@ -92,6 +92,12 @@ class TestDateTextResolves:
                     date_iso=None,
                     date_text="mañana",
                     audience=None,
+                    # New gates must be pre-satisfied so the test reaches date resolution
+                    no_more_services=True,
+                    extras_asked=True,
+                    customer_full_name="Ana García",
+                    customer_known=False,
+                    notes_asked=True,
                 )
             )
 
@@ -127,6 +133,11 @@ class TestDateTextAmbiguous:
                     date_iso=None,
                     date_text="la semana que viene",
                     audience=None,
+                    no_more_services=True,
+                    extras_asked=True,
+                    customer_full_name="Ana García",
+                    customer_known=False,
+                    notes_asked=True,
                 )
             )
 
@@ -161,6 +172,11 @@ class TestDateIsoPrecedence:
                     date_iso="2026-05-01",
                     date_text="mañana",
                     audience=None,
+                    no_more_services=True,
+                    extras_asked=True,
+                    customer_full_name="Ana García",
+                    customer_known=False,
+                    notes_asked=True,
                 )
             )
 
