@@ -240,18 +240,18 @@ export function CustomerStep({
                           : "hover:border-primary/50"
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium">
-                            {customer.first_name} {customer.last_name || ""}
-                          </p>
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium truncate">
+                          {customer.first_name} {customer.last_name || ""}
+                        </p>
+                        <div className="flex items-center gap-2 shrink-0">
                           <p className="text-sm text-muted-foreground">
                             {customer.phone}
                           </p>
+                          {selectedCustomer?.id === customer.id && (
+                            <Check className="h-5 w-5 text-primary" />
+                          )}
                         </div>
-                        {selectedCustomer?.id === customer.id && (
-                          <Check className="h-5 w-5 text-primary" />
-                        )}
                       </div>
                     </div>
                   </div>

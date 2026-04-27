@@ -115,13 +115,13 @@ export function SlotStep({
     }
   };
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = format(new Date(), "yyyy-MM-dd");
 
   const maxEndDate = useMemo(() => {
     if (!startDate) return "";
-    const start = new Date(startDate);
+    const start = new Date(startDate + "T00:00:00");
     start.setDate(start.getDate() + 14);
-    return start.toISOString().split("T")[0];
+    return format(start, "yyyy-MM-dd");
   }, [startDate]);
 
   return (
@@ -134,7 +134,7 @@ export function SlotStep({
             value={startDate ? new Date(startDate + "T00:00:00") : undefined}
             onChange={(date) => {
               if (date) {
-                const iso = date.toISOString().split("T")[0];
+                const iso = format(date, "yyyy-MM-dd");
                 onStartDateChange(iso);
                 if (!endDate || endDate < iso) {
                   onEndDateChange(iso);
@@ -153,7 +153,7 @@ export function SlotStep({
             value={endDate ? new Date(endDate + "T00:00:00") : undefined}
             onChange={(date) => {
               if (date) {
-                onEndDateChange(date.toISOString().split("T")[0]);
+                onEndDateChange(format(date, "yyyy-MM-dd"));
               } else {
                 onEndDateChange("");
               }
