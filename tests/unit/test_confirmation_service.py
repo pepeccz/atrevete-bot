@@ -81,7 +81,7 @@ async def test_confirm_pending_appointment():
         patch(
             "agent.services.confirmation_service._get_service_names",
             new_callable=AsyncMock,
-            return_value="Corte Dama",
+            return_value="Corte de Mujer",
         ),
     ):
         result = await handle_tool_action(appt.id, IntentType.CONFIRM_APPOINTMENT)
@@ -109,7 +109,7 @@ async def test_decline_pending_appointment():
         patch(
             "agent.services.confirmation_service._get_service_names",
             new_callable=AsyncMock,
-            return_value="Corte Dama",
+            return_value="Corte de Mujer",
         ),
     ):
         result = await handle_tool_action(appt.id, IntentType.DECLINE_APPOINTMENT)
@@ -183,7 +183,7 @@ async def test_decline_within_48h_window_rejected():
         patch(
             "agent.services.confirmation_service._get_service_names",
             new_callable=AsyncMock,
-            return_value="Corte Dama",
+            return_value="Corte de Mujer",
         ),
     ):
         result = await handle_tool_action(appt.id, IntentType.DECLINE_APPOINTMENT)
@@ -214,7 +214,7 @@ async def test_decline_outside_48h_window_allowed():
         patch(
             "agent.services.confirmation_service._get_service_names",
             new_callable=AsyncMock,
-            return_value="Corte Dama",
+            return_value="Corte de Mujer",
         ),
     ):
         result = await handle_tool_action(appt.id, IntentType.DECLINE_APPOINTMENT)

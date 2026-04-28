@@ -69,7 +69,7 @@ def pick_response(text: str) -> str | None:
         return "3"  # pick "cualquier profesional"
 
     # ── SERVICE CATALOG LIST ────────────────────────────────────────────────
-    # Bot shows numbered service options (Corte Caballero, Cortar, etc.)
+    # Bot shows numbered service options (Corte de Hombre, Cortar, etc.)
     # We already confirmed "Dama" but bot still shows catalog (re-ask after category skip)
     # Pick "Cortar" (option 2) as the generic ladies' haircut
     if ("cortar" in t or "corte caballero" in t or "corte niña" in t) and any(

@@ -37,16 +37,16 @@ async def db_session():
 
 @pytest.fixture
 async def multi_audience_cut_catalog(db_session):
-    """Seed Corte Dama Guard + Corte Caballero Guard — same dimension, distinct audiences."""
+    """Seed Corte de Mujer Guard + Corte de Hombre Guard — same dimension, distinct audiences."""
     from uuid import uuid4
     from sqlalchemy import delete
     from database.models import Service, ServiceCategory
 
     dim = "cut_guard_dim"
     services = [
-        ("Corte Dama Guard", "adult_female"),
-        ("Corte Caballero Guard", "adult_male"),
-        ("Corte Niña Guard", "child_female"),
+        ("Corte de Mujer Guard", "adult_female"),
+        ("Corte de Hombre Guard", "adult_male"),
+        ("Corte de Niña Guard", "child_female"),
     ]
     names = [n for n, _ in services]
 
@@ -82,7 +82,7 @@ async def test_update_booking_with_ambiguous_haircut_returns_audience_required(
 
     from agent.tools.update_booking import update_booking
 
-    raw = await update_booking.ainvoke({"services": ["Corte Dama Guard"]})
+    raw = await update_booking.ainvoke({"services": ["Corte de Mujer Guard"]})
     data = json.loads(raw)
 
     assert data["next_step"] == "audience_required", (

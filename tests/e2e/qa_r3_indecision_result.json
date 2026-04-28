@@ -33,7 +33,7 @@
     {
       "turn_number": 1,
       "user_message": "Hola! Quer\u00eda preguntar... no s\u00e9 bien qu\u00e9 hacerme, pero quiero algo para caballero. \u00bfMe pod\u00e9s ayudar?",
-      "agent_response": "\u00a1Hola! \ud83c\udf38 Soy Maite, la asistenta virtual con IA de Atr\u00e9vete Peluquer\u00eda. \u00a1Claro que s\u00ed! \ud83d\ude0a Entiendo que a veces es dif\u00edcil decidir.\n\nTenemos varios servicios pensados para caballero:\n\n1.  *Corte Caballero:* 40 min, incluye lavado.\n2.  *Color Caballero:* 30 min, para un cambio de look o cubrir canas.\n3.  *Barba:* 15 min, arreglo y modelado.\n4.  *Manicura Caballero:* 30 min, para unas manos cuidadas.\n\n\u00bfTe gustar\u00eda que te cuente m\u00e1s sobre alguno de estos o tienes alguna idea en mente?",
+      "agent_response": "\u00a1Hola! \ud83c\udf38 Soy Maite, la asistenta virtual con IA de Atr\u00e9vete Peluquer\u00eda. \u00a1Claro que s\u00ed! \ud83d\ude0a Entiendo que a veces es dif\u00edcil decidir.\n\nTenemos varios servicios pensados para caballero:\n\n1.  *Corte de Hombre:* 40 min, incluye lavado.\n2.  *Color para Hombre:* 30 min, para un cambio de look o cubrir canas.\n3.  *Barba:* 15 min, arreglo y modelado.\n4.  *Manicura de Hombre:* 30 min, para unas manos cuidadas.\n\n\u00bfTe gustar\u00eda que te cuente m\u00e1s sobre alguno de estos o tienes alguna idea en mente?",
       "timed_out": false,
       "latency_ms": 9292,
       "milestone_reached": "recommendation_given",
@@ -42,7 +42,7 @@
     {
       "turn_number": 2,
       "user_message": "Hmm... \u00bfy si tambi\u00e9n me hago la barba? Aunque bueno, empecemos con el corte.",
-      "agent_response": "\u00a1Perfecto! Empecemos con el *Corte Caballero* de 40 minutos. \ud83d\ude0a\n\n\u00bfQuieres que busquemos disponibilidad para este servicio?",
+      "agent_response": "\u00a1Perfecto! Empecemos con el *Corte de Hombre* de 40 minutos. \ud83d\ude0a\n\n\u00bfQuieres que busquemos disponibilidad para este servicio?",
       "timed_out": false,
       "latency_ms": 8321,
       "milestone_reached": "service_resolved",

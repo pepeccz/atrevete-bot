@@ -14,11 +14,11 @@ class TestPickVariantByHint:
     """C6.3: _pick_variant_by_hint reverse-maps hint → variant name."""
 
     def test_adult_female_hint_returns_senora_variant(self):
-        """S6: ['Corte Señora','Corte Caballero'] + 'adult_female' → 'Corte Señora'."""
+        """S6: ['Corte Señora','Corte de Hombre'] + 'adult_female' → 'Corte Señora'."""
         from shared.audience_maps import _pick_variant_by_hint
 
         result = _pick_variant_by_hint(
-            variants=["Corte Señora", "Corte Caballero"],
+            variants=["Corte Señora", "Corte de Hombre"],
             hint="adult_female",
         )
         assert result == "Corte Señora", (
@@ -26,39 +26,39 @@ class TestPickVariantByHint:
         )
 
     def test_adult_male_hint_returns_caballero_variant(self):
-        """S6: ['Corte Señora','Corte Caballero'] + 'adult_male' → 'Corte Caballero'."""
+        """S6: ['Corte Señora','Corte de Hombre'] + 'adult_male' → 'Corte de Hombre'."""
         from shared.audience_maps import _pick_variant_by_hint
 
         result = _pick_variant_by_hint(
-            variants=["Corte Señora", "Corte Caballero"],
+            variants=["Corte Señora", "Corte de Hombre"],
             hint="adult_male",
         )
-        assert result == "Corte Caballero", (
-            f"Expected 'Corte Caballero' for hint 'adult_male', got {result!r}"
+        assert result == "Corte de Hombre", (
+            f"Expected 'Corte de Hombre' for hint 'adult_male', got {result!r}"
         )
 
     def test_child_male_hint_matches_nino_variant(self):
-        """S6: ['Corte Niño', 'Corte Niña'] + 'child_male' → 'Corte Niño'."""
+        """S6: ['Corte de Niño', 'Corte de Niña'] + 'child_male' → 'Corte de Niño'."""
         from shared.audience_maps import _pick_variant_by_hint
 
         result = _pick_variant_by_hint(
-            variants=["Corte Niño", "Corte Niña"],
+            variants=["Corte de Niño", "Corte de Niña"],
             hint="child_male",
         )
-        assert result == "Corte Niño", (
-            f"Expected 'Corte Niño' for hint 'child_male', got {result!r}"
+        assert result == "Corte de Niño", (
+            f"Expected 'Corte de Niño' for hint 'child_male', got {result!r}"
         )
 
     def test_baby_hint_matches_bebe_variant(self):
-        """S6: ['Corte Bebé', 'Corte Señora'] + 'baby' → 'Corte Bebé'."""
+        """S6: ['Corte de Bebé', 'Corte Señora'] + 'baby' → 'Corte de Bebé'."""
         from shared.audience_maps import _pick_variant_by_hint
 
         result = _pick_variant_by_hint(
-            variants=["Corte Bebé", "Corte Señora"],
+            variants=["Corte de Bebé", "Corte Señora"],
             hint="baby",
         )
-        assert result == "Corte Bebé", (
-            f"Expected 'Corte Bebé' for hint 'baby', got {result!r}"
+        assert result == "Corte de Bebé", (
+            f"Expected 'Corte de Bebé' for hint 'baby', got {result!r}"
         )
 
     def test_unmapped_hint_returns_none(self):
@@ -66,7 +66,7 @@ class TestPickVariantByHint:
         from shared.audience_maps import _pick_variant_by_hint
 
         result = _pick_variant_by_hint(
-            variants=["Corte Señora", "Corte Caballero"],
+            variants=["Corte Señora", "Corte de Hombre"],
             hint="unknown_audience",
         )
         assert result is None, (
@@ -85,7 +85,7 @@ class TestPickVariantByHint:
         from shared.audience_maps import _pick_variant_by_hint
 
         result = _pick_variant_by_hint(
-            variants=["Corte Señora", "Corte Caballero"],
+            variants=["Corte Señora", "Corte de Hombre"],
             hint="baby",
         )
         assert result is None

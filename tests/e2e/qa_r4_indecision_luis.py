@@ -4,7 +4,7 @@ Commit tested: 31deed9
 
 Fixes validated vs R3:
   - NEW-C  (friday-no-loop): "el viernes" → nearest Friday without looping ✅ (verified R3, re-verify)
-  - NEW-REG-1 (service_id loop fix in 31deed9): After bot recommends "Corte Caballero" and Luis
+  - NEW-REG-1 (service_id loop fix in 31deed9): After bot recommends "Corte de Hombre" and Luis
       confirms → service_id/name written to state → advances to add_ons (NOT stuck in service_selection)
   - BUG-001 (book-on-confirm): book() called on confirmation → appointment_in_db=true
   - BUG-002 (no narration): Zero action narration phrases in responses
@@ -344,7 +344,7 @@ def generate_reply(turn_number: int, agent_response: str, current_milestone, sta
 
     # 8. caballero/dama selector
     if any(kw in stripped for kw in ["caballero, dama", "caballero o dama", "para caballero o", "dama, niño"]):
-        choices = ["caballero", "1", "Corte Caballero"]
+        choices = ["caballero", "1", "Corte de Hombre"]
         idx = min(state.caballero_count, len(choices) - 1)
         state.caballero_count += 1
         return choices[idx], False
@@ -365,13 +365,13 @@ def generate_reply(turn_number: int, agent_response: str, current_milestone, sta
         if not state.said_change_mind:
             state.said_change_mind = True
             # NEW-B (implicit add-on decline integrated) + explicit service name to avoid search loop
-            return "Quiero el Corte Caballero, por favor.", False
+            return "Quiero el Corte de Hombre, por favor.", False
         if not state.said_wants_corte:
             state.said_wants_corte = True
-            return "El Corte Caballero. ¿Para el viernes a la tarde tienen algo?", False
+            return "El Corte de Hombre. ¿Para el viernes a la tarde tienen algo?", False
         state.service_reask_count += 1
         if state.service_reask_count <= 2:
-            return "Corte Caballero.", False
+            return "Corte de Hombre.", False
         return "El corte de caballero.", False
 
     if current_milestone == "discovery_started":

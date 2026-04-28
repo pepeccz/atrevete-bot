@@ -299,7 +299,7 @@ async def _resolve_service_ids(
 ) -> tuple[list[str], list[str]]:
     """Resolve service names to UUIDs via normalized name match.
 
-    Matches against BOTH the internal Service.name (e.g. "Corte Dama") AND the
+    Matches against BOTH the internal Service.name (e.g. "Corte de Mujer") AND the
     customer-safe display name (e.g. "corte de mujer") computed by
     `_derive_customer_safe_service_name`. The LLM uses display names from the
     catalog block, while the DB stores internal names.

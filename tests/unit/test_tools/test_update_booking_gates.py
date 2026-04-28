@@ -88,7 +88,7 @@ async def _call_with_mocks(resolved_ids=None, unknown=None, audience_kind="none"
 async def test_extras_loop_required_fires_once():
     """services=[X], no_more_services=False, extras_asked=False → extras_loop_required + extras_asked=True."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=False,
         extras_asked=False,
     )
@@ -101,7 +101,7 @@ async def test_extras_loop_required_fires_once():
 async def test_extras_loop_self_clears():
     """extras_asked=True → does NOT fire extras_loop_required."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=False,
         extras_asked=True,
     )
@@ -113,7 +113,7 @@ async def test_extras_loop_self_clears():
 async def test_no_more_services_skips_extras_loop():
     """no_more_services=True → extras_loop_required never fires regardless of extras_asked."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=True,
         extras_asked=False,
     )
@@ -130,7 +130,7 @@ async def test_no_more_services_skips_extras_loop():
 async def test_name_required_fires_when_customer_unknown():
     """All slots resolved, customer_full_name=None, customer_known=False → name_required."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
@@ -146,7 +146,7 @@ async def test_name_required_fires_when_customer_unknown():
 async def test_name_required_skipped_when_customer_known():
     """customer_known=True → does NOT fire name_required; proceeds to notes_optional."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
@@ -162,7 +162,7 @@ async def test_name_required_skipped_when_customer_known():
 async def test_name_required_skipped_when_full_name_provided():
     """customer_full_name='Ana García' → name guard satisfied, proceeds."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
@@ -183,7 +183,7 @@ async def test_name_required_skipped_when_full_name_provided():
 async def test_notes_optional_fires_once():
     """All earlier gates closed, notes_asked=False → notes_optional + notes_asked=True."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
@@ -201,7 +201,7 @@ async def test_notes_optional_fires_once():
 async def test_notes_optional_self_clears():
     """notes_asked=True → does NOT fire notes_optional."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
@@ -223,7 +223,7 @@ async def test_notes_optional_self_clears():
 async def test_booking_ready_only_when_all_gates_pass():
     """All guards satisfied → booking_ready."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
@@ -245,7 +245,7 @@ async def test_booking_ready_only_when_all_gates_pass():
 async def test_priority_matrix_extras_before_stylist():
     """services=[X], no stylist, extras_asked=False → extras_loop_required wins over stylist_required."""
     data = await _call_with_mocks(
-        services=["Corte Dama"],
+        services=["Corte de Mujer"],
         no_more_services=False,
         extras_asked=False,
         # no stylist provided → if order is wrong, stylist_required would fire first

@@ -280,11 +280,11 @@ class TestBookingFlowCompatibility:
             "user_message": "I want to book a haircut",
             "customer_name": "Test User",
         }
-        mode_context = {"service_name": "Corte Caballero"}
+        mode_context = {"service_name": "Corte de Hombre"}
 
         # Build context (should work)
         context = build_step_context(state, mode_context)
-        assert "Corte Caballero" in context
+        assert "Corte de Hombre" in context
 
         # Build messages (should work)
         messages, dyn_idx = await build_layered_messages(state, mode_context)

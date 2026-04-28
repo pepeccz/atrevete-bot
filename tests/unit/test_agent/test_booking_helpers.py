@@ -143,13 +143,13 @@ async def principal_no_children(db_session):
 
 @pytest.fixture
 async def child_no_siblings(db_session):
-    """Seed 'Corte Dama Test' as only child of 'Corte Test' — no siblings."""
+    """Seed 'Corte de Mujer Test' as only child of 'Corte Test' — no siblings."""
     from uuid import uuid4
     from sqlalchemy import delete
     from database.models import Service, ServiceCategory
 
     parent_name = "Corte Test"
-    child_name = "Corte Dama Test"
+    child_name = "Corte de Mujer Test"
 
     await db_session.execute(delete(Service).where(Service.name == child_name))
     await db_session.flush()
@@ -219,7 +219,7 @@ async def test_principal_no_children_returns_ok(db_session, principal_no_childre
 
 @pytest.mark.asyncio
 async def test_child_no_siblings_returns_ok(db_session, child_no_siblings):
-    """Child 'Corte Dama Test' with no siblings → ('none', ..., [])."""
+    """Child 'Corte de Mujer Test' with no siblings → ('none', ..., [])."""
     from agent.tools._booking_helpers import _resolve_audience_variants
 
     kind, family, candidates = await _resolve_audience_variants(db_session, child_no_siblings)

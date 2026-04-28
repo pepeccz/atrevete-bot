@@ -34,7 +34,7 @@ def test_catalog_line_contains_uuid_when_id_present():
     from agent.prompts.catalog_builder import build_catalog_for_prompt
 
     svc_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-    svc = _fake_svc("Corte Dama", service_id=svc_id)
+    svc = _fake_svc("Corte de Mujer", service_id=svc_id)
     result = build_catalog_for_prompt([svc])
 
     assert f"id={svc_id}" in result, (
@@ -77,7 +77,7 @@ def test_multiple_services_all_have_uuids():
     from agent.prompts.catalog_builder import build_catalog_for_prompt
 
     svcs = [
-        _fake_svc("Corte Dama", service_id=uuid4()),
+        _fake_svc("Corte de Mujer", service_id=uuid4()),
         _fake_svc("Tinte Completo", service_id=uuid4()),
         _fake_svc("Manicura", service_id=uuid4()),
     ]

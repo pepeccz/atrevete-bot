@@ -21,7 +21,7 @@ MADRID_TZ = ZoneInfo("Europe/Madrid")
 def _make_mock_appointment(
     hours_from_now: float = 72.0,
     stylist_name: str = "María",
-    service_names: str = "Corte Dama",
+    service_names: str = "Corte de Mujer",
     status: str = "PENDING",
     confirmation_sent_at: datetime | None = None,
     reminder_sent_at: datetime | None = None,
@@ -134,7 +134,7 @@ class TestAppointmentContextMiddlewareWithAppointments:
             return [appt1, appt2]
 
         async def _fake_service_names(service_ids):
-            return "Corte Dama"
+            return "Corte de Mujer"
 
         with (
             patch(
@@ -259,7 +259,7 @@ class TestAppointmentContextLifecycleFields:
             return [appt]
 
         async def _fake_service_names(service_ids):
-            return "Corte Dama"
+            return "Corte de Mujer"
 
         with (
             patch(
@@ -340,7 +340,7 @@ class TestAppointmentContextLifecycleFields:
             return [appt]
 
         async def _fake_service_names(service_ids):
-            return "Corte Dama"
+            return "Corte de Mujer"
 
         with (
             patch(

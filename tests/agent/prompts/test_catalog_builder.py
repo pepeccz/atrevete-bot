@@ -142,7 +142,7 @@ class TestBuildCatalogForPrompt:
     def test_internal_audience_title_is_naturalized(self):
         fn = _import()
         svc = _FakeService(
-            name="Corte Dama",
+            name="Corte de Mujer",
             duration_minutes=40,
             description="Corte con lavado",
             audience="adult_female",
@@ -154,7 +154,7 @@ class TestBuildCatalogForPrompt:
         )
         result = fn([svc])
         assert "corte de mujer" in result
-        assert "Corte Dama" not in result
+        assert "Corte de Mujer" not in result
 
     def test_unisex_audience_in_tag(self):
         fn = _import()

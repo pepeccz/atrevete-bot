@@ -42,7 +42,7 @@ interactions:
       o (b) el servicio no tiene variantes en el cat\u00e1logo. La pregunta se hace
       UNA sola vez.\n10. **Nombres de servicio de cara al cliente**: cuando hables
       con el cliente, usa siempre la etiqueta natural del cat\u00e1logo. No expongas
-      t\u00edtulos internos en bruto como `Corte Dama`.\n11. **L\u00edmite de disponibilidad
+      t\u00edtulos internos en bruto como `Corte de Mujer`.\n11. **L\u00edmite de disponibilidad
       exacta**: `check_availability` solo sirve para la fecha pedida. No presentes
       alternativas de otros d\u00edas o profesionales si la herramienta no las ha
       devuelto.\n12. **Consentimiento antes de ampliar**: si el cliente ha pedido
@@ -76,8 +76,8 @@ interactions:
       cat\u00e1logo, pregunta siempre antes de llamar a cualquier herramienta.\n\n---\n\n###
       Ejemplo 2 \u2014 \"Vale\" ambiguo en paso 2\n\nBot pregunt\u00f3 \"\u00bfQuieres
       a\u00f1adir algo m\u00e1s?\"; cliente responde \"vale\".\n\n<bad>Bot: Perfecto,
-      continuamos con Corte Dama. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
-      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte Dama.
+      continuamos con Corte de Mujer. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
+      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte de Mujer.
       \u00bfA\u00f1adimos otro servicio o seguimos solo con ese?</good>\n\nRegla:
       \"vale\"/\"ok\"/\"bien\" sin slot concreto no cierran el paso 2; re-pregunta
       citando el servicio anotado.\n\n---\n\n### Ejemplo 3 \u2014 Listado de estilistas
@@ -98,7 +98,7 @@ interactions:
       de peluquer\u00eda (cortes, tintes, tratamientos capilares)\n- **aesthetics**
       \u2014 Servicios de est\u00e9tica (manicura, pedicura, depilaci\u00f3n, tratamientos
       faciales)\n\n## Tipos de Servicio en Cat\u00e1logo\n\n- **PRINCIPAL** \u2014
-      Servicio base (ej: Corte Dama, Tinte)\n- **VARIANTE** \u2014 Variante de un
+      Servicio base (ej: Corte de Mujer, Tinte)\n- **VARIANTE** \u2014 Variante de un
       servicio principal (ej: Corte + Secado)\n- **ADDON** \u2014 Servicio complementario
       (ej: Tratamiento hidratante)\n\n## Campos del Cat\u00e1logo\n\nCada l\u00ednea
       del cat\u00e1logo tiene el formato:\n```\n[TIPO \u00b7 dimensi\u00f3n \u00b7
@@ -292,7 +292,7 @@ interactions:
       \u2014 Sculptor + 30 min de radiofrecuencia para resultados anticelul\u00edticos
       potenciados (90 min) \u2014 id=2395f8c8-2d44-125e-058c-1b7d6a1d9ebc\n [VARIANTE
       de bioterapia de senos] bono bioterapia de senos \u2014 60min \u2014 Pack de
-      sesiones de Bioterapia de Senos para un resultado m\u00e1s progresivo y duradero
+      sesiones de Tratamiento de Senos para un resultado m\u00e1s progresivo y duradero
       (60 min) \u2014 id=613f5c9d-58b8-240c-0cd0-55da96564379\n [VARIANTE de cera
       enteras] brazos completos o pecho \u2014 30min \u2014 Depilaci\u00f3n con cera
       de brazos completos o zona del pecho a elegir (30 min) \u2014 id=c6d8e772-1e99-3b4d-a7f5-0e7af142875b\n
@@ -613,7 +613,7 @@ interactions:
       o (b) el servicio no tiene variantes en el cat\u00e1logo. La pregunta se hace
       UNA sola vez.\n10. **Nombres de servicio de cara al cliente**: cuando hables
       con el cliente, usa siempre la etiqueta natural del cat\u00e1logo. No expongas
-      t\u00edtulos internos en bruto como `Corte Dama`.\n11. **L\u00edmite de disponibilidad
+      t\u00edtulos internos en bruto como `Corte de Mujer`.\n11. **L\u00edmite de disponibilidad
       exacta**: `check_availability` solo sirve para la fecha pedida. No presentes
       alternativas de otros d\u00edas o profesionales si la herramienta no las ha
       devuelto.\n12. **Consentimiento antes de ampliar**: si el cliente ha pedido
@@ -647,8 +647,8 @@ interactions:
       cat\u00e1logo, pregunta siempre antes de llamar a cualquier herramienta.\n\n---\n\n###
       Ejemplo 2 \u2014 \"Vale\" ambiguo en paso 2\n\nBot pregunt\u00f3 \"\u00bfQuieres
       a\u00f1adir algo m\u00e1s?\"; cliente responde \"vale\".\n\n<bad>Bot: Perfecto,
-      continuamos con Corte Dama. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
-      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte Dama.
+      continuamos con Corte de Mujer. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
+      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte de Mujer.
       \u00bfA\u00f1adimos otro servicio o seguimos solo con ese?</good>\n\nRegla:
       \"vale\"/\"ok\"/\"bien\" sin slot concreto no cierran el paso 2; re-pregunta
       citando el servicio anotado.\n\n---\n\n### Ejemplo 3 \u2014 Listado de estilistas
@@ -669,7 +669,7 @@ interactions:
       de peluquer\u00eda (cortes, tintes, tratamientos capilares)\n- **aesthetics**
       \u2014 Servicios de est\u00e9tica (manicura, pedicura, depilaci\u00f3n, tratamientos
       faciales)\n\n## Tipos de Servicio en Cat\u00e1logo\n\n- **PRINCIPAL** \u2014
-      Servicio base (ej: Corte Dama, Tinte)\n- **VARIANTE** \u2014 Variante de un
+      Servicio base (ej: Corte de Mujer, Tinte)\n- **VARIANTE** \u2014 Variante de un
       servicio principal (ej: Corte + Secado)\n- **ADDON** \u2014 Servicio complementario
       (ej: Tratamiento hidratante)\n\n## Campos del Cat\u00e1logo\n\nCada l\u00ednea
       del cat\u00e1logo tiene el formato:\n```\n[TIPO \u00b7 dimensi\u00f3n \u00b7
@@ -863,7 +863,7 @@ interactions:
       \u2014 Sculptor + 30 min de radiofrecuencia para resultados anticelul\u00edticos
       potenciados (90 min) \u2014 id=2395f8c8-2d44-125e-058c-1b7d6a1d9ebc\n [VARIANTE
       de bioterapia de senos] bono bioterapia de senos \u2014 60min \u2014 Pack de
-      sesiones de Bioterapia de Senos para un resultado m\u00e1s progresivo y duradero
+      sesiones de Tratamiento de Senos para un resultado m\u00e1s progresivo y duradero
       (60 min) \u2014 id=613f5c9d-58b8-240c-0cd0-55da96564379\n [VARIANTE de cera
       enteras] brazos completos o pecho \u2014 30min \u2014 Depilaci\u00f3n con cera
       de brazos completos o zona del pecho a elegir (30 min) \u2014 id=c6d8e772-1e99-3b4d-a7f5-0e7af142875b\n
@@ -1191,7 +1191,7 @@ interactions:
       o (b) el servicio no tiene variantes en el cat\u00e1logo. La pregunta se hace
       UNA sola vez.\n10. **Nombres de servicio de cara al cliente**: cuando hables
       con el cliente, usa siempre la etiqueta natural del cat\u00e1logo. No expongas
-      t\u00edtulos internos en bruto como `Corte Dama`.\n11. **L\u00edmite de disponibilidad
+      t\u00edtulos internos en bruto como `Corte de Mujer`.\n11. **L\u00edmite de disponibilidad
       exacta**: `check_availability` solo sirve para la fecha pedida. No presentes
       alternativas de otros d\u00edas o profesionales si la herramienta no las ha
       devuelto.\n12. **Consentimiento antes de ampliar**: si el cliente ha pedido
@@ -1225,8 +1225,8 @@ interactions:
       cat\u00e1logo, pregunta siempre antes de llamar a cualquier herramienta.\n\n---\n\n###
       Ejemplo 2 \u2014 \"Vale\" ambiguo en paso 2\n\nBot pregunt\u00f3 \"\u00bfQuieres
       a\u00f1adir algo m\u00e1s?\"; cliente responde \"vale\".\n\n<bad>Bot: Perfecto,
-      continuamos con Corte Dama. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
-      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte Dama.
+      continuamos con Corte de Mujer. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
+      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte de Mujer.
       \u00bfA\u00f1adimos otro servicio o seguimos solo con ese?</good>\n\nRegla:
       \"vale\"/\"ok\"/\"bien\" sin slot concreto no cierran el paso 2; re-pregunta
       citando el servicio anotado.\n\n---\n\n### Ejemplo 3 \u2014 Listado de estilistas
@@ -1247,7 +1247,7 @@ interactions:
       de peluquer\u00eda (cortes, tintes, tratamientos capilares)\n- **aesthetics**
       \u2014 Servicios de est\u00e9tica (manicura, pedicura, depilaci\u00f3n, tratamientos
       faciales)\n\n## Tipos de Servicio en Cat\u00e1logo\n\n- **PRINCIPAL** \u2014
-      Servicio base (ej: Corte Dama, Tinte)\n- **VARIANTE** \u2014 Variante de un
+      Servicio base (ej: Corte de Mujer, Tinte)\n- **VARIANTE** \u2014 Variante de un
       servicio principal (ej: Corte + Secado)\n- **ADDON** \u2014 Servicio complementario
       (ej: Tratamiento hidratante)\n\n## Campos del Cat\u00e1logo\n\nCada l\u00ednea
       del cat\u00e1logo tiene el formato:\n```\n[TIPO \u00b7 dimensi\u00f3n \u00b7
@@ -1441,7 +1441,7 @@ interactions:
       \u2014 Sculptor + 30 min de radiofrecuencia para resultados anticelul\u00edticos
       potenciados (90 min) \u2014 id=2395f8c8-2d44-125e-058c-1b7d6a1d9ebc\n [VARIANTE
       de bioterapia de senos] bono bioterapia de senos \u2014 60min \u2014 Pack de
-      sesiones de Bioterapia de Senos para un resultado m\u00e1s progresivo y duradero
+      sesiones de Tratamiento de Senos para un resultado m\u00e1s progresivo y duradero
       (60 min) \u2014 id=613f5c9d-58b8-240c-0cd0-55da96564379\n [VARIANTE de cera
       enteras] brazos completos o pecho \u2014 30min \u2014 Depilaci\u00f3n con cera
       de brazos completos o zona del pecho a elegir (30 min) \u2014 id=c6d8e772-1e99-3b4d-a7f5-0e7af142875b\n
@@ -1771,7 +1771,7 @@ interactions:
       o (b) el servicio no tiene variantes en el cat\u00e1logo. La pregunta se hace
       UNA sola vez.\n10. **Nombres de servicio de cara al cliente**: cuando hables
       con el cliente, usa siempre la etiqueta natural del cat\u00e1logo. No expongas
-      t\u00edtulos internos en bruto como `Corte Dama`.\n11. **L\u00edmite de disponibilidad
+      t\u00edtulos internos en bruto como `Corte de Mujer`.\n11. **L\u00edmite de disponibilidad
       exacta**: `check_availability` solo sirve para la fecha pedida. No presentes
       alternativas de otros d\u00edas o profesionales si la herramienta no las ha
       devuelto.\n12. **Consentimiento antes de ampliar**: si el cliente ha pedido
@@ -1805,8 +1805,8 @@ interactions:
       cat\u00e1logo, pregunta siempre antes de llamar a cualquier herramienta.\n\n---\n\n###
       Ejemplo 2 \u2014 \"Vale\" ambiguo en paso 2\n\nBot pregunt\u00f3 \"\u00bfQuieres
       a\u00f1adir algo m\u00e1s?\"; cliente responde \"vale\".\n\n<bad>Bot: Perfecto,
-      continuamos con Corte Dama. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
-      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte Dama.
+      continuamos con Corte de Mujer. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
+      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte de Mujer.
       \u00bfA\u00f1adimos otro servicio o seguimos solo con ese?</good>\n\nRegla:
       \"vale\"/\"ok\"/\"bien\" sin slot concreto no cierran el paso 2; re-pregunta
       citando el servicio anotado.\n\n---\n\n### Ejemplo 3 \u2014 Listado de estilistas
@@ -1827,7 +1827,7 @@ interactions:
       de peluquer\u00eda (cortes, tintes, tratamientos capilares)\n- **aesthetics**
       \u2014 Servicios de est\u00e9tica (manicura, pedicura, depilaci\u00f3n, tratamientos
       faciales)\n\n## Tipos de Servicio en Cat\u00e1logo\n\n- **PRINCIPAL** \u2014
-      Servicio base (ej: Corte Dama, Tinte)\n- **VARIANTE** \u2014 Variante de un
+      Servicio base (ej: Corte de Mujer, Tinte)\n- **VARIANTE** \u2014 Variante de un
       servicio principal (ej: Corte + Secado)\n- **ADDON** \u2014 Servicio complementario
       (ej: Tratamiento hidratante)\n\n## Campos del Cat\u00e1logo\n\nCada l\u00ednea
       del cat\u00e1logo tiene el formato:\n```\n[TIPO \u00b7 dimensi\u00f3n \u00b7
@@ -2021,7 +2021,7 @@ interactions:
       \u2014 Sculptor + 30 min de radiofrecuencia para resultados anticelul\u00edticos
       potenciados (90 min) \u2014 id=2395f8c8-2d44-125e-058c-1b7d6a1d9ebc\n [VARIANTE
       de bioterapia de senos] bono bioterapia de senos \u2014 60min \u2014 Pack de
-      sesiones de Bioterapia de Senos para un resultado m\u00e1s progresivo y duradero
+      sesiones de Tratamiento de Senos para un resultado m\u00e1s progresivo y duradero
       (60 min) \u2014 id=613f5c9d-58b8-240c-0cd0-55da96564379\n [VARIANTE de cera
       enteras] brazos completos o pecho \u2014 30min \u2014 Depilaci\u00f3n con cera
       de brazos completos o zona del pecho a elegir (30 min) \u2014 id=c6d8e772-1e99-3b4d-a7f5-0e7af142875b\n
@@ -2358,7 +2358,7 @@ interactions:
       o (b) el servicio no tiene variantes en el cat\u00e1logo. La pregunta se hace
       UNA sola vez.\n10. **Nombres de servicio de cara al cliente**: cuando hables
       con el cliente, usa siempre la etiqueta natural del cat\u00e1logo. No expongas
-      t\u00edtulos internos en bruto como `Corte Dama`.\n11. **L\u00edmite de disponibilidad
+      t\u00edtulos internos en bruto como `Corte de Mujer`.\n11. **L\u00edmite de disponibilidad
       exacta**: `check_availability` solo sirve para la fecha pedida. No presentes
       alternativas de otros d\u00edas o profesionales si la herramienta no las ha
       devuelto.\n12. **Consentimiento antes de ampliar**: si el cliente ha pedido
@@ -2392,8 +2392,8 @@ interactions:
       cat\u00e1logo, pregunta siempre antes de llamar a cualquier herramienta.\n\n---\n\n###
       Ejemplo 2 \u2014 \"Vale\" ambiguo en paso 2\n\nBot pregunt\u00f3 \"\u00bfQuieres
       a\u00f1adir algo m\u00e1s?\"; cliente responde \"vale\".\n\n<bad>Bot: Perfecto,
-      continuamos con Corte Dama. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
-      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte Dama.
+      continuamos con Corte de Mujer. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
+      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte de Mujer.
       \u00bfA\u00f1adimos otro servicio o seguimos solo con ese?</good>\n\nRegla:
       \"vale\"/\"ok\"/\"bien\" sin slot concreto no cierran el paso 2; re-pregunta
       citando el servicio anotado.\n\n---\n\n### Ejemplo 3 \u2014 Listado de estilistas
@@ -2414,7 +2414,7 @@ interactions:
       de peluquer\u00eda (cortes, tintes, tratamientos capilares)\n- **aesthetics**
       \u2014 Servicios de est\u00e9tica (manicura, pedicura, depilaci\u00f3n, tratamientos
       faciales)\n\n## Tipos de Servicio en Cat\u00e1logo\n\n- **PRINCIPAL** \u2014
-      Servicio base (ej: Corte Dama, Tinte)\n- **VARIANTE** \u2014 Variante de un
+      Servicio base (ej: Corte de Mujer, Tinte)\n- **VARIANTE** \u2014 Variante de un
       servicio principal (ej: Corte + Secado)\n- **ADDON** \u2014 Servicio complementario
       (ej: Tratamiento hidratante)\n\n## Campos del Cat\u00e1logo\n\nCada l\u00ednea
       del cat\u00e1logo tiene el formato:\n```\n[TIPO \u00b7 dimensi\u00f3n \u00b7
@@ -2608,7 +2608,7 @@ interactions:
       \u2014 Sculptor + 30 min de radiofrecuencia para resultados anticelul\u00edticos
       potenciados (90 min) \u2014 id=2395f8c8-2d44-125e-058c-1b7d6a1d9ebc\n [VARIANTE
       de bioterapia de senos] bono bioterapia de senos \u2014 60min \u2014 Pack de
-      sesiones de Bioterapia de Senos para un resultado m\u00e1s progresivo y duradero
+      sesiones de Tratamiento de Senos para un resultado m\u00e1s progresivo y duradero
       (60 min) \u2014 id=613f5c9d-58b8-240c-0cd0-55da96564379\n [VARIANTE de cera
       enteras] brazos completos o pecho \u2014 30min \u2014 Depilaci\u00f3n con cera
       de brazos completos o zona del pecho a elegir (30 min) \u2014 id=c6d8e772-1e99-3b4d-a7f5-0e7af142875b\n
@@ -2948,7 +2948,7 @@ interactions:
       o (b) el servicio no tiene variantes en el cat\u00e1logo. La pregunta se hace
       UNA sola vez.\n10. **Nombres de servicio de cara al cliente**: cuando hables
       con el cliente, usa siempre la etiqueta natural del cat\u00e1logo. No expongas
-      t\u00edtulos internos en bruto como `Corte Dama`.\n11. **L\u00edmite de disponibilidad
+      t\u00edtulos internos en bruto como `Corte de Mujer`.\n11. **L\u00edmite de disponibilidad
       exacta**: `check_availability` solo sirve para la fecha pedida. No presentes
       alternativas de otros d\u00edas o profesionales si la herramienta no las ha
       devuelto.\n12. **Consentimiento antes de ampliar**: si el cliente ha pedido
@@ -2982,8 +2982,8 @@ interactions:
       cat\u00e1logo, pregunta siempre antes de llamar a cualquier herramienta.\n\n---\n\n###
       Ejemplo 2 \u2014 \"Vale\" ambiguo en paso 2\n\nBot pregunt\u00f3 \"\u00bfQuieres
       a\u00f1adir algo m\u00e1s?\"; cliente responde \"vale\".\n\n<bad>Bot: Perfecto,
-      continuamos con Corte Dama. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
-      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte Dama.
+      continuamos con Corte de Mujer. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
+      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte de Mujer.
       \u00bfA\u00f1adimos otro servicio o seguimos solo con ese?</good>\n\nRegla:
       \"vale\"/\"ok\"/\"bien\" sin slot concreto no cierran el paso 2; re-pregunta
       citando el servicio anotado.\n\n---\n\n### Ejemplo 3 \u2014 Listado de estilistas
@@ -3004,7 +3004,7 @@ interactions:
       de peluquer\u00eda (cortes, tintes, tratamientos capilares)\n- **aesthetics**
       \u2014 Servicios de est\u00e9tica (manicura, pedicura, depilaci\u00f3n, tratamientos
       faciales)\n\n## Tipos de Servicio en Cat\u00e1logo\n\n- **PRINCIPAL** \u2014
-      Servicio base (ej: Corte Dama, Tinte)\n- **VARIANTE** \u2014 Variante de un
+      Servicio base (ej: Corte de Mujer, Tinte)\n- **VARIANTE** \u2014 Variante de un
       servicio principal (ej: Corte + Secado)\n- **ADDON** \u2014 Servicio complementario
       (ej: Tratamiento hidratante)\n\n## Campos del Cat\u00e1logo\n\nCada l\u00ednea
       del cat\u00e1logo tiene el formato:\n```\n[TIPO \u00b7 dimensi\u00f3n \u00b7
@@ -3198,7 +3198,7 @@ interactions:
       \u2014 Sculptor + 30 min de radiofrecuencia para resultados anticelul\u00edticos
       potenciados (90 min) \u2014 id=2395f8c8-2d44-125e-058c-1b7d6a1d9ebc\n [VARIANTE
       de bioterapia de senos] bono bioterapia de senos \u2014 60min \u2014 Pack de
-      sesiones de Bioterapia de Senos para un resultado m\u00e1s progresivo y duradero
+      sesiones de Tratamiento de Senos para un resultado m\u00e1s progresivo y duradero
       (60 min) \u2014 id=613f5c9d-58b8-240c-0cd0-55da96564379\n [VARIANTE de cera
       enteras] brazos completos o pecho \u2014 30min \u2014 Depilaci\u00f3n con cera
       de brazos completos o zona del pecho a elegir (30 min) \u2014 id=c6d8e772-1e99-3b4d-a7f5-0e7af142875b\n
@@ -3539,7 +3539,7 @@ interactions:
       o (b) el servicio no tiene variantes en el cat\u00e1logo. La pregunta se hace
       UNA sola vez.\n10. **Nombres de servicio de cara al cliente**: cuando hables
       con el cliente, usa siempre la etiqueta natural del cat\u00e1logo. No expongas
-      t\u00edtulos internos en bruto como `Corte Dama`.\n11. **L\u00edmite de disponibilidad
+      t\u00edtulos internos en bruto como `Corte de Mujer`.\n11. **L\u00edmite de disponibilidad
       exacta**: `check_availability` solo sirve para la fecha pedida. No presentes
       alternativas de otros d\u00edas o profesionales si la herramienta no las ha
       devuelto.\n12. **Consentimiento antes de ampliar**: si el cliente ha pedido
@@ -3573,8 +3573,8 @@ interactions:
       cat\u00e1logo, pregunta siempre antes de llamar a cualquier herramienta.\n\n---\n\n###
       Ejemplo 2 \u2014 \"Vale\" ambiguo en paso 2\n\nBot pregunt\u00f3 \"\u00bfQuieres
       a\u00f1adir algo m\u00e1s?\"; cliente responde \"vale\".\n\n<bad>Bot: Perfecto,
-      continuamos con Corte Dama. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
-      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte Dama.
+      continuamos con Corte de Mujer. \u00bfTienes estilista preferida?</bad>\n\n<good>Bot:
+      No estoy segura de si quieres a\u00f1adir algo m\u00e1s a la cita de Corte de Mujer.
       \u00bfA\u00f1adimos otro servicio o seguimos solo con ese?</good>\n\nRegla:
       \"vale\"/\"ok\"/\"bien\" sin slot concreto no cierran el paso 2; re-pregunta
       citando el servicio anotado.\n\n---\n\n### Ejemplo 3 \u2014 Listado de estilistas
@@ -3595,7 +3595,7 @@ interactions:
       de peluquer\u00eda (cortes, tintes, tratamientos capilares)\n- **aesthetics**
       \u2014 Servicios de est\u00e9tica (manicura, pedicura, depilaci\u00f3n, tratamientos
       faciales)\n\n## Tipos de Servicio en Cat\u00e1logo\n\n- **PRINCIPAL** \u2014
-      Servicio base (ej: Corte Dama, Tinte)\n- **VARIANTE** \u2014 Variante de un
+      Servicio base (ej: Corte de Mujer, Tinte)\n- **VARIANTE** \u2014 Variante de un
       servicio principal (ej: Corte + Secado)\n- **ADDON** \u2014 Servicio complementario
       (ej: Tratamiento hidratante)\n\n## Campos del Cat\u00e1logo\n\nCada l\u00ednea
       del cat\u00e1logo tiene el formato:\n```\n[TIPO \u00b7 dimensi\u00f3n \u00b7
@@ -3789,7 +3789,7 @@ interactions:
       \u2014 Sculptor + 30 min de radiofrecuencia para resultados anticelul\u00edticos
       potenciados (90 min) \u2014 id=2395f8c8-2d44-125e-058c-1b7d6a1d9ebc\n [VARIANTE
       de bioterapia de senos] bono bioterapia de senos \u2014 60min \u2014 Pack de
-      sesiones de Bioterapia de Senos para un resultado m\u00e1s progresivo y duradero
+      sesiones de Tratamiento de Senos para un resultado m\u00e1s progresivo y duradero
       (60 min) \u2014 id=613f5c9d-58b8-240c-0cd0-55da96564379\n [VARIANTE de cera
       enteras] brazos completos o pecho \u2014 30min \u2014 Depilaci\u00f3n con cera
       de brazos completos o zona del pecho a elegir (30 min) \u2014 id=c6d8e772-1e99-3b4d-a7f5-0e7af142875b\n

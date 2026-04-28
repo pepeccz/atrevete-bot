@@ -52,16 +52,16 @@ def _pick_variant_by_hint(variants: list[str], hint: str) -> str | None:
     token maps to ``hint``.
 
     Args:
-        variants: Full service variant names (e.g. ``["Corte Señora", "Corte Caballero"]``).
+        variants: Full service variant names (e.g. ``["Corte Señora", "Corte de Hombre"]``).
         hint: Canonical audience hint (e.g. ``"adult_female"``).
 
     Returns:
         The first matching variant name, or ``None`` if no match.
 
     Examples:
-        >>> _pick_variant_by_hint(["Corte Señora", "Corte Caballero"], "adult_female")
+        >>> _pick_variant_by_hint(["Corte Señora", "Corte de Hombre"], "adult_female")
         'Corte Señora'
-        >>> _pick_variant_by_hint(["Corte Señora", "Corte Caballero"], "baby")
+        >>> _pick_variant_by_hint(["Corte Señora", "Corte de Hombre"], "baby")
         None
     """
     for variant in variants:

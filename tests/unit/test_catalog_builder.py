@@ -138,9 +138,9 @@ def test_unknown_service_type_yields_no_tag():
 @pytest.mark.parametrize(
     ("raw_name", "expected"),
     [
-        ("Corte Dama", "corte de mujer"),
-        ("Corte Caballero", "corte de caballero"),
-        ("Corte Niña", "corte de niña"),
+        ("Corte de Mujer", "corte de mujer"),
+        ("Corte de Hombre", "corte de caballero"),
+        ("Corte de Niña", "corte de niña"),
         ("Tinte Completo", "tinte completo"),
     ],
 )
@@ -153,7 +153,7 @@ def test_customer_safe_display_name_derivation(raw_name, expected):
 def test_get_service_display_name_uses_customer_safe_label():
     from agent.prompts.catalog_builder import get_service_display_name
 
-    svc = SimpleNamespace(name="Corte Dama")
+    svc = SimpleNamespace(name="Corte de Mujer")
     assert get_service_display_name(svc) == "corte de mujer"
 
 
@@ -234,9 +234,9 @@ async def test_get_active_services_returns_service_rows(monkeypatch):
 
     fake_rows = [
         ServiceRow(name="Cortar", audience=None, metadata={}),
-        ServiceRow(name="Corte Caballero", audience="adult_male", metadata={}),
+        ServiceRow(name="Corte de Hombre", audience="adult_male", metadata={}),
     ]
-    fake_markdown = "## Catálogo\n- Cortar\n- Corte Caballero\n"
+    fake_markdown = "## Catálogo\n- Cortar\n- Corte de Hombre\n"
 
     async def fake_loader():
         return (fake_rows, fake_markdown)

@@ -131,7 +131,7 @@ async def test_stylist_required_payload_populated():
         ),
     ):
         data = await _call_update_booking(
-            services=["Corte Dama"],
+            services=["Corte de Mujer"],
             no_more_services=True,
             extras_asked=True,
         )
@@ -217,7 +217,7 @@ async def _call_impl(date_iso, patches_override=None, **extra_kwargs):
         patch("shared.business_hours_validator.is_date_closed", patches["shared.business_hours_validator.is_date_closed"]),
     ):
         raw = await _update_booking_impl(
-            services=["Corte Dama"],
+            services=["Corte de Mujer"],
             stylist_name="Test Stylist",
             no_preference_stylist=False,
             date_iso=date_iso,
@@ -373,7 +373,7 @@ async def test_stylist_required_payload_empty_when_no_active_stylists():
         ),
     ):
         data = await _call_update_booking(
-            services=["Corte Dama"],
+            services=["Corte de Mujer"],
             no_more_services=True,
             extras_asked=True,
         )
@@ -422,7 +422,7 @@ async def test_stylist_required_payload_on_unknown_stylist():
         ),
     ):
         data = await _call_update_booking(
-            services=["Corte Dama"],
+            services=["Corte de Mujer"],
             no_more_services=True,
             extras_asked=True,
             stylist_name="Desconocida",
@@ -509,7 +509,7 @@ async def _call_pb_impl(slot_iso, messages=None, stylist_id=_FAKE_STYLIST_ID_PB,
         patch("database.connection.get_async_session", patches["database.connection.get_async_session"]),
     ):
         raw = await _update_booking_impl(
-            services=["Corte Dama"],
+            services=["Corte de Mujer"],
             stylist_name="Test Stylist",
             no_preference_stylist=False,
             date_iso=_FAKE_DATE_PB,

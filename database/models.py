@@ -331,6 +331,10 @@ class Service(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     audience: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
+    # Storage in cents (EUR). Nullable; reserved for future reporting feature.
+    # Not consumed by agent or admin UI yet.
+    price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Disambiguation metadata (JSONB) — used by the service resolver to disambiguate
     # ambiguous service names without hardcoding families in prompts.
     # Default: {} (empty — all existing services are metadata-free until seeded).

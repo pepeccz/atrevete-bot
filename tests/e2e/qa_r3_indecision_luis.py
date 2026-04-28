@@ -254,7 +254,7 @@ def generate_reply(turn_number: int, agent_response: str, current_milestone, sta
         return "Luis.", False
 
     if any(kw in stripped for kw in ["caballero, dama", "caballero o dama", "para caballero o", "dama, niño"]):
-        choices = ["caballero", "1", "Corte Caballero"]
+        choices = ["caballero", "1", "Corte de Hombre"]
         idx = min(state.caballero_count, len(choices) - 1)
         state.caballero_count += 1
         return choices[idx], False

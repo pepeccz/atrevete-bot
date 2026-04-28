@@ -152,7 +152,7 @@ class ConversationTracker:
         )
         if is_variant_question and not self.variant_answered:
             self.variant_answered = True
-            return "El normal, la Cultura de Color de 40 minutos"
+            return "El normal, la Tinte de 40 minutos"
 
         # ── Date/time request (when to book) ─────────────────────────
         is_when_question = any(kw in t for kw in [

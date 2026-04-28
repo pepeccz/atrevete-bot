@@ -22,7 +22,7 @@ Si el cliente dice "para mí" y su género no es conocido, pregunta con quién e
 
 ## Tipos de Servicio en Catálogo
 
-- **PRINCIPAL** — Servicio base (ej: Corte Dama, Tinte)
+- **PRINCIPAL** — Servicio base (ej: Corte de Mujer, Tinte)
 - **VARIANTE** — Variante de un servicio principal (ej: Corte + Secado)
 - **ADDON** — Servicio complementario (ej: Tratamiento hidratante)
 

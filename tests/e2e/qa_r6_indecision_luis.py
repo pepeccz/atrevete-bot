@@ -5,7 +5,7 @@ Commit: 6dbeacb
 Key fixes from R5:
 - T1 now says "Hola, soy hombre y quiero verme más prolijo, ¿qué me recomendás?"
   (direct ask, not vague) to avoid "consultoría" branch trap
-- T2: if bot shows numbered list → "1" (Corte Caballero)
+- T2: if bot shows numbered list → "1" (Corte de Hombre)
 - T3: always "Sí, quiero ese servicio para el viernes a la tarde" (verbal, not "1")
 - Harness script is deterministic, not purely adaptive
 """

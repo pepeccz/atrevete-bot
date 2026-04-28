@@ -30,14 +30,14 @@ FAKE_SERVICES = [
         "description": None,
     },
     {
-        "name": "Corte Caballero",
+        "name": "Corte de Hombre",
         "audience": "adult_male",
         "category": "HAIRDRESSING",
         "duration_minutes": 40,
         "description": None,
     },
     {
-        "name": "Limar y Pintar Manos",
+        "name": "Manicura",
         "audience": None,
         "category": "AESTHETICS",
         "duration_minutes": 30,

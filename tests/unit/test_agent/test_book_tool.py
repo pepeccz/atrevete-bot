@@ -27,7 +27,7 @@ def test_build_gcal_link_formats_url():
     url = _build_gcal_link(
         start=start,
         end=end,
-        service_names="Corte Dama",
+        service_names="Corte de Mujer",
         stylist_name="María",
         notes="Teñido previo",
     )
@@ -89,7 +89,7 @@ async def test_book_returns_calendar_link_on_success():
     # --- Mock DB session (first session: transaction; second: service names; third: stylist) ---
     mock_service = MagicMock()
     mock_service.duration_minutes = 60
-    mock_service.name = "Corte Dama"
+    mock_service.name = "Corte de Mujer"
 
     mock_customer = MagicMock()
     mock_customer.id = customer_uuid
@@ -135,7 +135,7 @@ async def test_book_returns_calendar_link_on_success():
     mock_gcal_session.__aexit__ = AsyncMock(return_value=False)
 
     svc_name_rows = MagicMock()
-    svc_name_rows.fetchall = MagicMock(return_value=[("Corte Dama",)])
+    svc_name_rows.fetchall = MagicMock(return_value=[("Corte de Mujer",)])
     mock_gcal_session.execute.return_value = svc_name_rows
 
     # Session for stylist name fetch (after commit)

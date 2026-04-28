@@ -326,7 +326,7 @@ def generate_luis_reply(
         caballero_responses = [
             "caballero",
             "1",
-            "Corte Caballero",
+            "Corte de Hombre",
             "Para caballero. Opción 1.",
         ]
         idx = min(state.caballero_answer_count, len(caballero_responses) - 1)

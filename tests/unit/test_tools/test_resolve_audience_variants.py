@@ -42,7 +42,7 @@ async def audience_services(db_session):
     from database.models import Service, ServiceCategory
 
     dim = "cut_test_dim"
-    names = ["Corte Dama Test", "Corte Caballero Test"]
+    names = ["Corte de Mujer Test", "Corte de Hombre Test"]
 
     await db_session.execute(delete(Service).where(Service.name.in_(names)))
     await db_session.flush()
