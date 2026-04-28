@@ -137,6 +137,10 @@ export default function CustomerDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
 
+  // Notes form state
+  const [notes, setNotes] = useState<string>("");
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
+
   // Fetch customer detail + first page of appointments on mount
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -148,6 +152,7 @@ export default function CustomerDetailPage() {
       ]);
       setCustomer(customerData);
       setMemories(memoriesFromCustomer(customerData));
+      setNotes(customerData.notes ?? "");
       setAppointments(apptData.items);
       setAppointmentsPage(1);
       setHasMoreAppointments(apptData.has_more);
@@ -178,6 +183,25 @@ export default function CustomerDetailPage() {
       toast.error("Error al cargar más citas");
     } finally {
       setIsLoadingAppts(false);
+    }
+  };
+
+  // Save notes
+  const handleSaveNotes = async () => {
+    setIsSavingNotes(true);
+    try {
+      const updated = await api.update<CustomerDetail>("customers", id, {
+        notes: notes.trim() || null,
+      } as Partial<CustomerDetail>);
+      setCustomer((prev) => (prev ? { ...prev, notes: updated.notes ?? null } : prev));
+      setNotes(updated.notes ?? "");
+      toast.success("Notas guardadas");
+    } catch (err) {
+      toast.error(
+        `Error al guardar: ${err instanceof Error ? err.message : "Error desconocido"}`
+      );
+    } finally {
+      setIsSavingNotes(false);
     }
   };
 
@@ -310,12 +334,6 @@ export default function CustomerDetailPage() {
                       </Badge>
                     </div>
                   )}
-                  {customer.notes && (
-                    <div>
-                      <p className="text-xs text-muted-foreground">Notas</p>
-                      <p className="text-sm">{customer.notes}</p>
-                    </div>
-                  )}
                 </CardContent>
               </Card>
 
@@ -371,6 +389,34 @@ export default function CustomerDetailPage() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Notas — full width below the info grid */}
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Info className="h-4 w-4" />
+                  Notas
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Textarea
+                  placeholder="Notas internas sobre el cliente (alergias, preferencias, observaciones, etc.)"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={4}
+                  className="resize-y"
+                />
+                <div className="flex justify-end">
+                  <Button
+                    onClick={handleSaveNotes}
+                    disabled={isSavingNotes || notes === (customer.notes ?? "")}
+                    size="sm"
+                  >
+                    {isSavingNotes ? "Guardando..." : "Guardar notas"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* ─── Citas Tab ──────────────────────────────────────────────── */}
