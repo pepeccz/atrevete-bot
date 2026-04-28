@@ -2,11 +2,9 @@
 
 Hook: awrap_model_call
 Logic:
-  - If len(state.messages) > window (default 20):
-      1. Take messages[:-keep_tail] (the "old" chunk).
-      2. Call an auxiliary LLM to summarize them in Spanish.
-      3. Replace old chunk with a single SystemMessage("[Resumen previo]: …").
-      4. Pass keep_tail recent messages verbatim.
+  - Gate 1: If len(state.messages) <= window, pass through unchanged.
+  - Gate 2: If new messages since last compaction < SUMMARIZE_NEW_MSG_THRESHOLD, skip LLM.
+  - Compact: summarize old messages, write cursor = len(compacted) = 1 + keep_tail.
 """
 
 from __future__ import annotations
@@ -18,6 +16,9 @@ from typing import ClassVar
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import AnyMessage, SystemMessage
 
+from agent.llm import get_summarizer_llm
+from shared.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 _SUMMARY_PROMPT = (
@@ -28,11 +29,10 @@ _SUMMARY_PROMPT = (
 )
 
 
-async def _summarize_messages(messages: list[AnyMessage]) -> str:
+async def _summarize_messages(messages: list[AnyMessage], llm=None) -> str:
     """Call a one-shot LLM to summarize a list of messages."""
-    from agent.llm import get_llm
-
-    llm = get_llm()
+    if llm is None:
+        llm = get_summarizer_llm()
     conversation_text = "\n".join(
         f"{getattr(m, 'type', 'unknown').upper()}: {m.content}" for m in messages
     )
@@ -47,6 +47,11 @@ class SummarizeMiddleware(AgentMiddleware):
     Async-only: the summarizer calls ``llm.ainvoke()`` against the auxiliary
     LLM. A sync variant would require a sync LLM client that the runtime
     never uses. Opt out of the parity guardrail.
+
+    Cursor semantics (post-trim):
+        cursor = len(compacted) = 1 + keep_tail
+    This is invariant under the add_messages reducer; subsequent appends
+    make total - cursor directly measure fresh messages added since last compaction.
     """
 
     _allow_single_variant: ClassVar[bool] = True
@@ -62,20 +67,37 @@ class SummarizeMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         state = request.state or {}
         messages: list[AnyMessage] = state.get("messages") or []
+        total = len(messages)
 
-        if len(messages) <= self.window:
+        # Gate 1: below window — nothing to do
+        if total <= self.window:
             return await handler(request)
 
-        # Split: old messages to summarize + recent tail to keep
+        # Gate 2: idempotency — skip if not enough new messages since last compaction
+        cursor: int | None = state.get("last_summarized_msg_count")
+        new_since = total - (cursor or 0)
+        settings = get_settings()
+        if new_since < settings.SUMMARIZE_NEW_MSG_THRESHOLD:
+            return await handler(request)
+
+        # Gate 3: compact
         tail_messages = messages[-self.keep_tail :]
         old_messages = messages[: -self.keep_tail]
 
         try:
-            summary_text = await _summarize_messages(old_messages)
+            llm = get_summarizer_llm()
+            summary_text = await _summarize_messages(old_messages, llm=llm)
             summary_msg = SystemMessage(content=f"[Resumen previo]: {summary_text}")
             compacted = [summary_msg] + tail_messages
 
-            new_state = {**state, "messages": compacted}
+            # Cursor stored as post-trim length (invariant under add_messages reducer)
+            new_cursor = len(compacted)  # = 1 + keep_tail
+            new_state = {
+                **state,
+                "messages": compacted,
+                "conversation_summary": summary_text,
+                "last_summarized_msg_count": new_cursor,
+            }
             modified_request = request.override(state=new_state)
             return await handler(modified_request)
 

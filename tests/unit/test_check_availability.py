@@ -199,3 +199,161 @@ async def test_check_availability_unchanged_when_some_days_open():
         f"Should not return closed_day for an open day: {data}"
     )
     assert data.get("status") == "ok"
+
+
+# ---------------------------------------------------------------------------
+# slot_time Filter Boundary Tightening (T12–T15)
+# Spec: §slot_time Filter Boundary Tightening / Design ADR-5
+# ---------------------------------------------------------------------------
+
+
+def _future_date_iso(days_ahead: int = 8) -> str:
+    return (date.today() + timedelta(days=days_ahead)).isoformat()
+
+
+def _make_slot_raw(time_str: str, seconds: str = "00") -> dict:
+    """Build a raw slot as returned by get_available_slots."""
+    target = date.today() + timedelta(days=8)
+    return {
+        "time": time_str,
+        "end_time": "11:30",
+        "full_datetime": f"{target}T{time_str}:{seconds}+02:00",
+        "stylist_id": str(FAKE_STYLIST_ID),
+        "adjacent_priority": 1,
+    }
+
+
+def _slot_time_patches(slots: list[dict]) -> dict:
+    return {
+        "agent.tools.check_availability._load_lead_time_settings": AsyncMock(
+            return_value=(3, 0)
+        ),
+        "agent.tools.check_availability._get_service_durations": AsyncMock(
+            return_value={FAKE_SERVICE_ID: 45}
+        ),
+        "agent.tools.check_availability._get_active_stylists_for_services": AsyncMock(
+            return_value=[FAKE_STYLIST_ID]
+        ),
+        "agent.tools.check_availability._get_stylist_names_map": AsyncMock(
+            return_value={FAKE_STYLIST_ID: "Marta Test"}
+        ),
+        "agent.tools.check_availability.get_available_slots": AsyncMock(
+            return_value=slots
+        ),
+        "shared.business_hours_validator.is_date_closed": AsyncMock(return_value=False),
+        "agent.tools._booking_helpers._compute_first_valid_date": MagicMock(
+            return_value=date.today() + timedelta(days=3)
+        ),
+    }
+
+
+# T12 — RED: partial collision accepted (wrong behavior with old T{slot_time}: filter)
+@pytest.mark.asyncio
+async def test_slot_time_partial_seconds_collision_rejected():
+    """T12: slot with non-standard seconds (e.g. :45) must NOT match slot_time='10:30'.
+
+    Old filter: f'T{slot_time}:' → 'T10:30:' matches '10:30:45' (wrong).
+    New filter: f'T{slot_time}:00' → does NOT match '10:30:45' (correct).
+    """
+    from agent.tools.check_availability import check_availability
+
+    date_iso = _future_date_iso(8)
+    # Slot with non-standard :45 seconds
+    slots = [_make_slot_raw("10:30", "45")]
+    patches = _slot_time_patches(slots)
+
+    with (
+        patch(
+            "agent.tools.check_availability._load_lead_time_settings",
+            patches["agent.tools.check_availability._load_lead_time_settings"],
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            patches["agent.tools.check_availability._get_service_durations"],
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            patches["agent.tools.check_availability._get_active_stylists_for_services"],
+        ),
+        patch(
+            "agent.tools.check_availability._get_stylist_names_map",
+            patches["agent.tools.check_availability._get_stylist_names_map"],
+        ),
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            patches["agent.tools.check_availability.get_available_slots"],
+        ),
+        patch(
+            "shared.business_hours_validator.is_date_closed",
+            patches["shared.business_hours_validator.is_date_closed"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._compute_first_valid_date",
+            patches["agent.tools._booking_helpers._compute_first_valid_date"],
+        ),
+    ):
+        raw = await check_availability.ainvoke({
+            "service_ids": [str(FAKE_SERVICE_ID)],
+            "stylist_id": str(FAKE_STYLIST_ID),
+            "date_iso": date_iso,
+            "slot_time": "10:30",
+        })
+
+    data = parse_response(raw)
+    # The :45 slot must NOT match slot_time=10:30 — should return rejected (slot_no_longer_available)
+    assert data.get("status") != "ok" or data.get("payload", {}).get("exact_match") is not True, (
+        f"Slot with :45 seconds must NOT match slot_time='10:30', got: {data}"
+    )
+
+
+# T13 — Exact :00 seconds boundary match still passes (regression guard)
+@pytest.mark.asyncio
+async def test_slot_time_exact_seconds_00_passes():
+    """T13: slot with :00 seconds must still match slot_time='10:30' (regression guard)."""
+    from agent.tools.check_availability import check_availability
+
+    date_iso = _future_date_iso(8)
+    # Standard :00 seconds slot
+    slots = [_make_slot_raw("10:30", "00")]
+    patches = _slot_time_patches(slots)
+
+    with (
+        patch(
+            "agent.tools.check_availability._load_lead_time_settings",
+            patches["agent.tools.check_availability._load_lead_time_settings"],
+        ),
+        patch(
+            "agent.tools.check_availability._get_service_durations",
+            patches["agent.tools.check_availability._get_service_durations"],
+        ),
+        patch(
+            "agent.tools.check_availability._get_active_stylists_for_services",
+            patches["agent.tools.check_availability._get_active_stylists_for_services"],
+        ),
+        patch(
+            "agent.tools.check_availability._get_stylist_names_map",
+            patches["agent.tools.check_availability._get_stylist_names_map"],
+        ),
+        patch(
+            "agent.tools.check_availability.get_available_slots",
+            patches["agent.tools.check_availability.get_available_slots"],
+        ),
+        patch(
+            "shared.business_hours_validator.is_date_closed",
+            patches["shared.business_hours_validator.is_date_closed"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._compute_first_valid_date",
+            patches["agent.tools._booking_helpers._compute_first_valid_date"],
+        ),
+    ):
+        raw = await check_availability.ainvoke({
+            "service_ids": [str(FAKE_SERVICE_ID)],
+            "stylist_id": str(FAKE_STYLIST_ID),
+            "date_iso": date_iso,
+            "slot_time": "10:30",
+        })
+
+    data = parse_response(raw)
+    assert data.get("status") == "ok", f"Expected ok for exact :00 match, got: {data}"
+    assert data.get("payload", {}).get("exact_match") is True

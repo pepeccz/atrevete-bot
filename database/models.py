@@ -647,6 +647,12 @@ class ConversationHistory(Base):
         cascade="all, delete-orphan",
         order_by="ConversationMessage.created_at",
     )
+    turns: Mapped[list["ConversationTurn"]] = relationship(
+        "ConversationTurn",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationTurn.turn_number",
+    )
 
     # Indexes
     __table_args__ = (
@@ -1671,6 +1677,78 @@ class EscalationStatus(str, PyEnum):
 
     TRIGGERED = "triggered"
     RESOLVED = "resolved"
+
+
+class ConversationTurn(Base):
+    """
+    ConversationTurn model — per-turn telemetry for each agent invocation.
+
+    One row per `graph.ainvoke()` call. Captures latency, LLM token counts,
+    and a compact JSONB summary of tool calls made during the turn.
+    CASCADE delete: removed automatically with the parent ConversationHistory.
+    """
+
+    __tablename__ = "conversation_turns"
+
+    # Primary key
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Foreign key to parent conversation (CASCADE DELETE)
+    conversation_history_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("conversation_history.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Turn ordering (1-based, monotonically increasing per conversation)
+    turn_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Latency of graph.ainvoke() in milliseconds
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # LLM token counts (NULL when usage_metadata is absent)
+    tokens_in: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tokens_out: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Tool call summaries: [{name, args, result_summary}], NULL for no-tool turns
+    tool_calls: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+
+    # Row creation timestamp (server-set)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    # Relationship back to parent conversation
+    conversation: Mapped["ConversationHistory"] = relationship(
+        "ConversationHistory",
+        back_populates="turns",
+    )
+
+    # Constraints and indexes
+    __table_args__ = (
+        # Composite index for ordered timeline reads per conversation
+        Index(
+            "idx_conversation_turns_conv_turn",
+            "conversation_history_id",
+            "turn_number",
+        ),
+        # Uniqueness: at most one row per (conversation, turn_number)
+        UniqueConstraint(
+            "conversation_history_id",
+            "turn_number",
+            name="uq_conversation_turns_conv_turn",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ConversationTurn(id={self.id}, "
+            f"conversation_history_id={self.conversation_history_id}, "
+            f"turn_number={self.turn_number}, latency_ms={self.latency_ms})>"
+        )
 
 
 class Escalation(Base):

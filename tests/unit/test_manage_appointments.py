@@ -6,7 +6,7 @@ Verifies the consolidated tool schema:
 - customer_phone is required
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -153,3 +153,206 @@ async def test_confirm_missing_appointment_id():
         }
     )
     assert "id" in out.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reschedule validator guard tests (T3 RED → T4 GREEN)
+#
+# These tests verify that _reschedule_appointment calls validate_booking_date
+# BEFORE any DB write when new_date is provided.
+# ─────────────────────────────────────────────────────────────────────────────
+
+FAKE_APPT_ID = str(uuid4())
+CUSTOMER_PHONE = "+34612345678"
+OPEN_DATE = "2026-05-05"
+SUNDAY_DATE = "2026-05-03"
+REF_DATE_STR = "2026-04-28"
+
+
+def _make_eligibility_ok():
+    """Return a mock eligibility result that allows rescheduling."""
+    eligible = MagicMock()
+    eligible.eligible = True
+    return eligible
+
+
+def _make_execute_reschedule_result():
+    """Return a mock reschedule result for the happy path."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    result = MagicMock()
+    result.success = True
+    result.new_start_time = datetime(2026, 5, 5, 10, 0, tzinfo=ZoneInfo("Europe/Madrid"))
+    result.error = None
+    result.slot_taken = False
+    return result
+
+
+@pytest.mark.asyncio
+async def test_reschedule_g1_unresolvable_relative_text_no_db_write():
+    """T3 G1: new_date='mañana' (unresolvable non-ISO) → error_code=invalid_relative_date, no DB write."""
+    from agent.tools.manage_appointments_tool import _reschedule_appointment
+    from agent.tools._booking_validators import DateValidationResult
+
+    invalid_result = DateValidationResult(
+        date_iso=None,
+        error_code="invalid_relative_date",
+        error_message="No pude entender la fecha. ¿Podés decirme el día y mes?",
+        payload={"raw_text": "mañana"},
+    )
+
+    execute_reschedule_mock = AsyncMock()
+
+    with (
+        patch(
+            "agent.services.reschedule_service.validate_reschedule_eligibility",
+            new=AsyncMock(return_value=_make_eligibility_ok()),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_booking_date",
+            new=AsyncMock(return_value=invalid_result),
+        ),
+        patch(
+            "agent.services.reschedule_service.execute_reschedule",
+            new=execute_reschedule_mock,
+        ),
+    ):
+        result = await _reschedule_appointment(
+            customer_phone=CUSTOMER_PHONE,
+            appointment_id=FAKE_APPT_ID,
+            new_date="mañana",
+            new_time="10:00",
+            reason=None,
+        )
+
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_relative_date"
+    assert result["message"]  # Spanish message present
+    execute_reschedule_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reschedule_g2_sunday_closed_no_db_write():
+    """T3 G2: new_date=Sunday ISO → error_code=closed_day, no DB write."""
+    from agent.tools.manage_appointments_tool import _reschedule_appointment
+    from agent.tools._booking_validators import DateValidationResult
+
+    closed_result = DateValidationResult(
+        date_iso=None,
+        error_code="closed_day",
+        error_message="El salón está cerrado el domingo.",
+        payload={"closed_date": SUNDAY_DATE, "reason": "domingo"},
+    )
+
+    execute_reschedule_mock = AsyncMock()
+
+    with (
+        patch(
+            "agent.services.reschedule_service.validate_reschedule_eligibility",
+            new=AsyncMock(return_value=_make_eligibility_ok()),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_booking_date",
+            new=AsyncMock(return_value=closed_result),
+        ),
+        patch(
+            "agent.services.reschedule_service.execute_reschedule",
+            new=execute_reschedule_mock,
+        ),
+    ):
+        result = await _reschedule_appointment(
+            customer_phone=CUSTOMER_PHONE,
+            appointment_id=FAKE_APPT_ID,
+            new_date=SUNDAY_DATE,
+            new_time="10:00",
+            reason=None,
+        )
+
+    assert result["success"] is False
+    assert result["error_code"] == "closed_day"
+    execute_reschedule_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reschedule_g3_advance_policy_violated_no_db_write():
+    """T3 G3: new_date=tomorrow (within lead-time) → error_code=advance_policy_violated, no DB write."""
+    from agent.tools.manage_appointments_tool import _reschedule_appointment
+    from agent.tools._booking_validators import DateValidationResult
+
+    violation_result = DateValidationResult(
+        date_iso=None,
+        error_code="advance_policy_violated",
+        error_message="La fecha viola la política de antelación mínima.",
+        payload={"min_date": "2026-05-01", "min_days": 3},
+    )
+
+    execute_reschedule_mock = AsyncMock()
+
+    with (
+        patch(
+            "agent.services.reschedule_service.validate_reschedule_eligibility",
+            new=AsyncMock(return_value=_make_eligibility_ok()),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_booking_date",
+            new=AsyncMock(return_value=violation_result),
+        ),
+        patch(
+            "agent.services.reschedule_service.execute_reschedule",
+            new=execute_reschedule_mock,
+        ),
+    ):
+        result = await _reschedule_appointment(
+            customer_phone=CUSTOMER_PHONE,
+            appointment_id=FAKE_APPT_ID,
+            new_date="2026-04-29",  # tomorrow — within lead-time
+            new_time="10:00",
+            reason=None,
+        )
+
+    assert result["success"] is False
+    assert result["error_code"] == "advance_policy_violated"
+    assert "min_date" in result  # payload spread into result
+    execute_reschedule_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reschedule_happy_path_valid_date_calls_db():
+    """T3 happy path: valid future ISO → validator returns ok → execute_reschedule is called."""
+    from agent.tools.manage_appointments_tool import _reschedule_appointment
+    from agent.tools._booking_validators import DateValidationResult
+
+    ok_result = DateValidationResult(
+        date_iso=OPEN_DATE,
+        error_code=None,
+        error_message=None,
+        payload={},
+    )
+
+    execute_reschedule_mock = AsyncMock(return_value=_make_execute_reschedule_result())
+
+    with (
+        patch(
+            "agent.services.reschedule_service.validate_reschedule_eligibility",
+            new=AsyncMock(return_value=_make_eligibility_ok()),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_booking_date",
+            new=AsyncMock(return_value=ok_result),
+        ),
+        patch(
+            "agent.services.reschedule_service.execute_reschedule",
+            new=execute_reschedule_mock,
+        ),
+    ):
+        result = await _reschedule_appointment(
+            customer_phone=CUSTOMER_PHONE,
+            appointment_id=FAKE_APPT_ID,
+            new_date=OPEN_DATE,
+            new_time="10:00",
+            reason=None,
+        )
+
+    assert result["success"] is True
+    execute_reschedule_mock.assert_awaited_once()

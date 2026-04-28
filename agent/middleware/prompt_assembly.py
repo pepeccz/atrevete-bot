@@ -1,11 +1,13 @@
 """PromptAssemblyMiddleware — assemble XML slots into system_message.
 
 Reads _slot_* keys written by upstream middlewares and appends them
-to system_message.content in fixed order:
-  1. _slot_customer          → <customer>...</customer>
-  2. _slot_upcoming_appointments → <upcoming_appointments>...</upcoming_appointments>
-  3. _slot_business_hours    → <business_hours>...</business_hours>
-  4. _slot_catalog           → <catalog>...</catalog>
+to system_message.content in SLOT_REGISTRY order (defined in agent.state):
+  1. _slot_today
+  2. _slot_customer
+  3. _slot_upcoming_appointments
+  4. _slot_business_hours
+  5. _slot_availability
+  6. _slot_catalog
 
 Missing slots are silently skipped.
 Must run AFTER DynamicPromptMiddleware and BEFORE SummarizeMiddleware.
@@ -20,16 +22,9 @@ from typing import ClassVar
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import SystemMessage
 
-logger = logging.getLogger(__name__)
+from agent.state import SLOT_REGISTRY
 
-_SLOT_ORDER = [
-    "_slot_today",
-    "_slot_customer",
-    "_slot_upcoming_appointments",
-    "_slot_business_hours",
-    "_slot_availability",  # ADR-1: after business_hours, before catalog
-    "_slot_catalog",
-]
+logger = logging.getLogger(__name__)
 
 
 class PromptAssemblyMiddleware(AgentMiddleware):
@@ -48,7 +43,7 @@ class PromptAssemblyMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         state = request.state or {}
 
-        blocks = [state[key] for key in _SLOT_ORDER if state.get(key)]
+        blocks = [state[key] for key in SLOT_REGISTRY if state.get(key)]
 
         if not blocks:
             return await handler(request)

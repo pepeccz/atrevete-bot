@@ -332,7 +332,7 @@ async def check_availability(
 
     # --- slot_time exact-match filter (pre-book re-validation, ADR-7) ---
     if slot_time is not None:
-        matched = [s for s in clean_slots if s.get("start_iso", "").find(f"T{slot_time}:") != -1]
+        matched = [s for s in clean_slots if s.get("start_iso", "").find(f"T{slot_time}:00") != -1]
         if matched:
             return ToolResponse(
                 status="ok",

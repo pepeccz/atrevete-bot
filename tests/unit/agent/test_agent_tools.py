@@ -21,7 +21,7 @@ EXPECTED_TOOL_NAMES = {
 
 def test_agent_tools_count():
     """AGENT_TOOLS must have exactly 6 tools after wiring update_booking."""
-    from agent.agent_factory import AGENT_TOOLS
+    from agent.tools import AGENT_TOOLS
 
     assert len(AGENT_TOOLS) == 6, (
         f"Expected 6 tools in AGENT_TOOLS, got {len(AGENT_TOOLS)}: "
@@ -31,7 +31,7 @@ def test_agent_tools_count():
 
 def test_update_booking_registered():
     """update_booking must be present in AGENT_TOOLS by name."""
-    from agent.agent_factory import AGENT_TOOLS
+    from agent.tools import AGENT_TOOLS
 
     names = {t.name for t in AGENT_TOOLS}
     assert "update_booking" in names, (
@@ -41,7 +41,7 @@ def test_update_booking_registered():
 
 def test_original_tools_still_present():
     """The original 5 tools must remain registered (no regressions)."""
-    from agent.agent_factory import AGENT_TOOLS
+    from agent.tools import AGENT_TOOLS
 
     names = {t.name for t in AGENT_TOOLS}
     original = EXPECTED_TOOL_NAMES - {"update_booking"}
@@ -53,7 +53,7 @@ def test_original_tools_still_present():
 
 def test_all_expected_tools_present():
     """AGENT_TOOLS must contain exactly the expected 6 tool names."""
-    from agent.agent_factory import AGENT_TOOLS
+    from agent.tools import AGENT_TOOLS
 
     names = {t.name for t in AGENT_TOOLS}
     assert names == EXPECTED_TOOL_NAMES, (

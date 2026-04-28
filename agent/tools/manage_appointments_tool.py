@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from agent.tools._booking_validators import validate_booking_date
+
 logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
@@ -272,9 +274,20 @@ async def _reschedule_appointment(
                 "new_start_time": None,
             }
 
+        # Step 1b — booking-date validation (G1 → G2 → G3)
+        # Called before datetime.strptime so guard errors are caught early without DB writes.
+        date_validation = await validate_booking_date(date_iso=new_date, date_text=new_date)
+        if not date_validation.ok:
+            return {
+                "success": False,
+                "error_code": date_validation.error_code,
+                "message": date_validation.error_message,
+                **date_validation.payload,
+            }
+
         # Step 2 — parse datetime with Madrid timezone
         try:
-            naive = datetime.strptime(f"{new_date} {new_time}", "%Y-%m-%d %H:%M")
+            naive = datetime.strptime(f"{date_validation.date_iso} {new_time}", "%Y-%m-%d %H:%M")
         except ValueError:
             return {
                 "success": False,

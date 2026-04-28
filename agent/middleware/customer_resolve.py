@@ -10,13 +10,56 @@ Logic:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 
+from shared.redis_client import get_redis_client
+
 logger = logging.getLogger(__name__)
+
+_CUSTOMER_CACHE_KEY_FMT = "customer:phone:{phone}"
+
+
+async def _get_cached_customer(phone: str) -> dict | None:
+    """Fail-open Redis GET. Returns parsed dict or None on miss/error."""
+    try:
+        client = get_redis_client()
+        raw = await client.get(_CUSTOMER_CACHE_KEY_FMT.format(phone=phone))
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning("customer cache GET failed phone=…: %s", exc)
+        return None
+
+
+async def _set_cached_customer(phone: str, data: dict) -> None:
+    """Fail-open Redis SETEX with configured TTL."""
+    try:
+        from shared.config import get_settings
+
+        client = get_redis_client()
+        ttl = get_settings().CUSTOMER_CACHE_TTL_SECONDS
+        await client.setex(
+            _CUSTOMER_CACHE_KEY_FMT.format(phone=phone),
+            ttl,
+            json.dumps(data, default=str),
+        )
+    except Exception as exc:
+        logger.warning("customer cache SETEX failed phone=…: %s", exc)
+
+
+async def _invalidate_cached_customer(phone: str) -> None:
+    """Fail-open Redis DEL. Called by name-write paths and admin edits."""
+    try:
+        client = get_redis_client()
+        await client.delete(_CUSTOMER_CACHE_KEY_FMT.format(phone=phone))
+    except Exception as exc:
+        logger.warning("customer cache DEL failed phone=…: %s", exc)
 
 
 async def _lookup_customer(phone: str) -> dict | None:
@@ -70,9 +113,12 @@ class CustomerResolveMiddleware(AgentMiddleware):
         if not phone:
             return await handler(request)
 
-        # Always do lookup when phone exists — ensures ## Cliente block is present for booking_flow.md
-        # (previously skipped if customer_id already set, but the flow depends on the block being there)
-        customer = await _lookup_customer(phone)
+        # Cache-aside: attempt Redis GET before DB
+        customer = await _get_cached_customer(phone)
+        if customer is None:
+            customer = await _lookup_customer(phone)
+            if customer is not None:
+                await _set_cached_customer(phone, customer)
 
         if customer is None:
             # Phone-only <customer> block for new (unknown) customers

@@ -121,6 +121,7 @@ markers = [
     "integration: Integration tests",
     "e2e: End-to-end scenario tests",
     "slow: Slow running tests",
+    "llm: Tests that require live OpenRouter LLM credentials (skip in CI without creds)",
 ]
 
 [tool.coverage.run]

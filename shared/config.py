@@ -207,6 +207,24 @@ class Settings(BaseSettings):
         description="Groq API key for Whisper audio transcription (console.groq.com)",
     )
 
+    # Summarizer efficiency — cursor-gated compaction
+    SUMMARIZE_NEW_MSG_THRESHOLD: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Minimum number of new messages (since last compaction) required before "
+            "SummarizeMiddleware triggers the LLM summarizer again. Default 10 mirrors "
+            "keep_tail=10 so one full tail of fresh traffic is needed per compaction."
+        ),
+    )
+    SUMMARIZER_MODEL: str = Field(
+        default="",
+        description=(
+            "Optional cheaper OpenRouter model slug for summarization "
+            "(e.g. 'openai/gpt-4.1-nano'). Empty string → fall back to LLM_MODEL."
+        ),
+    )
+
     # State Delivery — synthetic message primitive (E1 seed)
     STATE_DELIVERY_SYNTHETIC_ENABLED: bool = Field(
         default=True,
@@ -230,6 +248,16 @@ class Settings(BaseSettings):
             "Feature flag for the optimized prompt system. When True, uses layered prompts "
             "(cached system content + dynamic context) for 25% token reduction. "
             "When False, falls back to legacy inline prompts for backward compatibility."
+        ),
+    )
+
+    # Customer Cache
+    CUSTOMER_CACHE_TTL_SECONDS: int = Field(
+        default=300,
+        ge=1,
+        description=(
+            "TTL in seconds for the customer cache-aside Redis entries. "
+            "Controls maximum staleness window for is_returning flag. Default: 300s (5 min)."
         ),
     )
 

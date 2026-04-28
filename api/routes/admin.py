@@ -2095,6 +2095,12 @@ async def update_customer(
         await session.commit()
         await session.refresh(customer)
 
+        # Invalidate customer cache when name fields change
+        if request.first_name is not None or request.last_name is not None:
+            from agent.middleware.customer_resolve import _invalidate_cached_customer
+
+            await _invalidate_cached_customer(customer.phone)
+
         return {
             "id": str(customer.id),
             "phone": customer.phone,
@@ -5021,6 +5027,66 @@ async def list_conversations(
     except Exception as e:
         logger.error(f"Error listing conversations: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve conversations: {str(e)}")
+
+
+@router.get("/conversations/{conversation_id}/live")
+async def get_conversation_live(
+    conversation_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Return live Redis checkpoint summary for an active conversation.
+
+    Always returns HTTP 200. When no checkpoint is found, the null-body shape
+    is returned instead of raising a 404, so the admin UI can handle absence
+    gracefully without an error state.
+
+    Response body:
+        {
+            "summary": str | null,        — conversation_summary from checkpoint, null when < 20 msgs
+            "source": "redis" | "null",   — "redis" when checkpoint found, "null" otherwise
+            "message_count": int | null,
+            "last_updated": str | null,   — ISO8601 checkpoint timestamp
+        }
+
+    The ``summary`` field is forced to ``null`` when ``message_count`` < 20 (SummarizeMiddleware
+    only generates summaries after 20 messages, so earlier values are stale/absent).
+    """
+    from shared.checkpointer import get_checkpointer
+
+    _NULL_BODY = {"summary": None, "source": "null", "message_count": None, "last_updated": None}
+
+    try:
+        thread_id = f"v2:{conversation_id}"
+        config = {"configurable": {"thread_id": thread_id}}
+
+        async with get_checkpointer() as saver:
+            tpl = await saver.aget_tuple(config)
+
+        if tpl is None:
+            return _NULL_BODY
+
+        channel_values = tpl.checkpoint.get("channel_values", {})
+        messages = channel_values.get("messages", []) or []
+        message_count = len(messages)
+        raw_summary: str | None = channel_values.get("conversation_summary")
+        summary = raw_summary if message_count >= 20 else None
+        last_updated: str | None = tpl.checkpoint.get("ts")
+
+        return {
+            "summary": summary,
+            "source": "redis",
+            "message_count": message_count,
+            "last_updated": last_updated,
+        }
+
+    except Exception as exc:
+        logger.warning(
+            "get_conversation_live failed for conversation_id=%s: %s",
+            conversation_id,
+            exc,
+            exc_info=True,
+        )
+        return _NULL_BODY
 
 
 @router.get("/conversations/{conversation_id}")

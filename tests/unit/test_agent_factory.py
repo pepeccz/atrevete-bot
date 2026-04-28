@@ -31,17 +31,18 @@ def test_build_conversation_agent_returns_compiled_graph():
     assert hasattr(graph, "ainvoke"), "compiled graph must have ainvoke method"
 
 
-def test_build_conversation_agent_has_five_tools():
-    """The graph is built with the five canonical booking/general tools."""
-    from agent.agent_factory import AGENT_TOOLS
+def test_build_conversation_agent_has_six_tools():
+    """AGENT_TOOLS from agent.tools contains exactly the 6 canonical tool names."""
+    from agent.tools import AGENT_TOOLS
 
-    assert len(AGENT_TOOLS) == 5
-    tool_names = {t.name for t in AGENT_TOOLS}
-    assert "check_availability" in tool_names
-    assert "get_next_available_options" in tool_names
-    assert "book" in tool_names
-    assert "manage_appointments" in tool_names
-    assert "escalate" in tool_names
+    assert {t.name for t in AGENT_TOOLS} == {
+        "check_availability",
+        "get_next_available_options",
+        "book",
+        "manage_appointments",
+        "escalate",
+        "update_booking",
+    }
 
 
 def test_build_conversation_agent_accepts_none_checkpointer():

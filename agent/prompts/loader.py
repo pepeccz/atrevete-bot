@@ -85,6 +85,7 @@ def load_system_prompt() -> str:
         5. shared/booking_flow.md       — step-by-step booking protocol
         6. shared/tools_contract.md     — tool call rules for all 5 tools
         7. shared/appointment_management_flow.md — appointment lifecycle flow
+        8. shared/slot_contract.md              — dynamic slot preamble (today, customer, …)
 
     Returns:
         str: Full system prompt, newline-separated sections.
@@ -97,5 +98,6 @@ def load_system_prompt() -> str:
         _read("booking_flow.md"),
         _read("tools_contract.md"),
         _read("appointment_management_flow.md"),
+        _read("slot_contract.md"),
     ]
     return "\n\n---\n\n".join(s for s in sections if s)

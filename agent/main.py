@@ -9,8 +9,11 @@ import logging
 import os
 import signal
 import sys
+from time import perf_counter
+from typing import Any
+from uuid import UUID
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from agent.batching.message_batcher import MessageBatcher
 from agent.checkpointer import get_checkpointer, setup_checkpointer
@@ -43,6 +46,129 @@ shutdown_event = asyncio.Event()
 batcher: MessageBatcher | None = None
 
 _PHONE_GUARD_REPLY = "No pude identificar tu número. Un compañero te contactará en breve."
+
+
+# =============================================================================
+# Telemetry helpers — pure functions, no side effects, easy to unit-test
+# =============================================================================
+
+_TOOL_RESULT_MAX_CHARS = 500
+
+
+def _extract_tokens(messages: list[Any]) -> tuple[int | None, int | None]:
+    """Extract token counts from the last AIMessage in *messages*.
+
+    Returns (tokens_in, tokens_out). Both are None when usage_metadata is absent
+    or when there is no AIMessage in the slice.
+
+    Args:
+        messages: Slice of LangChain messages for the current turn.
+
+    Returns:
+        Tuple (tokens_in, tokens_out) — either both ints or both None.
+    """
+    last_ai: AIMessage | None = None
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            last_ai = msg
+    if last_ai is None:
+        return None, None
+    meta = getattr(last_ai, "usage_metadata", None)
+    if not meta:
+        return None, None
+    return meta.get("input_tokens"), meta.get("output_tokens")
+
+
+def _extract_tool_calls(messages: list[Any]) -> list[dict] | None:
+    """Build a compact tool-calls list from paired AIMessage.tool_calls + ToolMessages.
+
+    For each tool_call in the slice's AIMessages, locates the matching ToolMessage
+    by tool_call_id and stores a summary truncated to _TOOL_RESULT_MAX_CHARS chars.
+
+    Returns None (not []) when no tool invocations are present.
+
+    Args:
+        messages: Slice of LangChain messages for the current turn.
+
+    Returns:
+        List of {name, args, result_summary} dicts, or None.
+    """
+    # Index ToolMessages by tool_call_id for O(1) lookup
+    tool_results: dict[str, str] = {}
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            tool_results[msg.tool_call_id] = content
+
+    entries: list[dict] = []
+    for msg in messages:
+        if not isinstance(msg, AIMessage):
+            continue
+        for tc in getattr(msg, "tool_calls", []) or []:
+            call_id = tc.get("id") or tc.get("tool_call_id", "")
+            raw_result = tool_results.get(call_id, "")
+            entries.append(
+                {
+                    "name": tc.get("name", ""),
+                    "args": tc.get("args", {}),
+                    "result_summary": raw_result[:_TOOL_RESULT_MAX_CHARS],
+                }
+            )
+
+    return entries if entries else None
+
+
+async def record_turn(
+    conversation_history_id: UUID,
+    latency_ms: int,
+    messages_slice: list[Any],
+) -> None:
+    """Insert one ConversationTurn row for the completed agent turn.
+
+    Best-effort: all exceptions are caught, logged at WARNING, and swallowed
+    so telemetry failures never affect the user-visible agent response.
+
+    Args:
+        conversation_history_id: PK of the parent ConversationHistory row.
+        latency_ms: Wall-clock time of graph.ainvoke() in milliseconds.
+        messages_slice: New messages appended during this turn.
+    """
+    try:
+        from sqlalchemy import func, select
+
+        from database.connection import get_async_session
+        from database.models import ConversationTurn
+
+        tokens_in, tokens_out = _extract_tokens(messages_slice)
+        tool_calls = _extract_tool_calls(messages_slice)
+
+        async with get_async_session() as session:
+            count_result = await session.execute(
+                select(func.count()).select_from(ConversationTurn).where(
+                    ConversationTurn.conversation_history_id == conversation_history_id
+                )
+            )
+            existing_count: int = count_result.scalar() or 0
+            turn_number = existing_count + 1
+
+            session.add(
+                ConversationTurn(
+                    conversation_history_id=conversation_history_id,
+                    turn_number=turn_number,
+                    latency_ms=latency_ms,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    tool_calls=tool_calls,
+                )
+            )
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Telemetry record_turn failed (non-fatal) — %s: %s",
+            type(exc).__name__,
+            exc,
+            extra={"conversation_history_id": str(conversation_history_id)},
+        )
 
 
 def _is_phone_empty(phone: str | None) -> bool:
@@ -309,7 +435,9 @@ async def subscribe_to_incoming_messages():
                 # ================================================================
                 # GRAPH INVOCATION WITH CHECKPOINT FLUSH (ADR-010)
                 # ================================================================
+                _t0 = perf_counter()
                 result = await graph.ainvoke(invoke_payload, config=config)
+                _latency_ms = int((perf_counter() - _t0) * 1000)
 
                 # ================================================================
                 # CHECKPOINT PERSISTENCE (ADR-011: Single Source of Truth)
@@ -364,6 +492,36 @@ async def subscribe_to_incoming_messages():
                 )
                 logger.info(f"Sent fallback message for conversation_id={conversation_id}")
                 return
+
+            # ================================================================
+            # TELEMETRY CAPTURE (best-effort, never blocks response)
+            # ================================================================
+            try:
+                from sqlalchemy import select as _sa_select
+
+                from database.connection import get_async_session as _get_session
+                from database.models import ConversationHistory as _CH
+
+                async with _get_session() as _tel_session:
+                    _ch_result = await _tel_session.execute(
+                        _sa_select(_CH.id).where(_CH.conversation_id == conversation_id)
+                    )
+                    _ch_id = _ch_result.scalar_one_or_none()
+
+                if _ch_id is not None:
+                    _result_messages = result.get("messages", [])
+                    _messages_slice = _result_messages[messages_before:]
+                    await record_turn(
+                        conversation_history_id=_ch_id,
+                        latency_ms=_latency_ms,
+                        messages_slice=_messages_slice,
+                    )
+            except Exception as _tel_exc:  # noqa: BLE001
+                logger.warning(
+                    "Telemetry capture failed (non-fatal): %s",
+                    _tel_exc,
+                    extra={"conversation_id": conversation_id},
+                )
 
             # ================================================================
             # PUBLISH FRESHNESS GUARD (T1.1)

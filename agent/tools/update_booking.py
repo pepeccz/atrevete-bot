@@ -19,13 +19,19 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
+from agent.tools._booking_validators import (
+    ERROR_ADVANCE_POLICY_VIOLATED,
+    ERROR_CLOSED_DAY,
+    ERROR_INVALID_RELATIVE_DATE,
+    validate_booking_date,
+)
 from agent.tools.schemas import ToolResponse
 
 _MADRID_TZ = ZoneInfo("Europe/Madrid")
@@ -33,25 +39,58 @@ _MADRID_TZ = ZoneInfo("Europe/Madrid")
 logger = logging.getLogger(__name__)
 
 
+def _parse_iso_to_utc(s: str) -> datetime | None:
+    """Parse an ISO 8601 string to a UTC-aware datetime, or return None on any failure.
+
+    - Falsy or non-string input → None.
+    - Normalizes trailing 'Z' to '+00:00' (defensive shim; Python 3.11 fromisoformat
+      handles Z natively, but the explicit replace is cheap and readable).
+    - Naive datetime (no tzinfo) → None (fail-closed; see design ADR-2).
+    - ValueError → None (fail-closed).
+    Never raises.
+    """
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        normalized = s.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        logger.warning(
+            "gate.naive_iso_denied",
+            extra={"slot_iso": s},
+        )
+        return None
+    return dt.astimezone(timezone.utc)
+
+
 def _find_matching_check_availability(
     messages: list,
     slot_iso: str | None,
     stylist_id: str | None,
 ) -> bool:
-    """Scan the last 6 messages for a check_availability ToolMessage confirming the slot.
+    """Scan the full message history for a check_availability ToolMessage confirming the slot.
 
     Returns True if a matching confirmation is found, False otherwise.
+    Comparison is UTC-normalized datetime equality — no substring matching.
+    Full scan (no fixed-size tail slice): SummarizeMiddleware already bounds history to ~20 msgs.
+
     A message matches if:
     - name == "check_availability"
     - status == "ok"
-    - payload.exact_match == True OR slot.start_iso contains slot_iso
+    - UTC-normalized slot datetime equals UTC-normalized slot_iso
     - slot.stylist_id matches stylist_id (when both are provided)
     """
     if not messages or not slot_iso:
         return False
 
-    recent = messages[-6:]
-    for msg in reversed(recent):
+    slot_dt = _parse_iso_to_utc(slot_iso)
+    if slot_dt is None:
+        # slot_iso is malformed or naive — fail-closed
+        return False
+
+    for msg in messages:
         if not hasattr(msg, "name") or msg.name != "check_availability":
             continue
         try:
@@ -65,15 +104,18 @@ def _find_matching_check_availability(
         payload = data.get("payload", {})
         slots = payload.get("slots", [])
         for s in slots:
-            s_dt = s.get("start_iso", "")
+            s_dt = _parse_iso_to_utc(s.get("start_iso", ""))
+            if s_dt is None:
+                continue
+            if s_dt != slot_dt:
+                continue
             s_stylist = s.get("stylist_id", "")
-            dt_match = slot_iso in s_dt or s_dt in slot_iso or s_dt == slot_iso
             stylist_match = (
                 stylist_id is None
                 or s_stylist is None
                 or str(s_stylist) == str(stylist_id)
             )
-            if dt_match and stylist_match:
+            if stylist_match:
                 return True
 
     return False
@@ -365,28 +407,11 @@ async def _update_booking_impl(
         if no_preference_stylist:
             collected["no_preference_stylist"] = True
 
-        # ── Step 6: date_text resolution ──────────────────────────────────────
-        if not date_iso and date_text:
-            from agent.booking.resolvers.time_resolver import resolve_relative_date
-
-            today_local = datetime.now(_MADRID_TZ).date()
-            resolved = resolve_relative_date(date_text, today_local)
-            if resolved is not None:
-                date_iso = resolved.isoformat()
-            else:
-                return ToolResponse(
-                    status="partial",
-                    collected=collected,
-                    missing=["date_iso"],
-                    next_step="date_clarification_required",
-                    errors=[f"No pude entender la fecha: {date_text}"],
-                ).model_dump_json()
-
         # ── Step 6b: no date — offer_slots when stylist is resolved ──────────
         # When a stylist (or no-preference) is set and no date is provided, signal the LLM
         # to call get_next_available_options immediately using the payload below.
         # next_step="date_required" is only the 0-options fallback, driven by prompt rules.
-        if not date_iso:
+        if not date_iso and not date_text:
             missing.append("date_iso")
             stylist_resolved = bool(collected.get("stylist_id")) or bool(
                 collected.get("no_preference_stylist")
@@ -413,73 +438,69 @@ async def _update_booking_impl(
                 next_step="date_required",
             ).model_dump_json()
 
-        # Validate date format
-        try:
-            datetime.fromisoformat(date_iso)
-            collected["date_iso"] = date_iso
-        except ValueError:
-            return ToolResponse(
-                status="rejected",
-                collected=collected,
-                missing=["date_iso"],
-                next_step="date_required",
-                errors=[f"Fecha inválida: {date_iso}"],
-            ).model_dump_json()
+        # ── Steps 6, 6c, 6d: date resolution + G1/G2/G3 via shared validator ──
+        # validate_booking_date resolves relative text (G1), checks closed days (G2),
+        # and enforces lead-time policy (G3). Short-circuits on first failure.
+        # The adapter maps canonical error codes to this tool's wire-format next_step values.
+        _date_validation = await validate_booking_date(
+            date_iso=date_iso,
+            date_text=date_text,
+        )
 
-        # ── Step 6c: closed-day pre-validation ───────────────────────────────
-        # Check BEFORE name/notes/booking_ready so we never proceed on a closed day.
-        # Fails-closed on DB error (is_date_closed returns True) — safer than booking on
-        # a closed day at the cost of an occasional false-closure message.
-        from shared.business_hours_validator import is_date_closed
-
-        _parsed_date = datetime.fromisoformat(date_iso).date()
-        if await is_date_closed(_parsed_date):
-            logger.info(
-                "tool.response.rejected",
-                extra={"tool_name": "update_booking", "next_step": "closed_day_required"},
+        if not _date_validation.ok:
+            # Adapter mapping: canonical error codes → prompt-graph next_step values (ADR-2, ADR-6)
+            _next_step_map = {
+                ERROR_INVALID_RELATIVE_DATE: "date_clarification_required",
+                ERROR_CLOSED_DAY: "closed_day_required",
+                ERROR_ADVANCE_POLICY_VIOLATED: "advance_policy_violated",
+            }
+            _next_step = _next_step_map.get(
+                _date_validation.error_code, "date_required"  # fallback for unknown codes
             )
-            return ToolResponse(
-                status="rejected",
-                collected=collected,
-                missing=["date_iso"],
-                next_step="closed_day_required",
-                payload={
-                    "rejected_date": date_iso,
-                    "weekday": _parsed_date.strftime("%A").lower(),
+
+            # Build caller-owned payload: validator payload + tool-specific context
+            _resolved_rejected = date_iso or (
+                _date_validation.payload.get("raw_text", date_text) or date_text or ""
+            )
+            if _date_validation.error_code == ERROR_CLOSED_DAY:
+                # Preserve the full payload shape expected by the prompt graph
+                _closed_iso = _date_validation.payload.get("closed_date", date_iso)
+                _closed_date = datetime.fromisoformat(_closed_iso).date() if _closed_iso else None
+                _adapter_payload = {
+                    "rejected_date": _closed_iso,
+                    "weekday": _closed_date.strftime("%A").lower() if _closed_date else "",
                     "stylist_id": collected.get("stylist_id"),
                     "service_ids": collected.get("service_ids", []),
-                },
-                errors=[f"El salón está cerrado el {date_iso}"],
-            ).model_dump_json()
-
-        # ── Step 6d: advance-policy (lead-time) pre-validation ───────────────
-        # Mirror Step 6c shape. Reject BEFORE name/notes capture so we don't
-        # collect PII for an unbookable slot. Contract documented in
-        # critical_rules.md rule 27 + booking_flow.md Paso 2.
-        _today_madrid = datetime.now(_MADRID_TZ).date()
-        _first_valid = _today_madrid + timedelta(days=MIN_BOOKING_DAYS)
-        if _parsed_date < _first_valid:
-            logger.info(
-                "tool.response.rejected",
-                extra={"tool_name": "update_booking", "next_step": "advance_policy_violated"},
-            )
-            return ToolResponse(
-                status="rejected",
-                collected=collected,
-                missing=["date_iso"],
-                next_step="advance_policy_violated",
-                payload={
+                }
+            elif _date_validation.error_code == ERROR_ADVANCE_POLICY_VIOLATED:
+                _adapter_payload = {
                     "rejected_date": date_iso,
-                    "first_valid_date": _first_valid.isoformat(),
-                    "policy_min_days": MIN_BOOKING_DAYS,
+                    "first_valid_date": _date_validation.payload.get("min_date", ""),
+                    "policy_min_days": _date_validation.payload.get("min_days", MIN_BOOKING_DAYS),
                     "stylist_id": collected.get("stylist_id"),
                     "service_ids": collected.get("service_ids", []),
-                },
-                errors=[
-                    f"La fecha {date_iso} viola la política de antelación mínima "
-                    f"({MIN_BOOKING_DAYS} días). Primera fecha válida: {_first_valid.isoformat()}."
-                ],
+                }
+            else:
+                # G1: date_clarification_required — no extra payload needed
+                _adapter_payload = {}
+
+            logger.info(
+                "tool.response.rejected",
+                extra={"tool_name": "update_booking", "next_step": _next_step},
+            )
+            _is_g1 = _date_validation.error_code == ERROR_INVALID_RELATIVE_DATE
+            return ToolResponse(
+                status="partial" if _is_g1 else "rejected",
+                collected=collected,
+                missing=["date_iso"],
+                next_step=_next_step,
+                payload=_adapter_payload,
+                errors=[_date_validation.error_message] if _date_validation.error_message else [],
             ).model_dump_json()
+
+        # Validation passed — use the canonical resolved date
+        date_iso = _date_validation.date_iso
+        collected["date_iso"] = date_iso
 
         # ── Step 7: name required — after stylist+date+closed-day-check ──────
         # name_required intentionally fires AFTER date_iso is resolved AND closed-day-validated.
