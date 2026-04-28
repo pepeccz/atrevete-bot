@@ -315,7 +315,7 @@ def upgrade() -> None:
         old_id = generate_service_uuid(old_name)
         op.execute(
             sa.text(
-                "UPDATE services SET name = :n, description = :d WHERE id = :id"
+                "UPDATE services SET name = :n, description = :d WHERE id = CAST(:id AS uuid)"
             ).bindparams(n=new_name, d=new_desc, id=str(old_id))
         )
 
@@ -327,7 +327,7 @@ def downgrade() -> None:
         old_desc = OLD_DESCRIPTIONS[old_name]
         op.execute(
             sa.text(
-                "UPDATE services SET name = :n, description = :d WHERE id = :id"
+                "UPDATE services SET name = :n, description = :d WHERE id = CAST(:id AS uuid)"
             ).bindparams(n=old_name, d=old_desc, id=str(old_id))
         )
 
