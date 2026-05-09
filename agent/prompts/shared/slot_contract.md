@@ -9,4 +9,4 @@ El sistema inyecta los siguientes bloques XML en cada turno con datos reales de 
 - `<availability>` — huecos reales para los servicios resueltos (~60 s de caché)
 - `<catalog>` — catálogo de servicios activos con UUIDs y variantes
 
-Trabaja sólo con datos presentes en estos slots; no inventes valores ausentes.
+Trabaja sólo con datos presentes en estos slots.

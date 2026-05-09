@@ -14,8 +14,6 @@ Regla: si existen variantes en el catálogo, pregunta siempre antes de llamar a 
 
 ### Ejemplo 6 — Flujo completo: nuevo cliente, extras, nombre y notas
 
-Muestra el recorrido canónico completo desde el primer servicio hasta `book(confirmed=True)`.
-
 ```
 Cliente: "quiero un corte de mujer"
 Bot: → update_booking(services=["corte de mujer"])
@@ -60,17 +58,10 @@ Bot (turno B): → book(service_ids=[...], stylist_id="...", start_iso="2026-05-
 Bot: "Listo, reserva confirmada. Aquí tienes el enlace para añadirlo a tu calendario: [enlace]"
 ```
 
-Puntos clave:
-- `extras_asked` y `notes_asked` se pasan siempre de vuelta desde `collected`.
-- `name_required` dispara solo cuando el cliente es nuevo (sin `Nombre:` en `<customer>`).
-- `notes_optional` ofrece notas una sola vez; si el cliente declina, `notes=null` es válido.
-- `book` se llama solo en turno B, con `confirmed=true`.
 
 ---
 
-### Ejemplo 8 — Flujo slot-first: estilista resuelto → `offer_slots` → menú numerado → reserva
-
-Ilustra la ruta más habitual: estilista elegido antes que la fecha. El bot NUNCA pregunta "¿qué día?".
+### Ejemplo 8 — Flujo slot-first: `offer_slots` → menú numerado → reserva
 
 ```
 Cliente: "quiero un corte con Marta"
@@ -102,7 +93,3 @@ Bot:     → book(confirmed=True, ...) ← status=ok
 Bot:     "¡Listo! Reserva confirmada."
 ```
 
-Puntos clave:
-- Tras `offer_slots`, llama `get_next_available_options` SIN preguntar fecha.
-- La pregunta de notas usa el nombre de pila de la estilista.
-- El flujo de confirmación (dos turnos) aplica siempre.
