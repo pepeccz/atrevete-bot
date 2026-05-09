@@ -40,14 +40,14 @@ The assembly pipeline in `agent/prompts/loader.py`:
 shared/identity.md
   → shared/critical_rules.md
   → shared/glossary.md
-  → [MODE OVERLAY if applicable]
-  → dynamic_context (injected by loader.py)
+  → shared/booking_flow.md (if booking context active)
+  → dynamic_context (injected by loader.py via DynamicPromptMiddleware)
 ```
 
 **Key points**:
 - All `.md` files are cached at startup with 10-minute TTL
 - `loader.py:get_system_prompt()` concatenates shared/ files
-- Mode overlays (optional) append mode-specific instructions
+- All prompt files live under `agent/prompts/shared/` — there is no `modes/` subdirectory
 - Changes require cache clear (`loader.clear_prompt_cache()`) or service restart
 
 ---
@@ -61,9 +61,10 @@ Each rule/instruction type has exactly ONE canonical home.
 | Agent identity, name, personality | `shared/identity.md` | Single source of truth |
 | Rules that MUST NEVER be broken | `shared/critical_rules.md` | Hard constraints only |
 | Business terms, service glossary | `shared/glossary.md` | Definitions and synonyms |
-| Mode-specific flow | `modes/{mode}.md` | GREETING, BOOKING, GENERAL, ESCALATION |
-| Cancellation handling | `cancellation.md` | Standalone cancellation flow |
-| Conversation summary | `summarization_prompt.md` | Summarization logic |
+| Booking flow instructions | `shared/booking_flow.md` | Injected when booking context active |
+| Slot & time contract | `shared/slot_contract.md` | Slot resolution rules |
+| Tool call contract | `shared/tools_contract.md` | Tool usage rules for the LLM |
+| Appointment management | `shared/appointment_management_flow.md` | Appointment mgmt flow |
 | Legacy monolithic prompt | `maite_system_prompt.md` | **DEPRECATED** — do not edit |
 
 **PROHIBITED duplications**:
@@ -81,19 +82,19 @@ Token estimate: `len(content) // 4` (proxy — real GPT tokens ≈ words × 1.3)
 | `shared/identity.md` | ≤350 | ≤1,400 | Who is Maite — currently ~301t |
 | `shared/critical_rules.md` | ≤1,100 | ≤4,400 | Hard constraints — currently ~1,056t |
 | `shared/glossary.md` | N/A | N/A | **NOT loaded at runtime** — developer reference only |
-| `modes/greeting.md` | ≤280 | ≤1,120 | First contact — currently ~232t |
-| `modes/booking.md` | ≤1,800 | ≤7,200 | Booking flow (8-step + errors) — currently ~1,734t |
-| `modes/general.md` | ≤450 | ≤1,800 | FAQs — currently ~443t |
-| `modes/escalation.md` | N/A | N/A | **NOT loaded at runtime** — FSM in Python, doc only |
-| **RUNTIME TOTAL** | **≤3,980** | **≤15,920** | shared/ + active mode overlay |
+| `shared/booking_flow.md` | ≤1,800 | ≤7,200 | Booking flow instructions — currently ~1,734t |
+| `shared/slot_contract.md` | ≤450 | ≤1,800 | Slot & time resolution rules |
+| `shared/tools_contract.md` | N/A | N/A | Tool call contract for LLM |
+| `shared/appointment_management_flow.md` | N/A | N/A | Appointment management flow |
+| **RUNTIME TOTAL** | **≤3,980** | **≤15,920** | shared/ files assembled by loader.py |
 
-> **Note on `modes/booking.md`**: This file has a higher budget than other modes because it covers an 8-step flow with error handling, date parsing, and upsell logic. The 1,800t ceiling reflects the minimum after a full deduplication pass (April 2026). Do NOT compress below ~1,500t without a dedicated exploration — further cuts risk behavioral regressions on Steps 4–8.
+> **Note on `shared/booking_flow.md`**: This file has a higher budget because it covers an 8-step flow with error handling, date parsing, and upsell logic. The 1,800t ceiling reflects the minimum after a full deduplication pass (April 2026). Do NOT compress below ~1,500t without a dedicated exploration — further cuts risk behavioral regressions.
 
-> **Note on `glossary.md` and `escalation.md`**: These files are **never injected into the LLM context**. `glossary.md` is excluded by `loader.py` (tools serve the service catalog). `escalation.md` is never loaded because EscalationMode is a deterministic Python FSM. Edits to these files have zero runtime impact.
+> **Note on `shared/glossary.md`**: This file is **never injected into the LLM context**. It is excluded by `loader.py` (tools serve the service catalog). Edits have zero runtime impact.
 
 **Measure current size**:
 ```bash
-python3 -c "print(len(open('agent/prompts/modes/booking.md').read()) // 4)"
+python3 -c "print(len(open('agent/prompts/shared/booking_flow.md').read()) // 4)"
 ```
 
 ---
@@ -117,15 +118,15 @@ python3 -c "print(len(open('agent/prompts/modes/booking.md').read()) // 4)"
 
 ❌ **This file is DEPRECATED** (28KB legacy monolith)
 
-**Why harmful**: It's not used by the v6.0 loader. Changes here have no effect.
+**Why harmful**: It's not used by the current loader. Changes here have no effect.
 
-**Rule**: Edit `shared/*.md` and `modes/*.md` instead.
+**Rule**: Edit `shared/*.md` instead.
 
 ---
 
 ### AP-2: Duplicate Rules
 
-❌ Same rule in `shared/critical_rules.md` AND `modes/booking.md`
+❌ Same rule in `shared/critical_rules.md` AND `shared/booking_flow.md`
 
 **Why harmful**: Creates contradictions when rules diverge.
 
@@ -147,7 +148,7 @@ python3 -c "print(len(open('agent/prompts/modes/booking.md').read()) // 4)"
 
 ❌ Editing `legacy/step*.md` files
 
-**Why harmful**: These are archived FSM prompts, not used in v6.0.
+**Why harmful**: These are archived FSM prompts, not used in the current `create_agent` architecture.
 
 **Rule**: Do not touch `legacy/` directory.
 
@@ -178,7 +179,7 @@ python3 -c "print(len(open('agent/prompts/modes/booking.md').read()) // 4)"
 
 ## Resources
 
-- **Prompt files**: `agent/prompts/` (`shared/` + `modes/`)
+- **Prompt files**: `agent/prompts/shared/` (all prompt .md files live here)
 - **Assembly logic**: `agent/prompts/loader.py`
 - **Dynamic context**: `agent/prompts/dynamic_context.py`
 - **Cache control**: `loader.clear_prompt_cache()`

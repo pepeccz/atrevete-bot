@@ -3,14 +3,14 @@
 **Domain**: booking
 **Source change**: fix-booking-confirmation-bug
 **Archived**: 2026-03-27
-**Architecture**: LLM-driven mode-based (v6.0) — BookingContext + _pre_tool_call + _build_response
+**Architecture**: LangChain `create_agent` + 7 middleware (SSOT: `agent/agent_factory.py:47-55`) — booking logic in `agent/tools/book.py`
 
 ---
 
 ## Requirement 1 — Inline customer creation for new WhatsApp users
 
-**File**: `agent/modes/booking_mode.py`
-**Location**: `_pre_tool_call`, before `NO_CUSTOMER_ID` rejection gate
+**File**: `agent/tools/book.py`
+**Location**: customer validation gate, before booking execution
 
 The system MUST attempt silent customer creation when `ctx.customer_id` is `None` but `pending_whatsapp_name` and `customer_phone` are both available in state, before returning a `ToolCallRejection`. A new coroutine `_create_customer_if_needed(ctx, state)` SHALL perform the creation. If creation succeeds, it MUST inject the returned UUID into `ctx.customer_id` and allow the `book()` call to proceed. If creation fails (phone missing, tool error), the existing `NO_CUSTOMER_ID` rejection MUST be returned unchanged.
 
@@ -43,8 +43,8 @@ The system MUST attempt silent customer creation when `ctx.customer_id` is `None
 
 ## Requirement 2 — `last_error` field in `BookingContext`
 
-**File**: `agent/modes/booking_context.py`, `agent/modes/booking_mode.py`
-**Location**: `BookingContext` dataclass + `_build_response` error path
+**File**: `agent/tools/book.py`, `agent/tools/schemas.py`
+**Location**: booking result handling + error path
 
 `BookingContext` MUST expose a `last_error: str | None = None` field (default `None`). When `book()` raises an exception or the tool returns an error result, the calling code MUST set `ctx.last_error = str(e)` before calling `_build_response`. `BookingContext.to_mode_context()` MUST include `last_error` in its output. On the next turn, the LLM MUST receive `last_error` in its context so it can explain what happened.
 
@@ -67,10 +67,10 @@ The system MUST attempt silent customer creation when `ctx.customer_id` is `None
 
 ## Requirement 3 — `error_count` incremented on booking failure
 
-**File**: `agent/modes/booking_mode.py`
-**Location**: `_build_response`, after the booking result check
+**File**: `agent/tools/book.py`
+**Location**: after the booking result check
 
-`conversation_flow.py` reads `error_count` for auto-escalation (`>= 3`), but nothing incremented it prior to this fix. When `book()` returns a failure (not `ctx._booking_completed`), `_build_response` MUST add `"error_count": state.get("error_count", 0) + 1` to the returned state update dict. On success it MUST NOT change `error_count`.
+The graph reads `error_count` for auto-escalation (`>= 3`), but nothing incremented it prior to this fix. When `book()` returns a failure (not `ctx._booking_completed`), `_build_response` MUST add `"error_count": state.get("error_count", 0) + 1` to the returned state update dict. On success it MUST NOT change `error_count`.
 
 ### Scenario 3.1 — Booking failure increments error_count
 
@@ -98,11 +98,11 @@ The system MUST attempt silent customer creation when `ctx.customer_id` is `None
 **File**: `tests/unit/test_prompt_loader.py`
 **Location**: `TestBookingMdNoNamePermission` class (formerly `TestConfirmationMdNoNamePermission`)
 
-The test suite MUST reference the actual prompt file `agent/prompts/modes/booking.md` (not a non-existent `booking/confirmation.md` subdirectory). The test MUST assert that `booking.md` does NOT contain `"Puedes usar el nombre de la clienta"` and MUST assert it contains core booking instructions.
+The test suite MUST reference the actual prompt file `agent/prompts/shared/booking_flow.md` (not a non-existent `booking/confirmation.md` subdirectory). The test MUST assert that `booking_flow.md` does NOT contain `"Puedes usar el nombre de la clienta"` and MUST assert it contains core booking instructions.
 
-### Scenario 4.1 — booking.md does not grant name-use permission
+### Scenario 4.1 — booking_flow.md does not grant name-use permission
 
-- GIVEN `agent/prompts/modes/booking.md` is read
+- GIVEN `agent/prompts/shared/booking_flow.md` is read
 - WHEN its content is checked
 - THEN it does NOT contain `"Puedes usar el nombre de la clienta"`
 
@@ -110,7 +110,7 @@ The test suite MUST reference the actual prompt file `agent/prompts/modes/bookin
 
 - GIVEN the test class `TestBookingMdNoNamePermission` is run
 - WHEN it executes
-- THEN it reads `agent/prompts/modes/booking.md` (not a `booking/` subdirectory)
+- THEN it reads `agent/prompts/shared/booking_flow.md` (not a `booking/` subdirectory)
 - AND the test passes without `FileNotFoundError`
 
 ---
@@ -146,7 +146,7 @@ There MUST be integration tests that exercise `BookingMode.handle()` end-to-end 
 
 ## Out of Scope
 
-- Changes to `greeting_mode.py`, `general_mode.py`, or `escalation_mode.py`
+- Changes to greeting, general, or escalation middleware layers
 - Google Calendar sync or notification logic
 - Admin panel or API route changes
 - Any prompt content changes beyond the test redirection in Requirement 4

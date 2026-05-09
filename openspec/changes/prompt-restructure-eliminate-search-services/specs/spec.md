@@ -12,7 +12,7 @@
 
 ### MODIFIED Capability: `stylist-guard-in-pre-tool-call`
 
-Applies to: `BookingModeNode._pre_tool_call()` in `agent/modes/booking_mode.py` (~line 286-301).
+Applies to: the stylist-guard logic in the booking middleware layer (see `agent/agent_factory.py` for the middleware registration).
 
 ---
 
@@ -65,7 +65,7 @@ The system MUST accept a `check_availability` tool call when the LLM provides `s
 
 ### MODIFIED Capability: `tool-args-preservation-in-agentic-loop`
 
-Applies to: `BaseModeNode._run_agentic_loop()` in `agent/modes/base.py` (~line 564-620).
+Applies to: the tool-args preservation logic in the `create_agent` agentic loop (see `agent/agent_factory.py`).
 
 ---
 
@@ -130,11 +130,11 @@ The seed script at `database/seeds/stylists.py` MUST set `is_active=False` for a
 
 ### ADDED Requirement: Booking Prompt Examples Reference Active Stylists Only
 
-The file `agent/prompts/modes/booking.md` MUST NOT contain any stylist name in example blocks that refers to a name not in the active roster `[Marta, Pilar, Victor, Harolyn, Rosa]`.
+The file `agent/prompts/shared/booking_flow.md` MUST NOT contain any stylist name in example blocks that refers to a name not in the active roster `[Marta, Pilar, Victor, Harolyn, Rosa]`.
 
-#### Scenario: booking.md has no stale stylist name examples
+#### Scenario: booking_flow.md has no stale stylist name examples
 
-- GIVEN `booking.md` is loaded as a string
+- GIVEN `booking_flow.md` is loaded as a string
 - WHEN scanned for standalone stylist name examples
 - THEN the name "Ana" MUST NOT appear as a stylist example
 - AND every example stylist name MUST match one of `[Marta, Pilar, Victor, Harolyn, Rosa]`
@@ -150,8 +150,8 @@ Each static prompt file MUST measure at or below its defined token budget using 
 | File | Budget |
 |------|--------|
 | `agent/prompts/shared/identity.md` | ≤350 tokens |
-| `agent/prompts/modes/booking.md` | ≤1,800 tokens |
-| `agent/prompts/modes/greeting.md` | ≤280 tokens |
+| `agent/prompts/shared/booking_flow.md` | ≤1,800 tokens |
+| `agent/prompts/shared/greeting.md` | ≤280 tokens |
 
 Files already within budget (`critical_rules.md` ≤1,100t, `general.md` ≤450t) MUST NOT regress.
 
@@ -162,16 +162,16 @@ Files already within budget (`critical_rules.md` ≤1,100t, `general.md` ≤450t
 - THEN tiktoken count for identity.md MUST be ≤350
 - AND bot identity, salon name, and core persona content MUST be preserved
 
-#### Scenario: booking.md trimmed to budget
+#### Scenario: booking_flow.md trimmed to budget
 
-- GIVEN booking.md currently measures 1,876 tokens
+- GIVEN booking_flow.md currently measures 1,876 tokens
 - WHEN redundant disambiguation tables and stale examples are removed
-- THEN tiktoken count for booking.md MUST be ≤1,800
+- THEN tiktoken count for booking_flow.md MUST be ≤1,800
 - AND booking flow steps, slot selection, and confirmation gate MUST be preserved
 
 #### Scenario: greeting.md trimmed to budget
 
-- GIVEN greeting.md currently measures 350 tokens
+- GIVEN agent/prompts/shared/greeting.md currently measures 350 tokens
 - WHEN rules are condensed
 - THEN tiktoken count for greeting.md MUST be ≤280
 - AND name collection and first-interaction logic MUST be preserved

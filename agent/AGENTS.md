@@ -1,8 +1,10 @@
 # Agent Component Guidelines
 
-Conversational agent built on **LangChain `create_agent` + middleware stack**. No custom StateGraph, no mode nodes, no intent router. Single LLM tool-calling loop wrapped by 6 middlewares that hydrate state and assemble the system prompt.
+Conversational agent built on **LangChain `create_agent` + middleware stack**. No custom StateGraph, no mode nodes, no intent router. Single LLM tool-calling loop wrapped by 7 middlewares that hydrate state and assemble the system prompt.
 
-> **Architecture**: `create_agent` (langchain.agents) loop with 6 tools and 6 composed middlewares. Each turn: middleware chain hydrates customer + appointments + catalog + business hours into XML-fenced slots, assembles into the system prompt, then the LLM picks tools.
+> **Architecture**: `create_agent` (langchain.agents) loop with 6 tools and 7 composed middlewares. Each turn: middleware chain hydrates customer + appointments + catalog + business hours + availability into XML-fenced slots, assembles into the system prompt, then the LLM picks tools.
+>
+> **SSOT**: `agent/agent_factory.py:47-55`.
 
 ---
 
@@ -33,11 +35,12 @@ agent/
 ├── checkpointer.py          # AsyncRedisSaver wiring
 ├── resume_handler.py        # Resume helpers for interrupted runs
 ├── state.py                 # AgentState TypedDict (slim, 7 fields)
-├── middleware/              # 6 composed middlewares (order matters)
+├── middleware/              # 7 composed middlewares (order load-bearing)
 │   ├── disclosure.py        # First-turn EU AI Act disclosure prepend
 │   ├── customer_resolve.py  # phone → Customer DB lookup, writes _slot_customer
 │   ├── appointment_context.py # upcoming PENDING/CONFIRMED appts → _slot_upcoming_appointments
 │   ├── dynamic_prompt.py    # catalog + business hours → _slot_catalog, _slot_business_hours
+│   ├── availability_context.py # injects _slot_availability (runs after DynamicPrompt)
 │   ├── prompt_assembly.py   # collapse _slot_* keys into system_message in fixed order
 │   └── summarize.py         # collapse history > window into [Resumen previo] SystemMessage
 ├── tools/                   # 6 LangChain tools
@@ -84,8 +87,9 @@ Redis Streams message
 │ 2. CustomerResolveMiddleware                            │  phone → DB → _slot_customer + customer_id
 │ 3. AppointmentContextMiddleware  (after CustomerResolve)│  upcoming appts → _slot_upcoming_appointments
 │ 4. DynamicPromptMiddleware                              │  catalog + hours → _slot_catalog, _slot_business_hours
-│ 5. PromptAssemblyMiddleware                             │  fold _slot_* into system_message (fixed order)
-│ 6. SummarizeMiddleware (window=20, keep_tail=10)        │  compress old messages
+│ 5. AvailabilityContextMiddleware (after DynamicPrompt)  │  injects _slot_availability
+│ 6. PromptAssemblyMiddleware      (after all slot-writers)│  fold _slot_* into system_message (fixed order)
+│ 7. SummarizeMiddleware (window=20, keep_tail=10)        │  compress old messages
 └─────────────────────────────────────────────────────────┘
          │
          ▼
@@ -195,9 +199,10 @@ Required to opt out of the sync-parity guardrail. Otherwise the test suite flags
 middleware=[
     DisclosureMiddleware(),
     CustomerResolveMiddleware(),
-    AppointmentContextMiddleware(),  # MUST run after CustomerResolve (reads customer_id)
+    AppointmentContextMiddleware(),   # MUST run after CustomerResolve (reads customer_id)
     DynamicPromptMiddleware(),
-    PromptAssemblyMiddleware(),      # MUST run AFTER all slot-writers, BEFORE Summarize
+    AvailabilityContextMiddleware(),  # MUST run after DynamicPrompt
+    PromptAssemblyMiddleware(),       # MUST run AFTER all slot-writers, BEFORE Summarize
     SummarizeMiddleware(window=20, keep_tail=10),
 ]
 ```
