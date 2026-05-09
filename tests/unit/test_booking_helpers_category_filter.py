@@ -1,10 +1,11 @@
-"""T-1, T-3 — RED tests for category-filtered stylist resolution.
+"""T-1, T-3 — BookingQueryService.resolve_service_categories + resolve_active_stylists.
 
 Covers:
-- _resolve_service_categories: returns correct ServiceCategory set per input
-- _resolve_active_stylists(session, service_ids): filters by category matrix
+- resolve_service_categories: returns correct ServiceCategory set per input
+- resolve_active_stylists(service_ids): filters by category matrix
 
-Strict TDD: tests written BEFORE implementation; all must FAIL on first run.
+Post-PR#2: tests now call BookingQueryService methods directly.
+Fixtures commit data so the service's new session can see it.
 """
 from __future__ import annotations
 
@@ -56,7 +57,7 @@ async def category_services(db_session):
     names = [hair_name, aesth_name, both_name]
 
     await db_session.execute(delete(Service).where(Service.name.in_(names)))
-    await db_session.flush()
+    await db_session.commit()
 
     hair_id = uuid4()
     aesth_id = uuid4()
@@ -89,7 +90,7 @@ async def category_services(db_session):
             is_active=True,
         )
     )
-    await db_session.flush()
+    await db_session.commit()
 
     yield {
         "hair_id": str(hair_id),
@@ -98,7 +99,7 @@ async def category_services(db_session):
     }
 
     await db_session.execute(delete(Service).where(Service.name.in_(names)))
-    await db_session.flush()
+    await db_session.commit()
 
 
 @pytest.fixture
@@ -116,7 +117,7 @@ async def category_stylists(db_session):
     ]
 
     await db_session.execute(delete(Stylist).where(Stylist.name.in_(names)))
-    await db_session.flush()
+    await db_session.commit()
 
     hair_id = uuid4()
     aesth_id = uuid4()
@@ -155,7 +156,7 @@ async def category_stylists(db_session):
             is_active=False,
         )
     )
-    await db_session.flush()
+    await db_session.commit()
 
     yield {
         "hair_id": str(hair_id),
@@ -165,11 +166,11 @@ async def category_stylists(db_session):
     }
 
     await db_session.execute(delete(Stylist).where(Stylist.name.in_(names)))
-    await db_session.flush()
+    await db_session.commit()
 
 
 # ---------------------------------------------------------------------------
-# T-1: _resolve_service_categories
+# T-1: BookingQueryService.resolve_service_categories
 # ---------------------------------------------------------------------------
 
 
@@ -177,9 +178,9 @@ async def category_stylists(db_session):
 async def test_resolve_service_categories_hairdressing_only(db_session, category_services):
     """HAIRDRESSING-only service_ids → {HAIRDRESSING}."""
     from database.models import ServiceCategory
-    from agent.tools._booking_helpers import _resolve_service_categories
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_service_categories(db_session, [category_services["hair_id"]])
+    result = await BookingQueryService.resolve_service_categories([category_services["hair_id"]])
     assert result == {ServiceCategory.HAIRDRESSING}
 
 
@@ -187,9 +188,9 @@ async def test_resolve_service_categories_hairdressing_only(db_session, category
 async def test_resolve_service_categories_aesthetics_only(db_session, category_services):
     """AESTHETICS-only service_ids → {AESTHETICS}."""
     from database.models import ServiceCategory
-    from agent.tools._booking_helpers import _resolve_service_categories
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_service_categories(db_session, [category_services["aesth_id"]])
+    result = await BookingQueryService.resolve_service_categories([category_services["aesth_id"]])
     assert result == {ServiceCategory.AESTHETICS}
 
 
@@ -197,11 +198,10 @@ async def test_resolve_service_categories_aesthetics_only(db_session, category_s
 async def test_resolve_service_categories_mixed_hair_and_aesth(db_session, category_services):
     """HAIRDRESSING + AESTHETICS input → {HAIRDRESSING, AESTHETICS}."""
     from database.models import ServiceCategory
-    from agent.tools._booking_helpers import _resolve_service_categories
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_service_categories(
-        db_session,
-        [category_services["hair_id"], category_services["aesth_id"]],
+    result = await BookingQueryService.resolve_service_categories(
+        [category_services["hair_id"], category_services["aesth_id"]]
     )
     assert result == {ServiceCategory.HAIRDRESSING, ServiceCategory.AESTHETICS}
 
@@ -210,23 +210,23 @@ async def test_resolve_service_categories_mixed_hair_and_aesth(db_session, categ
 async def test_resolve_service_categories_both_present(db_session, category_services):
     """BOTH-category service present → {BOTH} in result."""
     from database.models import ServiceCategory
-    from agent.tools._booking_helpers import _resolve_service_categories
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_service_categories(db_session, [category_services["both_id"]])
+    result = await BookingQueryService.resolve_service_categories([category_services["both_id"]])
     assert ServiceCategory.BOTH in result
 
 
 @pytest.mark.asyncio
 async def test_resolve_service_categories_empty_list(db_session):
     """Empty list → empty set."""
-    from agent.tools._booking_helpers import _resolve_service_categories
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_service_categories(db_session, [])
+    result = await BookingQueryService.resolve_service_categories([])
     assert result == set()
 
 
 # ---------------------------------------------------------------------------
-# T-3: _resolve_active_stylists(session, service_ids) — extended signature
+# T-3: BookingQueryService.resolve_active_stylists(service_ids) — extended signature
 # ---------------------------------------------------------------------------
 
 
@@ -235,10 +235,9 @@ async def test_resolve_active_stylists_no_service_ids_returns_all(
     db_session, category_stylists
 ):
     """service_ids=None → all active stylists (legacy path)."""
-    from agent.tools._booking_helpers import _resolve_active_stylists
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_active_stylists(db_session)
-    names = result if isinstance(result[0], str) else [s for s in result]
+    result = await BookingQueryService.resolve_active_stylists()
     # All 3 active test stylists should appear by first name prefix
     assert any("_test_stylist_hair" in n for n in result) or any(
         n.startswith("_test") for n in result
@@ -252,10 +251,10 @@ async def test_resolve_active_stylists_hairdressing_services_excludes_aesthetics
     db_session, category_services, category_stylists
 ):
     """HAIRDRESSING services → only HAIRDRESSING + BOTH stylists returned."""
-    from agent.tools._booking_helpers import _resolve_active_stylists
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_active_stylists(
-        db_session, service_ids=[category_services["hair_id"]]
+    result = await BookingQueryService.resolve_active_stylists(
+        service_ids=[category_services["hair_id"]]
     )
     # First names of the test stylists
     result_names = " ".join(result)
@@ -270,10 +269,10 @@ async def test_resolve_active_stylists_aesthetics_services_excludes_hairdressing
     db_session, category_services, category_stylists
 ):
     """AESTHETICS services → only AESTHETICS + BOTH stylists returned."""
-    from agent.tools._booking_helpers import _resolve_active_stylists
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_active_stylists(
-        db_session, service_ids=[category_services["aesth_id"]]
+    result = await BookingQueryService.resolve_active_stylists(
+        service_ids=[category_services["aesth_id"]]
     )
     result_names = " ".join(result)
     assert "_test_stylist_aesth" in result_names, f"AESTH stylist missing: {result}"
@@ -286,11 +285,10 @@ async def test_resolve_active_stylists_mixed_returns_empty(
     db_session, category_services, category_stylists
 ):
     """Mixed HAIRDRESSING + AESTHETICS services → [] (fail-closed)."""
-    from agent.tools._booking_helpers import _resolve_active_stylists
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_active_stylists(
-        db_session,
-        service_ids=[category_services["hair_id"], category_services["aesth_id"]],
+    result = await BookingQueryService.resolve_active_stylists(
+        service_ids=[category_services["hair_id"], category_services["aesth_id"]]
     )
     assert result == [], f"Expected empty list for mixed, got: {result}"
 
@@ -300,9 +298,9 @@ async def test_resolve_active_stylists_empty_service_ids_returns_empty(
     db_session, category_stylists
 ):
     """Empty service_ids list → [] (fail-closed — no unresolved IDs should open the gate)."""
-    from agent.tools._booking_helpers import _resolve_active_stylists
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_active_stylists(db_session, service_ids=[])
+    result = await BookingQueryService.resolve_active_stylists(service_ids=[])
     assert result == [], f"Expected empty list for empty service_ids, got: {result}"
 
 
@@ -311,10 +309,10 @@ async def test_resolve_active_stylists_all_both_services_returns_all_active(
     db_session, category_services, category_stylists
 ):
     """All-BOTH services → all active stylists."""
-    from agent.tools._booking_helpers import _resolve_active_stylists
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_active_stylists(
-        db_session, service_ids=[category_services["both_id"]]
+    result = await BookingQueryService.resolve_active_stylists(
+        service_ids=[category_services["both_id"]]
     )
     result_names = " ".join(result)
     assert "_test_stylist_hair" in result_names
@@ -328,11 +326,10 @@ async def test_resolve_active_stylists_hair_plus_both_returns_hair_and_both(
     db_session, category_services, category_stylists
 ):
     """HAIR + BOTH service → HAIRDRESSING + BOTH stylists (BOTH service is compatible)."""
-    from agent.tools._booking_helpers import _resolve_active_stylists
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_active_stylists(
-        db_session,
-        service_ids=[category_services["hair_id"], category_services["both_id"]],
+    result = await BookingQueryService.resolve_active_stylists(
+        service_ids=[category_services["hair_id"], category_services["both_id"]]
     )
     result_names = " ".join(result)
     assert "_test_stylist_hair" in result_names

@@ -83,22 +83,20 @@ async def test_tool_importable():
 
 @pytest.mark.asyncio
 async def test_booking_helpers_importable():
-    """_booking_helpers importable with expected functions."""
-    from agent.tools._booking_helpers import (
-        _compute_first_valid_date,
-        _resolve_audience_variants,
-        _resolve_stylist,
-    )
+    """booking_helpers pure utils importable; DB-bound resolvers available via BookingQueryService."""
+    from agent.tools.booking_helpers import _compute_first_valid_date
+    from agent.services.booking_query_service import BookingQueryService
+
     assert callable(_compute_first_valid_date)
-    assert callable(_resolve_audience_variants)
-    assert callable(_resolve_stylist)
+    assert callable(BookingQueryService.resolve_audience_variants)
+    assert callable(BookingQueryService.resolve_stylist)
 
 
 @pytest.mark.asyncio
 async def test_compute_first_valid_date_pure():
     """_compute_first_valid_date is pure and correct."""
     from datetime import date
-    from agent.tools._booking_helpers import _compute_first_valid_date
+    from agent.tools.booking_helpers import _compute_first_valid_date
 
     today = date(2026, 5, 1)
     result = _compute_first_valid_date(today, 3)
@@ -108,7 +106,7 @@ async def test_compute_first_valid_date_pure():
 @pytest.mark.asyncio
 async def test_compute_first_valid_date_zero_days():
     from datetime import date
-    from agent.tools._booking_helpers import _compute_first_valid_date
+    from agent.tools.booking_helpers import _compute_first_valid_date
 
     today = date(2026, 5, 1)
     result = _compute_first_valid_date(today, 0)
@@ -149,12 +147,13 @@ async def test_unambiguous_service_does_not_trigger_audience_required():
 
 @pytest.mark.asyncio
 async def test_resolve_stylist_unaccented_match(db_session):
-    """_resolve_stylist matches on unaccented lowercase name."""
+    """BookingQueryService.resolve_stylist matches on unaccented lowercase name."""
     if not await _db_available():
         pytest.skip("Postgres not reachable")
 
     from sqlalchemy import delete
     from database.models import Stylist, ServiceCategory
+    from agent.services.booking_query_service import BookingQueryService
 
     stylist_id = uuid4()
     # Add stylist with accented name
@@ -168,9 +167,8 @@ async def test_resolve_stylist_unaccented_match(db_session):
     db_session.add(st)
     await db_session.flush()
 
-    from agent.tools._booking_helpers import _resolve_stylist
-
-    result = await _resolve_stylist(db_session, "maria jose")
+    # Service opens its own session (does not accept session parameter)
+    result = await BookingQueryService.resolve_stylist("maria jose")
     assert result == stylist_id
 
     # Cleanup

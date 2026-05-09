@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.tools._booking_helpers import _validate_full_name
+from agent.tools.booking_helpers import _validate_full_name
 
 
 def test_validate_full_name_returns_tuple_for_two_tokens():
