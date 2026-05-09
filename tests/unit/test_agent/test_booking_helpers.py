@@ -1,6 +1,9 @@
-"""T-02, T-03 — _resolve_audience_variants (principal-side) + _resolve_active_stylists.
+"""T-02, T-03 — BookingQueryService.resolve_audience_variants (principal-side) + resolve_active_stylists.
 
-RED phase: tests for the principal-side variant gate and the new stylist list helper.
+Tests for the principal-side variant gate and the stylist list helper.
+
+Post-PR#2: these tests call BookingQueryService methods directly (each opens its own
+session via get_async_session). DB fixtures still seed data for the queries to find.
 """
 from __future__ import annotations
 
@@ -180,7 +183,7 @@ async def child_no_siblings(db_session):
 @pytest.mark.asyncio
 async def test_principal_with_active_children_returns_variant(db_session, principal_with_children):
     """Principal 'Peinado Test' + active children → ('variant', principal_name, [principal, c1, c2])."""
-    from agent.tools._booking_helpers import _resolve_audience_variants
+    from agent.services.booking_query_service import BookingQueryService
 
     kind, family, candidates = await _resolve_audience_variants(
         db_session, principal_with_children["principal"]
@@ -196,10 +199,10 @@ async def test_principal_with_active_children_returns_variant(db_session, princi
 @pytest.mark.asyncio
 async def test_child_with_sibling_returns_variant(db_session, child_with_sibling):
     """Child 'Peinado Fiesta Test2' + sibling → ('variant', parent, [parent, siblings...])."""
-    from agent.tools._booking_helpers import _resolve_audience_variants
+    from agent.services.booking_query_service import BookingQueryService
 
     child_name = child_with_sibling["children"][0]
-    kind, family, candidates = await _resolve_audience_variants(db_session, child_name)
+    kind, family, candidates = await BookingQueryService.resolve_audience_variants(child_name)
 
     assert kind == "variant", f"Expected 'variant', got '{kind}'"
     assert family == child_with_sibling["parent"]
@@ -209,9 +212,9 @@ async def test_child_with_sibling_returns_variant(db_session, child_with_sibling
 @pytest.mark.asyncio
 async def test_principal_no_children_returns_ok(db_session, principal_no_children):
     """Principal 'Manicura Test' with no active children → ('ok'/'none', ..., [])."""
-    from agent.tools._booking_helpers import _resolve_audience_variants
+    from agent.services.booking_query_service import BookingQueryService
 
-    kind, family, candidates = await _resolve_audience_variants(db_session, principal_no_children)
+    kind, family, candidates = await BookingQueryService.resolve_audience_variants(principal_no_children)
 
     assert kind in ("none", "ok"), f"Expected 'none' or 'ok', got '{kind}'"
     assert candidates == []
@@ -220,9 +223,9 @@ async def test_principal_no_children_returns_ok(db_session, principal_no_childre
 @pytest.mark.asyncio
 async def test_child_no_siblings_returns_ok(db_session, child_no_siblings):
     """Child 'Corte de Mujer Test' with no siblings → ('none', ..., [])."""
-    from agent.tools._booking_helpers import _resolve_audience_variants
+    from agent.services.booking_query_service import BookingQueryService
 
-    kind, family, candidates = await _resolve_audience_variants(db_session, child_no_siblings)
+    kind, family, candidates = await BookingQueryService.resolve_audience_variants(child_no_siblings)
 
     assert kind in ("none", "ok"), f"Expected 'none' or 'ok', got '{kind}'"
     assert candidates == []
@@ -238,7 +241,7 @@ async def test_principal_variant_fires_regardless_of_audience(
     for a principal with children — the audience argument is irrelevant at the
     helper level (independence is enforced at update_booking level in T-08).
     """
-    from agent.tools._booking_helpers import _resolve_audience_variants
+    from agent.services.booking_query_service import BookingQueryService
 
     # The helper does not receive audience — just call it; result must still be variant.
     kind, family, candidates = await _resolve_audience_variants(
@@ -312,9 +315,9 @@ async def test_resolve_active_stylists_returns_only_active_first_names(
     db_session, stylists_mixed
 ):
     """Returns first names of active stylists only, alpha-ordered."""
-    from agent.tools._booking_helpers import _resolve_active_stylists
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_active_stylists(db_session)
+    result = await BookingQueryService.resolve_active_stylists()
 
     # Only first names of active stylists
     active_first_names = {"Zara", "Ana", "Marta"}
@@ -333,9 +336,9 @@ async def test_resolve_active_stylists_returns_empty_when_none_active(
     db_session, no_active_stylists
 ):
     """Returns [] when no active stylists exist (for the test-inserted ones)."""
-    from agent.tools._booking_helpers import _resolve_active_stylists
+    from agent.services.booking_query_service import BookingQueryService
 
-    result = await _resolve_active_stylists(db_session)
+    result = await BookingQueryService.resolve_active_stylists()
 
     # The test-only inactive stylists are NOT in result
     assert "Solo" not in result

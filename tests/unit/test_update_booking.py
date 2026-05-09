@@ -5,7 +5,9 @@ Tasks 2.1 (RED) and 2.2 (GREEN):
   - REQ-P2A-1: closed_day_required gate
   - REQ-BX-2: name_required fires after date resolution (regression guard)
 
-All tests patch DB helpers so they run without a live database.
+Post-PR#2: all DB helpers patched via BookingQueryService.resolve_all
+(single-session facade). No longer patches agent.tools._booking_helpers.*
+or database.connection.get_async_session.
 """
 
 from __future__ import annotations
@@ -24,41 +26,45 @@ import pytest
 FAKE_STYLIST_ID = uuid4()
 FAKE_SERVICE_ID = uuid4()
 
-# A Tuesday in the future — an open day (business assumes Mon-Sat open)
-OPEN_DATE_ISO = "2026-05-05"
+# A Monday far enough in the future — open day (business assumes Mon-Sat open)
+OPEN_DATE_ISO = "2026-06-01"
 # A Sunday in the future — closed by default
-CLOSED_DATE_ISO = "2026-05-03"
+CLOSED_DATE_ISO = "2026-05-31"
 
 
 def parse_response(raw: str) -> dict:
     return json.loads(raw)
 
 
-def _make_booking_helpers_patch(
+def _make_resolve_all_result(
     *,
-    service_ids: list[UUID] | None = None,
-    unknown_names: list[str] | None = None,
-    stylist_id: UUID | None = None,
-    active_stylists: list[dict] | None = None,
-    categories=None,
-    id_to_cat=None,
+    service_ids=None,
+    unknown_names=None,
+    stylist_id=None,
+    active_stylists=None,
+    has_category_mix=False,
+    hair_services=None,
+    aesth_services=None,
+    both_services=None,
 ):
-    """Return a context-manager dict for patching _booking_helpers."""
-    service_ids = service_ids if service_ids is not None else [FAKE_SERVICE_ID]
-    unknown_names = unknown_names if unknown_names is not None else []
-    active_stylists = active_stylists if active_stylists is not None else []
+    """Build a ResolveAllResult for mocking BookingQueryService.resolve_all."""
+    from agent.services.booking_query_service import ResolveAllResult
 
-    from database.models import ServiceCategory
-
-    categories_set = categories if categories is not None else {ServiceCategory.HAIRDRESSING}
-    id_to_cat_map = id_to_cat if id_to_cat is not None else {}
-
-    helpers_path = "agent.tools.update_booking"
-
-    patches = {
-        f"{helpers_path}._update_booking_impl": None,  # placeholder; we patch inline
-    }
-    return patches
+    return ResolveAllResult(
+        success=(unknown_names is None or len(unknown_names) == 0),
+        service_ids=service_ids if service_ids is not None else [FAKE_SERVICE_ID],
+        unknown_names=unknown_names if unknown_names is not None else [],
+        stylist_id=stylist_id,
+        audience_variants=("none", "", []),
+        categories=set(),
+        id_to_category={},
+        active_stylists=active_stylists if active_stylists is not None else [],
+        has_category_mix=has_category_mix,
+        hair_services=hair_services or [],
+        aesth_services=aesth_services or [],
+        both_services=both_services or [],
+        error_message=None,
+    )
 
 
 def _patch_booking_helpers(
@@ -68,44 +74,26 @@ def _patch_booking_helpers(
     active_stylists=None,
     is_date_closed_return=False,
 ):
-    """Helper to set up all standard mocks for _update_booking_impl internals."""
-    service_ids = service_ids if service_ids is not None else [FAKE_SERVICE_ID]
-    unknown_names = unknown_names if unknown_names is not None else []
-    active_stylists = active_stylists if active_stylists is not None else [
-        {"id": str(FAKE_STYLIST_ID), "name": "Marta Test"}
-    ]
+    """Return a dict of patch targets for mocking BookingQueryService internals.
 
-    from database.models import ServiceCategory
+    Post-PR#2: patches BookingQueryService.resolve_all (single-session facade)
+    and BookingQueryService.resolve_audience_variants (per-service disambiguation).
+    """
+    resolve_all_result = _make_resolve_all_result(
+        service_ids=service_ids,
+        unknown_names=unknown_names,
+        stylist_id=stylist_id,
+        active_stylists=active_stylists,
+    )
 
-    resolve_service_ids = AsyncMock(return_value=(service_ids, unknown_names))
-    resolve_service_categories = AsyncMock(return_value={ServiceCategory.HAIRDRESSING})
-    resolve_service_id_to_category_map = AsyncMock(return_value={})
-    resolve_audience_variants = AsyncMock(return_value=("ok", None, []))
-    resolve_stylist_mock = AsyncMock(return_value=stylist_id)
-    resolve_active_stylists = AsyncMock(return_value=active_stylists)
-    validate_full_name_mock = MagicMock(return_value=None)  # returns falsy → name required
-
-    # Fake session context manager
-    fake_session = AsyncMock()
-    fake_cm = AsyncMock()
-    fake_cm.__aenter__ = AsyncMock(return_value=fake_session)
-    fake_cm.__aexit__ = AsyncMock(return_value=False)
-    get_async_session_mock = MagicMock(return_value=fake_cm)
-
+    resolve_all_mock = AsyncMock(return_value=resolve_all_result)
+    resolve_audience_variants_mock = AsyncMock(return_value=("none", "", []))
     is_date_closed_mock = AsyncMock(return_value=is_date_closed_return)
 
     return {
-        "agent.tools._booking_helpers._resolve_service_ids": resolve_service_ids,
-        "agent.tools._booking_helpers._resolve_service_categories": resolve_service_categories,
-        "agent.tools._booking_helpers._resolve_service_id_to_category_map": resolve_service_id_to_category_map,
-        "agent.tools._booking_helpers._resolve_audience_variants": resolve_audience_variants,
-        "agent.tools._booking_helpers._resolve_stylist": resolve_stylist_mock,
-        "agent.tools._booking_helpers._resolve_active_stylists": resolve_active_stylists,
-        "agent.tools._booking_helpers._validate_full_name": validate_full_name_mock,
-        "database.connection.get_async_session": get_async_session_mock,
-        # Patch at the validator module level (where it's imported at module load time)
+        "agent.services.booking_query_service.BookingQueryService.resolve_all": resolve_all_mock,
+        "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants": resolve_audience_variants_mock,
         "agent.tools._booking_validators.is_date_closed": is_date_closed_mock,
-        # Also keep the original path for legacy tests that patch it directly
         "shared.business_hours_validator.is_date_closed": is_date_closed_mock,
     }
 
@@ -126,14 +114,14 @@ async def test_offer_slots_when_stylist_resolved_and_no_date():
     mocks = _patch_booking_helpers(stylist_id=FAKE_STYLIST_ID)
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -165,14 +153,14 @@ async def test_offer_slots_with_no_preference():
     mocks = _patch_booking_helpers(stylist_id=None)
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -212,14 +200,14 @@ async def test_date_required_regression_guard():
     mocks = _patch_booking_helpers(stylist_id=None)
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -246,7 +234,10 @@ async def test_date_required_regression_guard():
 
 @pytest.mark.asyncio
 async def test_closed_day_required_for_sunday():
-    """REQ-P2A-1: services+stylist+date_iso=Sunday → next_step=closed_day_required."""
+    """REQ-P2A-1: services+stylist+date_iso=Sunday → next_step=closed_day_required.
+
+    Note: CLOSED_DATE_ISO is 2026-05-31 (Sunday). is_date_closed mocked to True.
+    """
     from agent.tools.update_booking import _update_booking_impl
 
     mocks = _patch_booking_helpers(
@@ -255,15 +246,18 @@ async def test_closed_day_required_for_sunday():
     )
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
-        patch("agent.tools._booking_validators.is_date_closed", mocks["agent.tools._booking_validators.is_date_closed"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            mocks["agent.tools._booking_validators.is_date_closed"],
+        ),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -296,18 +290,16 @@ async def test_closed_day_required_uses_database_validator():
         stylist_id=FAKE_STYLIST_ID,
         is_date_closed_return=True,
     )
-    # Override the spy at the validator module level (where is_date_closed is now bound)
-    mocks["agent.tools._booking_validators.is_date_closed"] = is_date_closed_spy
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
         patch("agent.tools._booking_validators.is_date_closed", is_date_closed_spy),
     ):
         await _update_booking_impl(
@@ -340,15 +332,18 @@ async def test_open_day_passes_through_to_name_required():
     )
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
-        patch("agent.tools._booking_validators.is_date_closed", mocks["agent.tools._booking_validators.is_date_closed"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            mocks["agent.tools._booking_validators.is_date_closed"],
+        ),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -386,14 +381,14 @@ async def test_adapter_g1_date_clarification_required():
     mocks = _patch_booking_helpers(stylist_id=FAKE_STYLIST_ID)
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
         # Patch the resolver to return None → unresolvable
         patch(
             "agent.booking.resolvers.time_resolver.resolve_relative_date",
@@ -429,15 +424,18 @@ async def test_adapter_g2_closed_day_required_wire_format():
     )
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
-        patch("agent.tools._booking_validators.is_date_closed", mocks["agent.tools._booking_validators.is_date_closed"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            mocks["agent.tools._booking_validators.is_date_closed"],
+        ),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -475,15 +473,18 @@ async def test_adapter_g3_advance_policy_violated_payload_forwarded():
     )
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
-        patch("agent.tools._booking_validators.is_date_closed", mocks["agent.tools._booking_validators.is_date_closed"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            mocks["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            mocks["agent.tools._booking_validators.is_date_closed"],
+        ),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],

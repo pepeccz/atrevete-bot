@@ -219,386 +219,373 @@ async def _update_booking_impl(
     slot_iso: str | None = None,
     messages: list | None = None,
 ) -> str:
-    from agent.tools._booking_helpers import (
-        _resolve_active_stylists,
-        _resolve_audience_variants,
-        _resolve_service_categories,
-        _resolve_service_id_to_category_map,
-        _resolve_service_ids,
-        _resolve_stylist,
-        _validate_full_name,
-    )
     from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
-    from database.connection import get_async_session
+    from agent.services.booking_query_service import BookingQueryService
+    from agent.tools.booking_helpers import _validate_full_name
 
-    async with get_async_session() as session:
-        collected: dict = {}
-        missing: list[str] = []
-        errors: list[str] = []
+    collected: dict = {}
+    missing: list[str] = []
+    errors: list[str] = []
 
-        # ── Step 3: no services ───────────────────────────────────────────────
-        if not services:
-            missing.append("services")
-            return ToolResponse(
-                status="partial",
-                collected=collected,
-                missing=missing,
-                next_step="service_required",
-            ).model_dump_json()
+    # ── Step 3: no services ───────────────────────────────────────────────
+    if not services:
+        missing.append("services")
+        return ToolResponse(
+            status="partial",
+            collected=collected,
+            missing=missing,
+            next_step="service_required",
+        ).model_dump_json()
 
-        # ── Resolve service names ─────────────────────────────────────────────
-        resolved_ids, unknown_names = await _resolve_service_ids(session, services)
+    # ── Resolve all DB-bound data in ONE session via BookingQueryService ──
+    resolved = await BookingQueryService.resolve_all(
+        services=services,
+        stylist_name=stylist_name,
+        audience=audience,
+    )
 
-        if unknown_names:
-            errors.extend([f"No reconozco el servicio: {n}" for n in unknown_names])
-            logger.info(
-                "tool.response.rejected",
-                extra={
-                    "tool_name": "update_booking",
-                    "next_step": "service_required",
-                    "errors": errors,
-                },
-            )
-            return ToolResponse(
-                status="rejected",
-                missing=["services"],
-                next_step="service_required",
-                errors=errors,
-            ).model_dump_json()
+    resolved_ids = resolved.service_ids
+    unknown_names = resolved.unknown_names
 
-        # ── Step 1.5: category-mix gate ──────────────────────────────────────
-        # Runs AFTER service resolution (needs UUIDs) and BEFORE audience/variant gates.
-        # Fails-closed when services span HAIRDRESSING + AESTHETICS (no BOTH override).
-        from database.models import ServiceCategory as _SC
+    if unknown_names:
+        errors.extend([f"No reconozco el servicio: {n}" for n in unknown_names])
+        logger.info(
+            "tool.response.rejected",
+            extra={
+                "tool_name": "update_booking",
+                "next_step": "service_required",
+                "errors": errors,
+            },
+        )
+        return ToolResponse(
+            status="rejected",
+            missing=["services"],
+            next_step="service_required",
+            errors=errors,
+        ).model_dump_json()
 
-        _service_categories = await _resolve_service_categories(session, resolved_ids)
-        _has_hair = _SC.HAIRDRESSING in _service_categories
-        _has_aesth = _SC.AESTHETICS in _service_categories
-        if _has_hair and _has_aesth:
-            # Build payload: map each input service name to its category via bulk query.
-            _id_to_cat = await _resolve_service_id_to_category_map(session, resolved_ids)
-            _hair_services: list[str] = []
-            _aesth_services: list[str] = []
-            _both_services: list[str] = []
-            for _svc_name, _svc_id in zip(services, resolved_ids):
-                _cat = _id_to_cat.get(_svc_id)
-                if _cat == _SC.HAIRDRESSING:
-                    _hair_services.append(_svc_name)
-                elif _cat == _SC.AESTHETICS:
-                    _aesth_services.append(_svc_name)
-                else:  # BOTH or unknown — include in both groups per ADR-4
-                    _both_services.append(_svc_name)
-            logger.info(
-                "tool.response.rejected",
-                extra={"tool_name": "update_booking", "next_step": "category_mix_required"},
-            )
-            return ToolResponse(
-                status="rejected",
-                next_step="category_mix_required",
-                payload={
-                    "hairdressing_services": _hair_services + _both_services,
-                    "aesthetics_services": _aesth_services + _both_services,
-                    "categories": ["HAIRDRESSING", "AESTHETICS"],
-                },
-                errors=["No puedo combinar peluquería y estética en una misma cita."],
-            ).model_dump_json()
+    # ── Step 1.5: category-mix gate ──────────────────────────────────────
+    # Runs AFTER service resolution (needs UUIDs) and BEFORE audience/variant gates.
+    # Fails-closed when services span HAIRDRESSING + AESTHETICS (no BOTH override).
+    # Category mix logic resolved inside BookingQueryService — no database.* import needed.
+    if resolved.has_category_mix:
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "update_booking", "next_step": "category_mix_required"},
+        )
+        return ToolResponse(
+            status="rejected",
+            next_step="category_mix_required",
+            payload={
+                "hairdressing_services": resolved.hair_services + resolved.both_services,
+                "aesthetics_services": resolved.aesth_services + resolved.both_services,
+                "categories": ["HAIRDRESSING", "AESTHETICS"],
+            },
+            errors=["No puedo combinar peluquería y estética en una misma cita."],
+        ).model_dump_json()
 
-        # ── Step 1: audience disambiguation (only when audience unknown) ─────
-        # kind=="audience" → multi-PRINCIPAL same-dimension, ask for audience.
-        if audience is None:
-            for service_name in services:
-                kind, family, candidates = await _resolve_audience_variants(session, service_name)
-                if kind == "audience":
-                    logger.info(
-                        "tool.response.rejected",
-                        extra={"tool_name": "update_booking", "next_step": "audience_required"},
-                    )
-                    return ToolResponse(
-                        status="rejected",
-                        next_step="audience_required",
-                        payload={"variants": candidates, "family": family},
-                    ).model_dump_json()
-
-        # ── Step 2: variant disambiguation — UNGATED (independent of audience) ─
-        # kind=="variant" → principal with active children OR child with siblings.
-        # Must run regardless of audience state — the two axes are orthogonal.
-        # Design: ADR-2 ordering (booking-disambiguation-hardening).
+    # ── Step 1: audience disambiguation (only when audience unknown) ─────
+    # kind=="audience" → multi-PRINCIPAL same-dimension, ask for audience.
+    # resolve_all returns audience_variants for the first service; for multi-service
+    # queries each service must be checked. We call the per-service method here
+    # (each opens its own session — acceptable for disambiguation checks).
+    if audience is None:
         for service_name in services:
-            kind, family, candidates = await _resolve_audience_variants(session, service_name)
-            if kind == "variant":
+            kind, family, candidates = await BookingQueryService.resolve_audience_variants(
+                service_name
+            )
+            if kind == "audience":
                 logger.info(
                     "tool.response.rejected",
-                    extra={"tool_name": "update_booking", "next_step": "variant_required"},
+                    extra={"tool_name": "update_booking", "next_step": "audience_required"},
                 )
                 return ToolResponse(
                     status="rejected",
-                    next_step="variant_required",
+                    next_step="audience_required",
                     payload={"variants": candidates, "family": family},
                 ).model_dump_json()
 
-        collected["services"] = services
-        collected["service_ids"] = resolved_ids
-
-        # ── Step 4: extras loop — must be asked before stylist (ADR-2) ────────
-        if len(services) >= 1 and not no_more_services and not extras_asked:
-            collected["extras_asked"] = True
-            logger.info(
-                "tool.response.partial",
-                extra={"tool_name": "update_booking", "next_step": "extras_loop_required"},
-            )
-            return ToolResponse(
-                status="partial",
-                collected=collected,
-                missing=[],
-                next_step="extras_loop_required",
-            ).model_dump_json()
-
-        # Carry round-trip flags into collected (so LLM can pass them back)
-        collected["extras_asked"] = True  # gate is closed at this point
-        if no_more_services:
-            collected["no_more_services"] = True
-
-        # ── Step 5: no stylist ────────────────────────────────────────────────
-        stylist_id = None
-        if stylist_name is not None:
-            stylist_id = await _resolve_stylist(session, stylist_name)
-            if stylist_id is None:
-                logger.info(
-                    "tool.response.rejected",
-                    extra={"tool_name": "update_booking", "next_step": "stylist_required"},
-                )
-                _first_available_label = (
-                    f"La primera con disponibilidad (mín. {MIN_BOOKING_DAYS} días de antelación)"
-                )
-                return ToolResponse(
-                    status="rejected",
-                    collected=collected,
-                    missing=["stylist"],
-                    next_step="stylist_required",
-                    errors=[f"No encontré a la estilista: {stylist_name}"],
-                    payload={
-                        "stylists": await _resolve_active_stylists(
-                            session, service_ids=resolved_ids
-                        ),
-                        "first_available_label": _first_available_label,
-                    },
-                ).model_dump_json()
-            collected["stylist_id"] = str(stylist_id)
-            collected["stylist_name"] = stylist_name
-
-        if not no_preference_stylist and stylist_id is None:
-            missing.append("stylist")
-            _first_available_label = (
-                f"La primera con disponibilidad (mín. {MIN_BOOKING_DAYS} días de antelación)"
-            )
-            return ToolResponse(
-                status="partial",
-                collected=collected,
-                missing=missing,
-                next_step="stylist_required",
-                payload={
-                    "stylists": await _resolve_active_stylists(
-                        session, service_ids=resolved_ids
-                    ),
-                    "first_available_label": _first_available_label,
-                },
-            ).model_dump_json()
-
-        if no_preference_stylist:
-            collected["no_preference_stylist"] = True
-
-        # ── Step 6b: no date — offer_slots when stylist is resolved ──────────
-        # When a stylist (or no-preference) is set and no date is provided, signal the LLM
-        # to call get_next_available_options immediately using the payload below.
-        # next_step="date_required" is only the 0-options fallback, driven by prompt rules.
-        if not date_iso and not date_text:
-            missing.append("date_iso")
-            stylist_resolved = bool(collected.get("stylist_id")) or bool(
-                collected.get("no_preference_stylist")
-            )
-            if stylist_resolved:
-                today_iso = datetime.now(_MADRID_TZ).date().isoformat()
-                return ToolResponse(
-                    status="partial",
-                    collected=collected,
-                    missing=missing,
-                    next_step="offer_slots",
-                    payload={
-                        "stylist_id": collected.get("stylist_id"),
-                        "no_preference_stylist": bool(collected.get("no_preference_stylist")),
-                        "service_ids": collected.get("service_ids", []),
-                        "from_date": today_iso,
-                        "min_advance_days": MIN_BOOKING_DAYS,
-                    },
-                ).model_dump_json()
-            return ToolResponse(
-                status="partial",
-                collected=collected,
-                missing=missing,
-                next_step="date_required",
-            ).model_dump_json()
-
-        # ── Steps 6, 6c, 6d: date resolution + G1/G2/G3 via shared validator ──
-        # validate_booking_date resolves relative text (G1), checks closed days (G2),
-        # and enforces lead-time policy (G3). Short-circuits on first failure.
-        # The adapter maps canonical error codes to this tool's wire-format next_step values.
-        _date_validation = await validate_booking_date(
-            date_iso=date_iso,
-            date_text=date_text,
+    # ── Step 2: variant disambiguation — UNGATED (independent of audience) ─
+    # kind=="variant" → principal with active children OR child with siblings.
+    # Must run regardless of audience state — the two axes are orthogonal.
+    # Design: ADR-2 ordering (booking-disambiguation-hardening).
+    for service_name in services:
+        kind, family, candidates = await BookingQueryService.resolve_audience_variants(
+            service_name
         )
-
-        if not _date_validation.ok:
-            # Adapter mapping: canonical error codes → prompt-graph next_step values (ADR-2, ADR-6)
-            _next_step_map = {
-                ERROR_INVALID_RELATIVE_DATE: "date_clarification_required",
-                ERROR_CLOSED_DAY: "closed_day_required",
-                ERROR_ADVANCE_POLICY_VIOLATED: "advance_policy_violated",
-            }
-            _next_step = _next_step_map.get(
-                _date_validation.error_code, "date_required"  # fallback for unknown codes
-            )
-
-            # Build caller-owned payload: validator payload + tool-specific context
-            _resolved_rejected = date_iso or (
-                _date_validation.payload.get("raw_text", date_text) or date_text or ""
-            )
-            if _date_validation.error_code == ERROR_CLOSED_DAY:
-                # Preserve the full payload shape expected by the prompt graph
-                _closed_iso = _date_validation.payload.get("closed_date", date_iso)
-                _closed_date = datetime.fromisoformat(_closed_iso).date() if _closed_iso else None
-                _adapter_payload = {
-                    "rejected_date": _closed_iso,
-                    "weekday": _closed_date.strftime("%A").lower() if _closed_date else "",
-                    "stylist_id": collected.get("stylist_id"),
-                    "service_ids": collected.get("service_ids", []),
-                }
-            elif _date_validation.error_code == ERROR_ADVANCE_POLICY_VIOLATED:
-                _adapter_payload = {
-                    "rejected_date": date_iso,
-                    "first_valid_date": _date_validation.payload.get("min_date", ""),
-                    "policy_min_days": _date_validation.payload.get("min_days", MIN_BOOKING_DAYS),
-                    "stylist_id": collected.get("stylist_id"),
-                    "service_ids": collected.get("service_ids", []),
-                }
-            else:
-                # G1: date_clarification_required — no extra payload needed
-                _adapter_payload = {}
-
+        if kind == "variant":
             logger.info(
                 "tool.response.rejected",
-                extra={"tool_name": "update_booking", "next_step": _next_step},
-            )
-            _is_g1 = _date_validation.error_code == ERROR_INVALID_RELATIVE_DATE
-            return ToolResponse(
-                status="partial" if _is_g1 else "rejected",
-                collected=collected,
-                missing=["date_iso"],
-                next_step=_next_step,
-                payload=_adapter_payload,
-                errors=[_date_validation.error_message] if _date_validation.error_message else [],
-            ).model_dump_json()
-
-        # Validation passed — use the canonical resolved date
-        date_iso = _date_validation.date_iso
-        collected["date_iso"] = date_iso
-
-        # ── Step 7: name required — after stylist+date+closed-day-check ──────
-        # name_required intentionally fires AFTER date_iso is resolved AND closed-day-validated.
-        name_resolved = bool(_validate_full_name(customer_full_name)) or customer_known
-        if not name_resolved:
-            logger.info(
-                "tool.response.partial",
-                extra={"tool_name": "update_booking", "next_step": "name_required"},
+                extra={"tool_name": "update_booking", "next_step": "variant_required"},
             )
             return ToolResponse(
-                status="partial",
-                collected=collected,
-                missing=["customer_full_name"],
-                next_step="name_required",
+                status="rejected",
+                next_step="variant_required",
+                payload={"variants": candidates, "family": family},
             ).model_dump_json()
 
-        if customer_full_name:
-            collected["customer_full_name"] = customer_full_name
+    collected["services"] = services
+    collected["service_ids"] = resolved_ids
 
-        # ── Step 8: notes offered once ────────────────────────────────────────
-        if not notes_asked:
-            collected["notes_asked"] = True
-            logger.info(
-                "tool.response.partial",
-                extra={"tool_name": "update_booking", "next_step": "notes_optional"},
-            )
-            return ToolResponse(
-                status="partial",
-                collected=collected,
-                missing=[],
-                next_step="notes_optional",
-            ).model_dump_json()
-
-        collected["notes_asked"] = True
-        if notes is not None:
-            collected["notes"] = notes
-
-        # ── Step 8b: pre-book validation gate (ADR-6) ─────────────────────────
-        # slot_iso=None means the LLM hasn't chosen a slot yet — gate always blocks.
-        # slot_iso provided → must have a matching check_availability ToolMessage.
-        if slot_iso is None:
-            logger.info(
-                "tool.response.partial",
-                extra={
-                    "tool_name": "update_booking",
-                    "next_step": "pre_book_validation_required",
-                },
-            )
-            return ToolResponse(
-                status="partial",
-                collected=collected,
-                missing=[],
-                next_step="pre_book_validation_required",
-                payload={
-                    "hint": (
-                        "Llama a check_availability con slot_time exacto antes de book(). "
-                        "No se ha proporcionado slot_iso."
-                    ),
-                },
-            ).model_dump_json()
-
-        resolved_stylist_id = collected.get("stylist_id")
-        validated = _find_matching_check_availability(
-            messages or [], slot_iso, resolved_stylist_id
-        )
-
-        if not validated:
-                logger.info(
-                    "tool.response.partial",
-                    extra={
-                        "tool_name": "update_booking",
-                        "next_step": "pre_book_validation_required",
-                    },
-                )
-                return ToolResponse(
-                    status="partial",
-                    collected=collected,
-                    missing=[],
-                    next_step="pre_book_validation_required",
-                    payload={
-                        "hint": (
-                            "Llama a check_availability con slot_time exacto antes de book(). "
-                            f"Slot solicitado: {slot_iso}"
-                        ),
-                    },
-                ).model_dump_json()
-        collected["pre_book_validated"] = True
-        if slot_iso is not None:
-            collected["slot_iso"] = slot_iso
-
-        # ── Step 9: all gates pass → booking_ready ────────────────────────────
+    # ── Step 4: extras loop — must be asked before stylist (ADR-2) ────────
+    if len(services) >= 1 and not no_more_services and not extras_asked:
+        collected["extras_asked"] = True
         logger.info(
-            "tool.response.complete",
-            extra={"tool_name": "update_booking", "payload_keys": list(collected.keys())},
+            "tool.response.partial",
+            extra={"tool_name": "update_booking", "next_step": "extras_loop_required"},
         )
         return ToolResponse(
-            status="ok",
+            status="partial",
             collected=collected,
             missing=[],
-            next_step="booking_ready",
+            next_step="extras_loop_required",
         ).model_dump_json()
+
+    # Carry round-trip flags into collected (so LLM can pass them back)
+    collected["extras_asked"] = True  # gate is closed at this point
+    if no_more_services:
+        collected["no_more_services"] = True
+
+    # ── Step 5: no stylist ────────────────────────────────────────────────
+    stylist_id = resolved.stylist_id
+    active_stylists = resolved.active_stylists
+
+    if stylist_name is not None and stylist_id is None:
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "update_booking", "next_step": "stylist_required"},
+        )
+        _first_available_label = (
+            f"La primera con disponibilidad (mín. {MIN_BOOKING_DAYS} días de antelación)"
+        )
+        return ToolResponse(
+            status="rejected",
+            collected=collected,
+            missing=["stylist"],
+            next_step="stylist_required",
+            errors=[f"No encontré a la estilista: {stylist_name}"],
+            payload={
+                "stylists": active_stylists,
+                "first_available_label": _first_available_label,
+            },
+        ).model_dump_json()
+
+    if stylist_id is not None:
+        collected["stylist_id"] = str(stylist_id)
+        collected["stylist_name"] = stylist_name
+
+    if not no_preference_stylist and stylist_id is None:
+        missing.append("stylist")
+        _first_available_label = (
+            f"La primera con disponibilidad (mín. {MIN_BOOKING_DAYS} días de antelación)"
+        )
+        return ToolResponse(
+            status="partial",
+            collected=collected,
+            missing=missing,
+            next_step="stylist_required",
+            payload={
+                "stylists": active_stylists,
+                "first_available_label": _first_available_label,
+            },
+        ).model_dump_json()
+
+    if no_preference_stylist:
+        collected["no_preference_stylist"] = True
+
+    # ── Step 6b: no date — offer_slots when stylist is resolved ──────────
+    # When a stylist (or no-preference) is set and no date is provided, signal the LLM
+    # to call get_next_available_options immediately using the payload below.
+    # next_step="date_required" is only the 0-options fallback, driven by prompt rules.
+    if not date_iso and not date_text:
+        missing.append("date_iso")
+        stylist_resolved = bool(collected.get("stylist_id")) or bool(
+            collected.get("no_preference_stylist")
+        )
+        if stylist_resolved:
+            today_iso = datetime.now(_MADRID_TZ).date().isoformat()
+            return ToolResponse(
+                status="partial",
+                collected=collected,
+                missing=missing,
+                next_step="offer_slots",
+                payload={
+                    "stylist_id": collected.get("stylist_id"),
+                    "no_preference_stylist": bool(collected.get("no_preference_stylist")),
+                    "service_ids": collected.get("service_ids", []),
+                    "from_date": today_iso,
+                    "min_advance_days": MIN_BOOKING_DAYS,
+                },
+            ).model_dump_json()
+        return ToolResponse(
+            status="partial",
+            collected=collected,
+            missing=missing,
+            next_step="date_required",
+        ).model_dump_json()
+
+    # ── Steps 6, 6c, 6d: date resolution + G1/G2/G3 via shared validator ──
+    # validate_booking_date resolves relative text (G1), checks closed days (G2),
+    # and enforces lead-time policy (G3). Short-circuits on first failure.
+    # The adapter maps canonical error codes to this tool's wire-format next_step values.
+    _date_validation = await validate_booking_date(
+        date_iso=date_iso,
+        date_text=date_text,
+    )
+
+    if not _date_validation.ok:
+        # Adapter mapping: canonical error codes → prompt-graph next_step values (ADR-2, ADR-6)
+        _next_step_map = {
+            ERROR_INVALID_RELATIVE_DATE: "date_clarification_required",
+            ERROR_CLOSED_DAY: "closed_day_required",
+            ERROR_ADVANCE_POLICY_VIOLATED: "advance_policy_violated",
+        }
+        _next_step = _next_step_map.get(
+            _date_validation.error_code, "date_required"  # fallback for unknown codes
+        )
+
+        # Build caller-owned payload: validator payload + tool-specific context
+        _resolved_rejected = date_iso or (
+            _date_validation.payload.get("raw_text", date_text) or date_text or ""
+        )
+        if _date_validation.error_code == ERROR_CLOSED_DAY:
+            # Preserve the full payload shape expected by the prompt graph
+            _closed_iso = _date_validation.payload.get("closed_date", date_iso)
+            _closed_date = datetime.fromisoformat(_closed_iso).date() if _closed_iso else None
+            _adapter_payload = {
+                "rejected_date": _closed_iso,
+                "weekday": _closed_date.strftime("%A").lower() if _closed_date else "",
+                "stylist_id": collected.get("stylist_id"),
+                "service_ids": collected.get("service_ids", []),
+            }
+        elif _date_validation.error_code == ERROR_ADVANCE_POLICY_VIOLATED:
+            _adapter_payload = {
+                "rejected_date": date_iso,
+                "first_valid_date": _date_validation.payload.get("min_date", ""),
+                "policy_min_days": _date_validation.payload.get("min_days", MIN_BOOKING_DAYS),
+                "stylist_id": collected.get("stylist_id"),
+                "service_ids": collected.get("service_ids", []),
+            }
+        else:
+            # G1: date_clarification_required — no extra payload needed
+            _adapter_payload = {}
+
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "update_booking", "next_step": _next_step},
+        )
+        _is_g1 = _date_validation.error_code == ERROR_INVALID_RELATIVE_DATE
+        return ToolResponse(
+            status="partial" if _is_g1 else "rejected",
+            collected=collected,
+            missing=["date_iso"],
+            next_step=_next_step,
+            payload=_adapter_payload,
+            errors=[_date_validation.error_message] if _date_validation.error_message else [],
+        ).model_dump_json()
+
+    # Validation passed — use the canonical resolved date
+    date_iso = _date_validation.date_iso
+    collected["date_iso"] = date_iso
+
+    # ── Step 7: name required — after stylist+date+closed-day-check ──────
+    # name_required intentionally fires AFTER date_iso is resolved AND closed-day-validated.
+    name_resolved = bool(_validate_full_name(customer_full_name)) or customer_known
+    if not name_resolved:
+        logger.info(
+            "tool.response.partial",
+            extra={"tool_name": "update_booking", "next_step": "name_required"},
+        )
+        return ToolResponse(
+            status="partial",
+            collected=collected,
+            missing=["customer_full_name"],
+            next_step="name_required",
+        ).model_dump_json()
+
+    if customer_full_name:
+        collected["customer_full_name"] = customer_full_name
+
+    # ── Step 8: notes offered once ────────────────────────────────────────
+    if not notes_asked:
+        collected["notes_asked"] = True
+        logger.info(
+            "tool.response.partial",
+            extra={"tool_name": "update_booking", "next_step": "notes_optional"},
+        )
+        return ToolResponse(
+            status="partial",
+            collected=collected,
+            missing=[],
+            next_step="notes_optional",
+        ).model_dump_json()
+
+    collected["notes_asked"] = True
+    if notes is not None:
+        collected["notes"] = notes
+
+    # ── Step 8b: pre-book validation gate (ADR-6) ─────────────────────────
+    # slot_iso=None means the LLM hasn't chosen a slot yet — gate always blocks.
+    # slot_iso provided → must have a matching check_availability ToolMessage.
+    if slot_iso is None:
+        logger.info(
+            "tool.response.partial",
+            extra={
+                "tool_name": "update_booking",
+                "next_step": "pre_book_validation_required",
+            },
+        )
+        return ToolResponse(
+            status="partial",
+            collected=collected,
+            missing=[],
+            next_step="pre_book_validation_required",
+            payload={
+                "hint": (
+                    "Llama a check_availability con slot_time exacto antes de book(). "
+                    "No se ha proporcionado slot_iso."
+                ),
+            },
+        ).model_dump_json()
+
+    resolved_stylist_id = collected.get("stylist_id")
+    validated = _find_matching_check_availability(
+        messages or [], slot_iso, resolved_stylist_id
+    )
+
+    if not validated:
+        logger.info(
+            "tool.response.partial",
+            extra={
+                "tool_name": "update_booking",
+                "next_step": "pre_book_validation_required",
+            },
+        )
+        return ToolResponse(
+            status="partial",
+            collected=collected,
+            missing=[],
+            next_step="pre_book_validation_required",
+            payload={
+                "hint": (
+                    "Llama a check_availability con slot_time exacto antes de book(). "
+                    f"Slot solicitado: {slot_iso}"
+                ),
+            },
+        ).model_dump_json()
+
+    collected["pre_book_validated"] = True
+    if slot_iso is not None:
+        collected["slot_iso"] = slot_iso
+
+    # ── Step 9: all gates pass → booking_ready ────────────────────────────
+    logger.info(
+        "tool.response.complete",
+        extra={"tool_name": "update_booking", "payload_keys": list(collected.keys())},
+    )
+    return ToolResponse(
+        status="ok",
+        collected=collected,
+        missing=[],
+        next_step="booking_ready",
+    ).model_dump_json()

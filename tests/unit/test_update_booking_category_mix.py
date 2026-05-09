@@ -1,14 +1,16 @@
-"""T-5 — RED tests for update_booking category_mix gate.
+"""T-5 — tests for update_booking category_mix gate.
 
 Tests that the tool rejects mixed-category service requests with
 next_step="category_mix_required" before any availability gate.
 
+Post-PR#2: category mix logic resolved inside BookingQueryService.resolve_all.
+Patches target BookingQueryService.resolve_all with has_category_mix=True/False.
 All tests use mocks — no DB required.
 """
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -18,19 +20,41 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_session_ctx():
-    session_mock = AsyncMock()
-    ctx_mock = MagicMock()
-    ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
-    ctx_mock.__aexit__ = AsyncMock(return_value=False)
-    return ctx_mock, session_mock
-
-
 async def _call_update_booking(**kwargs) -> dict:
     from agent.tools.update_booking import update_booking
 
     raw = await update_booking.ainvoke(kwargs)
     return json.loads(raw)
+
+
+def _make_resolve_all(
+    service_ids=None,
+    unknown=None,
+    has_category_mix=False,
+    hair_services=None,
+    aesth_services=None,
+    both_services=None,
+    stylist_id=None,
+    active_stylists=None,
+):
+    """Build a ResolveAllResult for mocking BookingQueryService.resolve_all."""
+    from agent.services.booking_query_service import ResolveAllResult
+
+    return ResolveAllResult(
+        success=(not unknown),
+        service_ids=service_ids or [],
+        unknown_names=unknown or [],
+        stylist_id=stylist_id,
+        audience_variants=("none", "", []),
+        categories=set(),
+        id_to_category={},
+        active_stylists=active_stylists or [],
+        has_category_mix=has_category_mix,
+        hair_services=hair_services or [],
+        aesth_services=aesth_services or [],
+        both_services=both_services or [],
+        error_message=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -41,34 +65,21 @@ async def _call_update_booking(**kwargs) -> dict:
 @pytest.mark.asyncio
 async def test_category_mix_gate_fires_for_mixed_services():
     """Mixed HAIRDRESSING + AESTHETICS services → category_mix_required BEFORE audience gate."""
-    from database.models import ServiceCategory
-
-    ctx, _ = _make_session_ctx()
+    resolve_all_result = _make_resolve_all(
+        service_ids=["uuid-hair", "uuid-aesth"],
+        has_category_mix=True,
+        hair_services=["corte de mujer"],
+        aesth_services=["manicura"],
+    )
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["uuid-hair", "uuid-aesth"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(
-                return_value={ServiceCategory.HAIRDRESSING, ServiceCategory.AESTHETICS}
-            ),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
-            new=AsyncMock(
-                return_value={
-                    "uuid-hair": ServiceCategory.HAIRDRESSING,
-                    "uuid-aesth": ServiceCategory.AESTHETICS,
-                }
-            ),
         ),
     ):
         data = await _call_update_booking(
@@ -84,34 +95,21 @@ async def test_category_mix_gate_fires_for_mixed_services():
 @pytest.mark.asyncio
 async def test_category_mix_gate_fires_even_with_audience_set():
     """Mixed services + audience already set → still category_mix_required (gate is before audience)."""
-    from database.models import ServiceCategory
-
-    ctx, _ = _make_session_ctx()
+    resolve_all_result = _make_resolve_all(
+        service_ids=["uuid-hair", "uuid-aesth"],
+        has_category_mix=True,
+        hair_services=["corte de mujer"],
+        aesth_services=["manicura"],
+    )
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["uuid-hair", "uuid-aesth"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(
-                return_value={ServiceCategory.HAIRDRESSING, ServiceCategory.AESTHETICS}
-            ),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
-            new=AsyncMock(
-                return_value={
-                    "uuid-hair": ServiceCategory.HAIRDRESSING,
-                    "uuid-aesth": ServiceCategory.AESTHETICS,
-                }
-            ),
         ),
     ):
         data = await _call_update_booking(
@@ -125,34 +123,21 @@ async def test_category_mix_gate_fires_even_with_audience_set():
 @pytest.mark.asyncio
 async def test_category_mix_payload_has_required_keys():
     """Mixed response payload must include hairdressing_services, aesthetics_services, categories."""
-    from database.models import ServiceCategory
-
-    ctx, _ = _make_session_ctx()
+    resolve_all_result = _make_resolve_all(
+        service_ids=["uuid-hair", "uuid-aesth"],
+        has_category_mix=True,
+        hair_services=["corte de mujer"],
+        aesth_services=["manicura"],
+    )
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["uuid-hair", "uuid-aesth"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(
-                return_value={ServiceCategory.HAIRDRESSING, ServiceCategory.AESTHETICS}
-            ),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
-            new=AsyncMock(
-                return_value={
-                    "uuid-hair": ServiceCategory.HAIRDRESSING,
-                    "uuid-aesth": ServiceCategory.AESTHETICS,
-                }
-            ),
         ),
     ):
         data = await _call_update_booking(
@@ -169,27 +154,20 @@ async def test_category_mix_payload_has_required_keys():
 @pytest.mark.asyncio
 async def test_single_category_hairdressing_does_not_trigger_mix_gate():
     """HAIRDRESSING-only services → no category_mix_required, flow continues."""
-    from database.models import ServiceCategory
-
-    ctx, session_mock = _make_session_ctx()
+    resolve_all_result = _make_resolve_all(
+        service_ids=["uuid-hair"],
+        has_category_mix=False,
+        active_stylists=["Marta", "Ana"],
+    )
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["uuid-hair"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_active_stylists",
-            new=AsyncMock(return_value=["Marta", "Ana"]),
         ),
     ):
         data = await _call_update_booking(
@@ -204,29 +182,20 @@ async def test_single_category_hairdressing_does_not_trigger_mix_gate():
 @pytest.mark.asyncio
 async def test_both_service_alongside_hair_does_not_trigger_mix_gate():
     """BOTH-category service + HAIRDRESSING → no rejection (BOTH is compatible with any)."""
-    from database.models import ServiceCategory
-
-    ctx, _ = _make_session_ctx()
+    resolve_all_result = _make_resolve_all(
+        service_ids=["uuid-hair", "uuid-both"],
+        has_category_mix=False,  # HAIRDRESSING + BOTH = not a mix
+        active_stylists=["Marta"],
+    )
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["uuid-hair", "uuid-both"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(
-                return_value={ServiceCategory.HAIRDRESSING, ServiceCategory.BOTH}
-            ),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_active_stylists",
-            new=AsyncMock(return_value=["Marta"]),
         ),
     ):
         data = await _call_update_booking(

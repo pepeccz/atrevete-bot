@@ -1,8 +1,13 @@
 """T-08, T-09 — update_booking: variant gate audience-independence + stylist payload.
 
-RED phase: tests for:
+Tests for:
 - T-08: variant gate fires even when audience is already known
 - T-09: stylist_required emits payload with stylists list + first_available_label
+- T-LT-*: lead-time gate scenarios
+- T-PB-*: pre-book validation gate scenarios
+
+Post-PR#2: patches target BookingQueryService.resolve_all and
+BookingQueryService.resolve_audience_variants instead of _booking_helpers.* functions.
 """
 from __future__ import annotations
 
@@ -21,19 +26,38 @@ _MADRID_TZ = ZoneInfo("Europe/Madrid")
 # ---------------------------------------------------------------------------
 
 
-def _make_session_ctx():
-    session_mock = AsyncMock()
-    ctx_mock = MagicMock()
-    ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
-    ctx_mock.__aexit__ = AsyncMock(return_value=False)
-    return ctx_mock, session_mock
-
-
 async def _call_update_booking(**kwargs) -> dict:
     from agent.tools.update_booking import update_booking
 
     raw = await update_booking.ainvoke(kwargs)
     return json.loads(raw)
+
+
+def _make_resolve_all_result(
+    service_ids=None,
+    unknown_names=None,
+    stylist_id=None,
+    active_stylists=None,
+    has_category_mix=False,
+):
+    """Build a ResolveAllResult for mocking."""
+    from agent.services.booking_query_service import ResolveAllResult
+
+    return ResolveAllResult(
+        success=(not unknown_names),
+        service_ids=service_ids or ["service-uuid-1"],
+        unknown_names=unknown_names or [],
+        stylist_id=stylist_id,
+        audience_variants=("none", "", []),
+        categories=set(),
+        id_to_category={},
+        active_stylists=active_stylists if active_stylists is not None else [],
+        has_category_mix=has_category_mix,
+        hair_services=[],
+        aesth_services=[],
+        both_services=[],
+        error_message=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -47,33 +71,18 @@ async def test_variant_gate_fires_with_known_audience():
 
     The variant check must NOT be nested inside 'if audience is None'.
     """
-    ctx, _ = _make_session_ctx()
-
-    from database.models import ServiceCategory
+    resolve_all_result = _make_resolve_all_result(stylist_id=None)
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["service-uuid-1"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
             new=AsyncMock(
                 return_value=("variant", "Peinado", ["Peinado", "Peinado Novia", "Peinado Fiesta"])
             ),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
-            new=AsyncMock(return_value={}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_stylist",
-            new=AsyncMock(return_value=None),
         ),
     ):
         # audience IS already set — the variant gate must still fire
@@ -97,37 +106,20 @@ async def test_variant_gate_fires_with_known_audience():
 @pytest.mark.asyncio
 async def test_stylist_required_payload_populated():
     """Active stylists in DB → stylist_required emits payload.stylists non-empty."""
-    ctx, _ = _make_session_ctx()
-
     active_first_names = ["Ana", "Marta", "Pilar"]
-
-    from database.models import ServiceCategory
+    resolve_all_result = _make_resolve_all_result(
+        stylist_id=None,  # no stylist resolved
+        active_stylists=active_first_names,
+    )
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["service-uuid-1"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
-            new=AsyncMock(return_value={}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_stylist",
-            new=AsyncMock(return_value=None),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_active_stylists",
-            new=AsyncMock(return_value=active_first_names),
         ),
     ):
         data = await _call_update_booking(
@@ -159,43 +151,35 @@ _FAKE_SERVICE_ID_LT = "aabbccdd-0001-0002-0003-000000000002"
 
 def _lt_patches(is_date_closed_return: bool = False) -> dict:
     """Standard patch dict that gets past Steps 1-5 (service/stylist resolution)."""
-    from database.models import ServiceCategory
+    from agent.services.booking_query_service import ResolveAllResult
+
+    resolve_all_result = ResolveAllResult(
+        success=True,
+        service_ids=[_FAKE_SERVICE_ID_LT],
+        unknown_names=[],
+        stylist_id=_FAKE_STYLIST_ID_LT,
+        audience_variants=("none", "", []),
+        categories=set(),
+        id_to_category={},
+        active_stylists=[],
+        has_category_mix=False,
+        hair_services=[],
+        aesth_services=[],
+        both_services=[],
+        error_message=None,
+    )
 
     return {
-        "agent.tools._booking_helpers._resolve_service_ids": AsyncMock(
-            return_value=([_FAKE_SERVICE_ID_LT], [])
+        "agent.services.booking_query_service.BookingQueryService.resolve_all": AsyncMock(
+            return_value=resolve_all_result
         ),
-        "agent.tools._booking_helpers._resolve_service_categories": AsyncMock(
-            return_value={ServiceCategory.HAIRDRESSING}
+        "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants": AsyncMock(
+            return_value=("none", "", [])
         ),
-        "agent.tools._booking_helpers._resolve_service_id_to_category_map": AsyncMock(
-            return_value={}
-        ),
-        "agent.tools._booking_helpers._resolve_audience_variants": AsyncMock(
-            return_value=("ok", None, [])
-        ),
-        "agent.tools._booking_helpers._resolve_stylist": AsyncMock(
-            return_value=_FAKE_STYLIST_ID_LT
-        ),
-        "agent.tools._booking_helpers._resolve_active_stylists": AsyncMock(
-            return_value=[{"id": _FAKE_STYLIST_ID_LT, "name": "Test Stylist"}]
-        ),
-        "agent.tools._booking_helpers._validate_full_name": MagicMock(return_value=None),
-        "database.connection.get_async_session": MagicMock(
-            return_value=_make_fake_session_ctx()
-        ),
-        "shared.business_hours_validator.is_date_closed": AsyncMock(
+        "agent.tools._booking_validators.is_date_closed": AsyncMock(
             return_value=is_date_closed_return
         ),
     }
-
-
-def _make_fake_session_ctx():
-    fake_session = AsyncMock()
-    fake_cm = AsyncMock()
-    fake_cm.__aenter__ = AsyncMock(return_value=fake_session)
-    fake_cm.__aexit__ = AsyncMock(return_value=False)
-    return fake_cm
 
 
 async def _call_impl(date_iso, patches_override=None, **extra_kwargs):
@@ -206,15 +190,18 @@ async def _call_impl(date_iso, patches_override=None, **extra_kwargs):
         patches.update(patches_override)
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", patches["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", patches["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", patches["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", patches["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", patches["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", patches["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._validate_full_name", patches["agent.tools._booking_helpers._validate_full_name"]),
-        patch("database.connection.get_async_session", patches["database.connection.get_async_session"]),
-        patch("shared.business_hours_validator.is_date_closed", patches["shared.business_hours_validator.is_date_closed"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            patches["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            patches["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            patches["agent.tools._booking_validators.is_date_closed"],
+        ),
     ):
         raw = await _update_booking_impl(
             services=["Corte de Mujer"],
@@ -307,7 +294,7 @@ async def test_closed_day_takes_precedence_over_lead_time():
     closed_and_below_min = (today + timedelta(days=2)).isoformat()
 
     patches_override = {
-        "shared.business_hours_validator.is_date_closed": AsyncMock(return_value=True),
+        "agent.tools._booking_validators.is_date_closed": AsyncMock(return_value=True),
     }
 
     data = await _call_impl(date_iso=closed_and_below_min, patches_override=patches_override)
@@ -341,35 +328,19 @@ async def test_lead_time_gate_skipped_when_no_date():
 @pytest.mark.asyncio
 async def test_stylist_required_payload_empty_when_no_active_stylists():
     """No active stylists → payload.stylists == []."""
-    ctx, _ = _make_session_ctx()
-
-    from database.models import ServiceCategory
+    resolve_all_result = _make_resolve_all_result(
+        stylist_id=None,
+        active_stylists=[],
+    )
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["service-uuid-1"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
-            new=AsyncMock(return_value={}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_stylist",
-            new=AsyncMock(return_value=None),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_active_stylists",
-            new=AsyncMock(return_value=[]),
         ),
     ):
         data = await _call_update_booking(
@@ -388,37 +359,20 @@ async def test_stylist_required_payload_empty_when_no_active_stylists():
 @pytest.mark.asyncio
 async def test_stylist_required_payload_on_unknown_stylist():
     """Unknown stylist name → rejected/stylist_required with payload.stylists populated."""
-    ctx, _ = _make_session_ctx()
-
     active_first_names = ["Ana", "Marta"]
-
-    from database.models import ServiceCategory
+    resolve_all_result = _make_resolve_all_result(
+        stylist_id=None,  # stylist not found
+        active_stylists=active_first_names,
+    )
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["service-uuid-1"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
-            new=AsyncMock(return_value={}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_stylist",
-            new=AsyncMock(return_value=None),  # stylist name not found
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_active_stylists",
-            new=AsyncMock(return_value=active_first_names),
         ),
     ):
         data = await _call_update_booking(
@@ -434,48 +388,46 @@ async def test_stylist_required_payload_on_unknown_stylist():
 
 
 # ---------------------------------------------------------------------------
-# T1 — Pre-book gate: S1–S7 scenarios
+# T-PB-*: Pre-book gate scenarios
 # Tests call _update_booking_impl directly with messages= kwarg.
-# No patch on _get_recent_messages (will not exist after T2).
 # ---------------------------------------------------------------------------
 
 _FAKE_STYLIST_ID_PB = "bbbbcccc-0001-0002-0003-000000000001"
 _FAKE_SERVICE_ID_PB = "bbbbcccc-0001-0002-0003-000000000002"
 _FAKE_DATE_PB = (
-    __import__("datetime").date.today() + __import__("datetime").timedelta(days=5)
+    __import__("datetime").date.today() + __import__("datetime").timedelta(days=10)
 ).isoformat()
 _SLOT_ISO_PB = f"{_FAKE_DATE_PB}T10:00:00+02:00"
 
 
 def _pb_patches(stylist_id=_FAKE_STYLIST_ID_PB) -> dict:
-    """Patches that pass Steps 1-7 of update_booking (notes_asked=True bypasses steps 1-7)."""
-    from database.models import ServiceCategory
+    """Patches that pass Steps 1-7 of update_booking (notes_asked=True + customer_known bypasses)."""
+    from agent.services.booking_query_service import ResolveAllResult
 
-    session_mock = AsyncMock()
-    ctx_mock = AsyncMock()
-    ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
-    ctx_mock.__aexit__ = AsyncMock(return_value=False)
+    resolve_all_result = ResolveAllResult(
+        success=True,
+        service_ids=[_FAKE_SERVICE_ID_PB],
+        unknown_names=[],
+        stylist_id=stylist_id,
+        audience_variants=("none", "", []),
+        categories=set(),
+        id_to_category={},
+        active_stylists=[],
+        has_category_mix=False,
+        hair_services=[],
+        aesth_services=[],
+        both_services=[],
+        error_message=None,
+    )
 
     return {
-        "agent.tools._booking_helpers._resolve_service_ids": AsyncMock(
-            return_value=([_FAKE_SERVICE_ID_PB], [])
+        "agent.services.booking_query_service.BookingQueryService.resolve_all": AsyncMock(
+            return_value=resolve_all_result
         ),
-        "agent.tools._booking_helpers._resolve_service_categories": AsyncMock(
-            return_value={ServiceCategory.HAIRDRESSING}
+        "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants": AsyncMock(
+            return_value=("none", "", [])
         ),
-        "agent.tools._booking_helpers._resolve_audience_variants": AsyncMock(
-            return_value=("none", None, [])
-        ),
-        "agent.tools._booking_helpers._resolve_stylist": AsyncMock(return_value=stylist_id),
-        "agent.tools._booking_helpers._resolve_active_stylists": AsyncMock(return_value=[]),
-        "agent.tools._booking_helpers._resolve_service_id_to_category_map": AsyncMock(
-            return_value={}
-        ),
-        "agent.tools._booking_helpers._validate_full_name": MagicMock(
-            return_value=("Juan", "García")
-        ),
-        "shared.business_hours_validator.is_date_closed": AsyncMock(return_value=False),
-        "database.connection.get_async_session": MagicMock(return_value=ctx_mock),
+        "agent.tools._booking_validators.is_date_closed": AsyncMock(return_value=False),
     }
 
 
@@ -498,15 +450,18 @@ async def _call_pb_impl(slot_iso, messages=None, stylist_id=_FAKE_STYLIST_ID_PB,
     patches = _pb_patches(stylist_id=stylist_id)
 
     with (
-        patch("agent.tools._booking_helpers._resolve_service_ids", patches["agent.tools._booking_helpers._resolve_service_ids"]),
-        patch("agent.tools._booking_helpers._resolve_service_categories", patches["agent.tools._booking_helpers._resolve_service_categories"]),
-        patch("agent.tools._booking_helpers._resolve_audience_variants", patches["agent.tools._booking_helpers._resolve_audience_variants"]),
-        patch("agent.tools._booking_helpers._resolve_stylist", patches["agent.tools._booking_helpers._resolve_stylist"]),
-        patch("agent.tools._booking_helpers._resolve_active_stylists", patches["agent.tools._booking_helpers._resolve_active_stylists"]),
-        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", patches["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
-        patch("agent.tools._booking_helpers._validate_full_name", patches["agent.tools._booking_helpers._validate_full_name"]),
-        patch("shared.business_hours_validator.is_date_closed", patches["shared.business_hours_validator.is_date_closed"]),
-        patch("database.connection.get_async_session", patches["database.connection.get_async_session"]),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            patches["agent.services.booking_query_service.BookingQueryService.resolve_all"],
+        ),
+        patch(
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            patches["agent.services.booking_query_service.BookingQueryService.resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            patches["agent.tools._booking_validators.is_date_closed"],
+        ),
     ):
         raw = await _update_booking_impl(
             services=["Corte de Mujer"],

@@ -3,12 +3,15 @@
 Covers spec scenarios B-14, B-15, B-16.
 
 All resolver calls and datetime.now are mocked — no DB access required.
+
+Post-PR#2: patches target BookingQueryService.resolve_all and
+BookingQueryService.resolve_audience_variants instead of _booking_helpers.* functions.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,61 +25,50 @@ def parse(raw: str) -> dict:
 # Shared mock helpers
 # ---------------------------------------------------------------------------
 
-_TODAY_DATE = date(2026, 4, 27)
-_TODAY_DT = datetime(2026, 4, 27, 10, 0, 0, tzinfo=timezone.utc)
-
-
-def _mock_session_ctx(session_mock):
-    """Return an async context manager that yields session_mock."""
-    ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=session_mock)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-    return ctx
-
-
-def _make_session_with_service(service_id="svc-uuid-001", service_name="corte dama"):
-    """Return a session mock that resolves the given service and has no audience variants."""
-    session = AsyncMock()
-    return session
+_TODAY_DATE = date.today()
+_RESOLVED_DATE = _TODAY_DATE + timedelta(days=10)  # far enough to pass lead-time gate
+_TODAY_DT = datetime.combine(_TODAY_DATE, datetime.min.time()).replace(tzinfo=timezone.utc)
 
 
 @pytest.fixture
 def mock_helpers():
-    """Patch all DB helpers so update_booking runs without a real DB."""
-    from database.models import ServiceCategory
+    """Patch all DB helpers so update_booking runs without a real DB.
+
+    Post-PR#2: patches BookingQueryService.resolve_all and resolve_audience_variants.
+    """
+    from agent.services.booking_query_service import ResolveAllResult
+
+    resolve_all_result = ResolveAllResult(
+        success=True,
+        service_ids=["svc-uuid-001"],
+        unknown_names=[],
+        stylist_id="stylist-uuid-001",
+        audience_variants=("none", "", []),
+        categories=set(),
+        id_to_category={},
+        active_stylists=[],
+        has_category_mix=False,
+        hair_services=[],
+        aesth_services=[],
+        both_services=[],
+        error_message=None,
+    )
 
     with (
         patch(
-            "agent.tools._booking_helpers._resolve_service_ids",
-            new=AsyncMock(return_value=(["svc-uuid-001"], [])),
+            "agent.services.booking_query_service.BookingQueryService.resolve_all",
+            new=AsyncMock(return_value=resolve_all_result),
         ),
         patch(
-            "agent.tools._booking_helpers._resolve_audience_variants",
-            new=AsyncMock(return_value=("none", "", [])),  # no ambiguity → no disambiguation
+            "agent.services.booking_query_service.BookingQueryService.resolve_audience_variants",
+            new=AsyncMock(return_value=("none", "", [])),
         ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_categories",
-            new=AsyncMock(return_value={ServiceCategory.HAIRDRESSING}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
-            new=AsyncMock(return_value={}),
-        ),
-        patch(
-            "agent.tools._booking_helpers._resolve_stylist",
-            new=AsyncMock(return_value="stylist-uuid-001"),
-        ),
-        patch(
-            "database.connection.get_async_session",
-        ) as mock_get_session,
         # Patch is_date_closed so tests don't hit the DB and assume an open day.
         patch(
-            "shared.business_hours_validator.is_date_closed",
+            "agent.tools._booking_validators.is_date_closed",
             new=AsyncMock(return_value=False),
         ),
     ):
-        session_mock = AsyncMock()
-        mock_get_session.return_value = _mock_session_ctx(session_mock)
         yield
 
 
@@ -85,11 +77,26 @@ class TestDateTextResolves:
 
     @pytest.mark.asyncio
     async def test_b14_date_text_resolves_and_books(self, mock_helpers):
+        import json
+        from unittest.mock import MagicMock
+
+        slot_iso = f"{_RESOLVED_DATE.isoformat()}T10:00:00+02:00"
+
+        avail_msg = MagicMock()
+        avail_msg.name = "check_availability"
+        avail_msg.content = json.dumps({
+            "status": "ok",
+            "payload": {
+                "slots": [{"start_iso": slot_iso, "stylist_id": "stylist-uuid-001"}],
+                "exact_match": True,
+            },
+        })
+
         with (
+            # Patch at the module where the name is BOUND (module-level import in _booking_validators)
             patch(
-                "agent.booking.resolvers.time_resolver.resolve_relative_date",
-                # Use today+3 (2026-04-30) so the new lead-time gate passes (MIN_BOOKING_DAYS=3).
-                return_value=date(2026, 4, 30),
+                "agent.tools._booking_validators.resolve_relative_date",
+                return_value=_RESOLVED_DATE,
             ),
             patch(
                 "agent.tools.update_booking.datetime"
@@ -106,7 +113,7 @@ class TestDateTextResolves:
                     stylist_name="Marta",
                     no_preference_stylist=False,
                     date_iso=None,
-                    date_text="en tres días",
+                    date_text="en diez días",
                     audience=None,
                     # New gates must be pre-satisfied so the test reaches date resolution
                     no_more_services=True,
@@ -114,11 +121,13 @@ class TestDateTextResolves:
                     customer_full_name="Ana García",
                     customer_known=False,
                     notes_asked=True,
+                    slot_iso=slot_iso,
+                    messages=[avail_msg],
                 )
             )
 
         assert result["status"] == "ok"
-        assert result["collected"]["date_iso"] == "2026-04-30"
+        assert result["collected"]["date_iso"] == _RESOLVED_DATE.isoformat()
         assert result["next_step"] == "booking_ready"
 
 
@@ -129,7 +138,7 @@ class TestDateTextAmbiguous:
     async def test_b15_ambiguous_date_text_returns_clarification(self, mock_helpers):
         with (
             patch(
-                "agent.booking.resolvers.time_resolver.resolve_relative_date",
+                "agent.tools._booking_validators.resolve_relative_date",
                 return_value=None,
             ),
             patch(
@@ -167,6 +176,22 @@ class TestDateIsoPrecedence:
 
     @pytest.mark.asyncio
     async def test_b16_date_iso_wins_over_date_text(self, mock_helpers):
+        import json
+        from unittest.mock import MagicMock
+
+        future_date_iso = _RESOLVED_DATE.isoformat()
+        slot_iso = f"{future_date_iso}T10:00:00+02:00"
+
+        avail_msg = MagicMock()
+        avail_msg.name = "check_availability"
+        avail_msg.content = json.dumps({
+            "status": "ok",
+            "payload": {
+                "slots": [{"start_iso": slot_iso, "stylist_id": "stylist-uuid-001"}],
+                "exact_match": True,
+            },
+        })
+
         with (
             patch(
                 "agent.booking.resolvers.time_resolver.resolve_relative_date",
@@ -185,7 +210,7 @@ class TestDateIsoPrecedence:
                     services=["corte dama"],
                     stylist_name="Marta",
                     no_preference_stylist=False,
-                    date_iso="2026-05-01",
+                    date_iso=future_date_iso,
                     date_text="mañana",
                     audience=None,
                     no_more_services=True,
@@ -193,10 +218,12 @@ class TestDateIsoPrecedence:
                     customer_full_name="Ana García",
                     customer_known=False,
                     notes_asked=True,
+                    slot_iso=slot_iso,
+                    messages=[avail_msg],
                 )
             )
 
         # date_iso takes precedence → resolver should NOT be called
         mock_resolve.assert_not_called()
-        assert result["collected"]["date_iso"] == "2026-05-01"
+        assert result["collected"]["date_iso"] == future_date_iso
         assert result["next_step"] == "booking_ready"
