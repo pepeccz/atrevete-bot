@@ -55,7 +55,7 @@ class AppointmentQueryResult:
     error_message: str | None = None
 
 
-async def _get_customer_by_phone(phone_number: str) -> Customer | None:
+async def get_customer_by_phone(phone_number: str) -> Customer | None:
     """
     Get customer by phone number.
 
@@ -74,9 +74,9 @@ async def _get_customer_by_phone(phone_number: str) -> Customer | None:
         return None
 
 
-async def _get_upcoming_appointments(customer_id: UUID, limit: int = 5) -> list[Appointment]:
+async def get_appointments_by_customer_id(customer_id: UUID, limit: int = 5) -> list[Appointment]:
     """
-    Get upcoming appointments for a customer.
+    Get upcoming appointments for a customer by customer_id.
 
     Returns PENDING or CONFIRMED appointments in the future.
 
@@ -118,7 +118,7 @@ async def _get_upcoming_appointments(customer_id: UUID, limit: int = 5) -> list[
         return []
 
 
-async def _get_service_names(service_ids: list[UUID]) -> str:
+async def get_service_names(service_ids: list[UUID]) -> str:
     """Get comma-separated service names from service IDs."""
     if not service_ids:
         return "servicios"
@@ -175,7 +175,7 @@ async def get_upcoming_appointments(customer_phone: str, limit: int = 5) -> Appo
     logger.info(f"Querying appointments for phone: {customer_phone}")
 
     # Get customer
-    customer = await _get_customer_by_phone(customer_phone)
+    customer = await get_customer_by_phone(customer_phone)
     if not customer:
         logger.warning(f"Appointment query for unknown phone: {customer_phone}")
         return AppointmentQueryResult(
@@ -186,7 +186,7 @@ async def get_upcoming_appointments(customer_phone: str, limit: int = 5) -> Appo
 
     # Get appointments
     try:
-        appointments = await _get_upcoming_appointments(customer.id, limit)
+        appointments = await get_appointments_by_customer_id(customer.id, limit)
     except Exception as e:
         logger.error(f"Error fetching appointments: {e}")
         return AppointmentQueryResult(

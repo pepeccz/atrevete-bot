@@ -68,13 +68,13 @@ async def _list_appointments(customer_phone: str, limit: int = 5) -> dict:
     """
     try:
         from agent.services.appointment_query_service import (
-            _get_customer_by_phone,
-            _get_service_names,
-            _get_upcoming_appointments,
+            get_appointments_by_customer_id,
+            get_customer_by_phone,
+            get_service_names,
             format_date_spanish,
         )
 
-        customer = await _get_customer_by_phone(customer_phone)
+        customer = await get_customer_by_phone(customer_phone)
         if customer is None:
             return {
                 "success": True,
@@ -83,7 +83,7 @@ async def _list_appointments(customer_phone: str, limit: int = 5) -> dict:
                 "message": "No tienes citas programadas en este momento.",
             }
 
-        appointments = await _get_upcoming_appointments(customer.id, limit)
+        appointments = await get_appointments_by_customer_id(customer.id, limit)
         if not appointments:
             return {
                 "success": True,
@@ -97,7 +97,7 @@ async def _list_appointments(customer_phone: str, limit: int = 5) -> dict:
         for idx, appt in enumerate(appointments, 1):
             appt_time = appt.start_time.astimezone(MADRID_TZ)
             hours_until = (appt_time - now).total_seconds() / 3600
-            service_names = await _get_service_names(appt.service_ids)
+            service_names = await get_service_names(appt.service_ids)
             items.append(
                 {
                     "index": idx,
