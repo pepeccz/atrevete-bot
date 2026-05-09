@@ -276,7 +276,7 @@ async def test_book_creates_new_customer_and_appointment(test_stylist, test_serv
     phone = f"+34600{uuid4().hex[:6]}"
 
     with patch(
-        "agent.tools.book.fire_and_forget_push_appointment",
+        "agent.services.booking_service.fire_and_forget_push_appointment",
         new_callable=AsyncMock,
     ) as mock_push:
         raw = await book.ainvoke(
@@ -346,7 +346,7 @@ async def test_book_reuses_existing_customer(test_stylist, test_service):
         await sess.commit()
         existing_id = existing.id
 
-    with patch("agent.tools.book.fire_and_forget_push_appointment", new_callable=AsyncMock):
+    with patch("agent.services.booking_service.fire_and_forget_push_appointment", new_callable=AsyncMock):
         raw = await book.ainvoke(
             {
                 "service_ids": [str(test_service)],
@@ -390,7 +390,7 @@ async def test_book_calls_gcal_push_after_db_commit(test_stylist, test_service):
     phone = f"+34622{uuid4().hex[:6]}"
 
     with patch(
-        "agent.tools.book.fire_and_forget_push_appointment",
+        "agent.services.booking_service.fire_and_forget_push_appointment",
         new_callable=AsyncMock,
     ) as mock_push:
         raw = await book.ainvoke(

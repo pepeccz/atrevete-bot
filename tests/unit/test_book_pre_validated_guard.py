@@ -35,8 +35,10 @@ async def test_book_rejected_when_pre_book_validated_false() -> None:
 
 @pytest.mark.asyncio
 async def test_book_rejected_pre_book_validated_false_no_db_write() -> None:
-    """book(pre_book_validated=False) must NOT touch the DB."""
-    with patch("database.connection.get_async_session") as mock_session:
+    """book(pre_book_validated=False) must NOT call BookingService (no DB access)."""
+    with patch(
+        "agent.tools.book.BookingService.create_appointment",
+    ) as mock_service:
         result = await book.ainvoke(
             {
                 "service_ids": ["00000000-0000-0000-0000-000000000001"],
@@ -48,7 +50,7 @@ async def test_book_rejected_pre_book_validated_false_no_db_write() -> None:
                 "pre_book_validated": False,
             }
         )
-    mock_session.assert_not_called()
+    mock_service.assert_not_called()
     payload = json.loads(result)
     assert payload["status"] == "rejected"
 

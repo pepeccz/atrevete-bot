@@ -3,10 +3,12 @@ Tests for agent/tools/book.py — Phase 4 TDD (calendar link).
 
 T4.1 RED: _build_gcal_link formats URL correctly (pure function).
 T4.3 RED: book() success path returns calendar_link in payload.
+
+Post-PR4: patches BookingService.create_appointment, not DB sessions directly.
 """
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -73,94 +75,40 @@ def test_build_gcal_link_encodes_special_chars():
 
 # ---------------------------------------------------------------------------
 # T4.3 — book() success path returns calendar_link in payload
+# (post-PR4: patches BookingService.create_appointment)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_book_returns_calendar_link_on_success():
-    """Successful book() call must include calendar_link in the JSON payload."""
+    """Successful book() call must include calendar_link in the JSON payload.
+
+    Post-PR4: patches BookingService.create_appointment — tool is a thin wrapper.
+    """
+    from agent.services.booking_service import BookingResult
     from agent.tools.book import book
 
     stylist_uuid = uuid4()
     service_uuid = uuid4()
     appointment_uuid = uuid4()
     customer_uuid = uuid4()
+    start_time = datetime(2026, 5, 1, 10, 0, 0, tzinfo=UTC)
+    end_time = start_time + timedelta(hours=1)
 
-    # --- Mock DB session (first session: transaction; second: service names; third: stylist) ---
-    mock_service = MagicMock()
-    mock_service.duration_minutes = 60
-    mock_service.name = "Corte de Mujer"
+    mock_result = BookingResult(
+        success=True,
+        appointment_id=appointment_uuid,
+        customer_id=customer_uuid,
+        start_time=start_time,
+        end_time=end_time,
+        service_names="Corte de Mujer",
+        stylist_display_name="María",
+    )
 
-    mock_customer = MagicMock()
-    mock_customer.id = customer_uuid
-
-    mock_stylist = MagicMock()
-    mock_stylist.name = "María"
-
-    # Session for the main transaction
-    mock_txn_session = AsyncMock()
-    mock_txn_session.execute = AsyncMock()
-    mock_txn_session.get = AsyncMock(return_value=mock_stylist)
-    mock_txn_session.flush = AsyncMock()
-    mock_txn_session.commit = AsyncMock()
-    mock_txn_session.add = MagicMock()
-    mock_txn_session.__aenter__ = AsyncMock(return_value=mock_txn_session)
-    mock_txn_session.__aexit__ = AsyncMock(return_value=False)
-
-    # Duration query result
-    mock_dur_rows = MagicMock()
-    mock_dur_rows.fetchall = MagicMock(return_value=[(60,)])
-    # Customer lookup
-    mock_cust_rows = MagicMock()
-    mock_cust_rows.scalar_one_or_none = MagicMock(return_value=None)  # new customer
-    # Stylist get (after commit)
-    mock_sty_get_rows = MagicMock()
-
-    call_count = [0]
-
-    async def mock_execute(stmt):
-        call_count[0] += 1
-        if call_count[0] == 1:
-            return mock_dur_rows
-        if call_count[0] == 2:
-            return mock_cust_rows
-        return mock_sty_get_rows
-
-    mock_txn_session.execute.side_effect = mock_execute
-
-    # Session for GCal service name fetch
-    mock_gcal_session = AsyncMock()
-    mock_gcal_session.execute = AsyncMock()
-    mock_gcal_session.__aenter__ = AsyncMock(return_value=mock_gcal_session)
-    mock_gcal_session.__aexit__ = AsyncMock(return_value=False)
-
-    svc_name_rows = MagicMock()
-    svc_name_rows.fetchall = MagicMock(return_value=[("Corte de Mujer",)])
-    mock_gcal_session.execute.return_value = svc_name_rows
-
-    # Session for stylist name fetch (after commit)
-    mock_sty_session = AsyncMock()
-    mock_sty_session.get = AsyncMock(return_value=mock_stylist)
-    mock_sty_session.__aenter__ = AsyncMock(return_value=mock_sty_session)
-    mock_sty_session.__aexit__ = AsyncMock(return_value=False)
-
-    session_call = [0]
-
-    def make_session(*args, **kwargs):
-        session_call[0] += 1
-        if session_call[0] == 1:
-            return mock_txn_session
-        if session_call[0] == 2:
-            return mock_gcal_session
-        return mock_sty_session
-
-    with (
-        patch("database.connection.get_async_session", side_effect=make_session),
-        patch(
-            "agent.services.gcal_push_service.fire_and_forget_push_appointment",
-            new_callable=AsyncMock,
-        ),
-        patch("agent.tools.book.uuid4", return_value=appointment_uuid),
+    with patch(
+        "agent.tools.book.BookingService.create_appointment",
+        new_callable=AsyncMock,
+        return_value=mock_result,
     ):
         result = await book.ainvoke(
             {
@@ -179,3 +127,5 @@ async def test_book_returns_calendar_link_on_success():
     assert payload["status"] == "ok"
     assert "calendar_link" in payload["payload"]
     assert payload["payload"]["calendar_link"].startswith("https://calendar.google.com")
+    assert payload["payload"]["appointment_id"] == str(appointment_uuid)
+    assert payload["payload"]["customer_id"] == str(customer_uuid)

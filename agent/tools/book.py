@@ -1,20 +1,22 @@
 """
 book — atomic booking tool.
 
-Transaction: customer get-or-create + appointment insert + GCal push.
-GCal push fires AFTER DB commit (fire-and-forget).
-Rollback on any pre-commit failure.
+Thin wrapper: parse args → validate guards → call BookingService → format ToolResponse.
+All DB access is owned by BookingService. This tool holds no sessions.
+
+GCal push fires AFTER DB commit inside BookingService (fire-and-forget).
 Returns JSON-serialized ToolResponse.
 """
 
 import logging
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from urllib.parse import quote
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from langchain_core.tools import tool
 
+from agent.services.booking_service import BookingService
 from agent.tools.schemas import ToolResponse
 
 logger = logging.getLogger(__name__)
@@ -95,49 +97,6 @@ def _split_full_name(full_name: str) -> tuple[str, str | None]:
     return first_name, last_name
 
 
-async def _get_or_create_customer(
-    session,
-    phone: str,
-    first_name: str,
-    last_name: str | None,
-) -> "Customer":  # type: ignore[name-defined]
-    """
-    Look up customer by phone. If not found, create and flush (no commit yet).
-    Returns the Customer ORM object.
-    """
-    from sqlalchemy import select
-
-    from database.models import Customer
-
-    result = await session.execute(select(Customer).where(Customer.phone == phone))
-    customer = result.scalar_one_or_none()
-    if customer is None:
-        customer = Customer(
-            id=uuid4(),
-            phone=phone,
-            first_name=first_name,
-            last_name=last_name,
-        )
-        session.add(customer)
-        await session.flush()  # get the ID without committing
-    return customer
-
-
-async def _fetch_service_duration(session, service_ids: list[UUID]) -> int:
-    """Sum duration_minutes of given service IDs."""
-    from sqlalchemy import select
-
-    from database.models import Service
-
-    result = await session.execute(
-        select(Service.duration_minutes).where(Service.id.in_(service_ids))
-    )
-    rows = result.fetchall()
-    if not rows:
-        raise ValueError("No se encontraron los servicios solicitados.")
-    return sum(row[0] for row in rows)
-
-
 @tool
 async def book(
     service_ids: list[str],
@@ -167,7 +126,7 @@ async def book(
 
     Returns:
         JSON-serialized ToolResponse with payload containing:
-        appointment_id, customer_id, start_iso, end_iso, stylist_id.
+        appointment_id, customer_id, start_iso, end_iso, stylist_id, calendar_link.
     """
     # --- Guard 1: confirmation required ---
     if not confirmed:
@@ -196,18 +155,7 @@ async def book(
             ],
         ).model_dump_json()
 
-    if not confirmed:
-        logger.info(
-            "tool.response.rejected",
-            extra={"tool_name": "book", "next_step": "confirmation_required"},
-        )
-        return ToolResponse(
-            status="rejected",
-            next_step="confirmation_required",
-            errors=["El cliente aún no ha confirmado la reserva explícitamente."],
-        ).model_dump_json()
-
-    # --- Guard 2: slot completeness ---
+    # --- Guard 3: slot completeness ---
     missing: list[str] = []
     if not service_ids:
         missing.append("service_ids")
@@ -231,17 +179,11 @@ async def book(
             errors=[f"Faltan datos para completar la reserva: {', '.join(missing)}."],
         ).model_dump_json()
 
-    from sqlalchemy import select
-
-    from agent.services.gcal_push_service import fire_and_forget_push_appointment
-    from database.connection import get_async_session
-    from database.models import Appointment, AppointmentStatus, Service, Stylist
-
     # --- Sanitize customer-provided notes before any downstream use ---
     notes = _sanitize_notes(notes)
 
     # --- Validate full name (ADR-5: structured rejection instead of ValueError) ---
-    from agent.tools._booking_helpers import _validate_full_name
+    from agent.tools.booking_helpers import _validate_full_name
 
     name_parts = _validate_full_name(customer_full_name)
     if name_parts is None:
@@ -277,115 +219,52 @@ async def book(
             errors=[f"El formato de start_iso es inválido: {exc}"],
         ).model_dump_json()
 
-    # --- Atomic transaction ---
-    appointment_id = uuid4()
-    customer_id = None
-    total_duration = 0
+    # --- Delegate to BookingService (owns DB session + GCal push) ---
+    result = await BookingService.create_appointment(
+        service_ids=parsed_service_ids,
+        stylist_id=parsed_stylist_id,
+        start_at=start_time,
+        customer_phone=customer_phone,
+        first_name=first_name,
+        last_name=last_name,
+        notes=notes,
+    )
 
-    try:
-        async with get_async_session() as session:
-            # Fetch service duration
-            try:
-                total_duration = await _fetch_service_duration(session, parsed_service_ids)
-            except ValueError as exc:
-                return ToolResponse(
-                    status="rejected",
-                    errors=[str(exc)],
-                ).model_dump_json()
-
-            end_time = start_time + timedelta(minutes=total_duration)
-
-            # Get or create customer
-            customer = await _get_or_create_customer(session, customer_phone, first_name, last_name)
-            customer_id = customer.id
-
-            # Insert appointment
-            appointment = Appointment(
-                id=appointment_id,
-                customer_id=customer.id,
-                stylist_id=parsed_stylist_id,
-                service_ids=parsed_service_ids,
-                start_time=start_time,
-                duration_minutes=total_duration,
-                status=AppointmentStatus.PENDING,
-                first_name=first_name,
-                last_name=last_name,
-                notes=notes,
-            )
-            session.add(appointment)
-
-            # Commit everything — DB is source of truth
-            await session.commit()
-
-    except Exception as exc:
-        logger.error("book() transaction failed: %s", exc, exc_info=True)
-        error_msg = str(exc)
-        if (
-            "duplicate" in error_msg.lower()
-            or "unique" in error_msg.lower()
-            or "exclusion" in error_msg.lower()
-        ):
+    if not result.success:
+        error_code = result.error_code or "error"
+        if error_code == "duplicate":
             return ToolResponse(
                 status="rejected",
                 errors=["El horario solicitado ya está ocupado por otra cita con ese estilista."],
                 next_step="reoffer_slots",
             ).model_dump_json()
+        if error_code == "service_not_found":
+            return ToolResponse(
+                status="rejected",
+                errors=[result.error_message or "No se encontraron los servicios solicitados."],
+            ).model_dump_json()
         return ToolResponse(
             status="rejected",
-            errors=[f"La cita no pudo registrarse: {exc}"],
+            errors=[result.error_message or "La cita no pudo registrarse."],
             next_step="retry_later",
         ).model_dump_json()
 
-    # --- GCal push (fire-and-forget, AFTER commit) ---
-    service_names = stylist_id  # fallback — overwritten below on success
-    end_time = start_time + timedelta(minutes=total_duration)
-    try:
-        # Fetch service names for the GCal event title
-        async with get_async_session() as session:
-            svc_result = await session.execute(
-                select(Service.name).where(Service.id.in_(parsed_service_ids))
-            )
-            service_names = ", ".join(row[0] for row in svc_result.fetchall())
-
-        await fire_and_forget_push_appointment(
-            appointment_id=appointment_id,
-            stylist_id=parsed_stylist_id,
-            customer_name=f"{first_name} {last_name or ''}".strip(),
-            service_names=service_names,
-            start_time=start_time,
-            duration_minutes=total_duration,
-            status="pending",
-            notes=notes,
-        )
-    except Exception as exc:
-        # GCal push failure does NOT undo the DB commit — fire-and-forget
-        logger.error("GCal push failed (appointment already saved): %s", exc, exc_info=True)
-
-    # --- Calendar deep-link (non-critical, always attempted) ---
-    stylist_display_name: str = stylist_id  # fallback to UUID string
-    try:
-        async with get_async_session() as session:
-            sty = await session.get(Stylist, parsed_stylist_id)
-            if sty is not None:
-                stylist_display_name = sty.name
-    except Exception as exc:
-        logger.warning("Could not fetch stylist name for calendar link: %s", exc)
-
+    # --- Build calendar deep-link (pure function, no DB) ---
     calendar_link = _build_gcal_link(
-        start=start_time,
-        end=end_time,
-        service_names=service_names,
-        stylist_name=stylist_display_name,
+        start=result.start_time,
+        end=result.end_time,
+        service_names=result.service_names or stylist_id,
+        stylist_name=result.stylist_display_name or stylist_id,
         notes=notes,
     )
 
     return ToolResponse(
         status="ok",
         payload={
-            "appointment_id": str(appointment_id),
-            "customer_id": str(customer_id),
-            "start_iso": start_time.isoformat(),
-            "end_iso": end_time.isoformat(),
+            "appointment_id": str(result.appointment_id),
+            "customer_id": str(result.customer_id),
+            "start_iso": result.start_time.isoformat(),
+            "end_iso": result.end_time.isoformat(),
             "stylist_id": stylist_id,
             "calendar_link": calendar_link,
         },
