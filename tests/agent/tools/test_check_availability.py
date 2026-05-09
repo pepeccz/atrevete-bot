@@ -76,12 +76,12 @@ async def test_check_availability_returns_ok_when_slots_available():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -128,17 +128,17 @@ async def test_check_availability_slot_shape():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_name",
+            "agent.tools.check_availability.get_stylist_name",
             new_callable=AsyncMock,
             return_value="Marta",
         ),
@@ -176,12 +176,12 @@ async def test_check_availability_no_slots_returns_ok_with_empty_slots():
             return_value=[],
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -234,12 +234,12 @@ async def test_check_availability_keeps_requested_day_in_all_returned_slots():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -287,12 +287,12 @@ async def test_check_availability_queries_all_stylists_for_requested_day_only():
             "agent.tools.check_availability.get_available_slots", side_effect=mock_get_slots
         ) as mock_slots,
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[stylist_a, stylist_b],
         ),
@@ -386,12 +386,12 @@ async def test_check_availability_no_stylist_aggregates():
             side_effect=mock_get_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[stylist_a, stylist_b],
         ),
@@ -426,12 +426,12 @@ async def test_check_availability_returns_json_string():
             return_value=[],
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 30},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -494,12 +494,12 @@ def _patch_db_calls(
 
     return (
         _patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: service_duration},
         ),
         _patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=stylist_ids,
         ),
@@ -670,12 +670,12 @@ async def test_each_slot_has_label_in_spanish():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -716,12 +716,12 @@ async def test_label_has_no_year():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -757,12 +757,12 @@ async def test_requested_date_label_matches_date_iso():
             return_value=[],
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -799,17 +799,17 @@ async def test_payload_contains_available_stylists_filtered_by_category():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[STYLIST_A, STYLIST_B],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
+            "agent.tools.check_availability.get_stylist_names_map",
             new_callable=AsyncMock,
             return_value={STYLIST_A: "Ana", STYLIST_B: "María"},
         ),
@@ -847,17 +847,17 @@ async def test_available_stylists_sorted_by_name():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[STYLIST_A, STYLIST_B],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
+            "agent.tools.check_availability.get_stylist_names_map",
             new_callable=AsyncMock,
             return_value={STYLIST_A: "Zoë", STYLIST_B: "Ana"},
         ),
@@ -885,12 +885,12 @@ async def test_rejected_when_zero_stylists_for_category():
 
     with (
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[],  # zero stylists
         ),
@@ -924,12 +924,12 @@ async def test_single_stylist_when_stylist_id_provided():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
+            "agent.tools.check_availability.get_stylist_names_map",
             new_callable=AsyncMock,
             return_value={STYLIST_A: "Ana"},
         ),
@@ -1018,17 +1018,17 @@ async def test_no_preference_bypasses_stylist_guard():
 
     with (
         patch(
-            "agent.tools.check_availability._load_lead_time_settings",
+            "agent.tools.check_availability.load_lead_time_settings",
             new_callable=AsyncMock,
             return_value=(0, 0),
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -1142,17 +1142,17 @@ async def test_legacy_fields_still_present():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[STYLIST_A],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
+            "agent.tools.check_availability.get_stylist_names_map",
             new_callable=AsyncMock,
             return_value={STYLIST_A: "Ana"},
         ),

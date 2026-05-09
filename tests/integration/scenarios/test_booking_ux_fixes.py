@@ -97,17 +97,17 @@ async def test_oleo_exact_variant_resolves_to_ok_with_label():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 90},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
+            "agent.tools.check_availability.get_stylist_names_map",
             new_callable=AsyncMock,
             return_value={FAKE_STYLIST_ID: "Ana"},
         ),
@@ -231,17 +231,17 @@ async def test_date_rendering_label_not_iso():
             return_value=fake_slots,
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
+            "agent.tools.check_availability.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
+            "agent.tools.check_availability.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
+            "agent.tools.check_availability.get_stylist_names_map",
             new_callable=AsyncMock,
             return_value={FAKE_STYLIST_ID: "Ana"},
         ),

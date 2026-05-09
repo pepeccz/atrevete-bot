@@ -29,7 +29,7 @@ class TestLeadTimeFloor:
 
         with (
             patch(
-                "agent.tools.next_available._load_lead_time_settings",
+                "agent.tools.next_available.load_lead_time_settings",
                 new=AsyncMock(return_value=(min_days, 0)),
             ),
             patch(
@@ -37,11 +37,11 @@ class TestLeadTimeFloor:
                 new=AsyncMock(return_value=service_result),
             ) as mock_service,
             patch(
-                "agent.tools.next_available._get_service_durations",
+                "agent.tools.next_available.get_service_durations",
                 new=AsyncMock(return_value={None: 30}),
             ),
             patch(
-                "agent.tools.next_available._get_active_stylists_for_services",
+                "agent.tools.next_available.get_active_stylists_for_services",
                 new=AsyncMock(return_value=["stylist-uuid"]),
             ),
             patch(
@@ -80,7 +80,7 @@ class TestLeadTimeFloor:
 
         with (
             patch(
-                "agent.tools.next_available._load_lead_time_settings",
+                "agent.tools.next_available.load_lead_time_settings",
                 new=AsyncMock(side_effect=Exception("DB unavailable")),
             ),
             patch(
@@ -88,11 +88,11 @@ class TestLeadTimeFloor:
                 new=AsyncMock(return_value=service_result),
             ) as mock_service,
             patch(
-                "agent.tools.next_available._get_service_durations",
+                "agent.tools.next_available.get_service_durations",
                 new=AsyncMock(return_value={None: 30}),
             ),
             patch(
-                "agent.tools.next_available._get_active_stylists_for_services",
+                "agent.tools.next_available.get_active_stylists_for_services",
                 new=AsyncMock(return_value=["stylist-uuid"]),
             ),
             patch(
@@ -129,7 +129,7 @@ class TestLeadTimeFloor:
 
         with (
             patch(
-                "agent.tools.next_available._load_lead_time_settings",
+                "agent.tools.next_available.load_lead_time_settings",
                 new=AsyncMock(return_value=(min_days, 0)),
             ),
             patch(
@@ -137,11 +137,11 @@ class TestLeadTimeFloor:
                 new=AsyncMock(return_value=service_result),
             ) as mock_service,
             patch(
-                "agent.tools.next_available._get_service_durations",
+                "agent.tools.next_available.get_service_durations",
                 new=AsyncMock(return_value={None: 30}),
             ),
             patch(
-                "agent.tools.next_available._get_active_stylists_for_services",
+                "agent.tools.next_available.get_active_stylists_for_services",
                 new=AsyncMock(return_value=["stylist-uuid"]),
             ),
             patch(

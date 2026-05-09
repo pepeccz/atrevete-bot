@@ -10,14 +10,12 @@ from langchain_core.tools import tool
 
 from agent.prompts.catalog_builder import get_service_display_label_by_ids
 from agent.services.availability_service import (
+    get_active_stylists_for_services,
     get_next_available_options as get_next_available_options_service,
+    get_service_durations,
+    get_stylist_name,
 )
-from agent.tools.check_availability import (
-    _get_active_stylists_for_services,
-    _load_lead_time_settings,
-    _get_service_durations,
-    _get_stylist_name,
-)
+from agent.tools.check_availability import load_lead_time_settings
 from agent.tools.schemas import ToolResponse
 
 
@@ -55,7 +53,7 @@ async def get_next_available_options(
 
     # Apply minimum lead-time floor (sourced from settings, fallback = 3 days).
     try:
-        min_days, _ = await _load_lead_time_settings()
+        min_days, _ = await load_lead_time_settings()
     except Exception:
         min_days = 3
 
@@ -71,7 +69,7 @@ async def get_next_available_options(
             errors=["Uno o más service_ids no tienen formato UUID válido."],
         ).model_dump_json()
 
-    durations = await _get_service_durations(parsed_service_ids)
+    durations = await get_service_durations(parsed_service_ids)
     if not durations:
         return ToolResponse(
             status="rejected",
@@ -90,7 +88,7 @@ async def get_next_available_options(
                 errors=[f"El stylist_id '{stylist_id}' no tiene formato UUID válido."],
             ).model_dump_json()
 
-    compatible_stylist_ids = await _get_active_stylists_for_services(parsed_service_ids, audience)
+    compatible_stylist_ids = await get_active_stylists_for_services(parsed_service_ids, audience)
     if preferred_stylist_id and preferred_stylist_id not in compatible_stylist_ids:
         compatible_stylist_ids = [preferred_stylist_id, *compatible_stylist_ids]
 
@@ -116,7 +114,7 @@ async def get_next_available_options(
         enriched_options.append(
             {
                 **option,
-                "stylist_name": await _get_stylist_name(UUID(option["stylist_id"])),
+                "stylist_name": await get_stylist_name(UUID(option["stylist_id"])),
                 "service_label": service_label,
             }
         )

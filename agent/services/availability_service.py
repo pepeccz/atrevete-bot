@@ -963,6 +963,94 @@ async def get_calendar_events_for_range(
 
 
 # ---------------------------------------------------------------------------
+# Lookup helpers — promoted from agent/tools/check_availability.py (PR3)
+# ---------------------------------------------------------------------------
+
+
+async def get_service_durations(service_ids: list[UUID]) -> dict[UUID, int]:
+    """Fetch duration_minutes for each service_id. Returns {id: duration_minutes}.
+
+    Owns its DB session. Returns empty dict for empty input without hitting DB.
+    """
+    if not service_ids:
+        return {}
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Service.id, Service.duration_minutes).where(Service.id.in_(service_ids))
+        )
+        return {row[0]: row[1] for row in result.fetchall()}
+
+
+async def get_active_stylists_for_services(
+    service_ids: list[UUID],
+    audience: str | None,
+) -> list[UUID]:
+    """Return IDs of active stylists who can serve the given services.
+
+    Matching logic:
+      - All HAIRDRESSING → hairdressing + BOTH stylists
+      - Any AESTHETICS only → aesthetics + BOTH stylists
+      - Mixed HAIR+AESTHETICS without BOTH bridge → fail-closed (empty list)
+      - BOTH-only services → all active stylists
+
+    Owns its DB session.
+    """
+    async with get_async_session() as session:
+        svc_result = await session.execute(
+            select(Service.category).where(Service.id.in_(service_ids))
+        )
+        categories = {row[0] for row in svc_result.fetchall()}
+
+        has_hair = ServiceCategory.HAIRDRESSING in categories
+        has_aesthetics = ServiceCategory.AESTHETICS in categories
+
+        if has_hair and has_aesthetics:
+            # Mixed — fail-closed (defense in depth; update_booking blocks upstream)
+            return []
+
+        if has_hair and not has_aesthetics:
+            stylist_filter = Stylist.category == ServiceCategory.HAIRDRESSING
+        elif has_aesthetics and not has_hair:
+            stylist_filter = Stylist.category == ServiceCategory.AESTHETICS
+        else:
+            # BOTH only or empty — return all active
+            stylist_filter = Stylist.is_active.is_(True)
+
+        result = await session.execute(
+            select(Stylist.id).where(Stylist.is_active.is_(True)).where(stylist_filter)
+        )
+        return [row[0] for row in result.fetchall()]
+
+
+async def get_stylist_name(stylist_id: UUID) -> str:
+    """Fetch stylist name by ID. Returns str(stylist_id) if not found.
+
+    Owns its DB session.
+    """
+    async with get_async_session() as session:
+        result = await session.execute(select(Stylist.name).where(Stylist.id == stylist_id))
+        row = result.first()
+        return row[0] if row else str(stylist_id)
+
+
+async def get_stylist_names_map(stylist_ids: list[UUID]) -> dict[UUID, str]:
+    """Fetch names for a list of stylist UUIDs. Returns {id: name}.
+
+    Returns empty dict immediately for empty input without hitting DB.
+    Owns its DB session.
+    """
+    if not stylist_ids:
+        return {}
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Stylist.id, Stylist.name).where(Stylist.id.in_(stylist_ids))
+        )
+        return {row[0]: row[1] for row in result.fetchall()}
+
+
+# ---------------------------------------------------------------------------
 # Availability window aggregator — T3 (ADR-2)
 # ---------------------------------------------------------------------------
 

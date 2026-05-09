@@ -63,16 +63,16 @@ def _check_availability_base_patches(
     slots = slots if slots is not None else []
 
     return {
-        "agent.tools.check_availability._load_lead_time_settings": AsyncMock(
+        "agent.tools.check_availability.load_lead_time_settings": AsyncMock(
             return_value=(min_days, 0)
         ),
-        "agent.tools.check_availability._get_service_durations": AsyncMock(
+        "agent.tools.check_availability.get_service_durations": AsyncMock(
             return_value=service_durations
         ),
-        "agent.tools.check_availability._get_active_stylists_for_services": AsyncMock(
+        "agent.tools.check_availability.get_active_stylists_for_services": AsyncMock(
             return_value=stylist_ids
         ),
-        "agent.tools.check_availability._get_stylist_names_map": AsyncMock(
+        "agent.tools.check_availability.get_stylist_names_map": AsyncMock(
             return_value=stylist_names
         ),
         "agent.services.availability_service.get_available_slots": AsyncMock(
@@ -105,20 +105,20 @@ async def test_check_availability_returns_closed_day_when_all_days_closed():
 
     with (
         patch(
-            "agent.tools.check_availability._load_lead_time_settings",
-            patches["agent.tools.check_availability._load_lead_time_settings"],
+            "agent.tools.check_availability.load_lead_time_settings",
+            patches["agent.tools.check_availability.load_lead_time_settings"],
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
-            patches["agent.tools.check_availability._get_service_durations"],
+            "agent.tools.check_availability.get_service_durations",
+            patches["agent.tools.check_availability.get_service_durations"],
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
-            patches["agent.tools.check_availability._get_active_stylists_for_services"],
+            "agent.tools.check_availability.get_active_stylists_for_services",
+            patches["agent.tools.check_availability.get_active_stylists_for_services"],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
-            patches["agent.tools.check_availability._get_stylist_names_map"],
+            "agent.tools.check_availability.get_stylist_names_map",
+            patches["agent.tools.check_availability.get_stylist_names_map"],
         ),
         patch(
             "agent.services.availability_service.get_available_slots",
@@ -160,20 +160,20 @@ async def test_check_availability_unchanged_when_some_days_open():
 
     with (
         patch(
-            "agent.tools.check_availability._load_lead_time_settings",
-            patches["agent.tools.check_availability._load_lead_time_settings"],
+            "agent.tools.check_availability.load_lead_time_settings",
+            patches["agent.tools.check_availability.load_lead_time_settings"],
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
-            patches["agent.tools.check_availability._get_service_durations"],
+            "agent.tools.check_availability.get_service_durations",
+            patches["agent.tools.check_availability.get_service_durations"],
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
-            patches["agent.tools.check_availability._get_active_stylists_for_services"],
+            "agent.tools.check_availability.get_active_stylists_for_services",
+            patches["agent.tools.check_availability.get_active_stylists_for_services"],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
-            patches["agent.tools.check_availability._get_stylist_names_map"],
+            "agent.tools.check_availability.get_stylist_names_map",
+            patches["agent.tools.check_availability.get_stylist_names_map"],
         ),
         patch(
             "agent.services.availability_service.get_available_slots",
@@ -225,16 +225,16 @@ def _make_slot_raw(time_str: str, seconds: str = "00") -> dict:
 
 def _slot_time_patches(slots: list[dict]) -> dict:
     return {
-        "agent.tools.check_availability._load_lead_time_settings": AsyncMock(
+        "agent.tools.check_availability.load_lead_time_settings": AsyncMock(
             return_value=(3, 0)
         ),
-        "agent.tools.check_availability._get_service_durations": AsyncMock(
+        "agent.tools.check_availability.get_service_durations": AsyncMock(
             return_value={FAKE_SERVICE_ID: 45}
         ),
-        "agent.tools.check_availability._get_active_stylists_for_services": AsyncMock(
+        "agent.tools.check_availability.get_active_stylists_for_services": AsyncMock(
             return_value=[FAKE_STYLIST_ID]
         ),
-        "agent.tools.check_availability._get_stylist_names_map": AsyncMock(
+        "agent.tools.check_availability.get_stylist_names_map": AsyncMock(
             return_value={FAKE_STYLIST_ID: "Marta Test"}
         ),
         "agent.tools.check_availability.get_available_slots": AsyncMock(
@@ -264,20 +264,20 @@ async def test_slot_time_partial_seconds_collision_rejected():
 
     with (
         patch(
-            "agent.tools.check_availability._load_lead_time_settings",
-            patches["agent.tools.check_availability._load_lead_time_settings"],
+            "agent.tools.check_availability.load_lead_time_settings",
+            patches["agent.tools.check_availability.load_lead_time_settings"],
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
-            patches["agent.tools.check_availability._get_service_durations"],
+            "agent.tools.check_availability.get_service_durations",
+            patches["agent.tools.check_availability.get_service_durations"],
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
-            patches["agent.tools.check_availability._get_active_stylists_for_services"],
+            "agent.tools.check_availability.get_active_stylists_for_services",
+            patches["agent.tools.check_availability.get_active_stylists_for_services"],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
-            patches["agent.tools.check_availability._get_stylist_names_map"],
+            "agent.tools.check_availability.get_stylist_names_map",
+            patches["agent.tools.check_availability.get_stylist_names_map"],
         ),
         patch(
             "agent.tools.check_availability.get_available_slots",
@@ -319,20 +319,20 @@ async def test_slot_time_exact_seconds_00_passes():
 
     with (
         patch(
-            "agent.tools.check_availability._load_lead_time_settings",
-            patches["agent.tools.check_availability._load_lead_time_settings"],
+            "agent.tools.check_availability.load_lead_time_settings",
+            patches["agent.tools.check_availability.load_lead_time_settings"],
         ),
         patch(
-            "agent.tools.check_availability._get_service_durations",
-            patches["agent.tools.check_availability._get_service_durations"],
+            "agent.tools.check_availability.get_service_durations",
+            patches["agent.tools.check_availability.get_service_durations"],
         ),
         patch(
-            "agent.tools.check_availability._get_active_stylists_for_services",
-            patches["agent.tools.check_availability._get_active_stylists_for_services"],
+            "agent.tools.check_availability.get_active_stylists_for_services",
+            patches["agent.tools.check_availability.get_active_stylists_for_services"],
         ),
         patch(
-            "agent.tools.check_availability._get_stylist_names_map",
-            patches["agent.tools.check_availability._get_stylist_names_map"],
+            "agent.tools.check_availability.get_stylist_names_map",
+            patches["agent.tools.check_availability.get_stylist_names_map"],
         ),
         patch(
             "agent.tools.check_availability.get_available_slots",

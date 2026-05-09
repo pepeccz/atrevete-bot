@@ -42,10 +42,10 @@ async def test_get_active_stylists_for_services_mixed_returns_empty():
     ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
     ctx_mock.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("database.connection.get_async_session", return_value=ctx_mock):
-        from agent.tools.check_availability import _get_active_stylists_for_services
+    with patch("agent.services.availability_service.get_async_session", return_value=ctx_mock):
+        from agent.services.availability_service import get_active_stylists_for_services
 
-        result = await _get_active_stylists_for_services(
+        result = await get_active_stylists_for_services(
             service_ids=[hair_id, aesth_id],
             audience=None,
         )
@@ -84,10 +84,10 @@ async def test_get_active_stylists_for_services_hairdressing_only_returns_hair_s
     ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
     ctx_mock.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("database.connection.get_async_session", return_value=ctx_mock):
-        from agent.tools.check_availability import _get_active_stylists_for_services
+    with patch("agent.services.availability_service.get_async_session", return_value=ctx_mock):
+        from agent.services.availability_service import get_active_stylists_for_services
 
-        result = await _get_active_stylists_for_services(
+        result = await get_active_stylists_for_services(
             service_ids=[hair_svc_id],
             audience=None,
         )
