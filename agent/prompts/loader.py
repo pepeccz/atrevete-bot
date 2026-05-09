@@ -77,15 +77,18 @@ def _read(filename: str) -> str:
 def load_system_prompt() -> str:
     """Assemble and cache the static system prompt.
 
-    Concatenates (in order):
+    Canonical 7-file order (PR2+):
         1. shared/identity.md           — Maite persona
-        2. shared/critical_rules.md     — EU-AI-Act disclosure, UUID rule, Spanish-only
+        2. shared/critical_rules.md     — SSOT for [→ R{N}] rule statements
         3. shared/examples.md           — bad/good exemplars for variant disambiguation
         4. shared/glossary.md           — audience taxonomy + service tag glossary
-        5. shared/booking_flow.md       — step-by-step booking protocol
-        6. shared/tools_contract.md     — tool call rules for all 5 tools
-        7. shared/appointment_management_flow.md — appointment lifecycle flow
-        8. shared/slot_contract.md              — dynamic slot preamble (today, customer, …)
+        5. shared/booking_fsm.md        — unified booking + appointment-management FSM
+        6. shared/tools_contract.md     — tool call rules + next_step routing table
+        7. shared/slot_contract.md      — dynamic slot preamble (today, customer, …)
+
+    critical_rules.md must appear BEFORE booking_fsm.md and tools_contract.md
+    so the LLM has already seen canonical rule statements when it encounters
+    [→ R{N}] shorthand references in later sections.
 
     Returns:
         str: Full system prompt, newline-separated sections.
@@ -95,9 +98,8 @@ def load_system_prompt() -> str:
         _read("critical_rules.md"),
         _read("examples.md"),
         _read("glossary.md"),
-        _read("booking_flow.md"),
+        _read("booking_fsm.md"),       # replaces booking_flow.md + appointment_management_flow.md
         _read("tools_contract.md"),
-        _read("appointment_management_flow.md"),
         _read("slot_contract.md"),
     ]
     return "\n\n---\n\n".join(s for s in sections if s)
