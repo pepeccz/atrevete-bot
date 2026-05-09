@@ -1,51 +1,49 @@
-"""T1.1 RED — booking_flow.md included in load_system_prompt().
+"""PR2 — booking_fsm.md replaces booking_flow.md + appointment_management_flow.md.
 
-Asserts that load_system_prompt() contains "Flujo de reserva" and
-all 7 step anchors from the booking_flow.md script.
+load_system_prompt() must contain the unified FSM document and still reference
+manage_appointments for the appointment management flow.
 
-Also verifies appointment_management_flow.md is included.
+Anchors verified against booking_fsm.md as of 2026-05-09:
+    - "Reservas y Gestión de Citas — FSM" (file heading)
+    - "Flujo de reserva" (booking section)
+    - "Gestión de citas existentes" (appointment management section)
+    - "manage_appointments" (tool reference)
+    - "booking_ready" (booking_ready signal)
+    - "CONFIRMATION_PROMPT" or Turno A/B language
+
+booking_flow.md and appointment_management_flow.md are deleted in PR2.
+The old step anchors (Paso 1, Paso 1.5, …, Paso 4b) no longer exist.
 """
 
 
-def test_includes_appointment_management_flow():
-    """load_system_prompt() must include the ## Citas próximas guidance marker."""
+def test_includes_booking_fsm():
+    """load_system_prompt() must contain the unified FSM heading and key section markers."""
     from agent.prompts.loader import load_system_prompt
 
     load_system_prompt.cache_clear()
     prompt = load_system_prompt()
 
-    assert "## Citas próximas" in prompt, (
-        "System prompt must contain '## Citas próximas' guidance from appointment_management_flow.md"
+    assert "Reservas y Gestión de Citas — FSM" in prompt, (
+        "System prompt must include the booking_fsm.md heading"
     )
+    assert "Flujo de reserva" in prompt, (
+        "System prompt must include 'Flujo de reserva' section from booking_fsm.md"
+    )
+    assert "Gestión de citas existentes" in prompt, (
+        "System prompt must include 'Gestión de citas existentes' section from booking_fsm.md"
+    )
+    assert "booking_ready" in prompt, (
+        "System prompt must contain 'booking_ready' signal reference from booking_fsm.md"
+    )
+
+
+def test_includes_appointment_management_flow():
+    """load_system_prompt() must reference the manage_appointments tool."""
+    from agent.prompts.loader import load_system_prompt
+
+    load_system_prompt.cache_clear()
+    prompt = load_system_prompt()
+
     assert "manage_appointments" in prompt, (
         "System prompt must reference 'manage_appointments' tool"
     )
-
-
-def test_includes_booking_flow():
-    """load_system_prompt() must contain 'Flujo de reserva' and all 7 step anchors."""
-    from agent.prompts.loader import load_system_prompt
-
-    # Clear lru_cache so the test sees the latest state of the file system.
-    load_system_prompt.cache_clear()
-
-    prompt = load_system_prompt()
-
-    assert "Flujo de reserva" in prompt, (
-        "System prompt must include 'Flujo de reserva' heading from booking_flow.md"
-    )
-
-    # All 7 step anchors must be present.
-    step_anchors = [
-        "Paso 1",
-        "Paso 2",
-        "Paso 3",
-        "Paso 4",
-        "Paso 5",
-        "Paso 6",
-        "Paso 7",
-    ]
-    for anchor in step_anchors:
-        assert anchor in prompt, (
-            f"System prompt must contain step anchor '{anchor}' from booking_flow.md"
-        )
