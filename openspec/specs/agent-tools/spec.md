@@ -4,7 +4,7 @@
 
 ## Context
 
-`strict: True` is active in `agent/modes/base.py:487`. OpenAI strict mode requires
+`strict: True` is active in the tool-binding layer (configured in `agent/agent_factory.py`). OpenAI strict mode requires
 `additionalProperties: false` on every object in the JSON Schema — open `dict[str, Any]`
 fields violate this constraint and cause tool-call failures.
 

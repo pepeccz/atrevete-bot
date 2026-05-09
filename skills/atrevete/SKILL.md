@@ -36,36 +36,18 @@ metadata:
 
 WhatsApp → Chatwoot → Webhook (API) → Redis Streams → Agent
                                             ↓
-                                    LangGraph StateGraph
+                              create_agent + 7 middleware
+                              SSOT: agent/agent_factory.py:47-55
                                             ↓
-                              ┌───────────────────────────────┐
-                              │   4-Mode Routing System       │
-                              │                               │
-                              │  GREETING  → Name collection  │
-                              │  BOOKING   → Booking flow     │
-                              │  GENERAL   → FAQs/Info        │
-                              │  ESCALATION→ Human handoff    │
-                              └───────────────────────────────┘
+Message → Disclosure → CustomerResolve → AppointmentContext
+                                                ↓
+                           DynamicPrompt → AvailabilityContext
+                                                ↓
+                           PromptAssembly → Summarize → Response
                                             ↓
                                     PostgreSQL (State)
                                             ↓
                                Response → Chatwoot → WhatsApp
-
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         BOOKING FLOW (v6.0)                             │
-└─────────────────────────────────────────────────────────────────────────┘
-
-START → preprocess → router → mode_dispatcher
-                              ↓
-              ┌───────────────┼───────────────┐
-              ↓               ↓               ↓
-        [GREETING]    [BOOKING]        [GENERAL]      [ESCALATION]
-              ↓               ↓               ↓               ↓
-     Name extraction   Multi-step      Read-only      Human handoff
-     Customer create   booking flow    tools only
-              ↓               ↓               ↓               ↓
-            summarize_node (END)
 
 
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -87,23 +69,21 @@ Booking (write):
 3. **Processing**: Agent reads from stream, processes with LangGraph
 4. **Response**: Agent sends via Chatwoot API → WhatsApp
 
-## Mode-Based Architecture (v6.0)
+## Middleware Architecture (create_agent)
 
-**4 independent modes** eliminate infinite loops and simplify flow:
+**7 middleware pipeline** processes every conversation turn in order (SSOT: `agent/agent_factory.py:47-55`):
 
-| Mode | Purpose | Tools Available |
-|------|---------|-----------------|
-| **GREETING** | First contact, name collection | `manage_customer` (customer_tools) |
-| **BOOKING** | Multi-step appointment booking | `check_availability`, `book`, `manage_appointments` |
-| **GENERAL** | FAQs, service info (catalog in prompt) | `manage_appointments` (read), `escalate` |
-| **ESCALATION** | Human handoff | `escalate` |
+| # | Middleware | Purpose |
+|---|-----------|---------|
+| 1 | **Disclosure** | Privacy / consent handling |
+| 2 | **CustomerResolve** | Identify or create customer from phone |
+| 3 | **AppointmentContext** | Load active appointment state |
+| 4 | **DynamicPrompt** | Inject dynamic context into prompt |
+| 5 | **AvailabilityContext** | Pre-fetch availability data |
+| 6 | **PromptAssembly** | Assemble final system prompt |
+| 7 | **Summarize** | Summarize conversation for memory |
 
-**Routing Logic**:
-1. `escalation_triggered=True` → ESCALATION
-2. `error_count >= 3` → ESCALATION
-3. `is_first_interaction=True` OR `customer_name is None` → GREETING
-4. `intent == book` → BOOKING
-5. Everything else → GENERAL
+**Tools available** (registered at factory build time): `check_availability`, `book`, `manage_appointments`, `manage_customer`, `escalate`, `query_info`.
 
 ## Quick Commands
 

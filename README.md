@@ -1,13 +1,13 @@
 # Atrévete Bot
 
-AI-powered WhatsApp booking assistant for a beauty salon, built with LangGraph v6.0, GPT-4o-mini (via OpenRouter), and FastAPI.
+AI-powered WhatsApp booking assistant for a beauty salon, built with LangChain `create_agent` + 7 middleware, GPT-4o-mini (via OpenRouter), and FastAPI.
 
 ## Overview
 
-Atrévete Bot handles customer bookings via WhatsApp through Chatwoot, managing appointments across 5 stylists using a DB-first calendar architecture with Google Calendar as a push-only mirror. The agent uses LangGraph v6.0 for stateful conversation orchestration with a mode-based architecture (GREETING, BOOKING, GENERAL, ESCALATION) and GPT-4o-mini via OpenRouter for natural language understanding in Spanish.
+Atrévete Bot handles customer bookings via WhatsApp through Chatwoot, managing appointments across 5 stylists using a DB-first calendar architecture with Google Calendar as a push-only mirror. The agent uses LangChain `create_agent` with 7 composed middleware layers (SSOT: `agent/agent_factory.py:47-55`) and GPT-4o-mini via OpenRouter for natural language understanding in Spanish.
 
 **Key Features:**
-- **Mode-Based Architecture** - 4 independent conversation modes with intent routing and automatic transitions
+- **Middleware-Based Architecture** - 7 composable middleware layers handling context resolution, prompt assembly, and summarization
 - **DB-First Calendar** - PostgreSQL as source of truth, <100ms availability checks (vs 2-5s via Google Calendar API)
 - **Blocking Events & Holidays** - Stylist-specific unavailability and salon-wide closures
 - **Next.js Admin Panel** - Modern React admin interface with full CRUD, real-time calendar, and charts
@@ -60,7 +60,7 @@ This repository uses a **progressive-disclosure documentation system** for AI-as
 |------|---------|
 | **[AGENTS.md](AGENTS.md)** | Root AI governance: repository navigation, documentation precedence, skills catalog |
 | **[CLAUDE.md](CLAUDE.md)** | Comprehensive development guide: commands, architecture decisions, operational details |
-| **[agent/AGENTS.md](agent/AGENTS.md)** | LangGraph v6.0 mode-based agent architecture |
+| **[agent/AGENTS.md](agent/AGENTS.md)** | LangChain `create_agent` + 7 middleware architecture |
 | **[api/AGENTS.md](api/AGENTS.md)** | FastAPI routes and webhook handling |
 | **[database/AGENTS.md](database/AGENTS.md)** | SQLAlchemy models and Alembic migrations |
 | **[admin-panel/AGENTS.md](admin-panel/AGENTS.md)** | Next.js 15 admin panel patterns |
@@ -83,21 +83,20 @@ atrevete-bot/
 ├── CLAUDE.md                  # Comprehensive development guide
 ├── README.md                  # This file - quick start and overview
 │
-├── agent/                     # LangGraph v6.0 orchestrator
+├── agent/                     # LangChain create_agent orchestrator
 │   ├── AGENTS.md              # Agent component documentation
-│   ├── graphs/
-│   │   └── conversation_flow.py   # v6.0 mode-based StateGraph
-│   ├── modes/                 # Mode implementations
-│   │   ├── base.py            # BaseModeNode
-│   │   ├── greeting_mode.py   # GREETING mode
-│   │   ├── booking_mode.py    # BOOKING mode
-│   │   ├── general_mode.py    # GENERAL mode
-│   │   └── escalation_mode.py # ESCALATION mode
-│   ├── routing/
-│   │   └── intent_router.py   # Keyword + LLM hybrid classifier
+│   ├── agent_factory.py       # create_agent + 7 middleware (SSOT lines 47-55)
+│   ├── graph.py               # LangGraph graph wiring
+│   ├── middleware/            # 7 middleware layers (in execution order)
+│   │   ├── disclosure.py      # 1. Disclosure
+│   │   ├── customer_resolve.py # 2. CustomerResolve
+│   │   ├── appointment_context.py # 3. AppointmentContext
+│   │   ├── dynamic_prompt.py  # 4. DynamicPrompt
+│   │   ├── availability_context.py # 5. AvailabilityContext
+│   │   ├── prompt_assembly.py # 6. PromptAssembly
+│   │   └── summarize.py       # 7. Summarize
 │   ├── prompts/               # System prompts
-│   │   ├── shared/            # Core prompts (identity, rules, glossary)
-│   │   └── modes/             # Mode-specific overlays
+│   │   └── shared/            # Core prompts (identity, rules, glossary)
 │   └── tools/                 # LangChain tools
 │
 ├── api/                       # FastAPI webhook receiver
@@ -143,28 +142,29 @@ atrevete-bot/
 
 ## Architecture
 
-### Mode-Based Conversation Flow (v6.0)
+### Middleware Pipeline (`create_agent` + 7 middleware)
 
-The system uses a mode-based architecture where independent modes handle different conversation contexts:
+The agent uses LangChain `create_agent` composed with 7 middleware layers. SSOT: `agent/agent_factory.py:47-55`.
 
 ```
 Message Arrives (Redis Streams)
     ↓
-Preprocess → Intent Router (keyword + LLM hybrid)
+1. Disclosure          — injects disclosure context
+2. CustomerResolve     — resolves customer identity from phone/state
+3. AppointmentContext  — loads active appointment data
+4. DynamicPrompt       — selects and renders the system prompt
+5. AvailabilityContext — fetches availability windows before tool calls
+6. PromptAssembly      — assembles the final prompt for the LLM
+7. Summarize           — post-turn conversation summarization
     ↓
-├─ GREETING Mode → First contact + name collection
-├─ BOOKING Mode  → Multi-step appointment booking
-├─ GENERAL Mode  → FAQs and information queries
-└─ ESCALATION Mode → Human handoff
-    ↓
-Summarize → END
+END (state persisted via Redis checkpointer)
 ```
 
 **Key Principles:**
-- **Mode-Specific Tools** - Each mode loads only relevant tools
-- **Automatic Transitions** - Via `transition_mode()` helper
-- **State Management** - LangGraph checkpoints with custom reducers
-- **Tool-Driven State** - Tools declare state changes via `_internal_flags`
+- **Composable Middleware** - Each layer has a single responsibility
+- **DB-First State** - PostgreSQL as source of truth; Redis for checkpointing
+- **Tool-Driven Booking** - 6 LangChain tools handle booking, availability, escalation
+- **Structured Logging** - Every middleware layer emits structured JSON
 
 See [agent/AGENTS.md](agent/AGENTS.md) for detailed architecture.
 
@@ -182,7 +182,7 @@ See [CLAUDE.md](CLAUDE.md) for full architecture details.
 ## Technology Stack
 
 ### Backend
-- **Agent:** LangGraph 0.6.7+, LangChain 0.3.0+, GPT-4o-mini via OpenRouter
+- **Agent:** LangChain `create_agent` + 7 middleware, GPT-4o-mini via OpenRouter
 - **API:** FastAPI 0.116.1, Pydantic 2.x, Uvicorn 0.30.0+
 - **Database:** PostgreSQL 15+, SQLAlchemy 2.0+ (asyncpg), Alembic 1.13+
 - **Cache:** Redis Stack (RedisSearch, RedisJSON, Streams)
@@ -265,7 +265,7 @@ After modifying any skill, regenerate the auto-invoke tables:
 - **Google Calendar sync** - Push-only mirror (async, non-blocking)
 - **Blocking events** - Stylist-specific unavailability
 - **Holiday management** - Salon-wide closures
-- **Mode-based agent** - 4 modes with intent routing (v6.0)
+- **Middleware-based agent** - 7 composable middleware layers (create_agent, SSOT: agent_factory.py:47-55)
 - **Redis Streams** - Message delivery with acknowledgment
 - **Next.js admin panel** - Full CRUD with real-time calendar
 - **JWT authentication** - Secure admin access
@@ -278,7 +278,7 @@ After modifying any skill, regenerate the auto-invoke tables:
 
 ### Removed ❌
 - **Payment system** - All appointments auto-confirm
-- **FSM-based booking** - Replaced by mode-based v6.0
+- **FSM-based booking** - Replaced by create_agent + middleware architecture
 
 ## Documentation
 

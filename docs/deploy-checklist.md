@@ -17,7 +17,7 @@ be created at deploy time.
 ### When to Run
 
 Immediately after the first production deploy that includes `shared/negation_phrases.py`
-and the pre-loop hook in `agent/modes/booking_mode.py`.
+and the pre-loop hook in the booking middleware layer.
 
 ### Step: Persist Measured-Gate Memory
 
@@ -79,8 +79,8 @@ had to repeat themselves).
 
 ### Escalation Path
 
-If thresholds are not met: implement `agent/modes/_negation_classifier.py` as a
-pre-loop Haiku LLM fallback. Wire into `booking_mode.py` after `is_negation()` returns
+If thresholds are not met: implement a Haiku LLM pre-loop negation classifier as a
+fallback. Wire into the booking middleware layer after `is_negation()` returns
 `False`. Surface area: 1 new file + 1 call-site change (isolated by design).
 
 ---
@@ -90,7 +90,7 @@ pre-loop Haiku LLM fallback. Wire into `booking_mode.py` after `is_negation()` r
 Use this for each deploy that touches the booking flow:
 
 - [ ] `shared/negation_phrases.py` deployed and importable
-- [ ] Pre-loop hook active in `agent/modes/booking_mode.py`
+- [ ] Pre-loop hook active in the booking middleware layer
 - [ ] `booking.negation_resolver` log entries visible in production logs
 - [ ] Measured-gate memory persisted to Engram (`measured-gate/booking-negation-resolver-{date}`)
 - [ ] Review calendar entry created for `review_date` (+14 days)

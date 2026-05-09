@@ -45,7 +45,7 @@ When guidance conflicts, follow this hierarchy (highest priority first):
 |----------|---------------|
 | How do I run tests? | **CLAUDE.md** (commands) |
 | What's the database schema? | **CLAUDE.md** (models) |
-| How do I add a new agent mode? | **agent/AGENTS.md** → **atrevete-agent** skill |
+| How do I add a new middleware? | **agent/AGENTS.md** → **atrevete-agent** skill |
 | How do I create a migration? | **database/AGENTS.md** → **atrevete-database** skill |
 | What's the project architecture? | **AGENTS.md** (this file) |
 | How do I write a FastAPI route? | **api/AGENTS.md** → **atrevete-api** skill |
@@ -87,19 +87,20 @@ atrevete-bot/
 │   ├── services/          # Business logic
 │   └── middleware/        # CORS, logging, rate limiting
 │
-├── agent/                 # create_agent + middleware orchestrator
+├── agent/                 # create_agent + 7 middleware orchestrator
 │   ├── AGENTS.md          # Agent-specific guidance
 │   ├── main.py            # Redis Streams consumer
 │   ├── graph.py           # Thin wrapper → build_conversation_agent()
-│   ├── agent_factory.py   # build_conversation_agent: create_agent + tools + middleware
+│   ├── agent_factory.py   # build_conversation_agent: create_agent + tools + middleware (SSOT: lines 47-55)
 │   ├── llm.py             # get_llm() — OpenRouter gpt-5.4-mini
 │   ├── checkpointer.py    # AsyncRedisSaver wiring
-│   ├── state.py           # AgentState TypedDict (slim)
-│   ├── middleware/        # 6 composed middlewares
+│   ├── state.py           # AgentState TypedDict + SLOT_REGISTRY
+│   ├── middleware/        # 7 composed middlewares (order load-bearing)
 │   │   ├── disclosure.py
 │   │   ├── customer_resolve.py
 │   │   ├── appointment_context.py
 │   │   ├── dynamic_prompt.py
+│   │   ├── availability_context.py
 │   │   ├── prompt_assembly.py
 │   │   └── summarize.py
 │   ├── tools/             # 6 LangChain tools
@@ -163,6 +164,30 @@ atrevete-bot/
 ├── requirements.txt       # Python dependencies
 └── .env.example           # Environment variables template
 ```
+
+---
+
+## Architecture Status (current)
+
+Agent runtime: **`create_agent` + 7 middleware + 6 tools** (LangChain). No StateGraph. No mode nodes. No intent router.
+
+SSOT: `agent/agent_factory.py:47-55`.
+
+### Middleware pipeline (execution order, all 7)
+
+1. `DisclosureMiddleware` — first-turn EU AI Act prepend
+2. `CustomerResolveMiddleware` — phone → DB → `_slot_customer` + `customer_id`
+3. `AppointmentContextMiddleware` — upcoming appointments → `_slot_upcoming_appointments` (runs after CustomerResolve)
+4. `DynamicPromptMiddleware` — catalog + business hours → `_slot_catalog`, `_slot_business_hours`
+5. `AvailabilityContextMiddleware` — injects `_slot_availability` (runs after DynamicPrompt)
+6. `PromptAssemblyMiddleware` — collapses all `_slot_*` keys into `system_message` (runs after all slot-writers)
+7. `SummarizeMiddleware` — cursor-gated history compaction (runs last)
+
+### Tools (6)
+
+`check_availability`, `get_next_available_options`, `book`, `update_booking`, `manage_appointments`, `escalate` — registered in `agent/tools/__init__.py`.
+
+Full architecture docs: `docs/system/` (historical migration records).
 
 ---
 
@@ -373,5 +398,5 @@ These rules apply across ALL components:
 
 ---
 
-**Last Updated**: March 2026  
-**Version**: 1.0 (Mode-based architecture v6.0)
+**Last Updated**: May 2026  
+**Version**: 2.0 (create_agent + 7 middleware — SSOT: agent/agent_factory.py:47-55)

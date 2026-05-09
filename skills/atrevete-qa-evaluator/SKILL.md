@@ -120,16 +120,17 @@ From the trace, determine:
 
 ### Step 2: Read the relevant source code
 
-Based on the failure's mode, read the corresponding mode file:
+Based on the failure, read the corresponding middleware or tool file (SSOT: `agent/agent_factory.py:47-55`):
 
-| Mode | File |
+| Area | File |
 |------|------|
-| GREETING | `agent/modes/greeting_mode.py` |
-| BOOKING | `agent/modes/booking_mode.py` |
-| GENERAL | `agent/modes/general_mode.py` |
-| ESCALATION | `agent/modes/escalation_mode.py` |
-| Router | `agent/modes/router.py` |
-| Prompts | `agent/prompts/modes/{mode}.md` |
+| Customer resolution | `agent/middleware/customer_resolve.py` |
+| Appointment context | `agent/middleware/appointment_context.py` |
+| Prompt selection | `agent/middleware/dynamic_prompt.py` |
+| Availability | `agent/middleware/availability_context.py` |
+| Summarization | `agent/middleware/summarize.py` |
+| Booking tool | `agent/tools/` (check tool definitions) |
+| System prompts | `agent/prompts/shared/{file}.md` |
 
 Use Grep to search for the function or logic handling the failed step. Look for:
 - Missing guard clauses (e.g., not checking if `customer_name` already exists)
@@ -206,7 +207,7 @@ Produce a markdown report with this EXACT structure:
 ### Bugs Found (from tester + evaluator)
 | # | Category | Turn | Evidence | Root Cause | Fix |
 |---|----------|------|----------|------------|-----|
-| 1 | redundant_question | 7 | Bot asked name again | `booking_mode.py:245` doesn't check `customer_name` in state | Add guard: `if state.get("customer_name"): skip name step` |
+| 1 | redundant_question | 7 | Bot asked name again | `agent/middleware/customer_resolve.py` doesn't check `customer_name` in state | Add guard: `if state.get("customer_name"): skip name step` |
 
 ### Recommendations
 1. [Priority: HIGH] {description} — `{file}:{line}`

@@ -45,7 +45,7 @@ When guidance conflicts, follow this hierarchy (highest priority first):
 |----------|---------------|
 | How do I run tests? | **CLAUDE.md** (commands) |
 | What's the database schema? | **CLAUDE.md** (models) |
-| How do I add a new agent mode? | **agent/AGENTS.md** → **atrevete-agent** skill |
+| How do I add a new middleware? | **agent/AGENTS.md** → **atrevete-agent** skill |
 | How do I create a migration? | **database/AGENTS.md** → **atrevete-database** skill |
 | What's the project architecture? | **AGENTS.md** (this file) |
 | How do I write a FastAPI route? | **api/AGENTS.md** → **atrevete-api** skill |
@@ -87,29 +87,35 @@ atrevete-bot/
 │   ├── services/          # Business logic
 │   └── middleware/        # CORS, logging, rate limiting
 │
-├── agent/                 # LangGraph orchestrator
+├── agent/                 # create_agent + 7 middleware orchestrator
 │   ├── AGENTS.md          # Agent-specific guidance
+│   ├── CLAUDE.md          # Agent quick-ref (architecture SSOT template)
 │   ├── main.py            # Redis Streams consumer
-│   ├── graphs/            # StateGraph definitions
-│   │   └── conversation_flow.py   # v6.0 mode-based graph
-│   ├── modes/             # Mode nodes (v6.0)
-│   │   ├── greeting_mode.py       # GREETING mode
-│   │   ├── booking_mode.py        # BOOKING mode
-│   │   ├── general_mode.py        # GENERAL mode
-│   │   └── escalation_mode.py     # ESCALATION mode
-│   ├── routing/           # Intent router
-│   │   └── intent_router.py       # Keyword + LLM hybrid classifier
-│   ├── tools/             # 4 LangChain tools
-│   │   ├── availability_tools.py  # check_availability
-│   │   ├── booking_tools.py       # book
-│   │   ├── manage_appointments_tool.py  # manage_appointments
-│   │   └── escalation_tools.py    # escalate
-│   ├── prompts/           # System prompts
-│   │   ├── shared/        # Core prompts (identity, rules, glossary)
-│   │   └── modes/         # Mode-specific overlays
-│   ├── state/             # State schemas and checkpointer
-│   ├── services/          # Business logic (availability, GCal push)
-│   └── workers/           # Background workers (archiver)
+│   ├── graph.py           # Thin wrapper → build_conversation_agent()
+│   ├── agent_factory.py   # build_conversation_agent: create_agent + tools + middleware (SSOT: lines 47-55)
+│   ├── llm.py             # get_llm() — OpenRouter gpt-5.4-mini
+│   ├── checkpointer.py    # AsyncRedisSaver wiring
+│   ├── state.py           # AgentState TypedDict + SLOT_REGISTRY
+│   ├── middleware/        # 7 composed middlewares (order load-bearing)
+│   │   ├── disclosure.py
+│   │   ├── customer_resolve.py
+│   │   ├── appointment_context.py
+│   │   ├── dynamic_prompt.py
+│   │   ├── availability_context.py
+│   │   ├── prompt_assembly.py
+│   │   └── summarize.py
+│   ├── tools/             # 6 LangChain tools
+│   │   ├── check_availability.py
+│   │   ├── next_available.py          # get_next_available_options
+│   │   ├── book.py                    # atomic create + GCal push
+│   │   ├── update_booking.py          # mutate active draft
+│   │   ├── manage_appointments_tool.py # view/cancel/reschedule
+│   │   └── escalation_tools.py
+│   ├── prompts/           # Base prompt + dynamic loaders
+│   ├── booking/resolvers/ # service / stylist / time resolvers
+│   ├── batching/          # WhatsApp message batcher
+│   ├── services/          # Business logic (availability, GCal push, escalation)
+│   └── workers/           # Background workers (archiver, confirmation)
 │
 ├── database/              # SQLAlchemy models & Alembic migrations
 │   ├── AGENTS.md          # Database-specific guidance
@@ -161,16 +167,27 @@ atrevete-bot/
 
 ---
 
-## Architecture Status (2026-04-21)
+## Architecture Status (current)
 
-StateGraph v6.0 migration complete. Graph: `preprocess → router → [greeting | general | booking | escalation | appointment_management | confirmation_reply] → summarize → END`. All modes, tools, prompts, services wired.
+Agent runtime: **`create_agent` + 7 middleware + 6 tools** (LangChain). No StateGraph. No mode nodes. No intent router.
 
-E1 scaffolding partially reverted:
-- `agent/core/` — REMOVED (commit 02acbea, 2026-04-20). `state_delivery.py` + `status_line.py` never wired; concepts covered by `ConversationState` TypedDict + mode_context.
-- `infra/resolvers/negation.py` — kept (hard-rename of `shared/negation_phrases.py`, P8).
-- `scripts/check_layers.py` — kept (AST layer-import gate, CI-only).
+SSOT: `agent/agent_factory.py:47-55`.
 
-Full architecture docs: `docs/system/`.
+### Middleware pipeline (execution order, all 7)
+
+1. `DisclosureMiddleware` — first-turn EU AI Act prepend
+2. `CustomerResolveMiddleware` — phone → DB → `_slot_customer` + `customer_id`
+3. `AppointmentContextMiddleware` — upcoming appointments → `_slot_upcoming_appointments` (runs after CustomerResolve)
+4. `DynamicPromptMiddleware` — catalog + business hours → `_slot_catalog`, `_slot_business_hours`
+5. `AvailabilityContextMiddleware` — injects `_slot_availability` (runs after DynamicPrompt)
+6. `PromptAssemblyMiddleware` — collapses all `_slot_*` keys into `system_message` (runs after all slot-writers)
+7. `SummarizeMiddleware` — cursor-gated history compaction (runs last)
+
+### Tools (6)
+
+`check_availability`, `get_next_available_options`, `book`, `update_booking`, `manage_appointments`, `escalate` — registered in `agent/tools/__init__.py`.
+
+Full architecture docs: `docs/system/` (historical migration records).
 
 ---
 
@@ -411,5 +428,5 @@ YOU CAN'T RUN THIS PROJECT IN OTHER MACHINES, just in the up said
 
 ---
 
-**Last Updated**: March 2026  
-**Version**: 1.0 (Mode-based architecture v6.0)
+**Last Updated**: May 2026  
+**Version**: 2.0 (create_agent + 7 middleware — SSOT: agent/agent_factory.py:47-55)
