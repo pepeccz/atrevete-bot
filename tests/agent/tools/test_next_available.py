@@ -41,12 +41,12 @@ async def test_get_next_available_options_returns_ranked_options_payload():
 
     with (
         patch(
-            "agent.tools.next_available._get_service_durations",
+            "agent.tools.next_available.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.next_available._get_active_stylists_for_services",
+            "agent.tools.next_available.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -56,7 +56,7 @@ async def test_get_next_available_options_returns_ranked_options_payload():
             return_value=fallback_payload,
         ),
         patch(
-            "agent.tools.next_available._get_stylist_name",
+            "agent.tools.next_available.get_stylist_name",
             new_callable=AsyncMock,
             return_value="Marta",
         ),
@@ -121,12 +121,12 @@ async def test_get_next_available_options_returns_clamped_bounds_metadata():
 
     with (
         patch(
-            "agent.tools.next_available._get_service_durations",
+            "agent.tools.next_available.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.next_available._get_active_stylists_for_services",
+            "agent.tools.next_available.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[FAKE_STYLIST_ID],
         ),
@@ -168,12 +168,12 @@ async def test_get_next_available_options_rejects_when_no_compatible_stylists_ex
 
     with (
         patch(
-            "agent.tools.next_available._get_service_durations",
+            "agent.tools.next_available.get_service_durations",
             new_callable=AsyncMock,
             return_value={FAKE_SERVICE_ID: 60},
         ),
         patch(
-            "agent.tools.next_available._get_active_stylists_for_services",
+            "agent.tools.next_available.get_active_stylists_for_services",
             new_callable=AsyncMock,
             return_value=[],
         ),

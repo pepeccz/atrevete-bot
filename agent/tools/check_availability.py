@@ -13,18 +13,25 @@ from uuid import UUID
 
 from langchain_core.tools import tool
 
-from agent.services.availability_service import get_available_slots
+from agent.services.availability_service import (
+    get_active_stylists_for_services,
+    get_available_slots,
+    get_service_durations,
+    get_stylist_name,
+    get_stylist_names_map,
+)
 from agent.tools.schemas import ToolResponse
 from shared.date_format import format_date_spanish
 
 logger = logging.getLogger(__name__)
 
 
-async def _load_lead_time_settings() -> tuple[int, int]:
+async def load_lead_time_settings() -> tuple[int, int]:
     """Return (minimum_booking_days_advance, same_day_buffer_hours).
 
     Raises any exception on DB/settings failure (caller handles fail-closed).
     Imported lazily inside function so tests can patch get_settings_service.
+    Public so next_available.py can import it without underscore coupling.
     """
     from shared.settings_service import get_settings_service
 
@@ -32,90 +39,6 @@ async def _load_lead_time_settings() -> tuple[int, int]:
     min_days = await service.get("minimum_booking_days_advance", default=3)
     buffer_hours = await service.get("same_day_buffer_hours", default=0)
     return int(min_days or 3), int(buffer_hours or 0)
-
-
-async def _get_service_durations(service_ids: list[UUID]) -> dict[UUID, int]:
-    """Fetch duration_minutes for each service_id. Returns {id: duration}."""
-    from sqlalchemy import select
-
-    from database.connection import get_async_session
-    from database.models import Service
-
-    async with get_async_session() as session:
-        result = await session.execute(
-            select(Service.id, Service.duration_minutes).where(Service.id.in_(service_ids))
-        )
-        return {row[0]: row[1] for row in result.fetchall()}
-
-
-async def _get_active_stylists_for_services(
-    service_ids: list[UUID],
-    audience: str | None,
-) -> list[UUID]:
-    """
-    Return IDs of active stylists who can serve the given services.
-
-    Matching logic: use the service.category to determine which stylist category
-    can serve it. If all services are HAIRDRESSING → hairdressing stylists.
-    If any service is AESTHETICS → aesthetics stylists.
-    Mixed → all active stylists.
-    """
-    from sqlalchemy import select
-
-    from database.connection import get_async_session
-    from database.models import Service, ServiceCategory, Stylist
-
-    async with get_async_session() as session:
-        svc_result = await session.execute(
-            select(Service.category).where(Service.id.in_(service_ids))
-        )
-        categories = {row[0] for row in svc_result.fetchall()}
-
-        has_hair = ServiceCategory.HAIRDRESSING in categories
-        has_aesthetics = ServiceCategory.AESTHETICS in categories
-
-        if has_hair and not has_aesthetics:
-            stylist_filter = Stylist.category == ServiceCategory.HAIRDRESSING
-        elif has_aesthetics and not has_hair:
-            stylist_filter = Stylist.category == ServiceCategory.AESTHETICS
-        else:
-            # Mixed or empty — fail-closed (defense in depth; update_booking blocks upstream)
-            return []
-
-        result = await session.execute(
-            select(Stylist.id).where(Stylist.is_active.is_(True)).where(stylist_filter)
-        )
-        return [row[0] for row in result.fetchall()]
-
-
-async def _get_stylist_name(stylist_id: UUID) -> str:
-    """Fetch stylist name by ID."""
-    from sqlalchemy import select
-
-    from database.connection import get_async_session
-    from database.models import Stylist
-
-    async with get_async_session() as session:
-        result = await session.execute(select(Stylist.name).where(Stylist.id == stylist_id))
-        row = result.first()
-        return row[0] if row else str(stylist_id)
-
-
-async def _get_stylist_names_map(stylist_ids: list[UUID]) -> dict[UUID, str]:
-    """Fetch names for a list of stylist UUIDs. Returns {id: name}."""
-    from sqlalchemy import select
-
-    from database.connection import get_async_session
-    from database.models import Stylist
-
-    if not stylist_ids:
-        return {}
-
-    async with get_async_session() as session:
-        result = await session.execute(
-            select(Stylist.id, Stylist.name).where(Stylist.id.in_(stylist_ids))
-        )
-        return {row[0]: row[1] for row in result.fetchall()}
 
 
 def _build_available_stylists(stylist_ids: list[UUID], names_map: dict[UUID, str]) -> list[dict]:
@@ -154,7 +77,7 @@ async def check_availability(
         JSON-serialized ToolResponse with payload.slots list and
         payload.total_duration_minutes.
     """
-    from agent.tools._booking_helpers import _compute_first_valid_date
+    from agent.tools.booking_helpers import _compute_first_valid_date
 
     # --- Precondition: date required ---
     if not date_iso:
@@ -191,7 +114,7 @@ async def check_availability(
 
     # --- Lead-time guard (fail-closed on SettingsService error) ---
     try:
-        min_days, _buffer_hours = await _load_lead_time_settings()
+        min_days, _buffer_hours = await load_lead_time_settings()
     except Exception as exc:
         logger.warning("check_availability: SettingsService unavailable: %s", exc)
         return ToolResponse(
@@ -247,7 +170,7 @@ async def check_availability(
         ).model_dump_json()
 
     # --- Fetch service durations ---
-    durations = await _get_service_durations(parsed_service_ids)
+    durations = await get_service_durations(parsed_service_ids)
     if not durations:
         return ToolResponse(
             status="rejected",
@@ -267,7 +190,7 @@ async def check_availability(
             ).model_dump_json()
         stylist_ids = [parsed_stylist_id]
     else:
-        stylist_ids = await _get_active_stylists_for_services(parsed_service_ids, audience)
+        stylist_ids = await get_active_stylists_for_services(parsed_service_ids, audience)
         if not stylist_ids:
             return ToolResponse(
                 status="rejected",
@@ -275,7 +198,7 @@ async def check_availability(
             ).model_dump_json()
 
     # --- Fetch stylist names for available_stylists payload field ---
-    names_map = await _get_stylist_names_map(stylist_ids)
+    names_map = await get_stylist_names_map(stylist_ids)
 
     # --- Aggregate slots across stylists ---
     all_slots = []

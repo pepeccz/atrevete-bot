@@ -46,7 +46,7 @@ def auto_patch_stylist_names_map():
     Individual tests that need real names must override this patch explicitly.
     """
     with patch(
-        "agent.tools.check_availability._get_stylist_names_map",
+        "agent.tools.check_availability.get_stylist_names_map",
         new_callable=AsyncMock,
         return_value={},
     ):

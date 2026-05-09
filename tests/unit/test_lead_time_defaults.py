@@ -30,9 +30,9 @@ async def test_default_lead_time_is_3_when_settings_absent():
         "shared.settings_service.get_settings_service",
         new=_mock_get_settings_service,
     ):
-        from agent.tools.check_availability import _load_lead_time_settings
+        from agent.tools.check_availability import load_lead_time_settings
 
-        min_days, buffer = await _load_lead_time_settings()
+        min_days, buffer = await load_lead_time_settings()
 
     assert min_days == 3, f"Expected default min_days=3, got {min_days}"
 
@@ -52,9 +52,9 @@ async def test_default_lead_time_uses_settings_when_present():
         "shared.settings_service.get_settings_service",
         new=_mock_get_settings_service,
     ):
-        from agent.tools.check_availability import _load_lead_time_settings
+        from agent.tools.check_availability import load_lead_time_settings
 
-        min_days, buffer = await _load_lead_time_settings()
+        min_days, buffer = await load_lead_time_settings()
 
     assert min_days == 5
 
@@ -76,15 +76,15 @@ async def test_next_available_applies_min_days_3_fallback_on_exception():
 
     with (
         patch(
-            "agent.tools.next_available._load_lead_time_settings",
+            "agent.tools.next_available.load_lead_time_settings",
             new=AsyncMock(side_effect=Exception("DB down")),
         ),
         patch(
-            "agent.tools.next_available._get_service_durations",
+            "agent.tools.next_available.get_service_durations",
             new=AsyncMock(return_value={"uuid": 45}),
         ),
         patch(
-            "agent.tools.next_available._get_active_stylists_for_services",
+            "agent.tools.next_available.get_active_stylists_for_services",
             new=AsyncMock(return_value=[]),
         ),
     ):
