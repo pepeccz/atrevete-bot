@@ -115,17 +115,17 @@ class TestManageAppointmentsList:
 
         with (
             patch(
-                "agent.services.appointment_query_service._get_customer_by_phone",
+                "agent.services.appointment_query_service.get_customer_by_phone",
                 new_callable=AsyncMock,
                 return_value=customer,
             ),
             patch(
-                "agent.services.appointment_query_service._get_upcoming_appointments",
+                "agent.services.appointment_query_service.get_appointments_by_customer_id",
                 new_callable=AsyncMock,
                 return_value=[appt1, appt2],
             ),
             patch(
-                "agent.services.appointment_query_service._get_service_names",
+                "agent.services.appointment_query_service.get_service_names",
                 new_callable=AsyncMock,
                 return_value="Corte",
             ),
@@ -154,12 +154,12 @@ class TestManageAppointmentsList:
 
         with (
             patch(
-                "agent.services.appointment_query_service._get_customer_by_phone",
+                "agent.services.appointment_query_service.get_customer_by_phone",
                 new_callable=AsyncMock,
                 return_value=customer,
             ),
             patch(
-                "agent.services.appointment_query_service._get_upcoming_appointments",
+                "agent.services.appointment_query_service.get_appointments_by_customer_id",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
@@ -177,7 +177,7 @@ class TestManageAppointmentsList:
         from agent.tools.manage_appointments_tool import _list_appointments
 
         with patch(
-            "agent.services.appointment_query_service._get_customer_by_phone",
+            "agent.services.appointment_query_service.get_customer_by_phone",
             new_callable=AsyncMock,
             return_value=None,
         ):
@@ -192,7 +192,7 @@ class TestManageAppointmentsList:
         from agent.tools.manage_appointments_tool import _list_appointments
 
         with patch(
-            "agent.services.appointment_query_service._get_customer_by_phone",
+            "agent.services.appointment_query_service.get_customer_by_phone",
             side_effect=Exception("DB connection lost"),
         ):
             result = await _list_appointments(customer_phone="+34600000001")
