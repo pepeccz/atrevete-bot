@@ -130,8 +130,8 @@ export function ApptCard({
             overflow: "hidden",
             display: "-webkit-box",
             WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-          }}
+            WebkitBoxOrient: "vertical" as const,
+          } as CSSProperties}
         >
           {serviceText}
         </div>
