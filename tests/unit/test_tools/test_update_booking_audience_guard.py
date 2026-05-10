@@ -37,13 +37,19 @@ async def db_session():
 
 @pytest.fixture
 async def multi_audience_cut_catalog(db_session):
-    """Seed Corte de Mujer Guard + Corte de Hombre Guard — same dimension, distinct audiences."""
+    """Seed a null-audience principal + audience-tagged peers for audience gate test.
+
+    Per design §2 Slice 2 Task 2.3: the gate fires only when input_audience is None.
+    The null-audience principal "Corte Guard" represents what the LLM sends when the user
+    says "corte" without specifying gender/audience.
+    """
     from uuid import uuid4
     from sqlalchemy import delete
     from database.models import Service, ServiceCategory
 
     dim = "cut_guard_dim"
     services = [
+        ("Corte Guard", None),               # null-audience → what LLM resolves "corte" to
         ("Corte de Mujer Guard", "adult_female"),
         ("Corte de Hombre Guard", "adult_male"),
         ("Corte de Niña Guard", "child_female"),
@@ -66,7 +72,7 @@ async def multi_audience_cut_catalog(db_session):
         db_session.add(svc)
     await db_session.flush()
 
-    yield {"names": names, "dimension": dim}
+    yield {"names": names, "dimension": dim, "null_principal": "Corte Guard"}
 
     await db_session.execute(delete(Service).where(Service.name.in_(names)))
     await db_session.flush()
@@ -76,13 +82,17 @@ async def multi_audience_cut_catalog(db_session):
 async def test_update_booking_with_ambiguous_haircut_returns_audience_required(
     multi_audience_cut_catalog,
 ):
-    """Conv_id=7 regression: calling update_booking with an ambiguous cut returns audience_required."""
+    """Conv_id=7 regression: calling update_booking with a null-audience principal returns
+    audience_required.  Per design §2 Slice 2: the gate fires only for null-audience
+    principals whose dimension has audience-tagged peers.
+    """
     if not await _db_available():
         pytest.skip("Postgres not reachable")
 
     from agent.tools.update_booking import update_booking
 
-    raw = await update_booking.ainvoke({"services": ["Corte de Mujer Guard"]})
+    # "Corte Guard" has audience=None and lives in a multi-audience dimension → gate fires
+    raw = await update_booking.ainvoke({"services": ["Corte Guard"]})
     data = json.loads(raw)
 
     assert data["next_step"] == "audience_required", (

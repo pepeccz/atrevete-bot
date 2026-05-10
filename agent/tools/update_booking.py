@@ -225,6 +225,7 @@ async def _update_booking_impl(
         _resolve_service_categories,
         _resolve_service_id_to_category_map,
         _resolve_service_ids,
+        _resolve_service_ids_strict,
         _resolve_stylist,
         _validate_full_name,
     )
@@ -246,8 +247,31 @@ async def _update_booking_impl(
                 next_step="service_required",
             ).model_dump_json()
 
-        # ── Resolve service names ─────────────────────────────────────────────
-        resolved_ids, unknown_names = await _resolve_service_ids(session, services)
+        # ── Resolve service names (strict: detects ambiguous axis at resolution time) ──
+        resolved_ids, unknown_names, ambiguous_descriptors = await _resolve_service_ids_strict(
+            session, services
+        )
+
+        # ── Step 1.7: ambiguous descriptor gate (audience or variant axis) ────
+        # _resolve_service_ids_strict already detected the axis without committing
+        # a UUID. Return the first ambiguous descriptor immediately.
+        if ambiguous_descriptors:
+            first_desc = ambiguous_descriptors[0]
+            next_step = first_desc["question_hint"]  # "audience_required" | "variant_required"
+            logger.info(
+                "tool.response.ambiguous",
+                extra={
+                    "tool_name": "update_booking",
+                    "next_step": next_step,
+                    "axis": first_desc["axis"],
+                    "candidates_count": len(first_desc["candidates"]),
+                },
+            )
+            return ToolResponse(
+                status="ambiguous",
+                next_step=next_step,
+                payload=first_desc,
+            ).model_dump_json()
 
         if unknown_names:
             errors.extend([f"No reconozco el servicio: {n}" for n in unknown_names])

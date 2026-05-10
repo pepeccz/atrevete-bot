@@ -9,6 +9,7 @@ Refs: R2, R3, design §8
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from datetime import date, timedelta
@@ -16,6 +17,8 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 # ServiceCategory imported lazily inside functions to avoid circular imports at module load.
 
@@ -186,8 +189,17 @@ async def _resolve_audience_variants(
                 )
             )
             peers = peers_result.fetchall()
-            distinct_audiences = {p[1] for p in peers if p[1] is not None}
-            if len(peers) > 1 and len(distinct_audiences) > 1:
+            # Include None as a distinct sentinel so null-audience principals
+            # sharing a dimension with audience-tagged peers correctly trigger
+            # the audience-required gate (design §2 Slice 2, Task 2.3).
+            audience_values = {p[1] for p in peers}  # include None
+            input_audience = row[1]
+            if len(peers) > 1 and len(audience_values) > 1 and input_audience is None:
+                logger.info(
+                    "_resolve_audience_variants: audience_required axis=%s options_count=%d",
+                    dimension,
+                    len(peers),
+                )
                 return ("audience", dimension, sorted(p[0] for p in peers))
 
     return ("none", "", [])
@@ -211,9 +223,7 @@ async def _resolve_service_id_to_category_map(
     return {str(row[0]): row[1] for row in result.fetchall()}
 
 
-async def _resolve_service_categories(
-    session: AsyncSession, service_ids: list[str]
-) -> set:
+async def _resolve_service_categories(session: AsyncSession, service_ids: list[str]) -> set:
     """Return the distinct ServiceCategory values for the given service IDs.
 
     Empty set if no rows match or service_ids is empty.
@@ -226,9 +236,7 @@ async def _resolve_service_categories(
     if not service_ids:
         return set()
 
-    result = await session.execute(
-        select(Service.category).where(Service.id.in_(service_ids))
-    )
+    result = await session.execute(select(Service.category).where(Service.id.in_(service_ids)))
     return {row[0] for row in result.fetchall()}
 
 
@@ -292,6 +300,129 @@ async def _resolve_active_stylists(
         .order_by(Stylist.name.asc())
     )
     return [row[0].split(None, 1)[0] for row in result.fetchall()]
+
+
+async def _resolve_service_ids_strict(
+    session: AsyncSession, service_names: list[str]
+) -> tuple[list[str], list[str], list[dict]]:
+    """Resolve service names to UUIDs with ambiguity detection.
+
+    Like _resolve_service_ids but returns a 3-tuple:
+      (resolved_ids, unknown_names, ambiguous_descriptors)
+
+    When a service term maps to an ambiguous principal (audience axis or variant axis),
+    its UUID is NOT appended to resolved_ids — instead, a descriptor dict is added to
+    the third element.
+
+    Ambiguous descriptor shape (design §2 Slice 2):
+    {
+        "status": "ambiguous",
+        "axis": "audience" | "variant",
+        "service_term": str,
+        "family_label": str,
+        "candidates": list[str],
+        "question_hint": "audience_required" | "variant_required",
+    }
+
+    _resolve_service_ids stays as a thin 2-tuple wrapper for backward compatibility.
+
+    Refs: design §2 Slice 2, spec R2.1-R2.3, NFR-2
+    """
+    from agent.prompts.catalog_builder import _derive_customer_safe_service_name
+    from database.models import Service
+
+    result = await session.execute(
+        select(Service.id, Service.name).where(Service.is_active.is_(True))
+    )
+
+    by_internal: dict[str, str] = {}
+    by_display: dict[str, str] = {}
+    internal_name_by_norm: dict[str, str] = {}  # normalized → internal Service.name
+    for service_id, service_name in result.fetchall():
+        sid = str(service_id)
+        norm_internal = _normalize_name(service_name)
+        by_internal[norm_internal] = sid
+        internal_name_by_norm[norm_internal] = service_name
+        display = _derive_customer_safe_service_name(service_name)
+        norm_display = _normalize_name(display)
+        by_display[norm_display] = sid
+        if norm_display not in internal_name_by_norm:
+            internal_name_by_norm[norm_display] = service_name
+
+    resolved_ids: list[str] = []
+    unknown: list[str] = []
+    ambiguous: list[dict] = []
+
+    for name in service_names:
+        normalized = _normalize_name(name)
+
+        # Resolve to internal service name first
+        matched_internal: str | None = None
+        if normalized in by_internal:
+            matched_internal = internal_name_by_norm.get(normalized)
+        elif normalized in by_display:
+            matched_internal = internal_name_by_norm.get(normalized)
+        else:
+            # Try diminutive stripping
+            stem = _strip_diminutive(normalized)
+            if stem is not None:
+                for candidate in [stem, stem + "o", stem + "a", stem + "e"]:
+                    if candidate in by_internal:
+                        matched_internal = internal_name_by_norm.get(candidate)
+                        break
+                    if candidate in by_display:
+                        matched_internal = internal_name_by_norm.get(candidate)
+                        break
+
+        if matched_internal is None:
+            unknown.append(name)
+            continue
+
+        # Check for ambiguity before committing UUID
+        kind, family_label, candidates = await _resolve_audience_variants(session, matched_internal)
+        if kind == "audience":
+            logger.info(
+                "_resolve_service_ids_strict: ambiguous axis=%s term=%s options=%d",
+                "audience",
+                name,
+                len(candidates),
+            )
+            ambiguous.append(
+                {
+                    "status": "ambiguous",
+                    "axis": "audience",
+                    "service_term": name,
+                    "family_label": family_label,
+                    "candidates": candidates,
+                    "question_hint": "audience_required",
+                }
+            )
+        elif kind == "variant":
+            logger.info(
+                "_resolve_service_ids_strict: ambiguous axis=%s term=%s options=%d",
+                "variant",
+                name,
+                len(candidates),
+            )
+            ambiguous.append(
+                {
+                    "status": "ambiguous",
+                    "axis": "variant",
+                    "service_term": name,
+                    "family_label": family_label,
+                    "candidates": candidates,
+                    "question_hint": "variant_required",
+                }
+            )
+        else:
+            # Unambiguous — commit UUID
+            norm = _normalize_name(matched_internal)
+            if norm in by_internal:
+                resolved_ids.append(by_internal[norm])
+            elif norm in by_display:
+                resolved_ids.append(by_display[norm])
+
+    return resolved_ids, unknown, ambiguous
 
 
 async def _resolve_service_ids(

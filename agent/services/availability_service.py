@@ -53,6 +53,7 @@ from database.models import (
     Stylist,
 )
 from shared.business_hours_validator import get_business_hours_for_day, is_date_closed
+from shared.locale import SPANISH_WEEKDAYS
 
 logger = logging.getLogger(__name__)
 
@@ -608,21 +609,60 @@ async def get_next_available_options(
                 )
 
     ranked_options.sort(key=lambda option: option["_priority"])
+
+    # Dedup by start_iso — keep first (best priority) entry per start_iso.
+    # Because ranked_options is sorted by _priority ascending (best first), the
+    # first occurrence of each start_iso is always the highest-priority stylist.
+    # Design §2 Slice 2, spec R2.5/R2.6, Task 2.7.
+    seen_start: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for opt in ranked_options:
+        if opt["start_iso"] in seen_start:
+            continue
+        seen_start.add(opt["start_iso"])
+        deduped.append(opt)
+
     clean_options = [
         {
             key: value
             for key, value in option.items()
             if key not in {"_priority", "adjacent_priority"}
         }
-        for option in ranked_options[:bounded_max_options]
+        for option in deduped[:bounded_max_options]
     ]
 
-    return {
+    result: dict[str, Any] = {
         "options": clean_options,
         "searched_until": (base_date + timedelta(days=bounded_search_days)).isoformat(),
         "search_days": bounded_search_days,
         "max_options": bounded_max_options,
     }
+
+    # Compute gap_explanation_hint when nearest slot is > 2 calendar days away.
+    # Design §2 Slice 2 OQ2, spec R3.5, Task 2.9.
+    if deduped:
+        first_date = date.fromisoformat(deduped[0]["date_iso"])
+        gap_days = (first_date - base_date).days
+        if gap_days > 2:
+            skipped: list[dict[str, str]] = []
+            for offset in range(1, gap_days):  # exclude the first_date itself
+                if len(skipped) >= 7:  # cap at 7 entries
+                    break
+                d = base_date + timedelta(days=offset)
+                reason = "closed_day" if await is_date_closed(d) else "fully_booked"
+                skipped.append(
+                    {
+                        "date_iso": d.isoformat(),
+                        "weekday": SPANISH_WEEKDAYS[d.weekday()],
+                        "reason": reason,
+                    }
+                )
+            result["gap_explanation_hint"] = {
+                "gap_days_count": gap_days,
+                "skipped_dates": skipped,
+            }
+
+    return result
 
 
 async def get_soonest_slot_any_stylist(

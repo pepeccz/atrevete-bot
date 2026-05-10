@@ -78,6 +78,8 @@ def _patch_booking_helpers(
     from database.models import ServiceCategory
 
     resolve_service_ids = AsyncMock(return_value=(service_ids, unknown_names))
+    # _resolve_service_ids_strict returns 3-tuple: (resolved_ids, unknown, ambiguous=[])
+    resolve_service_ids_strict = AsyncMock(return_value=(service_ids, unknown_names, []))
     resolve_service_categories = AsyncMock(return_value={ServiceCategory.HAIRDRESSING})
     resolve_service_id_to_category_map = AsyncMock(return_value={})
     resolve_audience_variants = AsyncMock(return_value=("ok", None, []))
@@ -96,6 +98,7 @@ def _patch_booking_helpers(
 
     return {
         "agent.tools._booking_helpers._resolve_service_ids": resolve_service_ids,
+        "agent.tools._booking_helpers._resolve_service_ids_strict": resolve_service_ids_strict,
         "agent.tools._booking_helpers._resolve_service_categories": resolve_service_categories,
         "agent.tools._booking_helpers._resolve_service_id_to_category_map": resolve_service_id_to_category_map,
         "agent.tools._booking_helpers._resolve_audience_variants": resolve_audience_variants,
@@ -127,6 +130,7 @@ async def test_offer_slots_when_stylist_resolved_and_no_date():
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
@@ -166,6 +170,7 @@ async def test_offer_slots_with_no_preference():
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
@@ -213,6 +218,7 @@ async def test_date_required_regression_guard():
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
@@ -256,6 +262,7 @@ async def test_closed_day_required_for_sunday():
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
@@ -301,6 +308,7 @@ async def test_closed_day_required_uses_database_validator():
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
@@ -341,6 +349,7 @@ async def test_open_day_passes_through_to_name_required():
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
@@ -387,6 +396,7 @@ async def test_adapter_g1_date_clarification_required():
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
@@ -430,6 +440,7 @@ async def test_adapter_g2_closed_day_required_wire_format():
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
@@ -476,6 +487,7 @@ async def test_adapter_g3_advance_policy_violated_payload_forwarded():
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),

@@ -51,6 +51,10 @@ def mock_helpers():
             new=AsyncMock(return_value=(["svc-uuid-001"], [])),
         ),
         patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            new=AsyncMock(return_value=(["svc-uuid-001"], [], [])),
+        ),
+        patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
             new=AsyncMock(return_value=("none", "", [])),  # no ambiguity → no disambiguation
         ),

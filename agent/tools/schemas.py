@@ -25,7 +25,7 @@ _IMPERATIVE_VERBS: tuple[str, ...] = (
 class ToolResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["ok", "partial", "rejected"]
+    status: Literal["ok", "partial", "rejected", "ambiguous"]
     collected: dict[str, Any] = {}
     missing: list[str] = []
     next_step: str | None = (

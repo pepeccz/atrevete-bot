@@ -29,6 +29,9 @@ def _base_patches(
         "agent.tools._booking_helpers._resolve_service_ids": AsyncMock(
             return_value=(resolved_ids, [])
         ),
+        "agent.tools._booking_helpers._resolve_service_ids_strict": AsyncMock(
+            return_value=(resolved_ids, [], [])
+        ),
         "agent.tools._booking_helpers._resolve_service_categories": AsyncMock(
             return_value=set()
         ),
@@ -97,6 +100,10 @@ async def test_booking_ready_blocked_without_pre_book_validation():
         patch(
             "agent.tools._booking_helpers._resolve_service_ids",
             patches["agent.tools._booking_helpers._resolve_service_ids"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            patches["agent.tools._booking_helpers._resolve_service_ids_strict"],
         ),
         patch(
             "agent.tools._booking_helpers._resolve_service_categories",
@@ -171,6 +178,10 @@ async def test_booking_ready_unblocked_with_matching_validation():
             patches["agent.tools._booking_helpers._resolve_service_ids"],
         ),
         patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            patches["agent.tools._booking_helpers._resolve_service_ids_strict"],
+        ),
+        patch(
             "agent.tools._booking_helpers._resolve_service_categories",
             patches["agent.tools._booking_helpers._resolve_service_categories"],
         ),
@@ -243,6 +254,10 @@ async def test_booking_ready_blocked_mismatched_slot():
         patch(
             "agent.tools._booking_helpers._resolve_service_ids",
             patches["agent.tools._booking_helpers._resolve_service_ids"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            patches["agent.tools._booking_helpers._resolve_service_ids_strict"],
         ),
         patch(
             "agent.tools._booking_helpers._resolve_service_categories",
