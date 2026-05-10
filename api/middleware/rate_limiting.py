@@ -64,15 +64,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     request, call_next, redis_client, client_ip
                 )
 
-            # For other admin routes: skip rate limiting ONLY if token is VALID
+            # For admin routes: skip rate limiting ONLY when a valid cookie is present
             if request.url.path.startswith("/api/admin/"):
-                auth_header = request.headers.get("authorization", "")
-                if auth_header.startswith("Bearer "):
-                    token = auth_header.split(" ", 1)[1]
-                    if self._is_valid_token(token):
-                        # Token verified - skip rate limiting for authenticated users
-                        return await call_next(request)
-                    # Invalid token - fall through to apply rate limiting
+                token = request.cookies.get("admin_token")
+                if token and self._is_valid_token(token):
+                    # Cookie verified - skip rate limiting for authenticated users
+                    return await call_next(request)
+                # Missing or invalid cookie — fall through to standard rate limit
 
             # Apply standard rate limiting
             return await self._apply_rate_limit(

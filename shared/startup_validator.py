@@ -58,6 +58,35 @@ async def validate_startup_config(require_google_calendar: bool = False) -> dict
     # TIER 1: CRITICAL (block startup if any fail)
     # =========================================================================
 
+    # 0. CORS_ORIGINS safety checks (must precede cookie security checks)
+    cors_origins_raw = settings.CORS_ORIGINS
+    cors_entries = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+
+    if "*" in cors_entries:
+        critical_failures.append(
+            "CORS_ORIGINS must not contain '*' — wildcards are incompatible with "
+            "credentials: include. Set exact origins (e.g. https://admin.example.com)."
+        )
+        results["cors_origins_no_wildcard"] = False
+    else:
+        results["cors_origins_no_wildcard"] = True
+        logger.info("  [OK] CORS_ORIGINS has no wildcard")
+
+    if getattr(settings, "ADMIN_JWT_COOKIE_SECURE", True):
+        non_https = [o for o in cors_entries if o and not o.startswith("https://")]
+        if non_https:
+            critical_failures.append(
+                f"ADMIN_JWT_COOKIE_SECURE=True requires all CORS_ORIGINS to start with "
+                f"https://. Found non-HTTPS origins: {non_https}"
+            )
+            results["cors_origins_https"] = False
+        else:
+            results["cors_origins_https"] = True
+            logger.info("  [OK] All CORS_ORIGINS use HTTPS (required by ADMIN_JWT_COOKIE_SECURE)")
+    else:
+        results["cors_origins_https"] = True  # not enforced in dev (SECURE=False)
+        logger.info("  [INFO] ADMIN_JWT_COOKIE_SECURE=False — skipping HTTPS CORS check")
+
     # 1. Google Calendar credentials file exists and readable
     gc_path = Path(settings.GOOGLE_SERVICE_ACCOUNT_JSON)
     gc_error = None

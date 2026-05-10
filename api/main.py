@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from api.middleware.origin_check import OriginCheckMiddleware
 from api.middleware.rate_limiting import RateLimitMiddleware
 from api.routes import admin, billing, chatwoot, conversations, google_oauth, system, token_usage
 from api.routes import settings as settings_routes
@@ -32,14 +33,19 @@ origins = settings.CORS_ORIGINS.split(",")
 # Add rate limiting middleware FIRST (executes LAST, closest to routes)
 app.add_middleware(RateLimitMiddleware)
 
-# Add CORS middleware LAST (executes FIRST, handles preflight OPTIONS before rate limiting)
+# Add OriginCheckMiddleware BETWEEN RateLimit and CORS.
+# LIFO execution order: CORS → OriginCheck → RateLimit → route
+# CORS handles OPTIONS preflight first; OriginCheck evaluates non-preflight mutating requests.
+app.add_middleware(OriginCheckMiddleware)
+
+# Add CORS middleware LAST (executes FIRST, handles preflight OPTIONS before anything else)
 # In FastAPI/Starlette, last added middleware executes first
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    allow_headers=["Content-Type", "X-Requested-With"],  # Authorization removed (cookie-only transport)
 )
 
 # Include webhook routers
