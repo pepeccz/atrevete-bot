@@ -31,6 +31,8 @@ import { CalendarToolbar } from "./calendar-toolbar";
 import { StylistChipFilter, type AppointmentStatus } from "./stylist-chip-filter";
 import { ApptCard } from "./appt-card";
 import { AppointmentPopover, type PopoverAppointmentData } from "./appointment-popover";
+import { CalendarDayView, type DayViewEvent, type DayViewStylist } from "./calendar-day-view";
+import { DateTime } from "luxon";
 import { SelectActionDialog } from "./select-action-dialog";
 import { AppointmentWizard } from "@/app/(authenticated)/appointments/components/wizard/appointment-wizard";
 import { OverlapConfirmDialog } from "./overlap-confirm-dialog";
@@ -89,7 +91,49 @@ export interface CalendarViewRef {
   refresh: () => void;
 }
 
+// ---------------------------------------------------------------------------
+// DayViewPill — gold summary pill shown in toolbar when selectedView === 'day'
+// ---------------------------------------------------------------------------
+function DayViewPill({
+  events,
+  stylists,
+  gridStartHour,
+  gridEndHour,
+}: {
+  events: CalendarEvent[];
+  stylists: Stylist[];
+  gridStartHour: number;
+  gridEndHour: number;
+}) {
+  const appts = events.filter(
+    e => e.extendedProps.type === "appointment"
+      && e.extendedProps.status !== "cancelled"
+      && e.extendedProps.status !== "no_show"
+  );
+  const totalBooked = appts.reduce(
+    (acc, e) => acc + (e.extendedProps.duration_minutes ?? 0), 0
+  );
+  const businessMin = (gridEndHour - gridStartHour) * 60;
+  const totalCapacity = businessMin * Math.max(stylists.length, 1);
+  const pct = totalCapacity > 0 ? Math.round((totalBooked / totalCapacity) * 100) : 0;
+
+  return (
+    <span
+      className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold"
+      style={{
+        backgroundColor: "hsl(var(--gold-soft))",
+        border: "1px solid hsl(var(--gold-line))",
+        color: "hsl(var(--gold-dark))",
+      }}
+    >
+      {appts.length} {appts.length === 1 ? "cita hoy" : "citas hoy"} · ocupación {pct}%
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Legacy zoom config kept for backwards compat with zoomTowardPoint logic
+// ---------------------------------------------------------------------------
 const LEGACY_ZOOM_LEVELS = [
   { slot: "00:30:00", label: "30 min", labelInterval: "01:00" },
   { slot: "00:15:00", label: "15 min", labelInterval: "01:00" },
@@ -131,6 +175,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   // Calendar state — view, zoom, activeStylists (all persisted)
   const {
     selectedView,
+    selectedDate,
     activeStylists,
     zoomLevel,
     businessHours,
@@ -141,6 +186,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     toggleAllStylists,
     setView,
     setZoom,
+    setDate: setSelectedDate,
   } = useCalendarState();
 
   // Derive selectedStylistIds array from Set for API calls
@@ -151,7 +197,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
 
   // Modal states (blocking events)
   const [isBlockingModalOpen, setIsBlockingModalOpen] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedDateForBlocking, setSelectedDateForBlocking] = useState<Date | null>(null);
   const [selectedStartTime, setSelectedStartTime] = useState<Date | null>(null);
   const [selectedEndTime, setSelectedEndTime] = useState<Date | null>(null);
   const [selectedStylistForModal, setSelectedStylistForModal] = useState<string | null>(null);
@@ -466,8 +512,9 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     }
   }, [selectedView, isMobile]);
 
-  // Handle date set (when calendar view changes)
+  // Handle date set (when calendar view changes) — S4.10: also update selectedDate
   const handleDatesSet = (arg: { start: Date; end: Date }) => {
+    setSelectedDate(arg.start);
     fetchEvents(arg.start, arg.end);
   };
 
@@ -717,7 +764,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   const handleSelectBlocking = () => {
     if (!pendingSelectInfo) return;
     setSelectedStylistForModal(selectedStylistIds[0]);
-    setSelectedDate(pendingSelectInfo.start);
+    setSelectedDateForBlocking(pendingSelectInfo.start);
     setSelectedStartTime(pendingSelectInfo.start);
     setSelectedEndTime(pendingSelectInfo.end);
     setBlockingModalMode("create");
@@ -735,7 +782,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
 
     // Default to first selected stylist
     setSelectedStylistForModal(selectedStylistIds[0]);
-    setSelectedDate(new Date());
+    setSelectedDateForBlocking(new Date());
     setSelectedStartTime(null);  // Will use defaults in modal
     setSelectedEndTime(null);
     setBlockingModalMode("create");
@@ -1040,7 +1087,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         /* Desktop: new toolbar + chip filter */
         <>
           <CalendarToolbar
-            currentDate={new Date()}
+            currentDate={selectedDate}
             view={selectedView}
             zoomLevel={zoomLevel}
             onNav={handleToolbarNav}
@@ -1048,6 +1095,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
             onZoomChange={(z) => setZoom(z)}
             onCreate={handleCreateAppointment}
             onBlock={handleCreateBlockingEvent}
+            rightPill={selectedView === "day" ? <DayViewPill events={events} stylists={stylists} gridStartHour={9} gridEndHour={21} /> : undefined}
           />
           <StylistChipFilter
             stylists={stylists.map(s => ({ id: s.id, name: s.name, color: s.color || "#928679" }))}
@@ -1081,7 +1129,60 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         </Sheet>
       )}
 
-      {/* Calendar */}
+      {/* Calendar — day view (greenfield) or FullCalendar (week/month) */}
+      {!isMobile && selectedView === "day" ? (
+        <div className="relative">
+          {isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10 rounded-[14px]">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Calendar className="h-5 w-5 animate-pulse" />
+                <span>Cargando eventos...</span>
+              </div>
+            </div>
+          )}
+          <CalendarDayView
+            appointments={events.filter(e => e.extendedProps.type === "appointment") as DayViewEvent[]}
+            stylists={stylists
+              .filter(s => activeStylists.has(s.id))
+              .map((s): DayViewStylist => ({ id: s.id, name: s.name, color: s.color || "#928679" }))}
+            date={DateTime.fromJSDate(selectedDate, { zone: "Europe/Madrid" })}
+            gridStartHour={9}
+            gridEndHour={21}
+            slotMin={15}
+            slotPx={24}
+            onAppointmentClick={(apptId) => {
+              const ev = events.find(
+                e => e.extendedProps.appointment_id === apptId || e.id === apptId
+              );
+              if (!ev) return;
+              setPopoverState({
+                open: true,
+                anchorEl: null,
+                data: {
+                  appointmentId: apptId,
+                  customerName: (ev.extendedProps.customer_name as string) || "",
+                  serviceNames: (ev.extendedProps.service_names as string[]) || [],
+                  status: (ev.extendedProps.status as string) || "",
+                  duration: (ev.extendedProps.duration_minutes as number) || 0,
+                  notes: (ev.extendedProps.notes as string | null) || null,
+                  stylistColor: ev.backgroundColor,
+                  title: ev.title,
+                  start: ev.start ? new Date(ev.start) : null,
+                  end: ev.end ? new Date(ev.end) : null,
+                },
+              });
+            }}
+            onEmptySlotClick={(stylistId, datetime) => {
+              const dt = new Date(datetime);
+              setSelectedDateForModal(dt);
+              setSelectedStartTimeForModal(dt);
+              setSelectedEndTimeForModal(null);
+              setSelectedStylistForAppointmentModal(stylistId);
+              setIsAppointmentModalOpen(true);
+            }}
+          />
+        </div>
+      ) : (
       <Card ref={calendarCardRef} className={`relative ${isMobile ? "" : "rounded-t-none border-t-0"}`}>
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10 rounded-lg">
@@ -1174,6 +1275,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           }}
         />
       </Card>
+      )}
 
       {/* Action Selection Dialog (drag-select: cita vs bloqueo) */}
       <SelectActionDialog
@@ -1222,7 +1324,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         blockingEvent={editingBlockingEvent}
         stylistId={selectedStylistForModal || selectedStylistIds[0]}
         stylistName={getStylistName(selectedStylistForModal || selectedStylistIds[0])}
-        selectedDate={selectedDate}
+        selectedDate={selectedDateForBlocking}
         selectedStartTime={selectedStartTime}
         selectedEndTime={selectedEndTime}
         stylists={stylists.filter(s => selectedStylistIds.includes(s.id))}

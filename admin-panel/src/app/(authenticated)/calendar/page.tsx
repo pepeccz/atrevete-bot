@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { RefreshCw } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { CalendarView, CalendarViewRef } from "@/components/calendar/calendar-view";
+import { CalendarErrorBoundary } from "@/components/calendar/calendar-error-boundary";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -44,7 +45,9 @@ export default function CalendarPage() {
       />
 
       <div className="flex-1 p-4 md:p-6">
-        <CalendarView ref={calendarRef} />
+        <CalendarErrorBoundary>
+          <CalendarView ref={calendarRef} />
+        </CalendarErrorBoundary>
       </div>
     </div>
   );
