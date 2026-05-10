@@ -5,42 +5,75 @@
 @layer base {
   :root {
     /* ── Base shadcn tokens ──────────────────────────────────────────────── */
-    --background: 40 20% 98%;       /* warm off-white — salon feel */
-    --foreground: 240 10% 3.9%;
+    --background: 36 38% 96%;       /* #faf7f2 warm cream — handoff match */
+    --foreground: 24 12% 9%;        /* #1a1714 near-black */
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 24 12% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 45 62% 55%;
+    --popover-foreground: 24 12% 9%;
+    --primary: 38 43% 51%;          /* #b8924b brand gold */
     --primary-foreground: 0 0% 10%;
     --secondary: 240 4.8% 95.9%;
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 3.8% 46.1%;
-    --accent: 45 40% 94%;
-    --accent-foreground: 45 62% 30%;
+    --accent: 41 56% 90%;           /* #f3ead6 gold-soft — active item bg */
+    --accent-foreground: 35 49% 36%; /* #8a6a30 gold-dark */
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 45 62% 55%;
+    --border: 40 27% 89%;           /* #ece7dd warm line */
+    --input: 40 27% 89%;
+    --ring: 38 43% 51%;
     --radius: 0.5rem;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 45 62% 55%;
+    --sidebar-background: 42 41% 97%; /* #fbf9f4 softer cream */
+    --sidebar-foreground: 26 12% 32%; /* #5b5249 ink-soft */
+    --sidebar-primary: 38 43% 51%;
     --sidebar-primary-foreground: 0 0% 10%;
-    --sidebar-accent: 45 40% 94%;
-    --sidebar-accent-foreground: 45 62% 30%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 45 62% 55%;
+    --sidebar-accent: 41 56% 90%;   /* gold-soft */
+    --sidebar-accent-foreground: 35 49% 36%; /* gold-dark */
+    --sidebar-border: 40 27% 89%;
+    --sidebar-ring: 38 43% 51%;
 
-    /* ── Semantic surface tokens (AD10) ─────────────────────────────────── */
-    --surface: 40 20% 98%;          /* warm page background */
-    --surface-elevated: 0 0% 100%;  /* cards, dialogs — pure white */
-    --surface-hover: 40 15% 96%;    /* hover state on surface */
-    --surface-muted: 40 10% 94%;    /* subtle muted surface */
+    /* ── Ink (4 shades) ─────────────────────────────────────────────────── */
+    --ink:       24 12% 9%;         /* #1a1714 — alias of --foreground */
+    --ink-soft:  26 12% 32%;        /* #5b5249 — secondary text */
+    --ink-mute:  30 11% 53%;        /* #928679 — muted text, KPI labels */
+    --ink-faint: 33 22% 71%;        /* #c4b8a8 — placeholder, disabled */
 
-    /* ── Semantic status tokens ─────────────────────────────────────────── */
+    /* ── Brand gold (4 variants) ────────────────────────────────────────── */
+    --gold:      38 43% 51%;        /* #b8924b — alias of --primary */
+    --gold-dark: 35 49% 36%;        /* #8a6a30 — hover, gold text on light */
+    --gold-soft: 41 56% 90%;        /* #f3ead6 — active item bg, pill bg */
+    --gold-line: 40 47% 83%;        /* #e9dcc0 — gold accent border */
+
+    /* ── Lines (2 variants) ─────────────────────────────────────────────── */
+    --line:      40 27% 89%;        /* #ece7dd — alias of --border */
+    --line-soft: 40 30% 93%;        /* #f3efe7 — interior grid lines */
+
+    /* ── Surfaces (handoff-updated) ─────────────────────────────────────── */
+    --surface:          36 38% 96%; /* #faf7f2 — warm page background */
+    --surface-elevated: 0 0% 100%;  /* #ffffff — cards, dialogs */
+    --surface-hover:    36 30% 94%; /* hover on cream surfaces */
+    --surface-muted:    36 22% 92%; /* subtle muted surface */
+
+    /* ── Status colors (4 pairs: dot + bg) ─────────────────────────────── */
+    --status-confirm:    131 45% 41%;  /* #3a9a4d */
+    --status-confirm-fg: 131 45% 41%;  /* text variant (same as dot) */
+    --status-confirm-bg: 127 36% 91%;  /* #e1f1e3 */
+
+    --status-pending:    41 64% 53%;   /* #d4a23a dot */
+    --status-pending-fg: 42 76% 27%;   /* #7a5d11 text */
+    --status-pending-bg: 44 89% 92%;   /* #fdf3da */
+
+    --status-cancel:     0 60% 51%;    /* #cc3a3a */
+    --status-cancel-fg:  0 60% 51%;    /* text variant */
+    --status-cancel-bg:  0 71% 94%;    /* #fbe4e4 */
+
+    --status-done:       162 5% 51%;   /* #7d8a86 */
+    --status-done-fg:    162 5% 51%;
+    --status-done-bg:    150 6% 94%;   /* #eef0ef */
+
+    /* ── Semantic status tokens (pre-existing, preserved) ───────────────── */
     --success: 142 76% 36%;
     --success-foreground: 0 0% 98%;
     --warning: 38 92% 50%;
