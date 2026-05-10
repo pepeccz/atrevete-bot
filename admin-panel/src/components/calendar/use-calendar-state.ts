@@ -26,6 +26,26 @@ export const ZOOM_SLOT_MAP: Record<ZoomLevel, string> = {
   "1h": "01:00:00",
 };
 
+/** Map zoom level to slot size in minutes — used by the greenfield day view. */
+export const ZOOM_SLOT_MIN: Record<ZoomLevel, number> = {
+  "5min": 5,
+  "15min": 15,
+  "30min": 30,
+  "1h": 60,
+};
+
+/**
+ * Map zoom level to slot pixel height.
+ * Tuned so each hour grows ~50% more vertical space at the next zoom-in step
+ * (80 / 96 / 96 / 144 px per hour for 1h / 30min / 15min / 5min).
+ */
+export const ZOOM_SLOT_PX: Record<ZoomLevel, number> = {
+  "5min": 12,
+  "15min": 24,
+  "30min": 48,
+  "1h": 80,
+};
+
 /** Map zoom level to slotLabelInterval */
 export const ZOOM_LABEL_MAP: Record<ZoomLevel, string> = {
   "5min": "00:15",

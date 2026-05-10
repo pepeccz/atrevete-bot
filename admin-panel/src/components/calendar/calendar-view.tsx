@@ -26,7 +26,7 @@ import { SeriesEditDialog, type SeriesEditScope } from "./series-edit-dialog";
 import { ExceptionWarningDialog } from "./exception-warning-dialog";
 import { STYLIST_COLORS, HOLIDAY_COLOR, STATUS_MAP, resolveStylistColor } from "./calendar-constants";
 import "./calendar-styles.css";
-import { useCalendarState, ZOOM_SLOT_MAP, ZOOM_LABEL_MAP } from "./use-calendar-state";
+import { useCalendarState, ZOOM_SLOT_MAP, ZOOM_LABEL_MAP, ZOOM_SLOT_MIN, ZOOM_SLOT_PX } from "./use-calendar-state";
 import { CalendarToolbar } from "./calendar-toolbar";
 import { StylistChipFilter, type AppointmentStatus } from "./stylist-chip-filter";
 import { ApptCard } from "./appt-card";
@@ -1087,14 +1087,27 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
       .filter(sc => sc.count > 0);
   })();
 
-  // Toolbar navigation handler — delegates to FC API
+  // Toolbar navigation handler.
+  // Week/month views are owned by FullCalendar (datesSet -> selectedDate).
+  // The greenfield day view reads selectedDate from the hook directly, so
+  // the FC handle is unmounted there — we update the hook state instead.
   const handleToolbarNav = useCallback((dir: "prev" | "next" | "today") => {
+    if (selectedView === "day") {
+      if (dir === "today") {
+        setSelectedDate(new Date());
+        return;
+      }
+      const next = new Date(selectedDate);
+      next.setDate(next.getDate() + (dir === "next" ? 1 : -1));
+      setSelectedDate(next);
+      return;
+    }
     const fcApi = calendarRef.current?.getApi();
     if (!fcApi) return;
     if (dir === "prev") fcApi.prev();
     else if (dir === "next") fcApi.next();
     else fcApi.today();
-  }, []);
+  }, [selectedView, selectedDate, setSelectedDate]);
 
   return (
     <div className="space-y-0">
@@ -1175,8 +1188,8 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
             date={DateTime.fromJSDate(selectedDate, { zone: "Europe/Madrid" })}
             gridStartHour={9}
             gridEndHour={21}
-            slotMin={15}
-            slotPx={24}
+            slotMin={ZOOM_SLOT_MIN[zoomLevel]}
+            slotPx={ZOOM_SLOT_PX[zoomLevel]}
             onAppointmentClick={(eventId) => {
               const ev = events.find(
                 e => e.extendedProps.appointment_id === eventId
