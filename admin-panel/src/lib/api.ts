@@ -353,17 +353,6 @@ class ApiClient {
     return this.request(`/api/admin/calendar/events?${params}`);
   }
 
-  async getAvailability(
-    stylistId: string,
-    date: string
-  ): Promise<
-    Array<{ time: string; end_time: string; available: boolean }>
-  > {
-    return this.request(
-      `/api/admin/calendar/availability?stylist_id=${stylistId}&date=${date}`
-    );
-  }
-
   // Admin availability search with date range and optional stylist filter
   async searchAvailability(
     serviceIds: string[],
