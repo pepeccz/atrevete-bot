@@ -29,7 +29,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.drop_column("appointments", "stripe_payment_link_id")
+    cols = {c["name"] for c in sa.inspect(op.get_bind()).get_columns("appointments")}
+    if "stripe_payment_link_id" in cols:
+        op.drop_column("appointments", "stripe_payment_link_id")
 
 
 def downgrade() -> None:
