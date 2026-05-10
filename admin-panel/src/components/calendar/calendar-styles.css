@@ -1,6 +1,134 @@
-/* Status border indicators — appointment events only */
-.fc-event.cal-status-confirmed { border-left: 4px solid #16a34a !important; }
-.fc-event.cal-status-pending   { border-left: 4px solid #d97706 !important; }
-.fc-event.cal-status-cancelled { border-left: 4px solid #dc2626 !important; opacity: 0.65; }
-.fc-event.cal-status-completed { border-left: 4px solid #6b7280 !important; opacity: 0.65; }
-.fc-event.cal-status-no_show   { border-left: 4px solid #7f1d1d !important; opacity: 0.65; }
+/* ============================================================
+   Calendar styles — Atrévete admin-panel-redesign Slice 3
+   All colors use CSS vars from globals.css (warm palette).
+   ============================================================ */
+
+/* ── Global font ────────────────────────────────────────────── */
+.fc {
+  font-family: var(--font-jakarta), system-ui, sans-serif;
+}
+
+/* ── Day column header (short label + large date number) ────── */
+.fc .fc-col-header-cell-cushion {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  text-decoration: none !important;
+}
+
+.fc .fc-col-header-cell .fc-col-header-cell-cushion {
+  color: hsl(var(--ink-mute));
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Today column header highlight */
+.fc .fc-day-today .fc-col-header-cell-cushion {
+  color: hsl(var(--gold-dark));
+}
+
+.fc .fc-day-today {
+  background-color: hsl(var(--gold-soft) / 0.35) !important;
+}
+
+/* ── Time gutter (slot labels) ──────────────────────────────── */
+.fc .fc-timegrid-slot-label-cushion {
+  font-size: 11px;
+  font-weight: 500;
+  color: hsl(var(--ink-mute));
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Grid lines ─────────────────────────────────────────────── */
+/* Major hour lines — solid */
+.fc .fc-timegrid-slot:not(.fc-timegrid-slot-minor) {
+  border-top-color: hsl(var(--line));
+  border-top-style: solid;
+}
+
+/* Minor (half-hour) lines — dashed */
+.fc .fc-timegrid-slot-minor {
+  border-top-color: hsl(var(--line-soft));
+  border-top-style: dashed;
+}
+
+/* Column separators */
+.fc .fc-timegrid-col {
+  border-color: hsl(var(--line));
+}
+
+/* ── Now indicator — red line matching handoff ──────────────── */
+.fc .fc-timegrid-now-indicator-line {
+  border-color: hsl(var(--status-cancel));
+  border-top-width: 2px;
+  z-index: 5;
+}
+
+/* Drop the default FC triangle arrow — we render our own pin */
+.fc .fc-timegrid-now-indicator-arrow {
+  display: none;
+}
+
+/* ── Appointment event — custom eventContent wrapper ─────────── */
+/* Remove FC's default border/bg so ApptCard controls visuals */
+.fc-event.cal-appt-custom {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.fc-event.cal-appt-custom .fc-event-main {
+  padding: 0;
+}
+
+/* ── Holiday all-day event ───────────────────────────────────── */
+.fc-event.cal-event-holiday {
+  background-color: hsl(var(--gold-soft)) !important;
+  border-color: hsl(var(--gold-line)) !important;
+  color: hsl(var(--gold-dark)) !important;
+  font-weight: 600;
+}
+
+/* Holiday day cell background */
+.fc .fc-day.fc-day-has-holiday {
+  background-color: hsl(var(--gold-soft) / 0.25) !important;
+}
+
+/* ── All-day row label ───────────────────────────────────────── */
+.fc .fc-timegrid-axis-cushion {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: hsl(var(--ink-faint));
+}
+
+/* ── Status border indicators (legacy support) ───────────────── */
+/* These are kept for list view and fallback rendering */
+.fc-event.cal-status-confirmed { border-left: 4px solid hsl(var(--status-confirm)) !important; }
+.fc-event.cal-status-pending   { border-left: 4px solid hsl(var(--status-pending)) !important; }
+.fc-event.cal-status-cancelled { border-left: 4px solid hsl(var(--status-cancel)) !important; opacity: 0.65; }
+.fc-event.cal-status-completed { border-left: 4px solid hsl(var(--status-done)) !important; opacity: 0.65; }
+.fc-event.cal-status-no_show   { border-left: 4px solid hsl(var(--status-cancel)) !important; opacity: 0.65; }
+
+/* ── Popover / tooltip cleanup ───────────────────────────────── */
+.fc .fc-event:focus::after {
+  display: none;
+}
+
+/* ── Scrollbar polish ────────────────────────────────────────── */
+.fc-scroller::-webkit-scrollbar {
+  width: 6px;
+}
+.fc-scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+.fc-scroller::-webkit-scrollbar-thumb {
+  background: hsl(var(--line));
+  border-radius: 99px;
+}

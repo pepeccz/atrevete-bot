@@ -12,14 +12,13 @@ import luxonPlugin from "@fullcalendar/luxon3";
 import esLocale from "@fullcalendar/core/locales/es";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Plus, Calendar, Ban, Filter, ZoomIn, ZoomOut } from "lucide-react";
+import { Calendar, Filter } from "lucide-react";
 import api from "@/lib/api";
 import { BlockingEventModal } from "./blocking-event-modal";
 import { CreateAppointmentModal } from "./create-appointment-modal";
@@ -27,9 +26,10 @@ import { SeriesEditDialog, type SeriesEditScope } from "./series-edit-dialog";
 import { ExceptionWarningDialog } from "./exception-warning-dialog";
 import { STYLIST_COLORS, HOLIDAY_COLOR, STATUS_MAP } from "./calendar-constants";
 import "./calendar-styles.css";
-import { CalendarFilters } from "./calendar-filters";
-import { CalendarLegend } from "./calendar-legend";
-import { useCalendarState } from "./use-calendar-state";
+import { useCalendarState, ZOOM_SLOT_MAP, ZOOM_LABEL_MAP } from "./use-calendar-state";
+import { CalendarToolbar } from "./calendar-toolbar";
+import { StylistChipFilter, type AppointmentStatus } from "./stylist-chip-filter";
+import { ApptCard } from "./appt-card";
 import { AppointmentPopover, type PopoverAppointmentData } from "./appointment-popover";
 import { SelectActionDialog } from "./select-action-dialog";
 import { AppointmentWizard } from "@/app/(authenticated)/appointments/components/wizard/appointment-wizard";
@@ -89,14 +89,15 @@ export interface CalendarViewRef {
   refresh: () => void;
 }
 
-const ZOOM_LEVELS = [
+// Legacy zoom config kept for backwards compat with zoomTowardPoint logic
+const LEGACY_ZOOM_LEVELS = [
   { slot: "00:30:00", label: "30 min", labelInterval: "01:00" },
   { slot: "00:15:00", label: "15 min", labelInterval: "01:00" },
   { slot: "00:10:00", label: "10 min", labelInterval: "00:30" },
   { slot: "00:05:00", label: "5 min", labelInterval: "00:15" },
 ] as const;
 
-const DEFAULT_ZOOM = 1; // 15 min
+const DEFAULT_LEGACY_ZOOM = 1; // 15 min
 
 // Discriminated union for pending drag operations
 interface ResizeOperation {
@@ -119,25 +120,34 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   const router = useRouter();
   const calendarRef = useRef<FullCalendar>(null);
   const fetchEventsRef = useRef<(start: Date, end: Date) => void>(() => {});
-  const [selectedStylistIds, setSelectedStylistIds] = useState<string[]>([]);
   const [stylists, setStylists] = useState<Stylist[]>([]);
   const [stylistColors, setStylistColors] = useState<Record<string, { bg: string; border: string }>>({});
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [zoomLevel, setZoomLevel] = useState(DEFAULT_ZOOM);
+  // Legacy zoom index (for scroll-preserve logic during ctrl+wheel)
+  const [_legacyZoomIndex, setLegacyZoomIndex] = useState(DEFAULT_LEGACY_ZOOM);
   const calendarCardRef = useRef<HTMLDivElement>(null);
 
-  // localStorage persistence + business hours + mobile detection
-  const { getPersistedStylistIds, persistStylistIds, businessHours, isMobile } = useCalendarState();
+  // Calendar state — view, zoom, activeStylists (all persisted)
+  const {
+    selectedView,
+    activeStylists,
+    zoomLevel,
+    businessHours,
+    isMobile,
+    persistStylistIds,
+    initActiveStylists,
+    toggleStylist,
+    toggleAllStylists,
+    setView,
+    setZoom,
+  } = useCalendarState();
+
+  // Derive selectedStylistIds array from Set for API calls
+  const selectedStylistIds = Array.from(activeStylists);
 
   // Mobile filter sheet state
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
-
-  // Badge count: number of selected stylists when not all are selected
-  const filterBadgeCount =
-    selectedStylistIds.length > 0 && selectedStylistIds.length < stylists.length
-      ? selectedStylistIds.length
-      : null;
 
   // Modal states (blocking events)
   const [isBlockingModalOpen, setIsBlockingModalOpen] = useState(false);
@@ -268,17 +278,16 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         const response = await api.list<Stylist>("stylists", { is_active: true });
         setStylists(response.items);
         assignStylistColors(response.items);
-        // Restore persisted selection, falling back to all active stylists
         if (response.items.length > 0) {
           const allIds = response.items.map(s => s.id);
-          setSelectedStylistIds(getPersistedStylistIds(allIds));
+          initActiveStylists(allIds);
         }
       } catch (error) {
         console.error("Error fetching stylists:", error);
       }
     }
     fetchStylists();
-  }, [assignStylistColors, getPersistedStylistIds]);
+  }, [assignStylistColors, initActiveStylists]);
 
   // Persist stylist selection whenever it changes (only after stylists are loaded)
   useEffect(() => {
@@ -286,26 +295,6 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       persistStylistIds(selectedStylistIds);
     }
   }, [selectedStylistIds, stylists.length, persistStylistIds]);
-
-  // Toggle stylist selection
-  const toggleStylist = (stylistId: string) => {
-    setSelectedStylistIds(prev => {
-      if (prev.includes(stylistId)) {
-        return prev.filter(id => id !== stylistId);
-      } else {
-        return [...prev, stylistId];
-      }
-    });
-  };
-
-  // Select/deselect all stylists
-  const toggleAllStylists = () => {
-    if (selectedStylistIds.length === stylists.length) {
-      setSelectedStylistIds([]);
-    } else {
-      setSelectedStylistIds(stylists.map(s => s.id));
-    }
-  };
 
   // Fetch events when stylists or date range changes
   const fetchEvents = useCallback(async (start: Date, end: Date) => {
@@ -390,8 +379,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
   // Zoom toward a point: keeps the same time at the same pixel position
   const zoomTowardPoint = useCallback((direction: 1 | -1, cursorYInViewport?: number) => {
     const scrollEl = getScrollEl();
-    // Capture scroll ratio at cursor position BEFORE zoom
-    let ratio = 0.5; // default: center of viewport
+    let ratio = 0.5;
     let cursorOffset = 0;
     if (scrollEl) {
       const containerRect = scrollEl.getBoundingClientRect();
@@ -401,21 +389,25 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
       ratio = (scrollEl.scrollTop + cursorOffset) / scrollEl.scrollHeight;
     }
 
-    setZoomLevel(prev => {
+    setLegacyZoomIndex(prev => {
       const next = prev + direction;
-      const clamped = Math.max(0, Math.min(next, ZOOM_LEVELS.length - 1));
+      const clamped = Math.max(0, Math.min(next, LEGACY_ZOOM_LEVELS.length - 1));
       if (clamped !== prev) {
-        // After React re-render, restore scroll so ratio stays at cursorOffset
         setTimeout(() => {
           const el = getScrollEl();
           if (el) {
             el.scrollTop = ratio * el.scrollHeight - cursorOffset;
           }
         }, 50);
+        // Sync to new zoom state
+        const zoomMap: Record<number, import("./use-calendar-state").ZoomLevel> = {
+          0: "30min", 1: "15min", 2: "5min", 3: "5min",
+        };
+        setZoom(zoomMap[clamped] ?? "15min");
       }
       return clamped;
     });
-  }, [getScrollEl]);
+  }, [getScrollEl, setZoom]);
 
   // Ctrl+Wheel zoom on calendar — zoom toward cursor position
   useEffect(() => {
@@ -455,17 +447,24 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     },
   }), [fetchEvents]);
 
-  // Switch calendar view when screen size changes
+  // Sync FullCalendar view when selectedView or mobile changes
   useEffect(() => {
-    const api = calendarRef.current?.getApi();
-    if (!api) return;
-    const currentView = api.view.type;
-    if (isMobile && currentView === "timeGridWeek") {
-      api.changeView("listWeek");
-    } else if (!isMobile && currentView === "listWeek") {
-      api.changeView("timeGridWeek");
+    const fcApi = calendarRef.current?.getApi();
+    if (!fcApi) return;
+    if (isMobile) {
+      fcApi.changeView("listWeek");
+      return;
     }
-  }, [isMobile]);
+    const fcView = selectedView === "day"
+      ? "timeGridDay"
+      : selectedView === "month"
+      ? "dayGridMonth"
+      : "timeGridWeek";
+    const currentFcView = fcApi.view.type;
+    if (currentFcView !== fcView) {
+      fcApi.changeView(fcView);
+    }
+  }, [selectedView, isMobile]);
 
   // Handle date set (when calendar view changes)
   const handleDatesSet = (arg: { start: Date; end: Date }) => {
@@ -1000,83 +999,65 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     return stylists.find(s => s.id === id)?.name || "Estilista";
   };
 
+  // Compute status counts from visible events for legend
+  const statusCounts = (() => {
+    const counts: Record<string, number> = {};
+    events.forEach(e => {
+      if (e.extendedProps.type === "appointment" && e.extendedProps.status) {
+        const s = e.extendedProps.status as string;
+        counts[s] = (counts[s] || 0) + 1;
+      }
+    });
+    return (["confirmed", "pending", "cancelled"] as AppointmentStatus[])
+      .map(s => ({ status: s, count: counts[s] || 0 }))
+      .filter(sc => sc.count > 0);
+  })();
+
+  // Toolbar navigation handler — delegates to FC API
+  const handleToolbarNav = useCallback((dir: "prev" | "next" | "today") => {
+    const fcApi = calendarRef.current?.getApi();
+    if (!fcApi) return;
+    if (dir === "prev") fcApi.prev();
+    else if (dir === "next") fcApi.next();
+    else fcApi.today();
+  }, []);
+
   return (
-    <div className="space-y-4">
-      {/* Header with controls */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        {isMobile ? (
-          /* Mobile: filter button + icon-only action buttons */
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsFilterSheetOpen(true)}
-              className="relative"
-            >
-              <Filter className="h-4 w-4" />
-              {filterBadgeCount !== null && (
-                <Badge
-                  variant="destructive"
-                  className="absolute -top-2 -right-2 h-5 w-5 flex items-center justify-center p-0 text-xs"
-                >
-                  {filterBadgeCount}
-                </Badge>
-              )}
-            </Button>
-
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCreateBlockingEvent}
-                disabled={selectedStylistIds.length === 0}
-                title="Crear Bloqueo"
-              >
-                <Ban className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={handleCreateAppointment}
-                title="Nueva Cita"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-          </>
-        ) : (
-          /* Desktop: inline filters + labelled action buttons */
-          <>
-            <CalendarFilters
-              stylists={stylists}
-              selectedStylistIds={selectedStylistIds}
-              stylistColors={stylistColors}
-              onToggle={toggleStylist}
-              onToggleAll={toggleAllStylists}
-            />
-
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCreateBlockingEvent}
-                disabled={selectedStylistIds.length === 0}
-              >
-                <Ban className="h-4 w-4 mr-1" />
-                Crear Bloqueo
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={handleCreateAppointment}
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                Nueva Cita
-              </Button>
-            </div>
-          </>
-        )}
-      </div>
+    <div className="space-y-0">
+      {isMobile ? (
+        /* Mobile: minimal header with sheet filter */
+        <div className="flex flex-wrap items-start justify-between gap-4 pb-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsFilterSheetOpen(true)}
+          >
+            <Filter className="h-4 w-4 mr-1" />
+            Estilistas
+          </Button>
+        </div>
+      ) : (
+        /* Desktop: new toolbar + chip filter */
+        <>
+          <CalendarToolbar
+            currentDate={new Date()}
+            view={selectedView}
+            zoomLevel={zoomLevel}
+            onNav={handleToolbarNav}
+            onViewChange={(v) => setView(v)}
+            onZoomChange={(z) => setZoom(z)}
+            onCreate={handleCreateAppointment}
+            onBlock={handleCreateBlockingEvent}
+          />
+          <StylistChipFilter
+            stylists={stylists.map(s => ({ id: s.id, name: s.name, color: s.color || "#928679" }))}
+            active={activeStylists}
+            onToggle={toggleStylist}
+            onToggleAll={toggleAllStylists}
+            statusCounts={statusCounts}
+          />
+        </>
+      )}
 
       {/* Mobile filter Sheet */}
       {isMobile && (
@@ -1085,22 +1066,23 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
             <SheetHeader>
               <SheetTitle>Filtrar estilistas</SheetTitle>
             </SheetHeader>
-            <CalendarFilters
-              stylists={stylists}
-              selectedStylistIds={selectedStylistIds}
-              stylistColors={stylistColors}
-              onToggle={toggleStylist}
-              onToggleAll={toggleAllStylists}
-            />
+            <div className="space-y-2 pt-4">
+              {stylists.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => toggleStylist(s.id)}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${activeStylists.has(s.id) ? "bg-gold-soft text-gold-dark" : "text-ink-mute hover:text-ink"}`}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
           </SheetContent>
         </Sheet>
       )}
 
-      {/* Legend — hidden on mobile */}
-      {!isMobile && <CalendarLegend stylistColors={stylistColors} stylists={stylists} />}
-
       {/* Calendar */}
-      <Card ref={calendarCardRef} className="p-4 relative">
+      <Card ref={calendarCardRef} className={`relative ${isMobile ? "" : "rounded-t-none border-t-0"}`}>
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10 rounded-lg">
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -1118,7 +1100,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           headerToolbar={
             isMobile
               ? { left: "prev,next", center: "title", right: "listWeek,timeGridDay" }
-              : { left: "prev,next today", center: "title", right: "timeGridDay,timeGridWeek,dayGridMonth,listWeek" }
+              : false
           }
           buttonText={{
             today: "Hoy",
@@ -1147,49 +1129,50 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
           dateClick={handleDateClick}
           select={handleSelect}
           businessHours={businessHours || undefined}
-          height="calc(100vh - 180px)"
-          slotDuration={ZOOM_LEVELS[zoomLevel].slot}
-          slotLabelInterval={ZOOM_LEVELS[zoomLevel].labelInterval}
+          height="calc(100vh - 200px)"
+          slotDuration={ZOOM_SLOT_MAP[zoomLevel]}
+          slotLabelInterval={ZOOM_LABEL_MAP[zoomLevel]}
           nowIndicator={true}
           eventTimeFormat={{
             hour: "2-digit",
             minute: "2-digit",
             hour12: false,
           }}
+          dayCellClassNames={(arg) => {
+            // Gold-pastel highlight for days that have holiday events
+            const dateStr = arg.date.toISOString().slice(0, 10);
+            const hasHoliday = events.some(
+              e => e.extendedProps.type === "holiday" && e.start.slice(0, 10) === dateStr
+            );
+            return hasHoliday ? ["fc-day-has-holiday"] : [];
+          }}
+          eventContent={(arg) => {
+            const props = arg.event.extendedProps;
+            if (props.type !== "appointment") {
+              // Non-appointment events (holidays, blocking events) use default FC rendering
+              return undefined;
+            }
+            return (
+              <ApptCard
+                extendedProps={props as Parameters<typeof ApptCard>[0]["extendedProps"]}
+                stylistColor={arg.event.backgroundColor || "#928679"}
+                start={arg.event.start}
+                end={arg.event.end}
+                mode="week"
+              />
+            );
+          }}
           eventClassNames={(arg) => {
             const type = arg.event.extendedProps.type;
             const status = arg.event.extendedProps.status;
+            if (type === "holiday") return ["cal-event-holiday"];
             if (type !== "appointment" || !status) return [];
             const config = STATUS_MAP[status as keyof typeof STATUS_MAP];
-            return config ? [config.cssClass] : [];
+            // For appointment events rendered via eventContent, suppress the left border
+            // (ApptCard renders its own 3px border-left)
+            return config ? ["cal-appt-custom"] : [];
           }}
         />
-        {/* Zoom controls — top-right, sticky */}
-        {!isMobile && (
-          <div className="absolute top-2 right-2 flex items-center gap-1 bg-background/90 border rounded-md px-1.5 py-1 shadow-sm z-20">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              onClick={() => zoomTowardPoint(-1)}
-              disabled={zoomLevel === 0}
-            >
-              <ZoomOut className="h-3.5 w-3.5" />
-            </Button>
-            <span className="text-xs text-muted-foreground w-12 text-center font-mono">
-              {ZOOM_LEVELS[zoomLevel].label}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              onClick={() => zoomTowardPoint(1)}
-              disabled={zoomLevel === ZOOM_LEVELS.length - 1}
-            >
-              <ZoomIn className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        )}
       </Card>
 
       {/* Action Selection Dialog (drag-select: cita vs bloqueo) */}
