@@ -501,6 +501,15 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
     }
   }, [selectedStylistIds, fetchEvents]);
 
+  // Day view is "greenfield" (no FullCalendar) so datesSet never fires —
+  // refetch when selectedDate changes, scoped to that day in Europe/Madrid.
+  useEffect(() => {
+    if (selectedView !== "day") return;
+    const dayStart = DateTime.fromJSDate(selectedDate, { zone: "Europe/Madrid" }).startOf("day");
+    const dayEnd = dayStart.endOf("day");
+    fetchEvents(dayStart.toJSDate(), dayEnd.toJSDate());
+  }, [selectedView, selectedDate, fetchEvents]);
+
   // Expose refresh + resetToWeek via ref
   useImperativeHandle(ref, () => ({
     refresh: () => {
