@@ -9,7 +9,6 @@ import React, {
 } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { isTokenExpired, decodeToken } from "@/lib/auth";
 
 interface User {
   username: string;
@@ -32,46 +31,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   const checkAuth = useCallback(async () => {
-    const token = localStorage.getItem("admin_token");
-
-    if (!token) {
-      setUser(null);
-      setIsLoading(false);
-      return;
-    }
-
-    // If token is expired, clear it
-    if (isTokenExpired(token)) {
-      localStorage.removeItem("admin_token");
-      setUser(null);
-      setIsLoading(false);
-      return;
-    }
-
-    // Token exists and is not expired - extract user from token
-    const payload = decodeToken(token);
-    if (!payload) {
-      localStorage.removeItem("admin_token");
-      setUser(null);
-      setIsLoading(false);
-      return;
-    }
-
-    // Set user from token immediately (optimistic)
-    setUser({ username: payload.sub, role: "admin" });
-
-    // Validate with backend (but don't logout on network errors)
+    // GET /api/admin/auth/me is the SOLE source of truth for authentication state.
+    // No localStorage reads, no client-side JWT decoding.
+    // isLoading stays true until the response resolves.
+    setIsLoading(true);
     try {
       const userData = await api.getMe();
       setUser(userData);
-    } catch (error) {
-      // Only clear token on 401 Unauthorized (invalid/expired token)
-      // Keep session on network errors (backend down, etc.)
-      if (error instanceof Error && error.message.includes("401")) {
-        localStorage.removeItem("admin_token");
-        setUser(null);
-      }
-      // Otherwise, keep the session from the token
+    } catch {
+      // 401 (or network error) — treat as unauthenticated.
+      // api.ts handles 401 → redirect to /login automatically,
+      // but we also clear the user state here for correctness.
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
@@ -82,12 +53,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [checkAuth]);
 
   const login = async (username: string, password: string) => {
-    const response = await api.login(username, password);
-    const payload = decodeToken(response.access_token);
-    if (payload) {
-      setUser({ username: payload.sub, role: "admin" });
-    }
-    // Volver a la URL original o al dashboard
+    // Server sets the HttpOnly cookie in Set-Cookie; response body has no token.
+    await api.login(username, password);
+    // Refresh auth state from /auth/me now that the cookie exists.
+    await checkAuth();
+    // Navigate to the page the user was trying to access, or the dashboard.
     const returnTo = sessionStorage.getItem("returnTo");
     sessionStorage.removeItem("returnTo");
     router.push(returnTo || "/dashboard");
