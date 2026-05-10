@@ -1263,6 +1263,19 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
             minute: "2-digit",
             hour12: false,
           }}
+          dayHeaderContent={(arg) => {
+            // Stacked header per handoff: small uppercase weekday + large day number.
+            const weekday = arg.date
+              .toLocaleDateString("es-ES", { weekday: "short" })
+              .replace(".", "")
+              .toUpperCase();
+            return {
+              html: `<div class="flex flex-col items-center gap-1 leading-none">
+                <span class="text-[11px] font-semibold uppercase tracking-widest text-ink-mute">${weekday}</span>
+                <span class="text-[20px] font-bold text-ink tabular-nums">${arg.date.getDate()}</span>
+              </div>`,
+            };
+          }}
           dayCellClassNames={(arg) => {
             // Gold-pastel highlight for days that have holiday events
             const dateStr = arg.date.toISOString().slice(0, 10);

@@ -269,17 +269,21 @@ export function GlobalSearch() {
   return (
     <Popover open={desktopOpen} onOpenChange={setDesktopOpen}>
       <PopoverTrigger asChild>
-        <div className="relative hidden md:block">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <div className="relative hidden md:flex items-center w-72 h-9 rounded-[10px] border border-line bg-bg/60 px-3 gap-2 hover:bg-bg cursor-text">
+          <Search className="h-4 w-4 text-ink-mute flex-shrink-0" />
           <Input
             ref={inputRef}
             type="search"
-            placeholder="Buscar... (Ctrl+K)"
-            className="w-64 pl-8"
+            placeholder="Buscar clientes, citas, servicios..."
+            className="flex-1 h-7 border-0 bg-transparent p-0 text-[13px] placeholder:text-ink-mute focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => setDesktopOpen(true)}
           />
+          <span className="hidden lg:flex items-center gap-1 flex-shrink-0">
+            <kbd className="px-1.5 py-0.5 text-[10px] font-semibold text-ink-mute bg-white border border-line rounded">⌘</kbd>
+            <kbd className="px-1.5 py-0.5 text-[10px] font-semibold text-ink-mute bg-white border border-line rounded">K</kbd>
+          </span>
         </div>
       </PopoverTrigger>
       <PopoverContent

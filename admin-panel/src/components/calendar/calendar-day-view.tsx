@@ -269,11 +269,18 @@ export function CalendarDayView({
           >
             {hourLabels.map(h => {
               const top = (h * 60 - gridStartMin) * pxPerMin;
+              const isFirst = h === gridStartHour;
+              // First label sits at top: 0 — without translate it would clip
+              // half above the grid container. Drop the centering translate
+              // for the first label and clamp it inside the grid.
               return (
                 <div
                   key={h}
                   className="absolute right-0 pr-2 text-[11px] text-ink-mute tabular-nums font-medium select-none"
-                  style={{ top: `${top}px`, transform: "translateY(-50%)" } as CSSProperties}
+                  style={{
+                    top: `${top}px`,
+                    transform: isFirst ? "translateY(0)" : "translateY(-50%)",
+                  } as CSSProperties}
                 >
                   {formatHour(h)}
                 </div>

@@ -19,18 +19,29 @@ interface CalendarToolbarProps {
 
 const ZOOM_LEVELS: ZoomLevel[] = ["5min", "15min", "30min", "1h"];
 
-function formatDateRange(date: Date, view: CalendarView): string {
+interface DateLabelParts {
+  primary: string;
+  secondary?: string;
+  meta?: string;
+}
+
+function formatDateRange(date: Date, view: CalendarView): DateLabelParts {
   if (view === "day") {
-    return date.toLocaleDateString("es-ES", {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    });
+    const weekday = date
+      .toLocaleDateString("es-ES", { weekday: "long" })
+      .toUpperCase();
+    const day = date.getDate();
+    const month = date.toLocaleDateString("es-ES", { month: "long" });
+    return {
+      primary: weekday,
+      secondary: `${day} ${month}`,
+      meta: String(date.getFullYear()),
+    };
   }
 
   if (view === "month") {
-    return date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+    const m = date.toLocaleDateString("es-ES", { month: "long" });
+    return { primary: m, meta: String(date.getFullYear()) };
   }
 
   // Week view: Mon – Sun of current week
@@ -47,9 +58,9 @@ function formatDateRange(date: Date, view: CalendarView): string {
   const year = sunday.getFullYear();
 
   if (monMonth === sunMonth) {
-    return `${monDay} — ${sunDay} ${monMonth} ${year}`;
+    return { primary: `${monDay} — ${sunDay} ${monMonth}`, meta: String(year) };
   }
-  return `${monDay} ${monMonth} — ${sunDay} ${sunMonth} ${year}`;
+  return { primary: `${monDay} ${monMonth} — ${sunDay} ${sunMonth}`, meta: String(year) };
 }
 
 function zoomDown(current: ZoomLevel): ZoomLevel {
@@ -73,7 +84,7 @@ export function CalendarToolbar({
   onBlock,
   rightPill,
 }: CalendarToolbarProps) {
-  const dateLabel = formatDateRange(currentDate, view);
+  const dateParts = formatDateRange(currentDate, view);
 
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-line bg-white rounded-t-[14px]">
@@ -110,10 +121,35 @@ export function CalendarToolbar({
       {/* Divider 1 */}
       <span className="w-px h-6 bg-line flex-shrink-0" />
 
-      {/* Zone 2 — Date label */}
-      <span className="text-sm font-semibold text-ink font-jakarta tabular-nums select-none">
-        {dateLabel}
-      </span>
+      {/* Zone 2 — Date label (stacked typographic hierarchy per handoff) */}
+      <div className="flex items-baseline gap-2 select-none">
+        {view === "day" ? (
+          <>
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-ink-mute">
+              {dateParts.primary}
+            </span>
+            <span className="text-[17px] font-bold text-ink tabular-nums">
+              {dateParts.secondary}
+            </span>
+            {dateParts.meta && (
+              <span className="text-[14px] text-ink-mute tabular-nums">
+                {dateParts.meta}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="text-[17px] font-bold text-ink tabular-nums">
+              {dateParts.primary}
+            </span>
+            {dateParts.meta && (
+              <span className="text-[14px] text-ink-mute tabular-nums">
+                {dateParts.meta}
+              </span>
+            )}
+          </>
+        )}
+      </div>
 
       {rightPill && <>{rightPill}</>}
 
