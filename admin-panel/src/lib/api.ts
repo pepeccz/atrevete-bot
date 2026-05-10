@@ -506,14 +506,17 @@ class ApiClient {
     return this.request(`/api/admin/blocking-events${query ? `?${query}` : ""}`);
   }
 
-  async createBlockingEvent(data: {
-    stylist_ids: string[];  // One or more stylists
-    title: string;
-    description?: string;
-    start_time: string;
-    end_time: string;
-    event_type: string;
-  }): Promise<{
+  async createBlockingEvent(
+    data: {
+      stylist_ids: string[];  // One or more stylists
+      title: string;
+      description?: string;
+      start_time: string;
+      end_time: string;
+      event_type: string;
+    },
+    options?: { ignoreConflicts?: boolean }
+  ): Promise<{
     created: number;
     events: Array<{
       id: string;
@@ -526,7 +529,8 @@ class ApiClient {
       created_at: string;
     }>;
   }> {
-    return this.request("/api/admin/blocking-events", {
+    const qs = options?.ignoreConflicts ? "?ignore_conflicts=true" : "";
+    return this.request(`/api/admin/blocking-events${qs}`, {
       method: "POST",
       body: JSON.stringify(data),
     });
