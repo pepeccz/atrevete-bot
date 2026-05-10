@@ -1,11 +1,13 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { Menu, RefreshCw, Search } from "lucide-react";
+import { toast } from "sonner";
 import { GlobalSearch } from "./global-search";
 import { NotificationCenter } from "./notification-center";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/contexts/sidebar-context";
+import api from "@/lib/api";
 
 interface HeaderProps {
   /** Page title shown on the left. */
@@ -104,17 +106,22 @@ export function Header({
  * Uses the same /api/admin/calendar/sync endpoint already wired in the codebase.
  */
 function SyncGCalButton() {
+  const [syncing, setSyncing] = useState(false);
+
   const handleSync = async () => {
+    setSyncing(true);
     try {
-      const token = typeof window !== "undefined"
-        ? localStorage.getItem("auth_token")
-        : null;
-      await fetch("/api/admin/calendar/sync", {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const result = await api.triggerGcalSync();
+      if (result.success) {
+        toast.success(result.message);
+        window.dispatchEvent(new CustomEvent("atrevete:gcal-synced"));
+      } else {
+        toast.error(result.message);
+      }
     } catch {
-      // Errors surface through existing toast / notification system
+      toast.error("Error al sincronizar con Google Calendar");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -123,10 +130,11 @@ function SyncGCalButton() {
       variant="outline"
       size="sm"
       onClick={handleSync}
+      disabled={syncing}
       className="hidden md:flex items-center gap-1.5 text-[13.5px] font-medium text-ink-soft border-line hover:bg-gold-soft/50 hover:text-ink hover:border-gold-line"
       aria-label="Sincronizar Google Calendar"
     >
-      <RefreshCw className="h-3.5 w-3.5" />
+      <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
       Sync GCal
     </Button>
   );
