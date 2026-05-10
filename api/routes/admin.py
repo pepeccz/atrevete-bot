@@ -3177,7 +3177,7 @@ async def get_calendar_appointments(
         stylist_id: Optional filter by stylist
         sync_google: If False, only return DB appointments (default True)
     """
-    from agent.tools.calendar_tools import fetch_calendar_events_async, get_calendar_client
+    from shared.calendar_service import fetch_calendar_events_async, get_calendar_client
 
     async with get_async_session() as session:
         # 1. Leer citas de DB (rápido ~50ms)
