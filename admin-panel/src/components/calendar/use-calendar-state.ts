@@ -224,6 +224,7 @@ export function useCalendarState() {
     allStylistIds,
     // Setters
     setView,
+    setZoom,
     setDate: setSelectedDate,
     toggleStylist,
     toggleAllStylists,
