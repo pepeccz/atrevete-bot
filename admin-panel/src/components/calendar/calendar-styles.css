@@ -116,6 +116,35 @@
 .fc-event.cal-status-completed { border-left: 4px solid hsl(var(--status-done)) !important; opacity: 0.65; }
 .fc-event.cal-status-no_show   { border-left: 4px solid hsl(var(--status-cancel)) !important; opacity: 0.65; }
 
+/* ── Drag-select mirror (week / month views) ────────────────────
+   Match the warm dashed-gold ghost rendered by the greenfield day view
+   so the gesture feels identical across views. */
+.fc .fc-highlight {
+  background-color: hsl(var(--gold-soft) / 0.5) !important;
+}
+
+.fc-event.fc-event-mirror {
+  background-color: hsl(var(--gold-soft) / 0.5) !important;
+  background-image: none !important;
+  border: 1px dashed hsl(var(--gold)) !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+  color: hsl(var(--gold-dark)) !important;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.fc-event.fc-event-mirror .fc-event-main {
+  color: hsl(var(--gold-dark)) !important;
+  padding: 4px 6px;
+}
+
+.fc-event.fc-event-mirror .fc-event-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
 /* ── Popover / tooltip cleanup ───────────────────────────────── */
 .fc .fc-event:focus::after {
   display: none;
