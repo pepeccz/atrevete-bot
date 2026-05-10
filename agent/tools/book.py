@@ -7,6 +7,7 @@ Rollback on any pre-commit failure.
 Returns JSON-serialized ToolResponse.
 """
 
+import asyncio
 import logging
 import re
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,7 @@ from uuid import UUID, uuid4
 
 from langchain_core.tools import tool
 
+from agent.services.customer_memory_service import read_customer_memories, write_customer_memories
 from agent.tools.schemas import ToolResponse
 
 logger = logging.getLogger(__name__)
@@ -360,6 +362,31 @@ async def book(
     except Exception as exc:
         # GCal push failure does NOT undo the DB commit — fire-and-forget
         logger.error("GCal push failed (appointment already saved): %s", exc, exc_info=True)
+
+    # --- Customer memory persistence (fire-and-forget, AFTER commit) ---
+    async def _persist_memories_safe() -> None:
+        try:
+            existing = await read_customer_memories(customer_phone)
+            await write_customer_memories(
+                phone=customer_phone,
+                booking_data={
+                    "service_names": service_names.split(", ") if service_names else [],
+                    "stylist_name": None,  # resolved below after stylist fetch
+                    "stylist_id": stylist_id,
+                    "no_preference_stylist": False,
+                    "start_time": start_time.isoformat(),
+                    "notes": notes,
+                },
+                existing_prefs=existing,
+            )
+        except Exception as exc:
+            logger.warning(
+                "customer_memory persistence failed (booking already committed): %s",
+                exc,
+                exc_info=True,
+            )
+
+    asyncio.create_task(_persist_memories_safe())
 
     # --- Calendar deep-link (non-critical, always attempted) ---
     stylist_display_name: str = stylist_id  # fallback to UUID string

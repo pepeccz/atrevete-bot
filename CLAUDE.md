@@ -289,6 +289,22 @@ docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart a
 
 ---
 
+### Deploy Runbook (customer-notes-vs-memories)
+
+Renames `memories.notes` → `memories.agent_notes` in the JSONB column and wires customer memory read/write into the booking flow. **DB migration must run BEFORE deploying the new agent/API images.**
+
+```bash
+# Step 1: Apply the data migration (renames memories.notes → memories.agent_notes)
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic upgrade head
+
+# Step 2: Restart API and agent containers (no checkpoint flush needed — additive state field)
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart api agent
+```
+
+No checkpoint flush required. The `customer_memories` AgentState field is `NotRequired` — in-flight conversations see it as absent on the next turn (which is safe). The admin panel rename (agent_notes) is backward-compatible via the API field rename.
+
+---
+
 ### Running Services
 
 ```bash

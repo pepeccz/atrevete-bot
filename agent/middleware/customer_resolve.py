@@ -3,9 +3,11 @@
 Hook: awrap_model_call
 Logic:
   - If state.customer_id already set → skip (idempotent).
-  - Else query Customer by customer_phone.
-  - If found: inject customer_id + customer_name into a ## Cliente block appended
-    to the system prompt, and pass state updates via request.override().
+  - Else query Customer by phone.
+  - If found: inject customer_id + customer_name + memory enrichment into
+    a <customer> block appended to the system prompt, and pass state updates
+    via request.override().
+  - D5: if Customer.notes is non-null, also emit a <customer_staff_notes> block.
 """
 
 from __future__ import annotations
@@ -17,11 +19,14 @@ from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 
+from agent.services.customer_memory_service import read_customer_memories
 from shared.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
 _CUSTOMER_CACHE_KEY_FMT = "customer:phone:{phone}"
+_AGENT_NOTES_MAX_CHARS = 200
+_STAFF_NOTES_MAX_CHARS = 300
 
 
 async def _get_cached_customer(phone: str) -> dict | None:
@@ -63,7 +68,7 @@ async def _invalidate_cached_customer(phone: str) -> None:
 
 
 async def _lookup_customer(phone: str) -> dict | None:
-    """Query Customer by phone. Returns dict with id, name, is_returning or None."""
+    """Query Customer by phone. Returns dict with id, name, is_returning, notes or None."""
     try:
         from sqlalchemy import select
 
@@ -86,10 +91,70 @@ async def _lookup_customer(phone: str) -> dict | None:
                 "id": customer.id,
                 "name": customer.name,
                 "is_returning": has_appointments,
+                "notes": customer.notes,  # D5: staff notes (allergies/restrictions)
             }
     except Exception as exc:
         logger.warning("Customer lookup failed for phone %s: %s", phone, exc)
         return None
+
+
+def _build_memory_lines(memories: dict | None, is_returning: bool) -> list[str]:
+    """Build memory-specific bullet lines for <customer> slot per D1 field rules.
+
+    Returns an empty list when memories is None or is_returning is False.
+    Field rules (deterministic, in order):
+      1. Visitas previas — only if visit_count >= 1
+      2. Estilista preferido — only if preferred_stylist_name non-null and no_preference_stylist=False
+      3. Servicios habituales — only if list non-empty, capped at 3
+      4. Día/franja habitual — only if BOTH typical_day_of_week and typical_time_of_day non-null
+      5. Notas del bot — only if non-empty, truncated to 200 chars
+    """
+    if not memories or not is_returning:
+        return []
+
+    lines: list[str] = []
+
+    visit_count = memories.get("visit_count")
+    if visit_count and visit_count >= 1:
+        lines.append(f"- Visitas previas: {visit_count}")
+
+    preferred_stylist = memories.get("preferred_stylist_name")
+    no_pref = memories.get("no_preference_stylist", False)
+    if preferred_stylist and not no_pref:
+        lines.append(f"- Estilista preferido: {preferred_stylist}")
+
+    typical_services = memories.get("typical_services") or []
+    capped_services = typical_services[:3]
+    if capped_services:
+        lines.append(f"- Servicios habituales: {', '.join(capped_services)}")
+
+    typical_day = memories.get("typical_day_of_week")
+    typical_time = memories.get("typical_time_of_day")
+    if typical_day and typical_time:
+        lines.append(f"- Día/franja habitual: {typical_day} / {typical_time}")
+
+    agent_notes = memories.get("agent_notes")
+    if agent_notes and agent_notes.strip():
+        truncated = (
+            agent_notes[:_AGENT_NOTES_MAX_CHARS] + "…"
+            if len(agent_notes) > _AGENT_NOTES_MAX_CHARS
+            else agent_notes
+        )
+        lines.append(f"- Notas del bot: {truncated}")
+
+    return lines
+
+
+def _build_staff_notes_block(staff_notes: str | None) -> str | None:
+    """Build the <customer_staff_notes> block for D5. Returns None when notes absent."""
+    if not staff_notes or not staff_notes.strip():
+        return None
+    truncated = (
+        staff_notes[:_STAFF_NOTES_MAX_CHARS] + "…"
+        if len(staff_notes) > _STAFF_NOTES_MAX_CHARS
+        else staff_notes
+    )
+    return f"<customer_staff_notes>\n{truncated}\n</customer_staff_notes>"
 
 
 class CustomerResolveMiddleware(AgentMiddleware):
@@ -128,17 +193,36 @@ class CustomerResolveMiddleware(AgentMiddleware):
             modified_request = request.override(state=new_state)
             return await handler(modified_request)
 
+        # Read customer memories fail-open
+        try:
+            memories = await read_customer_memories(phone)
+        except Exception as exc:
+            logger.warning("read_customer_memories failed for %s: %s", phone, exc)
+            memories = None
+
         # Build <customer> block for known customers
         returning_label = "Sí" if customer["is_returning"] else "No"
-        body = (
-            f"- Nombre: {customer['name']}\n"
-            f"- Teléfono: {phone}\n"
-            f"- Cliente recurrente: {returning_label}"
-        )
-        slot = f"<customer>\n{body}\n</customer>"
+        body_lines = [
+            f"- Nombre: {customer['name']}",
+            f"- Teléfono: {phone}",
+            f"- Cliente recurrente: {returning_label}",
+        ]
+
+        # Append memory lines per D1 field rules
+        memory_lines = _build_memory_lines(memories, is_returning=customer["is_returning"])
+        body_lines.extend(memory_lines)
+
+        slot_parts = [f"<customer>\n{chr(10).join(body_lines)}\n</customer>"]
+
+        # D5: append staff notes block if present
+        staff_notes_block = _build_staff_notes_block(customer.get("notes"))
+        if staff_notes_block:
+            slot_parts.append(staff_notes_block)
+
+        slot = "\n".join(slot_parts)
 
         # Inject state delta only if not already set
-        new_state = {**state, "_slot_customer": slot}
+        new_state = {**state, "_slot_customer": slot, "customer_memories": memories}
         if state.get("customer_id") is None:
             new_state["customer_id"] = customer["id"]
         if state.get("customer_name") is None:

@@ -390,16 +390,16 @@ class TestMergePreferences:
         assert result["last_stylist_name"] == "Pilar"
 
     def test_merge_notes_overwrite_if_non_empty(self):
-        """New non-empty notes replace existing."""
-        existing = {"notes": "alergia amoniaco", "visit_count": 1}
+        """New non-empty notes replace existing agent_notes."""
+        existing = {"agent_notes": "alergia amoniaco", "visit_count": 1}
         result = _merge_preferences(existing, {"notes": "prefiere tarde"})
-        assert result["notes"] == "prefiere tarde"
+        assert result["agent_notes"] == "prefiere tarde"
 
     def test_merge_notes_preserved_if_new_empty(self):
-        """notes=None → existing notes preserved."""
-        existing = {"notes": "alergia amoniaco", "visit_count": 1}
+        """notes=None → existing agent_notes preserved."""
+        existing = {"agent_notes": "alergia amoniaco", "visit_count": 1}
         result = _merge_preferences(existing, {"notes": None})
-        assert result["notes"] == "alergia amoniaco"
+        assert result["agent_notes"] == "alergia amoniaco"
 
     def test_merge_time_of_day_morning(self):
         """start_time hour < 13 → 'morning'."""

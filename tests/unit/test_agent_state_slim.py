@@ -72,3 +72,47 @@ def test_agent_state_instantiation():
     }
     assert state["conversation_id"] == "test-123"
     assert state["customer_id"] is None
+
+
+def test_agent_state_has_customer_memories_field():
+    """AgentState declares customer_memories as a NotRequired field."""
+    from typing import get_type_hints
+    from agent.state import AgentState
+
+    hints = get_type_hints(AgentState, include_extras=True)
+    assert "customer_memories" in hints, "customer_memories field must be declared in AgentState"
+
+
+def test_agent_state_customer_memories_defaults_to_absent():
+    """When not set, customer_memories is absent (NotRequired) — accessing returns KeyError."""
+    from agent.state import AgentState
+
+    state: AgentState = {  # type: ignore[misc]
+        "conversation_id": "test-456",
+        "customer_phone": "+34600000001",
+        "user_message": None,
+        "pending_whatsapp_name": None,
+        "messages": [],
+        "customer_id": None,
+        "customer_name": None,
+    }
+    assert state.get("customer_memories") is None
+
+
+def test_agent_state_customer_memories_can_hold_dict():
+    """customer_memories can be set to a non-None dict for returning customers."""
+    from agent.state import AgentState
+
+    memories = {"visit_count": 3, "preferred_stylist_name": "Pilar", "agent_notes": "Alergia"}
+    state: AgentState = {  # type: ignore[misc]
+        "conversation_id": "test-789",
+        "customer_phone": "+34600000002",
+        "user_message": "hola",
+        "pending_whatsapp_name": None,
+        "messages": [],
+        "customer_id": None,
+        "customer_name": None,
+        "customer_memories": memories,
+    }
+    assert state["customer_memories"] == memories
+    assert state["customer_memories"]["visit_count"] == 3

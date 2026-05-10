@@ -196,7 +196,7 @@ async def test_update_memories_partial_update():
         "memories": {
             "preferred_stylist_name": "Ana",
             "visit_count": 5,
-            "notes": "Prefiere cita temprana",
+            "agent_notes": "Prefiere cita temprana",
             # other keys remain as previously stored or null — PG merges
         }
     }
@@ -206,7 +206,7 @@ async def test_update_memories_partial_update():
     request = UpdateMemoriesRequest(
         preferred_stylist_name="Ana",
         visit_count=5,
-        notes="Prefiere cita temprana",
+        agent_notes="Prefiere cita temprana",
     )
 
     with patch("api.routes.admin.get_async_session", return_value=mock_ctx):
@@ -216,4 +216,4 @@ async def test_update_memories_partial_update():
 
     assert result["memories"]["preferred_stylist_name"] == "Ana"
     assert result["memories"]["visit_count"] == 5
-    assert result["memories"]["notes"] == "Prefiere cita temprana"
+    assert result["memories"]["agent_notes"] == "Prefiere cita temprana"
