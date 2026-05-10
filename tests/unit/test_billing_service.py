@@ -53,6 +53,7 @@ def _make_token_usage(
 def _make_invoice(
     status: InvoiceStatus = InvoiceStatus.ISSUED,
     stripe_pi_id: str | None = None,
+    stripe_invoice_id: str | None = None,
     invoice_number: str = "ATR-2026-03-001",
     due_date: date | None = None,
 ):
@@ -62,6 +63,7 @@ def _make_invoice(
     mock.invoice_number = invoice_number
     mock.status = status
     mock.stripe_payment_intent_id = stripe_pi_id
+    mock.stripe_invoice_id = stripe_invoice_id
     mock.due_date = due_date or (date.today() - timedelta(days=5))
     mock.notes = None
     mock.pdf_path = None
@@ -342,7 +344,7 @@ class TestVoidInvoice:
     """void_invoice transitions a valid invoice to VOID status."""
 
     async def test_void_invoice_valid(self):
-        """Issued invoice can be voided successfully."""
+        """Issued invoice can be voided successfully (no stripe refs — local void only)."""
         from api.services.billing_service import BillingService
 
         invoice = _make_invoice(status=InvoiceStatus.ISSUED)
@@ -351,7 +353,7 @@ class TestVoidInvoice:
 
         svc = BillingService.__new__(BillingService)
         svc.stripe_service = AsyncMock()
-        svc.stripe_service.cancel_payment_intent = AsyncMock()
+        svc.stripe_service.void_stripe_invoice = AsyncMock()
 
         await svc.void_invoice(session, invoice.id, reason="Test void")
 
@@ -390,40 +392,71 @@ class TestVoidInvoice:
 
         assert exc_info.value.status_code == 404
 
-    async def test_void_invoice_cancels_stripe_pi(self):
-        """Voiding an invoice with a Stripe PI triggers cancellation."""
+# ---------------------------------------------------------------------------
+# T8 — Tests: void_invoice uses only stripe Invoice.void after dead code removal
+# ---------------------------------------------------------------------------
+
+
+class TestVoidInvoiceStripeInvoiceOnly:
+    """
+    PR-2 / T8: After removing cancel_payment_intent dead code, void_invoice
+    must only act on stripe_invoice_id via void_stripe_invoice.
+    Invoices with only stripe_payment_intent_id are voided locally without
+    calling any deprecated Stripe method.
+    """
+
+    async def test_void_invoice_calls_void_stripe_invoice_when_stripe_invoice_id_set(self):
+        """
+        GIVEN an invoice with stripe_invoice_id set
+        WHEN void_invoice is called
+        THEN void_stripe_invoice is called with that id
+        AND invoice.status == VOID
+        AND no cancel_payment_intent call is made.
+        """
         from api.services.billing_service import BillingService
 
-        pi_id = "pi_abc123"
-        invoice = _make_invoice(status=InvoiceStatus.ISSUED, stripe_pi_id=pi_id)
-        session = _make_async_session()
-        session.execute.return_value = _scalar_result(invoice)
-
-        svc = BillingService.__new__(BillingService)
-        svc.stripe_service = AsyncMock()
-        svc.stripe_service.cancel_payment_intent = AsyncMock(return_value=True)
-
-        await svc.void_invoice(session, invoice.id)
-
-        svc.stripe_service.cancel_payment_intent.assert_called_once_with(pi_id)
-
-    async def test_void_invoice_stripe_cancel_failure_does_not_raise(self):
-        """Stripe PI cancellation failure is swallowed — void still proceeds."""
-        from api.services.billing_service import BillingService
-
-        invoice = _make_invoice(status=InvoiceStatus.ISSUED, stripe_pi_id="pi_xyz")
-        session = _make_async_session()
-        session.execute.return_value = _scalar_result(invoice)
-
-        svc = BillingService.__new__(BillingService)
-        svc.stripe_service = AsyncMock()
-        svc.stripe_service.cancel_payment_intent = AsyncMock(
-            side_effect=RuntimeError("Stripe unreachable")
+        stripe_inv_id = "in_live_abc123"
+        invoice = _make_invoice(
+            status=InvoiceStatus.ISSUED,
+            stripe_invoice_id=stripe_inv_id,
         )
+        session = _make_async_session()
+        session.execute.return_value = _scalar_result(invoice)
 
-        # Should NOT raise
+        svc = BillingService.__new__(BillingService)
+        svc.stripe_service = AsyncMock()
+        svc.stripe_service.void_stripe_invoice = AsyncMock(return_value=None)
+
+        await svc.void_invoice(session, invoice.id, reason="PR-2 test")
+
+        svc.stripe_service.void_stripe_invoice.assert_called_once_with(stripe_inv_id)
+        assert invoice.status == InvoiceStatus.VOID
+        session.commit.assert_called_once()
+
+    async def test_void_invoice_local_only_when_no_stripe_refs(self):
+        """
+        GIVEN an invoice with no stripe_invoice_id and no stripe_payment_intent_id
+        WHEN void_invoice is called
+        THEN invoice.status == VOID (local-only void)
+        AND void_stripe_invoice is NOT called.
+        """
+        from api.services.billing_service import BillingService
+
+        invoice = _make_invoice(
+            status=InvoiceStatus.ISSUED,
+            stripe_invoice_id=None,
+            stripe_pi_id=None,
+        )
+        session = _make_async_session()
+        session.execute.return_value = _scalar_result(invoice)
+
+        svc = BillingService.__new__(BillingService)
+        svc.stripe_service = AsyncMock()
+        svc.stripe_service.void_stripe_invoice = AsyncMock(return_value=None)
+
         await svc.void_invoice(session, invoice.id)
 
+        svc.stripe_service.void_stripe_invoice.assert_not_called()
         assert invoice.status == InvoiceStatus.VOID
         session.commit.assert_called_once()
 

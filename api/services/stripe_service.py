@@ -134,62 +134,6 @@ class StripeService:
         await session.commit()
         logger.info(f"SEPA mandate configured: customer={customer_id}, PM=...{last4}")
 
-    # DEPRECATED: remove after 30-day transition to Stripe Invoicing
-    async def create_sepa_charge(
-        self,
-        amount_cents: int,
-        customer_id: str,
-        payment_method_id: str,
-        invoice_number: str,
-    ) -> stripe.PaymentIntent:
-        """
-        Create and confirm a SEPA PaymentIntent.
-
-        Idempotency key: invoice_{invoice_number} (prevents double-charge).
-        """
-        loop = asyncio.get_event_loop()
-
-        return await loop.run_in_executor(
-            None,
-            lambda: stripe.PaymentIntent.create(
-                amount=amount_cents,
-                currency="eur",
-                customer=customer_id,
-                payment_method=payment_method_id,
-                payment_method_types=["sepa_debit"],
-                confirm=True,
-                off_session=True,
-                idempotency_key=f"invoice_{invoice_number}",
-                metadata={"invoice_number": invoice_number},
-            ),
-        )
-
-    # DEPRECATED: remove after 30-day transition to Stripe Invoicing
-    async def cancel_payment_intent(self, payment_intent_id: str) -> bool:
-        """Cancel a PaymentIntent if it's in a cancellable state. Returns True if cancelled."""
-        loop = asyncio.get_event_loop()
-        try:
-            pi = await loop.run_in_executor(
-                None,
-                lambda: stripe.PaymentIntent.retrieve(payment_intent_id),
-            )
-            if pi.status in ("requires_payment_method", "requires_confirmation", "processing"):
-                await loop.run_in_executor(
-                    None,
-                    lambda: stripe.PaymentIntent.cancel(payment_intent_id),
-                )
-                logger.info(f"Cancelled PaymentIntent {payment_intent_id}")
-                return True
-            else:
-                logger.info(
-                    f"PaymentIntent {payment_intent_id} in terminal state: {pi.status}, "
-                    f"cannot cancel"
-                )
-                return False
-        except stripe.error.StripeError as e:
-            logger.warning(f"Failed to cancel PaymentIntent {payment_intent_id}: {e}")
-            return False
-
     async def create_invoice(
         self,
         customer_id: str,

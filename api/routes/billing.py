@@ -493,62 +493,6 @@ async def stripe_webhook(request: Request) -> dict:
                             await session.commit()
                             logger.info(f"Payment for {invoice.invoice_number} marked FAILED")
 
-        # LEGACY: remove after 30-day transition
-        elif event_type == "payment_intent.succeeded":
-            pi_id = event_data.id
-            if pi_id:
-                try:
-                    payment_result = await session.execute(
-                        select(Payment).where(Payment.stripe_payment_intent_id == pi_id)
-                    )
-                    payment = payment_result.scalar_one_or_none()
-
-                    if payment:
-                        payment.status = PaymentStatus.SUCCEEDED
-
-                        # Update invoice to PAID
-                        invoice_result = await session.execute(
-                            select(Invoice).where(Invoice.id == payment.invoice_id)
-                        )
-                        invoice = invoice_result.scalar_one_or_none()
-                        if invoice:
-                            invoice.status = InvoiceStatus.PAID
-                            invoice.paid_at = datetime.utcnow()
-                            logger.info(
-                                f"Invoice {invoice.invoice_number} marked PAID via webhook"
-                            )
-
-                        await session.commit()
-                    else:
-                        logger.warning(f"No Payment row found for PI {pi_id}")
-                except Exception as e:
-                    logger.error(f"payment_intent.succeeded handler failed for {pi_id}: {e}")
-
-        # LEGACY: remove after 30-day transition
-        elif event_type == "payment_intent.payment_failed":
-            pi_id = event_data.id
-            if pi_id:
-                try:
-                    last_error = getattr(event_data, "last_payment_error", None)
-                    failure_message = (
-                        last_error.message if last_error else "Unknown failure"
-                    )
-
-                    payment_result = await session.execute(
-                        select(Payment).where(Payment.stripe_payment_intent_id == pi_id)
-                    )
-                    payment = payment_result.scalar_one_or_none()
-
-                    if payment:
-                        payment.status = PaymentStatus.FAILED
-                        payment.failure_reason = failure_message
-                        await session.commit()
-                        logger.info(f"Payment {pi_id} marked FAILED: {failure_message}")
-                    else:
-                        logger.warning(f"No Payment row found for failed PI {pi_id}")
-                except Exception as e:
-                    logger.error(f"payment_intent.payment_failed handler failed for {pi_id}: {e}")
-
         else:
             logger.debug(f"Unhandled Stripe event type: {event_type}")
 

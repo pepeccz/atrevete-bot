@@ -301,22 +301,13 @@ class BillingService:
                 ),
             )
 
-        # Void on Stripe — new invoices use Stripe Invoice, legacy uses PI cancel
+        # Void on Stripe Invoice if present; no Stripe call for invoices without stripe_invoice_id
         if invoice.stripe_invoice_id:
             try:
                 await self.stripe_service.void_stripe_invoice(invoice.stripe_invoice_id)
             except Exception as e:
                 logger.warning(
                     f"Failed to void Stripe invoice for {invoice.invoice_number}: {e}"
-                )
-        elif invoice.stripe_payment_intent_id:
-            try:
-                await self.stripe_service.cancel_payment_intent(
-                    invoice.stripe_payment_intent_id
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to cancel Stripe PI for {invoice.invoice_number}: {e}"
                 )
 
         invoice.status = InvoiceStatus.VOID
