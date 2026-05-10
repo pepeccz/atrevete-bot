@@ -287,6 +287,39 @@ Additive prompt + tool enrichment change. No DB migration, no thread_id bump, no
 docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart agent
 ```
 
+### Deploy Runbook (billing-wip-completion)
+
+**Pre-merge guard — MUST run on production before merging dead-code removal (T8/PR-2).**
+
+This query returns the count of v1 PaymentIntent invoices still in flight.
+If the count is > 0, do NOT remove `create_sepa_charge`, `cancel_payment_intent`, or the legacy
+webhook handlers — those in-flight invoices still depend on them.
+
+```bash
+# Run on the SSH server (pepe@server):
+PGPASSWORD="changeme_min16chars_secure_password" psql -h localhost -U atrevete -d atrevete_db -c \
+  "SELECT COUNT(*) AS legacy_in_flight FROM invoices \
+   WHERE stripe_payment_intent_id IS NOT NULL \
+     AND stripe_invoice_id IS NULL \
+     AND status NOT IN ('paid', 'void');"
+```
+
+Result must be **0** before PR-2 (dead-code removal) can be merged.
+
+**setup-fiscal is curl-only — do NOT add a UI button.**
+
+The `POST /api/billing/setup-fiscal` endpoint is a one-time deployment step.
+Invoke it once via curl after first deploy with Stripe credentials configured:
+
+```bash
+# Run on the SSH server after first deploy:
+curl -X POST https://your-api-host/api/billing/setup-fiscal \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json"
+```
+
+Do NOT add a button in the admin panel for this endpoint. See JSDoc in `admin-panel/src/lib/billing-api.ts`.
+
 ---
 
 ### Running Services

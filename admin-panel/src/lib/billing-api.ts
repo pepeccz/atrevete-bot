@@ -118,4 +118,18 @@ export const billingApi = {
       provider_address: string;
       provider_email: string;
     }>("/api/billing/fiscal-details"),
+
+  /**
+   * One-time deployment step — invoke via curl only. Do NOT add a UI button.
+   *
+   * Creates the IVA 21% TaxRate on Stripe and attaches the client NIF to the
+   * Stripe Customer. This is idempotent and must be run once after initial
+   * deploy with Stripe credentials configured. See CLAUDE.md → Deploy Runbook
+   * (billing-wip-completion) for the curl command.
+   */
+  setupFiscal: () =>
+    billingRequest<{ tax_rate_id: string | null; tax_rate_created: boolean; tax_id_attached: boolean }>(
+      "/api/billing/setup-fiscal",
+      { method: "POST" }
+    ),
 };

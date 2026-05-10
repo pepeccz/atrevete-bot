@@ -560,3 +560,99 @@ class TestStripeWebhook:
                 )
 
         assert response.status_code == 200
+
+
+# =============================================================================
+# T10 — GET /api/billing/invoices/{id}/pdf — persist regenerated path (Bug 2)
+# =============================================================================
+
+
+class TestDownloadInvoicePdfPersistPath:
+    """
+    Bug 2: download_invoice_pdf must persist the regenerated pdf_path to the DB
+    so that subsequent downloads do not re-invoke PdfService.ensure_pdf_exists.
+    """
+
+    def _make_pdf_invoice(self, pdf_path="/old/missing.pdf"):
+        """Invoice with a stale local pdf_path and no Stripe-hosted URL."""
+        inv = MagicMock()
+        inv.id = uuid4()
+        inv.invoice_number = "ATR-2026-03-001"
+        inv.year = 2026
+        inv.month = 3
+        inv.invoice_pdf_url = None  # no Stripe URL → falls into local branch
+        inv.pdf_path = pdf_path
+        return inv
+
+    def test_download_invoice_pdf_persists_regenerated_path(self, client, mock_auth, tmp_path):
+        """
+        GIVEN invoice with stale pdf_path and no invoice_pdf_url
+        WHEN GET /api/billing/invoices/{id}/pdf
+        THEN response is 200 PDF
+        AND session.commit() is called (path persisted)
+        AND ensure_pdf_exists was called exactly once.
+        """
+        invoice = self._make_pdf_invoice()
+        invoice_id = invoice.id
+
+        # Regenerated path — different from old stale path
+        regenerated_path = tmp_path / f"{invoice.invoice_number}.pdf"
+        regenerated_path.write_bytes(b"%PDF-1.4 content")
+
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=invoice))
+        )
+
+        with patch(
+            "api.routes.billing.get_async_session",
+            return_value=_mock_session_cm(mock_session),
+        ):
+            with patch("api.routes.billing.PdfService") as MockPdfService:
+                mock_pdf_svc = MagicMock()
+                mock_pdf_svc.ensure_pdf_exists = AsyncMock(return_value=str(regenerated_path))
+                MockPdfService.return_value = mock_pdf_svc
+
+                response = client.get(f"/api/billing/invoices/{invoice_id}/pdf")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/pdf"
+        # Path was persisted — session.commit called
+        mock_session.commit.assert_called_once()
+        # ensure_pdf_exists was called exactly once
+        mock_pdf_svc.ensure_pdf_exists.assert_called_once_with(invoice)
+
+    def test_download_invoice_pdf_skips_commit_when_path_unchanged(self, client, mock_auth, tmp_path):
+        """
+        GIVEN invoice.pdf_path already matches the regenerated path
+        WHEN GET /api/billing/invoices/{id}/pdf
+        THEN response is 200 PDF
+        AND session.commit() is NOT called (no-op guard).
+        """
+        regen_path = tmp_path / "ATR-2026-03-001.pdf"
+        regen_path.write_bytes(b"%PDF-1.4 cached")
+
+        invoice = self._make_pdf_invoice(pdf_path=str(regen_path))
+        invoice_id = invoice.id
+
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=invoice))
+        )
+
+        with patch(
+            "api.routes.billing.get_async_session",
+            return_value=_mock_session_cm(mock_session),
+        ):
+            with patch("api.routes.billing.PdfService") as MockPdfService:
+                mock_pdf_svc = MagicMock()
+                mock_pdf_svc.ensure_pdf_exists = AsyncMock(return_value=str(regen_path))
+                MockPdfService.return_value = mock_pdf_svc
+
+                response = client.get(f"/api/billing/invoices/{invoice_id}/pdf")
+
+        assert response.status_code == 200
+        # Path unchanged — no commit needed
+        mock_session.commit.assert_not_called()

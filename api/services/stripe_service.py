@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from enum import Enum
 from uuid import uuid4
 
 import stripe
@@ -12,6 +13,23 @@ from database.models import SystemSetting
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class SepaMandateStatus(str, Enum):
+    """SEPA Direct Debit mandate state — surfaces to admin UI via /api/billing/stripe/status."""
+
+    ACTIVE = "active"                  # Mandate is valid, charges can succeed
+    INACTIVE = "inactive"              # Mandate revoked or expired
+    REQUIRES_ACTION = "requires_action"  # User intervention needed (maps from Stripe 'pending')
+    UNKNOWN = "unknown"                # Stripe call failed or status indeterminate
+
+
+# Stripe mandate.status → SepaMandateStatus mapping
+_STRIPE_MANDATE_STATUS_MAP: dict[str, SepaMandateStatus] = {
+    "active": SepaMandateStatus.ACTIVE,
+    "inactive": SepaMandateStatus.INACTIVE,
+    "pending": SepaMandateStatus.REQUIRES_ACTION,
+}
 
 
 class StripeService:
@@ -293,11 +311,30 @@ class StripeService:
                     lambda: stripe.PaymentMethod.retrieve(pm_id),
                 )
                 result["payment_method_status"] = "active"
-                if pm.sepa_debit and hasattr(pm.sepa_debit, "mandate"):
-                    # If we can determine mandate status
-                    result["sepa_mandate_status"] = "active"
+
+                # Resolve SEPA mandate status via real Stripe Mandate.retrieve
+                mandate_id = getattr(pm.sepa_debit, "mandate", None) if pm.sepa_debit else None
+                if mandate_id:
+                    try:
+                        mandate = await loop.run_in_executor(
+                            None,
+                            lambda: stripe.Mandate.retrieve(mandate_id),
+                        )
+                        stripe_status = getattr(mandate, "status", None)
+                        mapped = _STRIPE_MANDATE_STATUS_MAP.get(stripe_status, SepaMandateStatus.UNKNOWN)
+                        if stripe_status and stripe_status not in _STRIPE_MANDATE_STATUS_MAP:
+                            logger.warning(
+                                f"Unrecognised Stripe mandate status {stripe_status!r} for "
+                                f"mandate {mandate_id} — defaulting to UNKNOWN"
+                            )
+                        result["sepa_mandate_status"] = mapped.value
+                    except stripe.error.StripeError as e:
+                        logger.warning(f"Failed to retrieve Stripe mandate {mandate_id}: {e}")
+                        result["sepa_mandate_status"] = SepaMandateStatus.UNKNOWN.value
                 else:
-                    result["sepa_mandate_status"] = "active"  # Default when PM exists
+                    # PM exists but no mandate attached yet
+                    result["sepa_mandate_status"] = SepaMandateStatus.UNKNOWN.value
+
             except stripe.error.StripeError as e:
                 logger.warning(f"Failed to query Stripe PM status: {e}")
                 result["payment_method_status"] = "unknown"

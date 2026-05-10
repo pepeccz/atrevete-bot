@@ -619,3 +619,121 @@ class TestNextInvoiceNumber:
 
         assert number == "ATR-2026-01-001"
         assert "ATR-2026-1-" not in number
+
+
+# ---------------------------------------------------------------------------
+# T9-billing — Tests: Bug 1 PDF generate+persist (TDD RED → T2 GREEN)
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateInvoicePdfPersistence:
+    """
+    Bug 1: generate_invoice must call ensure_pdf_exists, persist the returned
+    path to invoice.pdf_path, and forward that path to send_invoice_email.
+    """
+
+    async def test_generate_invoice_persists_pdf_path(self):
+        """
+        GIVEN PdfService.ensure_pdf_exists returns a valid path
+        WHEN generate_invoice is called
+        THEN invoice.pdf_path equals the returned path
+        AND send_invoice_email is called with that pdf_path value.
+        """
+        from api.services.billing_service import BillingService
+
+        settings = _make_settings(operator_email="ops@test.com")
+        token_usage = _make_token_usage()
+        session = _make_async_session()
+
+        session.execute.side_effect = [
+            _scalar_result(None),       # duplicate check
+            _scalar_result(token_usage),  # token usage
+            _scalar_count(0),           # _next_invoice_number
+        ]
+
+        expected_pdf_path = "/data/invoices/ATR-2026-03-001.pdf"
+
+        svc = BillingService.__new__(BillingService)
+        svc.pdf_service = AsyncMock()
+        svc.pdf_service.ensure_pdf_exists = AsyncMock(return_value=expected_pdf_path)
+        svc.stripe_service = AsyncMock()
+        svc.stripe_service.get_sepa_status = AsyncMock(return_value={"configured": False})
+        svc.email_service = AsyncMock()
+        svc.email_service.send_invoice_email = AsyncMock(return_value=True)
+
+        with patch("api.services.billing_service.get_settings", return_value=settings):
+            with patch("api.services.billing_service.datetime") as mock_dt:
+                mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                invoice = await svc.generate_invoice(session, 2026, 3)
+
+        # The invoice object added to session must have pdf_path set
+        added = session.add.call_args_list[0][0][0]
+        assert added.pdf_path == expected_pdf_path, (
+            f"Expected invoice.pdf_path={expected_pdf_path!r}, got {added.pdf_path!r}"
+        )
+
+        # email must be called with that pdf_path
+        call_kwargs = svc.email_service.send_invoice_email.call_args
+        assert call_kwargs is not None, "send_invoice_email was never called"
+        if "pdf_path" in call_kwargs.kwargs:
+            sent_pdf_path = call_kwargs.kwargs["pdf_path"]
+        elif len(call_kwargs.args) > 4:
+            sent_pdf_path = call_kwargs.args[4]
+        else:
+            sent_pdf_path = "NOT_FOUND"
+        assert sent_pdf_path == expected_pdf_path, (
+            f"send_invoice_email called with pdf_path={sent_pdf_path!r}, expected {expected_pdf_path!r}"
+        )
+
+    async def test_generate_invoice_handles_pdf_failure_gracefully(self):
+        """
+        GIVEN PdfService.ensure_pdf_exists raises an exception
+        WHEN generate_invoice is called
+        THEN no exception propagates from generate_invoice
+        AND invoice is still committed (pdf_path=None)
+        AND send_invoice_email is called with pdf_path=None.
+        """
+        from api.services.billing_service import BillingService
+
+        settings = _make_settings(operator_email="ops@test.com")
+        token_usage = _make_token_usage()
+        session = _make_async_session()
+
+        session.execute.side_effect = [
+            _scalar_result(None),
+            _scalar_result(token_usage),
+            _scalar_count(0),
+        ]
+
+        svc = BillingService.__new__(BillingService)
+        svc.pdf_service = AsyncMock()
+        svc.pdf_service.ensure_pdf_exists = AsyncMock(
+            side_effect=OSError("weasyprint unavailable")
+        )
+        svc.stripe_service = AsyncMock()
+        svc.stripe_service.get_sepa_status = AsyncMock(return_value={"configured": False})
+        svc.email_service = AsyncMock()
+        svc.email_service.send_invoice_email = AsyncMock(return_value=False)
+
+        with patch("api.services.billing_service.get_settings", return_value=settings):
+            with patch("api.services.billing_service.datetime") as mock_dt:
+                mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                # Must NOT raise
+                invoice = await svc.generate_invoice(session, 2026, 3)
+
+        # Invoice still committed despite PDF failure
+        session.commit.assert_called_once()
+
+        # email called with pdf_path=None
+        call_kwargs = svc.email_service.send_invoice_email.call_args
+        assert call_kwargs is not None, "send_invoice_email was never called"
+        # use "pdf_path" kwarg if present; fall back to 5th positional arg (index 4)
+        if "pdf_path" in call_kwargs.kwargs:
+            sent_pdf_path = call_kwargs.kwargs["pdf_path"]
+        elif len(call_kwargs.args) > 4:
+            sent_pdf_path = call_kwargs.args[4]
+        else:
+            sent_pdf_path = "NOT_FOUND"
+        assert sent_pdf_path is None, (
+            f"Expected send_invoice_email(pdf_path=None), got pdf_path={sent_pdf_path!r}"
+        )

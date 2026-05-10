@@ -143,6 +143,17 @@ async def download_invoice_pdf(
                     detail="No se pudo generar el PDF de la factura.",
                 )
 
+            # Persist the (possibly regenerated) path so subsequent downloads skip weasyprint
+            if str(pdf_path) != (invoice.pdf_path or ""):
+                try:
+                    invoice.pdf_path = str(pdf_path)
+                    await session.commit()
+                except Exception as e:
+                    logger.error(
+                        f"Failed to persist pdf_path for invoice {invoice_id}: {e}. "
+                        f"Returning PDF to client anyway."
+                    )
+
             pdf_bytes = await asyncio.get_event_loop().run_in_executor(
                 None, Path(pdf_path).read_bytes
             )

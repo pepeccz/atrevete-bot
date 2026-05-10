@@ -17,6 +17,7 @@ from database.models import (
     TokenUsage,
 )
 from shared.config import get_settings
+from api.services.pdf_service import PdfService
 from api.services.stripe_service import StripeService
 from shared.email_service import EmailService
 
@@ -34,6 +35,7 @@ class BillingService:
     """Stateless billing service — all state flows through function parameters."""
 
     def __init__(self):
+        self.pdf_service = PdfService()
         self.stripe_service = StripeService()
         self.email_service = EmailService()
 
@@ -239,7 +241,18 @@ class BillingService:
         if notes_parts:
             invoice.notes = " | ".join(notes_parts)
 
-        # 8. Commit
+        # 8a. Generate local PDF and persist path before commit
+        try:
+            local_pdf_path = await self.pdf_service.ensure_pdf_exists(invoice)
+            invoice.pdf_path = str(local_pdf_path)
+        except Exception as e:
+            logger.warning(
+                f"PDF generation failed for {invoice.invoice_number}: {e}. "
+                f"Email will be sent without attachment."
+            )
+            invoice.pdf_path = None
+
+        # 8. Commit (includes pdf_path set above)
         await session.commit()
         await session.refresh(invoice)
 

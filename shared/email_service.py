@@ -29,13 +29,15 @@ class EmailService:
         invoice_number: str,
         period_label: str,
         total_eur: Decimal,
-        pdf_path: str,
+        pdf_path: str | None,
     ) -> bool:
         """
-        Send invoice notification with PDF attachment.
+        Send invoice notification with optional PDF attachment.
 
         Returns True if sent, False if skipped or failed.
         Never raises — errors are logged.
+        pdf_path may be None (e.g. when PDF generation failed); email is sent
+        without an attachment in that case.
         """
         if not self.is_configured():
             logger.warning("SMTP not configured, skipping invoice email")
@@ -53,26 +55,31 @@ class EmailService:
                 f"Se ha generado la factura {invoice_number} "
                 f"para el periodo {period_label}.\n\n"
                 f"Total: {total_eur:.2f} €\n\n"
-                f"Se adjunta el PDF de la factura.\n\n"
                 f"— Atrévete Bot"
             )
             msg.attach(MIMEText(body, "plain", "utf-8"))
 
-            # Attach PDF if exists
-            pdf_file = Path(pdf_path)
-            if pdf_file.exists():
-                with open(pdf_file, "rb") as f:
-                    part = MIMEBase("application", "pdf")
-                    part.set_payload(f.read())
-                    encoders.encode_base64(part)
-                    part.add_header(
-                        "Content-Disposition",
-                        f'attachment; filename="{invoice_number}.pdf"',
+            # Attach PDF if a path was provided and the file exists on disk
+            if pdf_path:
+                pdf_file = Path(pdf_path)
+                if pdf_file.exists():
+                    with open(pdf_file, "rb") as f:
+                        part = MIMEBase("application", "pdf")
+                        part.set_payload(f.read())
+                        encoders.encode_base64(part)
+                        part.add_header(
+                            "Content-Disposition",
+                            f'attachment; filename="{invoice_number}.pdf"',
+                        )
+                        msg.attach(part)
+                else:
+                    logger.warning(
+                        f"PDF not found at {pdf_path}, sending email without attachment"
                     )
-                    msg.attach(part)
             else:
-                logger.warning(
-                    f"PDF not found at {pdf_path}, sending email without attachment"
+                logger.info(
+                    f"Sending invoice email for {invoice_number} without PDF attachment "
+                    f"(pdf_path is None)"
                 )
 
             loop = asyncio.get_event_loop()

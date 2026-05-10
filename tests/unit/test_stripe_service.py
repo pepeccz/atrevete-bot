@@ -591,3 +591,173 @@ class TestGetAndSetSetting:
         # No new add — existing was mutated
         session.add.assert_not_called()
         assert existing.value == {"value": "cus_new"}
+
+
+# ---------------------------------------------------------------------------
+# T11 — Tests: Bug 3 get_sepa_status real mandate status (TDD RED → T4 GREEN)
+# ---------------------------------------------------------------------------
+
+
+def _make_stripe_stub_with_mandate():
+    """Extended stripe stub that includes Mandate.retrieve support."""
+    stub = _make_stripe_stub()
+
+    class _Mandate:
+        @staticmethod
+        def retrieve(mandate_id):
+            return SimpleNamespace(status="active")
+
+    stub.Mandate = _Mandate
+    return stub
+
+
+class TestGetSepaStatusMandateStatus:
+    """
+    Bug 3: get_sepa_status must query stripe.Mandate.retrieve and return
+    the real mandate status via SepaMandateStatus enum mapping.
+    """
+
+    async def _run_get_sepa_status_with(self, pm_stub, mandate_retrieve_fn=None, stripe_err=None):
+        """
+        Helper: wires up session + stripe stub, calls get_sepa_status,
+        returns the result dict.
+        """
+        from importlib import reload
+        import api.services.stripe_service as stripe_mod
+
+        stub = _make_stripe_stub_with_mandate()
+
+        customer_setting = _make_system_setting("stripe_customer_id", "cus_abc123")
+        pm_setting = _make_system_setting("stripe_payment_method_id", "pm_sepa_456")
+        last4_setting = _make_system_setting("stripe_payment_method_last4", "1234")
+
+        session = _make_async_session()
+        session.execute.side_effect = [
+            _scalar_result(customer_setting),
+            _scalar_result(pm_setting),
+            _scalar_result(last4_setting),
+        ]
+
+        stub.PaymentMethod.retrieve = MagicMock(return_value=pm_stub)
+
+        if stripe_err:
+            stub.Mandate.retrieve = MagicMock(side_effect=stripe_err)
+        elif mandate_retrieve_fn:
+            stub.Mandate.retrieve = mandate_retrieve_fn
+
+        with patch.dict("sys.modules", {"stripe": stub, "stripe.error": stub.error}):
+            reload(stripe_mod)
+            svc = _build_stripe_service(_make_settings(stripe_key="sk_test_real"))
+            return await svc.get_sepa_status(session)
+
+    async def test_get_sepa_status_returns_active_mandate(self):
+        """
+        GIVEN Stripe PM has a mandate with status='active'
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'active'
+        """
+        mandate_id = "mandate_abc123"
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="1234", mandate=mandate_id)
+        )
+        retrieve_fn = MagicMock(return_value=SimpleNamespace(status="active"))
+
+        result = await self._run_get_sepa_status_with(pm, mandate_retrieve_fn=retrieve_fn)
+
+        assert result["sepa_mandate_status"] == "active", (
+            f"Expected 'active', got {result['sepa_mandate_status']!r}"
+        )
+
+    async def test_get_sepa_status_returns_inactive_mandate(self):
+        """
+        GIVEN Stripe PM has a mandate with status='inactive'
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'inactive'
+        """
+        mandate_id = "mandate_inactive_456"
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="5678", mandate=mandate_id)
+        )
+        retrieve_fn = MagicMock(return_value=SimpleNamespace(status="inactive"))
+
+        result = await self._run_get_sepa_status_with(pm, mandate_retrieve_fn=retrieve_fn)
+
+        assert result["sepa_mandate_status"] == "inactive", (
+            f"Expected 'inactive', got {result['sepa_mandate_status']!r}"
+        )
+
+    async def test_get_sepa_status_returns_requires_action_for_pending(self):
+        """
+        GIVEN Stripe PM has a mandate with status='pending'
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'requires_action'
+        (Stripe 'pending' maps to our REQUIRES_ACTION bucket)
+        """
+        mandate_id = "mandate_pending_789"
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="9012", mandate=mandate_id)
+        )
+        retrieve_fn = MagicMock(return_value=SimpleNamespace(status="pending"))
+
+        result = await self._run_get_sepa_status_with(pm, mandate_retrieve_fn=retrieve_fn)
+
+        assert result["sepa_mandate_status"] == "requires_action", (
+            f"Expected 'requires_action', got {result['sepa_mandate_status']!r}"
+        )
+
+    async def test_get_sepa_status_returns_unknown_on_stripe_error(self):
+        """
+        GIVEN Stripe.Mandate.retrieve raises StripeError
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'unknown'
+        AND no exception propagates
+        """
+        from importlib import reload
+        import api.services.stripe_service as stripe_mod
+
+        stub = _make_stripe_stub_with_mandate()
+
+        mandate_id = "mandate_err_000"
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="3456", mandate=mandate_id)
+        )
+        stub.PaymentMethod.retrieve = MagicMock(return_value=pm)
+        stub.Mandate.retrieve = MagicMock(side_effect=stub.error.StripeError("Network error"))
+
+        customer_setting = _make_system_setting("stripe_customer_id", "cus_abc")
+        pm_setting = _make_system_setting("stripe_payment_method_id", "pm_sepa")
+        last4_setting = _make_system_setting("stripe_payment_method_last4", "3456")
+
+        session = _make_async_session()
+        session.execute.side_effect = [
+            _scalar_result(customer_setting),
+            _scalar_result(pm_setting),
+            _scalar_result(last4_setting),
+        ]
+
+        with patch.dict("sys.modules", {"stripe": stub, "stripe.error": stub.error}):
+            reload(stripe_mod)
+            svc = _build_stripe_service(_make_settings(stripe_key="sk_test_real"))
+            # Must NOT raise
+            result = await svc.get_sepa_status(session)
+
+        assert result["sepa_mandate_status"] == "unknown", (
+            f"Expected 'unknown', got {result['sepa_mandate_status']!r}"
+        )
+
+    async def test_get_sepa_status_returns_unknown_when_no_mandate_id(self):
+        """
+        GIVEN Stripe PM has sepa_debit but mandate attribute is None
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'unknown'
+        (mandate not yet created by Stripe)
+        """
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="7890", mandate=None)
+        )
+
+        result = await self._run_get_sepa_status_with(pm)
+
+        assert result["sepa_mandate_status"] == "unknown", (
+            f"Expected 'unknown', got {result['sepa_mandate_status']!r}"
+        )
