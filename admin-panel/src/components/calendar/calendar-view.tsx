@@ -1200,6 +1200,36 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
               const props = ev.extendedProps;
               if (props.type === "blocking_event") {
                 const blockingEventId = (props.blocking_event_id as string) || ev.id;
+                const recurringSeriesId = props.recurring_series_id as string | null;
+
+                if (recurringSeriesId) {
+                  // Recurring block — mirror week-view: open SeriesEditDialog first
+                  const startStr = typeof ev.start === "string" ? ev.start : new Date(ev.start as Date).toISOString();
+                  const endStr = typeof ev.end === "string" ? ev.end : new Date(ev.end as Date).toISOString();
+                  setPendingSeriesEvent({
+                    id: blockingEventId,
+                    title: ev.title,
+                    props,
+                    startStr,
+                    endStr,
+                  });
+                  setSeriesDialogAction("edit");
+                  setIsSeriesLoading(true);
+                  api.getBlockingEventSeries(blockingEventId)
+                    .then((series) => {
+                      setSeriesInfo(series);
+                      setIsSeriesDialogOpen(true);
+                    })
+                    .catch((error) => {
+                      console.error("Error fetching series info:", error);
+                      // Fallback: open plain edit modal for this occurrence
+                      openBlockingEditModal(blockingEventId, ev.title, props, startStr, endStr);
+                    })
+                    .finally(() => setIsSeriesLoading(false));
+                  return;
+                }
+
+                // Non-recurring blocking event — open edit modal directly
                 setEditingBlockingEvent({
                   id: blockingEventId,
                   title: ev.title,

@@ -24,8 +24,11 @@ from uuid import UUID, uuid4
 import pytz
 from dateutil.parser import parse as parse_datetime
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # noqa: F401 — kept for type compatibility
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+)  # noqa: F401 — kept for type compatibility
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -1639,6 +1642,7 @@ async def update_stylist(
 
         try:
             from shared.catalog_builder import invalidate_catalog_cache
+
             invalidate_catalog_cache()
         except Exception:
             pass
@@ -2337,6 +2341,7 @@ async def create_service(
 
         try:
             from shared.catalog_builder import invalidate_catalog_cache
+
             invalidate_catalog_cache()
         except Exception:
             pass
@@ -2402,6 +2407,7 @@ async def update_service(
 
         try:
             from shared.catalog_builder import invalidate_catalog_cache
+
             invalidate_catalog_cache()
         except Exception:
             pass
@@ -2438,6 +2444,7 @@ async def delete_service(
 
     try:
         from shared.catalog_builder import invalidate_catalog_cache
+
         invalidate_catalog_cache()
     except Exception:
         pass
@@ -3827,26 +3834,52 @@ async def list_blocking_events(
 async def create_blocking_event(
     current_user: Annotated[dict, Depends(get_current_user)],
     request: CreateBlockingEventRequest,
+    ignore_conflicts: bool = Query(
+        False, description="Skip overlap check; create even if conflicts exist"
+    ),
 ):
     """
     Create blocking events for one or more stylists.
 
     This creates events in the database and pushes each to Google Calendar.
+    Pass ignore_conflicts=true to override any detected scheduling conflicts.
     """
     from shared.gcal_push_service import fire_and_forget_push_blocking_event
 
-    # Validate event_type
+    # Validate event_type — enumerate dynamically so this message stays correct as the enum grows
+    valid_values = ", ".join(t.value for t in BlockingEventType)
     try:
         event_type_enum = BlockingEventType(request.event_type)
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid event_type: {request.event_type}. Must be one of: vacation, meeting, break, general",
+            detail=f"Invalid event_type: {request.event_type}. Must be one of: {valid_values}",
         )
 
     # Validate end_time > start_time
     if request.end_time <= request.start_time:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
+
+    # Overlap / conflict check (skip when caller explicitly opts out)
+    if not ignore_conflicts:
+        all_conflicts: list[dict] = []
+        async with get_async_session() as conflict_session:
+            for stylist_id in request.stylist_ids:
+                conflicts = await check_conflicts_for_dates(
+                    stylist_id=stylist_id,
+                    dates=[request.start_time.date()],
+                    start_time=request.start_time.time(),
+                    end_time=request.end_time.time(),
+                    session=conflict_session,
+                )
+                all_conflicts.extend(conflicts)
+        if all_conflicts:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "conflicts": [ConflictInfo(**c).model_dump(mode="json") for c in all_conflicts]
+                },
+            )
 
     created_events = []
 

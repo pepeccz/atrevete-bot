@@ -14,7 +14,7 @@ Follows the established pattern in tests/integration/test_dashboard_endpoint.py:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -56,7 +56,9 @@ def _bypass_rate_limiter():
 @pytest.fixture
 def client():
     """Provide a TestClient for the FastAPI app."""
-    return TestClient(app, raise_server_exceptions=False, headers={"Origin": "http://localhost:3000"})
+    return TestClient(
+        app, raise_server_exceptions=False, headers={"Origin": "http://localhost:3000"}
+    )
 
 
 @pytest.fixture
@@ -75,18 +77,17 @@ def mock_auth():
 
 def _make_blocking_event_mock(stylist_id: str) -> MagicMock:
     """Return a mock BlockingEvent ORM object with all fields populated."""
-    from datetime import datetime, timezone
 
     event = MagicMock()
     event.id = uuid4()
     event.stylist_id = stylist_id
     event.title = "Reunión equipo"
     event.description = "Standup semanal"
-    event.start_time = datetime(2026, 6, 2, 8, 0, tzinfo=timezone.utc)
-    event.end_time = datetime(2026, 6, 2, 9, 0, tzinfo=timezone.utc)
+    event.start_time = datetime(2026, 6, 2, 8, 0, tzinfo=UTC)
+    event.end_time = datetime(2026, 6, 2, 9, 0, tzinfo=UTC)
     event.event_type = MagicMock()
     event.event_type.value = "meeting"
-    event.created_at = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+    event.created_at = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
     return event
 
 
@@ -115,8 +116,9 @@ def _make_session_ctx(stylist_ids: list[str] | None = None):
     # Mock refresh to populate created_at on BlockingEvent objects
     async def _mock_refresh(obj):
         if not hasattr(obj, "created_at") or obj.created_at is None:
-            from datetime import datetime, timezone
-            obj.created_at = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+            from datetime import datetime
+
+            obj.created_at = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
 
     mock_session = AsyncMock()
     mock_session.execute = AsyncMock(return_value=mock_result)
@@ -169,9 +171,7 @@ class TestCreateBlockingEventConflictCheck:
 
         assert response.status_code == 201
 
-    def test_create_overlapping_appointment_without_ignore_returns_409(
-        self, client, mock_auth
-    ):
+    def test_create_overlapping_appointment_without_ignore_returns_409(self, client, mock_auth):
         """
         GIVEN a confirmed appointment overlaps the requested range
         WHEN POST /api/admin/blocking-events is called without ignore_conflicts
@@ -193,9 +193,7 @@ class TestCreateBlockingEventConflictCheck:
         assert "conflicts" in body["detail"]
         assert len(body["detail"]["conflicts"]) >= 1
 
-    def test_create_overlapping_appointment_with_ignore_returns_201(
-        self, client, mock_auth
-    ):
+    def test_create_overlapping_appointment_with_ignore_returns_201(self, client, mock_auth):
         """
         GIVEN a confirmed appointment overlaps the requested range
         WHEN POST /api/admin/blocking-events is called with ignore_conflicts=true
@@ -237,9 +235,7 @@ class TestCreateBlockingEventConflictCheck:
 
         assert response.status_code == 409
 
-    def test_create_overlapping_cancelled_appointment_returns_201(
-        self, client, mock_auth
-    ):
+    def test_create_overlapping_cancelled_appointment_returns_201(self, client, mock_auth):
         """
         GIVEN a CANCELLED appointment overlaps the requested range
         WHEN POST /api/admin/blocking-events is called
@@ -261,9 +257,7 @@ class TestCreateBlockingEventConflictCheck:
 
         assert response.status_code == 201
 
-    def test_create_invalid_event_type_lists_personal_in_error(
-        self, client, mock_auth
-    ):
+    def test_create_invalid_event_type_lists_personal_in_error(self, client, mock_auth):
         """
         GIVEN event_type 'bogus' is submitted
         WHEN POST /api/admin/blocking-events is called
@@ -277,9 +271,9 @@ class TestCreateBlockingEventConflictCheck:
         assert response.status_code == 400
         body = response.json()
         detail = body.get("detail", "")
-        assert "personal" in detail.lower(), (
-            f"Expected 'personal' in error message, got: {detail!r}"
-        )
+        assert (
+            "personal" in detail.lower()
+        ), f"Expected 'personal' in error message, got: {detail!r}"
 
     def test_ignore_conflicts_query_param_default_false(self, client, mock_auth):
         """

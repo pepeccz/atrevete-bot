@@ -906,6 +906,7 @@ async def get_calendar_events_for_range(
                         "extendedProps": {
                             "blocking_event_id": str(block.id),
                             "stylist_id": str(block.stylist_id),
+                            "title": block.title,
                             "description": block.description,
                             "event_type": block.event_type.value,
                             "type": "blocking_event",
