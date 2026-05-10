@@ -24,7 +24,7 @@ import { BlockingEventModal } from "./blocking-event-modal";
 import { CreateAppointmentModal } from "./create-appointment-modal";
 import { SeriesEditDialog, type SeriesEditScope } from "./series-edit-dialog";
 import { ExceptionWarningDialog } from "./exception-warning-dialog";
-import { STYLIST_COLORS, HOLIDAY_COLOR, STATUS_MAP } from "./calendar-constants";
+import { STYLIST_COLORS, HOLIDAY_COLOR, STATUS_MAP, resolveStylistColor } from "./calendar-constants";
 import "./calendar-styles.css";
 import { useCalendarState, ZOOM_SLOT_MAP, ZOOM_LABEL_MAP } from "./use-calendar-state";
 import { CalendarToolbar } from "./calendar-toolbar";
@@ -1122,7 +1122,7 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
             rightPill={selectedView === "day" ? <DayViewPill events={events} stylists={stylists} gridStartHour={9} gridEndHour={21} /> : undefined}
           />
           <StylistChipFilter
-            stylists={stylists.map(s => ({ id: s.id, name: s.name, color: s.color || "#928679" }))}
+            stylists={stylists.map((s, i) => ({ id: s.id, name: s.name, color: resolveStylistColor(s, i) }))}
             active={activeStylists}
             onToggle={toggleStylist}
             onToggleAll={toggleAllStylists}
@@ -1168,7 +1168,7 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
             appointments={events.filter(e => e.extendedProps.type === "appointment") as DayViewEvent[]}
             stylists={stylists
               .filter(s => activeStylists.has(s.id))
-              .map((s): DayViewStylist => ({ id: s.id, name: s.name, color: s.color || "#928679" }))}
+              .map((s, i): DayViewStylist => ({ id: s.id, name: s.name, color: resolveStylistColor(s, i) }))}
             date={DateTime.fromJSDate(selectedDate, { zone: "Europe/Madrid" })}
             gridStartHour={9}
             gridEndHour={21}
