@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   AlertTriangle,
@@ -19,13 +18,9 @@ import {
   ExternalLink,
   MessageCircle,
   Sun,
-  Moon,
-  Monitor,
 } from "lucide-react";
-import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import {
   Tooltip,
   TooltipContent,
@@ -40,10 +35,13 @@ import {
 import { useAuth } from "@/contexts/auth-context";
 import { useSidebar } from "@/contexts/sidebar-context";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 interface NavItem {
   title: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  badge?: number;
 }
 
 interface ExternalLinkItem {
@@ -52,61 +50,26 @@ interface ExternalLinkItem {
   icon: React.ComponentType<{ className?: string }>;
 }
 
-const mainNav: NavItem[] = [
-  {
-    title: "Dashboard",
-    href: "/dashboard",
-    icon: LayoutDashboard,
-  },
-  {
-    title: "Calendario",
-    href: "/calendar",
-    icon: Calendar,
-  },
-  {
-    title: "Citas",
-    href: "/appointments",
-    icon: Clock,
-  },
+// ── Nav data ──────────────────────────────────────────────────────────────────
+
+const principalNav: NavItem[] = [
+  { title: "Dashboard",  href: "/dashboard",    icon: LayoutDashboard },
+  { title: "Calendario", href: "/calendar",     icon: Calendar },
+  { title: "Citas",      href: "/appointments", icon: Clock },
 ];
 
-const managementNav: NavItem[] = [
-  {
-    title: "Clientes",
-    href: "/customers",
-    icon: Users,
-  },
-  {
-    title: "Estilistas",
-    href: "/stylists",
-    icon: UserCog,
-  },
-  {
-    title: "Servicios",
-    href: "/services",
-    icon: Scissors,
-  },
+const gestionNav: NavItem[] = [
+  { title: "Clientes",   href: "/customers",   icon: Users },
+  { title: "Estilistas", href: "/stylists",    icon: UserCog },
+  { title: "Servicios",  href: "/services",    icon: Scissors },
 ];
 
 const configNav: NavItem[] = [
-  {
-    title: "Configuración del Salón",
-    href: "/settings",
-    icon: Settings,
-  },
-  {
-    title: "Conversaciones",
-    href: "/conversations",
-    icon: MessageSquare,
-  },
-  {
-    title: "Escalaciones",
-    href: "/escalations",
-    icon: AlertTriangle,
-  },
+  { title: "Configuración del Salón", href: "/settings",      icon: Settings },
+  { title: "Conversaciones",          href: "/conversations", icon: MessageSquare, badge: 4 },
+  { title: "Escalaciones",            href: "/escalations",   icon: AlertTriangle, badge: 2 },
 ];
 
-// External links section - opens in new tab
 const externalLinks: ExternalLinkItem[] = [
   {
     title: "Chatwoot",
@@ -114,6 +77,21 @@ const externalLinks: ExternalLinkItem[] = [
     icon: MessageCircle,
   },
 ];
+
+// ── Logo SVG (pyramid logotype — ported from design handoff shared.jsx) ───────
+
+function Logo({ size = 28 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden>
+      <path d="M16 4 L28 26 L4 26 Z" fill="#b8924b" />
+      <path d="M16 4 L16 26" stroke="#fff" strokeWidth="1.2" opacity="0.55" />
+      <path d="M16 4 L21 26" stroke="#fff" strokeWidth="0.8" opacity="0.35" />
+      <path d="M16 4 L11 26" stroke="#fff" strokeWidth="0.8" opacity="0.35" />
+    </svg>
+  );
+}
+
+// ── Nav section ───────────────────────────────────────────────────────────────
 
 function NavSection({
   title,
@@ -129,49 +107,73 @@ function NavSection({
   const pathname = usePathname();
 
   return (
-    <div className={cn("py-2", isCollapsed ? "px-2" : "px-3")}>
+    <div className={cn("py-1", isCollapsed ? "px-2" : "px-3")}>
       {!isCollapsed && (
-        <h2 className="mb-2 px-4 text-xs font-semibold tracking-tight text-muted-foreground uppercase">
+        <p className="mb-1 px-3 text-[10.5px] font-bold tracking-[0.14em] text-ink-mute uppercase select-none">
           {title}
-        </h2>
+        </p>
       )}
-      <div className="space-y-1">
+      <div className="space-y-0.5">
         {items.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href;
 
-          return (
-            <Tooltip key={item.href}>
-              <TooltipTrigger asChild>
-                <Link href={item.href} onClick={onNavClick}>
-                  <Button
-                    variant={isActive ? "secondary" : "ghost"}
-                    className={cn(
-                      "w-full",
-                      isCollapsed ? "justify-center px-2" : "justify-start",
-                      isActive &&
-                        "bg-sidebar-accent text-sidebar-accent-foreground"
+          const inner = (
+            <Link href={item.href} onClick={onNavClick} className="block">
+              <span
+                className={cn(
+                  "relative flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[14px] font-medium transition-colors",
+                  isActive
+                    ? "bg-gold-soft text-gold-dark font-semibold"
+                    : "text-ink-soft hover:bg-gold-soft/50 hover:text-ink"
+                )}
+              >
+                {/* 3px left gold bar for active items */}
+                {isActive && (
+                  <span
+                    className="absolute left-0 top-[6px] bottom-[6px] w-[3px] rounded-full bg-gold"
+                    aria-hidden
+                  />
+                )}
+                <Icon className="h-[17px] w-[17px] flex-shrink-0" />
+                {!isCollapsed && (
+                  <>
+                    <span className="flex-1 truncate">{item.title}</span>
+                    {item.badge != null && item.badge > 0 && (
+                      <span
+                        className={cn(
+                          "text-[11px] font-bold px-1.5 py-0.5 rounded-pill",
+                          isActive
+                            ? "bg-white text-gold-dark"
+                            : "bg-gold-soft text-gold-dark"
+                        )}
+                      >
+                        {item.badge}
+                      </span>
                     )}
-                  >
-                    <Icon
-                      className={cn("h-4 w-4", !isCollapsed && "mr-2")}
-                    />
-                    {!isCollapsed && (
-                      <span className="truncate">{item.title}</span>
-                    )}
-                  </Button>
-                </Link>
-              </TooltipTrigger>
-              {isCollapsed && (
-                <TooltipContent side="right">{item.title}</TooltipContent>
-              )}
-            </Tooltip>
+                  </>
+                )}
+              </span>
+            </Link>
           );
+
+          if (isCollapsed) {
+            return (
+              <Tooltip key={item.href}>
+                <TooltipTrigger asChild>{inner}</TooltipTrigger>
+                <TooltipContent side="right">{item.title}</TooltipContent>
+              </Tooltip>
+            );
+          }
+
+          return <div key={item.href}>{inner}</div>;
         })}
       </div>
     </div>
   );
 }
+
+// ── External links section ────────────────────────────────────────────────────
 
 function ExternalLinksSection({
   title,
@@ -183,90 +185,89 @@ function ExternalLinksSection({
   isCollapsed: boolean;
 }) {
   return (
-    <div className={cn("py-2", isCollapsed ? "px-2" : "px-3")}>
+    <div className={cn("py-1", isCollapsed ? "px-2" : "px-3")}>
       {!isCollapsed && (
-        <h2 className="mb-2 px-4 text-xs font-semibold tracking-tight text-muted-foreground uppercase">
+        <p className="mb-1 px-3 text-[10.5px] font-bold tracking-[0.14em] text-ink-mute uppercase select-none">
           {title}
-        </h2>
+        </p>
       )}
-      <div className="space-y-1">
+      <div className="space-y-0.5">
         {items.map((item) => {
           const Icon = item.icon;
 
-          return (
-            <Tooltip key={item.href}>
-              <TooltipTrigger asChild>
-                <a
-                  href={item.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <Button
-                    variant="ghost"
-                    className={cn(
-                      "w-full",
-                      isCollapsed ? "justify-center px-2" : "justify-start"
-                    )}
-                  >
-                    <Icon
-                      className={cn("h-4 w-4", !isCollapsed && "mr-2")}
-                    />
-                    {!isCollapsed && (
-                      <>
-                        <span className="truncate flex-1">{item.title}</span>
-                        <ExternalLink className="h-3 w-3 ml-1 text-muted-foreground" />
-                      </>
-                    )}
-                  </Button>
-                </a>
-              </TooltipTrigger>
-              {isCollapsed && (
+          const inner = (
+            <a
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block"
+            >
+              <span className="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[14px] font-medium text-ink-soft hover:bg-gold-soft/50 hover:text-ink transition-colors">
+                <Icon className="h-[17px] w-[17px] flex-shrink-0" />
+                {!isCollapsed && (
+                  <>
+                    <span className="flex-1 truncate">{item.title}</span>
+                    <ExternalLink className="h-3 w-3 text-ink-faint" />
+                  </>
+                )}
+              </span>
+            </a>
+          );
+
+          if (isCollapsed) {
+            return (
+              <Tooltip key={item.href}>
+                <TooltipTrigger asChild>{inner}</TooltipTrigger>
                 <TooltipContent side="right">
                   {item.title} (abre en nueva pestaña)
                 </TooltipContent>
-              )}
-            </Tooltip>
-          );
+              </Tooltip>
+            );
+          }
+
+          return <div key={item.href}>{inner}</div>;
         })}
       </div>
     </div>
   );
 }
 
-/** Botón compacto de cambio de tema (claro / oscuro / sistema) */
-function ThemeToggle({ isCollapsed }: { isCollapsed: boolean }) {
-  const { theme, setTheme } = useTheme();
+// ── Theme toggle (light-only, Oscuro visually disabled) ───────────────────────
 
-  const nextTheme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
-  const Icon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
-  const label =
-    theme === "light" ? "Modo claro" : theme === "dark" ? "Modo oscuro" : "Según sistema";
-
+function ThemeToggleLightOnly({ isCollapsed }: { isCollapsed: boolean }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size={isCollapsed ? "icon" : "sm"}
-          onClick={() => setTheme(nextTheme)}
-          className={cn(
-            "text-muted-foreground hover:text-foreground transition-colors",
-            isCollapsed ? "h-8 w-8" : "w-full justify-start gap-2 px-2 h-8"
-          )}
-          aria-label={`Cambiar tema: ${label}`}
-        >
-          <Icon className="h-4 w-4 flex-shrink-0" />
-          {!isCollapsed && <span className="text-xs">{label}</span>}
-        </Button>
-      </TooltipTrigger>
-      {isCollapsed && (
-        <TooltipContent side="right">{label}</TooltipContent>
+    <div
+      className={cn(
+        "flex items-center gap-2 px-3 py-2 text-ink-mute text-[13px] font-medium",
+        isCollapsed && "justify-center px-1"
       )}
-    </Tooltip>
+    >
+      <Sun className="h-4 w-4 flex-shrink-0" />
+      {!isCollapsed && (
+        <>
+          <span className="flex-1">Modo claro</span>
+          {/* Toggle pill — dark side visually disabled */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="relative w-8 h-[18px] rounded-pill border border-line bg-line cursor-not-allowed"
+                aria-label="Modo oscuro — próximamente"
+                role="img"
+              >
+                {/* thumb locked to left (light side) */}
+                <span className="absolute left-[2px] top-[2px] w-[13px] h-[13px] rounded-full bg-white shadow-sm" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="right">Próximamente</TooltipContent>
+          </Tooltip>
+        </>
+      )}
+    </div>
   );
 }
 
-/** Contenido de navegación reutilizado en sidebar de escritorio y Sheet móvil */
+// ── Sidebar inner content ─────────────────────────────────────────────────────
+
 function SidebarContent({
   isCollapsed,
   onNavClick,
@@ -277,14 +278,18 @@ function SidebarContent({
   const { logout, user } = useAuth();
   const { toggle } = useSidebar();
 
+  const initials = user?.username
+    ? user.username.slice(0, 2).toUpperCase()
+    : "A";
+
   return (
     <div
       className={cn(
-        "relative flex h-full flex-col border-r bg-sidebar transition-all duration-300 ease-in-out",
+        "relative flex h-full flex-col border-r border-line bg-sidebar transition-all duration-300 ease-in-out",
         isCollapsed ? "w-16" : "w-64"
       )}
     >
-      {/* Floating Toggle Button — solo en escritorio */}
+      {/* Floating collapse/expand toggle — desktop only */}
       {!onNavClick && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -292,7 +297,7 @@ function SidebarContent({
               variant="outline"
               size="icon"
               onClick={toggle}
-              className="absolute -right-3 top-20 z-50 h-6 w-6 rounded-full border bg-background shadow-md hover:bg-accent"
+              className="absolute -right-3 top-20 z-50 h-6 w-6 rounded-full border border-line bg-background shadow-md hover:bg-gold-soft"
             >
               {isCollapsed ? (
                 <ChevronRight className="h-3 w-3" />
@@ -307,143 +312,136 @@ function SidebarContent({
         </Tooltip>
       )}
 
-      {/* Logo/Brand */}
-      <div className="flex h-16 items-center border-b px-3">
+      {/* Brand header */}
+      <div className="flex items-center gap-3 px-5 py-5 border-b border-line">
         <Link
           href="/dashboard"
           onClick={onNavClick}
-          className={cn(
-            "flex items-center gap-2 overflow-hidden",
-            isCollapsed && "justify-center"
-          )}
+          className={cn("flex items-center gap-3", isCollapsed && "justify-center")}
         >
-          <Image
-            src="/logo.png"
-            alt="Atrévete Peluquería"
-            width={32}
-            height={32}
-            className="flex-shrink-0 object-contain"
-          />
+          <Logo size={28} />
           {!isCollapsed && (
-            <span className="text-lg font-bold text-sidebar-foreground whitespace-nowrap">
-              Atrévete Peluquería
-            </span>
+            <div className="flex flex-col leading-none">
+              <span className="font-serif text-[20px] text-ink tracking-tight">
+                Atrévete
+              </span>
+              <span className="text-[11px] text-ink-mute tracking-[0.12em] uppercase mt-0.5">
+                Peluquería
+              </span>
+            </div>
           )}
         </Link>
       </div>
 
       {/* Navigation */}
-      <div className="flex-1 overflow-y-auto py-4">
-        <NavSection title="Principal" items={mainNav} isCollapsed={isCollapsed} onNavClick={onNavClick} />
-        <Separator className="my-2" />
-        <NavSection title="Gestión" items={managementNav} isCollapsed={isCollapsed} onNavClick={onNavClick} />
-        <Separator className="my-2" />
-        <NavSection title="Configuración" items={configNav} isCollapsed={isCollapsed} onNavClick={onNavClick} />
-        <Separator className="my-2" />
-        <ExternalLinksSection title="Herramientas" items={externalLinks} isCollapsed={isCollapsed} />
-      </div>
+      <nav className="flex-1 overflow-y-auto py-3 space-y-4">
+        <NavSection
+          title="Principal"
+          items={principalNav}
+          isCollapsed={isCollapsed}
+          onNavClick={onNavClick}
+        />
+        <NavSection
+          title="Gestión"
+          items={gestionNav}
+          isCollapsed={isCollapsed}
+          onNavClick={onNavClick}
+        />
+        <NavSection
+          title="Configuración"
+          items={configNav}
+          isCollapsed={isCollapsed}
+          onNavClick={onNavClick}
+        />
+        <ExternalLinksSection
+          title="Herramientas"
+          items={externalLinks}
+          isCollapsed={isCollapsed}
+        />
+      </nav>
 
-      {/* Tema */}
-      <div className={cn("px-3 py-1 border-t pt-2", isCollapsed && "px-2")}>
-        <ThemeToggle isCollapsed={isCollapsed} />
-      </div>
+      {/* Footer: theme toggle + account row */}
+      <div className="border-t border-line">
+        {/* Theme toggle */}
+        <div className={cn("px-2 pt-2", isCollapsed && "px-1")}>
+          <ThemeToggleLightOnly isCollapsed={isCollapsed} />
+        </div>
 
-      {/* Powered by Zanovix */}
-      <div className={cn("px-3 py-2", isCollapsed && "px-2")}>
-        <a
-          href="https://zanovix.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={cn(
-            "flex items-center text-xs text-muted-foreground hover:text-foreground transition-colors",
-            isCollapsed ? "justify-center" : "justify-center"
-          )}
-        >
+        {/* Account row */}
+        <div className="p-2 pb-3">
           {isCollapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="font-medium">Z</span>
-              </TooltipTrigger>
-              <TooltipContent side="right">Powered by Zanovix</TooltipContent>
-            </Tooltip>
+            <div className="flex flex-col items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gold-soft text-gold-dark text-sm font-bold cursor-default">
+                    {initials}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  {user?.username || "Admin"}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={logout}
+                    className="h-8 w-8 text-ink-mute hover:text-ink"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right">Cerrar sesión</TooltipContent>
+              </Tooltip>
+            </div>
           ) : (
-            <span>
-              Powered by <span className="font-medium hover:underline">Zanovix</span>
-            </span>
+            <div className="flex items-center gap-2.5 rounded-[10px] bg-white border border-line px-2.5 py-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gold-soft text-gold-dark text-[13px] font-bold flex-shrink-0">
+                {initials}
+              </div>
+              <div className="flex-1 min-w-0 leading-tight">
+                <p className="text-[13px] font-semibold text-ink truncate">
+                  {user?.username || "Admin"}
+                </p>
+                <p className="text-[11.5px] text-ink-mute mt-0.5">
+                  Administrador
+                </p>
+              </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={logout}
+                    className="h-8 w-8 text-ink-mute hover:text-ink flex-shrink-0"
+                  >
+                    <LogOut className="h-[15px] w-[15px]" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">Cerrar sesión</TooltipContent>
+              </Tooltip>
+            </div>
           )}
-        </a>
-      </div>
-
-      {/* User section */}
-      <div className="border-t p-2">
-        {isCollapsed ? (
-          <div className="flex flex-col items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-medium cursor-default">
-                  {user?.username?.charAt(0).toUpperCase() || "A"}
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                {user?.username || "Admin"}
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={logout}
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                >
-                  <LogOut className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">Cerrar sesión</TooltipContent>
-            </Tooltip>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3 rounded-lg bg-sidebar-accent p-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-medium flex-shrink-0">
-              {user?.username?.charAt(0).toUpperCase() || "A"}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-sidebar-foreground truncate">
-                {user?.username || "Admin"}
-              </p>
-              <p className="text-xs text-muted-foreground">Administrador</p>
-            </div>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={logout}
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground flex-shrink-0"
-                >
-                  <LogOut className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">Cerrar sesión</TooltipContent>
-            </Tooltip>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );
 }
+
+// ── Public export ─────────────────────────────────────────────────────────────
 
 export function Sidebar() {
   const { isCollapsed, isMobileOpen, closeMobile } = useSidebar();
 
   return (
     <TooltipProvider delayDuration={0}>
-      {/* Sidebar de escritorio — oculto en móvil */}
+      {/* Desktop sidebar — hidden on mobile */}
       <div className="hidden md:block h-full">
         <SidebarContent isCollapsed={isCollapsed} />
       </div>
 
-      {/* Sheet móvil — visible solo en móvil */}
+      {/* Mobile Sheet */}
       <Sheet open={isMobileOpen} onOpenChange={(open) => !open && closeMobile()}>
         <SheetContent side="left" className="p-0 w-64">
           <SheetTitle className="sr-only">Menú de navegación</SheetTitle>
