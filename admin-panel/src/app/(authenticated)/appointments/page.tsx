@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Plus, RefreshCw, CalendarOff } from "lucide-react";
+import { Plus, CalendarOff } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,6 @@ export default function AppointmentsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [appointmentToDelete, setAppointmentToDelete] = useState<string | null>(null);
   const [filters, setFilters] = useState({ stylist_id: "", status: "" });
-  const [syncing, setSyncing] = useState(false);
 
   const stylistMap = Object.fromEntries(stylists.map((s) => [s.id, s.name]));
   const serviceMap = Object.fromEntries(services.map((s) => [s.id, s.name]));
@@ -78,6 +77,13 @@ export default function AppointmentsPage() {
     loadData();
   }, [loadData]);
 
+  // Refresh when the global Sync GCal button completes a sync.
+  useEffect(() => {
+    const handler = () => loadData();
+    window.addEventListener("atrevete:gcal-synced", handler);
+    return () => window.removeEventListener("atrevete:gcal-synced", handler);
+  }, [loadData]);
+
   const handleDelete = async () => {
     if (!appointmentToDelete) return;
     try {
@@ -93,39 +99,16 @@ export default function AppointmentsPage() {
     }
   };
 
-  const handleGcalSync = async () => {
-    setSyncing(true);
-    try {
-      const result = await api.triggerGcalSync();
-      if (result.success) {
-        toast.success(result.message);
-        await loadData();
-      } else {
-        toast.error(result.message);
-      }
-    } catch (error) {
-      toast.error("Error al sincronizar con Google Calendar");
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   return (
     <div className="flex flex-col">
       <Header
         title="Citas"
-        description="Gestión de citas del salón"
-        action={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleGcalSync} disabled={syncing}>
-              <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-              Sync GCal
-            </Button>
-            <Button onClick={() => setCreateModalOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Nueva Cita
-            </Button>
-          </div>
+        subtitle="Gestión de citas del salón"
+        primaryAction={
+          <Button onClick={() => setCreateModalOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Nueva Cita
+          </Button>
         }
       />
 

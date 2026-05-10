@@ -39,6 +39,12 @@ interface DataTableProps<TData, TValue> {
   onPageChange?: (page: number) => void
   currentPage?: number
   serverSidePagination?: boolean
+  /**
+   * Optional row click handler. Cells that need to override the row-level
+   * navigation (e.g. action buttons, links to a different entity) should
+   * call event.stopPropagation() inside their own onClick.
+   */
+  onRowClick?: (row: TData) => void
 }
 
 export function DataTable<TData, TValue>({
@@ -52,6 +58,7 @@ export function DataTable<TData, TValue>({
   onPageChange,
   currentPage = 0,
   serverSidePagination = false,
+  onRowClick,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -183,6 +190,8 @@ export function DataTable<TData, TValue>({
                 <TableRow
                   key={row.id}
                   data-state={row.getIsSelected() && "selected"}
+                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  className={onRowClick ? "cursor-pointer hover:bg-muted/40" : undefined}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>

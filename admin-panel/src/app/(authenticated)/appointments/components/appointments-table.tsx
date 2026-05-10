@@ -56,7 +56,22 @@ export function AppointmentsTable({
         ),
         cell: ({ row }) => {
           const appointment = row.original;
-          return `${appointment.first_name} ${appointment.last_name || ""}`.trim();
+          const fullName = `${appointment.first_name} ${appointment.last_name || ""}`.trim();
+          if (!appointment.customer_id) {
+            return fullName;
+          }
+          return (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                router.push(`/customers/${appointment.customer_id}`);
+              }}
+              className="text-left text-foreground hover:text-gold-dark hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded-sm"
+            >
+              {fullName}
+            </button>
+          );
         },
       },
       {
@@ -133,7 +148,7 @@ export function AppointmentsTable({
         cell: ({ row }) => {
           const appointment = row.original;
           return (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               <Button
                 variant="ghost"
                 size="icon"
@@ -174,6 +189,7 @@ export function AppointmentsTable({
       isLoading={isLoading}
       searchKey="first_name"
       searchPlaceholder="Buscar por nombre..."
+      onRowClick={(appointment) => router.push(`/appointments/${appointment.id}`)}
     />
   );
 }
