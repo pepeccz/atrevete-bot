@@ -19,30 +19,30 @@ depends_on = None
 def upgrade() -> None:
     op.execute("""
         UPDATE customers
-        SET metadata_ =
+        SET metadata =
             jsonb_set(
-                metadata_ #- '{memories,notes}',
+                metadata #- '{memories,notes}',
                 '{memories,agent_notes}',
-                metadata_->'memories'->'notes',
+                metadata->'memories'->'notes',
                 true
             )
-        WHERE metadata_ ? 'memories'
-          AND metadata_->'memories' ? 'notes'
-          AND NOT (metadata_->'memories' ? 'agent_notes');
+        WHERE metadata ? 'memories'
+          AND metadata->'memories' ? 'notes'
+          AND NOT (metadata->'memories' ? 'agent_notes');
     """)
 
 
 def downgrade() -> None:
     op.execute("""
         UPDATE customers
-        SET metadata_ =
+        SET metadata =
             jsonb_set(
-                metadata_ #- '{memories,agent_notes}',
+                metadata #- '{memories,agent_notes}',
                 '{memories,notes}',
-                metadata_->'memories'->'agent_notes',
+                metadata->'memories'->'agent_notes',
                 true
             )
-        WHERE metadata_ ? 'memories'
-          AND metadata_->'memories' ? 'agent_notes'
-          AND NOT (metadata_->'memories' ? 'notes');
+        WHERE metadata ? 'memories'
+          AND metadata->'memories' ? 'agent_notes'
+          AND NOT (metadata->'memories' ? 'notes');
     """)
