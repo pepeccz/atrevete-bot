@@ -198,9 +198,9 @@ def _merge_preferences(
     if not last_visit_date:
         last_visit_date = date.today().isoformat()
 
-    # Notes — new overwrites existing if non-empty
+    # Agent notes — new overwrites existing if non-empty
     new_notes = booking_data.get("notes")
-    notes = new_notes if new_notes else existing.get("notes")
+    agent_notes = new_notes if new_notes else existing.get("agent_notes")
 
     return {
         "preferred_stylist_name": preferred_stylist_name,
@@ -209,7 +209,7 @@ def _merge_preferences(
         "typical_services": typical_services,
         "typical_day_of_week": typical_day,
         "typical_time_of_day": typical_time,
-        "notes": notes,
+        "agent_notes": agent_notes,
         "visit_count": visit_count,
         "last_visit_date": last_visit_date,
         "last_stylist_name": last_stylist_name,

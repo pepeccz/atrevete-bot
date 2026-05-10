@@ -87,7 +87,6 @@ export interface Customer {
   preferred_stylist_id: string | null;
   notes: string | null;
   chatwoot_conversation_id: string | null;
-  metadata: Record<string, unknown>;
   created_at: string;
 }
 
@@ -98,7 +97,7 @@ export interface CustomerMemories {
   typical_services?: string[] | null;
   typical_day_of_week?: string | null;
   typical_time_of_day?: string | null;
-  notes?: string | null;
+  agent_notes?: string | null;
   visit_count?: number | null;
   last_visit_date?: string | null;
   last_stylist_name?: string | null;

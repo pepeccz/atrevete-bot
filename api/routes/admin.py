@@ -691,7 +691,7 @@ class UpdateMemoriesRequest(BaseModel):
     typical_services: list[str] | None = None
     typical_day_of_week: str | None = None
     typical_time_of_day: str | None = None
-    notes: str | None = None
+    agent_notes: str | None = None
     visit_count: int | None = None
     last_visit_date: str | None = None
     last_stylist_name: str | None = None

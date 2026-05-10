@@ -656,11 +656,11 @@ export default function CustomerDetailPage() {
                     <Label htmlFor="mem-notes">Notas del bot</Label>
                     <Textarea
                       id="mem-notes"
-                      value={memories.notes ?? ""}
+                      value={memories.agent_notes ?? ""}
                       onChange={(e) =>
                         setMemories((prev) => ({
                           ...prev,
-                          notes: e.target.value || null,
+                          agent_notes: e.target.value || null,
                         }))
                       }
                       placeholder="Notas aprendidas por el bot..."

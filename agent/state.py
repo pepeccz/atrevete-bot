@@ -33,6 +33,8 @@ class AgentState(TypedDict):
     # T3 — normalize to NotRequired (matches last_summarized_msg_count pattern)
     conversation_summary: NotRequired[str | None]
     last_summarized_msg_count: NotRequired[int | None]
+    # customer_memories — raw dict from read_customer_memories, populated by middleware
+    customer_memories: NotRequired[dict | None]
     # T7 — 6 slot fields, NotRequired[str] (absence encodes "not set")
     _slot_today: NotRequired[str]
     _slot_customer: NotRequired[str]
