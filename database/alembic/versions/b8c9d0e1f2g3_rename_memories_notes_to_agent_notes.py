@@ -10,7 +10,7 @@ for all customers rows. Idempotent. Symmetric downgrade.
 
 from alembic import op
 
-revision: str = "a1b2c3d4e5f6"
+revision: str = "b8c9d0e1f2g3"
 down_revision: str | None = "z6a7b8c9d0e1"
 branch_labels = None
 depends_on = None
