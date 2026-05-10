@@ -270,7 +270,10 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
 
   // Action selection dialog state (drag-select: cita vs bloqueo)
   const [isActionDialogOpen, setIsActionDialogOpen] = useState(false);
-  const [pendingSelectInfo, setPendingSelectInfo] = useState<{ start: Date; end: Date | null } | null>(null);
+  // stylistId is set when the day-view drag-select knows the column;
+  // FC week-view selects don't carry a stylist so it falls back to the
+  // first selected stylist in handleSelectAppointment / handleSelectBlocking.
+  const [pendingSelectInfo, setPendingSelectInfo] = useState<{ start: Date; end: Date | null; stylistId?: string } | null>(null);
 
   // Appointment popover state (CAL-06)
   const [popoverState, setPopoverState] = useState<{
@@ -780,14 +783,14 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
     setSelectedDateForModal(pendingSelectInfo.start);
     setSelectedStartTimeForModal(pendingSelectInfo.start);
     setSelectedEndTimeForModal(pendingSelectInfo.end);
-    setSelectedStylistForAppointmentModal(selectedStylistIds[0]);
+    setSelectedStylistForAppointmentModal(pendingSelectInfo.stylistId ?? selectedStylistIds[0]);
     setIsAppointmentModalOpen(true);
     setPendingSelectInfo(null);
   };
 
   const handleSelectBlocking = () => {
     if (!pendingSelectInfo) return;
-    setSelectedStylistForModal(selectedStylistIds[0]);
+    setSelectedStylistForModal(pendingSelectInfo.stylistId ?? selectedStylistIds[0]);
     setSelectedDateForBlocking(pendingSelectInfo.start);
     setSelectedStartTime(pendingSelectInfo.start);
     setSelectedEndTime(pendingSelectInfo.end);
@@ -1165,7 +1168,7 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
             </div>
           )}
           <CalendarDayView
-            appointments={events.filter(e => e.extendedProps.type === "appointment") as DayViewEvent[]}
+            appointments={events.filter(e => e.extendedProps.type !== "holiday") as DayViewEvent[]}
             stylists={stylists
               .filter(s => activeStylists.has(s.id))
               .map((s, i): DayViewStylist => ({ id: s.id, name: s.name, color: resolveStylistColor(s, i) }))}
@@ -1174,21 +1177,40 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
             gridEndHour={21}
             slotMin={15}
             slotPx={24}
-            onAppointmentClick={(apptId) => {
+            onAppointmentClick={(eventId) => {
               const ev = events.find(
-                e => e.extendedProps.appointment_id === apptId || e.id === apptId
+                e => e.extendedProps.appointment_id === eventId
+                  || e.extendedProps.blocking_event_id === eventId
+                  || e.id === eventId
               );
               if (!ev) return;
+              const props = ev.extendedProps;
+              if (props.type === "blocking_event") {
+                const blockingEventId = (props.blocking_event_id as string) || ev.id;
+                setEditingBlockingEvent({
+                  id: blockingEventId,
+                  title: ev.title,
+                  description: (props.description as string | null) ?? null,
+                  event_type: (props.event_type as string) || "other",
+                  start_time: typeof ev.start === "string" ? ev.start : new Date(ev.start as Date).toISOString(),
+                  end_time: typeof ev.end === "string" ? ev.end : new Date(ev.end as Date).toISOString(),
+                  stylist_id: (props.stylist_id as string) || "",
+                });
+                setBlockingModalMode("edit");
+                setIsBlockingModalOpen(true);
+                return;
+              }
+              // Appointment → existing popover flow
               setPopoverState({
                 open: true,
                 anchorEl: null,
                 data: {
-                  appointmentId: apptId,
-                  customerName: (ev.extendedProps.customer_name as string) || "",
-                  serviceNames: (ev.extendedProps.service_names as string[]) || [],
-                  status: (ev.extendedProps.status as string) || "",
-                  duration: (ev.extendedProps.duration_minutes as number) || 0,
-                  notes: (ev.extendedProps.notes as string | null) || null,
+                  appointmentId: eventId,
+                  customerName: (props.customer_name as string) || "",
+                  serviceNames: (props.service_names as string[]) || [],
+                  status: (props.status as string) || "",
+                  duration: (props.duration_minutes as number) || 0,
+                  notes: (props.notes as string | null) || null,
                   stylistColor: ev.backgroundColor,
                   title: ev.title,
                   start: ev.start ? new Date(ev.start) : null,
@@ -1203,6 +1225,11 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
               setSelectedEndTimeForModal(null);
               setSelectedStylistForAppointmentModal(stylistId);
               setIsAppointmentModalOpen(true);
+            }}
+            onSelect={(stylistId, startISO, endISO) => {
+              if (selectedStylistIds.length === 0) return;
+              setPendingSelectInfo({ start: new Date(startISO), end: new Date(endISO), stylistId });
+              setIsActionDialogOpen(true);
             }}
           />
         </div>

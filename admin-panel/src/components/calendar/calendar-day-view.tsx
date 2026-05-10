@@ -58,6 +58,12 @@ interface CalendarDayViewProps {
   slotPx?: number;
   onAppointmentClick: (id: string) => void;
   onEmptySlotClick: (stylistId: string, datetime: string) => void;
+  /**
+   * Drag-to-select callback. Fires after a meaningful drag (>= one slot).
+   * The parent then opens the action dialog (cita vs bloqueo).
+   * If the user simply clicks (no drag), onEmptySlotClick is fired instead.
+   */
+  onSelect?: (stylistId: string, startISO: string, endISO: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +128,7 @@ export function CalendarDayView({
   slotPx = 24,
   onAppointmentClick,
   onEmptySlotClick,
+  onSelect,
 }: CalendarDayViewProps) {
   const pxPerMin = slotPx / slotMin;
   const gridStartMin = gridStartHour * 60;
@@ -139,36 +146,137 @@ export function CalendarDayView({
 
   const isNowVisible = nowMinute >= gridStartMin && nowMinute <= gridEndMin;
 
-  // Group appointments by stylist
+  // Group events by stylist — includes appointments AND blocking_events
+  // (holidays are filtered out upstream and rendered in FC's all-day row).
   const appointmentsByStylist = useCallback(
     (stylistId: string) =>
       appointments.filter(
         a => a.extendedProps.stylist_id === stylistId
-          && a.extendedProps.type === "appointment"
+          && (a.extendedProps.type === "appointment" || a.extendedProps.type === "blocking_event")
       ),
     [appointments]
   );
 
-  // Handle empty slot click
-  const handleColumnClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>, stylistId: string, columnEl: HTMLDivElement) => {
-      // If click target is an appointment card, ignore (the card handles its own click)
-      if ((e.target as HTMLElement).closest("[data-appt-card]")) return;
+  // ----- Drag-to-select state -----
+  // While the user is dragging within a column, draggingState carries the
+  // pointer-down stylist + the start/current minute offsets so we can render
+  // a ghost overlay and decide on mouseup whether this was a drag or a tap.
+  interface DragState {
+    stylistId: string;
+    startMin: number; // minutes-of-day, snapped
+    currentMin: number; // minutes-of-day, snapped, may be < startMin
+    pointerStartY: number; // raw pointer Y in viewport, for delta math
+  }
+  const [drag, setDrag] = useState<DragState | null>(null);
+  // pendingTap captures the mousedown coordinates so onMouseUp can decide
+  // whether the gesture was a drag or a click (delta < threshold).
+  const pendingTap = useRef<{ stylistId: string; pointerStartY: number; columnEl: HTMLDivElement; startMinUnrounded: number } | null>(null);
 
-      const rect = columnEl.getBoundingClientRect();
-      const clickY = e.clientY - rect.top;
-      const clickedMinutes = gridStartMin + clickY / pxPerMin;
-      const roundedMinutes = Math.round(clickedMinutes / slotMin) * slotMin;
+  // Threshold: a drag must move at least one slot to be considered a "select"
+  const dragThresholdPx = slotPx;
+
+  const yToMinutes = useCallback(
+    (y: number): number => {
+      const minutesFromStart = y / pxPerMin;
+      const absoluteMin = gridStartMin + minutesFromStart;
+      return Math.max(gridStartMin, Math.min(gridEndMin, absoluteMin));
+    },
+    [pxPerMin, gridStartMin, gridEndMin]
+  );
+
+  const snapMinutes = useCallback(
+    (mins: number): number => Math.round(mins / slotMin) * slotMin,
+    [slotMin]
+  );
+
+  const minutesToISO = useCallback(
+    (mins: number): string => {
       const dt = date.set({
-        hour: Math.floor(roundedMinutes / 60),
-        minute: roundedMinutes % 60,
+        hour: Math.floor(mins / 60),
+        minute: mins % 60,
         second: 0,
         millisecond: 0,
       });
-      onEmptySlotClick(stylistId, dt.toISO() ?? "");
+      return dt.toISO() ?? "";
     },
-    [gridStartMin, pxPerMin, slotMin, date, onEmptySlotClick]
+    [date]
   );
+
+  const handleColumnMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>, stylistId: string, columnEl: HTMLDivElement) => {
+      // If pointer down landed on an event card, let the card handle it.
+      if ((e.target as HTMLElement).closest("[data-appt-card]")) return;
+      // Only left button
+      if (e.button !== 0) return;
+
+      const rect = columnEl.getBoundingClientRect();
+      const yLocal = e.clientY - rect.top;
+      const startMinUnrounded = yToMinutes(yLocal);
+      pendingTap.current = {
+        stylistId,
+        pointerStartY: e.clientY,
+        columnEl,
+        startMinUnrounded,
+      };
+      // Don't start drag visualization yet — wait until the pointer has moved
+      // past the threshold so a plain click still feels instant.
+    },
+    [yToMinutes]
+  );
+
+  // Window-level mousemove / mouseup so drags don't get cancelled when the
+  // pointer briefly leaves the column. Always mounted — the handlers no-op
+  // when there is no pendingTap and no active drag.
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const tap = pendingTap.current;
+      if (!tap) return;
+      const dy = e.clientY - tap.pointerStartY;
+      if (!drag && Math.abs(dy) < dragThresholdPx) return;
+      const rect = tap.columnEl.getBoundingClientRect();
+      const yLocal = e.clientY - rect.top;
+      const currentMinRaw = yToMinutes(yLocal);
+      const startSnapped = snapMinutes(tap.startMinUnrounded);
+      const currentSnapped = snapMinutes(currentMinRaw);
+      if (currentSnapped === startSnapped) return; // still inside same slot
+      setDrag({
+        stylistId: tap.stylistId,
+        startMin: startSnapped,
+        currentMin: currentSnapped,
+        pointerStartY: tap.pointerStartY,
+      });
+    };
+    const onUp = (e: MouseEvent) => {
+      const tap = pendingTap.current;
+      pendingTap.current = null;
+      if (drag) {
+        // Emit onSelect with start < end
+        const startMin = Math.min(drag.startMin, drag.currentMin);
+        let endMin = Math.max(drag.startMin, drag.currentMin);
+        // Ensure at least one slot of duration
+        if (endMin - startMin < slotMin) endMin = startMin + slotMin;
+        if (onSelect) {
+          onSelect(drag.stylistId, minutesToISO(startMin), minutesToISO(endMin));
+        }
+        setDrag(null);
+        return;
+      }
+      // No drag → it was a tap. Treat as empty-slot click.
+      if (tap) {
+        const totalDelta = Math.abs(e.clientY - tap.pointerStartY);
+        if (totalDelta < dragThresholdPx) {
+          const snapped = snapMinutes(tap.startMinUnrounded);
+          onEmptySlotClick(tap.stylistId, minutesToISO(snapped));
+        }
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [drag, dragThresholdPx, yToMinutes, snapMinutes, slotMin, onSelect, onEmptySlotClick, minutesToISO]);
 
   // Column ref map for click coordinate calculation
   const columnRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -310,9 +418,9 @@ export function CalendarDayView({
                 }}
                 className="border-r border-line"
                 style={{ height: `${totalGridHeight}px`, position: "relative", cursor: "pointer" } as CSSProperties}
-                onClick={e => {
+                onMouseDown={e => {
                   const colEl = columnRefs.current.get(s.id);
-                  if (colEl) handleColumnClick(e, s.id, colEl);
+                  if (colEl) handleColumnMouseDown(e, s.id, colEl);
                 }}
               >
                 {/* Grid lines */}
@@ -343,6 +451,34 @@ export function CalendarDayView({
                     />
                   );
                 })}
+
+                {/* Drag-to-select ghost overlay (only on the column being dragged) */}
+                {drag && drag.stylistId === s.id && (() => {
+                  const startMin = Math.min(drag.startMin, drag.currentMin);
+                  const endMin = Math.max(drag.startMin, drag.currentMin);
+                  const top = (startMin - gridStartMin) * pxPerMin;
+                  const height = Math.max(slotPx, (endMin - startMin) * pxPerMin);
+                  const dur = endMin - startMin;
+                  return (
+                    <div
+                      className="absolute left-0 right-0 pointer-events-none rounded-[6px]"
+                      style={{
+                        top: `${top}px`,
+                        height: `${height}px`,
+                        backgroundColor: "hsl(var(--gold-soft) / 0.5)",
+                        border: "1px dashed hsl(var(--gold))",
+                        zIndex: 3,
+                      } as CSSProperties}
+                    >
+                      <div className="absolute inset-x-0 top-1 text-center text-[10px] font-semibold text-gold-dark tabular-nums">
+                        {Math.floor(startMin / 60).toString().padStart(2, "0")}:{(startMin % 60).toString().padStart(2, "0")}
+                        {" — "}
+                        {Math.floor(endMin / 60).toString().padStart(2, "0")}:{(endMin % 60).toString().padStart(2, "0")}
+                        {dur > 0 && <span className="ml-1 opacity-70">({dur}m)</span>}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Appointment cards */}
                 {stylistAppts.map(appt => {

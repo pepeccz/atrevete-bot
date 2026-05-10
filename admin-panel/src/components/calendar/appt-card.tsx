@@ -70,10 +70,24 @@ export function ApptCard({
   style,
   onClick,
 }: ApptCardProps) {
+  const isBlocking = extendedProps.type === "blocking_event";
+  const palette = deriveStylistPalette(stylistColor);
+
+  if (isBlocking) {
+    return <BlockingCard
+      extendedProps={extendedProps}
+      palette={palette}
+      start={start}
+      end={end}
+      mode={mode}
+      style={style}
+      onClick={onClick}
+    />;
+  }
+
   const status = extendedProps.status || "pending";
   const isCancelled = status === "cancelled" || status === "no_show";
   const duration = extendedProps.duration_minutes || 0;
-  const palette = deriveStylistPalette(stylistColor);
   const dotColor = STATUS_DOT_COLORS[status] || STATUS_DOT_COLORS.pending;
 
   const showService = mode === "day" || duration >= 60;
@@ -144,5 +158,70 @@ export function ApptCard({
         </div>
       )}
     </div>
+  );
+}
+
+interface BlockingCardProps {
+  extendedProps: CalendarEventExtended;
+  palette: ReturnType<typeof deriveStylistPalette>;
+  start: Date | null;
+  end: Date | null;
+  mode: "week" | "day";
+  style?: CSSProperties;
+  onClick?: () => void;
+}
+
+function BlockingCard({ extendedProps, palette, start, end, mode, style, onClick }: BlockingCardProps) {
+  const label = extendedProps.description || extendedProps.event_type || "Bloqueo";
+  return (
+    <div
+      onClick={onClick}
+      className="overflow-hidden rounded-[8px] h-full w-full cursor-pointer select-none transition-opacity hover:opacity-90"
+      style={{
+        // Diagonal gray hatching — visually distinct from the soft pastel of an appointment.
+        backgroundImage: `repeating-linear-gradient(135deg, hsl(var(--surface-muted)) 0px, hsl(var(--surface-muted)) 6px, hsl(var(--line-soft)) 6px, hsl(var(--line-soft)) 12px)`,
+        borderLeft: `3px dashed ${palette.solid}`,
+        padding: "6px 8px",
+        ...style,
+      }}
+      aria-label={`Bloqueo: ${label}`}
+    >
+      <div
+        className="flex items-center gap-1.5 text-[11px] font-bold tabular-nums uppercase tracking-wide"
+        style={{ color: "hsl(var(--ink-soft))" }}
+      >
+        <BlockIcon />
+        {mode === "day" && start && end ? (
+          <span>{formatTimeRange(start.toISOString(), end.toISOString(), "Europe/Madrid")}</span>
+        ) : (
+          <span>{formatTime(start)}</span>
+        )}
+      </div>
+      <div
+        className="text-[12px] font-semibold leading-tight mt-0.5 truncate"
+        style={{ color: "hsl(var(--ink-soft))" }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function BlockIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className="h-3 w-3 flex-shrink-0"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+    </svg>
   );
 }
