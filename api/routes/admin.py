@@ -34,6 +34,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from api.models.dashboard import DashboardKPIs, TodayAgendaItem, TodayAgendaResponse
+from api.services.dashboard_kpis import (
+    _appointments_count_today,
+    _confirmation_rate_today,
+    _new_customers_last_7d,
+    _occupation_today,
+)
 from database.connection import get_async_session
 from database.models import (
     Appointment,
@@ -596,13 +603,6 @@ class UserResponse(BaseModel):
     role: str = "admin"
 
 
-class DashboardKPIs(BaseModel):
-    appointments_this_month: int
-    total_customers: int
-    avg_appointment_duration: float
-    total_hours_booked: float
-
-
 class StylistResponse(BaseModel):
     id: str
     name: str
@@ -1073,47 +1073,111 @@ class StylistPerformancePoint(BaseModel):
 async def get_dashboard_kpis(
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
-    """Get dashboard KPI metrics."""
+    """Get dashboard KPI metrics (today-scoped, parallelized).
+
+    Returns 4 today-scoped KPIs via asyncio.gather for minimum latency.
+    Legacy monthly-aggregate fields are preserved as None for frontend transition.
+    """
     async with get_async_session() as session:
-        # Get current month start
-        now = datetime.now()
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        now = datetime.now(MADRID_TZ)
+        today = now.date()
 
-        # Appointments this month
-        appointments_query = select(func.count(Appointment.id)).where(
-            Appointment.start_time >= month_start,
-            Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
+        # Parallelize all 4 KPI queries
+        confirmation_rate, appointments_count, occupation_rate, new_customers = (
+            await asyncio.gather(
+                _confirmation_rate_today(session, today),
+                _appointments_count_today(session, today),
+                _occupation_today(session, today),
+                _new_customers_last_7d(session, now),
+            )
         )
-        appointments_result = await session.execute(appointments_query)
-        appointments_this_month = appointments_result.scalar() or 0
-
-        # Total customers
-        customers_query = select(func.count(Customer.id))
-        customers_result = await session.execute(customers_query)
-        total_customers = customers_result.scalar() or 0
-
-        # Average appointment duration
-        avg_duration_query = select(func.avg(Appointment.duration_minutes)).where(
-            Appointment.start_time >= month_start
-        )
-        avg_result = await session.execute(avg_duration_query)
-        avg_duration = avg_result.scalar() or 0
-
-        # Total hours booked this month
-        hours_query = select(func.sum(Appointment.duration_minutes)).where(
-            Appointment.start_time >= month_start,
-            Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
-        )
-        hours_result = await session.execute(hours_query)
-        total_minutes = hours_result.scalar() or 0
-        total_hours = total_minutes / 60
 
         return DashboardKPIs(
-            appointments_this_month=appointments_this_month,
-            total_customers=total_customers,
-            avg_appointment_duration=round(float(avg_duration), 1),
-            total_hours_booked=round(total_hours, 1),
+            confirmation_rate_today=round(float(confirmation_rate), 4),
+            confirmed_today=0,  # internal — not exposed; use confirmation_rate_today
+            total_today=appointments_count,
+            appointments_today=appointments_count,
+            occupation_today=round(float(occupation_rate), 4),
+            booked_minutes_today=0,  # internal detail; not exposed at endpoint level
+            business_minutes_today=0,  # internal detail; not exposed at endpoint level
+            new_customers_this_week=new_customers,
+            # Legacy fields deprecated — None signals removal in next change
+            appointments_this_month=None,
+            total_customers=None,
+            avg_appointment_duration=None,
+            total_hours_booked=None,
         )
+
+
+@router.get("/dashboard/today-agenda", response_model=TodayAgendaResponse)
+async def get_today_agenda(
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """Get today's appointments in chronological order with related data expanded.
+
+    Returns appointments for today (in salon's Europe/Madrid timezone) with
+    customer, stylist, and services eagerly loaded. Limited to 200 rows
+    (a salon won't book more than that in a single day).
+    """
+    async with get_async_session() as session:
+        now = datetime.now(MADRID_TZ)
+        today = now.date()
+
+        query = (
+            select(Appointment)
+            .options(
+                selectinload(Appointment.customer),
+                selectinload(Appointment.stylist),
+            )
+            .where(func.date(Appointment.start_time) == today)
+            .order_by(Appointment.start_time.asc())
+            .limit(200)
+        )
+
+        result = await session.execute(query)
+        appointments = result.scalars().unique().all()
+
+        # Build service names for each appointment by querying Service table
+        # Appointment.service_ids is a list of UUIDs — we resolve names inline
+        from database.models import Service as ServiceModel
+
+        agenda_items: list[TodayAgendaItem] = []
+        for appt in appointments:
+            # Resolve service names from service_ids
+            service_names: list[dict] = []
+            if appt.service_ids:
+                svc_query = select(ServiceModel).where(ServiceModel.id.in_(appt.service_ids))
+                svc_result = await session.execute(svc_query)
+                services = svc_result.scalars().all()
+                service_names = [{"id": str(svc.id), "name": svc.name} for svc in services]
+
+            customer_name = appt.first_name
+            if appt.last_name:
+                customer_name = f"{appt.first_name} {appt.last_name}"
+
+            agenda_items.append(
+                TodayAgendaItem(
+                    id=str(appt.id),
+                    start_time=appt.start_time,
+                    duration_minutes=appt.duration_minutes,
+                    status=appt.status.value if hasattr(appt.status, "value") else str(appt.status),
+                    customer_name=customer_name,
+                    stylist_name=appt.stylist.name if appt.stylist else "",
+                    stylist_color=appt.stylist.color if appt.stylist else None,
+                    customer={
+                        "id": str(appt.customer_id),
+                        "name": customer_name,
+                    },
+                    stylist={
+                        "id": str(appt.stylist_id),
+                        "name": appt.stylist.name if appt.stylist else "",
+                        "color": appt.stylist.color if appt.stylist else None,
+                    },
+                    services=service_names,
+                )
+            )
+
+        return TodayAgendaResponse(date=today, appointments=agenda_items)
 
 
 @router.get("/dashboard/charts/appointments-trend")
@@ -2579,12 +2643,14 @@ async def get_pending_actions(
                     "first_name": appt.first_name
                     or (appt.customer.first_name if appt.customer else "Cliente"),
                     "last_name": appt.last_name,
-                    "stylist": {
-                        "id": str(appt.stylist.id),
-                        "name": appt.stylist.name,
-                    }
-                    if appt.stylist
-                    else None,
+                    "stylist": (
+                        {
+                            "id": str(appt.stylist.id),
+                            "name": appt.stylist.name,
+                        }
+                        if appt.stylist
+                        else None
+                    ),
                     "services": [{"id": str(s.id), "name": s.name} for s in services],
                 }
             )
@@ -4862,10 +4928,7 @@ async def list_conversations(
             db_rows: list[ConversationHistory] = list(count_result.scalars().all())
             db_conv_ids = {row.conversation_id for row in db_rows}
 
-            db_items = [
-                _resolve_conversation_list_item(row)
-                for row in db_rows
-            ]
+            db_items = [_resolve_conversation_list_item(row) for row in db_rows]
 
             # --- Source 2: Active Redis conversations (not yet in DB) ---
             redis_items = []
