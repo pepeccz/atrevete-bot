@@ -5319,7 +5319,7 @@ async def global_search(
             )
 
         # Search Appointments (recent 90 days)
-        ninety_days_ago = datetime.utcnow() - timedelta(days=90)
+        ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
         appointments_query = (
             select(Appointment)
             .where(
@@ -5500,7 +5500,7 @@ async def mark_notification_read(
             raise HTTPException(status_code=404, detail="Notification not found")
 
         notification.is_read = True
-        notification.read_at = datetime.utcnow()
+        notification.read_at = datetime.now(timezone.utc)
         await session.commit()
 
         return {"success": True}
@@ -5517,7 +5517,7 @@ async def mark_all_notifications_read(
         await session.execute(
             update(Notification)
             .where(Notification.is_read == False)
-            .values(is_read=True, read_at=datetime.utcnow())
+            .values(is_read=True, read_at=datetime.now(timezone.utc))
         )
         await session.commit()
 
@@ -5692,7 +5692,7 @@ async def get_notification_stats(
             by_category[category_name] = count
 
         # Trend data (last N days)
-        start_date = datetime.utcnow() - timedelta(days=days)
+        start_date = datetime.now(timezone.utc) - timedelta(days=days)
         trend_query = (
             select(
                 cast(Notification.created_at, Date).label("date"),
@@ -5746,7 +5746,7 @@ async def toggle_notification_star(
             raise HTTPException(status_code=404, detail="Notification not found")
 
         notification.is_starred = not notification.is_starred
-        notification.starred_at = datetime.utcnow() if notification.is_starred else None
+        notification.starred_at = datetime.now(timezone.utc) if notification.is_starred else None
         await session.commit()
 
         return {
@@ -5935,7 +5935,7 @@ async def export_notifications(
             iter([output.getvalue()]),
             media_type="text/csv",
             headers={
-                "Content-Disposition": f"attachment; filename=notificaciones_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+                "Content-Disposition": f"attachment; filename=notificaciones_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
             },
         )
 

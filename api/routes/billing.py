@@ -8,7 +8,7 @@ All endpoints except the Stripe webhook are protected by admin authentication.
 import asyncio
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -420,7 +420,7 @@ async def stripe_webhook(request: Request) -> dict:
                     invoice.invoice_pdf_url = getattr(event_data, "invoice_pdf", None)
                     if invoice.status == InvoiceStatus.DRAFT:
                         invoice.status = InvoiceStatus.ISSUED
-                        invoice.issued_at = datetime.utcnow()
+                        invoice.issued_at = datetime.now(timezone.utc)
                     await session.commit()
                     logger.info(f"Invoice {invoice.invoice_number} finalized, PDF URL stored")
                 else:
@@ -435,7 +435,7 @@ async def stripe_webhook(request: Request) -> dict:
                 invoice = result.scalar_one_or_none()
                 if invoice and invoice.status != InvoiceStatus.PAID:
                     invoice.status = InvoiceStatus.PAID
-                    invoice.paid_at = datetime.utcnow()
+                    invoice.paid_at = datetime.now(timezone.utc)
                     invoice.invoice_pdf_url = getattr(event_data, "invoice_pdf", None)
 
                     # Update Payment row if exists
@@ -502,7 +502,7 @@ async def stripe_webhook(request: Request) -> dict:
                         invoice = invoice_result.scalar_one_or_none()
                         if invoice:
                             invoice.status = InvoiceStatus.PAID
-                            invoice.paid_at = datetime.utcnow()
+                            invoice.paid_at = datetime.now(timezone.utc)
                             logger.info(
                                 f"Invoice {invoice.invoice_number} marked PAID via webhook"
                             )

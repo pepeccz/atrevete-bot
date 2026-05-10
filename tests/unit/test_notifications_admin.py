@@ -20,7 +20,7 @@ Coverage:
 - CSV export format
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -305,7 +305,7 @@ class TestStarToggleLogic:
     def test_toggle_star_on(self):
         """Verify toggling star sets is_starred=True and starred_at."""
         is_starred = False
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Toggle logic
         new_is_starred = not is_starred
@@ -317,7 +317,7 @@ class TestStarToggleLogic:
     def test_toggle_star_off(self):
         """Verify toggling star clears is_starred and starred_at."""
         is_starred = True
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Toggle logic
         new_is_starred = not is_starred
@@ -338,7 +338,7 @@ class TestReadToggleLogic:
     def test_mark_as_read_sets_timestamp(self):
         """Verify marking as read sets read_at timestamp."""
         is_read = False
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Mark read logic
         new_is_read = True
@@ -350,7 +350,7 @@ class TestReadToggleLogic:
     def test_mark_as_unread_clears_timestamp(self):
         """Verify marking as unread clears read_at timestamp."""
         is_read = True
-        read_at = datetime.utcnow()
+        read_at = datetime.now(timezone.utc)
 
         # Mark unread logic
         new_is_read = False

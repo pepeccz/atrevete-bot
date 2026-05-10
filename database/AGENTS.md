@@ -98,21 +98,35 @@ class MyModel(Base):
 
 ### Timezone-Aware Timestamps
 
+Canonical pattern — ALL models MUST use this. Both `server_default` (DB-side safety net for
+raw SQL inserts) and `default` (Python-side, populates the attribute immediately on `Model()`
+before any DB flush) are required. ADR-1 through ADR-5 from `datetime-tz-aware-uniform` govern
+this choice — never use `datetime.utcnow` (deprecated in Python 3.12, returns tz-naive).
+
 ```python
-from datetime import datetime
-from sqlalchemy import TIMESTAMP
+from datetime import datetime, timezone
+from sqlalchemy import TIMESTAMP, func
 
 class MyModel(Base):
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        server_default=func.now(),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
 ```
+
+Special cases:
+- Nullable timestamps with no defaults (e.g. `read_at`, `starred_at`): keep `nullable=True`, no `default`/`server_default` — absence is meaningful state.
+- Explicit-write timestamps (e.g. `issued_at`, `paid_at`): no `default`/`server_default`; set to `datetime.now(timezone.utc)` in the handler.
+- Pattern A migration: run `b2c3d4e5f6g7_datetime_tz_aware_uniform.py` to add `DEFAULT now()` at the DB level for tables created before this standard was enforced.
 
 ### Enums with Values
 

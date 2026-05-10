@@ -1,7 +1,7 @@
 """Core billing service — invoice generation, voiding, estimates, and overdue checks."""
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 
@@ -59,7 +59,7 @@ class BillingService:
         - Email failure → silent (log only)
         """
         settings = get_settings()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # 1. Validate period — reject future months
         if year > now.year or (year == now.year and month > now.month):
@@ -128,7 +128,7 @@ class BillingService:
         invoice_number = await self._next_invoice_number(session, year, month)
 
         # Due date: 30 days from issue
-        issued_at = datetime.utcnow()
+        issued_at = datetime.now(timezone.utc)
         due_date = (issued_at + timedelta(days=30)).date()
 
         # 6. Create Invoice DB row (draft)
@@ -320,7 +320,7 @@ class BillingService:
     async def get_current_estimate(self, session: AsyncSession) -> dict:
         """Get current month's running total estimate."""
         settings = get_settings()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         year, month = now.year, now.month
 
         # Query current month token usage
