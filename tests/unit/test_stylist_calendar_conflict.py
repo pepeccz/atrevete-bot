@@ -16,7 +16,7 @@ Coverage:
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4, UUID
 
@@ -258,8 +258,8 @@ class TestUpdateStylistConflictValidation:
         mock_stylist.category = ServiceCategory.HAIRDRESSING
         mock_stylist.is_active = True
         mock_stylist.color = None
-        mock_stylist.created_at = datetime.utcnow()
-        mock_stylist.updated_at = datetime.utcnow()
+        mock_stylist.created_at = datetime.now(timezone.utc)
+        mock_stylist.updated_at = datetime.now(timezone.utc)
 
         with patch("api.routes.admin.get_async_session") as mock_session_factory:
             mock_session = AsyncMock()
