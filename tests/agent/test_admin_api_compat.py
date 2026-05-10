@@ -2,21 +2,12 @@
 
 These tests verify that the module symbols referenced inside lazy-import blocks
 in api/routes/admin.py and api/routes/system.py are importable after Phase 7.
+
+Phase 1 (agent-tools-shared-extraction): dead endpoint and its shim module
+removed. The two availability shim tests were deleted along with the dead code.
 """
 
 import importlib
-
-
-def test_availability_tools_importable():
-    """agent.tools.availability_tools must be importable."""
-    mod = importlib.import_module("agent.tools.availability_tools")
-    assert mod is not None
-
-
-def test_availability_tools_exposes_check_availability():
-    """check_availability symbol must be exported from availability_tools."""
-    mod = importlib.import_module("agent.tools.availability_tools")
-    assert hasattr(mod, "check_availability"), "check_availability not found in availability_tools"
 
 
 def test_calendar_tools_importable():
