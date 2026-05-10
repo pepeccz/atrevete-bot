@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { deriveStylistPalette } from "@/lib/stylist-colors";
+import { formatTimeRange } from "@/lib/calendar-time";
 
 export interface CalendarEventExtended {
   appointment_id?: string;
@@ -93,7 +94,7 @@ export function ApptCard({
         ...style,
       }}
     >
-      {/* Line 1: status dot · time · duration */}
+      {/* Line 1: status dot · time (range in day mode, single in week) · duration */}
       <div
         className="flex items-center gap-1.5 text-[11px] font-bold tabular-nums"
         style={{ color: palette.text }}
@@ -102,11 +103,17 @@ export function ApptCard({
           className="w-1.5 h-1.5 rounded-full flex-shrink-0"
           style={{ backgroundColor: dotColor }}
         />
-        <span>{formatTime(start)}</span>
-        {duration > 0 && (
-          <span className="ml-auto text-[10px] font-medium opacity-70">
-            {formatDuration(duration)}
-          </span>
+        {mode === "day" && start && end ? (
+          <span>{formatTimeRange(start.toISOString(), end.toISOString(), "Europe/Madrid")}</span>
+        ) : (
+          <>
+            <span>{formatTime(start)}</span>
+            {duration > 0 && (
+              <span className="ml-auto text-[10px] font-medium opacity-70">
+                {formatDuration(duration)}
+              </span>
+            )}
+          </>
         )}
       </div>
 
