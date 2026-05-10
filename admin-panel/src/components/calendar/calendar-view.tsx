@@ -1365,10 +1365,14 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
           }}
           eventContent={(arg) => {
             const props = arg.event.extendedProps;
-            if (props.type !== "appointment") {
-              // Non-appointment events (holidays, blocking events) use default FC rendering
+            // Holidays use default FC rendering (all-day strip with festive badge).
+            if (props.type === "holiday") {
               return undefined;
             }
+            // Appointments AND blocking events both render via ApptCard, which
+            // internally dispatches to BlockingCard when type === "blocking_event".
+            // This guarantees minimum visible info (icon + time + label) instead
+            // of an empty colored rectangle.
             return (
               <ApptCard
                 extendedProps={props as Parameters<typeof ApptCard>[0]["extendedProps"]}
