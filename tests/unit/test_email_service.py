@@ -250,3 +250,68 @@ class TestSendInvoiceEmail:
                 )
 
         assert result is False
+
+
+# =============================================================================
+# T9-email — None pdf_path guard (TDD RED → T1 implementation makes GREEN)
+# =============================================================================
+
+
+class TestSendInvoiceEmailNonePdfPath:
+    """Tests covering the pdf_path=None guard introduced in billing-wip-completion."""
+
+    async def test_send_invoice_email_accepts_none_pdf_path(self):
+        """
+        GIVEN SMTP is not configured (safe path — avoids real SMTP)
+        AND pdf_path=None
+        WHEN send_invoice_email is called
+        THEN no TypeError (Path(None)) is raised
+        AND the call returns False (SMTP unconfigured)
+        """
+        with patch(
+            "shared.email_service.get_settings",
+            return_value=_make_settings(smtp_host=""),  # not configured
+        ):
+            service = EmailService()
+            # Must NOT raise — pre-fix would crash with TypeError: argument should be str
+            result = await service.send_invoice_email(
+                to="owner@salon.es",
+                invoice_number="ATR-2026-03-001",
+                period_label="Marzo 2026",
+                total_eur=Decimal("100.00"),
+                pdf_path=None,
+            )
+
+        # SMTP not configured → returns False (not a crash)
+        assert result is False
+
+    async def test_send_invoice_email_none_path_still_sends_with_smtp_configured(self):
+        """
+        GIVEN SMTP is configured
+        AND pdf_path=None
+        WHEN send_invoice_email is called
+        THEN email is sent without a PDF attachment (no crash)
+        AND method returns True
+        """
+        settings = _make_settings(smtp_host="smtp.example.com", smtp_user="user@example.com")
+        settings.SMTP_FROM = ""
+
+        mock_smtp_instance = MagicMock()
+        mock_smtp_class = MagicMock()
+        mock_smtp_class.return_value.__enter__ = MagicMock(return_value=mock_smtp_instance)
+        mock_smtp_class.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("shared.email_service.get_settings", return_value=settings):
+            with patch("smtplib.SMTP", mock_smtp_class):
+                service = EmailService()
+                result = await service.send_invoice_email(
+                    to="owner@salon.es",
+                    invoice_number="ATR-2026-03-001",
+                    period_label="Marzo 2026",
+                    total_eur=Decimal("100.00"),
+                    pdf_path=None,  # <— the fix
+                )
+
+        assert result is True
+        # Email was sent even without an attachment
+        mock_smtp_instance.send_message.assert_called_once()

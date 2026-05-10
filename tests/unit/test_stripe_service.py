@@ -181,110 +181,6 @@ class TestIsConfigured:
 
 
 # ---------------------------------------------------------------------------
-# Tests — create_sepa_charge
-# ---------------------------------------------------------------------------
-
-
-class TestCreateSepaCharge:
-    """create_sepa_charge creates a PaymentIntent with correct params."""
-
-    async def test_create_sepa_charge_correct_params(self):
-        """PaymentIntent.create is called with the right amount, currency, and metadata."""
-        stripe_stub = _make_stripe_stub()
-        created_params = {}
-
-        def capture_create(**kwargs):
-            created_params.update(kwargs)
-            pi = SimpleNamespace()
-            pi.id = "pi_test_123"
-            pi.status = "processing"
-            return pi
-
-        stripe_stub.PaymentIntent.create = capture_create
-
-        with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
-            from importlib import reload
-            import api.services.stripe_service as stripe_mod
-
-            reload(stripe_mod)
-            svc = _build_stripe_service()
-
-            result = await svc.create_sepa_charge(
-                amount_cents=5045,
-                customer_id="cus_abc123",
-                payment_method_id="pm_sepa_456",
-                invoice_number="ATR-2026-03-001",
-            )
-
-        assert created_params["amount"] == 5045
-        assert created_params["currency"] == "eur"
-        assert created_params["customer"] == "cus_abc123"
-        assert created_params["payment_method"] == "pm_sepa_456"
-        assert created_params["confirm"] is True
-        assert created_params["metadata"]["invoice_number"] == "ATR-2026-03-001"
-
-    async def test_create_sepa_charge_idempotency_key(self):
-        """Idempotency key follows the invoice_{invoice_number} format."""
-        stripe_stub = _make_stripe_stub()
-        captured_idempotency_key = {}
-
-        def capture_create(**kwargs):
-            captured_idempotency_key["key"] = kwargs.get("idempotency_key")
-            pi = SimpleNamespace()
-            pi.id = "pi_idem_123"
-            pi.status = "processing"
-            return pi
-
-        stripe_stub.PaymentIntent.create = capture_create
-
-        with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
-            from importlib import reload
-            import api.services.stripe_service as stripe_mod
-
-            reload(stripe_mod)
-            svc = _build_stripe_service()
-
-            await svc.create_sepa_charge(
-                amount_cents=5000,
-                customer_id="cus_test",
-                payment_method_id="pm_test",
-                invoice_number="ATR-2026-03-001",
-            )
-
-        assert captured_idempotency_key["key"] == "invoice_ATR-2026-03-001"
-
-    async def test_create_sepa_charge_sepa_debit_payment_type(self):
-        """payment_method_types includes sepa_debit."""
-        stripe_stub = _make_stripe_stub()
-        created_params = {}
-
-        def capture_create(**kwargs):
-            created_params.update(kwargs)
-            pi = SimpleNamespace()
-            pi.id = "pi_sepa_123"
-            pi.status = "processing"
-            return pi
-
-        stripe_stub.PaymentIntent.create = capture_create
-
-        with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
-            from importlib import reload
-            import api.services.stripe_service as stripe_mod
-
-            reload(stripe_mod)
-            svc = _build_stripe_service()
-
-            await svc.create_sepa_charge(
-                amount_cents=1000,
-                customer_id="cus_x",
-                payment_method_id="pm_x",
-                invoice_number="ATR-2026-01-001",
-            )
-
-        assert "sepa_debit" in created_params["payment_method_types"]
-
-
-# ---------------------------------------------------------------------------
 # Tests — verify_webhook
 # ---------------------------------------------------------------------------
 
@@ -337,114 +233,6 @@ class TestVerifyWebhook:
                 svc = _build_stripe_service(settings)
                 with pytest.raises(stripe_stub.error.SignatureVerificationError):
                     svc.verify_webhook(payload=b"bad", sig_header="wrong")
-
-
-# ---------------------------------------------------------------------------
-# Tests — cancel_payment_intent
-# ---------------------------------------------------------------------------
-
-
-class TestCancelPaymentIntent:
-    """cancel_payment_intent cancels PIs in cancellable states."""
-
-    async def test_cancel_payment_intent_cancellable(self):
-        """PI in 'processing' state is cancelled — returns True."""
-        stripe_stub = _make_stripe_stub()
-
-        def retrieve_processing(pi_id):
-            return SimpleNamespace(id=pi_id, status="processing")
-
-        cancelled = {}
-
-        def cancel_pi(pi_id):
-            cancelled["id"] = pi_id
-            return SimpleNamespace(id=pi_id, status="canceled")
-
-        stripe_stub.PaymentIntent.retrieve = retrieve_processing
-        stripe_stub.PaymentIntent.cancel = cancel_pi
-
-        with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
-            from importlib import reload
-            import api.services.stripe_service as stripe_mod
-
-            reload(stripe_mod)
-            svc = _build_stripe_service()
-            result = await svc.cancel_payment_intent("pi_processing_123")
-
-        assert result is True
-        assert cancelled["id"] == "pi_processing_123"
-
-    async def test_cancel_payment_intent_terminal_state(self):
-        """PI in 'succeeded' terminal state cannot be cancelled — returns False."""
-        stripe_stub = _make_stripe_stub()
-
-        def retrieve_succeeded(pi_id):
-            return SimpleNamespace(id=pi_id, status="succeeded")
-
-        cancel_called = []
-
-        def cancel_pi(pi_id):
-            cancel_called.append(pi_id)
-            return SimpleNamespace(id=pi_id, status="succeeded")
-
-        stripe_stub.PaymentIntent.retrieve = retrieve_succeeded
-        stripe_stub.PaymentIntent.cancel = cancel_pi
-
-        with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
-            from importlib import reload
-            import api.services.stripe_service as stripe_mod
-
-            reload(stripe_mod)
-            svc = _build_stripe_service()
-            result = await svc.cancel_payment_intent("pi_succeeded_123")
-
-        assert result is False
-        assert cancel_called == []  # cancel was never called
-
-    async def test_cancel_payment_intent_stripe_error_returns_false(self):
-        """StripeError during cancellation is caught — returns False."""
-        stripe_stub = _make_stripe_stub()
-
-        def retrieve_raises(pi_id):
-            raise stripe_stub.error.StripeError("Network error")
-
-        stripe_stub.PaymentIntent.retrieve = retrieve_raises
-
-        with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
-            from importlib import reload
-            import api.services.stripe_service as stripe_mod
-
-            reload(stripe_mod)
-            svc = _build_stripe_service()
-            result = await svc.cancel_payment_intent("pi_error_123")
-
-        assert result is False
-
-    async def test_cancel_payment_intent_requires_confirmation_state(self):
-        """PI in 'requires_confirmation' is also cancellable."""
-        stripe_stub = _make_stripe_stub()
-
-        def retrieve_req_confirm(pi_id):
-            return SimpleNamespace(id=pi_id, status="requires_confirmation")
-
-        cancelled = {}
-
-        def cancel_pi(pi_id):
-            cancelled["id"] = pi_id
-            return SimpleNamespace(id=pi_id, status="canceled")
-
-        stripe_stub.PaymentIntent.retrieve = retrieve_req_confirm
-        stripe_stub.PaymentIntent.cancel = cancel_pi
-
-        with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
-            from importlib import reload
-            import api.services.stripe_service as stripe_mod
-
-            reload(stripe_mod)
-            svc = _build_stripe_service()
-            result = await svc.cancel_payment_intent("pi_req_confirm_123")
-
-        assert result is True
 
 
 # ---------------------------------------------------------------------------
@@ -591,3 +379,173 @@ class TestGetAndSetSetting:
         # No new add — existing was mutated
         session.add.assert_not_called()
         assert existing.value == {"value": "cus_new"}
+
+
+# ---------------------------------------------------------------------------
+# T11 — Tests: Bug 3 get_sepa_status real mandate status (TDD RED → T4 GREEN)
+# ---------------------------------------------------------------------------
+
+
+def _make_stripe_stub_with_mandate():
+    """Extended stripe stub that includes Mandate.retrieve support."""
+    stub = _make_stripe_stub()
+
+    class _Mandate:
+        @staticmethod
+        def retrieve(mandate_id):
+            return SimpleNamespace(status="active")
+
+    stub.Mandate = _Mandate
+    return stub
+
+
+class TestGetSepaStatusMandateStatus:
+    """
+    Bug 3: get_sepa_status must query stripe.Mandate.retrieve and return
+    the real mandate status via SepaMandateStatus enum mapping.
+    """
+
+    async def _run_get_sepa_status_with(self, pm_stub, mandate_retrieve_fn=None, stripe_err=None):
+        """
+        Helper: wires up session + stripe stub, calls get_sepa_status,
+        returns the result dict.
+        """
+        from importlib import reload
+        import api.services.stripe_service as stripe_mod
+
+        stub = _make_stripe_stub_with_mandate()
+
+        customer_setting = _make_system_setting("stripe_customer_id", "cus_abc123")
+        pm_setting = _make_system_setting("stripe_payment_method_id", "pm_sepa_456")
+        last4_setting = _make_system_setting("stripe_payment_method_last4", "1234")
+
+        session = _make_async_session()
+        session.execute.side_effect = [
+            _scalar_result(customer_setting),
+            _scalar_result(pm_setting),
+            _scalar_result(last4_setting),
+        ]
+
+        stub.PaymentMethod.retrieve = MagicMock(return_value=pm_stub)
+
+        if stripe_err:
+            stub.Mandate.retrieve = MagicMock(side_effect=stripe_err)
+        elif mandate_retrieve_fn:
+            stub.Mandate.retrieve = mandate_retrieve_fn
+
+        with patch.dict("sys.modules", {"stripe": stub, "stripe.error": stub.error}):
+            reload(stripe_mod)
+            svc = _build_stripe_service(_make_settings(stripe_key="sk_test_real"))
+            return await svc.get_sepa_status(session)
+
+    async def test_get_sepa_status_returns_active_mandate(self):
+        """
+        GIVEN Stripe PM has a mandate with status='active'
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'active'
+        """
+        mandate_id = "mandate_abc123"
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="1234", mandate=mandate_id)
+        )
+        retrieve_fn = MagicMock(return_value=SimpleNamespace(status="active"))
+
+        result = await self._run_get_sepa_status_with(pm, mandate_retrieve_fn=retrieve_fn)
+
+        assert result["sepa_mandate_status"] == "active", (
+            f"Expected 'active', got {result['sepa_mandate_status']!r}"
+        )
+
+    async def test_get_sepa_status_returns_inactive_mandate(self):
+        """
+        GIVEN Stripe PM has a mandate with status='inactive'
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'inactive'
+        """
+        mandate_id = "mandate_inactive_456"
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="5678", mandate=mandate_id)
+        )
+        retrieve_fn = MagicMock(return_value=SimpleNamespace(status="inactive"))
+
+        result = await self._run_get_sepa_status_with(pm, mandate_retrieve_fn=retrieve_fn)
+
+        assert result["sepa_mandate_status"] == "inactive", (
+            f"Expected 'inactive', got {result['sepa_mandate_status']!r}"
+        )
+
+    async def test_get_sepa_status_returns_requires_action_for_pending(self):
+        """
+        GIVEN Stripe PM has a mandate with status='pending'
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'requires_action'
+        (Stripe 'pending' maps to our REQUIRES_ACTION bucket)
+        """
+        mandate_id = "mandate_pending_789"
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="9012", mandate=mandate_id)
+        )
+        retrieve_fn = MagicMock(return_value=SimpleNamespace(status="pending"))
+
+        result = await self._run_get_sepa_status_with(pm, mandate_retrieve_fn=retrieve_fn)
+
+        assert result["sepa_mandate_status"] == "requires_action", (
+            f"Expected 'requires_action', got {result['sepa_mandate_status']!r}"
+        )
+
+    async def test_get_sepa_status_returns_unknown_on_stripe_error(self):
+        """
+        GIVEN Stripe.Mandate.retrieve raises StripeError
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'unknown'
+        AND no exception propagates
+        """
+        from importlib import reload
+        import api.services.stripe_service as stripe_mod
+
+        stub = _make_stripe_stub_with_mandate()
+
+        mandate_id = "mandate_err_000"
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="3456", mandate=mandate_id)
+        )
+        stub.PaymentMethod.retrieve = MagicMock(return_value=pm)
+        stub.Mandate.retrieve = MagicMock(side_effect=stub.error.StripeError("Network error"))
+
+        customer_setting = _make_system_setting("stripe_customer_id", "cus_abc")
+        pm_setting = _make_system_setting("stripe_payment_method_id", "pm_sepa")
+        last4_setting = _make_system_setting("stripe_payment_method_last4", "3456")
+
+        session = _make_async_session()
+        session.execute.side_effect = [
+            _scalar_result(customer_setting),
+            _scalar_result(pm_setting),
+            _scalar_result(last4_setting),
+        ]
+
+        with patch.dict("sys.modules", {"stripe": stub, "stripe.error": stub.error}):
+            reload(stripe_mod)
+            svc = _build_stripe_service(_make_settings(stripe_key="sk_test_real"))
+            # Must NOT raise
+            result = await svc.get_sepa_status(session)
+
+        assert result["sepa_mandate_status"] == "unknown", (
+            f"Expected 'unknown', got {result['sepa_mandate_status']!r}"
+        )
+
+    async def test_get_sepa_status_returns_unknown_when_no_mandate_id(self):
+        """
+        GIVEN Stripe PM has sepa_debit but mandate attribute is None
+        WHEN get_sepa_status is called
+        THEN sepa_mandate_status == 'unknown'
+        (mandate not yet created by Stripe)
+        """
+        pm = SimpleNamespace(
+            sepa_debit=SimpleNamespace(last4="7890", mandate=None)
+        )
+
+        result = await self._run_get_sepa_status_with(pm)
+
+        assert result["sepa_mandate_status"] == "unknown", (
+            f"Expected 'unknown', got {result['sepa_mandate_status']!r}"
+        )

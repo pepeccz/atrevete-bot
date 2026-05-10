@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from enum import Enum
 from uuid import uuid4
 
 import stripe
@@ -12,6 +13,23 @@ from database.models import SystemSetting
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class SepaMandateStatus(str, Enum):
+    """SEPA Direct Debit mandate state — surfaces to admin UI via /api/billing/stripe/status."""
+
+    ACTIVE = "active"                  # Mandate is valid, charges can succeed
+    INACTIVE = "inactive"              # Mandate revoked or expired
+    REQUIRES_ACTION = "requires_action"  # User intervention needed (maps from Stripe 'pending')
+    UNKNOWN = "unknown"                # Stripe call failed or status indeterminate
+
+
+# Stripe mandate.status → SepaMandateStatus mapping
+_STRIPE_MANDATE_STATUS_MAP: dict[str, SepaMandateStatus] = {
+    "active": SepaMandateStatus.ACTIVE,
+    "inactive": SepaMandateStatus.INACTIVE,
+    "pending": SepaMandateStatus.REQUIRES_ACTION,
+}
 
 
 class StripeService:
@@ -115,62 +133,6 @@ class StripeService:
 
         await session.commit()
         logger.info(f"SEPA mandate configured: customer={customer_id}, PM=...{last4}")
-
-    # DEPRECATED: remove after 30-day transition to Stripe Invoicing
-    async def create_sepa_charge(
-        self,
-        amount_cents: int,
-        customer_id: str,
-        payment_method_id: str,
-        invoice_number: str,
-    ) -> stripe.PaymentIntent:
-        """
-        Create and confirm a SEPA PaymentIntent.
-
-        Idempotency key: invoice_{invoice_number} (prevents double-charge).
-        """
-        loop = asyncio.get_event_loop()
-
-        return await loop.run_in_executor(
-            None,
-            lambda: stripe.PaymentIntent.create(
-                amount=amount_cents,
-                currency="eur",
-                customer=customer_id,
-                payment_method=payment_method_id,
-                payment_method_types=["sepa_debit"],
-                confirm=True,
-                off_session=True,
-                idempotency_key=f"invoice_{invoice_number}",
-                metadata={"invoice_number": invoice_number},
-            ),
-        )
-
-    # DEPRECATED: remove after 30-day transition to Stripe Invoicing
-    async def cancel_payment_intent(self, payment_intent_id: str) -> bool:
-        """Cancel a PaymentIntent if it's in a cancellable state. Returns True if cancelled."""
-        loop = asyncio.get_event_loop()
-        try:
-            pi = await loop.run_in_executor(
-                None,
-                lambda: stripe.PaymentIntent.retrieve(payment_intent_id),
-            )
-            if pi.status in ("requires_payment_method", "requires_confirmation", "processing"):
-                await loop.run_in_executor(
-                    None,
-                    lambda: stripe.PaymentIntent.cancel(payment_intent_id),
-                )
-                logger.info(f"Cancelled PaymentIntent {payment_intent_id}")
-                return True
-            else:
-                logger.info(
-                    f"PaymentIntent {payment_intent_id} in terminal state: {pi.status}, "
-                    f"cannot cancel"
-                )
-                return False
-        except stripe.error.StripeError as e:
-            logger.warning(f"Failed to cancel PaymentIntent {payment_intent_id}: {e}")
-            return False
 
     async def create_invoice(
         self,
@@ -293,11 +255,30 @@ class StripeService:
                     lambda: stripe.PaymentMethod.retrieve(pm_id),
                 )
                 result["payment_method_status"] = "active"
-                if pm.sepa_debit and hasattr(pm.sepa_debit, "mandate"):
-                    # If we can determine mandate status
-                    result["sepa_mandate_status"] = "active"
+
+                # Resolve SEPA mandate status via real Stripe Mandate.retrieve
+                mandate_id = getattr(pm.sepa_debit, "mandate", None) if pm.sepa_debit else None
+                if mandate_id:
+                    try:
+                        mandate = await loop.run_in_executor(
+                            None,
+                            lambda: stripe.Mandate.retrieve(mandate_id),
+                        )
+                        stripe_status = getattr(mandate, "status", None)
+                        mapped = _STRIPE_MANDATE_STATUS_MAP.get(stripe_status, SepaMandateStatus.UNKNOWN)
+                        if stripe_status and stripe_status not in _STRIPE_MANDATE_STATUS_MAP:
+                            logger.warning(
+                                f"Unrecognised Stripe mandate status {stripe_status!r} for "
+                                f"mandate {mandate_id} — defaulting to UNKNOWN"
+                            )
+                        result["sepa_mandate_status"] = mapped.value
+                    except stripe.error.StripeError as e:
+                        logger.warning(f"Failed to retrieve Stripe mandate {mandate_id}: {e}")
+                        result["sepa_mandate_status"] = SepaMandateStatus.UNKNOWN.value
                 else:
-                    result["sepa_mandate_status"] = "active"  # Default when PM exists
+                    # PM exists but no mandate attached yet
+                    result["sepa_mandate_status"] = SepaMandateStatus.UNKNOWN.value
+
             except stripe.error.StripeError as e:
                 logger.warning(f"Failed to query Stripe PM status: {e}")
                 result["payment_method_status"] = "unknown"

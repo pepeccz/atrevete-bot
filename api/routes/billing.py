@@ -8,7 +8,7 @@ All endpoints except the Stripe webhook are protected by admin authentication.
 import asyncio
 import io
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -143,6 +143,17 @@ async def download_invoice_pdf(
                     detail="No se pudo generar el PDF de la factura.",
                 )
 
+            # Persist the (possibly regenerated) path so subsequent downloads skip weasyprint
+            if str(pdf_path) != (invoice.pdf_path or ""):
+                try:
+                    invoice.pdf_path = str(pdf_path)
+                    await session.commit()
+                except Exception as e:
+                    logger.error(
+                        f"Failed to persist pdf_path for invoice {invoice_id}: {e}. "
+                        f"Returning PDF to client anyway."
+                    )
+
             pdf_bytes = await asyncio.get_event_loop().run_in_executor(
                 None, Path(pdf_path).read_bytes
             )
@@ -211,7 +222,7 @@ async def update_invoice_status(
     request_body: StatusUpdateRequest,
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> InvoiceResponse:
-    """Void an invoice. Cancels the associated Stripe PaymentIntent if pending."""
+    """Void an invoice via Stripe Invoicing API."""
     async with get_async_session() as session:
         billing_service = BillingService()
         invoice = await billing_service.void_invoice(session, invoice_id, request_body.reason)
@@ -378,8 +389,6 @@ async def stripe_webhook(request: Request) -> dict:
 
     Processes:
     - checkout.session.completed → store SEPA mandate details
-    - payment_intent.succeeded → mark payment and invoice as paid
-    - payment_intent.payment_failed → mark payment as failed with reason
     """
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
@@ -420,7 +429,7 @@ async def stripe_webhook(request: Request) -> dict:
                     invoice.invoice_pdf_url = getattr(event_data, "invoice_pdf", None)
                     if invoice.status == InvoiceStatus.DRAFT:
                         invoice.status = InvoiceStatus.ISSUED
-                        invoice.issued_at = datetime.now(timezone.utc)
+                        invoice.issued_at = datetime.utcnow()
                     await session.commit()
                     logger.info(f"Invoice {invoice.invoice_number} finalized, PDF URL stored")
                 else:
@@ -435,7 +444,7 @@ async def stripe_webhook(request: Request) -> dict:
                 invoice = result.scalar_one_or_none()
                 if invoice and invoice.status != InvoiceStatus.PAID:
                     invoice.status = InvoiceStatus.PAID
-                    invoice.paid_at = datetime.now(timezone.utc)
+                    invoice.paid_at = datetime.utcnow()
                     invoice.invoice_pdf_url = getattr(event_data, "invoice_pdf", None)
 
                     # Update Payment row if exists
@@ -481,62 +490,6 @@ async def stripe_webhook(request: Request) -> dict:
                             )
                             await session.commit()
                             logger.info(f"Payment for {invoice.invoice_number} marked FAILED")
-
-        # LEGACY: remove after 30-day transition
-        elif event_type == "payment_intent.succeeded":
-            pi_id = event_data.id
-            if pi_id:
-                try:
-                    payment_result = await session.execute(
-                        select(Payment).where(Payment.stripe_payment_intent_id == pi_id)
-                    )
-                    payment = payment_result.scalar_one_or_none()
-
-                    if payment:
-                        payment.status = PaymentStatus.SUCCEEDED
-
-                        # Update invoice to PAID
-                        invoice_result = await session.execute(
-                            select(Invoice).where(Invoice.id == payment.invoice_id)
-                        )
-                        invoice = invoice_result.scalar_one_or_none()
-                        if invoice:
-                            invoice.status = InvoiceStatus.PAID
-                            invoice.paid_at = datetime.now(timezone.utc)
-                            logger.info(
-                                f"Invoice {invoice.invoice_number} marked PAID via webhook"
-                            )
-
-                        await session.commit()
-                    else:
-                        logger.warning(f"No Payment row found for PI {pi_id}")
-                except Exception as e:
-                    logger.error(f"payment_intent.succeeded handler failed for {pi_id}: {e}")
-
-        # LEGACY: remove after 30-day transition
-        elif event_type == "payment_intent.payment_failed":
-            pi_id = event_data.id
-            if pi_id:
-                try:
-                    last_error = getattr(event_data, "last_payment_error", None)
-                    failure_message = (
-                        last_error.message if last_error else "Unknown failure"
-                    )
-
-                    payment_result = await session.execute(
-                        select(Payment).where(Payment.stripe_payment_intent_id == pi_id)
-                    )
-                    payment = payment_result.scalar_one_or_none()
-
-                    if payment:
-                        payment.status = PaymentStatus.FAILED
-                        payment.failure_reason = failure_message
-                        await session.commit()
-                        logger.info(f"Payment {pi_id} marked FAILED: {failure_message}")
-                    else:
-                        logger.warning(f"No Payment row found for failed PI {pi_id}")
-                except Exception as e:
-                    logger.error(f"payment_intent.payment_failed handler failed for {pi_id}: {e}")
 
         else:
             logger.debug(f"Unhandled Stripe event type: {event_type}")
