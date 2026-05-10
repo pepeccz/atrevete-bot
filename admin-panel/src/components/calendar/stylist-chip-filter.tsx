@@ -104,20 +104,25 @@ export function StylistChipFilter({
         })}
       </div>
 
-      {/* Right side: status legend */}
-      {statusCounts.length > 0 && (
-        <div className="flex items-center gap-4">
-          {statusCounts
-            .filter((sc) => sc.count > 0)
-            .map((sc) => (
-              <span key={sc.status} className="inline-flex items-center gap-1.5 text-xs text-ink-mute">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT_CLASS[sc.status]}`} />
-                <span className="font-medium text-ink-soft">{STATUS_LABELS[sc.status]}</span>
-                <span className="tabular-nums font-semibold text-ink">{sc.count}</span>
-              </span>
-            ))}
-        </div>
-      )}
+      {/* Right side: status legend — always visible, mirrors handoff */}
+      <div className="flex items-center gap-4">
+        <span className="text-[11px] uppercase tracking-widest text-ink-mute font-semibold">
+          Estado
+        </span>
+        {LEGEND_STATUSES.map((status) => {
+          const count = statusCounts.find((sc) => sc.status === status)?.count ?? 0;
+          return (
+            <span key={status} className="inline-flex items-center gap-1.5 text-xs text-ink-mute">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT_CLASS[status]}`} />
+              <span className="font-medium text-ink-soft">{STATUS_LABELS[status]}</span>
+              <span className="tabular-nums font-semibold text-ink">{count}</span>
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }
+
+// Legend always shows these three regardless of data — mirrors handoff
+const LEGEND_STATUSES: AppointmentStatus[] = ["confirmed", "pending", "cancelled"];
