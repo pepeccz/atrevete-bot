@@ -528,25 +528,35 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
   useEffect(() => {
     const fcApi = calendarRef.current?.getApi();
     if (!fcApi) return;
-    if (isMobile) {
-      fcApi.changeView("listWeek");
-      return;
-    }
-    const fcView = selectedView === "day"
-      ? "timeGridDay"
-      : selectedView === "month"
-      ? "dayGridMonth"
-      : "timeGridWeek";
-    const currentFcView = fcApi.view.type;
-    if (currentFcView !== fcView) {
-      fcApi.changeView(fcView);
-      // When entering Día, FC's internal pointer is whatever start-of-range
-      // datesSet last fired with (Monday for a week view). Without this jump,
-      // the day view would silently land on Monday instead of today.
-      if (selectedView === "day") {
-        fcApi.gotoDate(new Date());
+    // FullCalendar's changeView wraps the view transition in flushSync.
+    // Calling it directly from a useEffect counts as a lifecycle phase for
+    // React 19+/Next 16, which forbids nested flushSync. Defer via
+    // queueMicrotask so FC runs its flushSync outside React's commit window.
+    queueMicrotask(() => {
+      // Re-acquire the API inside the microtask — the calendar may have
+      // unmounted (e.g. switching to greenfield day view) between scheduling
+      // and execution. Without this guard we'd hit a stale ref.
+      const api = calendarRef.current?.getApi();
+      if (!api) return;
+      if (isMobile) {
+        if (api.view.type !== "listWeek") api.changeView("listWeek");
+        return;
       }
-    }
+      const fcView = selectedView === "day"
+        ? "timeGridDay"
+        : selectedView === "month"
+        ? "dayGridMonth"
+        : "timeGridWeek";
+      if (api.view.type !== fcView) {
+        api.changeView(fcView);
+        // When entering Día, FC's internal pointer is whatever start-of-range
+        // datesSet last fired with (Monday for a week view). Without this jump,
+        // the day view would silently land on Monday instead of today.
+        if (selectedView === "day") {
+          api.gotoDate(new Date());
+        }
+      }
+    });
   }, [selectedView, isMobile]);
 
   // Handle date set (when calendar view changes) — S4.10: also update selectedDate.
