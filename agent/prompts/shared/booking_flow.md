@@ -9,26 +9,27 @@ Llama `check_availability` solo para re-validar el hueco exacto elegido o cuando
 
 ## Pasos obligatorios
 
-**Paso 0** — Si el servicio tiene variantes de audiencia, pregunta antes de continuar (ver `critical_rules.md` R9/R9b).
+**Paso 1 — Servicios**: el cliente enumera los servicios que quiere. Llama `update_booking(services=[...])` ANTES de pedir nada más.
+Si `next_step` trae `*_required`, haz esa pregunta exacta antes de avanzar.
 
-**Paso 1** — Al mencionar un servicio, llama `update_booking(services=[...])` ANTES de pedir fecha u otro dato.
-Si `next_step` trae `*_required`, haz esa pregunta exacta.
+**Paso 2 — Desambiguación** (`audience_required` / `variant_required`): si `next_step` lo pide, pregunta la dimensión faltante (audiencia o variante) en un solo turno antes de continuar. Ver R9/R9b.
 
-**Paso 1.5 `category_mix_required`** — Presenta los dos grupos del payload; pregunta cuál reservar primero. Nunca combines peluquería y estética en un solo `book`.
+**Paso 2.5 — Mezcla de categorías** (`category_mix_required`): presenta los dos grupos del payload; pregunta cuál reservar primero. Nunca combines peluquería y estética en un solo `book`.
 
-**Paso 2 `offer_slots`** — Llama `get_next_available_options` INMEDIATAMENTE con args del payload; presenta menú numerado (≥3 opciones). NUNCA preguntes "¿qué día te viene bien?".
+**Paso 3 — Confirmación de "no añadir más"** (`extras_loop_required`):
+- Si el cliente YA enumeró 2+ servicios con "y" / coma / lista explícita: formulación LIGERA → "Entonces te anoto {a} y {b}, ¿correcto?". Si confirma → `update_booking(no_more_services=True, extras_asked=true)`.
+- Si el cliente mencionó 1 servicio o pidió algo vago: formulación ABIERTA → "¿Quieres añadir algún otro servicio o solo {lista}?".
+- Una sola pregunta, un solo turno. Pasa siempre `extras_asked=true`.
+
+**Paso 4 — Estilista** (`stylist_required`): lista numerada con `payload.first_available_label` como opción 0, luego `payload.stylists` en orden. No inventes ni reordenes nombres.
+
+**Paso 5 — Slots** (`offer_slots`): llama `get_next_available_options` INMEDIATAMENTE con los args del payload; si el payload incluye `gap_explanation_hint` con `gap_days_count > 2`, narra brevemente el motivo (ver R30) ANTES del menú. Presenta menú numerado (≥3 opciones). Fechas SIEMPRE por campo `label`.
 - 0 opciones → comunica sin disponibilidad próxima; pide fecha concreta.
 - `closed_day` / `advance_policy_violated` → disculpa + re-presenta último menú sin pregunta abierta.
 
-**Paso 2 ordinario** — Fecha concreta → `check_availability`. Frase vaga → `get_next_available_options` + menú numerado.
+**Paso 6 — Nombre + Primer Apellido** (`name_required`): pide "nombre y primer apellido" (un solo apellido, no dos). Si `<customer>` ya tiene `Nombre:`, usa ese valor y pasa `customer_known=true`.
 
-**Paso 2.5 `extras_loop_required`** — Pregunta si añade otro servicio (una pregunta, un turno). Si no → `update_booking(no_more_services=True)`. Pasa siempre `extras_asked=true`.
-
-**§ Estilista `stylist_required`** — Lista numerada con `payload.first_available_label` como opción 0, luego `payload.stylists`. No inventes ni reordenes nombres.
-
-**Paso 4 `name_required`** — Pide nombre y apellido en un solo turno. Si `<customer>` ya tiene `Nombre:`, usa ese valor y pasa `customer_known=true`.
-
-**Paso 4b `notes_optional`** — Pregunta notas una vez: "¿Alguna nota para {estilista}?" o "¿Hay algo que deba tener en cuenta?" si no hay estilista concreto. Pasa `notes_asked=true`.
+**Paso 7 — Notas** (`notes_optional`): pregunta una vez. Pasa `notes_asked=true`.
 
 ---
 
