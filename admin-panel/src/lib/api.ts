@@ -167,43 +167,56 @@ class ApiClient {
   }
 
   // Dashboard endpoints
-  async getDashboardKPIs(): Promise<{
-    appointments_this_month: number;
-    total_customers: number;
-    avg_appointment_duration: number;
-    total_hours_booked: number;
-  }> {
+  async getDashboardKPIs(): Promise<import("./types").DashboardKPIs> {
     return this.request("/api/admin/dashboard/kpis");
   }
 
+  async getTodayAgenda(): Promise<import("./types").TodayAgendaResponse> {
+    return this.request("/api/admin/dashboard/today-agenda");
+  }
+
   async getAppointmentsTrend(
-    days: number = 30
-  ): Promise<Array<{ date: string; count: number }>> {
+    days: number = 14
+  ): Promise<Array<import("./types").AppointmentTrendPoint>> {
     return this.request(`/api/admin/dashboard/charts/appointments-trend?days=${days}`);
   }
 
   async getTopServices(
     limit: number = 10
-  ): Promise<Array<{ name: string; count: number }>> {
+  ): Promise<Array<import("./types").TopServiceItem>> {
+    // Uses 7-day window per redesign spec
     return this.request(`/api/admin/dashboard/charts/top-services?limit=${limit}`);
   }
 
+  /** @deprecated Not used in redesigned dashboard */
   async getHoursWorked(
     months: number = 12
   ): Promise<Array<{ month: string; hours: number }>> {
     return this.request(`/api/admin/dashboard/charts/hours-worked?months=${months}`);
   }
 
+  /** @deprecated Not used in redesigned dashboard */
   async getCustomerGrowth(
     months: number = 12
   ): Promise<Array<{ month: string; count: number }>> {
     return this.request(`/api/admin/dashboard/charts/customer-growth?months=${months}`);
   }
 
+  /** @deprecated Not used in redesigned dashboard */
   async getStylistPerformance(): Promise<
     Array<{ name: string; appointments: number; hours: number }>
   > {
     return this.request("/api/admin/dashboard/charts/stylist-performance");
+  }
+
+  /**
+   * Stylist activity — endpoint not yet implemented in backend.
+   * Returns empty array as placeholder. TODO: wire when backend endpoint ships.
+   */
+  async getStylistActivity(): Promise<Array<import("./types").StylistActivityItem>> {
+    // GAP: GET /api/admin/dashboard/stylist-activity does not exist yet.
+    // Returns empty array so the frontend renders gracefully.
+    return Promise.resolve([]);
   }
 
   // Generic CRUD methods

@@ -270,11 +270,85 @@ export interface User {
 }
 
 // Dashboard types
-export interface DashboardKPIs {
+/** @deprecated Legacy monthly-aggregate KPIs — use DashboardKPIs instead */
+export interface DashboardKPIsLegacy {
   appointments_this_month: number;
   total_customers: number;
   avg_appointment_duration: number;
   total_hours_booked: number;
+}
+
+/** Today-scoped KPIs returned by GET /api/admin/dashboard/kpis (Slice 2a) */
+export interface DashboardKPIs {
+  // New today-scoped fields
+  confirmation_rate_today: number | null;
+  confirmed_today: number;
+  total_today: number;
+  appointments_today: number;
+  occupation_today: number;
+  booked_minutes_today: number;
+  business_minutes_today: number;
+  new_customers_this_week: number;
+  // Legacy fields (deprecated, may be null)
+  appointments_this_month?: number | null;
+  total_customers?: number | null;
+  avg_appointment_duration?: number | null;
+  total_hours_booked?: number | null;
+}
+
+export interface AgendaCustomer {
+  id: string;
+  name: string;
+  phone?: string | null;
+}
+
+export interface AgendaStylist {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface AgendaService {
+  id: string;
+  name: string;
+}
+
+export interface TodayAgendaItem {
+  id: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  status: AppointmentStatus;
+  customer: AgendaCustomer;
+  stylist: AgendaStylist;
+  services: AgendaService[];
+}
+
+export interface TodayAgendaResponse {
+  date: string;
+  appointments: TodayAgendaItem[];
+}
+
+/** Top services (7-day window) */
+export interface TopServiceItem {
+  name: string;
+  count: number;
+}
+
+/** Stylist activity for today */
+export interface StylistActivityItem {
+  id: string;
+  name: string;
+  color: string;
+  appointments_today: number;
+  booked_minutes_today: number;
+  utilization_pct: number;
+}
+
+/** 14-day appointments trend */
+export interface AppointmentTrendPoint {
+  date: string;
+  count: number;
 }
 
 // API pagination

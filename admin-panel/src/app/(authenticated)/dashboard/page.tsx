@@ -1,360 +1,432 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { Header } from "@/components/layout/header";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Calendar, Users, Clock, TrendingUp, Bell, Check, X, CheckCheck } from "lucide-react";
+import dynamic from "next/dynamic";
+import { Plus } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
+
+import { Header } from "@/components/layout/header";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatCardSkeleton } from "@/components/shared/loading-skeleton";
+import { useAuth } from "@/contexts/auth-context";
 import api from "@/lib/api";
-import type { Notification, NotificationsListResponse } from "@/lib/types";
-import { cn } from "@/lib/utils";
-import dynamic from "next/dynamic";
-import { StatCardSkeleton, ChartSkeleton } from "@/components/shared/loading-skeleton";
 
-// Recharts does not support SSR — lazy load all chart components to reduce initial bundle
-const AppointmentTrendChart = dynamic(
+import { DashboardGreeting } from "@/components/dashboard/dashboard-greeting";
+import { KpiCard } from "@/components/dashboard/kpi-card";
+import { AgendaRow } from "@/components/dashboard/agenda-row";
+import { EscalationItem } from "@/components/dashboard/escalation-item";
+import { ServiceBar } from "@/components/dashboard/service-bar";
+import { StylistActivityRow } from "@/components/dashboard/stylist-activity-row";
+
+import type {
+  DashboardKPIs,
+  TodayAgendaItem,
+  TopServiceItem,
+  StylistActivityItem,
+  AppointmentTrendPoint,
+  Escalation,
+} from "@/lib/types";
+
+// Recharts does not support SSR — lazy load chart
+const AppointmentsTrendChart = dynamic(
   () =>
-    import("@/components/charts/appointments-trend-chart").then(
-      (m) => m.AppointmentTrendChart
+    import("@/components/dashboard/appointments-trend-chart").then(
+      (m) => m.AppointmentsTrendChart
     ),
-  { ssr: false, loading: () => <ChartSkeleton title="Tendencia de Citas" /> }
+  { ssr: false, loading: () => <Skeleton className="h-[132px] w-full" /> }
 );
 
-const TopServicesChart = dynamic(
-  () =>
-    import("@/components/charts/top-services-chart").then(
-      (m) => m.TopServicesChart
-    ),
-  { ssr: false, loading: () => <ChartSkeleton title="Servicios Populares" /> }
-);
+// ─── Skeleton helpers ────────────────────────────────────────────────────────
 
-const HoursWorkedChart = dynamic(
-  () =>
-    import("@/components/charts/hours-worked-chart").then(
-      (m) => m.HoursWorkedChart
-    ),
-  { ssr: false, loading: () => <ChartSkeleton title="Horas Trabajadas" /> }
-);
-
-const CustomerGrowthChart = dynamic(
-  () =>
-    import("@/components/charts/customer-growth-chart").then(
-      (m) => m.CustomerGrowthChart
-    ),
-  { ssr: false, loading: () => <ChartSkeleton title="Crecimiento de Clientes" /> }
-);
-
-const StylistPerformanceChart = dynamic(
-  () =>
-    import("@/components/charts/stylist-performance-chart").then(
-      (m) => m.StylistPerformanceChart
-    ),
-  { ssr: false, loading: () => <ChartSkeleton title="Rendimiento por Estilista" /> }
-);
-
-interface KPIs {
-  appointments_this_month: number;
-  total_customers: number;
-  avg_appointment_duration: number;
-  total_hours_booked: number;
-}
-
-interface ChartData {
-  appointmentsTrend: Array<{ date: string; count: number }>;
-  topServices: Array<{ name: string; count: number }>;
-  hoursWorked: Array<{ month: string; hours: number }>;
-  customerGrowth: Array<{ month: string; count: number }>;
-  stylistPerformance: Array<{ name: string; appointments: number; hours: number }>;
-}
-
-function KPICard({
-  title,
-  value,
-  description,
-  icon: Icon,
-}: {
-  title: string;
-  value: string | number;
-  description: string;
-  icon: React.ComponentType<{ className?: string }>;
-}) {
+function AgendaSkeleton() {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </CardContent>
-    </Card>
+    <div className="flex flex-col gap-2 p-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3">
+          <Skeleton className="h-4 w-12" />
+          <Skeleton className="h-8 w-1 rounded-full" />
+          <div className="flex-1 space-y-1">
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-3 w-48" />
+          </div>
+          <Skeleton className="h-6 w-20 rounded-full" />
+        </div>
+      ))}
+    </div>
   );
 }
 
-// Notification icon mapping
-const notificationIcons: Record<string, typeof Calendar> = {
-  appointment_created: Calendar,
-  appointment_cancelled: X,
-  appointment_confirmed: Check,
-  appointment_completed: CheckCheck,
-};
+function EscalationSkeleton() {
+  return (
+    <div className="flex flex-col gap-2 p-4">
+      {Array.from({ length: 2 }).map((_, i) => (
+        <div key={i} className="flex items-start gap-3">
+          <Skeleton className="h-[30px] w-[30px] rounded-full" />
+          <div className="flex-1 space-y-1">
+            <Skeleton className="h-3 w-28" />
+            <Skeleton className="h-3 w-48" />
+            <Skeleton className="h-3 w-16" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-const notificationColors: Record<string, string> = {
-  appointment_created: "text-green-500",
-  appointment_cancelled: "text-red-500",
-  appointment_confirmed: "text-blue-500",
-  appointment_completed: "text-gray-500",
-};
+function ServiceBarSkeleton() {
+  return (
+    <div className="flex flex-col gap-3 px-[18px] py-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="space-y-1">
+          <div className="flex justify-between">
+            <Skeleton className="h-3 w-28" />
+            <Skeleton className="h-3 w-6" />
+          </div>
+          <Skeleton className="h-[6px] w-full rounded-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── KPI formatting helpers ──────────────────────────────────────────────────
+
+function formatRate(rate: number | null | undefined): string {
+  if (rate === null || rate === undefined) return "—";
+  return `${Math.round(rate * 100)}%`;
+}
+
+function formatOccupation(rate: number | null | undefined): string {
+  if (rate === null || rate === undefined) return "0%";
+  return `${Math.round(rate * 100)}%`;
+}
+
+// ─── Page component ──────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const router = useRouter();
-  const [kpis, setKpis] = useState<KPIs | null>(null);
-  const [chartData, setChartData] = useState<ChartData | null>(null);
-  const [notifications, setNotifications] = useState<NotificationsListResponse | null>(null);
-  const [notificationError, setNotificationError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
 
-  const fetchNotifications = useCallback(async () => {
-    try {
-      const response = await api.getNotifications(5, false); // Solo no leidas, maximo 5
-      setNotifications(response);
-      setNotificationError(null); // Clear previous error on success
-    } catch (err) {
-      console.error("Failed to fetch notifications:", err);
-      setNotificationError("No se pudieron cargar las notificaciones");
-      // Keep previous notifications data if available
-    }
+  const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
+  const [agenda, setAgenda] = useState<TodayAgendaItem[] | null>(null);
+  const [escalations, setEscalations] = useState<Escalation[] | null>(null);
+  const [topServices, setTopServices] = useState<TopServiceItem[] | null>(null);
+  const [stylistActivity, setStylistActivity] = useState<StylistActivityItem[] | null>(null);
+  const [trendData, setTrendData] = useState<AppointmentTrendPoint[] | null>(null);
+
+  const [kpisLoading, setKpisLoading] = useState(true);
+  const [agendaLoading, setAgendaLoading] = useState(true);
+  const [escalationsLoading, setEscalationsLoading] = useState(true);
+  const [servicesLoading, setServicesLoading] = useState(true);
+  const [trendLoading, setTrendLoading] = useState(true);
+
+  const [escalationsError, setEscalationsError] = useState(false);
+
+  // Fetch KPIs
+  useEffect(() => {
+    api
+      .getDashboardKPIs()
+      .then(setKpis)
+      .catch(() => setKpis(null))
+      .finally(() => setKpisLoading(false));
+  }, []);
+
+  // Fetch today-agenda
+  useEffect(() => {
+    api
+      .getTodayAgenda()
+      .then((r) => setAgenda(r.appointments))
+      .catch(() => setAgenda([]))
+      .finally(() => setAgendaLoading(false));
+  }, []);
+
+  // Fetch escalations (graceful degradation on error)
+  const fetchEscalations = useCallback(() => {
+    setEscalationsError(false);
+    api
+      .getEscalations({ status: "triggered", page_size: 5 })
+      .then((r) => setEscalations(r.items))
+      .catch(() => {
+        setEscalations(null);
+        setEscalationsError(true);
+      })
+      .finally(() => setEscalationsLoading(false));
   }, []);
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        // Fetch KPIs
-        const kpisData = await api.getDashboardKPIs();
-        setKpis(kpisData);
+    fetchEscalations();
+  }, [fetchEscalations]);
 
-        // Fetch all chart data in parallel
-        const [
-          appointmentsTrend,
-          topServices,
-          hoursWorked,
-          customerGrowth,
-          stylistPerformance,
-        ] = await Promise.all([
-          api.getAppointmentsTrend(),
-          api.getTopServices(),
-          api.getHoursWorked(),
-          api.getCustomerGrowth(),
-          api.getStylistPerformance(),
-        ]);
-
-        setChartData({
-          appointmentsTrend,
-          topServices,
-          hoursWorked,
-          customerGrowth,
-          stylistPerformance,
-        });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Error cargando datos");
-        // Use mock data if API not ready
-        setKpis({
-          appointments_this_month: 0,
-          total_customers: 0,
-          avg_appointment_duration: 0,
-          total_hours_booked: 0,
-        });
-        setChartData({
-          appointmentsTrend: [],
-          topServices: [],
-          hoursWorked: [],
-          customerGrowth: [],
-          stylistPerformance: [],
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    fetchData();
+  // Fetch top services + stylist activity + trend in parallel
+  useEffect(() => {
+    Promise.allSettled([
+      api.getTopServices(5),
+      api.getStylistActivity(),
+      api.getAppointmentsTrend(14),
+    ]).then(([servicesResult, activityResult, trendResult]) => {
+      setTopServices(
+        servicesResult.status === "fulfilled" ? servicesResult.value : []
+      );
+      setStylistActivity(
+        activityResult.status === "fulfilled" ? activityResult.value : []
+      );
+      setTrendData(
+        trendResult.status === "fulfilled" ? trendResult.value : []
+      );
+      setServicesLoading(false);
+      setTrendLoading(false);
+    });
   }, []);
 
-  // Fetch notifications on mount (no polling - NotificationCenter in header handles that)
-  useEffect(() => {
-    fetchNotifications();
-  }, [fetchNotifications]);
-
-  const handleNotificationClick = async (notification: Notification) => {
-    // Mark as read
-    try {
-      await api.markNotificationRead(notification.id);
-      fetchNotifications(); // Refresh
-    } catch (error) {
-      console.error("Failed to mark notification as read:", error);
-    }
-    // Navigate to appointment
-    if (notification.entity_type === "appointment" && notification.entity_id) {
-      router.push(`/appointments?highlight=${notification.entity_id}`);
-    }
-  };
+  // Derived
+  const pendingEscalations =
+    escalations?.filter((e) => e.status === "triggered").length ?? 0;
+  const appointmentsToday = kpis?.appointments_today ?? 0;
+  const maxServiceCount = topServices ? Math.max(...topServices.map((s) => s.count), 1) : 1;
 
   return (
     <div className="flex flex-col">
       <Header
         title="Dashboard"
-        description="Vista general del salon"
+        subtitle={`${appointmentsToday} citas hoy · ${pendingEscalations} escalaciones pendientes`}
+        primaryAction={
+          <Button size="sm" className="rounded-btn bg-gold text-white hover:bg-gold-dark">
+            <Plus className="mr-1 h-4 w-4" />
+            Nueva cita
+          </Button>
+        }
       />
 
-      <div className="flex-1 space-y-6 p-4 md:p-6">
-        {/* KPI Cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {isLoading ? (
-            <>
-              <StatCardSkeleton />
-              <StatCardSkeleton />
-              <StatCardSkeleton />
-              <StatCardSkeleton />
-            </>
+      <div className="flex-1 space-y-[20px] p-[28px]">
+        {/* Greeting */}
+        <DashboardGreeting
+          firstName={user?.username}
+          appointmentsToday={appointmentsToday}
+          pendingEscalations={pendingEscalations}
+        />
+
+        {/* KPI row — 4 columns */}
+        <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-4">
+          {kpisLoading ? (
+            Array.from({ length: 4 }).map((_, i) => <StatCardSkeleton key={i} />)
           ) : (
             <>
-              <KPICard
-                title="Citas este mes"
-                value={kpis?.appointments_this_month ?? 0}
-                description="Total de citas agendadas"
-                icon={Calendar}
+              <KpiCard
+                label="Tasa de confirmación"
+                value={formatRate(kpis?.confirmation_rate_today)}
+                subline={
+                  kpis?.total_today
+                    ? `${kpis.confirmed_today} de ${kpis.total_today} citas`
+                    : "Sin citas hoy"
+                }
               />
-              <KPICard
-                title="Clientes totales"
-                value={kpis?.total_customers ?? 0}
-                description="Clientes registrados"
-                icon={Users}
+              <KpiCard
+                label="Citas hoy"
+                value={kpis?.appointments_today ?? 0}
+                subline="Total no canceladas"
               />
-              <KPICard
-                title="Duración promedio"
-                value={`${kpis?.avg_appointment_duration ?? 0} min`}
-                description="Tiempo promedio por cita"
-                icon={Clock}
+              <KpiCard
+                label="Ocupación"
+                value={formatOccupation(kpis?.occupation_today)}
+                subline={
+                  kpis?.business_minutes_today
+                    ? `${kpis.booked_minutes_today} min de ${kpis.business_minutes_today} min`
+                    : undefined
+                }
               />
-              <KPICard
-                title="Horas reservadas"
-                value={kpis?.total_hours_booked ?? 0}
-                description="Horas totales este mes"
-                icon={TrendingUp}
+              <KpiCard
+                label="Nuevos clientes"
+                value={kpis?.new_customers_this_week ?? 0}
+                subline="Esta semana"
               />
             </>
           )}
         </div>
 
-        {/* Notifications Widget */}
-        {notificationError && (
-          <Card className="border-amber-200 bg-amber-50">
-            <CardContent className="pt-6 flex items-center gap-2">
-              <Bell className="h-4 w-4 text-amber-600" />
-              <p className="text-sm text-amber-800">{notificationError}</p>
-            </CardContent>
-          </Card>
-        )}
-        {notifications && notifications.unread_count > 0 && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div>
-                <CardTitle className="text-base font-semibold flex items-center gap-2">
-                  <Bell className="h-4 w-4" />
-                  Notificaciones Recientes
-                </CardTitle>
-                <CardDescription>
-                  {notifications.unread_count} sin leer
-                </CardDescription>
-              </div>
+        {/* Middle row: 1.6fr / 1fr */}
+        <div className="grid grid-cols-1 gap-[14px] lg:grid-cols-[1.6fr_1fr]">
+          {/* Agenda de hoy */}
+          <Card className="rounded-card-lg overflow-hidden">
+            <CardHeader className="flex flex-row items-baseline gap-3 border-b border-[hsl(var(--line-soft))] px-[18px] py-4">
+              <CardTitle className="flex-1 text-[14px] font-bold text-ink">
+                Agenda de hoy
+              </CardTitle>
+              <span className="text-[12px] text-ink-mute">
+                {!agendaLoading && agenda ? `${agenda.length} citas` : ""}
+              </span>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {notifications.items.slice(0, 5).map((notification) => {
-                  const Icon = notificationIcons[notification.type] || Bell;
-                  const colorClass = notificationColors[notification.type] || "text-gray-500";
+            {agendaLoading ? (
+              <AgendaSkeleton />
+            ) : agenda && agenda.length > 0 ? (
+              <div className="flex flex-col">
+                {agenda.map((item, idx) => {
+                  const time = new Date(item.start_time).toLocaleTimeString("es-ES", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  });
+                  const serviceName =
+                    item.services.map((s) => s.name).join(", ") || "—";
                   return (
-                    <button
-                      key={notification.id}
-                      onClick={() => handleNotificationClick(notification)}
-                      className="w-full flex items-start gap-3 p-2 rounded-md hover:bg-accent text-left transition-colors"
-                    >
-                      <div className={cn("mt-0.5", colorClass)}>
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium">{notification.title}</p>
-                        <p className="text-xs text-muted-foreground line-clamp-1">
-                          {notification.message}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(new Date(notification.created_at), {
-                            addSuffix: true,
-                            locale: es,
-                          })}
-                        </p>
-                      </div>
-                    </button>
+                    <AgendaRow
+                      key={item.id}
+                      time={time}
+                      durationMin={item.duration_minutes}
+                      stylist={{ name: item.stylist.name, color: item.stylist.color || "#928679" }}
+                      customerName={item.customer.name}
+                      serviceName={serviceName}
+                      status={item.status}
+                      isLast={idx === agenda.length - 1}
+                    />
                   );
                 })}
               </div>
-            </CardContent>
+            ) : (
+              <CardContent className="flex items-center justify-center py-10 text-[13px] text-ink-mute">
+                No hay citas hoy
+              </CardContent>
+            )}
           </Card>
-        )}
 
-        {error && (
-          <Card className="border-amber-200 bg-amber-50">
-            <CardContent className="pt-6">
-              <p className="text-sm text-amber-800">
-                <strong>Nota:</strong> {error}
-              </p>
-            </CardContent>
-          </Card>
-        )}
+          {/* Right column */}
+          <div className="flex flex-col gap-[14px]">
+            {/* Necesitan atención */}
+            <Card className="rounded-card-lg overflow-hidden border-[hsl(var(--gold-line))]">
+              <CardHeader className="flex flex-row items-baseline gap-3 border-b border-[hsl(var(--line-soft))] px-[18px] py-4">
+                <CardTitle className="flex-1 text-[14px] font-bold text-ink">
+                  Necesitan atención
+                </CardTitle>
+                {!escalationsLoading && !escalationsError && (
+                  <span className="text-[12px] text-ink-mute">
+                    {pendingEscalations} pendientes
+                  </span>
+                )}
+              </CardHeader>
+              {escalationsLoading ? (
+                <EscalationSkeleton />
+              ) : escalationsError ? (
+                <CardContent className="py-6 text-[13px] text-ink-mute">
+                  No disponible
+                </CardContent>
+              ) : escalations && escalations.length > 0 ? (
+                <div className="flex flex-col">
+                  {escalations.map((esc, idx) => (
+                    <EscalationItem
+                      key={esc.id}
+                      customerName={esc.customer_name ?? esc.customer_phone}
+                      reason={esc.reason}
+                      relativeTime={formatDistanceToNow(new Date(esc.triggered_at), {
+                        addSuffix: true,
+                        locale: es,
+                      })}
+                      isLast={idx === escalations.length - 1}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <CardContent className="flex items-center justify-center py-8 text-[13px] text-ink-mute">
+                  Todo al día
+                </CardContent>
+              )}
+            </Card>
 
-        {/* Charts Row 1 */}
-        <div className="grid gap-4 md:grid-cols-2">
-          {isLoading ? (
-            <>
-              <ChartSkeleton title="Tendencia de Citas" />
-              <ChartSkeleton title="Servicios Populares" />
-            </>
-          ) : (
-            <>
-              <AppointmentTrendChart data={chartData?.appointmentsTrend ?? []} />
-              <TopServicesChart data={chartData?.topServices ?? []} />
-            </>
-          )}
+            {/* Top servicios */}
+            <Card className="rounded-card-lg overflow-hidden">
+              <CardHeader className="border-b border-[hsl(var(--line-soft))] px-[18px] py-4">
+                <CardTitle className="text-[14px] font-bold text-ink">
+                  Top servicios · esta semana
+                </CardTitle>
+              </CardHeader>
+              {servicesLoading ? (
+                <ServiceBarSkeleton />
+              ) : topServices && topServices.length > 0 ? (
+                <div className="flex flex-col gap-3 px-[18px] py-4">
+                  {topServices.map((svc) => (
+                    <ServiceBar
+                      key={svc.name}
+                      name={svc.name}
+                      count={svc.count}
+                      maxCount={maxServiceCount}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <CardContent className="py-6 text-[13px] text-ink-mute">
+                  Sin servicios esta semana
+                </CardContent>
+              )}
+            </Card>
+          </div>
         </div>
 
-        {/* Charts Row 2 */}
-        <div className="grid gap-4 md:grid-cols-2">
-          {isLoading ? (
-            <>
-              <ChartSkeleton title="Horas Trabajadas" />
-              <ChartSkeleton title="Crecimiento de Clientes" />
-            </>
-          ) : (
-            <>
-              <HoursWorkedChart data={chartData?.hoursWorked ?? []} />
-              <CustomerGrowthChart data={chartData?.customerGrowth ?? []} />
-            </>
-          )}
-        </div>
+        {/* Bottom row: 1fr / 1.4fr */}
+        <div className="grid grid-cols-1 gap-[14px] lg:grid-cols-[1fr_1.4fr]">
+          {/* Estilistas activos */}
+          <Card className="rounded-card-lg overflow-hidden">
+            <CardHeader className="border-b border-[hsl(var(--line-soft))] px-[18px] py-4">
+              <CardTitle className="text-[14px] font-bold text-ink">
+                Estilistas activos
+              </CardTitle>
+            </CardHeader>
+            {servicesLoading ? (
+              <div className="flex flex-col gap-2 p-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <Skeleton className="h-[34px] w-[34px] rounded-full" />
+                    <div className="flex-1 space-y-1">
+                      <Skeleton className="h-3 w-24" />
+                      <Skeleton className="h-2 w-32" />
+                      <Skeleton className="h-[3px] w-full rounded-full" />
+                    </div>
+                    <Skeleton className="h-6 w-20 rounded-full" />
+                  </div>
+                ))}
+              </div>
+            ) : stylistActivity && stylistActivity.length > 0 ? (
+              <div className="flex flex-col">
+                {stylistActivity.map((s, idx) => (
+                  <StylistActivityRow
+                    key={s.id}
+                    name={s.name}
+                    color={s.color}
+                    appointmentsToday={s.appointments_today}
+                    hoursToday={s.booked_minutes_today / 60}
+                    utilizationPct={s.utilization_pct * 100}
+                    statusDot={s.appointments_today > 0 ? "on" : "off"}
+                    isLast={idx === stylistActivity.length - 1}
+                  />
+                ))}
+              </div>
+            ) : (
+              <CardContent className="py-8 text-[13px] text-ink-mute">
+                {/* GAP: stylist-activity endpoint not yet shipped */}
+                Sin datos de estilistas hoy
+              </CardContent>
+            )}
+          </Card>
 
-        {/* Chart Row 3 */}
-        {!isLoading && chartData?.stylistPerformance && (
-          <StylistPerformanceChart data={chartData.stylistPerformance} />
-        )}
+          {/* Citas últimos 14 días */}
+          <Card className="rounded-card-lg overflow-hidden">
+            <CardHeader className="border-b border-[hsl(var(--line-soft))] px-[18px] py-4">
+              <div>
+                <CardTitle className="text-[14px] font-bold text-ink">
+                  Citas últimos 14 días
+                </CardTitle>
+                <p className="mt-[2px] text-[12px] text-ink-mute">
+                  {trendData
+                    ? `Total: ${trendData.reduce((s, p) => s + p.count, 0)} citas`
+                    : "Cargando..."}
+                </p>
+              </div>
+            </CardHeader>
+            {trendLoading ? (
+              <Skeleton className="mx-4 my-4 h-[132px]" />
+            ) : (
+              <AppointmentsTrendChart data={trendData ?? []} />
+            )}
+          </Card>
+        </div>
       </div>
     </div>
   );
