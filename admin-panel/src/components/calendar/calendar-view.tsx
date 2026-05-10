@@ -512,6 +512,12 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     const currentFcView = fcApi.view.type;
     if (currentFcView !== fcView) {
       fcApi.changeView(fcView);
+      // When entering Día, FC's internal pointer is whatever start-of-range
+      // datesSet last fired with (Monday for a week view). Without this jump,
+      // the day view would silently land on Monday instead of today.
+      if (selectedView === "day") {
+        fcApi.gotoDate(new Date());
+      }
     }
   }, [selectedView, isMobile]);
 
