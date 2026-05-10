@@ -12,31 +12,24 @@ import type {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-function getAuthHeaders(): HeadersInit {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("admin_token") : null;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-  return headers;
-}
-
 async function billingRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
+  // Authentication is exclusively via HttpOnly cookie (admin_token).
+  // credentials:"include" causes the browser to attach it automatically.
+  // No Authorization header is ever set by the client.
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
-    headers: { ...getAuthHeaders(), ...options.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
     credentials: "include",
   });
 
   if (!response.ok) {
     if (response.status === 401 && typeof window !== "undefined") {
-      localStorage.removeItem("admin_token");
       window.location.href = "/login";
     }
     const error = await response.json().catch(() => ({ detail: "Error" }));
@@ -62,14 +55,11 @@ export const billingApi = {
       window.open(pdfUrl, '_blank');
       return;
     }
-    const token =
-      typeof window !== "undefined"
-        ? localStorage.getItem("admin_token")
-        : null;
+    // Authentication via HttpOnly cookie (credentials:"include").
     const response = await fetch(
       `${API_BASE_URL}/api/billing/invoices/${id}/pdf`,
       {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
       }
     );

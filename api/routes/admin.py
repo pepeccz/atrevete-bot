@@ -25,7 +25,7 @@ import pytz
 from dateutil.parser import parse as parse_datetime
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # noqa: F401 — kept for type compatibility
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -367,14 +367,12 @@ async def _get_latest_checkpoint_state(redis_client: Any, thread_id: str) -> dic
 # Security
 # =============================================================================
 
-security = HTTPBearer(auto_error=False)  # auto_error=False allows cookie fallback
 settings = get_settings()
 
 # JWT Configuration
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 720  # 30 days - persistent session
 JWT_COOKIE_NAME = "admin_token"  # HttpOnly cookie name
-JWT_COOKIE_SECURE = False  # Set to True in production with HTTPS
 JWT_COOKIE_SAMESITE = "lax"  # "strict" may break some OAuth flows
 
 
@@ -548,24 +546,15 @@ def verify_token(token: str) -> dict[str, Any]:
 
 async def get_current_user(
     request: Request,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
     admin_token: Annotated[str | None, Cookie()] = None,
 ) -> dict[str, Any]:
     """
     Dependency to get current authenticated user.
 
-    Supports two authentication methods (in priority order):
-    1. HttpOnly cookie (recommended, XSS-safe)
-    2. Authorization header (for API clients/mobile apps)
-
-    Verifies JWT signature and checks token blacklist for revoked tokens.
+    Reads the JWT exclusively from the admin_token HttpOnly cookie.
+    Bearer / Authorization header fallback has been removed (cookie-only transport).
     """
-    # Try to get token from cookie first (more secure)
     token = admin_token
-
-    # Fall back to Authorization header
-    if not token and credentials:
-        token = credentials.credentials
 
     if not token:
         raise HTTPException(
@@ -598,8 +587,7 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+    username: str
     expires_in: int = JWT_EXPIRATION_HOURS * 3600
 
 
@@ -976,18 +964,18 @@ async def login(request: LoginRequest, response: Response):
     token, _jti = create_access_token(request.username)
 
     # Set HttpOnly cookie for browser clients (XSS-safe)
+    # path=/api (not /api/admin) so billing and token-usage routes receive the cookie
     response.set_cookie(
         key=JWT_COOKIE_NAME,
         value=token,
         httponly=True,  # Not accessible via JavaScript
-        secure=JWT_COOKIE_SECURE,  # Only sent over HTTPS
+        secure=get_settings().ADMIN_JWT_COOKIE_SECURE,  # env-driven — True in prod
         samesite=JWT_COOKIE_SAMESITE,  # CSRF protection
         max_age=JWT_EXPIRATION_HOURS * 3600,
-        path="/api/admin",  # Scope to admin routes only
+        path="/api",  # widened from /api/admin so billing/* and token-usage/* are covered
     )
 
-    # Also return token in body for API clients (mobile apps, etc.)
-    return LoginResponse(access_token=token)
+    return LoginResponse(username=request.username, expires_in=JWT_EXPIRATION_HOURS * 3600)
 
 
 @router.get("/auth/me", response_model=UserResponse)
@@ -1017,12 +1005,12 @@ async def logout(
     jti = current_user.get("jti")
     exp = current_user.get("exp")
 
-    # Clear the HttpOnly cookie
+    # Clear the HttpOnly cookie — path must mirror the set_cookie path exactly
     response.delete_cookie(
         key=JWT_COOKIE_NAME,
-        path="/api/admin",
+        path="/api",
         httponly=True,
-        secure=JWT_COOKIE_SECURE,
+        secure=get_settings().ADMIN_JWT_COOKIE_SECURE,
         samesite=JWT_COOKIE_SAMESITE,
     )
 

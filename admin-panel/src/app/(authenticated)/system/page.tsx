@@ -115,8 +115,13 @@ export default function SystemPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [logFilter, setLogFilter] = useState<"all" | "error" | "warning" | "info" | "debug">("all");
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const retriesRef = useRef(0);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  const MAX_RETRIES = 10;
+  const BASE_BACKOFF_MS = 500;
+  const MAX_BACKOFF_MS = 15_000;
 
   // Helper to detect log level from line content
   const getLogLevel = (line: string): "error" | "warning" | "info" | "debug" => {
@@ -180,58 +185,99 @@ export default function SystemPage() {
     return () => clearInterval(interval);
   }, [fetchHealth, fetchServices]);
 
-  // Start log streaming
+  // Start log streaming via fetch + ReadableStream (cookie-authenticated, no ?token=)
   const startLogStream = useCallback(() => {
-    // Close existing stream
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
+    // Abort any existing stream
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    retriesRef.current = 0;
 
-    const token = api.getToken();
-    if (!token) {
-      toast.error("No hay sesión activa. Por favor, iniciá sesión de nuevo.");
-      return;
-    }
+    setIsStreaming(true);
+    setLogs([]);
 
-    const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/admin/system/${selectedLogService}/logs?tail=100&token=${encodeURIComponent(token)}`;
+    const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/admin/system/${selectedLogService}/logs?tail=100`;
 
-    const eventSource = new EventSource(url);
+    async function runStream() {
+      while (!ctrl.signal.aborted) {
+        try {
+          const res = await fetch(url, {
+            credentials: "include",
+            signal: ctrl.signal,
+            headers: { Accept: "text/event-stream" },
+          });
 
-    eventSource.onopen = () => {
-      setIsStreaming(true);
-      setLogs([]);
-    };
-
-    eventSource.onmessage = (event) => {
-      const line = event.data;
-      if (line && !line.startsWith("Error:")) {
-        setLogs((prev) => {
-          const newLogs = [...prev, line];
-          // Keep last 500 lines
-          if (newLogs.length > 500) {
-            return newLogs.slice(-500);
+          if (res.status === 401) {
+            // Session expired — redirect to login
+            if (typeof window !== "undefined") {
+              const currentPath = window.location.pathname + window.location.search;
+              if (currentPath !== "/login") {
+                sessionStorage.setItem("returnTo", currentPath);
+              }
+              window.location.href = "/login";
+            }
+            return;
           }
-          return newLogs;
-        });
-      } else if (line.startsWith("Error:")) {
-        toast.error(line);
+
+          if (!res.ok || !res.body) {
+            throw new Error(`stream error: ${res.status}`);
+          }
+
+          retriesRef.current = 0; // reset on successful connect
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break; // server closed → reconnect
+
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split("\n\n");
+            buffer = events.pop() ?? "";
+
+            for (const ev of events) {
+              const dataLines = ev.split("\n").filter((l) => l.startsWith("data:"));
+              if (!dataLines.length) continue;
+              const payload = dataLines.map((l) => l.slice(5).trim()).join("\n");
+
+              if (payload && !payload.startsWith("Error:")) {
+                setLogs((prev) => {
+                  const next = [...prev, payload];
+                  return next.length > 500 ? next.slice(-500) : next;
+                });
+              } else if (payload.startsWith("Error:")) {
+                toast.error(payload);
+              }
+            }
+          }
+        } catch (err) {
+          if (ctrl.signal.aborted) return;
+          // Network or stream error — apply backoff and retry
+        }
+
+        if (retriesRef.current >= MAX_RETRIES) {
+          toast.error("Conexión al log perdida. Reintenta manualmente.");
+          setIsStreaming(false);
+          return;
+        }
+
+        const delay = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** retriesRef.current);
+        const jitter = Math.floor(Math.random() * 200);
+        await new Promise<void>((r) => setTimeout(r, delay + jitter));
+        retriesRef.current += 1;
       }
-    };
+    }
 
-    eventSource.onerror = () => {
-      setIsStreaming(false);
-      eventSource.close();
-    };
-
-    eventSourceRef.current = eventSource;
-  }, [selectedLogService]);
+    runStream().catch(() => {
+      if (!ctrl.signal.aborted) setIsStreaming(false);
+    });
+  }, [selectedLogService]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stop log streaming
   const stopLogStream = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
+    abortRef.current?.abort();
+    abortRef.current = null;
     setIsStreaming(false);
   }, []);
 
@@ -242,12 +288,10 @@ export default function SystemPage() {
     }
   }, [logs]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — abort any in-flight fetch stream
   useEffect(() => {
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      abortRef.current?.abort();
     };
   }, []);
 

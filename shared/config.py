@@ -353,6 +353,13 @@ class Settings(BaseSettings):
     ADMIN_JWT_SECRET: str = Field(
         default="", description="JWT secret key for admin panel authentication (min 32 chars)"
     )
+    ADMIN_JWT_COOKIE_SECURE: bool = Field(
+        default=True,
+        description=(
+            "Set Secure attribute on admin_token cookie. "
+            "Override to False in local dev (.env). Never False in production."
+        ),
+    )
 
     # Google OAuth2 (optional — system uses service account if not set)
     # Configure these when using OAuth2 flow from admin panel instead of service account JSON.

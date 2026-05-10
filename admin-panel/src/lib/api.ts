@@ -57,21 +57,9 @@ export class ApiRequestError extends Error {
 
 class ApiClient {
   private baseUrl: string;
-  private token: string | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-  }
-
-  setToken(token: string | null) {
-    this.token = token;
-  }
-
-  getToken(): string | null {
-    if (typeof window !== "undefined") {
-      return this.token || localStorage.getItem("admin_token");
-    }
-    return this.token;
   }
 
   private async request<T>(
@@ -79,32 +67,25 @@ class ApiClient {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    const token = this.getToken();
 
     const headers: HeadersInit = {
       "Content-Type": "application/json",
       ...options.headers,
     };
 
-    // Include Authorization header as fallback for API clients
-    // Primary authentication is via HttpOnly cookie (set by server)
-    if (token) {
-      (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
-    }
+    // Authentication is exclusively via HttpOnly cookie (admin_token).
+    // The browser attaches it automatically thanks to credentials:"include".
+    // No Authorization header is ever set by the client.
 
     const response = await fetch(url, {
       ...options,
       headers,
-      // SECURITY: Include credentials to send HttpOnly cookies automatically
       credentials: "include",
     });
 
     if (!response.ok) {
       if (response.status === 401) {
-        // Token expired or invalid
-        this.setToken(null);
         if (typeof window !== "undefined") {
-          localStorage.removeItem("admin_token");
           // Guardar URL actual para volver después del login
           const currentPath = window.location.pathname + window.location.search;
           if (currentPath !== "/login") {
@@ -159,35 +140,25 @@ class ApiClient {
   async login(
     username: string,
     password: string
-  ): Promise<{ access_token: string; token_type: string; expires_in: number }> {
-    const response = await this.request<{
-      access_token: string;
-      token_type: string;
-      expires_in: number;
-    }>("/api/admin/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-    });
-    this.setToken(response.access_token);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("admin_token", response.access_token);
-    }
-    return response;
+  ): Promise<{ username: string; expires_in: number }> {
+    // Server sets the admin_token HttpOnly cookie in the Set-Cookie header.
+    // Response body contains only non-sensitive metadata (no access_token).
+    return this.request<{ username: string; expires_in: number }>(
+      "/api/admin/auth/login",
+      {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      }
+    );
   }
 
   async logout(): Promise<void> {
-    // Call server logout endpoint to invalidate token and clear cookie
+    // Server invalidates the JWT (Redis blacklist) and clears the cookie.
     try {
       await this.request("/api/admin/auth/logout", { method: "POST" });
     } catch (error) {
-      // Ignore errors - we'll clear local state anyway
+      // Ignore errors - cookie will expire naturally
       console.warn("Server logout failed:", error);
-    }
-
-    // Clear local state
-    this.setToken(null);
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("admin_token");
     }
   }
 
@@ -931,8 +902,8 @@ class ApiClient {
   }
 
   getServiceLogsUrl(service: SystemServiceName): string {
-    const token = this.getToken();
-    return `${this.baseUrl}/api/admin/system/${service}/logs?token=${token}`;
+    // No token in URL — authentication via HttpOnly cookie (credentials:"include").
+    return `${this.baseUrl}/api/admin/system/${service}/logs`;
   }
 
   async triggerGcalSync(): Promise<ServiceActionResponse> {
