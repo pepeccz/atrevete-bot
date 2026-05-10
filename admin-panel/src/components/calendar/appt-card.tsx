@@ -1,8 +1,10 @@
 "use client";
 
 import type { CSSProperties } from "react";
+import { Repeat } from "lucide-react";
 import { deriveStylistPalette } from "@/lib/stylist-colors";
 import { formatTimeRange } from "@/lib/calendar-time";
+import { getEventTypeMeta } from "./event-types";
 
 export interface CalendarEventExtended {
   appointment_id?: string;
@@ -14,6 +16,7 @@ export interface CalendarEventExtended {
   duration_minutes?: number;
   notes?: string | null;
   description?: string | null;
+  title?: string;
   event_type?: string;
   type: "appointment" | "blocking_event" | "holiday";
   recurring_series_id?: string | null;
@@ -172,11 +175,18 @@ interface BlockingCardProps {
 }
 
 function BlockingCard({ extendedProps, palette, start, end, mode, style, onClick }: BlockingCardProps) {
-  const label = extendedProps.description || extendedProps.event_type || "Bloqueo";
+  const meta = getEventTypeMeta(extendedProps.event_type ?? "general");
+  const label =
+    extendedProps.title ||
+    extendedProps.description ||
+    meta.label ||
+    "Bloqueo";
+  const TypeIcon = meta.Icon;
+
   return (
     <div
       onClick={onClick}
-      className="overflow-hidden rounded-[8px] h-full w-full cursor-pointer select-none transition-opacity hover:opacity-90"
+      className="relative overflow-hidden rounded-[8px] h-full w-full cursor-pointer select-none transition-opacity hover:opacity-90"
       style={{
         // Diagonal gray hatching — visually distinct from the soft pastel of an appointment.
         backgroundImage: `repeating-linear-gradient(135deg, hsl(var(--surface-muted)) 0px, hsl(var(--surface-muted)) 6px, hsl(var(--line-soft)) 6px, hsl(var(--line-soft)) 12px)`,
@@ -186,11 +196,18 @@ function BlockingCard({ extendedProps, palette, start, end, mode, style, onClick
       }}
       aria-label={`Bloqueo: ${label}`}
     >
+      {extendedProps.recurring_series_id && (
+        <Repeat
+          className="absolute top-1 right-1 h-3 w-3 opacity-70"
+          style={{ color: "hsl(var(--ink-soft))" }}
+          aria-label="Bloqueo recurrente"
+        />
+      )}
       <div
         className="flex items-center gap-1.5 text-[11px] font-bold tabular-nums uppercase tracking-wide"
         style={{ color: "hsl(var(--ink-soft))" }}
       >
-        <BlockIcon />
+        <TypeIcon className="h-3 w-3 flex-shrink-0" />
         {mode === "day" && start && end ? (
           <span>{formatTimeRange(start.toISOString(), end.toISOString(), "Europe/Madrid")}</span>
         ) : (
@@ -207,21 +224,3 @@ function BlockingCard({ extendedProps, palette, start, end, mode, style, onClick
   );
 }
 
-function BlockIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      className="h-3 w-3 flex-shrink-0"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-    </svg>
-  );
-}
