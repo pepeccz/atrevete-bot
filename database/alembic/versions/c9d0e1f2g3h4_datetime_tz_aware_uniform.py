@@ -22,7 +22,7 @@ from typing import Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "b2c3d4e5f6g7"
+revision: str = "c9d0e1f2g3h4"
 down_revision: Union[str, None] = "z6a7b8c9d0e1"
 branch_labels = None
 depends_on = None
