@@ -1,7 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import api from "@/lib/api";
+import type { ConversationHistory } from "@/lib/types";
 import {
   AlertTriangle,
   Calendar,
@@ -64,11 +67,55 @@ const gestionNav: NavItem[] = [
   { title: "Servicios",  href: "/services",    icon: Scissors },
 ];
 
-const configNav: NavItem[] = [
+const baseConfigNav: NavItem[] = [
   { title: "Configuración del Salón", href: "/settings",      icon: Settings },
-  { title: "Conversaciones",          href: "/conversations", icon: MessageSquare, badge: 4 },
-  { title: "Escalaciones",            href: "/escalations",   icon: AlertTriangle, badge: 2 },
+  { title: "Conversaciones",          href: "/conversations", icon: MessageSquare },
+  { title: "Escalaciones",            href: "/escalations",   icon: AlertTriangle },
 ];
+
+interface BadgeCounts {
+  conversations: number;
+  escalations: number;
+}
+
+/**
+ * Polls for live counts that drive the sidebar badges. Refreshes on mount,
+ * on route change (cheap heuristic that catches user actions like resolving
+ * an escalation), and every 60s.
+ *
+ * Conversations badge counts threads still in progress (no ended_at). When
+ * we land on a "needs attention" semantic for conversations we'll narrow this.
+ * Escalations badge counts those with status = pending.
+ */
+function useSidebarBadgeCounts(pathname: string): BadgeCounts {
+  const [counts, setCounts] = useState<BadgeCounts>({ conversations: 0, escalations: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [convRes, escStats] = await Promise.all([
+          api.list<ConversationHistory>("conversations", { page_size: 100 }).catch(() => null),
+          api.getEscalationStats().catch(() => null),
+        ]);
+        if (cancelled) return;
+        const activeConversations = convRes?.items?.filter((c) => !c.ended_at).length ?? 0;
+        const pendingEscalations = escStats?.pending ?? 0;
+        setCounts({ conversations: activeConversations, escalations: pendingEscalations });
+      } catch {
+        // Silent failure — sidebar badges are decorative, not load-bearing.
+      }
+    }
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [pathname]);
+
+  return counts;
+}
 
 const externalLinks: ExternalLinkItem[] = [
   {
@@ -277,6 +324,14 @@ function SidebarContent({
 }) {
   const { logout, user } = useAuth();
   const { toggle } = useSidebar();
+  const pathname = usePathname();
+  const badgeCounts = useSidebarBadgeCounts(pathname);
+
+  const configNav: NavItem[] = [
+    baseConfigNav[0],
+    { ...baseConfigNav[1], badge: badgeCounts.conversations },
+    { ...baseConfigNav[2], badge: badgeCounts.escalations },
+  ];
 
   const initials = user?.username
     ? user.username.slice(0, 2).toUpperCase()
