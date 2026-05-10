@@ -162,7 +162,17 @@ interface MoveOperation {
 }
 type PendingDragOperation = ResizeOperation | MoveOperation | null;
 
-export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_props, ref) {
+interface CalendarViewProps {
+  /**
+   * Notifies the parent page whenever the view (day/week/month) or the
+   * number of active stylists changes, so the page can render an
+   * adaptive subtitle in <Header />.
+   */
+  onContextChange?: (ctx: { view: "day" | "week" | "month"; activeStylists: number }) => void;
+}
+
+export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(function CalendarView(props, ref) {
+  const { onContextChange } = props;
   const router = useRouter();
   const calendarRef = useRef<FullCalendar>(null);
   const fetchEventsRef = useRef<(start: Date, end: Date) => void>(() => {});
@@ -199,6 +209,12 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     () => Array.from(activeStylists),
     [activeStylists],
   );
+
+  // Surface (view, activeStylists count) to the page so it can render the
+  // subtitle that matches the active view.
+  useEffect(() => {
+    onContextChange?.({ view: selectedView, activeStylists: selectedStylistIds.length });
+  }, [onContextChange, selectedView, selectedStylistIds.length]);
 
   // Mobile filter sheet state
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
