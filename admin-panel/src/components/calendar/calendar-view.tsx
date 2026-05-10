@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import { useRouter } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -191,8 +191,14 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     setDate: setSelectedDate,
   } = useCalendarState();
 
-  // Derive selectedStylistIds array from Set for API calls
-  const selectedStylistIds = Array.from(activeStylists);
+  // Derive selectedStylistIds array from Set with stable identity
+  // (activeStylists Set identity only changes when toggled — without useMemo
+  // every render produces a new array, which cascades into a new fetchEvents
+  // callback and re-fires the useEffect that reads it, causing an infinite loop).
+  const selectedStylistIds = useMemo(
+    () => Array.from(activeStylists),
+    [activeStylists],
+  );
 
   // Mobile filter sheet state
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
