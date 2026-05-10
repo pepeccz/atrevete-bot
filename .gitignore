@@ -83,3 +83,10 @@ v4-backup/
 # Local AI tooling (Claude Code agents config + OpenCode editor)
 .agents/
 .opencode/
+
+# Local working artifacts (not for commit)
+.claire/
+.clone/
+_panel_audit/
+notes.md
+Panel Atrevete Bot*.zip
