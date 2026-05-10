@@ -58,7 +58,7 @@ from database.models import (
 from shared.config import get_settings
 from shared.cache_signals import publish_cache_invalidation
 from shared.settings_service import get_settings_service
-from agent.services.recurrence_service import (
+from shared.recurrence_service import (
     expand_recurrence,
     check_conflicts_for_dates,
     get_business_hours_summary,
@@ -114,7 +114,7 @@ async def _safe_delete_gcal_event(stylist_id: UUID, event_id: str) -> None:
     blocking the HTTP response while waiting for Google Calendar API calls.
     Failures are logged but don't affect the caller.
     """
-    from agent.services.gcal_push_service import delete_gcal_event
+    from shared.gcal_push_service import delete_gcal_event
 
     try:
         await delete_gcal_event(stylist_id, event_id)
@@ -1586,7 +1586,7 @@ async def update_stylist(
         await publish_cache_invalidation("stylists", "update")
 
         try:
-            from agent.prompts.catalog_builder import invalidate_catalog_cache
+            from shared.catalog_builder import invalidate_catalog_cache
             invalidate_catalog_cache()
         except Exception:
             pass
@@ -2097,7 +2097,7 @@ async def update_customer(
 
         # Invalidate customer cache when name fields change
         if request.first_name is not None or request.last_name is not None:
-            from agent.middleware.customer_resolve import _invalidate_cached_customer
+            from shared.customer_resolve import _invalidate_cached_customer
 
             await _invalidate_cached_customer(customer.phone)
 
@@ -2284,7 +2284,7 @@ async def create_service(
         await session.refresh(service)
 
         try:
-            from agent.prompts.catalog_builder import invalidate_catalog_cache
+            from shared.catalog_builder import invalidate_catalog_cache
             invalidate_catalog_cache()
         except Exception:
             pass
@@ -2349,7 +2349,7 @@ async def update_service(
         await session.refresh(service)
 
         try:
-            from agent.prompts.catalog_builder import invalidate_catalog_cache
+            from shared.catalog_builder import invalidate_catalog_cache
             invalidate_catalog_cache()
         except Exception:
             pass
@@ -2385,7 +2385,7 @@ async def delete_service(
         await session.commit()
 
     try:
-        from agent.prompts.catalog_builder import invalidate_catalog_cache
+        from shared.catalog_builder import invalidate_catalog_cache
         invalidate_catalog_cache()
     except Exception:
         pass
@@ -2794,7 +2794,7 @@ async def create_appointment(
         # Push to Google Calendar (fire-and-forget, non-blocking)
         # Push failures are logged but don't affect the appointment creation
         try:
-            from agent.services.gcal_push_service import push_appointment_to_gcal
+            from shared.gcal_push_service import push_appointment_to_gcal
 
             service_names = ", ".join(s.name for s in services)
             customer_name = f"{request.first_name} {request.last_name or ''}".strip()
@@ -3070,7 +3070,7 @@ async def update_appointment(
 
         if appointment.google_calendar_event_id:
             # Update existing event (fire-and-forget)
-            from agent.services.gcal_push_service import update_appointment_in_gcal
+            from shared.gcal_push_service import update_appointment_in_gcal
 
             asyncio.create_task(
                 update_appointment_in_gcal(
@@ -3088,7 +3088,7 @@ async def update_appointment(
             logger.info(f"Triggered Google Calendar update for appointment {appointment.id}")
         else:
             # Create new event if missing (immediate push)
-            from agent.services.gcal_push_service import push_appointment_to_gcal
+            from shared.gcal_push_service import push_appointment_to_gcal
 
             try:
                 event_id = await push_appointment_to_gcal(
@@ -3397,7 +3397,7 @@ async def search_availability(
             ]
         }
     """
-    from agent.services.availability_service import get_available_slots, is_holiday
+    from shared.availability_service import get_available_slots, is_holiday
     from database.models import ServiceCategory
     from datetime import date as date_type, timedelta
     from shared.business_hours_validator import is_date_closed
@@ -3779,7 +3779,7 @@ async def create_blocking_event(
 
     This creates events in the database and pushes each to Google Calendar.
     """
-    from agent.services.gcal_push_service import fire_and_forget_push_blocking_event
+    from shared.gcal_push_service import fire_and_forget_push_blocking_event
 
     # Validate event_type
     try:
@@ -3901,7 +3901,7 @@ async def update_blocking_event(
 
         # Sync with Google Calendar if event exists
         if event.google_calendar_event_id:
-            from agent.services.gcal_push_service import update_blocking_event_in_gcal
+            from shared.gcal_push_service import update_blocking_event_in_gcal
 
             # Fire-and-forget update to Google Calendar
             asyncio.create_task(
@@ -4077,7 +4077,7 @@ async def create_recurring_blocking_event(
     Creates a RecurringBlockingSeries and individual BlockingEvent instances.
     Optionally ignores conflicts if ignore_conflicts=true.
     """
-    from agent.services.gcal_push_service import fire_and_forget_push_blocking_event
+    from shared.gcal_push_service import fire_and_forget_push_blocking_event
 
     # Parse times
     try:
@@ -4386,7 +4386,7 @@ async def update_blocking_event_with_scope(
 
             # Fire-and-forget GCal update
             if event.google_calendar_event_id:
-                from agent.services.gcal_push_service import update_blocking_event_in_gcal
+                from shared.gcal_push_service import update_blocking_event_in_gcal
 
                 asyncio.create_task(
                     update_blocking_event_in_gcal(
@@ -4493,7 +4493,7 @@ async def update_blocking_event_with_scope(
         await session.commit()
 
         # Fire-and-forget GCal updates for all updated events
-        from agent.services.gcal_push_service import update_blocking_event_in_gcal
+        from shared.gcal_push_service import update_blocking_event_in_gcal
 
         for evt in updated_events:
             if evt.google_calendar_event_id:
@@ -4660,7 +4660,7 @@ async def get_calendar_events(
     Returns:
         List of events formatted for FullCalendar with stylist color coding
     """
-    from agent.services.availability_service import get_calendar_events_for_range
+    from shared.availability_service import get_calendar_events_for_range
 
     # Default color palette (fallback for stylists without custom color)
     STYLIST_COLORS = [
