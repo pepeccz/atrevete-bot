@@ -222,7 +222,7 @@ async def update_invoice_status(
     request_body: StatusUpdateRequest,
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> InvoiceResponse:
-    """Void an invoice. Cancels the associated Stripe PaymentIntent if pending."""
+    """Void an invoice via Stripe Invoicing API."""
     async with get_async_session() as session:
         billing_service = BillingService()
         invoice = await billing_service.void_invoice(session, invoice_id, request_body.reason)
@@ -389,8 +389,6 @@ async def stripe_webhook(request: Request) -> dict:
 
     Processes:
     - checkout.session.completed → store SEPA mandate details
-    - payment_intent.succeeded → mark payment and invoice as paid
-    - payment_intent.payment_failed → mark payment as failed with reason
     """
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")

@@ -281,7 +281,7 @@ class BillingService:
     async def void_invoice(
         self, session: AsyncSession, invoice_id: UUID, reason: str | None = None
     ) -> Invoice:
-        """Void an invoice. Cancel Stripe PaymentIntent if pending."""
+        """Void an invoice via Stripe Invoicing API."""
         result = await session.execute(select(Invoice).where(Invoice.id == invoice_id))
         invoice = result.scalar_one_or_none()
 
