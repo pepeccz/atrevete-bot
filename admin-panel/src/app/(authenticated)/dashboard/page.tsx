@@ -283,8 +283,24 @@ export default function DashboardPage() {
                 })}
               </div>
             ) : (
-              <CardContent className="flex items-center justify-center py-10 text-[13px] text-ink-mute">
-                No hay citas hoy
+              <CardContent className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-8 w-8 text-ink-faint"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                <span className="text-[13px] text-ink-mute">No hay citas hoy</span>
               </CardContent>
             )}
           </Card>
@@ -325,8 +341,22 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : (
-                <CardContent className="flex items-center justify-center py-8 text-[13px] text-ink-mute">
-                  Todo al día
+                <CardContent className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-7 w-7 text-[hsl(var(--status-confirm))]"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+                  <span className="text-[13px] text-ink-mute">Todo al día</span>
                 </CardContent>
               )}
             </Card>
@@ -352,8 +382,8 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : (
-                <CardContent className="py-6 text-[13px] text-ink-mute">
-                  Sin servicios esta semana
+                <CardContent className="flex items-center justify-center py-8 text-[13px] text-ink-mute">
+                  Sin datos suficientes esta semana
                 </CardContent>
               )}
             </Card>
@@ -422,6 +452,10 @@ export default function DashboardPage() {
             </CardHeader>
             {trendLoading ? (
               <Skeleton className="mx-4 my-4 h-[132px]" />
+            ) : trendData && trendData.every((p) => p.count === 0) ? (
+              <div className="flex items-center justify-center py-8 text-[13px] text-ink-mute">
+                Sin datos de los últimos 14 días
+              </div>
             ) : (
               <AppointmentsTrendChart data={trendData ?? []} />
             )}

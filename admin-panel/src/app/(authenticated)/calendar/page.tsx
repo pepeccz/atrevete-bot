@@ -45,7 +45,7 @@ export default function CalendarPage() {
       />
 
       <div className="flex-1 p-4 md:p-6">
-        <CalendarErrorBoundary>
+        <CalendarErrorBoundary onResetToWeek={() => calendarRef.current?.resetToWeek()}>
           <CalendarView ref={calendarRef} />
         </CalendarErrorBoundary>
       </div>

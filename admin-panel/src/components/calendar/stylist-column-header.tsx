@@ -57,6 +57,8 @@ export function StylistColumnHeader({
     <div
       className="relative flex flex-col items-center justify-center gap-1 px-2 border-b border-r border-line bg-white"
       style={{ height: "84px", position: "sticky", top: 0, zIndex: 5 } as CSSProperties}
+      role="columnheader"
+      aria-label={`${stylist.name}: ${metrics.appointmentsCount} ${metrics.appointmentsCount === 1 ? "cita" : "citas"}, ${formatHours(metrics.totalMinutes)}, ocupación ${metrics.utilizationPct}%`}
     >
       {/* Status dot — top-right corner */}
       <span

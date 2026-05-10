@@ -89,6 +89,8 @@ interface EditingBlockingEvent {
 // Ref interface for external control
 export interface CalendarViewRef {
   refresh: () => void;
+  /** Reset view to 'week' — used by CalendarErrorBoundary to recover from errors. */
+  resetToWeek: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,20 +354,12 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
 
     try {
       setIsLoading(true);
-      console.log("[Calendar] Fetching events:", {
-        stylists: selectedStylistIds,
-        start: start.toISOString(),
-        end: end.toISOString(),
-      });
 
       const response = await api.getCalendarEvents(
         selectedStylistIds,
         start.toISOString(),
         end.toISOString()
       );
-
-      console.log("[Calendar] Received events:", response);
-      console.log("[Calendar] Number of events:", response.events.length);
 
       // Apply colors based on stylist (ALL events use stylist color, except holidays)
       const coloredEvents = response.events.map(event => {
@@ -482,7 +476,7 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     }
   }, [selectedStylistIds, fetchEvents]);
 
-  // Expose refresh method via ref
+  // Expose refresh + resetToWeek via ref
   useImperativeHandle(ref, () => ({
     refresh: () => {
       if (calendarRef.current) {
@@ -491,7 +485,10 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
         fetchEvents(view.activeStart, view.activeEnd || new Date());
       }
     },
-  }), [fetchEvents]);
+    resetToWeek: () => {
+      setView("week");
+    },
+  }), [fetchEvents, setView]);
 
   // Sync FullCalendar view when selectedView or mobile changes
   useEffect(() => {
@@ -533,7 +530,6 @@ export const CalendarView = forwardRef<CalendarViewRef>(function CalendarView(_p
     };
   }) => {
     const props = info.event.extendedProps;
-    console.log("Event clicked:", info.event.id, props);
 
     if (props.type === "blocking_event") {
       const blockingEventId = props.blocking_event_id as string;

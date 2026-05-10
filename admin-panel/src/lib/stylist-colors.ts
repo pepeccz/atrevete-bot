@@ -99,6 +99,37 @@ function contrastRatio(fg: string, bg: string): number {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
+ * Verifies WCAG AA contrast of a derived palette's text over soft background.
+ *
+ * Returns `{ aa: boolean, ratio: number }`. AA requires ratio ≥ 4.5.
+ * Intended for dev-mode diagnostics and testing; not called in hot render paths.
+ */
+export function verifyPaletteContrast(palette: StylistPalette): { aa: boolean; ratio: number } {
+  const ratio = contrastRatio(palette.text, palette.soft);
+  return { aa: ratio >= 4.5, ratio: Math.round(ratio * 100) / 100 };
+}
+
+/**
+ * Dev-mode console warning when a stylist hex produces a palette that fails
+ * WCAG AA contrast. Call this in development to surface admin-configured
+ * hex values with poor contrast.
+ *
+ * No-ops in production (process.env.NODE_ENV === 'production').
+ */
+export function warnIfContrastFails(stylistName: string, hex: string): void {
+  if (typeof process !== "undefined" && process.env.NODE_ENV === "production") return;
+  const palette = deriveStylistPalette(hex);
+  const { aa, ratio } = verifyPaletteContrast(palette);
+  if (!aa) {
+    console.warn(
+      `[stylist-colors] WCAG AA contrast failure for stylist "${stylistName}" (hex: ${hex}). ` +
+        `Derived text "${palette.text}" on soft "${palette.soft}" has ratio ${ratio} (need ≥ 4.5). ` +
+        `Update the stylist's hex color in the admin panel.`
+    );
+  }
+}
+
+/**
  * Derives a three-variant palette from a hex colour.
  *
  * @param hex - Any 6-digit hex string, with or without `#` prefix.

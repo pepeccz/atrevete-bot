@@ -20,7 +20,11 @@ export function KpiCard({ label, value, delta, subline, className }: KpiCardProp
   const isNeutral = delta?.direction === "neutral";
 
   return (
-    <Card className={cn("rounded-card-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)]", className)}>
+    <Card
+      className={cn("rounded-card-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)]", className)}
+      role="article"
+      aria-label={`${label}: ${value}${subline ? ` — ${subline}` : ""}`}
+    >
       <CardContent className="px-[18px] py-4">
         {/* Label */}
         <div className="text-[12px] font-semibold uppercase tracking-[0.01em] text-ink-mute">

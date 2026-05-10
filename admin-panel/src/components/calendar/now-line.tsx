@@ -58,7 +58,8 @@ export function NowLine({
     <div
       className="pointer-events-none absolute left-0 right-0 z-20"
       style={{ top: `${top}px` }}
-      aria-hidden="true"
+      role="presentation"
+      aria-label={`Hora actual: ${timeLabel}`}
     >
       {/* Red line */}
       <div

@@ -61,7 +61,9 @@ export function StylistChipFilter({
               ? "bg-[hsl(var(--gold-soft))] text-[hsl(var(--gold-dark))] border-[hsl(var(--gold-line))]"
               : "bg-white text-ink-mute border-line opacity-55 hover:opacity-100",
           ].join(" ")}
-          aria-pressed={allActive}
+          role="checkbox"
+          aria-checked={allActive}
+          aria-label="Mostrar todos los estilistas"
         >
           Todos
         </button>
@@ -88,7 +90,9 @@ export function StylistChipFilter({
                     }
                   : undefined
               }
-              aria-pressed={isActive}
+              role="checkbox"
+              aria-checked={isActive}
+              aria-label={`${isActive ? "Ocultar" : "Mostrar"} citas de ${stylist.name}`}
             >
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
