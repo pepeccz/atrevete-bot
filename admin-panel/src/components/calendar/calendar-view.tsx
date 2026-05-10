@@ -549,10 +549,16 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
     }
   }, [selectedView, isMobile]);
 
-  // Handle date set (when calendar view changes) — S4.10: also update selectedDate
+  // Handle date set (when calendar view changes) — S4.10: also update selectedDate.
+  // Deferred via queueMicrotask: FullCalendar's changeView (notably for
+  // dayGridMonth) wraps view transitions in flushSync, and synchronous
+  // setState inside that boundary triggers React's "flushSync from inside a
+  // lifecycle" error. Microtask defers our state updates to after FC's flush.
   const handleDatesSet = (arg: { start: Date; end: Date }) => {
-    setSelectedDate(arg.start);
-    fetchEvents(arg.start, arg.end);
+    queueMicrotask(() => {
+      setSelectedDate(arg.start);
+      fetchEvents(arg.start, arg.end);
+    });
   };
 
   // Handle event click
