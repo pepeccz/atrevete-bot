@@ -47,7 +47,7 @@ export function CustomerStep({
   const form = useForm<NewCustomerValues>({
     resolver: zodResolver(NewCustomerSchema),
     defaultValues: {
-      phone: "",
+      phone: "+34",
       first_name: "",
       last_name: "",
     },

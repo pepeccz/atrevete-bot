@@ -77,7 +77,7 @@ function CustomerModal({
   const form = useForm<CustomerFormValues>({
     resolver: zodResolver(CustomerFormSchema),
     defaultValues: {
-      phone: "",
+      phone: "+34",
       first_name: "",
       last_name: "",
       notes: "",
@@ -95,7 +95,7 @@ function CustomerModal({
         });
       } else {
         form.reset({
-          phone: "",
+          phone: "+34",
           first_name: "",
           last_name: "",
           notes: "",
