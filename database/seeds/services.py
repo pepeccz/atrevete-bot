@@ -78,7 +78,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 30,
         "description": "Regula la porosidad y equilibra el pH. Deja el cabello brillante y manejable (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "addon", "dimension": "treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "addon",
+            "dimension": "treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Agua Tierra",
@@ -86,7 +90,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 25,
         "description": "Detox capilar: purifica el cuero cabelludo y reduce el exceso de grasa (25 min)",
         "audience": None,
-        "metadata_": {"service_type": "addon", "dimension": "treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "addon",
+            "dimension": "treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Corte de Flequillo",
@@ -94,7 +102,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 15,
         "description": "Recorte y modelado del flequillo. Sin lavado ni secado, ideal para un retoque rápido (15 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "cut", "parent_service_name": "Corte de Mujer"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "cut",
+            "parent_service_name": "Corte de Mujer",
+        },
     },
     {
         "name": "Perilla",
@@ -102,7 +114,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 10,
         "description": "Perfilado de patillas con navaja. Acabado preciso para un look prolijo (10 min)",
         "audience": "adult_male",
-        "metadata_": {"service_type": "variant", "dimension": "cut", "parent_service_name": "Corte de Hombre"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "cut",
+            "parent_service_name": "Corte de Hombre",
+        },
     },
     {
         "name": "Tratamiento Precolor",
@@ -118,7 +134,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 30,
         "description": "Tratamiento que refuerza la fibra capilar desde la raíz. Para cabello debilitado (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "addon", "dimension": "treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "addon",
+            "dimension": "treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Infoactivo Sensitivo",
@@ -126,7 +146,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 30,
         "description": "Calma el cuero cabelludo sensible o irritado y lo protege (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "addon", "dimension": "treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "addon",
+            "dimension": "treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Mechas Localizadas",
@@ -134,7 +158,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 20,
         "description": "Mechas solo en zonas elegidas: sin full-head. Ideal para un toque de luz puntual (20 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "highlights", "parent_service_name": "Mechas"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "highlights",
+            "parent_service_name": "Mechas",
+        },
     },
     {
         "name": "Color para Hombre",
@@ -142,15 +170,23 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 30,
         "description": "Cultura de Color específica para caballeros. Cubre canas con resultado natural (30 min)",
         "audience": "adult_male",
-        "metadata_": {"service_type": "principal", "dimension": "color", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "color",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Tinte",
         "category": ServiceCategory.HAIRDRESSING,
         "duration_minutes": 40,
         "description": "Cultura de Color: coloración completa con lavado, aplicación y resultado uniforme. Cabello normal (40 min)",
-        "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "color", "parent_service_name": None},
+        "audience": "adult_female",
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "color",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Recogido",
@@ -158,7 +194,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 60,
         "description": "Peinado recogido para eventos especiales. Incluye diseño y fijación profesional (60 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "updo", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "updo",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Semirecogido",
@@ -166,7 +206,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 40,
         "description": "Recogido parcial para looks elegantes sin estructuras rígidas (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "updo", "parent_service_name": "Recogido"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "updo",
+            "parent_service_name": "Recogido",
+        },
     },
     {
         "name": "Recogido de Novia",
@@ -174,7 +218,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 120,
         "description": "Recogido completo de novia: prueba previa y ejecución el día del evento (120 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "updo", "parent_service_name": "Recogido"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "updo",
+            "parent_service_name": "Recogido",
+        },
     },
     {
         "name": "Corte de Bebé",
@@ -190,7 +238,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 60,
         "description": "Mechas completas con lavado y procesado. Para cabello normal (60 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "highlights", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "highlights",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Mechas Extras",
@@ -198,7 +250,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 70,
         "description": "Mechas completas para cabello con más volumen o largo extra. 10 min más que Mechas estándar (70 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "highlights", "parent_service_name": "Mechas"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "highlights",
+            "parent_service_name": "Mechas",
+        },
     },
     {
         "name": "Barro Gold",
@@ -206,7 +262,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 40,
         "description": "Tratamiento con barro que aporta tonos dorados cálidos mientras nutre (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "treatment", "parent_service_name": "Barro"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "treatment",
+            "parent_service_name": "Barro",
+        },
     },
     {
         "name": "Mechas Localizadas Exprés",
@@ -214,7 +274,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 15,
         "description": "Versión express de Mechas Localizadas. Resultado rápido en zonas puntuales (15 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "highlights", "parent_service_name": "Mechas"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "highlights",
+            "parent_service_name": "Mechas",
+        },
     },
     {
         "name": "Óleo Extra",
@@ -222,7 +286,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 40,
         "description": "Tratamiento intensivo con óleos para cabello muy seco o químicamente dañado (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "addon", "dimension": "treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "addon",
+            "dimension": "treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Barro Extra",
@@ -230,7 +298,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 40,
         "description": "Barro intensivo para cabello con alta densidad o daño avanzado (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "treatment", "parent_service_name": "Barro"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "treatment",
+            "parent_service_name": "Barro",
+        },
     },
     {
         "name": "Barba",
@@ -238,7 +310,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 15,
         "description": "Arreglo, perfilado y modelado de barba para un acabado limpio y definido (15 min)",
         "audience": "adult_male",
-        "metadata_": {"service_type": "variant", "dimension": "cut", "parent_service_name": "Corte de Hombre"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "cut",
+            "parent_service_name": "Corte de Hombre",
+        },
     },
     {
         "name": "Moldeado Extra",
@@ -246,7 +322,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 70,
         "description": "Moldeado para cabello largo o muy denso. Más tiempo de proceso que el estándar (70 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "hairstyle", "parent_service_name": "Peinado"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "hairstyle",
+            "parent_service_name": "Peinado",
+        },
     },
     {
         "name": "Agua Lluvia",
@@ -254,7 +334,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 25,
         "description": "Hidratación intensa que aporta suavidad y brillo sin pesar el cabello (25 min)",
         "audience": None,
-        "metadata_": {"service_type": "addon", "dimension": "treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "addon",
+            "dimension": "treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Tinte Extra",
@@ -262,7 +346,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 50,
         "description": "Cultura de Color extendida para cabello muy denso o cambios de tono importantes (50 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "color", "parent_service_name": "Tinte"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "color",
+            "parent_service_name": "Tinte",
+        },
     },
     {
         "name": "Prepigmentar",
@@ -286,7 +374,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 45,
         "description": "Lavado + secado con forma para cabello largo. Más tiempo de trabajo (45 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "hairstyle", "parent_service_name": "Peinado"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "hairstyle",
+            "parent_service_name": "Peinado",
+        },
     },
     {
         "name": "Barro",
@@ -294,7 +386,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 40,
         "description": "Tratamiento nutritivo con barro natural: cierra la cutícula y da brillo duradero (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Peinado Extra",
@@ -302,7 +398,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 70,
         "description": "Lavado + secado para cabello muy largo o con mucho volumen. Versión más extensa (70 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "hairstyle", "parent_service_name": "Peinado"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "hairstyle",
+            "parent_service_name": "Peinado",
+        },
     },
     {
         "name": "Corte de Niña",
@@ -318,7 +418,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 70,
         "description": "Peinado de gala para niñas en su Primera Comunión. Diseño elegante y duradero (70 min)",
         "audience": "child_female",
-        "metadata_": {"service_type": "variant", "dimension": "hairstyle", "parent_service_name": "Peinado"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "hairstyle",
+            "parent_service_name": "Peinado",
+        },
     },
     {
         "name": "Secado",
@@ -326,7 +430,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 20,
         "description": "Secado profesional sin lavado. Para quienes ya vienen con el pelo mojado (20 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "blowdry", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "blowdry",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Peinado",
@@ -334,7 +442,11 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 40,
         "description": "Lavado + secado con forma para cabello corto/medio. El estilo del día a día (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "hairstyle", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "hairstyle",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Corte de Niño",
@@ -366,7 +478,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 60,
         "description": "Masaje de cuerpo completo de 60 min. Profunda relajación y alivio muscular (60 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "massage", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "massage",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Maquillaje",
@@ -374,7 +490,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 60,
         "description": "Maquillaje profesional para eventos y fiestas. Adaptado a tu estilo y ocasión (60 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "makeup", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "makeup",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Tinte de Pestañas",
@@ -382,7 +502,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 40,
         "description": "Da color oscuro y duradero a las pestañas naturales. Sin extensiones (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "eyelash", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "eyelash",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Exfoliación Corporal",
@@ -390,7 +514,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 60,
         "description": "Peeling corporal: exfoliación profunda que elimina células muertas y renueva la textura de la piel (60 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "body_treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "body_treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Tinte + Permanente de Pestañas",
@@ -398,7 +526,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 90,
         "description": "Combina color + curvatura duradera en un solo turno. Más completo (90 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "eyelash", "parent_service_name": "Tinte de Pestañas"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "eyelash",
+            "parent_service_name": "Tinte de Pestañas",
+        },
     },
     {
         "name": "Permanente de Pestañas",
@@ -406,7 +538,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 40,
         "description": "Curvatura duradera para las pestañas sin rizador. Resultado natural (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "eyelash", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "eyelash",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Tratamiento Facial + Radiofrecuencia (30 min)",
@@ -414,7 +550,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 90,
         "description": "Facial + 30 min de radiofrecuencia. Máxima potencia anti-edad (90 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "facial", "parent_service_name": "Tratamiento Facial"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "facial",
+            "parent_service_name": "Tratamiento Facial",
+        },
     },
     {
         "name": "Tratamiento Facial + Radiofrecuencia (15 min)",
@@ -422,7 +562,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 75,
         "description": "Facial + 15 min de radiofrecuencia para reafirmar y rejuvenecer la piel (75 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "facial", "parent_service_name": "Tratamiento Facial"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "facial",
+            "parent_service_name": "Tratamiento Facial",
+        },
     },
     {
         "name": "Tratamiento Facial",
@@ -430,7 +574,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 60,
         "description": "Bioterapia facial personalizada según el tipo de piel: limpieza, nutrición y equilibrio (60 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "facial", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "facial",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Maquillaje Exprés",
@@ -438,7 +586,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Maquillaje rápido y prolijo para el día a día. Resultado fresco en 30 min",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "makeup", "parent_service_name": "Maquillaje"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "makeup",
+            "parent_service_name": "Maquillaje",
+        },
     },
     {
         "name": "Depilación de Brazos Enteros o Pecho",
@@ -446,7 +598,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Depilación con cera de brazos completos o zona del pecho a elegir (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Limpieza de Espalda",
@@ -454,7 +610,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 60,
         "description": "Higiene profunda de la espalda: extracción de impurezas, granos y limpieza de poros (60 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "body_treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "body_treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Maquillaje de Novia",
@@ -462,7 +622,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 70,
         "description": "Maquillaje de novia con prueba previa. Duración garantizada durante todo el evento (70 min)",
         "audience": "adult_female",
-        "metadata_": {"service_type": "variant", "dimension": "makeup", "parent_service_name": "Maquillaje"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "makeup",
+            "parent_service_name": "Maquillaje",
+        },
     },
     {
         "name": "Depilación de Cejas",
@@ -470,7 +634,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 15,
         "description": "Diseño y depilación con cera. Da forma y limpia el contorno para enmarcar la mirada (15 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Depilación de Ingles o Axilas",
@@ -478,7 +646,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Depilación con cera de ingles o axilas a elección. Piel lisa y sin irritación (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Manicura Permanente con Tratamiento",
@@ -486,7 +658,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 90,
         "description": "Limar uñas + esmaltado semipermanente + tratamiento hidratante de manos en un solo turno (90 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "manicure", "parent_service_name": "Manicura"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "manicure",
+            "parent_service_name": "Manicura",
+        },
     },
     {
         "name": "Tratamiento Anticelulítico + Radiofrecuencia (30 min)",
@@ -494,7 +670,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 90,
         "description": "Sculptor + 30 min de radiofrecuencia para resultados anticelulíticos potenciados (90 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "body_contour", "parent_service_name": "Tratamiento Anticelulítico Completo"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "body_contour",
+            "parent_service_name": "Tratamiento Anticelulítico Completo",
+        },
     },
     {
         "name": "Manicura Permanente",
@@ -502,7 +682,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 40,
         "description": "Limar uñas + esmaltado semipermanente de manos. Durabilidad de hasta 3 semanas (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "manicure", "parent_service_name": "Manicura"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "manicure",
+            "parent_service_name": "Manicura",
+        },
     },
     {
         "name": "Depilación de Antebrazo",
@@ -510,7 +694,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Depilación con cera de medio brazo: antebrazo o parte superior a elegir (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Tratamiento de Senos",
@@ -518,7 +706,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 60,
         "description": "Bioterapia de senos: tratamiento natural que mejora tonicidad e hidratación de la zona del busto (60 min)",
         "audience": "adult_female",
-        "metadata_": {"service_type": "principal", "dimension": "body_treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "body_treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Masaje Corporal (30 min)",
@@ -526,7 +718,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Masaje relajante de 30 min para aliviar tensiones y descansar zonas específicas",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "massage", "parent_service_name": "Masaje Corporal (60 min)"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "massage",
+            "parent_service_name": "Masaje Corporal (60 min)",
+        },
     },
     {
         "name": "Bono Tratamiento de Senos",
@@ -534,7 +730,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 60,
         "description": "Pack de sesiones del tratamiento bioterapéutico de senos para un resultado más progresivo y duradero (60 min)",
         "audience": "adult_female",
-        "metadata_": {"service_type": "variant", "dimension": "body_treatment", "parent_service_name": "Tratamiento de Senos"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "body_treatment",
+            "parent_service_name": "Tratamiento de Senos",
+        },
     },
     {
         "name": "Retirada de Esmalte Permanente",
@@ -542,7 +742,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 25,
         "description": "Quitar esmalte semipermanente de uñas de forma segura, sin dañar la uña natural (25 min)",
         "audience": None,
-        "metadata_": {"service_type": "addon", "dimension": "manicure", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "addon",
+            "dimension": "manicure",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Depilación de Medio Brazo",
@@ -550,7 +754,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 20,
         "description": "Depilación con cera de media brazo. Variante más rápida sin incluir codo (20 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Piernas Perfectas + Presoterapia (30 min)",
@@ -558,15 +766,31 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 90,
         "description": "Drenaje + descongestión + reafirmación de piernas. Combinado con presoterapia (90 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "body_contour", "parent_service_name": "Tratamiento Anticelulítico Completo"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "body_contour",
+            "parent_service_name": "Tratamiento Anticelulítico Completo",
+        },
     },
     {
-        "name": "Depilación de Piernas Enteras",
+        "name": "Depilación",
         "category": ServiceCategory.AESTHETICS,
         "duration_minutes": 40,
-        "description": "Depilación con cera de piernas enteras: desde tobillo hasta ingle, ambas piernas completas (40 min)",
+        "description": "Depilación con cera. Elige la zona corporal (40 min para piernas enteras)",
         "audience": None,
         "metadata_": {"service_type": "principal", "dimension": "wax", "parent_service_name": None},
+    },
+    {
+        "name": "Piernas Enteras",
+        "category": ServiceCategory.AESTHETICS,
+        "duration_minutes": 40,
+        "description": "Depilación con cera de piernas enteras: desde tobillo hasta ingle (40 min)",
+        "audience": None,
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Depilación de Media Pierna",
@@ -574,7 +798,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Depilación con cera de media pierna: pantorrilla o muslo a elegir (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Depilación de Abdomen, Glúteos, Espalda o Pecho",
@@ -582,7 +810,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Depilación con cera de una zona a elegir. Resultado limpio y prolijo (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Depilación de Muslos",
@@ -590,7 +822,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Depilación con cera de la zona de los muslos. Completa la media pierna (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Depilación de Pubis Completo",
@@ -598,7 +834,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Depilación con cera de la zona del pubis al completo (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Depilación Brasileña",
@@ -606,7 +846,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Depilación con cera de ingles brasileñas: elimina todo el vello de la zona íntima (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
     {
         "name": "Barro Gold Extra",
@@ -614,7 +858,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 40,
         "description": "Tratamiento facial con barro dorado extra para nutrición profunda y luminosidad (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "facial", "parent_service_name": "Tratamiento Facial"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "facial",
+            "parent_service_name": "Tratamiento Facial",
+        },
     },
     {
         "name": "Tratamiento Anticelulítico Completo",
@@ -622,7 +870,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 60,
         "description": "Tratamiento Sculptor anticelulítico completo: reduce nódulos, drena y combate la retención de líquidos (60 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "body_contour", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "body_contour",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Tratamiento de Pies",
@@ -630,7 +882,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 40,
         "description": "Tratamiento bioterapéutico podal: hidrata, revitaliza y alivia la fatiga. No incluye esmaltado (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "foot_treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "foot_treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Pedicura",
@@ -638,7 +894,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Limar uñas + esmaltado tradicional de pies. Dura aproximadamente 1 semana (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "pedicure", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "pedicure",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Pedicura Permanente",
@@ -646,7 +906,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 40,
         "description": "Limar uñas + esmaltado semipermanente de pies. Durabilidad de hasta 3 semanas (40 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "pedicure", "parent_service_name": "Pedicura"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "pedicure",
+            "parent_service_name": "Pedicura",
+        },
     },
     {
         "name": "Tratamiento de Manos",
@@ -654,7 +918,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 45,
         "description": "Tratamiento bioterapéutico de manos: hidratación y revitalización intensiva. No incluye esmaltado (45 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "hand_treatment", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "hand_treatment",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Pedicura Permanente con Tratamiento",
@@ -662,7 +930,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 75,
         "description": "Pedicura completa + esmaltado semipermanente + tratamiento hidratante de pies en un turno (75 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "pedicure", "parent_service_name": "Pedicura"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "pedicure",
+            "parent_service_name": "Pedicura",
+        },
     },
     {
         "name": "Manicura de Hombre",
@@ -670,7 +942,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Manicura específica para caballeros: limado, arreglo de cutículas e hidratación. Sin esmalte (30 min)",
         "audience": "adult_male",
-        "metadata_": {"service_type": "variant", "dimension": "manicure", "parent_service_name": "Manicura"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "manicure",
+            "parent_service_name": "Manicura",
+        },
     },
     {
         "name": "Manicura",
@@ -678,7 +954,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Limar uñas + esmaltado tradicional de manos. Dura aproximadamente 1 semana (30 min)",
         "audience": None,
-        "metadata_": {"service_type": "principal", "dimension": "manicure", "parent_service_name": None},
+        "metadata_": {
+            "service_type": "principal",
+            "dimension": "manicure",
+            "parent_service_name": None,
+        },
     },
     {
         "name": "Depilación de Labio",
@@ -686,7 +966,11 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 10,
         "description": "Depilación con cera del labio superior. Resultado suave y duradero (10 min)",
         "audience": None,
-        "metadata_": {"service_type": "variant", "dimension": "wax", "parent_service_name": "Depilación de Piernas Enteras"},
+        "metadata_": {
+            "service_type": "variant",
+            "dimension": "wax",
+            "parent_service_name": "Depilación",
+        },
     },
 ]
 
@@ -732,8 +1016,8 @@ ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
 #                       (variants: Masaje Corporal (30 min))
 #   - makeup          → Maquillaje
 #                       (variants: Maquillaje Exprés, Maquillaje de Novia)
-#   - wax             → Depilación de Piernas Enteras
-#                       (variants: everything else under "depilación con cera")
+#   - wax             → Depilación (principal, formerly "Depilación de Piernas Enteras")
+#                       (variants: Piernas Enteras + everything else under "depilación con cera")
 #   - eyelash         → Tinte de Pestañas / Permanente de Pestañas
 #                       (variants: Tinte + Permanente de Pestañas)
 #   - hand_treatment  → Tratamiento de Manos

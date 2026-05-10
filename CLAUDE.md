@@ -338,6 +338,45 @@ No checkpoint flush required. The `customer_memories` AgentState field is `NotRe
 
 ---
 
+### Deploy Runbook (service-disambiguation-data-fixes)
+
+Additive data-only migration: tags `Tinte.audience = 'adult_female'`, renames the `Depilación de Piernas Enteras` principal to `Depilación` (UUID unchanged), patches 11 child variants' `metadata_[parent_service_name]` via `jsonb_set`, and inserts a new `Piernas Enteras` variant. **No restart needed** — no app code changed.
+
+```bash
+# Apply the migration
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic upgrade head
+```
+
+Verification queries (run against production DB post-migration):
+
+```sql
+-- 1. Tinte must have audience = adult_female
+SELECT name, audience FROM services WHERE name = 'Tinte';
+-- expect: 1 row, audience = 'adult_female'
+
+-- 2. Wax principal renamed; UUID unchanged
+SELECT name, metadata_->>'service_type' FROM services
+WHERE metadata_->>'dimension' = 'wax' AND metadata_->>'service_type' = 'principal';
+-- expect: 1 row, name = 'Depilación'
+
+-- 3. All wax variants now point to new parent name
+SELECT COUNT(*) FROM services WHERE metadata_->>'parent_service_name' = 'Depilación';
+-- expect: 12 (11 existing + new "Piernas Enteras")
+
+-- 4. No orphans pointing to old principal name
+SELECT COUNT(*) FROM services WHERE metadata_->>'parent_service_name' = 'Depilación de Piernas Enteras';
+-- expect: 0
+```
+
+Rollback:
+```bash
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic downgrade -1
+```
+
+No checkpoint flush required. Revision: `a7b8c9d0e1f2` (parent: `z6a7b8c9d0e1`).
+
+---
+
 ### Running Services
 
 ```bash
