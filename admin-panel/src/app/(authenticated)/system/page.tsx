@@ -53,7 +53,6 @@ const SERVICE_LABELS: Record<SystemServiceName, { name: string; description: str
   api: { name: "API (FastAPI)", description: "Webhooks y endpoints REST - Puerto 8000" },
   agent: { name: "Agent (LangGraph)", description: "Orquestador de conversaciones con IA" },
   archiver: { name: "Archiver", description: "Worker que archiva conversaciones a PostgreSQL" },
-  "confirmation-worker": { name: "Confirmation Worker", description: "Envio de recordatorios y confirmaciones" },
   "gcal-sync-worker": { name: "GCal Sync Worker", description: "Sincronizacion bidireccional con Google Calendar" },
   postgres: { name: "PostgreSQL", description: "Base de datos principal - Puerto 5432" },
   redis: { name: "Redis Stack", description: "Cache y checkpointing - Puerto 6379" },

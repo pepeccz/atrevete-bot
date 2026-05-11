@@ -19,6 +19,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Calendar, Filter } from "lucide-react";
+import { toast } from "sonner";
 import api from "@/lib/api";
 import { BlockingEventModal } from "./blocking-event-modal";
 import { CreateAppointmentModal } from "./create-appointment-modal";
@@ -176,6 +177,7 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
   const router = useRouter();
   const calendarRef = useRef<FullCalendar>(null);
   const fetchEventsRef = useRef<(start: Date, end: Date) => void>(() => {});
+  const fetchAbortRef = useRef<AbortController | null>(null);
   const [stylists, setStylists] = useState<Stylist[]>([]);
   const [stylistColors, setStylistColors] = useState<Record<string, { bg: string; border: string }>>({});
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -377,13 +379,20 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
       return;
     }
 
+    // Cancel any in-flight fetch — prevents racing requests when stylists/colors
+    // change quickly or the user navigates between views mid-request.
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
+
     try {
       setIsLoading(true);
 
       const response = await api.getCalendarEvents(
         selectedStylistIds,
         start.toISOString(),
-        end.toISOString()
+        end.toISOString(),
+        controller.signal
       );
 
       // Apply colors based on stylist (ALL events use stylist color, except holidays)
@@ -427,12 +436,19 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
 
       setEvents(coloredEvents);
     } catch (error) {
+      // Swallow aborts — they're expected when a newer fetch supersedes this one
+      // or when the component unmounts mid-request.
+      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+        return;
+      }
       console.error("Error fetching events:", error);
       setEvents([]);
       const errorMessage = error instanceof Error ? error.message : "Error desconocido";
-      alert(`Error cargando eventos del calendario: ${errorMessage}`);
+      toast.error(`Error cargando eventos del calendario: ${errorMessage}`);
     } finally {
-      setIsLoading(false);
+      if (fetchAbortRef.current === controller) {
+        setIsLoading(false);
+      }
     }
   }, [selectedStylistIds, stylistColors]);
 
@@ -491,6 +507,9 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
 
   // Keep ref in sync so resize handlers always use latest fetchEvents
   useEffect(() => { fetchEventsRef.current = fetchEvents; }, [fetchEvents]);
+
+  // Abort any in-flight events fetch on unmount
+  useEffect(() => () => fetchAbortRef.current?.abort(), []);
 
   // Fetch events when stylists change
   useEffect(() => {

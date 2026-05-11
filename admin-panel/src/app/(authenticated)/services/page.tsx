@@ -515,7 +515,6 @@ export default function ServicesPage() {
                     <SelectItem value="all">Todas las categorías</SelectItem>
                     <SelectItem value="HAIRDRESSING">Peluquería</SelectItem>
                     <SelectItem value="AESTHETICS">Estética</SelectItem>
-                    <SelectItem value="BOTH">Ambos</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

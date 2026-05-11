@@ -38,7 +38,6 @@ import type { SystemSetting, SettingCategory, SystemServiceName } from "@/lib/ty
 
 // Mapping from setting category to the worker service that needs restart
 const CATEGORY_TO_WORKER: Partial<Record<SettingCategory, SystemServiceName>> = {
-  confirmation: "confirmation-worker",
   gcal_sync: "gcal-sync-worker",
 };
 
@@ -455,7 +454,7 @@ export default function SystemSettingsPage() {
         {settings["ai_control"]?.some(
           (s) => s.key === "ai_agent_enabled" && editedValues[s.key] === false
         ) && (
-          <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-300 bg-red-50 p-4 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+          <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-300 bg-red-50 p-4 text-red-800">
             <AlertTriangle className="h-5 w-5 flex-shrink-0" />
             <div>
               <p className="font-semibold">Maite está desactivada</p>

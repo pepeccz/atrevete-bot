@@ -558,7 +558,6 @@ export type SystemServiceName =
   | "api"
   | "agent"
   | "archiver"
-  | "confirmation-worker"
   | "gcal-sync-worker"
   | "postgres"
   | "redis";

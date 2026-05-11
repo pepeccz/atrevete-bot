@@ -302,7 +302,8 @@ class ApiClient {
   async getCalendarEvents(
     stylistIds: string[],
     start: string,
-    end: string
+    end: string,
+    signal?: AbortSignal
   ): Promise<{
     events: Array<{
       id: string;
@@ -334,7 +335,7 @@ class ApiClient {
     if (stylistIds.length > 0) {
       params.append("stylist_ids", stylistIds.join(","));
     }
-    return this.request(`/api/admin/calendar/events?${params}`);
+    return this.request(`/api/admin/calendar/events?${params}`, { signal });
   }
 
   // Admin availability search with date range and optional stylist filter
