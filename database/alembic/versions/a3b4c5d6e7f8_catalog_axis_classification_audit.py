@@ -22,10 +22,18 @@ Changes (REQ-DR-1 through REQ-DR-8):
                                                   'Tratamiento Facial'; design I-1 concluded
                                                   this is a distinct AESTHETICS facial offering)
 
-Idempotency: each UPDATE sets fields to constant values; re-running upgrade on an
-already-migrated DB produces zero row changes (the WHERE clause matches rows in their
-original state only when the service_type guard is present; for reclassified rows the
-jsonb_set is always idempotent to the target value).
+Idempotency: each UPDATE uses jsonb_set to write constant target values.
+Re-running ``alembic upgrade head`` on an already-migrated database is safe:
+  - ``jsonb_set(metadata, '{service_type}', '"addon"')`` is a no-op when the
+    field is already ``"addon"``.
+  - ``jsonb_set(metadata, '{parent_service_name}', 'null')`` is a no-op when
+    the field is already JSON ``null``.
+No WHERE guard on current state is needed because writing the same value twice
+is idempotent for JSONB field assignment.
+
+Verify idempotency on the target server:
+  alembic downgrade -1 && alembic upgrade head
+  -- re-run upgrade head a second time: expect 0 rows changed (no error)
 
 Downgrade: restores all 8 rows to their original variant/parent state.
 
