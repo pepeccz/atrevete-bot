@@ -21,7 +21,7 @@ from api.models.token_usage import (
 )
 from api.routes.admin import get_current_user
 from database.connection import get_async_session
-from database.models import TokenUsage
+from database.models import AdminUser, TokenUsage
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ router = APIRouter(prefix="/api/token-usage", tags=["token-usage"])
     description="Returns the last N months of token usage. Admin only.",
 )
 async def get_token_usage(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     months: int = 12,
 ):
     """
@@ -53,9 +53,7 @@ async def get_token_usage(
 
     async with get_async_session() as session:
         result = await session.execute(
-            select(TokenUsage)
-            .order_by(desc(TokenUsage.year), desc(TokenUsage.month))
-            .limit(months)
+            select(TokenUsage).order_by(desc(TokenUsage.year), desc(TokenUsage.month)).limit(months)
         )
         usage_list = result.scalars().all()
 
@@ -72,7 +70,7 @@ async def get_token_usage(
     description="Returns token usage for the current month with computed costs. Admin only.",
 )
 async def get_current_month_usage(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """
     Get token usage for the current month.
@@ -107,9 +105,7 @@ async def get_current_month_usage(
             )
 
         # Calculate costs
-        input_cost = (
-            Decimal(usage.input_tokens) / Decimal(1_000_000)
-        ) * settings.TOKEN_PRICE_INPUT
+        input_cost = (Decimal(usage.input_tokens) / Decimal(1_000_000)) * settings.TOKEN_PRICE_INPUT
         output_cost = (
             Decimal(usage.output_tokens) / Decimal(1_000_000)
         ) * settings.TOKEN_PRICE_OUTPUT
@@ -134,7 +130,7 @@ async def get_current_month_usage(
     description="Returns the configured token pricing. Admin only.",
 )
 async def get_pricing(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """
     Get current token pricing configuration.

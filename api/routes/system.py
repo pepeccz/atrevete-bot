@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.routes.admin import get_current_user, verify_token
+from database.models import AdminUser
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ CONTROLLABLE_SERVICES = list(CONTAINER_MAP.keys())
 
 class ServiceStatus(BaseModel):
     """Status of a single service."""
+
     name: str
     container: str
     status: str  # running, exited, paused, etc.
@@ -56,11 +58,13 @@ class ServiceStatus(BaseModel):
 
 class ServicesResponse(BaseModel):
     """Response with all services status."""
+
     services: list[ServiceStatus]
 
 
 class ServiceActionResponse(BaseModel):
     """Response for service actions (restart/stop)."""
+
     success: bool
     message: str
 
@@ -103,7 +107,7 @@ async def get_container_status(container_name: str) -> dict:
 
 @router.get("/services", response_model=ServicesResponse)
 async def list_services(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> ServicesResponse:
     """
     List all services with their current status.
@@ -113,19 +117,18 @@ async def list_services(
     services = []
 
     # Fetch status for all containers in parallel
-    tasks = [
-        get_container_status(container)
-        for container in CONTAINER_MAP.values()
-    ]
+    tasks = [get_container_status(container) for container in CONTAINER_MAP.values()]
     results = await asyncio.gather(*tasks)
 
     for (service_name, container_name), status_info in zip(CONTAINER_MAP.items(), results):
-        services.append(ServiceStatus(
-            name=service_name,
-            container=container_name,
-            status=status_info["status"],
-            health=status_info["health"],
-        ))
+        services.append(
+            ServiceStatus(
+                name=service_name,
+                container=container_name,
+                status=status_info["status"],
+                health=status_info["health"],
+            )
+        )
 
     return ServicesResponse(services=services)
 
@@ -162,7 +165,7 @@ async def stream_logs(
     if service not in CONTAINER_MAP:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Service not found: {service}. Available: {list(CONTAINER_MAP.keys())}"
+            detail=f"Service not found: {service}. Available: {list(CONTAINER_MAP.keys())}",
         )
 
     container_name = CONTAINER_MAP[service]
@@ -201,21 +204,21 @@ async def stream_logs(
                                     if offset + 8 > len(chunk):
                                         break
                                     # Header: 1 byte stream type, 3 bytes padding, 4 bytes size
-                                    size = int.from_bytes(chunk[offset+4:offset+8], 'big')
+                                    size = int.from_bytes(chunk[offset + 4 : offset + 8], "big")
                                     if offset + 8 + size > len(chunk):
                                         # Partial frame, skip
                                         break
-                                    frame_data = chunk[offset+8:offset+8+size]
-                                    line = frame_data.decode('utf-8', errors='replace').strip()
+                                    frame_data = chunk[offset + 8 : offset + 8 + size]
+                                    line = frame_data.decode("utf-8", errors="replace").strip()
                                     if line:
                                         # Escape newlines for SSE
-                                        escaped_line = line.replace('\n', '\\n')
+                                        escaped_line = line.replace("\n", "\\n")
                                         yield f"data: {escaped_line}\n\n"
                                     offset += 8 + size
                             except Exception as e:
                                 # Fallback: try to decode entire chunk
                                 try:
-                                    text = chunk.decode('utf-8', errors='replace').strip()
+                                    text = chunk.decode("utf-8", errors="replace").strip()
                                     if text:
                                         yield f"data: {text}\n\n"
                                 except:
@@ -233,14 +236,14 @@ async def stream_logs(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable nginx buffering
-        }
+        },
     )
 
 
 @router.post("/{service}/restart", response_model=ServiceActionResponse)
 async def restart_service(
     service: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> ServiceActionResponse:
     """
     Restart a service container.
@@ -250,11 +253,11 @@ async def restart_service(
     if service not in CONTROLLABLE_SERVICES:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Service not found: {service}. Available: {CONTROLLABLE_SERVICES}"
+            detail=f"Service not found: {service}. Available: {CONTROLLABLE_SERVICES}",
         )
 
     container_name = CONTAINER_MAP[service]
-    username = current_user.get("username", "unknown")
+    username = current_user.username
     logger.info(f"Service restart requested: {container_name} by {username}")
 
     try:
@@ -268,47 +271,35 @@ async def restart_service(
         if response.status_code == 204:
             logger.info(f"Service {container_name} restarted successfully")
             return ServiceActionResponse(
-                success=True,
-                message=f"Servicio '{service}' reiniciado correctamente"
+                success=True, message=f"Servicio '{service}' reiniciado correctamente"
             )
         elif response.status_code == 404:
             logger.error(f"Container not found: {container_name}")
             return ServiceActionResponse(
-                success=False,
-                message=f"Contenedor '{container_name}' no encontrado"
+                success=False, message=f"Contenedor '{container_name}' no encontrado"
             )
         else:
             error_detail = response.text
             logger.error(f"Docker API error: {response.status_code} - {error_detail}")
             return ServiceActionResponse(
-                success=False,
-                message=f"Error Docker API: {response.status_code}"
+                success=False, message=f"Error Docker API: {response.status_code}"
             )
 
     except httpx.ConnectError:
         logger.error("Cannot connect to Docker daemon")
-        return ServiceActionResponse(
-            success=False,
-            message="No se puede conectar al Docker daemon"
-        )
+        return ServiceActionResponse(success=False, message="No se puede conectar al Docker daemon")
     except httpx.TimeoutException:
         logger.error("Service restart timed out")
-        return ServiceActionResponse(
-            success=False,
-            message="Timeout al reiniciar servicio (>60s)"
-        )
+        return ServiceActionResponse(success=False, message="Timeout al reiniciar servicio (>60s)")
     except Exception as e:
         logger.error(f"Service restart error: {e}")
-        return ServiceActionResponse(
-            success=False,
-            message=f"Error inesperado: {str(e)}"
-        )
+        return ServiceActionResponse(success=False, message=f"Error inesperado: {str(e)}")
 
 
 @router.post("/{service}/stop", response_model=ServiceActionResponse)
 async def stop_service(
     service: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> ServiceActionResponse:
     """
     Stop a service container.
@@ -319,18 +310,18 @@ async def stop_service(
     if service not in CONTROLLABLE_SERVICES:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Service not found: {service}. Available: {CONTROLLABLE_SERVICES}"
+            detail=f"Service not found: {service}. Available: {CONTROLLABLE_SERVICES}",
         )
 
     # Extra protection: don't allow stopping critical services easily
     if service == "api":
         return ServiceActionResponse(
             success=False,
-            message="No se puede detener la API desde el panel (se perderia la conexion)"
+            message="No se puede detener la API desde el panel (se perderia la conexion)",
         )
 
     container_name = CONTAINER_MAP[service]
-    username = current_user.get("username", "unknown")
+    username = current_user.username
     logger.warning(f"Service STOP requested: {container_name} by {username}")
 
     try:
@@ -344,58 +335,45 @@ async def stop_service(
         if response.status_code == 204:
             logger.info(f"Service {container_name} stopped successfully")
             return ServiceActionResponse(
-                success=True,
-                message=f"Servicio '{service}' detenido correctamente"
+                success=True, message=f"Servicio '{service}' detenido correctamente"
             )
         elif response.status_code == 304:
             return ServiceActionResponse(
-                success=True,
-                message=f"Servicio '{service}' ya estaba detenido"
+                success=True, message=f"Servicio '{service}' ya estaba detenido"
             )
         elif response.status_code == 404:
             logger.error(f"Container not found: {container_name}")
             return ServiceActionResponse(
-                success=False,
-                message=f"Contenedor '{container_name}' no encontrado"
+                success=False, message=f"Contenedor '{container_name}' no encontrado"
             )
         else:
             error_detail = response.text
             logger.error(f"Docker API error: {response.status_code} - {error_detail}")
             return ServiceActionResponse(
-                success=False,
-                message=f"Error Docker API: {response.status_code}"
+                success=False, message=f"Error Docker API: {response.status_code}"
             )
 
     except httpx.ConnectError:
         logger.error("Cannot connect to Docker daemon")
-        return ServiceActionResponse(
-            success=False,
-            message="No se puede conectar al Docker daemon"
-        )
+        return ServiceActionResponse(success=False, message="No se puede conectar al Docker daemon")
     except httpx.TimeoutException:
         logger.error("Service stop timed out")
-        return ServiceActionResponse(
-            success=False,
-            message="Timeout al detener servicio (>30s)"
-        )
+        return ServiceActionResponse(success=False, message="Timeout al detener servicio (>30s)")
     except Exception as e:
         logger.error(f"Service stop error: {e}")
-        return ServiceActionResponse(
-            success=False,
-            message=f"Error inesperado: {str(e)}"
-        )
+        return ServiceActionResponse(success=False, message=f"Error inesperado: {str(e)}")
 
 
 @router.post("/gcal-sync/trigger", response_model=ServiceActionResponse)
 async def trigger_gcal_sync(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> ServiceActionResponse:
     """
     Manually trigger Google Calendar sync.
 
     Imports and runs the sync function directly for immediate execution.
     """
-    username = current_user.get("username", "unknown")
+    username = current_user.username
     logger.info(f"Manual GCal sync triggered by {username}")
 
     try:
@@ -405,21 +383,17 @@ async def trigger_gcal_sync(
         await run_gcal_sync()
 
         return ServiceActionResponse(
-            success=True,
-            message="Sincronización con Google Calendar completada"
+            success=True, message="Sincronización con Google Calendar completada"
         )
 
     except Exception as e:
         logger.error(f"Manual GCal sync error: {e}", exc_info=True)
-        return ServiceActionResponse(
-            success=False,
-            message=f"Error en la sincronización: {str(e)}"
-        )
+        return ServiceActionResponse(success=False, message=f"Error en la sincronización: {str(e)}")
 
 
 @router.post("/cache/clear", response_model=ServiceActionResponse)
 async def clear_system_cache(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> ServiceActionResponse:
     """
     Clear all system caches.
@@ -430,7 +404,7 @@ async def clear_system_cache(
 
     This forces fresh data to be loaded from the database on next access.
     """
-    username = current_user.get("username", "unknown")
+    username = current_user.username
     logger.info(f"System cache clear requested by {username}")
 
     errors = []
@@ -460,11 +434,7 @@ async def clear_system_cache(
 
     if errors:
         return ServiceActionResponse(
-            success=False,
-            message=f"Cache parcialmente limpiada. Errores: {', '.join(errors)}"
+            success=False, message=f"Cache parcialmente limpiada. Errores: {', '.join(errors)}"
         )
 
-    return ServiceActionResponse(
-        success=True,
-        message="Cache del sistema limpiada correctamente"
-    )
+    return ServiceActionResponse(success=True, message="Cache del sistema limpiada correctamente")

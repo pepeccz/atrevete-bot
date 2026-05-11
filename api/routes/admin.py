@@ -15,15 +15,15 @@ import logging
 import re
 import time
 import unicodedata
-from datetime import date, datetime, time as dt_time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as dt_time
 from enum import Enum
-from zoneinfo import ZoneInfo
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytz
 from dateutil.parser import parse as parse_datetime
-
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import (
     HTTPAuthorizationCredentials,
@@ -46,6 +46,7 @@ from api.services.dashboard_kpis import (
 )
 from database.connection import get_async_session
 from database.models import (
+    AdminUser,
     Appointment,
     AppointmentStatus,
     BlockingEvent,
@@ -60,23 +61,24 @@ from database.models import (
     Notification,
     NotificationType,
     Policy,
-    RecurringBlockingSeries,
     RecurrenceFrequency,
+    RecurringBlockingSeries,
     Service,
     Stylist,
 )
-from shared.config import get_settings
 from shared.cache_signals import publish_cache_invalidation
-from shared.settings_service import get_settings_service
+from shared.config import get_settings
 from shared.recurrence_service import (
-    expand_recurrence,
     check_conflicts_for_dates,
-    get_business_hours_summary,
-    get_remaining_week_days,
+    expand_recurrence,
     format_byday,
     format_bymonthday,
+    get_business_hours_summary,
+    get_remaining_week_days,
     parse_byday,
 )
+from shared.security import verify_password
+from shared.settings_service import get_settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -516,8 +518,9 @@ async def add_token_to_blacklist(jti: str, exp: int) -> bool:
     Returns:
         True if added successfully, False otherwise
     """
-    from shared.redis_client import get_redis_client
     import time
+
+    from shared.redis_client import get_redis_client
 
     try:
         redis_client = get_redis_client()
@@ -554,15 +557,16 @@ def verify_token(token: str) -> dict[str, Any]:
         )
 
 
-async def get_current_user(
+async def _get_current_user_dict(
     request: Request,
     admin_token: Annotated[str | None, Cookie()] = None,
 ) -> dict[str, Any]:
     """
-    Dependency to get current authenticated user.
+    INTERNAL — returns raw JWT payload dict.
 
-    Reads the JWT exclusively from the admin_token HttpOnly cookie.
-    Bearer / Authorization header fallback has been removed (cookie-only transport).
+    Used only by the logout endpoint which needs jti/exp from the raw payload.
+    All other endpoints MUST use get_current_user from api/dependencies/auth.py
+    (imported below) which returns an AdminUser ORM instance.
     """
     token = admin_token
 
@@ -585,6 +589,11 @@ async def get_current_user(
 
     return payload
 
+
+# Import the AdminUser-returning get_current_user and require_permission from the
+# dedicated dependency module.  All routes (except logout) use get_current_user.
+# Logout stays on _get_current_user_dict to preserve dict-based jti/exp access.
+from api.dependencies.auth import get_current_user, require_permission  # noqa: E402
 
 # =============================================================================
 # Request/Response Models
@@ -941,28 +950,61 @@ class OverlapCheckResponse(BaseModel):
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(request: LoginRequest, response: Response):
+async def login(
+    request: LoginRequest,
+    response: Response,
+    session: AsyncSession = Depends(get_async_session),
+):
     """
     Authenticate admin user and return JWT token.
 
+    DB-first path (FR-AUTH-4, FR-AUTH-5):
+    1. Count rows in admin_users.
+    2. If rows exist → validate against DB (bcrypt via shared.security.verify_password).
+       - Update last_login_at on success.
+       - Env-var fallback is SKIPPED entirely when rows exist (SC-AUTH-10).
+    3. If table is empty → fall back to env-var credentials (SC-AUTH-9, bootstrap path).
+
     Sets HttpOnly cookie for browser-based clients (XSS-safe).
-    Also returns token in response body for API clients.
+    Failed attempts logged at WARNING level (username only, never password — NFR-4).
     """
-    admin_username, password_plain, password_hash = get_admin_credentials()
+    row_count: int = (await session.execute(select(func.count(AdminUser.id)))).scalar_one()
 
-    # Verify username
-    if request.username != admin_username:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-        )
+    if row_count > 0:
+        # DB-first path — env-var fallback is NOT available when rows exist (SC-AUTH-10).
+        user: AdminUser | None = (
+            await session.execute(select(AdminUser).where(AdminUser.username == request.username))
+        ).scalar_one_or_none()
 
-    # Verify password using bcrypt hash (preferred) or plain text (deprecated)
-    if not verify_admin_password(request.password, password_plain, password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-        )
+        if (
+            user is None
+            or not user.is_active
+            or not verify_password(request.password, user.password_hash)
+        ):
+            logger.warning("Failed login attempt", extra={"username": request.username})
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            )
+
+        # Update last_login_at (SC-AUTH-2, FR-AUTH-4)
+        user.last_login_at = func.now()
+        await session.commit()
+
+    else:
+        # Empty-table fallback path (SC-AUTH-9) — bootstrap / disaster-recovery escape hatch.
+        admin_username, password_plain, password_hash_env = get_admin_credentials()
+
+        if not verify_admin_password(request.password, password_plain, password_hash_env) or (
+            request.username != admin_username
+        ):
+            logger.warning(
+                "Failed env-fallback login attempt", extra={"username": request.username}
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            )
 
     token, _jti = create_access_token(request.username)
 
@@ -983,27 +1025,32 @@ async def login(request: LoginRequest, response: Response):
 
 @router.get("/auth/me", response_model=UserResponse)
 async def get_me(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """
     Get current authenticated user info.
 
     Validates that the token is still valid and returns user data.
     Used by frontend to check session status on page refresh.
+    Role is read from the DB row (FR-AUTH-3, FR-AUTH-7).
     """
-    return UserResponse(username=current_user["sub"], role="admin")
+    return UserResponse(username=current_user.username, role=current_user.role)
 
 
 @router.post("/auth/logout")
 async def logout(
     response: Response,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(_get_current_user_dict)],
 ):
     """
     Logout user by adding token to blacklist and clearing cookie.
 
     The token's JTI (JWT ID) is added to Redis with TTL matching token expiration.
     Subsequent requests with this token will be rejected.
+
+    Uses _get_current_user_dict (returns raw JWT payload dict) so jti/exp are
+    directly accessible.  All other endpoints use the AdminUser-returning
+    get_current_user from api/dependencies/auth.py.
     """
     jti = current_user.get("jti")
     exp = current_user.get("exp")
@@ -1074,7 +1121,7 @@ class StylistPerformancePoint(BaseModel):
 
 @router.get("/dashboard/kpis", response_model=DashboardKPIs)
 async def get_dashboard_kpis(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Get dashboard KPI metrics (today-scoped, parallelized).
 
@@ -1114,7 +1161,7 @@ async def get_dashboard_kpis(
 
 @router.get("/dashboard/today-agenda", response_model=TodayAgendaResponse)
 async def get_today_agenda(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Get today's appointments in chronological order with related data expanded.
 
@@ -1185,7 +1232,7 @@ async def get_today_agenda(
 
 @router.get("/dashboard/charts/appointments-trend")
 async def get_appointments_trend(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     days: int = 30,
 ):
     """Get appointment trend for the last N days."""
@@ -1238,7 +1285,7 @@ async def get_appointments_trend(
 
 @router.get("/dashboard/charts/top-services")
 async def get_top_services(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     limit: int = 10,
 ):
     """Get top N most booked services."""
@@ -1275,7 +1322,7 @@ async def get_top_services(
 
 @router.get("/dashboard/charts/hours-worked")
 async def get_hours_worked(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     months: int = 12,
 ):
     """Get hours worked per month for the last N months."""
@@ -1329,7 +1376,7 @@ async def get_hours_worked(
 
 @router.get("/dashboard/charts/customer-growth")
 async def get_customer_growth(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     months: int = 12,
 ):
     """Get customer growth per month for the last N months."""
@@ -1381,7 +1428,7 @@ async def get_customer_growth(
 
 @router.get("/dashboard/charts/stylist-performance")
 async def get_stylist_performance(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Get stylist performance for current month."""
     async with get_async_session() as session:
@@ -1442,7 +1489,7 @@ class UpdateStylistRequest(BaseModel):
 
 @router.get("/stylists")
 async def list_stylists(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     page: int = 1,
     page_size: int = 50,
     is_active: bool | None = None,
@@ -1485,7 +1532,7 @@ async def list_stylists(
 @router.get("/stylists/{stylist_id}")
 async def get_stylist(
     stylist_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Get a single stylist by ID."""
     async with get_async_session() as session:
@@ -1510,11 +1557,12 @@ async def get_stylist(
 @router.post("/stylists", status_code=status.HTTP_201_CREATED)
 async def create_stylist(
     request: CreateStylistRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Create a new stylist."""
-    from database.models import ServiceCategory
     from sqlalchemy.exc import IntegrityError
+
+    from database.models import ServiceCategory
 
     # Validate category
     try:
@@ -1583,11 +1631,12 @@ async def create_stylist(
 async def update_stylist(
     stylist_id: UUID,
     request: UpdateStylistRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Update an existing stylist."""
-    from database.models import ServiceCategory
     from sqlalchemy.exc import IntegrityError
+
+    from database.models import ServiceCategory
 
     async with get_async_session() as session:
         result = await session.execute(select(Stylist).where(Stylist.id == stylist_id))
@@ -1662,7 +1711,7 @@ async def update_stylist(
 @router.delete("/stylists/{stylist_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_stylist(
     stylist_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Delete a stylist."""
     async with get_async_session() as session:
@@ -1795,7 +1844,7 @@ def _generate_slug(name: str) -> str:
 async def assign_stylist_calendar(
     stylist_id: UUID,
     request: AssignCalendarRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """
     Assign a Google Calendar to a stylist.
@@ -1876,7 +1925,7 @@ class UpdateCustomerRequest(BaseModel):
 
 @router.get("/customers")
 async def list_customers(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     page: int = 1,
     page_size: int = 50,
     search: str | None = None,
@@ -1929,7 +1978,7 @@ async def list_customers(
 @router.get("/customers/{customer_id}", response_model=CustomerDetailResponse)
 async def get_customer(
     customer_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Get a single customer by ID — enriched with preferred_stylist_name, memories, chatwoot_id."""
     async with get_async_session() as session:
@@ -1968,7 +2017,7 @@ async def get_customer(
 @router.get("/customers/{customer_id}/appointments")
 async def get_customer_appointments(
     customer_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     page: int = 1,
     page_size: int = 20,
 ):
@@ -2047,7 +2096,7 @@ async def get_customer_appointments(
 async def update_customer_memories(
     customer_id: UUID,
     request: UpdateMemoriesRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Update customer bot memories via JSONB merge. Empty body {} clears all memories."""
     from sqlalchemy import update as sa_update
@@ -2079,7 +2128,7 @@ async def update_customer_memories(
 @router.post("/customers", status_code=status.HTTP_201_CREATED)
 async def create_customer(
     request: CreateCustomerRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Create a new customer."""
     async with get_async_session() as session:
@@ -2120,7 +2169,7 @@ async def create_customer(
 async def update_customer(
     customer_id: UUID,
     request: UpdateCustomerRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Update an existing customer."""
     async with get_async_session() as session:
@@ -2177,7 +2226,7 @@ async def update_customer(
 @router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_customer(
     customer_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("customers:delete"))],
 ):
     """Delete a customer."""
     async with get_async_session() as session:
@@ -2236,7 +2285,7 @@ class UpdateServiceRequest(BaseModel):
 
 @router.get("/services")
 async def list_services(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     page: int = 1,
     page_size: int = 100,
     is_active: bool | None = None,
@@ -2284,7 +2333,7 @@ async def list_services(
 @router.get("/services/{service_id}")
 async def get_service(
     service_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Get a single service by ID."""
     async with get_async_session() as session:
@@ -2311,7 +2360,7 @@ async def get_service(
 @router.post("/services", status_code=status.HTTP_201_CREATED)
 async def create_service(
     request: CreateServiceRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Create a new service."""
     from database.models import ServiceCategory
@@ -2364,7 +2413,7 @@ async def create_service(
 async def update_service(
     service_id: UUID,
     request: UpdateServiceRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Update an existing service."""
     from database.models import ServiceCategory
@@ -2429,7 +2478,7 @@ async def update_service(
 @router.delete("/services/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_service(
     service_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Delete a service."""
     async with get_async_session() as session:
@@ -2457,7 +2506,7 @@ async def delete_service(
 
 @router.get("/appointments")
 async def list_appointments(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     page: int = 1,
     page_size: int = 50,
     stylist_id: UUID | None = None,
@@ -2518,7 +2567,7 @@ async def check_overlaps(
     stylist_id: UUID,
     start_time: datetime,
     duration_minutes: int,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     exclude_appointment_id: UUID | None = None,
 ):
     """
@@ -2600,7 +2649,7 @@ async def check_overlaps(
 
 @router.get("/appointments/pending-actions")
 async def get_pending_actions(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """
     Get appointments that have passed but are still pending/confirmed
@@ -2749,7 +2798,7 @@ class CreateAppointmentRequest(BaseModel):
 @router.post("/appointments")
 async def create_appointment(
     request: CreateAppointmentRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Create a new appointment with Google Calendar integration."""
     async with get_async_session() as session:
@@ -2959,7 +3008,7 @@ async def create_appointment(
 @router.get("/appointments/{appointment_id}")
 async def get_appointment(
     appointment_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Get a single appointment by ID with all related data."""
     async with get_async_session() as session:
@@ -3039,7 +3088,7 @@ class UpdateAppointmentRequest(BaseModel):
 async def update_appointment(
     appointment_id: UUID,
     request: UpdateAppointmentRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Update an existing appointment."""
     async with get_async_session() as session:
@@ -3190,7 +3239,7 @@ async def update_appointment(
 @router.delete("/appointments/{appointment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_appointment(
     appointment_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Delete an appointment."""
     async with get_async_session() as session:
@@ -3219,7 +3268,7 @@ async def delete_appointment(
 
 @router.get("/calendar/appointments")
 async def get_calendar_appointments(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     start: datetime,
     end: datetime,
     stylist_id: UUID | None = None,
@@ -3414,7 +3463,7 @@ DAY_NAMES_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado",
 @router.post("/availability/search")
 async def search_availability(
     request: AdminAvailabilityRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """
     Search availability for stylists across a date range.
@@ -3458,9 +3507,11 @@ async def search_availability(
             ]
         }
     """
-    from shared.availability_service import get_available_slots, is_holiday
+    from datetime import date as date_type
+    from datetime import timedelta
+
     from database.models import ServiceCategory
-    from datetime import date as date_type, timedelta
+    from shared.availability_service import get_available_slots, is_holiday
     from shared.business_hours_validator import is_date_closed
 
     # Parse dates
@@ -3599,7 +3650,7 @@ class UpdateBusinessHoursRequest(BaseModel):
 
 @router.get("/business-hours")
 async def list_business_hours(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Get business hours for all days of the week."""
     async with get_async_session() as session:
@@ -3626,7 +3677,7 @@ async def list_business_hours(
 async def update_business_hours(
     hours_id: UUID,
     request: UpdateBusinessHoursRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Update business hours for a specific day."""
     async with get_async_session() as session:
@@ -3775,7 +3826,7 @@ class SeriesInfo(BaseModel):
 
 @router.get("/blocking-events")
 async def list_blocking_events(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     stylist_id: UUID | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
@@ -3832,7 +3883,7 @@ async def list_blocking_events(
 
 @router.post("/blocking-events", status_code=status.HTTP_201_CREATED)
 async def create_blocking_event(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     request: CreateBlockingEventRequest,
     ignore_conflicts: bool = Query(
         False, description="Skip overlap check; create even if conflicts exist"
@@ -3945,7 +3996,7 @@ async def create_blocking_event(
 
 @router.put("/blocking-events/{event_id}")
 async def update_blocking_event(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     event_id: UUID,
     request: UpdateBlockingEventRequest,
 ):
@@ -4018,7 +4069,7 @@ async def update_blocking_event(
 
 @router.delete("/blocking-events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_blocking_event(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     event_id: UUID,
 ):
     """Delete a blocking event."""
@@ -4046,7 +4097,7 @@ async def delete_blocking_event(
 
 @router.get("/business-hours/summary")
 async def get_business_hours_summary_endpoint(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """
     Get business hours summary for all days of the week.
@@ -4061,7 +4112,7 @@ async def get_business_hours_summary_endpoint(
 
 @router.get("/blocking-events/remaining-week")
 async def get_remaining_week_days_endpoint(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     from_date: date,
 ):
     """
@@ -4092,7 +4143,7 @@ async def get_remaining_week_days_endpoint(
 
 @router.post("/blocking-events/recurring/preview")
 async def preview_recurring_blocking_event(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     request: CreateRecurringBlockingEventRequest,
 ):
     """
@@ -4154,7 +4205,7 @@ async def preview_recurring_blocking_event(
 
 @router.post("/blocking-events/recurring", status_code=status.HTTP_201_CREATED)
 async def create_recurring_blocking_event(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     request: CreateRecurringBlockingEventRequest,
     ignore_conflicts: bool = False,
 ):
@@ -4300,7 +4351,7 @@ async def create_recurring_blocking_event(
 
 @router.get("/blocking-events/{event_id}/series")
 async def get_blocking_event_series(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     event_id: UUID,
 ):
     """
@@ -4354,7 +4405,7 @@ async def get_blocking_event_series(
 
 @router.get("/blocking-events/{event_id}/series/exceptions")
 async def check_series_exceptions(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     event_id: UUID,
     scope: SeriesEditScope = SeriesEditScope.ALL,
 ):
@@ -4416,7 +4467,7 @@ async def check_series_exceptions(
 
 @router.put("/blocking-events/{event_id}/series")
 async def update_blocking_event_with_scope(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     event_id: UUID,
     request: UpdateBlockingEventRequest,
     scope: SeriesEditScope = SeriesEditScope.THIS_ONLY,
@@ -4634,7 +4685,7 @@ async def update_blocking_event_with_scope(
 
 @router.delete("/blocking-events/{event_id}/series", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_blocking_event_with_scope(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     event_id: UUID,
     scope: SeriesEditScope = SeriesEditScope.THIS_ONLY,
 ):
@@ -4728,7 +4779,7 @@ async def delete_blocking_event_with_scope(
 
 @router.get("/calendar/events")
 async def get_calendar_events(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     start: datetime,
     end: datetime,
     stylist_ids: str | None = None,  # Comma-separated UUIDs
@@ -4821,7 +4872,7 @@ async def get_calendar_events(
 
 @router.get("/holidays")
 async def list_holidays(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     year: int | None = None,
 ):
     """List all holidays, optionally filtered by year."""
@@ -4860,7 +4911,7 @@ class CreateHolidayRequest(BaseModel):
 
 @router.post("/holidays", status_code=status.HTTP_201_CREATED)
 async def create_holiday(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     request: CreateHolidayRequest,
 ):
     """Create a new holiday."""
@@ -4899,7 +4950,7 @@ async def create_holiday(
 
 @router.delete("/holidays/{holiday_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_holiday(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     holiday_id: UUID,
 ):
     """Delete a holiday."""
@@ -4921,7 +4972,7 @@ async def delete_holiday(
 
 @router.get("/conversations")
 async def list_conversations(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     page: int = 1,
     page_size: int = 50,
     customer_id: UUID | None = None,
@@ -5049,7 +5100,7 @@ async def list_conversations(
 @router.get("/conversations/{conversation_id}/live")
 async def get_conversation_live(
     conversation_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> dict:
     """Return live Redis checkpoint summary for an active conversation.
 
@@ -5109,7 +5160,7 @@ async def get_conversation_live(
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """
     Get a single conversation with all messages.
@@ -5214,7 +5265,7 @@ async def get_conversation(
 @router.delete("/conversations/{conversation_uuid}", status_code=200)
 async def delete_conversation_endpoint(
     conversation_uuid: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:write"))],
 ):
     """
     Delete a conversation and clean up all associated Redis checkpoint keys.
@@ -5225,12 +5276,13 @@ async def delete_conversation_endpoint(
 
     Returns a DeleteResult JSON with per-step outcomes.
     """
+    from uuid import UUID as _UUID
+
     from api.services.conversation_delete_service import (
         DeleteResult,
         delete_conversation,
     )
     from shared.redis_client import get_redis_client
-    from uuid import UUID as _UUID
 
     # --- Redis-only delete (active conversation not yet archived) ---
     if conversation_uuid.startswith("redis:"):
@@ -5258,6 +5310,7 @@ async def delete_conversation_endpoint(
                 # Redis keys not found — conversation may have been archived already.
                 # Fall back to DB lookup and delete.
                 from sqlalchemy import select as _select
+
                 from database.models import ConversationHistory as _ConvHistory
 
                 async with get_async_session() as session:
@@ -5355,7 +5408,7 @@ async def delete_conversation_endpoint(
 
 @router.get("/search", response_model=GlobalSearchResponse)
 async def global_search(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     q: str = "",
     limit: int = 5,
 ):
@@ -5516,7 +5569,7 @@ async def create_notification(
 
 @router.get("/notifications", response_model=NotificationsListResponse)
 async def list_notifications(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     limit: int = 20,
     include_read: bool = False,
 ):
@@ -5571,7 +5624,7 @@ async def list_notifications(
 @router.put("/notifications/{notification_id}/read")
 async def mark_notification_read(
     notification_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Mark a single notification as read."""
     async with get_async_session() as session:
@@ -5592,7 +5645,7 @@ async def mark_notification_read(
 
 @router.put("/notifications/mark-all-read")
 async def mark_all_notifications_read(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Mark all unread notifications as read."""
     from sqlalchemy import update
@@ -5610,7 +5663,7 @@ async def mark_all_notifications_read(
 
 @router.get("/notifications/paginated", response_model=NotificationsPaginatedResponse)
 async def list_notifications_paginated(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     page: int = 1,
     page_size: int = 20,
     types: str | None = None,
@@ -5639,7 +5692,7 @@ async def list_notifications_paginated(
         sort_by: Sort field (created_at, type)
         sort_order: Sort order (asc, desc)
     """
-    from sqlalchemy import or_, and_, cast, Date
+    from sqlalchemy import Date, and_, cast, or_
 
     async with get_async_session() as session:
         # Validate page_size
@@ -5749,7 +5802,7 @@ async def list_notifications_paginated(
 
 @router.get("/notifications/stats", response_model=NotificationStatsResponse)
 async def get_notification_stats(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     days: int = 30,
 ):
     """
@@ -5758,8 +5811,9 @@ async def get_notification_stats(
     Args:
         days: Number of days for trend data (default 30)
     """
-    from sqlalchemy import cast, Date
     from datetime import timedelta
+
+    from sqlalchemy import Date, cast
 
     async with get_async_session() as session:
         # Count by type
@@ -5817,7 +5871,7 @@ async def get_notification_stats(
 @router.put("/notifications/{notification_id}/star")
 async def toggle_notification_star(
     notification_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Toggle starred status of a notification."""
     async with get_async_session() as session:
@@ -5843,7 +5897,7 @@ async def toggle_notification_star(
 @router.put("/notifications/{notification_id}/unread")
 async def mark_notification_unread(
     notification_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Mark a notification as unread."""
     async with get_async_session() as session:
@@ -5865,7 +5919,7 @@ async def mark_notification_unread(
 @router.delete("/notifications/bulk")
 async def bulk_delete_notifications(
     request: NotificationBulkRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Delete multiple notifications."""
     from sqlalchemy import delete as sql_delete
@@ -5882,7 +5936,7 @@ async def bulk_delete_notifications(
 @router.delete("/notifications/{notification_id}")
 async def delete_notification(
     notification_id: UUID,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     """Delete a single notification."""
     from sqlalchemy import delete as sql_delete
@@ -5904,7 +5958,7 @@ async def delete_notification(
 
 @router.get("/notifications/export")
 async def export_notifications(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     types: str | None = None,
     category: str | None = None,
     is_read: bool | None = None,
@@ -5918,10 +5972,11 @@ async def export_notifications(
 
     Applies same filters as the paginated list endpoint.
     """
-    from fastapi.responses import StreamingResponse
-    from sqlalchemy import or_, and_, cast, Date
     import csv
     import io
+
+    from fastapi.responses import StreamingResponse
+    from sqlalchemy import Date, and_, cast, or_
 
     async with get_async_session() as session:
         # Build query with same filters as paginated endpoint
@@ -6031,7 +6086,7 @@ async def export_notifications(
 
 @router.get("/escalations/stats", response_model=EscalationStatsResponse)
 async def get_escalation_stats(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     async with get_async_session() as session:
         total = (await session.execute(select(func.count()).select_from(Escalation))).scalar() or 0
@@ -6077,7 +6132,7 @@ async def get_escalation_stats(
 
 @router.get("/escalations", response_model=dict)
 async def list_escalations(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     page: int = 1,
     page_size: int = 20,
     status: str | None = None,
@@ -6182,7 +6237,7 @@ async def list_escalations(
 @router.get("/escalations/{escalation_id}", response_model=EscalationResponse)
 async def get_escalation(
     escalation_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
     async with get_async_session() as session:
         try:
@@ -6209,7 +6264,7 @@ async def get_escalation(
 @router.patch("/escalations/{escalation_id}/resolve", response_model=EscalationResponse)
 async def resolve_escalation(
     escalation_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("escalations:resolve"))],
 ):
     async with get_async_session() as session:
         try:

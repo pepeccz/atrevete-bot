@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 from api.routes.admin import get_current_user
+from database.models import AdminUser
 from shared.archive_retrieval import (
     get_archived_conversation,
     list_archived_conversations,
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 @router.get("/{conversation_id}/history")
 async def get_conversation_history(
     conversation_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
@@ -71,15 +72,12 @@ async def get_conversation_history(
     """
     try:
         result = await get_archived_conversation(
-            conversation_id=conversation_id,
-            limit=limit,
-            offset=offset
+            conversation_id=conversation_id, limit=limit, offset=offset
         )
 
         if result["total_messages"] == 0:
             raise HTTPException(
-                status_code=404,
-                detail=f"Conversation {conversation_id} not found in archive"
+                status_code=404, detail=f"Conversation {conversation_id} not found in archive"
             )
 
         return result
@@ -88,18 +86,16 @@ async def get_conversation_history(
         raise
     except Exception as e:
         logger.error(
-            f"Error retrieving conversation history for {conversation_id}: {e}",
-            exc_info=True
+            f"Error retrieving conversation history for {conversation_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500,
-            detail="Internal server error retrieving conversation history"
+            status_code=500, detail="Internal server error retrieving conversation history"
         )
 
 
 @router.get("/")
 async def list_conversations(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
     customer_phone: Annotated[str | None, Query()] = None,
     start_date: Annotated[datetime | None, Query()] = None,
     end_date: Annotated[datetime | None, Query()] = None,
@@ -156,17 +152,11 @@ async def list_conversations(
             start_date=start_date,
             end_date=end_date,
             limit=limit,
-            offset=offset
+            offset=offset,
         )
 
         return result
 
     except Exception as e:
-        logger.error(
-            f"Error listing archived conversations: {e}",
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error listing conversations"
-        )
+        logger.error(f"Error listing archived conversations: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error listing conversations")

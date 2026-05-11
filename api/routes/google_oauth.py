@@ -38,7 +38,7 @@ from agent.services.google_oauth_service import (
     PrimaryCalendarError,
 )
 from database.connection import get_async_session
-from database.models import Stylist
+from database.models import AdminUser, Stylist
 from shared.config import get_settings
 from sqlalchemy import select
 
@@ -67,7 +67,9 @@ _CSRF_TTL_SECONDS = 600
 class CreateCalendarRequest(BaseModel):
     """Request body for POST /calendars."""
 
-    summary: str = Field(..., min_length=1, max_length=200, description="Display name of the calendar")
+    summary: str = Field(
+        ..., min_length=1, max_length=200, description="Display name of the calendar"
+    )
     description: str = Field(default="", description="Optional calendar description")
     timeZone: str = Field(default="Europe/Madrid", description="IANA time zone string")
 
@@ -136,7 +138,7 @@ async def _consume_csrf_state(state: str) -> tuple[bool, str | None]:
 
 @router.get("/status")
 async def google_connection_status(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> dict[str, Any]:
     """
     Return the current Google OAuth2 connection status.
@@ -154,7 +156,7 @@ async def google_connection_status(
 
 @router.get("/auth-url")
 async def generate_auth_url(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> dict[str, str]:
     """
     Generate a Google OAuth2 authorization URL.
@@ -230,9 +232,7 @@ async def google_oauth_callback(
     # --- CSRF validation (consume state from Redis) ---
     state_valid, code_verifier = await _consume_csrf_state(state)
     if not state_valid:
-        logger.warning(
-            "OAuth2 callback CSRF state invalid or expired (state=%s...)", state[:8]
-        )
+        logger.warning("OAuth2 callback CSRF state invalid or expired (state=%s...)", state[:8])
         return RedirectResponse(
             url=f"{base_redirect}?error=invalid_state",
             status_code=302,
@@ -251,9 +251,7 @@ async def google_oauth_callback(
                 session=session,
                 code_verifier=code_verifier,
             )
-        logger.info(
-            "Google OAuth2 connection successful for email=%s", result.get("email")
-        )
+        logger.info("Google OAuth2 connection successful for email=%s", result.get("email"))
         return RedirectResponse(
             url=f"{base_redirect}?connected=true",
             status_code=302,
@@ -284,7 +282,7 @@ async def google_oauth_callback(
 
 @router.get("/calendars")
 async def list_google_calendars(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> dict[str, list[dict]]:
     """
     List Google Calendars accessible from the connected account.
@@ -345,7 +343,7 @@ async def list_google_calendars(
 @router.post("/calendars", status_code=status.HTTP_201_CREATED)
 async def create_google_calendar(
     body: CreateCalendarRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> CalendarResponse:
     """
     Create a new secondary Google Calendar owned by the connected account.
@@ -380,7 +378,7 @@ async def create_google_calendar(
 
         logger.info(
             "Admin user=%s created Google Calendar id=%s",
-            current_user.get("sub"),
+            current_user.username,
             calendar.get("id"),
         )
         return CalendarResponse(
@@ -422,7 +420,7 @@ async def create_google_calendar(
 async def update_google_calendar(
     calendar_id: str,
     body: UpdateCalendarRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> CalendarResponse:
     """
     Partially update a Google Calendar's name and/or description.
@@ -460,7 +458,7 @@ async def update_google_calendar(
 
         logger.info(
             "Admin user=%s updated Google Calendar id=%s",
-            current_user.get("sub"),
+            current_user.username,
             calendar_id,
         )
         return CalendarResponse(
@@ -507,7 +505,7 @@ async def update_google_calendar(
 @router.delete("/calendars/{calendar_id}")
 async def delete_google_calendar(
     calendar_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> dict[str, Any]:
     """
     Delete a Google Calendar by ID.
@@ -557,7 +555,7 @@ async def delete_google_calendar(
 
         logger.info(
             "Admin user=%s deleted Google Calendar id=%s",
-            current_user.get("sub"),
+            current_user.username,
             calendar_id,
         )
         return {"deleted": True, "calendar_id": calendar_id}
@@ -596,7 +594,7 @@ async def delete_google_calendar(
 
 @router.delete("/disconnect")
 async def disconnect_google_account(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(get_current_user)],
 ) -> dict[str, bool]:
     """
     Disconnect the Google account by deactivating and clearing all credentials.
@@ -610,7 +608,5 @@ async def disconnect_google_account(
     async with get_async_session() as session:
         await _oauth_service.disconnect(session)
 
-    logger.info(
-        "Google account disconnected by admin user=%s", current_user.get("sub")
-    )
+    logger.info("Google account disconnected by admin user=%s", current_user.username)
     return {"disconnected": True}
