@@ -575,6 +575,33 @@ Rollback: `git revert` the PR-2 commits + `docker compose restart api`. No DB ro
 
 ---
 
+### Deploy Runbook (conversaciones-inbox PR-3)
+
+Full inbox UI rewrite: 3-column `/conversations` page, 8 inbox components, `useConversationPolling` hook, `/escalations` 308 redirect, sidebar badge merge, and `paused_24h` notification handler. **Requires PR-2 endpoints live.** No DB migration, no schema change, no checkpoint flush required.
+
+```bash
+# Step 1: Rebuild and redeploy admin-panel (on deploy server)
+cd /home/pepe/Proyectos/atrevete-bot/admin-panel && npm run build
+# Then serve the new build (e.g. via your Next.js start command or nginx static)
+
+# Step 2: Restart agent container to pick up paused_24h handler registration
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart agent
+
+# Step 3: Smoke tests
+# a) Navigate to /escalations → should 308-redirect to /conversations?filter=escalated
+# b) Open /conversations → confirm 3-column layout: list | thread | customer card
+# c) Confirm "Escalaciones" sidebar entry is absent; Conversaciones badge is visible
+# d) Select a conversation → PausedBanner shows if bot is paused
+# e) Send a message while bot is ON → TakeoverModal appears, confirm → bot paused
+# f) Click "Reanudar bot" → bot resumes, pending_injection Redis key set
+# g) paused_24h handler: check logs for "paused_24h: created N reminder notifications"
+#    after running notifications_worker (triggered automatically on next poll cycle)
+```
+
+Rollback: `git revert` the PR-3 commits + rebuild admin-panel previous version + `docker compose restart agent`.
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
