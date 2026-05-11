@@ -62,20 +62,43 @@ class ConversationInboxService:
         self._chatwoot = chatwoot_client
 
     async def _get_history(self, conversation_id: str) -> ConversationHistory:
-        """Fetch the ConversationHistory row by conversation_id string.
+        """Fetch the ConversationHistory row by either UUID PK or Chatwoot id string.
+
+        Admin-panel callers pass ``ConversationHistory.id`` (UUID string) since
+        that's what the listing endpoint exposes. Internal callers (resume
+        injection from the webhook) pass ``ConversationHistory.conversation_id``
+        (Chatwoot integer as string). This method accepts both: it tries to
+        parse as UUID first, then falls back to the string column lookup.
 
         Args:
-            conversation_id: The Chatwoot / LangGraph conversation identifier string.
+            conversation_id: UUID string OR Chatwoot conversation_id string.
 
         Raises:
-            ValueError: If no ConversationHistory row exists for this conversation_id.
+            ValueError: If no ConversationHistory row exists for either match.
         """
-        result = await self._session.execute(
-            select(ConversationHistory).where(
-                ConversationHistory.conversation_id == conversation_id
+        from uuid import UUID as _UUID
+
+        history: ConversationHistory | None = None
+
+        try:
+            uuid_value = _UUID(conversation_id)
+        except (ValueError, TypeError):
+            uuid_value = None
+
+        if uuid_value is not None:
+            result = await self._session.execute(
+                select(ConversationHistory).where(ConversationHistory.id == uuid_value)
             )
-        )
-        history = result.scalar_one_or_none()
+            history = result.scalar_one_or_none()
+
+        if history is None:
+            result = await self._session.execute(
+                select(ConversationHistory).where(
+                    ConversationHistory.conversation_id == conversation_id
+                )
+            )
+            history = result.scalar_one_or_none()
+
         if history is None:
             raise ValueError(f"Conversation '{conversation_id}' not found.")
         return history
