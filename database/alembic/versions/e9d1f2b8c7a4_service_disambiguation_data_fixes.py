@@ -62,7 +62,7 @@ def upgrade() -> None:
         VALUES (
             gen_random_uuid(),
             'Piernas Enteras',
-            'aesthetics',
+            'AESTHETICS',
             40,
             'Depilación con cera de piernas enteras: desde tobillo hasta ingle (40 min)',
             NULL,
