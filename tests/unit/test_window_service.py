@@ -1,11 +1,11 @@
 """Unit tests for api.services.window_service.compute_window_open.
 
-Covers SC-4 (24h boundary behaviour):
-  - A conversation with a user message 5 hours ago → window OPEN.
-  - A conversation with a user message 25 hours ago → window CLOSED.
-  - Boundary cases: exactly 24h (closed), just under 24h (open).
-  - No user messages at all → window CLOSED, last_user_message_at is None.
+Two-tier source of truth:
+  - Tier 1 (preferred): cached ``can_reply`` mirrored from Chatwoot webhook,
+    used when ``can_reply_captured_at`` is younger than 24h.
+  - Tier 2 (fallback): ``MAX(created_at) WHERE role='user'`` legacy computation.
 
+Covers SC-4 boundary behaviour plus the new cached-vs-fallback decision logic.
 All DB calls are mocked; no real database connection is required.
 """
 
@@ -24,69 +24,149 @@ from api.services.window_service import WINDOW_DURATION, compute_window_open
 # ---------------------------------------------------------------------------
 
 
-def _make_session_with_max_created_at(dt: datetime | None) -> AsyncMock:
-    """Build a minimal AsyncSession mock that returns ``dt`` from scalar_one_or_none()."""
+def _make_session(
+    cached_can_reply: bool | None,
+    cached_captured_at: datetime | None,
+    last_user_message_at: datetime | None,
+) -> AsyncMock:
+    """Build a session mock for the two execute calls compute_window_open issues.
+
+    Args:
+        cached_can_reply: the bool stored on ConversationHistory.can_reply,
+            or None to simulate an absent / un-cached row.
+        cached_captured_at: timestamp of capture, or None.
+        last_user_message_at: MAX(created_at) WHERE role='user', or None.
+
+    When ``cached_can_reply`` is None and ``cached_captured_at`` is None, the
+    first execute returns a row of (None, None) — matching what Postgres returns
+    for a row that exists but has no capture yet.
+    """
     session = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = dt
-    session.execute = AsyncMock(return_value=result)
+
+    cached_result = MagicMock()
+    cached_result.first.return_value = (cached_can_reply, cached_captured_at)
+
+    fallback_result = MagicMock()
+    fallback_result.scalar_one_or_none.return_value = last_user_message_at
+
+    session.execute = AsyncMock(side_effect=[cached_result, fallback_result])
     return session
 
 
+def _legacy_session(last_user_message_at: datetime | None) -> AsyncMock:
+    """Session mock simulating no cached value — only the timestamp fallback."""
+    return _make_session(
+        cached_can_reply=None,
+        cached_captured_at=None,
+        last_user_message_at=last_user_message_at,
+    )
+
+
 # ---------------------------------------------------------------------------
-# SC-4 — 24h window boundary
+# Tier 1: cached can_reply path
 # ---------------------------------------------------------------------------
 
 
-class TestComputeWindowOpen:
-    """Tests for compute_window_open boundary behaviour (SC-4)."""
+class TestCachedCanReplyPath:
+    """Cached can_reply is trusted when captured_at is fresh (<24h old)."""
 
     @pytest.mark.asyncio
-    async def test_window_open_when_last_message_5h_ago(self):
-        """Last user message 5 hours ago → window is open (within 24h)."""
-        last_msg = datetime.now(tz=UTC) - timedelta(hours=5)
-        session = _make_session_with_max_created_at(last_msg)
+    async def test_fresh_cache_true_returns_open(self):
+        last_msg = datetime.now(tz=UTC) - timedelta(hours=2)
+        session = _make_session(
+            cached_can_reply=True,
+            cached_captured_at=datetime.now(tz=UTC) - timedelta(minutes=10),
+            last_user_message_at=last_msg,
+        )
         conv_id = uuid4()
 
         open_, ts = await compute_window_open(session, conv_id)
 
         assert open_ is True
         assert ts is not None
-        # The returned timestamp should be tz-aware
+
+    @pytest.mark.asyncio
+    async def test_fresh_cache_false_returns_closed(self):
+        """Even if message timestamps look open, fresh cache=False wins."""
+        # Last message looks recent (5h ago) but Chatwoot said can_reply=False
+        # — e.g. inbox configured for an API channel with custom window.
+        last_msg = datetime.now(tz=UTC) - timedelta(hours=5)
+        session = _make_session(
+            cached_can_reply=False,
+            cached_captured_at=datetime.now(tz=UTC) - timedelta(minutes=10),
+            last_user_message_at=last_msg,
+        )
+        conv_id = uuid4()
+
+        open_, ts = await compute_window_open(session, conv_id)
+
+        assert open_ is False
+        assert ts is not None  # fallback ts still returned for context
+
+    @pytest.mark.asyncio
+    async def test_stale_cache_falls_back_to_timestamp(self):
+        """captured_at older than 24h is considered stale — fall through to legacy."""
+        # Cache says False but it's 25h old. Legacy computation sees a recent
+        # message → window opens.
+        last_msg = datetime.now(tz=UTC) - timedelta(hours=2)
+        session = _make_session(
+            cached_can_reply=False,
+            cached_captured_at=datetime.now(tz=UTC) - timedelta(hours=25),
+            last_user_message_at=last_msg,
+        )
+        conv_id = uuid4()
+
+        open_, ts = await compute_window_open(session, conv_id)
+
+        assert open_ is True  # legacy wins
+        assert ts is not None
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: legacy MAX(created_at) fallback (SC-4 boundary)
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyFallback:
+    """When no cache is available, use MAX(created_at) WHERE role='user'."""
+
+    @pytest.mark.asyncio
+    async def test_window_open_when_last_message_5h_ago(self):
+        last_msg = datetime.now(tz=UTC) - timedelta(hours=5)
+        session = _legacy_session(last_msg)
+        conv_id = uuid4()
+
+        open_, ts = await compute_window_open(session, conv_id)
+
+        assert open_ is True
+        assert ts is not None
         assert ts.tzinfo is not None
 
     @pytest.mark.asyncio
     async def test_window_closed_when_last_message_25h_ago(self):
-        """Last user message 25 hours ago → window is closed (beyond 24h)."""
         last_msg = datetime.now(tz=UTC) - timedelta(hours=25)
-        session = _make_session_with_max_created_at(last_msg)
+        session = _legacy_session(last_msg)
         conv_id = uuid4()
 
         open_, ts = await compute_window_open(session, conv_id)
 
         assert open_ is False
         assert ts is not None
-        assert ts.tzinfo is not None
 
     @pytest.mark.asyncio
     async def test_window_closed_at_exact_24h(self):
-        """Last user message exactly 24h ago → window is closed (boundary is exclusive)."""
-        # Subtract a tiny epsilon to simulate a real DB timestamp that is exactly 24h old
-        # at query time.  The condition is strict ``<``, so 24h == 24h is closed.
         last_msg = datetime.now(tz=UTC) - WINDOW_DURATION
-        session = _make_session_with_max_created_at(last_msg)
+        session = _legacy_session(last_msg)
         conv_id = uuid4()
 
         open_, ts = await compute_window_open(session, conv_id)
 
-        # (now - last_msg) is ~WINDOW_DURATION; strict < means this is NOT open
         assert open_ is False
 
     @pytest.mark.asyncio
     async def test_window_open_just_under_24h(self):
-        """Last user message 23h59m59s ago → window is still open (one second to spare)."""
         last_msg = datetime.now(tz=UTC) - WINDOW_DURATION + timedelta(seconds=1)
-        session = _make_session_with_max_created_at(last_msg)
+        session = _legacy_session(last_msg)
         conv_id = uuid4()
 
         open_, ts = await compute_window_open(session, conv_id)
@@ -95,8 +175,7 @@ class TestComputeWindowOpen:
 
     @pytest.mark.asyncio
     async def test_window_closed_when_no_user_messages(self):
-        """No user messages at all → window is closed and last_user_message_at is None."""
-        session = _make_session_with_max_created_at(None)
+        session = _legacy_session(None)
         conv_id = uuid4()
 
         open_, ts = await compute_window_open(session, conv_id)
@@ -106,29 +185,25 @@ class TestComputeWindowOpen:
 
     @pytest.mark.asyncio
     async def test_returns_timezone_aware_timestamp(self):
-        """Returned timestamp must be timezone-aware even if DB returns naive UTC."""
-        # Simulate Postgres returning a naive datetime (no tzinfo)
-        naive_dt = datetime.utcnow() - timedelta(hours=2)
-        assert naive_dt.tzinfo is None  # confirm it's naive
+        naive_dt = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=2)
+        assert naive_dt.tzinfo is None
 
-        session = _make_session_with_max_created_at(naive_dt)
+        session = _legacy_session(naive_dt)
         conv_id = uuid4()
 
         open_, ts = await compute_window_open(session, conv_id)
 
         assert open_ is True
         assert ts is not None
-        # Service must attach UTC tzinfo to naive timestamps
         assert ts.tzinfo is not None
 
     @pytest.mark.asyncio
-    async def test_uses_correct_conversation_id(self):
-        """compute_window_open must pass the conversation_history_id to the query."""
+    async def test_issues_two_queries(self):
+        """compute_window_open issues exactly two execute calls: cache + fallback."""
         last_msg = datetime.now(tz=UTC) - timedelta(hours=1)
-        session = _make_session_with_max_created_at(last_msg)
+        session = _legacy_session(last_msg)
         conv_id = uuid4()
 
         await compute_window_open(session, conv_id)
 
-        # The session.execute must have been called once (for the MAX query)
-        session.execute.assert_called_once()
+        assert session.execute.call_count == 2

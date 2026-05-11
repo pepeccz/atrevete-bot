@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 class ChatwootSender(BaseModel):
     """Chatwoot message sender information."""
+
     model_config = ConfigDict(extra="allow")
 
     phone_number: str | None = None
@@ -16,6 +17,7 @@ class ChatwootSender(BaseModel):
 
 class ChatwootAttachment(BaseModel):
     """Chatwoot message attachment (audio, video, image, file)."""
+
     model_config = ConfigDict(extra="allow")
 
     id: int
@@ -25,6 +27,7 @@ class ChatwootAttachment(BaseModel):
 
 class ChatwootMessage(BaseModel):
     """Single message within a Chatwoot conversation."""
+
     model_config = ConfigDict(extra="allow")
 
     id: int
@@ -39,12 +42,16 @@ class ChatwootMessage(BaseModel):
 
 class ChatwootConversation(BaseModel):
     """Chatwoot conversation object."""
+
     model_config = ConfigDict(extra="allow")
 
     id: int  # conversation_id
     inbox_id: int
     messages: list[ChatwootMessage]
     custom_attributes: dict[str, bool | str | int | float | None] = {}
+    # 24h WhatsApp window indicator — Chatwoot's MessageWindowService output.
+    # Mirrored into conversation_history.can_reply for fast read in /window-status.
+    can_reply: bool | None = None
 
 
 class ChatwootWebhookPayload(BaseModel):
@@ -59,6 +66,7 @@ class ChatwootWebhookPayload(BaseModel):
         ...
     }
     """
+
     model_config = ConfigDict(extra="allow")
 
     event: str  # "message_created", etc.
@@ -92,8 +100,6 @@ class ChatwootMessageEvent(BaseModel):
             if not phonenumbers.is_valid_number(parsed):
                 raise ValueError(f"Invalid phone number: {v}")
             # Format to E.164 standard
-            return phonenumbers.format_number(
-                parsed, phonenumbers.PhoneNumberFormat.E164
-            )
+            return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
         except phonenumbers.NumberParseException as e:
             raise ValueError(f"Cannot parse phone number {v}: {e}") from e
