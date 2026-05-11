@@ -486,6 +486,19 @@ Revision: `a3b4c5d6e7f8` (parent: `f0a1b2c3d4e5`). No checkpoint flush required.
 
 ---
 
+### Deploy Runbook (papercut-fixes)
+
+Pure text changes: two voseo strings in `agent/tools/_booking_validators.py` replaced with castellano forms, and R-35 (`partial_resolved_ids` round-trip rule) added to `agent/prompts/shared/booking_flow.md` + `tools_contract.md`. No DB migration, no schema change, no checkpoint flush required.
+
+```bash
+# Restart api and agent containers to pick up new prompts and validator strings
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart api agent
+```
+
+Rollback: `git revert HEAD~n` (revert commits on this branch) + restart containers.
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
