@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
@@ -62,7 +62,7 @@ def _parse_iso_to_utc(s: str) -> datetime | None:
             extra={"slot_iso": s},
         )
         return None
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 def _find_matching_check_availability(
@@ -233,6 +233,7 @@ async def _update_booking_impl(
     pre_resolved_service_ids: list[str] | None = None,
     messages: list | None = None,
 ) -> str:
+    from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
     from agent.tools._booking_helpers import (
         _resolve_active_stylists,
         _resolve_audience_variants,
@@ -243,7 +244,6 @@ async def _update_booking_impl(
         _resolve_stylist,
         _validate_full_name,
     )
-    from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
     from database.connection import get_async_session
 
     async with get_async_session() as session:
@@ -251,8 +251,52 @@ async def _update_booking_impl(
         missing: list[str] = []
         errors: list[str] = []
 
+        # ── AR5: validate pre_resolved_service_ids against active catalog ─────
+        # UUIDs are validated BEFORE the services gate so that pre_resolved can
+        # satisfy the services requirement (ADR-DR-2). Invalid UUIDs are rejected
+        # immediately to prevent hallucinated UUIDs bypassing catalog validation.
+        pre_resolved_set: list[str] = []
+        if pre_resolved_service_ids:
+            from sqlalchemy import select as _sa_select
+
+            from database.models import Service as _Service
+
+            _uuid_list: list[str] = list(pre_resolved_service_ids)
+            _result = await session.execute(
+                _sa_select(_Service.id).where(
+                    _Service.id.in_(_uuid_list),
+                    _Service.is_active.is_(True),
+                )
+            )
+            valid_ids = {str(r[0]) for r in _result.fetchall()}
+            invalid = [u for u in _uuid_list if u not in valid_ids]
+            if invalid:
+                logger.info(
+                    "tool.response.rejected",
+                    extra={
+                        "tool_name": "update_booking",
+                        "next_step": "service_required",
+                        "invalid_pre_resolved_ids": invalid,
+                    },
+                )
+                return ToolResponse(
+                    status="rejected",
+                    errors=[f"UUIDs no válidos o inactivos: {invalid}"],
+                    next_step="service_required",
+                ).model_dump_json()
+            pre_resolved_set = list(valid_ids)
+            logger.info(
+                "tool.disambiguation.pre_resolved_merged",
+                extra={
+                    "tool_name": "update_booking",
+                    "pre_resolved_count": len(pre_resolved_set),
+                    "pre_resolved_ids": pre_resolved_set,
+                },
+            )
+
         # ── Step 3: no services ───────────────────────────────────────────────
-        if not services:
+        # pre_resolved_set satisfies the services requirement if non-empty.
+        if not services and not pre_resolved_set:
             missing.append("services")
             return ToolResponse(
                 status="partial",
@@ -262,9 +306,18 @@ async def _update_booking_impl(
             ).model_dump_json()
 
         # ── Resolve service names (strict: detects ambiguous axis at resolution time) ──
-        resolved_ids, unknown_names, ambiguous_descriptors, partial_resolved_ids = (
-            await _resolve_service_ids_strict(session, services)
-        )
+        # When services is empty (only pre_resolved_set), skip name resolution entirely.
+        if services:
+            resolved_ids, unknown_names, ambiguous_descriptors, partial_resolved_ids = (
+                await _resolve_service_ids_strict(session, services)
+            )
+        else:
+            resolved_ids, unknown_names, ambiguous_descriptors, partial_resolved_ids = (
+                [],
+                [],
+                [],
+                [],
+            )
 
         # ── Step 1.7: ambiguous descriptor gate (audience or variant axis) ────
         # _resolve_service_ids_strict already detected the axis without committing
@@ -343,6 +396,15 @@ async def _update_booking_impl(
                 errors=errors,
             ).model_dump_json()
 
+        # ── ADR-DR-2: merge pre_resolved_set into resolved_ids ───────────────
+        # De-duplicate by UUID to prevent double-booking the same service.
+        if pre_resolved_set:
+            existing = set(resolved_ids)
+            for _uuid in pre_resolved_set:
+                if _uuid not in existing:
+                    resolved_ids.append(_uuid)
+                    existing.add(_uuid)
+
         # ── Step 1.5: category-mix gate ──────────────────────────────────────
         # Runs AFTER service resolution (needs UUIDs) and BEFORE audience/variant gates.
         # Fails-closed when services span HAIRDRESSING + AESTHETICS (no BOTH override).
@@ -357,7 +419,7 @@ async def _update_booking_impl(
             _hair_services: list[str] = []
             _aesth_services: list[str] = []
             _both_services: list[str] = []
-            for _svc_name, _svc_id in zip(services, resolved_ids):
+            for _svc_name, _svc_id in zip(services, resolved_ids, strict=False):
                 _cat = _id_to_cat.get(_svc_id)
                 if _cat == _SC.HAIRDRESSING:
                     _hair_services.append(_svc_name)
