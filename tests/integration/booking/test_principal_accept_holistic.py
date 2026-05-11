@@ -453,6 +453,6 @@ async def test_tinte_uuid_preserved_across_disambiguation_turns(db_with_seeds):
 
     # No variant_required loop — the bypass must prevent re-entry
     assert turn2.get("next_step") != "variant_required", (
-        f"Turn 2: next_step='variant_required' indicates re-entry into variant gate. "
-        f"pre_resolved_service_ids + variant_resolved=True must bypass the gate entirely."
+        "Turn 2: next_step='variant_required' indicates re-entry into variant gate. "
+        "pre_resolved_service_ids + variant_resolved=True must bypass the gate entirely."
     )
