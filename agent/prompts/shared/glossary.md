@@ -39,7 +39,7 @@ El `id=UUID` al final de cada línea es el identificador que debes usar en las l
 
 ## Ejes de Desambiguación
 
-El catálogo discrimina servicios en CINCO ejes independientes. Cada eje tiene su propia puerta en `update_booking`; el LLM NUNCA debe colapsar dos ejes en una sola pregunta.
+El catálogo discrimina servicios en CUATRO ejes independientes. Cada eje tiene su propia puerta en `update_booking`; el LLM NUNCA debe colapsar dos ejes en una sola pregunta.
 
 | Eje (`axis`) | Trigger condition | Pregunta natural ejemplo | Ejemplo de familia de servicios |
 |--------------|-------------------|--------------------------|----------------------------------|
@@ -47,9 +47,10 @@ El catálogo discrimina servicios en CINCO ejes independientes. Cada eje tiene s
 | `variant` (zona) | `next_step=variant_required`, dimensión `wax`/`cut` | "¿Qué zona quieres depilarte? Tengo {candidates}." | Depilación (Piernas Enteras / Cejas / Axilas / …) |
 | `variant` (longitud) | `next_step=variant_required`, dimensión `hairstyle`/`updo` | "¿Cómo tienes el pelo: corto, largo o muy largo?" | Peinado (Largo / Moldeado Extra / …) |
 | `variant` (formalidad) | `next_step=variant_required`, dimensión `updo` | "¿Es para evento o para el día a día?" | Recogido (Recogido / Semirecogido / Recogido de Novia) |
-| `variant` (duración) | `next_step=variant_required`, dimensión `highlights`/`color`/`treatment` | "¿La sesión corta o la completa? Tengo {candidates}." | Mechas (Extras / Localizadas / …) |
 
 **Regla de independencia**: cuando dos ejes están abiertos a la vez, `update_booking` los puerta secuencialmente — primero audience, luego variant. NUNCA preguntes ambos en el mismo turno. Usa los nombres de `payload.candidates` como sustantivos; la pregunta DEBE sonar natural en castellano de Madrid.
+
+> **Nota operativa**: las diferencias de duración en color / tratamiento / mechas (ej. Tinte Extra, Barro Extra, Mechas Extras) son decisiones del personal según densidad, daño o complejidad del cambio de tono — NO son elecciones del cliente. Esas variantes están modeladas como **ADDON** en el catálogo, no como `variant`. NUNCA preguntes al cliente "corta o larga / normal o extra" en esos ejes. Ver R-34 en `critical_rules.md`.
 
 ---
 
