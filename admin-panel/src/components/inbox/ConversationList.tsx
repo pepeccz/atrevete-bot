@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { MessageSquare, Bot, BotOff, AlertTriangle, Inbox } from "lucide-react";
+import { MessageSquare, Bot, BotOff, AlertTriangle, Inbox, Mail } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ const FILTER_TABS: FilterTab[] = [
   { id: "bot_on",    label: "Bot ON",   icon: Bot },
   { id: "bot_off",   label: "Bot OFF",  icon: BotOff },
   { id: "escalated", label: "Escaladas", icon: AlertTriangle },
+  { id: "unread",    label: "Sin leer", icon: Mail },
 ];
 
 function matchesFilter(conv: ConversationHistory, filter: InboxFilter): boolean {
