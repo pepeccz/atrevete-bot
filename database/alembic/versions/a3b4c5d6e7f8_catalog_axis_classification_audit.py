@@ -86,16 +86,14 @@ _ORIGINAL_PARENTS: dict[str, str] = {
 def upgrade() -> None:
     # 1. Reclassify 7 duration-delta variants: variant → addon, clear parent
     for name in _RECLASSIFIED_ADDONS:
-        op.execute(
-            f"""
+        op.execute(f"""
             UPDATE services
             SET metadata = jsonb_set(
                 jsonb_set(metadata, '{{service_type}}', '"addon"'::jsonb),
                 '{{parent_service_name}}', 'null'::jsonb
             )
             WHERE name = '{name}'
-            """
-        )
+            """)
 
     # 2. Fix Barro Gold Extra: cross-category mis-parent → standalone AESTHETICS principal
     #    The service is an AESTHETICS (category) facial offering (dimension=facial).
@@ -131,13 +129,11 @@ def downgrade() -> None:
 
     # Restore 7 reclassified services: addon → variant, restore original parent
     for name, parent in _ORIGINAL_PARENTS.items():
-        op.execute(
-            f"""
+        op.execute(f"""
             UPDATE services
             SET metadata = jsonb_set(
                 jsonb_set(metadata, '{{service_type}}', '"variant"'::jsonb),
                 '{{parent_service_name}}', '"{parent}"'::jsonb
             )
             WHERE name = '{name}'
-            """
-        )
+            """)

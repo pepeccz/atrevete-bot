@@ -130,9 +130,7 @@ async def seeded_services_session():
 
 @pytest.mark.parametrize("invariant_id", list(CHECKERS.keys()))
 @pytest.mark.asyncio(loop_scope="module")
-async def test_service_catalog_invariant(
-    seeded_services_session, invariant_id: str, capfd
-) -> None:
+async def test_service_catalog_invariant(seeded_services_session, invariant_id: str, capfd) -> None:
     """Assert that the seeded production catalog satisfies invariant ``invariant_id``.
 
     ERROR-severity invariants (I1-I7) cause a hard pytest FAIL on violations.

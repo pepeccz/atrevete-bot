@@ -383,13 +383,11 @@ async def session_with_operator_only_variant() -> AsyncGenerator:
 
     # Also patch the description column (services.description) so the invariant SQL sees it
     async with AsyncSessionLocal() as session:
-        await session.execute(
-            text("""
+        await session.execute(text("""
                 UPDATE services
                 SET description = 'Cabello muy denso, +10 min adicionales'
                 WHERE name = 'SyntheticOperatorOnlyVariant_I8'
-            """)
-        )
+            """))
         await session.commit()
 
     async with AsyncSessionLocal() as session:
@@ -422,9 +420,7 @@ async def test_invariant_8_detects_operator_only_variant(
 
     # I8 returns strings (not Violation objects) — it's WARNING-only
     assert results, "Expected at least one I8 warning but got none"
-    assert any(
-        "I8" in str(r) for r in results
-    ), f"Expected 'I8' prefix in results, got: {results}"
+    assert any("I8" in str(r) for r in results), f"Expected 'I8' prefix in results, got: {results}"
     assert any(
         "SyntheticOperatorOnlyVariant_I8" in str(r) for r in results
     ), f"Expected synthetic offender name in results, got: {results}"

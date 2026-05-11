@@ -45,18 +45,16 @@ def test_glossary_axis_table_surviving_rows_present() -> None:
     """T2.1 companion: the 4 surviving axis rows must still be present after the edit."""
     content = GLOSSARY_PATH.read_text(encoding="utf-8")
 
-    assert "variant` (zona)" in content, (
-        "The zona axis row must remain in glossary.md (zone-based variants like Depilación are valid)."
-    )
-    assert "variant` (longitud)" in content, (
-        "The longitud axis row must remain in glossary.md (Peinado Largo is a valid length variant)."
-    )
-    assert "variant` (formalidad)" in content, (
-        "The formalidad axis row must remain in glossary.md (Recogido de Novia is a valid formality variant)."
-    )
-    assert "audience" in content, (
-        "The audience axis row must remain in glossary.md."
-    )
+    assert (
+        "variant` (zona)" in content
+    ), "The zona axis row must remain in glossary.md (zone-based variants like Depilación are valid)."
+    assert (
+        "variant` (longitud)" in content
+    ), "The longitud axis row must remain in glossary.md (Peinado Largo is a valid length variant)."
+    assert (
+        "variant` (formalidad)" in content
+    ), "The formalidad axis row must remain in glossary.md (Recogido de Novia is a valid formality variant)."
+    assert "audience" in content, "The audience axis row must remain in glossary.md."
 
 
 def test_glossary_operational_footnote_present() -> None:
@@ -107,7 +105,9 @@ def test_critical_rules_r34_canonical_phrase() -> None:
     """
     content = CRITICAL_RULES_PATH.read_text(encoding="utf-8")
 
-    canonical = "NUNCA presentes al cliente una variante cuyo único distintivo sea un delta de duración"
+    canonical = (
+        "NUNCA presentes al cliente una variante cuyo único distintivo sea un delta de duración"
+    )
     assert canonical in content, (
         f"critical_rules.md must contain the canonical R-34 phrase:\n  {canonical}\n"
         "This phrase is the spec-mandated anchor string (REQ-PR-2)."
