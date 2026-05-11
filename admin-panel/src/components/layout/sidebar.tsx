@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import api from "@/lib/api";
 import type { ConversationHistory } from "@/lib/types";
 import {
-  AlertTriangle,
   Calendar,
   Users,
   Scissors,
@@ -68,28 +67,32 @@ const gestionNav: NavItem[] = [
   { title: "Servicios",  href: "/services",    icon: Scissors },
 ];
 
+/**
+ * Base config nav without badges — badges are applied dynamically in SidebarContent.
+ * "Escalaciones" entry removed: FR-MIGRATE-2. Traffic now flows to
+ * /conversations?filter=escalated via the 308 redirect.
+ */
 const baseConfigNav: NavItem[] = [
   { title: "Configuración del Salón", href: "/settings",      icon: Settings },
   { title: "Conversaciones",          href: "/conversations", icon: MessageSquare },
-  { title: "Escalaciones",            href: "/escalations",   icon: AlertTriangle },
 ];
 
 interface BadgeCounts {
+  /** Sum of active (unended) conversations + triggered escalations. FR-MIGRATE-2. */
   conversations: number;
-  escalations: number;
 }
 
 /**
  * Polls for live counts that drive the sidebar badges. Refreshes on mount,
- * on route change (cheap heuristic that catches user actions like resolving
- * an escalation), and every 60s.
+ * on route change, and every 60s.
  *
- * Conversations badge counts threads still in progress (no ended_at). When
- * we land on a "needs attention" semantic for conversations we'll narrow this.
- * Escalations badge counts those with status = pending.
+ * Conversations badge = active (no ended_at) conversations + escalations with
+ * status='triggered'. These are merged into a single badge because the
+ * "Escalaciones" nav entry has been removed in favour of the
+ * /conversations?filter=escalated tab (FR-MIGRATE-2).
  */
 function useSidebarBadgeCounts(pathname: string): BadgeCounts {
-  const [counts, setCounts] = useState<BadgeCounts>({ conversations: 0, escalations: 0 });
+  const [counts, setCounts] = useState<BadgeCounts>({ conversations: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -101,8 +104,9 @@ function useSidebarBadgeCounts(pathname: string): BadgeCounts {
         ]);
         if (cancelled) return;
         const activeConversations = convRes?.items?.filter((c) => !c.ended_at).length ?? 0;
-        const pendingEscalations = escStats?.pending ?? 0;
-        setCounts({ conversations: activeConversations, escalations: pendingEscalations });
+        const triggeredEscalations = escStats?.pending ?? 0;
+        // Merge both counts into the single Conversaciones badge.
+        setCounts({ conversations: activeConversations + triggeredEscalations });
       } catch {
         // Silent failure — sidebar badges are decorative, not load-bearing.
       }
@@ -164,7 +168,11 @@ function NavSection({
       <div className="space-y-0.5">
         {items.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.href;
+          // /conversations is also "active" when on /escalations (which now 308-redirects
+          // there) to keep the sidebar highlight consistent after navigation.
+          const isActive =
+            pathname === item.href ||
+            (item.href === "/conversations" && pathname === "/escalations");
 
           const inner = (
             <Link href={item.href} onClick={onNavClick} className="block">
@@ -297,11 +305,11 @@ function SidebarContent({
   const canManageUsers = usePermission("users:manage");
 
   // "Configuración del Salón" is admin-only (system:settings).
-  // "Conversaciones" and "Escalaciones" are shared (conversations:read — both roles).
+  // "Conversaciones" is shared (conversations:read — both roles). The badge
+  // includes active conversations + triggered escalations (FR-MIGRATE-2).
   const configNav: NavItem[] = [
     ...(canAccessSettings ? [baseConfigNav[0]] : []),
     { ...baseConfigNav[1], badge: badgeCounts.conversations },
-    { ...baseConfigNav[2], badge: badgeCounts.escalations },
   ];
 
   // "Usuarios" is admin-only (users:manage).

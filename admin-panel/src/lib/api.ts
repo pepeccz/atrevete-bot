@@ -1114,6 +1114,112 @@ class ApiClient {
       body: JSON.stringify({ new_password: newPassword }),
     });
   }
+
+  // =========================================================================
+  // Inbox endpoints (conversaciones-inbox PR-3)
+  // All paths under /api/admin/conversations/{id}/*
+  // Methods use POST to match PR-2 implementation (admin.py uses POST, not PATCH).
+  // =========================================================================
+
+  /**
+   * Send a free-text message from the admin panel to the customer via Chatwoot.
+   * Requires conversations:write permission. Only valid within the 24h window.
+   * FR-API-1, SC-1.
+   */
+  async sendMessage(
+    convId: string,
+    text: string
+  ): Promise<import("./types").InboxMessageResponse> {
+    return this.request<import("./types").InboxMessageResponse>(
+      `/api/admin/conversations/${convId}/send-message`,
+      { method: "POST", body: JSON.stringify({ text }) }
+    );
+  }
+
+  /**
+   * Send a Meta-approved template message. Requires templates:send permission.
+   * Only available when window_open=false (outside 24h window).
+   * FR-API-2, SC-1.
+   */
+  async sendTemplate(
+    convId: string,
+    templateName: string,
+    params: Record<string, string>
+  ): Promise<import("./types").InboxMessageResponse> {
+    return this.request<import("./types").InboxMessageResponse>(
+      `/api/admin/conversations/${convId}/send-template`,
+      { method: "POST", body: JSON.stringify({ template_name: templateName, params }) }
+    );
+  }
+
+  /**
+   * Pause the bot for a conversation (atencion_automatica=False).
+   * source="manual" creates an Escalation row. Requires bot:pause permission.
+   * FR-API-2, SC-6.
+   */
+  async pauseConversation(
+    convId: string,
+    source: "manual" | "toggle",
+    reason?: string
+  ): Promise<import("./types").InboxPauseResponse> {
+    return this.request<import("./types").InboxPauseResponse>(
+      `/api/admin/conversations/${convId}/pause`,
+      { method: "POST", body: JSON.stringify({ source, reason: reason ?? null }) }
+    );
+  }
+
+  /**
+   * Resume the bot for a conversation (atencion_automatica=True).
+   * Sets pending_injection Redis flag. Requires bot:resume permission.
+   * FR-API-3, SC-3.
+   */
+  async resumeConversation(
+    convId: string
+  ): Promise<import("./types").InboxResumeResponse> {
+    return this.request<import("./types").InboxResumeResponse>(
+      `/api/admin/conversations/${convId}/resume`,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+  }
+
+  /**
+   * Manually escalate a conversation. Requires escalations:resolve permission (admin only).
+   * FR-API-5.
+   */
+  async escalateConversation(
+    convId: string,
+    reason: string,
+    note?: string
+  ): Promise<import("./types").InboxEscalationResponse> {
+    return this.request<import("./types").InboxEscalationResponse>(
+      `/api/admin/conversations/${convId}/escalate`,
+      { method: "POST", body: JSON.stringify({ reason, note: note ?? null }) }
+    );
+  }
+
+  /**
+   * Get the current 24h message window status for a conversation.
+   * Computed server-side from MAX(created_at WHERE role='user'). FR-API-4, SC-4.
+   */
+  async getWindowStatus(
+    convId: string,
+    signal?: AbortSignal
+  ): Promise<import("./types").InboxWindowStatusResponse> {
+    return this.request<import("./types").InboxWindowStatusResponse>(
+      `/api/admin/conversations/${convId}/window-status`,
+      { signal }
+    );
+  }
+
+  /**
+   * List available Meta templates and their approval status.
+   * Requires conversations:read permission. FR-API-6.
+   */
+  async listTemplates(): Promise<import("./types").InboxTemplateListResponse> {
+    return this.request<import("./types").InboxTemplateListResponse>(
+      "/api/admin/conversations/templates"
+    );
+  }
 }
 
 export const api = new ApiClient(API_BASE_URL);

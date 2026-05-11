@@ -11,7 +11,8 @@ export type AppointmentStatus =
   | "completed"
   | "cancelled"
   | "no_show";
-export type MessageRole = "user" | "assistant" | "system";
+/** Extended role set — includes human_agent added by the inbox migration (PR-1). */
+export type MessageRole = "user" | "assistant" | "system" | "human_agent";
 
 // Models
 export interface Stylist {
@@ -808,4 +809,63 @@ export interface AdminUserUpdateRequest {
   role?: AdminUserRole | null;
   is_active?: boolean | null;
   display_name?: string | null;
+}
+
+// ─── Inbox (conversaciones-inbox) ────────────────────────────────────────────
+
+/** Extended ConversationHistory fields added by the inbox migration (PR-1). */
+export interface ConversationHistoryInbox extends ConversationHistory {
+  paused_at: string | null;
+  resumed_at: string | null;
+  context_injected_at: string | null;
+  /** Whether the bot is currently active for this conversation. */
+  atencion_automatica: boolean | null;
+  /** Filter label returned by the listing endpoint ?filter= param. */
+  filter_label?: string;
+}
+
+export type InboxFilter = "all" | "bot_on" | "bot_off" | "escalated" | "unread";
+
+// Inbox API request/response shapes (mirrors api/models/inbox.py from PR-2).
+
+export interface InboxMessageResponse {
+  id: string;
+  content: string;
+  created_at: string;
+  author_username: string | null;
+}
+
+export interface InboxPauseResponse {
+  paused_at: string;
+  escalation_id?: string | null;
+}
+
+export interface InboxResumeResponse {
+  resumed_at: string;
+  pending_injection_ttl_seconds: number;
+}
+
+export interface InboxEscalationResponse {
+  escalation_id: string;
+}
+
+export interface InboxWindowStatusResponse {
+  window_open: boolean;
+  last_user_message_at: string | null;
+  hours_until_close: number | null;
+}
+
+export interface InboxTemplateParamDef {
+  name: string;
+  label: string;
+}
+
+export interface InboxTemplateDef {
+  name: string;
+  status: "approved" | "pending";
+  params: InboxTemplateParamDef[];
+}
+
+export interface InboxTemplateListResponse {
+  items: InboxTemplateDef[];
 }

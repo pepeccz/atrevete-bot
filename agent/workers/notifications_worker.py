@@ -24,6 +24,7 @@ from typing import Any
 
 from agent.workers.notification_handlers import NotificationHandler
 from agent.workers.notification_handlers.confirm_48h import HANDLER as confirm_48h_handler
+from agent.workers.notification_handlers.paused_24h import HANDLER as paused_24h_handler
 from agent.workers.notification_handlers.reminder_24h import HANDLER as reminder_24h_handler
 from database.connection import get_async_session
 from shared.chatwoot_client import ChatwootClient
@@ -36,6 +37,8 @@ HEARTBEAT_PATH = Path("/tmp/notifications_worker_heartbeat.json")
 HANDLERS: dict[str, NotificationHandler] = {
     reminder_24h_handler.name: reminder_24h_handler,
     confirm_48h_handler.name: confirm_48h_handler,
+    # SC-8: daily in-app reminder for conversations paused > 24h (conversaciones-inbox)
+    paused_24h_handler.name: paused_24h_handler,
 }
 
 _shutdown_requested = False
