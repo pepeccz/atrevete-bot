@@ -19,6 +19,7 @@ from pathlib import Path
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "agent" / "prompts"
 GLOSSARY_PATH = PROMPTS_DIR / "shared" / "glossary.md"
 CRITICAL_RULES_PATH = PROMPTS_DIR / "shared" / "critical_rules.md"
+BOOKING_FLOW_PATH = PROMPTS_DIR / "shared" / "booking_flow.md"
 
 
 # ---------------------------------------------------------------------------
@@ -121,4 +122,46 @@ def test_critical_rules_r34_names_affected_services() -> None:
     assert "Tinte Extra" in content, (
         "R-34 must name 'Tinte Extra' as an example of a duration-delta service. "
         "This satisfies REQ-PR-2's requirement to name affected services explicitly."
+    )
+
+
+# ---------------------------------------------------------------------------
+# REQ-TE-2 / T2.1 papercut-fixes — R-35 round-trip rule
+# ---------------------------------------------------------------------------
+
+
+def test_critical_rules_r35_rule_present() -> None:
+    """T2.1 [RED→GREEN]: R-35 must be present in booking_flow.md.
+
+    ADR-DR-3 fallback: critical_rules.md exceeded the 2400-token budget by 12
+    tokens after adding R-35 (2412 tokens). R-35 is placed in booking_flow.md
+    instead, per the conditional fallback documented in the design artifact.
+    RED until T2.2 appends R-35 to booking_flow.md.
+    """
+    content = BOOKING_FLOW_PATH.read_text(encoding="utf-8")
+
+    assert "[R35]" in content, (
+        "booking_flow.md must contain [R35] after T2.2 (ADR-DR-3 fallback: "
+        "critical_rules.md exceeded the 2400-token budget). "
+        "R-35 documents the partial_resolved_ids → pre_resolved_service_ids round-trip contract."
+    )
+
+
+def test_critical_rules_r35_canonical_substrings() -> None:
+    """T2.1 companion: both canonical substrings from design ADR-DR-3 must be present.
+
+    ADR-DR-3 fallback: R-35 placed in booking_flow.md (critical_rules.md at 2412
+    tokens exceeded the 2400 ceiling). The golden-test anchor ensures both the
+    field returned by the tool and the argument the LLM must re-pass are named.
+    RED until T2.2 appends R-35 to booking_flow.md.
+    """
+    content = BOOKING_FLOW_PATH.read_text(encoding="utf-8")
+
+    assert "partial_resolved_ids" in content, (
+        "booking_flow.md R-35 must reference 'partial_resolved_ids' — the field returned "
+        "by update_booking when status='ambiguous' with already-resolved services."
+    )
+    assert "pre_resolved_service_ids" in content, (
+        "booking_flow.md R-35 must reference 'pre_resolved_service_ids' — the argument "
+        "the LLM must re-pass on the next update_booking call."
     )

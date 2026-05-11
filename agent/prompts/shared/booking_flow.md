@@ -36,6 +36,15 @@ Si `next_step` trae `*_required`, haz esa pregunta exacta antes de avanzar.
 ## Regla crítica — `update_booking` es SIN ESTADO
 Cada llamada DEBE incluir TODOS los slots acumulados de turnos anteriores.
 
+[R35] **Round-trip de UUIDs ya resueltos**: cuando `update_booking` devuelva `collected.partial_resolved_ids`, DEBES re-pasar esos UUIDs en `pre_resolved_service_ids` en la siguiente llamada. Sin esto, los servicios ya resueltos se re-resuelven o se pierden.
+
+<example do-not-reproduce>
+<!-- Turno N: update_booking devuelve status="ambiguous" con un servicio ya resuelto -->
+Respuesta herramienta: { "status": "ambiguous", "collected": { "partial_resolved_ids": ["{uuid-A}"] }, "next_step": "variant_required" }
+<!-- Turno N+1: re-pasar el UUID ya resuelto en pre_resolved_service_ids -->
+Llamada: update_booking(services=["{servicio-pendiente}"], pre_resolved_service_ids=["{uuid-A}"], ...)
+</example>
+
 ---
 
 ## Puerta de confirmación — antes de `book`

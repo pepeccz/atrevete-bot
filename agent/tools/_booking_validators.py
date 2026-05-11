@@ -121,7 +121,7 @@ async def validate_booking_date(
             error_code=ERROR_INVALID_RELATIVE_DATE,
             error_message=(
                 "No pude entender la fecha. "
-                "¿Podés decirme el día y mes (por ejemplo, 15 de mayo)?"
+                "¿Puedes decirme el día y mes (por ejemplo, 15 de mayo)?"
             ),
             payload={"raw_text": date_text},
         )
@@ -134,7 +134,7 @@ async def validate_booking_date(
             error_code=ERROR_CLOSED_DAY,
             error_message=(
                 f"El salón está cerrado el {resolved.isoformat()} ({weekday_name}). "
-                "Por favor, elegí otro día."
+                "Por favor, elige otro día."
             ),
             payload={
                 "closed_date": resolved.isoformat(),
