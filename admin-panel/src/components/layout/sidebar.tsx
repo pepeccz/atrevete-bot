@@ -20,6 +20,7 @@ import {
   ChevronRight,
   ExternalLink,
   MessageCircle,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -293,6 +294,7 @@ function SidebarContent({
   const pathname = usePathname();
   const badgeCounts = useSidebarBadgeCounts(pathname);
   const canAccessSettings = usePermission("system:settings");
+  const canManageUsers = usePermission("users:manage");
 
   // "Configuración del Salón" is admin-only (system:settings).
   // "Conversaciones" and "Escalaciones" are shared (conversations:read — both roles).
@@ -302,9 +304,15 @@ function SidebarContent({
     { ...baseConfigNav[2], badge: badgeCounts.escalations },
   ];
 
-  const initials = user?.username
-    ? user.username.slice(0, 2).toUpperCase()
-    : "A";
+  // "Usuarios" is admin-only (users:manage).
+  const activeGestionNav: NavItem[] = [
+    ...gestionNav,
+    ...(canManageUsers ? [{ title: "Usuarios", href: "/users", icon: Shield }] : []),
+  ];
+
+  const displayName = user?.display_name || user?.username || "Admin";
+  const initials = displayName.slice(0, 2).toUpperCase();
+  const roleLabel = user?.role === "admin" ? "Admin" : user?.role === "stylist" ? "Estilista" : "";
 
   return (
     <div
@@ -367,7 +375,7 @@ function SidebarContent({
         />
         <NavSection
           title="Gestión"
-          items={gestionNav}
+          items={activeGestionNav}
           isCollapsed={isCollapsed}
           onNavClick={onNavClick}
         />
@@ -397,7 +405,7 @@ function SidebarContent({
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="right">
-                  {user?.username || "Admin"}
+                  {displayName}
                 </TooltipContent>
               </Tooltip>
               <Tooltip>
@@ -421,10 +429,10 @@ function SidebarContent({
               </div>
               <div className="flex-1 min-w-0 leading-tight">
                 <p className="text-[13px] font-semibold text-ink truncate">
-                  {user?.username || "Admin"}
+                  {displayName}
                 </p>
                 <p className="text-[11.5px] text-ink-mute mt-0.5">
-                  Administrador
+                  {roleLabel}
                 </p>
               </div>
               <Tooltip>

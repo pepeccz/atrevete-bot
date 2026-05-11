@@ -30,6 +30,10 @@ import type {
   CustomerDetail,
   CustomerAppointmentsPage,
   CustomerMemories,
+  AdminUser,
+  AdminUserListResponse,
+  AdminUserCreateRequest,
+  AdminUserUpdateRequest,
 } from "./types";
 
 const API_BASE_URL =
@@ -1070,6 +1074,41 @@ class ApiClient {
         body: JSON.stringify(memories),
       }
     );
+  }
+
+  // Admin user management endpoints (users:manage gated on backend)
+
+  async listUsers(params?: { limit?: number; offset?: number }): Promise<AdminUserListResponse> {
+    const query = new URLSearchParams();
+    if (params?.limit != null) query.set("limit", String(params.limit));
+    if (params?.offset != null) query.set("offset", String(params.offset));
+    const qs = query.toString();
+    return this.request<AdminUserListResponse>(`/api/admin/users${qs ? `?${qs}` : ""}`);
+  }
+
+  async getUser(id: string): Promise<AdminUser> {
+    return this.request<AdminUser>(`/api/admin/users/${id}`);
+  }
+
+  async createUser(data: AdminUserCreateRequest): Promise<AdminUser> {
+    return this.request<AdminUser>("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateUser(id: string, data: AdminUserUpdateRequest): Promise<AdminUser> {
+    return this.request<AdminUser>(`/api/admin/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async resetUserPassword(id: string, newPassword: string): Promise<void> {
+    await this.request(`/api/admin/users/${id}/password-reset`, {
+      method: "POST",
+      body: JSON.stringify({ new_password: newPassword }),
+    });
   }
 }
 
