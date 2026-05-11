@@ -156,6 +156,9 @@ class NotificationType(str, PyEnum):
     ESCALATION_MEDICAL = "escalation_medical"  # Medical consultation requires human
     ESCALATION_AMBIGUITY = "escalation_ambiguity"  # Ambiguous request after multiple attempts
 
+    # Inbox / human-takeover reminders (SC-8 — conversaciones-inbox)
+    CONVERSATION_PAUSED_REMINDER = "conversation_paused_reminder"  # Bot paused > 24h
+
 
 # ============================================================================
 # Core Models
