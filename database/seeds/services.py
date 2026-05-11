@@ -116,10 +116,12 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 10,
         "description": "Perfilado de patillas con navaja. Acabado preciso para un look prolijo (10 min)",
         "audience": "adult_male",
+        # disambiguation-resilience: reclassified from variant→addon (REQ-DR-2)
+        # Previously a child of 'Corte de Hombre'; now a standalone addon grooming service.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "cut",
-            "parent_service_name": "Corte de Hombre",
+            "parent_service_name": None,
         },
     },
     {
@@ -312,10 +314,12 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 15,
         "description": "Arreglo, perfilado y modelado de barba para un acabado limpio y definido (15 min)",
         "audience": "adult_male",
+        # disambiguation-resilience: reclassified from variant→addon (REQ-DR-2)
+        # Previously a child of 'Corte de Hombre'; now a standalone addon grooming service.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "cut",
-            "parent_service_name": "Corte de Hombre",
+            "parent_service_name": None,
         },
     },
     {
