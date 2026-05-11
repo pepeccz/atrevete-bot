@@ -7,17 +7,12 @@ with customer WhatsApp conversations from the inbox UI:
   - Pausing / resuming the bot per conversation
   - Escalating conversations
 
-IMPORTANT — stub status:
-  PR-1 ships this module with method stubs only (``NotImplementedError``).
-  The full implementation is wired in PR-2 once the API endpoints and webhook
-  gate refactor are in place.  The stubs document the intended signatures and
-  contracts so that PR-2 can be developed against a stable interface.
-
 Dependencies (injected at construction time):
   - ``session``: an active ``AsyncSession`` from the request lifecycle.
   - ``chatwoot_client``: a ``ChatwootClient`` instance (or compatible async client).
+  - ``redis_client``: a Redis client instance (injected where needed by callers).
 
-Usage (once PR-2 lands)::
+Usage::
 
     service = ConversationInboxService(session=session, chatwoot_client=cw_client)
     msg = await service.send_text_message(conv_id, text="Hola", author=current_user)
@@ -25,11 +20,30 @@ Usage (once PR-2 lands)::
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID, uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import AdminUser
+from api.services.template_catalog import get_template_def, is_approved, render_body
+from api.services.window_service import compute_window_open
+from database.models import (
+    AdminUser,
+    ConversationHistory,
+    ConversationMessage,
+    ConversationMessageRole,
+    Escalation,
+    EscalationSource,
+    EscalationStatus,
+)
+
+logger = logging.getLogger(__name__)
+
+# TTL for the pending injection Redis flag (10 minutes)
+PENDING_INJECTION_TTL_SECONDS = 600
 
 
 class ConversationInboxService:
@@ -47,19 +61,38 @@ class ConversationInboxService:
         self._session = session
         self._chatwoot = chatwoot_client
 
+    async def _get_history(self, conversation_id: str) -> ConversationHistory:
+        """Fetch the ConversationHistory row by conversation_id string.
+
+        Args:
+            conversation_id: The Chatwoot / LangGraph conversation identifier string.
+
+        Raises:
+            ValueError: If no ConversationHistory row exists for this conversation_id.
+        """
+        result = await self._session.execute(
+            select(ConversationHistory).where(
+                ConversationHistory.conversation_id == conversation_id
+            )
+        )
+        history = result.scalar_one_or_none()
+        if history is None:
+            raise ValueError(f"Conversation '{conversation_id}' not found.")
+        return history
+
     async def send_text_message(
         self,
         conversation_id: str,
         text: str,
         author: AdminUser,
-    ) -> Any:
+    ) -> ConversationMessage:
         """Send a free-text message to the customer via Chatwoot and persist it.
 
-        Business rules (PR-2 implementation):
+        Business rules:
         - Window must be open (``compute_window_open`` returns ``True``).
         - Calls ``ChatwootClient.send_message(conversation_id, text)``.
         - Persists ``ConversationMessage(role='human_agent', author_user_id=author.id,
-          content=text, chatwoot_message_id=<cw response id>)``.
+          content=text)``.
         - Commits the session and returns the ORM row.
 
         Args:
@@ -74,17 +107,50 @@ class ConversationInboxService:
         Raises:
             ValueError: If the 24h messaging window is closed.
             RuntimeError: If the Chatwoot API call fails.
-
-        TODO (PR-2):
-            Implement by:
-            1. Look up ConversationHistory row by conversation_id string.
-            2. Call WindowService.compute_window_open(session, history.id).
-            3. Raise ValueError if window closed.
-            4. Call self._chatwoot.send_message(conversation_id, text).
-            5. Persist ConversationMessage row.
-            6. Commit and return the row.
         """
-        raise NotImplementedError("send_text_message is implemented in PR-2")
+        history = await self._get_history(conversation_id)
+
+        window_open, _ = await compute_window_open(self._session, history.id)
+        if not window_open:
+            raise ValueError(
+                "The 24h WhatsApp messaging window is closed for this conversation. "
+                "Use a Meta-approved template instead."
+            )
+
+        # Send via Chatwoot — conversation_id from Chatwoot is an int
+        cw_conv_id = int(conversation_id)
+        success = await self._chatwoot.send_message(
+            customer_phone="",  # not needed when conversation_id is provided
+            message=text,
+            conversation_id=cw_conv_id,
+        )
+        if not success:
+            raise RuntimeError(
+                f"Chatwoot API failed to send message for conversation '{conversation_id}'."
+            )
+
+        now = datetime.now(tz=UTC)
+        msg = ConversationMessage(
+            id=uuid4(),
+            conversation_history_id=history.id,
+            role=ConversationMessageRole.HUMAN_AGENT.value,
+            content=text,
+            author_user_id=author.id,
+            created_at=now,
+        )
+        self._session.add(msg)
+        await self._session.commit()
+        await self._session.refresh(msg)
+
+        logger.info(
+            "Human-agent message persisted",
+            extra={
+                "conversation_id": conversation_id,
+                "author_user_id": str(author.id),
+                "message_id": str(msg.id),
+            },
+        )
+        return msg
 
     async def send_template(
         self,
@@ -92,10 +158,10 @@ class ConversationInboxService:
         template_name: str,
         params: dict[str, str],
         author: AdminUser,
-    ) -> Any:
+    ) -> ConversationMessage:
         """Send a Meta-approved template message and persist it.
 
-        Business rules (PR-2 implementation):
+        Business rules:
         - Template must be registered and approved (``is_approved(template_name)``).
         - Calls the Chatwoot template endpoint with the rendered body.
         - Persists ``ConversationMessage`` using the rendered body as content.
@@ -113,16 +179,63 @@ class ConversationInboxService:
             KeyError: If ``template_name`` is not in the catalog or required params missing.
             ValueError: If the template is not yet approved by Meta.
             RuntimeError: If the Chatwoot API call fails.
-
-        TODO (PR-2):
-            Implement by:
-            1. Validate template via TemplateCatalog.is_approved(template_name).
-            2. Render body via TemplateCatalog.render_body(template_name, params).
-            3. Call Chatwoot template endpoint.
-            4. Persist ConversationMessage row.
-            5. Commit and return.
         """
-        raise NotImplementedError("send_template is implemented in PR-2")
+        # Validate template exists (raises KeyError if unknown)
+        template_def = get_template_def(template_name)
+
+        if not is_approved(template_name):
+            raise ValueError(
+                f"Template '{template_name}' is not yet approved by Meta. "
+                "It cannot be sent until approval is granted."
+            )
+
+        # Render the local body string for DB storage (may raise KeyError on missing params)
+        rendered_body = render_body(template_name, params)
+
+        history = await self._get_history(conversation_id)
+        cw_conv_id = int(conversation_id)
+
+        # Chatwoot template endpoint via send_template_message
+        # body_params uses positional keys matching the template param order
+        positional_params = {
+            str(i + 1): params.get(p.name, "") for i, p in enumerate(template_def.params)
+        }
+        success = await self._chatwoot.send_template_message(
+            customer_phone="",
+            template_name=template_name,
+            body_params=positional_params,
+            conversation_id=cw_conv_id,
+            fallback_content=rendered_body,
+        )
+        if not success:
+            raise RuntimeError(
+                f"Chatwoot template API failed for template '{template_name}', "
+                f"conversation '{conversation_id}'."
+            )
+
+        now = datetime.now(tz=UTC)
+        msg = ConversationMessage(
+            id=uuid4(),
+            conversation_history_id=history.id,
+            role=ConversationMessageRole.HUMAN_AGENT.value,
+            content=rendered_body,
+            author_user_id=author.id,
+            created_at=now,
+        )
+        self._session.add(msg)
+        await self._session.commit()
+        await self._session.refresh(msg)
+
+        logger.info(
+            "Human-agent template message persisted",
+            extra={
+                "conversation_id": conversation_id,
+                "template_name": template_name,
+                "author_user_id": str(author.id),
+                "message_id": str(msg.id),
+            },
+        )
+        return msg
 
     async def pause(
         self,
@@ -132,7 +245,7 @@ class ConversationInboxService:
     ) -> dict[str, Any]:
         """Pause the bot for a conversation (toggle atencion_automatica=False).
 
-        Business rules (PR-2 implementation):
+        Business rules:
         - Calls ``ChatwootClient.update_conversation_attributes(atencion_automatica=False)``.
         - Sets ``ConversationHistory.paused_at = now()`` in DB.
         - Creates ``Escalation(source='manual')`` row ONLY when ``source == 'manual'``
@@ -151,19 +264,68 @@ class ConversationInboxService:
         Raises:
             ValueError: If the conversation is already paused (409 territory).
             RuntimeError: If the Chatwoot API call fails.
-
-        TODO (PR-2): Implement full logic described above.
         """
-        raise NotImplementedError("pause is implemented in PR-2")
+        history = await self._get_history(conversation_id)
+
+        if history.paused_at is not None and history.resumed_at is None:
+            raise ValueError(f"Conversation '{conversation_id}' is already paused.")
+
+        cw_conv_id = int(conversation_id)
+        try:
+            await self._chatwoot.update_conversation_attributes(
+                conversation_id=cw_conv_id,
+                attributes={"atencion_automatica": False},
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Chatwoot API failed to set atencion_automatica=False: {exc}"
+            ) from exc
+
+        now = datetime.now(tz=UTC)
+        history.paused_at = now
+
+        escalation_id: UUID | None = None
+        if source == "manual":
+            # Fetch customer phone from ConversationHistory metadata or default to empty
+            customer_phone = history.metadata_.get("sender_phone", "") if history.metadata_ else ""
+            escalation = Escalation(
+                id=uuid4(),
+                conversation_id=conversation_id,
+                customer_id=history.customer_id,
+                customer_phone=customer_phone,
+                reason="Manual takeover by admin/stylist",
+                source=EscalationSource.MANUAL,
+                status=EscalationStatus.TRIGGERED,
+            )
+            self._session.add(escalation)
+            escalation_id = escalation.id
+
+        await self._session.commit()
+
+        logger.info(
+            "Conversation paused",
+            extra={
+                "conversation_id": conversation_id,
+                "source": source,
+                "author_user_id": str(author.id),
+                "escalation_id": str(escalation_id) if escalation_id else None,
+            },
+        )
+
+        result: dict[str, Any] = {"paused_at": now}
+        if escalation_id is not None:
+            result["escalation_id"] = escalation_id
+        return result
 
     async def resume(
         self,
         conversation_id: str,
         author: AdminUser,
+        redis_client: Any | None = None,
     ) -> dict[str, Any]:
         """Resume the bot for a conversation (toggle atencion_automatica=True).
 
-        Business rules (PR-2 implementation):
+        Business rules:
         - Calls ``ChatwootClient.update_conversation_attributes(atencion_automatica=True)``.
         - Sets ``ConversationHistory.resumed_at = now()``, clears ``paused_at = NULL``.
         - Auto-resolves any open ``Escalation`` row
@@ -175,6 +337,7 @@ class ConversationInboxService:
         Args:
             conversation_id: Chatwoot / LangGraph conversation identifier string.
             author: The ``AdminUser`` performing the resume.
+            redis_client: Redis client for setting the pending injection flag.
 
         Returns:
             Dict with ``resumed_at: datetime`` and ``pending_injection_ttl_seconds: int``.
@@ -182,10 +345,73 @@ class ConversationInboxService:
         Raises:
             ValueError: If the conversation is not currently paused (409 territory).
             RuntimeError: If the Chatwoot API call or Redis write fails.
-
-        TODO (PR-2): Implement full logic described above.
         """
-        raise NotImplementedError("resume is implemented in PR-2")
+        history = await self._get_history(conversation_id)
+
+        if history.paused_at is None:
+            raise ValueError(f"Conversation '{conversation_id}' is not currently paused.")
+
+        cw_conv_id = int(conversation_id)
+        try:
+            await self._chatwoot.update_conversation_attributes(
+                conversation_id=cw_conv_id,
+                attributes={"atencion_automatica": True},
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Chatwoot API failed to set atencion_automatica=True: {exc}"
+            ) from exc
+
+        now = datetime.now(tz=UTC)
+        history.resumed_at = now
+        history.paused_at = None
+
+        # Auto-resolve any open Escalation for this conversation
+        escalation_result = await self._session.execute(
+            select(Escalation).where(
+                Escalation.conversation_id == conversation_id,
+                Escalation.status == EscalationStatus.TRIGGERED,
+            )
+        )
+        open_escalation = escalation_result.scalar_one_or_none()
+        if open_escalation is not None:
+            open_escalation.status = EscalationStatus.RESOLVED
+            open_escalation.resolved_at = now
+            open_escalation.resolved_by_user_id = author.id
+
+        await self._session.commit()
+
+        # Set pending injection flag in Redis (TTL 600s)
+        if redis_client is not None:
+            try:
+                injection_key = f"pending_injection:v2:{conversation_id}"
+                await redis_client.set(injection_key, "1", ex=PENDING_INJECTION_TTL_SECONDS)
+                logger.info(
+                    "Pending injection flag set",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "ttl_seconds": PENDING_INJECTION_TTL_SECONDS,
+                    },
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to set pending_injection Redis flag: %s — injection will not occur",
+                    exc,
+                    extra={"conversation_id": conversation_id},
+                )
+
+        logger.info(
+            "Conversation resumed",
+            extra={
+                "conversation_id": conversation_id,
+                "author_user_id": str(author.id),
+            },
+        )
+
+        return {
+            "resumed_at": now,
+            "pending_injection_ttl_seconds": PENDING_INJECTION_TTL_SECONDS,
+        }
 
     async def escalate(
         self,
@@ -196,15 +422,14 @@ class ConversationInboxService:
     ) -> dict[str, Any]:
         """Create an explicit escalation record for a conversation.
 
-        Business rules (PR-2 implementation):
-        - Inserts ``Escalation(source=reason, note=note, author_user_id=author.id,
-          status='triggered')``.
+        Business rules:
+        - Inserts ``Escalation(source='manual', status='triggered')``.
         - Does NOT pause the bot (caller is responsible for pausing if needed).
         - Commits and returns ``{escalation_id: UUID}``.
 
         Args:
             conversation_id: Chatwoot / LangGraph conversation identifier string.
-            reason: Short reason string (maps to ``EscalationSource`` or free text).
+            reason: Short reason string stored in ``Escalation.reason``.
             note: Optional longer note stored in ``Escalation.issue_summary``.
             author: The ``AdminUser`` triggering the escalation.
 
@@ -213,7 +438,30 @@ class ConversationInboxService:
 
         Raises:
             RuntimeError: On unexpected DB write failure.
-
-        TODO (PR-2): Implement full logic described above.
         """
-        raise NotImplementedError("escalate is implemented in PR-2")
+        history = await self._get_history(conversation_id)
+        customer_phone = history.metadata_.get("sender_phone", "") if history.metadata_ else ""
+
+        escalation = Escalation(
+            id=uuid4(),
+            conversation_id=conversation_id,
+            customer_id=history.customer_id,
+            customer_phone=customer_phone,
+            reason=reason,
+            source=EscalationSource.MANUAL,
+            status=EscalationStatus.TRIGGERED,
+            issue_summary=note,
+        )
+        self._session.add(escalation)
+        await self._session.commit()
+
+        logger.info(
+            "Explicit escalation created",
+            extra={
+                "conversation_id": conversation_id,
+                "escalation_id": str(escalation.id),
+                "author_user_id": str(author.id),
+            },
+        )
+
+        return {"escalation_id": escalation.id}
