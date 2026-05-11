@@ -122,3 +122,40 @@ def test_critical_rules_r34_names_affected_services() -> None:
         "R-34 must name 'Tinte Extra' as an example of a duration-delta service. "
         "This satisfies REQ-PR-2's requirement to name affected services explicitly."
     )
+
+
+# ---------------------------------------------------------------------------
+# REQ-TE-2 / T2.1 papercut-fixes — R-35 round-trip rule
+# ---------------------------------------------------------------------------
+
+
+def test_critical_rules_r35_rule_present() -> None:
+    """T2.1 [RED→GREEN]: R-35 must be present in critical_rules.md.
+
+    RED until T2.2 appends R-35.
+    """
+    content = CRITICAL_RULES_PATH.read_text(encoding="utf-8")
+
+    assert "[R35]" in content, (
+        "critical_rules.md must contain [R35] after T2.2. "
+        "R-35 documents the partial_resolved_ids → pre_resolved_service_ids round-trip contract."
+    )
+
+
+def test_critical_rules_r35_canonical_substrings() -> None:
+    """T2.1 companion: both canonical substrings from design ADR-DR-3 must be present.
+
+    The golden-test anchor ensures the round-trip contract names both
+    the field returned by the tool and the argument the LLM must re-pass.
+    RED until T2.2 appends R-35.
+    """
+    content = CRITICAL_RULES_PATH.read_text(encoding="utf-8")
+
+    assert "partial_resolved_ids" in content, (
+        "R-35 must reference 'partial_resolved_ids' — the field returned by update_booking "
+        "when status='ambiguous' with already-resolved services."
+    )
+    assert "pre_resolved_service_ids" in content, (
+        "R-35 must reference 'pre_resolved_service_ids' — the argument the LLM must "
+        "re-pass on the next update_booking call to avoid re-resolving known services."
+    )
