@@ -13,6 +13,7 @@ These are HARD FAIL golden tests. No xfail.
 Refs: REQ-PR-1, REQ-PR-2, REQ-PR-3, REQ-PR-4 (spec #5275); design #5277 §Prompt rule wording.
 Tasks: T3.1 (RED), T3.3 (RED), T3.5 (RED).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -111,14 +112,32 @@ def test_r33_reinforces_r8():
 
 
 def test_glossary_has_axis_mapping_section():
-    """glossary.md must contain the 'Mapeo de ejes de desambiguación' section.
+    """glossary.md must contain the 'Ejes de Desambiguación' section.
 
+    Title per spec REQ-PR-3 and design: "Ejes de Desambiguación".
     Refs: REQ-PR-3, design §Glossary axis-mapping section.
     """
     content = _read("glossary.md")
-    assert "Mapeo de ejes de desambiguación" in content, (
-        "glossary.md missing 'Mapeo de ejes de desambiguación' section. "
-        "T3.6 must add the axis-mapping table to the file."
+    assert "Ejes de Desambiguación" in content, (
+        "glossary.md missing 'Ejes de Desambiguación' section. "
+        "T3.6 must add the axis-mapping table to the file with the correct title."
+    )
+
+
+def test_glossary_axis_mapping_has_four_columns():
+    """Axis-mapping table must use 4 columns per design: axis, trigger, question, family example.
+
+    Asserts that the table header contains all four column names.
+    Refs: REQ-PR-3, design §Glossary axis-mapping 4-column structure (W2 fix).
+    """
+    content = _read("glossary.md")
+    assert "Trigger condition" in content, (
+        "Axis-mapping table must have a 'Trigger condition' column. "
+        "Design specifies a 4-column table: axis, trigger, question, example family."
+    )
+    assert "Ejemplo de familia de servicios" in content, (
+        "Axis-mapping table must have an 'Ejemplo de familia de servicios' column. "
+        "Design specifies a 4-column table with concrete service family examples."
     )
 
 
