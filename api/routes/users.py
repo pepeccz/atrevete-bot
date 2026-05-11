@@ -24,13 +24,14 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies.auth import require_permission
 from api.models.users import (
     PasswordResetRequest,
     UserCreateRequest,
+    UserListResponse,
     UserResponse,
     UserUpdateRequest,
 )
@@ -47,24 +48,32 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
-@router.get("/", response_model=list[UserResponse])
+@router.get("/", response_model=UserListResponse)
 async def list_users(
     current_user: Annotated[AdminUser, Depends(require_permission("users:manage"))],
     session: AsyncSession = Depends(get_async_session),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-) -> list[UserResponse]:
+) -> UserListResponse:
     """
     List all admin/stylist users, paginated.
 
     Permission: users:manage (admin only).
-    Returns a list of UserResponse objects — never exposes password_hash.
+    Returns UserListResponse { items, total, limit, offset } — never exposes password_hash.
     """
-    result = await session.execute(
+    count_result = await session.execute(select(func.count(AdminUser.id)))
+    total: int = count_result.scalar_one()
+
+    list_result = await session.execute(
         select(AdminUser).order_by(AdminUser.username).limit(limit).offset(offset)
     )
-    users = result.scalars().all()
-    return [UserResponse.model_validate(u) for u in users]
+    users = list_result.scalars().all()
+    return UserListResponse(
+        items=[UserResponse.model_validate(u) for u in users],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -202,7 +202,7 @@ def test_password_reset_request_validates_min_length():
 
 @pytest.mark.asyncio
 async def test_list_users_returns_list():
-    """GET /api/admin/users must return a list of UserResponse objects."""
+    """GET /api/admin/users must return a paginated wrapper with items list."""
     admin_user = _make_admin_user()
     app = _make_test_app(admin_user)
 
@@ -210,21 +210,27 @@ async def test_list_users_returns_list():
     u2 = _make_admin_user(username="bob", role="stylist")
 
     mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = [u1, u2]
-    mock_session.execute = AsyncMock(return_value=mock_result)
 
-    with patch("api.routes.users.get_async_session", return_value=mock_session):
-        from database.connection import get_async_session
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 2
 
-        app.dependency_overrides[get_async_session] = lambda: mock_session
+    list_result = MagicMock()
+    list_result.scalars.return_value.all.return_value = [u1, u2]
 
-        client = TestClient(app, raise_server_exceptions=True)
-        response = client.get("/api/admin/users")
+    mock_session.execute = AsyncMock(side_effect=[count_result, list_result])
+
+    from database.connection import get_async_session
+
+    app.dependency_overrides[get_async_session] = lambda: mock_session
+
+    client = TestClient(app, raise_server_exceptions=True)
+    response = client.get("/api/admin/users")
 
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, list)
+    assert isinstance(data, dict)
+    assert "items" in data
+    assert isinstance(data["items"], list)
 
 
 @pytest.mark.asyncio
@@ -234,9 +240,14 @@ async def test_list_users_pagination_params():
     app = _make_test_app(admin_user)
 
     mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = []
-    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 0
+
+    list_result = MagicMock()
+    list_result.scalars.return_value.all.return_value = []
+
+    mock_session.execute = AsyncMock(side_effect=[count_result, list_result])
 
     from database.connection import get_async_session
 
@@ -616,3 +627,58 @@ def test_stylist_gets_403_on_list():
     client = TestClient(test_app, raise_server_exceptions=True)
     response = client.get("/api/admin/users")
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/users — wrapper shape (CRITICAL-1 fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_users_returns_wrapper_shape():
+    """
+    GET /api/admin/users must return a paginated wrapper { items, total, limit, offset }.
+
+    Frontend AdminUserListResponse expects this shape. Returning a plain array
+    causes res.items to be undefined, rendering the /users page empty.
+    (spec: UserListResponse; design §3.1 pagination contract)
+    """
+    admin_user = _make_admin_user()
+    app = _make_test_app(admin_user)
+
+    u1 = _make_admin_user(username="alice", role="admin")
+    u2 = _make_admin_user(username="bob", role="stylist")
+    u3 = _make_admin_user(username="carol", role="stylist")
+
+    mock_session = AsyncMock()
+
+    # First execute call → count query; second → users list query
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 3
+
+    list_result = MagicMock()
+    list_result.scalars.return_value.all.return_value = [u1, u2, u3]
+
+    mock_session.execute = AsyncMock(side_effect=[count_result, list_result])
+
+    from database.connection import get_async_session
+
+    app.dependency_overrides[get_async_session] = lambda: mock_session
+
+    client = TestClient(app, raise_server_exceptions=True)
+    response = client.get("/api/admin/users?limit=10&offset=0")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Must be a dict, not a list
+    assert isinstance(data, dict), f"Expected dict wrapper, got {type(data).__name__}: {data!r}"
+    assert "items" in data, f"Response missing 'items' key: {data}"
+    assert "total" in data, f"Response missing 'total' key: {data}"
+    assert "limit" in data, f"Response missing 'limit' key: {data}"
+    assert "offset" in data, f"Response missing 'offset' key: {data}"
+
+    assert len(data["items"]) == 3
+    assert data["total"] == 3
+    assert data["limit"] == 10
+    assert data["offset"] == 0
