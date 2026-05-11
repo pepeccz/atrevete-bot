@@ -1,34 +1,34 @@
 """Chatwoot webhook route handler."""
 
-import aiohttp
 import hmac
 import logging
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
+import aiohttp
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from groq import RateLimitError, APIError
+from groq import APIError, RateLimitError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.chatwoot_client import ChatwootClient
 from api.models.chatwoot_webhook import (
     ChatwootMessageEvent,
     ChatwootWebhookPayload,
 )
 from shared.audio_conversion import convert_ogg_to_wav
 from shared.audio_transcription import get_transcription_service
+from shared.chatwoot_client import ChatwootClient
 from shared.config import get_settings
-from shared.settings_service import get_settings_service
 from shared.redis_client import (
-    publish_to_channel,
+    INCOMING_STREAM,
     add_to_stream,
     get_redis_client,
-    INCOMING_STREAM,
+    publish_to_channel,
 )
+from shared.settings_service import get_settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +55,9 @@ async def upsert_conversation_history(
     - Recomputes parent.message_count from actual children to stay consistent
       with the archiver fallback.
     """
-    from database.models import ConversationHistory, ConversationMessage, Customer
     from sqlalchemy import func
+
+    from database.models import ConversationHistory, ConversationMessage, Customer
 
     conversation_id_str = str(payload.conversation.id)
     sender_name = payload.sender.name or ""
@@ -75,7 +76,7 @@ async def upsert_conversation_history(
         )
     )
     existing = result.scalar_one_or_none()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
 
     if existing is None:
         parent = ConversationHistory(
@@ -211,6 +212,12 @@ async def receive_chatwoot_webhook(
     Only processes 'message_created' events with 'incoming' message type.
     Valid messages are enqueued to Redis 'incoming_messages' channel.
 
+    Gate refactor (FR-WEBHOOK-1 through FR-WEBHOOK-5 — PR-2):
+    - DB upsert and audio transcription ALWAYS run (before any gate check).
+    - Global AI off: persists DB row then returns WITHOUT publishing to Redis.
+    - Per-conversation gate (atencion_automatica=False): only gates the Redis publish.
+    - Resume injection: checked between DB upsert and Redis publish.
+
     Args:
         request: FastAPI request object
         token: Secret token from URL path
@@ -223,16 +230,14 @@ async def receive_chatwoot_webhook(
     """
     settings = get_settings()
 
-    # Validate token using timing-safe comparison
+    # Step 1: Token auth
     if not hmac.compare_digest(token, settings.CHATWOOT_WEBHOOK_TOKEN):
-        logger.warning(
-            f"Invalid Chatwoot webhook token attempted from IP: {request.client.host}"
-        )
+        logger.warning(f"Invalid Chatwoot webhook token attempted from IP: {request.client.host}")
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    # Read and parse webhook payload
+    # Step 2: Payload parse + event/incoming filter
     body = await request.body()
-    body_str = body.decode('utf-8')
+    body_str = body.decode("utf-8")
     logger.info(f"Raw webhook payload: {body_str[:2000]}")
     logger.debug(f"Full webhook payload: {body_str}")
 
@@ -242,9 +247,9 @@ async def receive_chatwoot_webhook(
         logger.error(
             f"Failed to parse webhook payload: {e}",
             exc_info=True,
-            extra={"payload_preview": body_str[:1000]}
+            extra={"payload_preview": body_str[:1000]},
         )
-        raise HTTPException(status_code=400, detail=f"Invalid payload format: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid payload format: {str(e)}") from e
 
     # Filter: Only process message_created events
     if payload.event != "message_created":
@@ -261,45 +266,14 @@ async def receive_chatwoot_webhook(
 
     # Filter: Only process incoming messages (message_type == 0)
     if last_message.message_type != 0:
-        logger.debug(
-            f"Ignoring non-incoming message: message_type={last_message.message_type}"
-        )
+        logger.debug(f"Ignoring non-incoming message: message_type={last_message.message_type}")
         return JSONResponse(status_code=200, content={"status": "ignored"})
 
-    # Idempotency check: Prevent duplicate processing if Chatwoot retries webhook
+    # Step 3: Idempotency check
     if await check_and_set_idempotency(last_message.id):
         return JSONResponse(status_code=200, content={"status": "duplicate"})
 
-    # System-wide AI toggle check (panic button) — fail-CLOSED
-    try:
-        settings_service = await get_settings_service()
-        ai_enabled = await settings_service.get("ai_agent_enabled")
-        if ai_enabled is None or ai_enabled is False:
-            log_level = logging.ERROR if ai_enabled is None else logging.INFO
-            logger.log(
-                log_level,
-                "AI agent disabled — ignoring message for conversation %s%s",
-                payload.conversation.id,
-                " (setting missing — fail-closed)" if ai_enabled is None else "",
-                extra={"conversation_id": str(payload.conversation.id)},
-            )
-            return JSONResponse(
-                status_code=200,
-                content={"status": "ignored_ai_disabled"},
-            )
-    except Exception as e:
-        logger.error(
-            "SettingsService error checking ai_agent_enabled — fail-closed: %s",
-            e,
-            extra={"conversation_id": str(payload.conversation.id)},
-            exc_info=True,
-        )
-        return JSONResponse(
-            status_code=200,
-            content={"status": "ignored_ai_disabled"},
-        )
-
-    # Per-conversation rate limit check
+    # Step 4: Per-conversation rate limit check (before transcription to avoid wasted CPU)
     if await check_conversation_rate_limit(payload.conversation.id):
         try:
             chatwoot_client = ChatwootClient()
@@ -312,72 +286,12 @@ async def receive_chatwoot_webhook(
             pass
         return JSONResponse(status_code=200, content={"status": "rate_limited"})
 
-    # Ensure phone number exists (use sender from root level, not from message)
+    # Step 5: Phone guard
     if not payload.sender.phone_number:
         logger.warning(f"Message {last_message.id} has no phone number, ignoring")
         return JSONResponse(status_code=200, content={"status": "ignored"})
 
-    # Filter: Check atencion_automatica custom attribute
-    # This allows toggling AI bot on/off per conversation
-    atencion_automatica = payload.conversation.custom_attributes.get("atencion_automatica")
-
-    if atencion_automatica is False:
-        # Bot is disabled for this conversation - ignore message
-        logger.info(
-            f"Ignoring message for conversation {payload.conversation.id}: "
-            f"atencion_automatica=false (bot disabled)",
-            extra={
-                "conversation_id": str(payload.conversation.id),
-                "customer_phone": payload.sender.phone_number,
-            }
-        )
-        return JSONResponse(
-            status_code=200,
-            content={"status": "ignored_auto_attention_disabled"}
-        )
-
-    elif atencion_automatica is None:
-        # First message from this customer - enable bot and continue processing
-        logger.info(
-            f"First message for conversation {payload.conversation.id}: "
-            f"setting atencion_automatica=true",
-            extra={
-                "conversation_id": str(payload.conversation.id),
-                "customer_phone": payload.sender.phone_number,
-            }
-        )
-
-        # Update conversation to enable bot
-        try:
-            chatwoot_client = ChatwootClient()
-            await chatwoot_client.update_conversation_attributes(
-                conversation_id=payload.conversation.id,
-                attributes={"atencion_automatica": True}
-            )
-            logger.info(
-                f"Successfully enabled bot for conversation {payload.conversation.id}"
-            )
-        except Exception as e:
-            # Log warning but continue processing - don't block first message
-            logger.warning(
-                f"Failed to set atencion_automatica for conversation {payload.conversation.id}: {e}",
-                extra={
-                    "conversation_id": str(payload.conversation.id),
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
-
-    # If atencion_automatica is True or was just set, continue processing normally
-    logger.debug(
-        f"Processing message for conversation {payload.conversation.id}: "
-        f"atencion_automatica={atencion_automatica}",
-        extra={
-            "conversation_id": str(payload.conversation.id),
-            "atencion_automatica": atencion_automatica,
-        }
-    )
-
+    # Step 6: Audio transcription (runs BEFORE the gate — FR-WEBHOOK-2)
     # Initialize message text and audio tracking fields
     message_text = last_message.content or ""
     is_audio_transcription = False
@@ -389,10 +303,7 @@ async def receive_chatwoot_webhook(
     if message_attachments:
         # Filter: Ignore messages with non-audio attachments (images, videos, files)
         # We only want to process text messages or audio messages for transcription
-        non_audio_attachments = [
-            att for att in message_attachments
-            if att.file_type != "audio"
-        ]
+        non_audio_attachments = [att for att in message_attachments if att.file_type != "audio"]
 
         if non_audio_attachments:
             logger.info(
@@ -401,13 +312,11 @@ async def receive_chatwoot_webhook(
                 extra={
                     "conversation_id": str(payload.conversation.id),
                     "attachment_types": [att.file_type for att in non_audio_attachments],
-                }
+                },
             )
             if message_text:
                 # Text + non-audio attachment: process the text, ignore attachment
-                logger.info(
-                    "Message has text alongside non-audio attachment, processing text only"
-                )
+                logger.info("Message has text alongside non-audio attachment, processing text only")
             else:
                 # Pure non-audio attachment: reply with friendly message and ignore
                 try:
@@ -423,14 +332,10 @@ async def receive_chatwoot_webhook(
                 except Exception as e:
                     logger.warning("Failed to send non-audio attachment reply: %s", e)
                 return JSONResponse(
-                    status_code=200,
-                    content={"status": "ignored_non_audio_attachment"}
+                    status_code=200, content={"status": "ignored_non_audio_attachment"}
                 )
 
-        audio_attachments = [
-            att for att in message_attachments
-            if att.file_type == "audio"
-        ]
+        audio_attachments = [att for att in message_attachments if att.file_type == "audio"]
 
         if audio_attachments:
             # Process first audio attachment (WhatsApp sends one audio per message)
@@ -444,7 +349,7 @@ async def receive_chatwoot_webhook(
                     "conversation_id": str(payload.conversation.id),
                     "attachment_id": audio_attachment.id,
                     "audio_url": audio_url,
-                }
+                },
             )
 
             # Download and transcribe audio
@@ -514,7 +419,7 @@ async def receive_chatwoot_webhook(
                     extra={
                         "conversation_id": str(payload.conversation.id),
                         "file_size_mb": len(audio_data) / (1024 * 1024),
-                    }
+                    },
                 )
 
                 # 3. Convert OGG → WAV for optimal compatibility
@@ -532,7 +437,7 @@ async def receive_chatwoot_webhook(
                             "conversation_id": str(payload.conversation.id),
                             "confidence_score": confidence,
                             "transcription_preview": message_text[:100],
-                        }
+                        },
                     )
                     # Ask user to resend audio or send text instead
                     message_text = "[AUDIO_LOW_CONFIDENCE] Lo siento, no pude entender bien el audio. ¿Puedes enviarlo de nuevo o escribir tu mensaje en texto? 😊"
@@ -546,7 +451,7 @@ async def receive_chatwoot_webhook(
                             "transcription_length": len(message_text),
                             "transcription_preview": message_text[:100],
                             "confidence_score": confidence,
-                        }
+                        },
                     )
 
             except RateLimitError:
@@ -595,7 +500,8 @@ async def receive_chatwoot_webhook(
                     except Exception as e:
                         logger.warning(f"Failed to cleanup WAV file: {e}")
 
-    # Upsert conversation_history with sender metadata (fire-and-don't-block-on-error)
+    # Step 7: DB upsert — ALWAYS runs before gate checks (FR-WEBHOOK-1)
+    # Policy change (FR-WEBHOOK-4): even when AI is globally disabled, we persist.
     try:
         from database.connection import get_async_session
 
@@ -621,9 +527,122 @@ async def receive_chatwoot_webhook(
             extra={"conversation_id": str(payload.conversation.id)},
         )
 
-    # Create message event for Redis
+    # Step 8: System-wide AI toggle check (panic button) — fail-CLOSED
+    # Policy change (FR-WEBHOOK-4): we already persisted the DB row above.
+    # Now we short-circuit WITHOUT publishing to Redis.
+    try:
+        settings_service = await get_settings_service()
+        ai_enabled = await settings_service.get("ai_agent_enabled")
+        if ai_enabled is None or ai_enabled is False:
+            log_level = logging.ERROR if ai_enabled is None else logging.INFO
+            logger.log(
+                log_level,
+                "AI agent disabled — message persisted to DB but NOT published to Redis for conversation %s%s",
+                payload.conversation.id,
+                " (setting missing — fail-closed)" if ai_enabled is None else "",
+                extra={"conversation_id": str(payload.conversation.id)},
+            )
+            return JSONResponse(
+                status_code=200,
+                content={"status": "ignored_ai_disabled"},
+            )
+    except Exception as e:
+        logger.error(
+            "SettingsService error checking ai_agent_enabled — fail-closed: %s",
+            e,
+            extra={"conversation_id": str(payload.conversation.id)},
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={"status": "ignored_ai_disabled"},
+        )
+
+    # Step 9: Per-conversation gate — Check atencion_automatica custom attribute
+    # This allows toggling AI bot on/off per conversation.
+    # Only the Redis publish step is gated (FR-WEBHOOK-3).
+    atencion_automatica = payload.conversation.custom_attributes.get("atencion_automatica")
+
+    if atencion_automatica is None:
+        # First message from this customer - enable bot and continue processing
+        logger.info(
+            f"First message for conversation {payload.conversation.id}: "
+            f"setting atencion_automatica=true",
+            extra={
+                "conversation_id": str(payload.conversation.id),
+                "customer_phone": payload.sender.phone_number,
+            },
+        )
+
+        # Update conversation to enable bot
+        try:
+            chatwoot_client = ChatwootClient()
+            await chatwoot_client.update_conversation_attributes(
+                conversation_id=payload.conversation.id, attributes={"atencion_automatica": True}
+            )
+            logger.info(f"Successfully enabled bot for conversation {payload.conversation.id}")
+        except Exception as e:
+            # Log warning but continue processing - don't block first message
+            logger.warning(
+                f"Failed to set atencion_automatica for conversation {payload.conversation.id}: {e}",
+                extra={
+                    "conversation_id": str(payload.conversation.id),
+                    "error": str(e),
+                },
+                exc_info=True,
+            )
+
+    # Step 10: Resume injection hook (FR-WEBHOOK-5)
+    # Check if a pending injection flag exists and inject paused-window messages
+    # into LangGraph state before publishing to the Redis Stream.
+    conversation_id_str = str(payload.conversation.id)
+    if atencion_automatica is not False:
+        # Only attempt injection when bot is ON (or just enabled above)
+        try:
+            redis_client = get_redis_client()
+            from api.services.resume_injection import maybe_inject_pending_context
+            from database.connection import get_async_session as _get_session
+
+            async with _get_session() as inject_session:
+                await maybe_inject_pending_context(
+                    conversation_id=conversation_id_str,
+                    session=inject_session,
+                    redis_client=redis_client,
+                )
+        except Exception as inject_err:
+            logger.warning(
+                "Resume injection error for conversation %s: %s — proceeding to publish",
+                conversation_id_str,
+                inject_err,
+                extra={"conversation_id": conversation_id_str},
+            )
+
+    # Step 11: Per-conversation gate — only Redis publish is gated (FR-WEBHOOK-3)
+    if atencion_automatica is False:
+        # Bot is disabled for this conversation - message was persisted but NOT published
+        logger.info(
+            f"Bot paused for conversation {payload.conversation.id}: "
+            f"message persisted to DB but NOT published to Redis",
+            extra={
+                "conversation_id": str(payload.conversation.id),
+                "customer_phone": payload.sender.phone_number,
+            },
+        )
+        return JSONResponse(status_code=200, content={"status": "ignored_auto_attention_disabled"})
+
+    # If atencion_automatica is True or was just set, continue to publish
+    logger.debug(
+        f"Processing message for conversation {payload.conversation.id}: "
+        f"atencion_automatica={atencion_automatica}",
+        extra={
+            "conversation_id": str(payload.conversation.id),
+            "atencion_automatica": atencion_automatica,
+        },
+    )
+
+    # Step 12: Create message event for Redis and publish
     message_event = ChatwootMessageEvent(
-        conversation_id=str(payload.conversation.id),
+        conversation_id=conversation_id_str,
         customer_phone=payload.sender.phone_number,  # Will be normalized to E.164
         message_text=message_text,
         sender_name=payload.sender.name,
@@ -645,7 +664,7 @@ async def receive_chatwoot_webhook(
             "conversation_id": message_event.conversation_id,
             "customer_phone": message_event.customer_phone,
             "message_length": len(message_event.message_text) if message_event.message_text else 0,
-        }
+        },
     )
 
     # Publish to Redis (using Streams or Pub/Sub based on config)
@@ -673,7 +692,7 @@ async def receive_chatwoot_webhook(
     # Log Redis payload for debugging
     logger.debug(
         f"Redis payload: {message_event.model_dump()}",
-        extra={"conversation_id": message_event.conversation_id}
+        extra={"conversation_id": message_event.conversation_id},
     )
 
     return JSONResponse(status_code=200, content={"status": "received"})
