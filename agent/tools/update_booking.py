@@ -111,9 +111,7 @@ def _find_matching_check_availability(
                 continue
             s_stylist = s.get("stylist_id", "")
             stylist_match = (
-                stylist_id is None
-                or s_stylist is None
-                or str(s_stylist) == str(stylist_id)
+                stylist_id is None or s_stylist is None or str(s_stylist) == str(stylist_id)
             )
             if stylist_match:
                 return True
@@ -138,6 +136,8 @@ async def update_booking(
     notes_asked: bool = False,
     customer_known: bool = False,
     slot_iso: str | None = None,
+    variant_resolved: bool = False,
+    pre_resolved_service_ids: list[str] | None = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Slot collector for the booking flow.
@@ -168,6 +168,16 @@ async def update_booking(
         slot_iso: Optional full ISO datetime of the slot the customer has chosen (e.g.
             "2026-05-01T10:00:00+02:00"). Required to activate the pre_book_validation_required
             gate. Pass when the customer has selected a specific slot and you are ready to book.
+        variant_resolved: Set True when the user has explicitly accepted the principal service
+            as-is (e.g. "mechas normales" after a variant_required turn). When True, the
+            variant gate is bypassed and the principal UUID is committed directly.
+            Default False preserves current behavior (gate fires).
+            Refs: REQ-TL-1, ADR-DR-1.
+        pre_resolved_service_ids: UUIDs from a previous turn's collected.partial_resolved_ids.
+            These bypass name resolution entirely and are merged directly into collected.services.
+            Each UUID is validated against the active service catalog before merge.
+            Default None (treated as empty list) preserves current behavior.
+            Refs: REQ-TL-2, ADR-DR-2.
 
     Returns:
         JSON-serialized ToolResponse with status, collected, missing, next_step.
@@ -192,6 +202,8 @@ async def update_booking(
             notes_asked=notes_asked,
             customer_known=customer_known,
             slot_iso=slot_iso,
+            variant_resolved=variant_resolved,
+            pre_resolved_service_ids=pre_resolved_service_ids,
             messages=messages,
         )
     except Exception as exc:
@@ -217,6 +229,8 @@ async def _update_booking_impl(
     notes_asked: bool = False,
     customer_known: bool = False,
     slot_iso: str | None = None,
+    variant_resolved: bool = False,
+    pre_resolved_service_ids: list[str] | None = None,
     messages: list | None = None,
 ) -> str:
     from agent.tools._booking_helpers import (
@@ -248,13 +262,41 @@ async def _update_booking_impl(
             ).model_dump_json()
 
         # ── Resolve service names (strict: detects ambiguous axis at resolution time) ──
-        resolved_ids, unknown_names, ambiguous_descriptors = await _resolve_service_ids_strict(
-            session, services
+        resolved_ids, unknown_names, ambiguous_descriptors, partial_resolved_ids = (
+            await _resolve_service_ids_strict(session, services)
         )
 
         # ── Step 1.7: ambiguous descriptor gate (audience or variant axis) ────
         # _resolve_service_ids_strict already detected the axis without committing
-        # a UUID. Return the first ambiguous descriptor immediately.
+        # a UUID. Apply variant_resolved bypass (ADR-DR-1) before returning.
+        if ambiguous_descriptors:
+            # ADR-DR-1: when variant_resolved=True, bypass the variant gate for the
+            # first ambiguous variant descriptor — commit the principal UUID directly.
+            if variant_resolved:
+                remaining_ambiguous = []
+                for desc in ambiguous_descriptors:
+                    if desc["axis"] == "variant":
+                        # Commit the principal UUID by resolving the service_term name
+                        from agent.tools._booking_helpers import _resolve_service_ids
+
+                        principal_ids, _unk = await _resolve_service_ids(
+                            session, [desc["service_term"]]
+                        )
+                        if principal_ids:
+                            resolved_ids.extend(principal_ids)
+                            logger.info(
+                                "tool.disambiguation.principal_accepted",
+                                extra={
+                                    "tool_name": "update_booking",
+                                    "service_term": desc["service_term"],
+                                    "principal_uuid": principal_ids[0],
+                                },
+                            )
+                        # Do not add to remaining_ambiguous — descriptor is consumed
+                    else:
+                        remaining_ambiguous.append(desc)
+                ambiguous_descriptors = remaining_ambiguous
+
         if ambiguous_descriptors:
             first_desc = ambiguous_descriptors[0]
             next_step = first_desc["question_hint"]  # "audience_required" | "variant_required"
@@ -267,10 +309,21 @@ async def _update_booking_impl(
                     "candidates_count": len(first_desc["candidates"]),
                 },
             )
+            # NFR-2: emit partial_committed audit log when partial_resolved_ids is non-empty
+            if partial_resolved_ids:
+                logger.info(
+                    "tool.disambiguation.partial_committed",
+                    extra={
+                        "tool_name": "update_booking",
+                        "partial_resolved_ids": partial_resolved_ids,
+                        "count": len(partial_resolved_ids),
+                    },
+                )
             return ToolResponse(
                 status="ambiguous",
                 next_step=next_step,
                 payload=first_desc,
+                collected={"partial_resolved_ids": partial_resolved_ids},
             ).model_dump_json()
 
         if unknown_names:
@@ -421,9 +474,7 @@ async def _update_booking_impl(
                 missing=missing,
                 next_step="stylist_required",
                 payload={
-                    "stylists": await _resolve_active_stylists(
-                        session, service_ids=resolved_ids
-                    ),
+                    "stylists": await _resolve_active_stylists(session, service_ids=resolved_ids),
                     "first_available_label": _first_available_label,
                 },
             ).model_dump_json()
@@ -587,30 +638,28 @@ async def _update_booking_impl(
             ).model_dump_json()
 
         resolved_stylist_id = collected.get("stylist_id")
-        validated = _find_matching_check_availability(
-            messages or [], slot_iso, resolved_stylist_id
-        )
+        validated = _find_matching_check_availability(messages or [], slot_iso, resolved_stylist_id)
 
         if not validated:
-                logger.info(
-                    "tool.response.partial",
-                    extra={
-                        "tool_name": "update_booking",
-                        "next_step": "pre_book_validation_required",
-                    },
-                )
-                return ToolResponse(
-                    status="partial",
-                    collected=collected,
-                    missing=[],
-                    next_step="pre_book_validation_required",
-                    payload={
-                        "hint": (
-                            "Llama a check_availability con slot_time exacto antes de book(). "
-                            f"Slot solicitado: {slot_iso}"
-                        ),
-                    },
-                ).model_dump_json()
+            logger.info(
+                "tool.response.partial",
+                extra={
+                    "tool_name": "update_booking",
+                    "next_step": "pre_book_validation_required",
+                },
+            )
+            return ToolResponse(
+                status="partial",
+                collected=collected,
+                missing=[],
+                next_step="pre_book_validation_required",
+                payload={
+                    "hint": (
+                        "Llama a check_availability con slot_time exacto antes de book(). "
+                        f"Slot solicitado: {slot_iso}"
+                    ),
+                },
+            ).model_dump_json()
         collected["pre_book_validated"] = True
         if slot_iso is not None:
             collected["slot_iso"] = slot_iso

@@ -109,8 +109,8 @@ async def test_depilacion_strict_resolver_returns_ambiguous_axis_variant(db_with
     """_resolve_service_ids_strict('depilación') → axis=variant, non-empty candidates."""
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
-    resolved_ids, unknown_names, ambiguous_descriptors = await _resolve_service_ids_strict(
-        db_with_seeds, ["depilación"]
+    resolved_ids, unknown_names, ambiguous_descriptors, _partial = (
+        await _resolve_service_ids_strict(db_with_seeds, ["depilación"])
     )
 
     assert len(ambiguous_descriptors) > 0, (
@@ -137,7 +137,7 @@ async def test_depilacion_candidates_include_piernas_enteras(db_with_seeds):
     """Candidates for 'depilación' must include the new 'Piernas Enteras' variant (PR-1)."""
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
-    _, _, ambiguous_descriptors = await _resolve_service_ids_strict(db_with_seeds, ["depilación"])
+    _, _, ambiguous_descriptors, _ = await _resolve_service_ids_strict(db_with_seeds, ["depilación"])
 
     assert len(ambiguous_descriptors) > 0, "Expected ambiguous descriptor for 'depilación'"
     candidates = ambiguous_descriptors[0]["candidates"]
@@ -155,8 +155,8 @@ async def test_depilacion_no_uuid_committed_before_zone_selected(db_with_seeds):
     """No UUID committed to resolved_ids when 'depilación' is ambiguous (spec R2.3)."""
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
-    resolved_ids, unknown_names, ambiguous_descriptors = await _resolve_service_ids_strict(
-        db_with_seeds, ["depilación"]
+    resolved_ids, unknown_names, ambiguous_descriptors, _partial = (
+        await _resolve_service_ids_strict(db_with_seeds, ["depilación"])
     )
 
     assert len(resolved_ids) == 0, (

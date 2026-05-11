@@ -30,7 +30,7 @@ def _base_patches(
             return_value=(resolved_ids, [])
         ),
         "agent.tools._booking_helpers._resolve_service_ids_strict": AsyncMock(
-            return_value=(resolved_ids, [], [])
+            return_value=(resolved_ids, [], [], [])
         ),
         "agent.tools._booking_helpers._resolve_service_categories": AsyncMock(
             return_value=set()
