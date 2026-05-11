@@ -49,6 +49,7 @@ from database.seeds.services import seed_services
 from tests.integration._service_catalog_invariants import (
     CHECKERS,
     INVARIANT_DESCRIPTIONS,
+    INVARIANT_SEVERITY,
     Violation,
 )
 
@@ -129,14 +130,32 @@ async def seeded_services_session():
 
 @pytest.mark.parametrize("invariant_id", list(CHECKERS.keys()))
 @pytest.mark.asyncio(loop_scope="module")
-async def test_service_catalog_invariant(seeded_services_session, invariant_id: str) -> None:
+async def test_service_catalog_invariant(seeded_services_session, invariant_id: str, capfd) -> None:
     """Assert that the seeded production catalog satisfies invariant ``invariant_id``.
+
+    ERROR-severity invariants (I1-I7) cause a hard pytest FAIL on violations.
+    WARNING-severity invariants (I8+) print the warning list but do NOT fail CI (NFR-3).
 
     Failure message names every violating row with enough detail to locate
     the bad entry in database/seeds/services.py (spec R4).
     """
     violations = await CHECKERS[invariant_id](seeded_services_session)
-    assert not violations, _format_violations(invariant_id, violations)
+    severity = INVARIANT_SEVERITY.get(invariant_id, "ERROR")
+
+    if severity == "WARNING":
+        if violations:
+            # Surface warnings to stdout so they appear in CI logs without blocking
+            warning_lines = "\n".join(f"  {v}" for v in violations)
+            print(f"\n[WARNING] {invariant_id} — {len(violations)} warning(s):\n{warning_lines}")
+        # WARNING invariants never assert — pass unconditionally
+        return
+
+    # ERROR-severity: hard fail on any violation
+    if violations and isinstance(violations[0], Violation):
+        assert not violations, _format_violations(invariant_id, violations)
+    else:
+        # Fallback: plain string results (future checkers may return strings)
+        assert not violations, f"{invariant_id}: unexpected violations: {violations}"
 
 
 # ---------------------------------------------------------------------------
@@ -227,3 +246,28 @@ async def test_dr3_manicura_de_hombre_is_principal(seeded_services_session) -> N
     assert (
         row.parent_service_name is None
     ), f"Expected parent_service_name IS NULL for Manicura de Hombre, got '{row.parent_service_name}'"
+
+
+# ---------------------------------------------------------------------------
+# I8 clean baseline — catalog-axis-classification-audit T1.6
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_invariant_8_clean_baseline(seeded_services_session) -> None:
+    """I8 (REQ-TE-3 Test B): production catalog after migration must produce zero I8 warnings.
+
+    The 7 reclassified services (Tinte Extra, Mechas Extras, etc.) are now addon rows
+    and are excluded from I8's scope (which only scans variant rows). This confirms the
+    migration closed the classification gap I8 was designed to catch.
+
+    RED state for catalog-axis-classification-audit T1.6: CHECKERS does not yet have 'I8',
+    so this raises KeyError. Goes GREEN after T1.7 adds _check_invariant_8.
+    """
+    checker = CHECKERS["I8"]
+    warnings = await checker(seeded_services_session)
+    assert not warnings, (
+        f"I8 clean baseline failed: {len(warnings)} warning(s) found in production catalog "
+        f"after catalog-axis-classification-audit migration.\n"
+        + "\n".join(f"  {w}" for w in warnings)
+    )

@@ -423,6 +423,69 @@ Revision: `f0a1b2c3d4e5` (parent: `f7e8d9c0b1a2`). No checkpoint flush required.
 
 ---
 
+### Deploy Runbook (catalog-axis-classification-audit)
+
+Data-only migration: reclassifies 7 duration-delta services from `variant→addon` (clearing `parent_service_name`) and promotes `Barro Gold Extra` to standalone `principal` (was incorrectly parented under `Tratamiento Facial`). Also removes the `variant (duración)` row from `agent/prompts/shared/glossary.md` and adds R-34 to `critical_rules.md`. **No restart needed** — no app code changed beyond prompts.
+
+```bash
+# Step 1: Apply the migration (revision a3b4c5d6e7f8, parent f0a1b2c3d4e5)
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" alembic upgrade head
+```
+
+Verification queries (run against production DB post-migration):
+
+```sql
+-- 1. 7 reclassified services must be addon with no parent
+SELECT name, metadata->>'service_type' AS service_type, metadata->>'parent_service_name' AS parent
+FROM services
+WHERE name IN (
+  'Tinte Extra',
+  'Mechas Extras',
+  'Barro Extra',
+  'Tratamiento Facial + Radiofrecuencia (15 min)',
+  'Tratamiento Facial + Radiofrecuencia (30 min)',
+  'Tratamiento Anticelulítico + Radiofrecuencia (30 min)',
+  'Piernas Perfectas + Presoterapia (30 min)'
+);
+-- expect: all 7 rows: service_type='addon', parent=null
+
+-- 2. Barro Gold Extra must be standalone principal with dimension=facial
+SELECT name, metadata->>'service_type' AS service_type, metadata->>'parent_service_name' AS parent, metadata->>'dimension' AS dimension
+FROM services WHERE name = 'Barro Gold Extra';
+-- expect: service_type='principal', parent=null, dimension='facial'
+
+-- 3. Tinte must have zero variant children (no duration-delta orphans)
+SELECT COUNT(*) FROM services
+WHERE metadata->>'parent_service_name' = 'Tinte'
+  AND metadata->>'service_type' = 'variant';
+-- expect: 0
+
+-- 4. No duration-delta variants remain in color/treatment dimensions (I8 clean baseline)
+SELECT name, metadata->>'dimension' AS dim, metadata->>'service_type' AS service_type
+FROM services
+WHERE metadata->>'service_type' = 'variant'
+  AND metadata->>'dimension' IN ('color', 'treatment', 'highlights', 'body_contour');
+-- expect: only legitimate zone/specialization variants (Mechas Localizadas, Barro Gold, etc.)
+```
+
+Idempotency verification:
+```bash
+# Downgrade then upgrade again — must produce no errors, no state change
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" alembic downgrade -1
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" alembic upgrade head
+# Re-run upgrade head a second time — zero rows changed, no error
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" alembic upgrade head
+```
+
+Rollback:
+```bash
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" alembic downgrade -1
+```
+
+Revision: `a3b4c5d6e7f8` (parent: `f0a1b2c3d4e5`). No checkpoint flush required. Prompt changes (`glossary.md`, `critical_rules.md`) take effect on next agent container restart.
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.

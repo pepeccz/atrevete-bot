@@ -254,10 +254,12 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 70,
         "description": "Mechas completas para cabello con más volumen o largo extra. 10 min más que Mechas estándar (70 min)",
         "audience": None,
+        # catalog-axis-classification-audit: reclassified from variant→addon (REQ-DR-2)
+        # Operator-only duration delta; stylist decides based on hair volume/density.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "highlights",
-            "parent_service_name": "Mechas",
+            "parent_service_name": None,
         },
     },
     {
@@ -302,10 +304,12 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 40,
         "description": "Barro intensivo para cabello con alta densidad o daño avanzado (40 min)",
         "audience": None,
+        # catalog-axis-classification-audit: reclassified from variant→addon (REQ-DR-3)
+        # Operator-only: stylist adds based on hair density/damage assessment.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "treatment",
-            "parent_service_name": "Barro",
+            "parent_service_name": None,
         },
     },
     {
@@ -352,10 +356,12 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 50,
         "description": "Cultura de Color extendida para cabello muy denso o cambios de tono importantes (50 min)",
         "audience": None,
+        # catalog-axis-classification-audit: reclassified from variant→addon (REQ-DR-1)
+        # Operator-only: stylist decides based on hair density and tone-change complexity.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "color",
-            "parent_service_name": "Tinte",
+            "parent_service_name": None,
         },
     },
     {
@@ -556,10 +562,12 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 90,
         "description": "Facial + 30 min de radiofrecuencia. Máxima potencia anti-edad (90 min)",
         "audience": None,
+        # catalog-axis-classification-audit: reclassified from variant→addon (REQ-DR-5)
+        # Operator-only: stylist applies RF dose based on skin condition and protocol.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "facial",
-            "parent_service_name": "Tratamiento Facial",
+            "parent_service_name": None,
         },
     },
     {
@@ -568,10 +576,12 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 75,
         "description": "Facial + 15 min de radiofrecuencia para reafirmar y rejuvenecer la piel (75 min)",
         "audience": None,
+        # catalog-axis-classification-audit: reclassified from variant→addon (REQ-DR-4)
+        # Operator-only: same rationale as (30 min) variant.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "facial",
-            "parent_service_name": "Tratamiento Facial",
+            "parent_service_name": None,
         },
     },
     {
@@ -676,10 +686,12 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 90,
         "description": "Sculptor + 30 min de radiofrecuencia para resultados anticelulíticos potenciados (90 min)",
         "audience": None,
+        # catalog-axis-classification-audit: reclassified from variant→addon (REQ-DR-6)
+        # Operator-only: RF intensity and duration decided by stylist based on treatment protocol.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "body_contour",
-            "parent_service_name": "Tratamiento Anticelulítico Completo",
+            "parent_service_name": None,
         },
     },
     {
@@ -772,10 +784,12 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 90,
         "description": "Drenaje + descongestión + reafirmación de piernas. Combinado con presoterapia (90 min)",
         "audience": None,
+        # catalog-axis-classification-audit: reclassified from variant→addon (REQ-DR-7)
+        # Operator-only: presotherapy duration is a clinical decision, not a customer choice.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "body_contour",
-            "parent_service_name": "Tratamiento Anticelulítico Completo",
+            "parent_service_name": None,
         },
     },
     {
@@ -864,10 +878,14 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 40,
         "description": "Tratamiento facial con barro dorado extra para nutrición profunda y luminosidad (40 min)",
         "audience": None,
+        # catalog-axis-classification-audit: reclassified from variant→standalone principal (REQ-DR-8)
+        # Design I-1: cross-category data error. 'Tratamiento Facial' was a wrong parent —
+        # Barro Gold Extra is a distinct AESTHETICS facial offering, NOT a child of
+        # HAIRDRESSING 'Barro Gold'. Standalone principal with dimension=facial.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "principal",
             "dimension": "facial",
-            "parent_service_name": "Tratamiento Facial",
+            "parent_service_name": None,
         },
     },
     {
@@ -1001,18 +1019,19 @@ ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
 #                   + Corte de Flequillo [PRINCIPAL — disambiguation-resilience REQ-DR-1]
 #                   (addons: Barba, Perilla — reclassified from variant, REQ-DR-2)
 #   - color       → Tinte / Color para Hombre
-#                   (variants: Tinte Extra; addons: Tratamiento Precolor, Prepigmentar)
+#                   (variants: none; addons: Tinte Extra [REQ-DR-1], Tratamiento Precolor, Prepigmentar)
 #   - highlights  → Mechas
-#                   (variants: Mechas Extras, Mechas Localizadas, Mechas Localizadas Exprés)
+#                   (variants: Mechas Localizadas, Mechas Localizadas Exprés;
+#                    addons: Mechas Extras [REQ-DR-2])
 #   - hairstyle   → Peinado
 #                   (variants: Peinado Largo, Peinado Extra, Moldeado Extra, Peinado de Comunión)
 #   - updo        → Recogido
 #                   (variants: Semirecogido, Recogido de Novia)
 #   - blowdry     → Secado
 #   - treatment   → Barro
-#                   (variants: Barro Gold, Barro Extra;
-#                    addons: Óleo Pigmento, Agua Tierra, Agua Lluvia, Óleo Extra,
-#                            Infoactivo Fuerza, Infoactivo Sensitivo)
+#                   (variants: Barro Gold;
+#                    addons: Barro Extra [REQ-DR-3], Óleo Pigmento, Agua Tierra, Agua Lluvia,
+#                            Óleo Extra, Infoactivo Fuerza, Infoactivo Sensitivo)
 #
 # AESTHETICS:
 #   - manicure        → Manicura / Manicura de Hombre [PRINCIPAL audience=adult_male — REQ-DR-3]
@@ -1020,8 +1039,10 @@ ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
 #                        addons: Retirada de Esmalte Permanente)
 #   - pedicure        → Pedicura
 #                       (variants: Pedicura Permanente, Pedicura Permanente con Tratamiento)
-#   - facial          → Tratamiento Facial
-#                       (variants: Tratamiento Facial + Radiofrecuencia 15/30 min, Barro Gold Extra)
+#   - facial          → Tratamiento Facial / Barro Gold Extra [standalone principal — REQ-DR-8]
+#                       (variants: none after catalog-axis-classification-audit;
+#                        addons: Tratamiento Facial + Radiofrecuencia (15 min) [REQ-DR-4],
+#                                Tratamiento Facial + Radiofrecuencia (30 min) [REQ-DR-5])
 #   - massage         → Masaje Corporal (60 min)
 #                       (variants: Masaje Corporal (30 min))
 #   - makeup          → Maquillaje
@@ -1033,8 +1054,9 @@ ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
 #   - hand_treatment  → Tratamiento de Manos
 #   - foot_treatment  → Tratamiento de Pies
 #   - body_contour    → Tratamiento Anticelulítico Completo
-#                       (variants: Tratamiento Anticelulítico + Radiofrecuencia,
-#                                  Piernas Perfectas + Presoterapia)
+#                       (variants: none after catalog-axis-classification-audit;
+#                        addons: Tratamiento Anticelulítico + Radiofrecuencia (30 min) [REQ-DR-6],
+#                                Piernas Perfectas + Presoterapia (30 min) [REQ-DR-7])
 #   - body_treatment  → Exfoliación Corporal / Limpieza de Espalda / Tratamiento de Senos
 #                       (variants: Bono Tratamiento de Senos)
 

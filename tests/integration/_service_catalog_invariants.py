@@ -15,6 +15,7 @@ Postmortem reference: deploy/service-disambiguation-postmortem (Engram obs #5260
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -47,6 +48,22 @@ INVARIANT_DESCRIPTIONS: dict[str, str] = {
     "I5": "Every variant has a non-null parent_service_name",
     "I6": "Valid dimension — derived from principals at runtime",
     "I7": "No cross-dimension variant parenting — variant dimension must match its parent's dimension",
+    "I8": "No operator-only variants in operational dimensions (WARNING — does not block CI)",
+}
+
+# ---------------------------------------------------------------------------
+# Invariant severity map — ERROR-level invariants fail CI; WARNING-level do not
+# ---------------------------------------------------------------------------
+
+INVARIANT_SEVERITY: dict[str, str] = {
+    "I1": "ERROR",
+    "I2": "ERROR",
+    "I3": "ERROR",
+    "I4": "ERROR",
+    "I5": "ERROR",
+    "I6": "ERROR",
+    "I7": "ERROR",
+    "I8": "WARNING",  # heuristic; false positives acceptable — see ADR-DR-3
 }
 
 # ---------------------------------------------------------------------------
@@ -253,6 +270,86 @@ async def _check_invariant_7(session: AsyncSession) -> list[Violation]:
 
 
 # ---------------------------------------------------------------------------
+# I8 — operator-only variant detection (WARNING severity, not CI-blocking)
+# ---------------------------------------------------------------------------
+
+# Phrases in descriptions that signal an operator decision (density, damage, dose),
+# not a customer-facing axis choice. Designed for color/treatment/highlights/body_contour.
+_OPERATOR_ONLY_PATTERNS: re.Pattern[str] = re.compile(
+    r"\b("
+    r"muy denso|alta densidad|daño avanzado|"
+    r"cambios? de tono importantes?|"
+    r"más volumen o largo extra|más tiempo de proceso|"
+    r"dosis intensiva|para cabello con más volumen|"
+    r"máxima potencia|resultados potenciados"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Tokens in the service NAME that indicate a genuine axis differentiator
+# (not just a duration/dose delta). If the name contains one of these, the
+# service is likely a legitimate variant, not an operator-only one.
+_AXIS_DISTINGUISHER_TOKENS: re.Pattern[str] = re.compile(
+    r"\b("
+    r"gold|exprés|express|permanente|larg[ao]|"
+    r"novia|comunión|localizada|semirecogido|brasileña|"
+    r"cejas|axilas|piernas|labio|antebrazo|muslos|pubis|"
+    r"abdomen|pecho|espalda|glúteos|brazos?|"
+    r"con tratamiento"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Only scan variants in dimensions where duration/dose confusion is a real risk.
+_OPERATIONAL_DIMENSIONS: frozenset[str] = frozenset(
+    {"color", "treatment", "highlights", "body_contour"}
+)
+
+
+async def _check_invariant_8(session: AsyncSession) -> list[str]:
+    """I8 (WARNING): variant rows in operational dimensions with operator-only
+    differentiators in their description and no axis-distinguishing token in their name.
+
+    Returns a list of warning strings (not Violation objects) because I8 is heuristic
+    and must NOT cause a hard pytest FAIL. Severity = WARNING per INVARIANT_SEVERITY.
+
+    Algorithm (ADR-DR-3):
+    1. Query all active variant rows in operational dimensions with a non-null parent.
+    2. For each, check if description matches _OPERATOR_ONLY_PATTERNS.
+    3. AND check that the service name lacks any _AXIS_DISTINGUISHER_TOKENS.
+    4. If both conditions hold, emit a WARNING string prefixed with 'I8 WARNING:'.
+    """
+    result = await session.execute(text("""
+        SELECT
+            name,
+            metadata->>'dimension' AS dim,
+            description
+        FROM services
+        WHERE is_active = TRUE
+          AND metadata->>'service_type' = 'variant'
+          AND metadata->>'parent_service_name' IS NOT NULL
+          AND metadata->>'dimension' IS NOT NULL
+    """))
+    rows = result.fetchall()
+
+    warnings: list[str] = []
+    for row in rows:
+        dim = row.dim or ""
+        if dim not in _OPERATIONAL_DIMENSIONS:
+            continue
+        desc = row.description or ""
+        name = row.name or ""
+        if _OPERATOR_ONLY_PATTERNS.search(desc) and not _AXIS_DISTINGUISHER_TOKENS.search(name):
+            warnings.append(
+                f"I8 WARNING: variant '{name}' (dim={dim}) has operator-only "
+                f"differentiator in description and no axis token in name; "
+                f"consider reclassifying as ADDON. "
+                f"Description excerpt: '{desc[:80]}...'"
+            )
+    return warnings
+
+
+# ---------------------------------------------------------------------------
 # CHECKERS registry — maps invariant ID → checker function
 # ---------------------------------------------------------------------------
 
@@ -264,4 +361,5 @@ CHECKERS: dict[str, Callable[..., object]] = {
     "I5": _check_invariant_5,
     "I6": _check_invariant_6,
     "I7": _check_invariant_7,
+    "I8": _check_invariant_8,
 }

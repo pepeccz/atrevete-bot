@@ -30,6 +30,7 @@ from database.seeds.services import seed_services
 # This import will fail until Task 1.2 creates the module (RED state for Task 1.1)
 from tests.integration._service_catalog_invariants import (  # noqa: E402
     CHECKERS,
+    INVARIANT_SEVERITY,
 )
 
 # ---------------------------------------------------------------------------
@@ -322,3 +323,110 @@ async def test_failure_cross_dimension_variant_i7(
             assert (
                 "color" in v.detail or "cut" in v.detail
             ), f"Expected detail to mention dimension mismatch, got: {v.detail!r}"
+
+
+# ---------------------------------------------------------------------------
+# Fixture for I8 failure: inject operator-only variant (catalog-axis-audit T1.5)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture()
+async def session_with_operator_only_variant() -> AsyncGenerator:
+    """Insert a variant with an operator-only description in a color/treatment dimension.
+
+    The synthetic row mimics the pattern that triggered the catalog audit:
+    - service_type=variant (not yet reclassified)
+    - dimension=color (in _OPERATIONAL_DIMENSIONS)
+    - description contains "muy denso" (matches _OPERATOR_ONLY_PATTERNS)
+    - name contains no axis-distinguishing token (no "gold", "exprés", "permanente", etc.)
+
+    RED state for catalog-axis-classification-audit T1.5: CHECKERS does not yet have 'I8',
+    so this test raises KeyError. Goes GREEN after T1.7 adds _check_invariant_8.
+    """
+    if not _postgres_reachable():
+        pytest.skip("Postgres not reachable")
+
+    await _truncate_and_seed()
+
+    # Find a color principal to use as parent for the synthetic variant
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(text("""
+            SELECT name FROM services
+            WHERE metadata->>'service_type' = 'principal'
+              AND metadata->>'dimension' = 'color'
+            LIMIT 1
+        """))
+        row = result.fetchone()
+        assert row is not None, "No principal with dimension='color' found in seeded data"
+        color_principal_name = row.name
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("""
+                INSERT INTO services (id, name, category, duration_minutes, is_active, audience, metadata)
+                VALUES (
+                    :id, :name, 'HAIRDRESSING', 50, true, null,
+                    :meta::jsonb
+                )
+            """),
+            {
+                "id": _random_uuid(),
+                "name": "SyntheticOperatorOnlyVariant_I8",
+                "meta": (
+                    '{"service_type": "variant", "dimension": "color", '
+                    f'"parent_service_name": "{color_principal_name}", '
+                    '"description": "Cabello muy denso, +10 min adicionales"}'
+                ),
+            },
+        )
+        await session.commit()
+
+    # Also patch the description column (services.description) so the invariant SQL sees it
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("""
+                UPDATE services
+                SET description = 'Cabello muy denso, +10 min adicionales'
+                WHERE name = 'SyntheticOperatorOnlyVariant_I8'
+            """))
+        await session.commit()
+
+    async with AsyncSessionLocal() as session:
+        yield session
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("TRUNCATE services CASCADE"))
+        await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# I8 failure test (REQ-TE-3 Test A) — catalog-axis-classification-audit T1.5
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_invariant_8_detects_operator_only_variant(
+    session_with_operator_only_variant,
+) -> None:
+    """I8: helper detects variant with operator-only differentiator in operational dimension.
+
+    REQ-TE-3 Test A: synthetic offender must be flagged with an 'I8:' warning.
+
+    RED state for catalog-axis-classification-audit T1.5: CHECKERS does not yet have 'I8',
+    so this raises KeyError. Goes GREEN after T1.7 adds _check_invariant_8.
+    """
+    # Verify I8 is registered in CHECKERS (KeyError = still RED)
+    checker = CHECKERS["I8"]
+    results = await checker(session_with_operator_only_variant)
+
+    # I8 returns strings (not Violation objects) — it's WARNING-only
+    assert results, "Expected at least one I8 warning but got none"
+    assert any("I8" in str(r) for r in results), f"Expected 'I8' prefix in results, got: {results}"
+    assert any(
+        "SyntheticOperatorOnlyVariant_I8" in str(r) for r in results
+    ), f"Expected synthetic offender name in results, got: {results}"
+
+    # I8 must be registered as WARNING (not ERROR)
+    assert INVARIANT_SEVERITY.get("I8") == "WARNING", (
+        "I8 must have severity='WARNING' in INVARIANT_SEVERITY map. "
+        "It must NOT cause CI to fail (NFR-3)."
+    )
