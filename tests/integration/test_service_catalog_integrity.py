@@ -171,3 +171,34 @@ async def test_dr1_corte_de_flequillo_is_principal(seeded_services_session) -> N
     assert row.audience is None, (
         f"Expected audience IS NULL for Corte de Flequillo, got '{row.audience}'"
     )
+
+
+@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.parametrize("service_name", ["Barba", "Perilla"])
+async def test_dr2_barba_perilla_are_addon(seeded_services_session, service_name: str) -> None:
+    """DR-2 (REQ-DR-2): Barba and Perilla must be service_type=addon,
+    parent_service_name IS NULL, and category=HAIRDRESSING after
+    disambiguation-resilience migration + seed update.
+    """
+    result = await seeded_services_session.execute(
+        text("""
+            SELECT
+                metadata->>'service_type' AS service_type,
+                metadata->>'parent_service_name' AS parent_service_name,
+                category
+            FROM services
+            WHERE name = :name
+        """),
+        {"name": service_name},
+    )
+    row = result.fetchone()
+    assert row is not None, f"'{service_name}' not found in seeded data"
+    assert row.service_type == "addon", (
+        f"Expected service_type='addon' for '{service_name}', got '{row.service_type}'"
+    )
+    assert row.parent_service_name is None, (
+        f"Expected parent_service_name IS NULL for '{service_name}', got '{row.parent_service_name}'"
+    )
+    assert row.category == "HAIRDRESSING", (
+        f"Expected category='HAIRDRESSING' for '{service_name}', got '{row.category}'"
+    )
