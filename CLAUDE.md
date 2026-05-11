@@ -377,11 +377,57 @@ No checkpoint flush required. Revision: `e9d1f2b8c7a4` (parent: `a7b8c9d0e1f2`).
 
 ---
 
+### Deploy Runbook (disambiguation-resilience)
+
+Data-only migration: reclassifies `Corte de Flequillo` (variant→principal), `Barba` and `Perilla` (variant→addon), and `Manicura de Hombre` (variant→principal with `audience=adult_male`). **No restart needed** — no app code changed.
+
+```bash
+# Apply the migration (revision f0a1b2c3d4e5, parent f7e8d9c0b1a2)
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" alembic upgrade head
+```
+
+Verification queries (run against production DB post-migration):
+
+```sql
+-- 1. Corte de Flequillo must be principal, no parent
+SELECT name, metadata->>'service_type' AS service_type, metadata->>'parent_service_name' AS parent
+FROM services WHERE name = 'Corte de Flequillo';
+-- expect: service_type='principal', parent=null
+
+-- 2. Barba and Perilla must be addon, no parent
+SELECT name, metadata->>'service_type' AS service_type, metadata->>'parent_service_name' AS parent
+FROM services WHERE name IN ('Barba', 'Perilla');
+-- expect: both rows: service_type='addon', parent=null
+
+-- 3. Manicura de Hombre must be principal, audience=adult_male, no parent
+SELECT name, audience, metadata->>'service_type' AS service_type, metadata->>'parent_service_name' AS parent
+FROM services WHERE name = 'Manicura de Hombre';
+-- expect: service_type='principal', audience='adult_male', parent=null
+
+-- 4. No cross-dimension variant parenting (invariant I7)
+SELECT v.name, v.metadata->>'dimension' AS v_dim, p.metadata->>'dimension' AS p_dim
+FROM services v
+JOIN services p ON p.name = v.metadata->>'parent_service_name'
+  AND p.metadata->>'service_type' = 'principal'
+WHERE v.metadata->>'service_type' = 'variant'
+  AND v.metadata->>'dimension' != p.metadata->>'dimension';
+-- expect: 0 rows
+```
+
+Rollback:
+```bash
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" alembic downgrade -1
+```
+
+Revision: `f0a1b2c3d4e5` (parent: `f7e8d9c0b1a2`). No checkpoint flush required.
+
+---
+
 ### Service Catalog Integrity Guard
 
-CI guard that asserts 6 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260).
+CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
 
-**What it catches:** orphan variants (I1), dimension mismatch between variant and parent (I2), invalid audience value (I3), duplicate principals with same (name, dimension) (I4), variant with null parent_service_name (I5), dimension not present in principals (I6).
+**What it catches:** orphan variants (I1), dimension mismatch between variant and parent (I2), invalid audience value (I3), duplicate principals with same (name, dimension) (I4), variant with null parent_service_name (I5), dimension not present in principals (I6), cross-dimension variant parenting (I7).
 
 **How to run locally:**
 ```bash
