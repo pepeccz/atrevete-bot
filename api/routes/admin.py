@@ -6306,3 +6306,291 @@ async def resolve_escalation(
             )
 
         return EscalationResponse(**_escalation_to_response(escalation, customer_name))
+
+
+# =============================================================================
+# Human-Agent Inbox Endpoints (PR-2 — conversaciones-inbox)
+# =============================================================================
+# All 7 endpoints are grouped under the existing /api/admin/conversations prefix
+# following ADR-4 (co-locate with existing conversation reads).
+#
+# Permission mapping (from ROLE_PERMISSIONS in shared/permissions.py):
+#   conversations:read   — admin + stylist
+#   conversations:write  — admin + stylist
+#   bot:pause            — admin + stylist
+#   bot:resume           — admin + stylist
+#   templates:send       — admin + stylist
+#   escalations:resolve  — admin only
+# =============================================================================
+
+from api.models.inbox import (  # noqa: E402
+    EscalateRequest,
+    EscalateResponse,
+    MessageResponse,
+    PauseRequest,
+    PauseResponse,
+    ResumeResponse,
+    SendMessageRequest,
+    SendTemplateRequest,
+    TemplateListResponse,
+    WindowStatusResponse,
+)
+
+
+@router.post("/conversations/{conversation_id}/send-message", status_code=200)
+async def inbox_send_message(
+    conversation_id: str,
+    body: SendMessageRequest,
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:write"))],
+) -> MessageResponse:
+    """Send a free-text message from a human agent to a customer via Chatwoot.
+
+    Requires the 24h WhatsApp messaging window to be open for this conversation.
+    Persists a ConversationMessage(role='human_agent') row as the audit record.
+
+    Permissions: conversations:write (admin + stylist).
+    """
+    from api.services.conversation_inbox_service import ConversationInboxService
+    from shared.chatwoot_client import ChatwootClient
+
+    async with get_async_session() as session:
+        chatwoot = ChatwootClient()
+        service = ConversationInboxService(session=session, chatwoot_client=chatwoot)
+        try:
+            msg = await service.send_text_message(
+                conversation_id=conversation_id,
+                text=body.text,
+                author=current_user,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        return MessageResponse(
+            id=msg.id,
+            content=msg.content or "",
+            created_at=msg.created_at,
+            author_username=current_user.username,
+        )
+
+
+@router.post("/conversations/{conversation_id}/send-template", status_code=200)
+async def inbox_send_template(
+    conversation_id: str,
+    body: SendTemplateRequest,
+    current_user: Annotated[AdminUser, Depends(require_permission("templates:send"))],
+) -> MessageResponse:
+    """Send a Meta-approved template message to a customer via Chatwoot.
+
+    Validates that the template is registered in the catalog AND approved by Meta.
+    Persists the rendered body as a ConversationMessage(role='human_agent') row.
+
+    Permissions: templates:send (admin + stylist).
+    """
+    from api.services.conversation_inbox_service import ConversationInboxService
+    from shared.chatwoot_client import ChatwootClient
+
+    async with get_async_session() as session:
+        chatwoot = ChatwootClient()
+        service = ConversationInboxService(session=session, chatwoot_client=chatwoot)
+        try:
+            msg = await service.send_template(
+                conversation_id=conversation_id,
+                template_name=body.template_name,
+                params=body.params,
+                author=current_user,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        return MessageResponse(
+            id=msg.id,
+            content=msg.content or "",
+            created_at=msg.created_at,
+            author_username=current_user.username,
+        )
+
+
+@router.post("/conversations/{conversation_id}/pause", status_code=200)
+async def inbox_pause(
+    conversation_id: str,
+    body: PauseRequest,
+    current_user: Annotated[AdminUser, Depends(require_permission("bot:pause"))],
+) -> PauseResponse:
+    """Pause the bot for a conversation (sets atencion_automatica=False in Chatwoot).
+
+    When source='manual' (takeover modal confirmed), creates an Escalation row.
+    Returns 409 if the conversation is already paused.
+
+    Permissions: bot:pause (admin + stylist).
+    """
+    from api.services.conversation_inbox_service import ConversationInboxService
+    from shared.chatwoot_client import ChatwootClient
+
+    async with get_async_session() as session:
+        chatwoot = ChatwootClient()
+        service = ConversationInboxService(session=session, chatwoot_client=chatwoot)
+        try:
+            result = await service.pause(
+                conversation_id=conversation_id,
+                source=body.source,
+                author=current_user,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        return PauseResponse(
+            paused_at=result["paused_at"],
+            escalation_id=result.get("escalation_id"),
+        )
+
+
+@router.post("/conversations/{conversation_id}/resume", status_code=200)
+async def inbox_resume(
+    conversation_id: str,
+    current_user: Annotated[AdminUser, Depends(require_permission("bot:resume"))],
+) -> ResumeResponse:
+    """Resume the bot for a conversation (sets atencion_automatica=True in Chatwoot).
+
+    Sets a Redis flag pending_injection:v2:{conversation_id} (TTL 600s) so the
+    next customer inbound triggers LangGraph state injection (ADR-2).
+    Returns 409 if the conversation is not currently paused.
+
+    Permissions: bot:resume (admin + stylist).
+    """
+    from api.services.conversation_inbox_service import ConversationInboxService
+    from shared.chatwoot_client import ChatwootClient
+    from shared.redis_client import get_redis_client
+
+    async with get_async_session() as session:
+        chatwoot = ChatwootClient()
+        redis_client = get_redis_client()
+        service = ConversationInboxService(session=session, chatwoot_client=chatwoot)
+        try:
+            result = await service.resume(
+                conversation_id=conversation_id,
+                author=current_user,
+                redis_client=redis_client,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        return ResumeResponse(
+            resumed_at=result["resumed_at"],
+            pending_injection_ttl_seconds=result["pending_injection_ttl_seconds"],
+        )
+
+
+@router.post("/conversations/{conversation_id}/escalate", status_code=200)
+async def inbox_escalate(
+    conversation_id: str,
+    body: EscalateRequest,
+    current_user: Annotated[AdminUser, Depends(require_permission("escalations:resolve"))],
+) -> EscalateResponse:
+    """Create an explicit escalation record for a conversation.
+
+    Does NOT automatically pause the bot. Creates Escalation(source='manual', status='triggered').
+
+    Permissions: escalations:resolve (admin only).
+    """
+    from api.services.conversation_inbox_service import ConversationInboxService
+    from shared.chatwoot_client import ChatwootClient
+
+    async with get_async_session() as session:
+        chatwoot = ChatwootClient()
+        service = ConversationInboxService(session=session, chatwoot_client=chatwoot)
+        try:
+            result = await service.escalate(
+                conversation_id=conversation_id,
+                reason=body.reason,
+                note=body.note,
+                author=current_user,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return EscalateResponse(escalation_id=result["escalation_id"])
+
+
+@router.get("/conversations/{conversation_id}/window-status", status_code=200)
+async def inbox_window_status(
+    conversation_id: str,
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:read"))],
+) -> WindowStatusResponse:
+    """Return the 24h WhatsApp messaging window status for a conversation.
+
+    Window state is computed from DB (MAX(created_at) WHERE role='user') per FR-API-4.
+
+    Permissions: conversations:read (admin + stylist).
+    """
+    from api.services.window_service import compute_window_open
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(ConversationHistory).where(
+                ConversationHistory.conversation_id == conversation_id
+            )
+        )
+        history = result.scalar_one_or_none()
+        if history is None:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+
+        window_open, last_user_message_at = await compute_window_open(session, history.id)
+
+        hours_until_close: float | None = None
+        if window_open and last_user_message_at is not None:
+            from datetime import UTC, timedelta
+
+            now_utc = datetime.now(tz=UTC)
+            elapsed = now_utc - last_user_message_at
+            remaining = timedelta(hours=24) - elapsed
+            hours_until_close = max(0.0, remaining.total_seconds() / 3600)
+
+        return WindowStatusResponse(
+            window_open=window_open,
+            last_user_message_at=last_user_message_at,
+            hours_until_close=hours_until_close,
+        )
+
+
+@router.get("/conversations/templates", status_code=200)
+async def inbox_list_templates(
+    current_user: Annotated[AdminUser, Depends(require_permission("templates:send"))],
+) -> TemplateListResponse:
+    """Return the list of Meta templates available in the inbox with approval status.
+
+    Templates with status='pending' are shown but disabled in the UI
+    (displayed with 'Plantillas en aprobacion' copy — R2 from proposal).
+
+    Permissions: templates:send (admin + stylist).
+    """
+    from api.models.inbox import ParamDefResponse, TemplateDefResponse
+    from api.services.template_catalog import get_templates
+
+    raw_templates = get_templates()
+    items = [
+        TemplateDefResponse(
+            name=t["name"],
+            display_name=t["display_name"],
+            status=t["status"],
+            params=[
+                ParamDefResponse(
+                    name=p["name"],
+                    label=p["label"],
+                    description=p.get("description", ""),
+                )
+                for p in t["params"]
+            ],
+        )
+        for t in raw_templates
+    ]
+    return TemplateListResponse(items=items)
