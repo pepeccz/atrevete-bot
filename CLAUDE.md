@@ -528,6 +528,53 @@ Rollback: `alembic downgrade -1`. No checkpoint flush required. No in-flight con
 
 ---
 
+### Deploy Runbook (conversaciones-inbox PR-2)
+
+7 new admin endpoints (`send-message`, `send-template`, `pause`, `resume`, `escalate`, `window-status`, `templates`), `resume_injection` service, and webhook gate refactor (persist-before-gate). **PR-1 migration must be applied first.** No new DB migration, no checkpoint flush required.
+
+**Gate refactor policy change (FR-WEBHOOK-4)**: Inbound messages are now persisted to `ConversationMessage` even when `ai_agent_enabled=False` or `atencion_automatica=False`. Only the Redis Stream publish is gated.
+
+```bash
+# Requires PR-1 migration already applied (b5c6d7e8f9a0 must be current head).
+
+# Restart api container to pick up new endpoints, service implementations, and gate refactor.
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart api
+
+# Smoke tests:
+# a) GET window-status (replace <id> with a real Chatwoot conversation ID)
+curl -b "admin_token=<your_token>" \
+  https://your-api-host/api/admin/conversations/<id>/window-status
+# expect: 200 + {"window_open": bool, "last_user_message_at": ..., "hours_until_close": ...}
+
+# b) GET templates
+curl -b "admin_token=<your_token>" \
+  https://your-api-host/api/admin/conversations/templates
+# expect: 200 + {"items": [{"name": "reengagement", "status": "pending", ...}]}
+
+# c) POST pause (admin role required)
+curl -X POST -b "admin_token=<your_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"source": "toggle"}' \
+  https://your-api-host/api/admin/conversations/<id>/pause
+# expect: 200 + {"paused_at": "..."}
+
+# d) POST resume (verify pending_injection Redis key is set)
+curl -X POST -b "admin_token=<your_token>" \
+  https://your-api-host/api/admin/conversations/<id>/resume
+# expect: 200 + {"resumed_at": "...", "pending_injection_ttl_seconds": 600}
+# redis-cli TTL "pending_injection:v2:<id>" → ~600
+
+# e) Bot-off inbound regression: send a WhatsApp message to a paused conversation,
+#    confirm no Redis Stream entry (redis-cli XLEN INCOMING_STREAM unchanged),
+#    but DB row exists (SELECT * FROM conversation_messages WHERE role='user' ORDER BY created_at DESC LIMIT 1).
+```
+
+**Resume injection**: On the first customer inbound after `/resume`, `maybe_inject_pending_context()` runs in the webhook handler. Check logs for `"Resume injection complete — context_injected_at set"` and verify `conversation_history.context_injected_at` is populated and the `pending_injection:v2:{id}` Redis key is deleted.
+
+Rollback: `git revert` the PR-2 commits + `docker compose restart api`. No DB rollback needed (no schema change in PR-2).
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
