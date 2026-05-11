@@ -499,6 +499,35 @@ Rollback: `git revert HEAD~n` (revert commits on this branch) + restart containe
 
 ---
 
+### Deploy Runbook (conversaciones-inbox PR-1)
+
+Additive migration only: adds `conversation_messages.author_user_id` (UUID NULL FK → `admin_users.id` ON DELETE SET NULL + index) and three TIMESTAMPTZ columns to `conversation_history` (`paused_at`, `resumed_at`, `context_injected_at`). Also ships service module stubs (`conversation_inbox_service.py`, `window_service.py`, `template_catalog.py`) — no endpoints exposed yet. No checkpoint flush required.
+
+```bash
+# Step 1: Apply the migration (a4b5c6d7e8f9 → b5c6d7e8f9a0)
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" \
+  ./venv/bin/alembic upgrade head
+
+# Step 2: No restart needed for PR-1 alone — no new endpoints or code serving the columns.
+# Verify the columns were created:
+PGPASSWORD="changeme_min16chars_secure_password" psql -h localhost -U atrevete -d atrevete_db -c \
+  "SELECT column_name FROM information_schema.columns
+   WHERE table_name='conversation_messages' AND column_name='author_user_id';"
+# expect: 1 row
+
+PGPASSWORD="changeme_min16chars_secure_password" psql -h localhost -U atrevete -d atrevete_db -c \
+  "SELECT column_name FROM information_schema.columns
+   WHERE table_name='conversation_history'
+   AND column_name IN ('paused_at','resumed_at','context_injected_at');"
+# expect: 3 rows
+```
+
+Rollback: `alembic downgrade -1`. No checkpoint flush required. No in-flight conversation is affected (all new columns are nullable; existing rows are unchanged).
+
+**Template env flags**: A new env flag `INBOX_TEMPLATE_REENGAGEMENT_APPROVED=false` is added to `shared/config.py`. Set to `true` only after Meta approves the re-engagement template on the developer portal. Default is `false` (safe — templates show as "Plantillas en aprobación" in the composer UI).
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
