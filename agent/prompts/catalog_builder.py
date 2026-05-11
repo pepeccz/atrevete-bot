@@ -133,9 +133,7 @@ def _build_service_type_tag(svc: Any) -> str:
     dimension = metadata.get("dimension") or "unknown"
 
     if service_type == "principal":
-        audience = getattr(svc, "audience", None)
-        audience_token = _AUDIENCE_TOKENS.get(audience, "any")
-        return f" [PRINCIPAL · {dimension} · {audience_token}]"
+        return f" [PRINCIPAL · {dimension}]"
 
     if service_type == "variant":
         parent = metadata.get("parent_service_name") or "?"
@@ -391,7 +389,9 @@ async def build_catalog_prompt_section() -> str:
             orm_services = list(result.scalars().all())
 
             stylists_result = await session.execute(
-                select(Stylist).where(Stylist.is_active == True).order_by(Stylist.name)  # noqa: E712
+                select(Stylist)
+                .where(Stylist.is_active == True)  # noqa: E712
+                .order_by(Stylist.name)
             )
             stylists = list(stylists_result.scalars().all())
 

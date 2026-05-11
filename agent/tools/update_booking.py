@@ -309,7 +309,7 @@ async def _update_booking_impl(
         # When services is empty (only pre_resolved_set), skip name resolution entirely.
         if services:
             resolved_ids, unknown_names, ambiguous_descriptors, partial_resolved_ids = (
-                await _resolve_service_ids_strict(session, services)
+                await _resolve_service_ids_strict(session, services, audience=audience)
             )
         else:
             resolved_ids, unknown_names, ambiguous_descriptors, partial_resolved_ids = (

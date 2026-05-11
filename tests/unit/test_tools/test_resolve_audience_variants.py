@@ -7,6 +7,7 @@ Covers:
 
 Refs: design Decision 5, spec H1/H3/U3
 """
+
 from __future__ import annotations
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
+
         from database.connection import get_async_session
 
         async with get_async_session() as session:
@@ -46,7 +48,9 @@ async def audience_services(db_session):
     Querying 'Corte de Mujer Test' (adult_female) → kind='none' (already specific).
     """
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     dim = "cut_test_dim"
@@ -83,7 +87,9 @@ async def audience_services(db_session):
 async def variant_services(db_session):
     """Seed two VARIANT services sharing parent_service_name='Cera Test'."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     parent = "Cera Test Padre"
@@ -99,7 +105,11 @@ async def variant_services(db_session):
             category=ServiceCategory.AESTHETICS,
             duration_minutes=20,
             is_active=True,
-            metadata_={"service_type": "variant", "dimension": "wax", "parent_service_name": parent},
+            metadata_={
+                "service_type": "variant",
+                "dimension": "wax",
+                "parent_service_name": parent,
+            },
         )
         db_session.add(svc)
     await db_session.flush()
@@ -114,7 +124,9 @@ async def variant_services(db_session):
 async def single_service(db_session):
     """Seed one PRINCIPAL service with no peers sharing its dimension."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     name = "Manicura Solo Test"
@@ -128,7 +140,11 @@ async def single_service(db_session):
         duration_minutes=45,
         is_active=True,
         audience=None,
-        metadata_={"service_type": "principal", "dimension": "manicure_solo_dim", "parent_service_name": None},
+        metadata_={
+            "service_type": "principal",
+            "dimension": "manicure_solo_dim",
+            "parent_service_name": None,
+        },
     )
     db_session.add(svc)
     await db_session.flush()
@@ -163,26 +179,54 @@ async def test_null_audience_principal_in_multi_audience_dimension_returns_audie
 
 
 @pytest.mark.asyncio
-async def test_audience_tagged_principal_in_multi_audience_dimension_returns_none(
+async def test_audience_tagged_principal_without_explicit_input_audience_still_triggers_gate(
     db_session, audience_services
 ):
-    """H1b (new): audience-tagged PRINCIPAL in a multi-audience dimension
-    → kind=='none' (already specific — no gate needed).
+    """H1b-no-param: audience-tagged PRINCIPAL called WITHOUT explicit input_audience param
+    → kind=='audience' (gate fires because caller provided no audience context).
 
-    Per design §2 Slice 2 Task 2.3: gate only fires when input_audience is None.
+    Per ADR-2 fix: `input_audience` is the CALLER's audience (parameter), not the DB row's
+    audience column. With default input_audience=None the gate fires regardless of the
+    service's own audience tag — the function cannot bypass the gate without explicit caller intent.
     """
     if not await _db_available():
         pytest.skip("Postgres not reachable")
 
     from agent.tools._booking_helpers import _resolve_audience_variants
 
-    # Query the audience-tagged principal "Corte de Mujer Test" (adult_female)
-    kind, family, candidates = await _resolve_audience_variants(
-        db_session, "Corte de Mujer Test"  # audience='adult_female' → gate must NOT fire
+    # Call without input_audience — default is None → gate fires
+    kind, family, candidates = await _resolve_audience_variants(db_session, "Corte de Mujer Test")
+    assert kind == "audience", (
+        f"Expected kind='audience' when input_audience not provided (default None), got '{kind}'. "
+        "Gate must fire when caller has not stated audience — the DB row value is irrelevant."
     )
-    assert kind in ("none", "variant"), (
-        f"Expected kind='none' for audience-tagged principal, got '{kind}'. "
-        "A service with a known audience is already specific — no disambiguation needed."
+
+
+@pytest.mark.asyncio
+async def test_audience_tagged_principal_with_explicit_input_audience_returns_none(
+    db_session, audience_services
+):
+    """H1b-bypass (new): audience-tagged PRINCIPAL called WITH explicit input_audience
+    → kind=='none' (gate bypassed — caller already knows the audience).
+
+    SCN-2 regression guard: when update_booking(services=["Corte de Mujer"],
+    audience="adult_female") is called, the internal resolver must NOT fire the
+    audience gate because the caller has already provided audience context.
+
+    Refs: SCN-2, REQ-3, ADR-2 fix (slim-booking-protocol batch 2).
+    """
+    if not await _db_available():
+        pytest.skip("Postgres not reachable")
+
+    from agent.tools._booking_helpers import _resolve_audience_variants
+
+    # Pass explicit input_audience — gate must NOT fire
+    kind, family, candidates = await _resolve_audience_variants(
+        db_session, "Corte de Mujer Test", input_audience="adult_female"
+    )
+    assert kind == "none", (
+        f"Expected kind='none' when input_audience='adult_female' is provided, got '{kind}'. "
+        "Gate must be bypassed when the caller has already stated audience — no re-asking needed."
     )
 
 

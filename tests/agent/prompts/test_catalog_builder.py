@@ -116,7 +116,7 @@ class TestBuildCatalogForPrompt:
     def test_principal_line_format(self):
         fn = _import()
         result = fn([PRINCIPAL_CORTE_SENORA])
-        assert "[PRINCIPAL · cut · adult_female]" in result
+        assert "[PRINCIPAL · cut]" in result  # REQ-2: no audience suffix
         assert "corte señora" in result
         assert "45min" in result
 
@@ -159,7 +159,7 @@ class TestBuildCatalogForPrompt:
     def test_unisex_audience_in_tag(self):
         fn = _import()
         result = fn([UNISEX_PRINCIPAL])
-        assert "[PRINCIPAL · massage · unisex]" in result
+        assert "[PRINCIPAL · massage]" in result  # REQ-2: no audience suffix
 
     def test_ordering_principals_first(self):
         """Principals must appear before variants and addons."""

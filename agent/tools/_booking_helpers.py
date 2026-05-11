@@ -106,7 +106,7 @@ async def _resolve_stylist(session: AsyncSession, name: str) -> UUID | None:
 
 
 async def _resolve_audience_variants(
-    session: AsyncSession, service_name: str
+    session: AsyncSession, service_name: str, input_audience: str | None = None
 ) -> tuple[str, str, list[str]]:
     """Detect whether a service belongs to an ambiguous family.
 
@@ -193,7 +193,9 @@ async def _resolve_audience_variants(
             # sharing a dimension with audience-tagged peers correctly trigger
             # the audience-required gate (design §2 Slice 2, Task 2.3).
             audience_values = {p[1] for p in peers}  # include None
-            input_audience = row[1]
+            # Gate fires only when the CALLER has not yet provided an explicit audience.
+            # input_audience is the caller's audience value (parameter), NOT the DB row's
+            # audience column — reading the row value was semantically wrong (ADR-2 fix).
             if len(peers) > 1 and len(audience_values) > 1 and input_audience is None:
                 logger.info(
                     "_resolve_audience_variants: audience_required axis=%s options_count=%d",
@@ -303,7 +305,7 @@ async def _resolve_active_stylists(
 
 
 async def _resolve_service_ids_strict(
-    session: AsyncSession, service_names: list[str]
+    session: AsyncSession, service_names: list[str], audience: str | None = None
 ) -> tuple[list[str], list[str], list[dict], list[str]]:
     """Resolve service names to UUIDs with ambiguity detection.
 
@@ -383,8 +385,11 @@ async def _resolve_service_ids_strict(
             unknown.append(name)
             continue
 
-        # Check for ambiguity before committing UUID
-        kind, family_label, candidates = await _resolve_audience_variants(session, matched_internal)
+        # Check for ambiguity before committing UUID.
+        # Pass caller's audience so the gate does not fire when audience is already known.
+        kind, family_label, candidates = await _resolve_audience_variants(
+            session, matched_internal, input_audience=audience
+        )
         if kind == "audience":
             logger.info(
                 "_resolve_service_ids_strict: ambiguous axis=%s term=%s options=%d",

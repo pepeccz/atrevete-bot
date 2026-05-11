@@ -37,9 +37,9 @@ def test_audience_labels_are_strings():
     from agent.prompts.catalog_builder import _AUDIENCE_LABELS
 
     for key, value in _AUDIENCE_LABELS.items():
-        assert isinstance(value, str) and value, (
-            f"_AUDIENCE_LABELS[{key!r}] must be a non-empty string, got {value!r}"
-        )
+        assert (
+            isinstance(value, str) and value
+        ), f"_AUDIENCE_LABELS[{key!r}] must be a non-empty string, got {value!r}"
 
 
 def test_category_labels_defined():
@@ -52,9 +52,9 @@ def test_category_labels_defined():
         ServiceCategory.AESTHETICS,
         ServiceCategory.BOTH,
     ):
-        assert category in _CATEGORY_LABELS, (
-            f"_CATEGORY_LABELS missing ServiceCategory.{category.name}"
-        )
+        assert (
+            category in _CATEGORY_LABELS
+        ), f"_CATEGORY_LABELS missing ServiceCategory.{category.name}"
 
 
 def test_category_labels_are_strings():
@@ -62,9 +62,9 @@ def test_category_labels_are_strings():
     from agent.prompts.catalog_builder import _CATEGORY_LABELS
 
     for key, value in _CATEGORY_LABELS.items():
-        assert isinstance(value, str) and value, (
-            f"_CATEGORY_LABELS[{key!r}] must be a non-empty string, got {value!r}"
-        )
+        assert (
+            isinstance(value, str) and value
+        ), f"_CATEGORY_LABELS[{key!r}] must be a non-empty string, got {value!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -78,16 +78,18 @@ def _fake_service(metadata_=None, audience=None):
 
 
 def test_principal_tag_includes_dimension_and_audience():
+    """PRINCIPAL tag format: dimension only (no audience suffix — REQ-2)."""
     from agent.prompts.catalog_builder import _build_service_type_tag
 
     svc = _fake_service(
         metadata_={"service_type": "principal", "dimension": "cut", "parent_service_name": None},
         audience="adult_female",
     )
-    assert _build_service_type_tag(svc) == " [PRINCIPAL · cut · adult_female]"
+    assert _build_service_type_tag(svc) == " [PRINCIPAL · cut]"
 
 
 def test_principal_tag_uses_any_when_audience_is_none():
+    """PRINCIPAL tag format: dimension only — audience=None also produces no suffix (REQ-2)."""
     from agent.prompts.catalog_builder import _build_service_type_tag
 
     svc = _fake_service(
@@ -98,7 +100,7 @@ def test_principal_tag_uses_any_when_audience_is_none():
         },
         audience=None,
     )
-    assert _build_service_type_tag(svc) == " [PRINCIPAL · manicure · any]"
+    assert _build_service_type_tag(svc) == " [PRINCIPAL · manicure]"
 
 
 def test_variant_tag_references_parent():
@@ -126,6 +128,46 @@ def test_backward_compatible_when_metadata_missing(metadata):
 
     svc = _fake_service(metadata_=metadata)
     assert _build_service_type_tag(svc) == ""
+
+
+def test_principal_tag_omits_audience_token():
+    """SCN-5 (REQ-2): PRINCIPAL tag must NOT include an audience suffix.
+
+    The new required format is '[PRINCIPAL · {dimension}]' regardless of the
+    service's audience value.  Only dimension is shown.
+
+    Negative assertions confirm VARIANTE and ADDON formats are unchanged.
+    """
+    from agent.prompts.catalog_builder import _build_service_type_tag
+
+    # Positive: PRINCIPAL with audience=adult_female → no audience in tag
+    svc_principal = _fake_service(
+        metadata_={"service_type": "principal", "dimension": "cut", "parent_service_name": None},
+        audience="adult_female",
+    )
+    result = _build_service_type_tag(svc_principal)
+    assert result == " [PRINCIPAL · cut]", (
+        f"SCN-5 FAILED: expected ' [PRINCIPAL · cut]', got {result!r}. "
+        "Audience token must be omitted from PRINCIPAL tag (REQ-2)."
+    )
+
+    # Negative: VARIANTE tag is unchanged
+    svc_variant = _fake_service(
+        metadata_={"service_type": "variant", "dimension": "cut", "parent_service_name": "Cortar"},
+    )
+    variant_result = _build_service_type_tag(svc_variant)
+    assert (
+        variant_result == " [VARIANTE de cortar]"
+    ), f"SCN-5 FAILED: VARIANTE tag must be unchanged, got {variant_result!r}."
+
+    # Negative: ADDON tag is unchanged
+    svc_addon = _fake_service(
+        metadata_={"service_type": "addon", "dimension": "treatment", "parent_service_name": None},
+    )
+    addon_result = _build_service_type_tag(svc_addon)
+    assert (
+        addon_result == " [ADDON · treatment]"
+    ), f"SCN-5 FAILED: ADDON tag must be unchanged, got {addon_result!r}."
 
 
 def test_unknown_service_type_yields_no_tag():
@@ -173,9 +215,9 @@ def test_seeds_populate_metadata_keys_for_every_service():
         meta = svc.get("metadata_", {})
         missing = required_keys - meta.keys()
         assert not missing, f"Service {svc['name']!r} metadata_ is missing keys: {missing}"
-        assert meta["service_type"] in valid_types, (
-            f"Service {svc['name']!r} has invalid service_type={meta['service_type']!r}"
-        )
+        assert (
+            meta["service_type"] in valid_types
+        ), f"Service {svc['name']!r} has invalid service_type={meta['service_type']!r}"
 
 
 def test_seeds_variant_parent_references_are_valid():
