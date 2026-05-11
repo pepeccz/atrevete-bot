@@ -28,6 +28,7 @@ import { ConversationThread } from "@/components/inbox/ConversationThread";
 import { CustomerCard } from "@/components/inbox/CustomerCard";
 import { usePermission } from "@/hooks/use-permission";
 import api from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type { InboxFilter, ConversationHistory, ConversationHistoryInbox } from "@/lib/types";
 
 // ─── Permission gate ───────────────────────────────────────────────────────────
@@ -74,6 +75,28 @@ export default function ConversationsPage() {
   const [activeWhatsappContact, setActiveWhatsappContact] = useState<
     import("@/lib/types").WhatsappContact | null
   >(null);
+  // Persisted collapse state for the left conversation list — matches the
+  // main nav rail UX. Reads localStorage on mount, writes on toggle.
+  const [listCollapsed, setListCollapsed] = useState<boolean>(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("inbox.listCollapsed");
+      if (saved === "1") setListCollapsed(true);
+    } catch {
+      // localStorage may be unavailable (SSR, privacy mode) — silently ignore
+    }
+  }, []);
+  const toggleListCollapsed = useCallback(() => {
+    setListCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("inbox.listCollapsed", next ? "1" : "0");
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
 
   // Sync URL → state when browser back/forward or external link changes params
   useEffect(() => {
@@ -144,13 +167,20 @@ export default function ConversationsPage() {
 
       {/* 3-column grid — fills remaining height */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left — conversation list */}
-        <div className="w-72 flex-shrink-0 overflow-hidden">
+        {/* Left — conversation list (collapsible icon rail) */}
+        <div
+          className={cn(
+            "flex-shrink-0 overflow-hidden transition-[width] duration-150",
+            listCollapsed ? "w-12" : "w-72"
+          )}
+        >
           <ConversationList
             activeFilter={activeFilter}
             activeConversationId={activeConversationId}
             onFilterChange={handleFilterChange}
             onSelectConversation={handleSelectConversation}
+            collapsed={listCollapsed}
+            onToggleCollapsed={toggleListCollapsed}
           />
         </div>
 
