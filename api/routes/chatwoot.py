@@ -279,7 +279,7 @@ async def receive_chatwoot_webhook(
             chatwoot_client = ChatwootClient()
             await chatwoot_client.send_message(
                 customer_phone=payload.sender.phone_number,
-                message="Estás enviando mensajes muy rápido 😅 Esperá un momento y volvé a escribirme. 🙏",
+                message="Estás enviando mensajes muy rápido 😅 Espera un momento y vuelve a escribirme. 🙏",
                 conversation_id=payload.conversation.id,
             )
         except Exception:
@@ -324,8 +324,8 @@ async def receive_chatwoot_webhook(
                     await chatwoot_client.send_message(
                         customer_phone=payload.sender.phone_number,
                         message=(
-                            "¡Hola! Solo puedo procesar mensajes de texto o de voz 🎤 "
-                            "¿Podrías escribirme lo que necesitas? 💕"
+                            "No puedo procesar imágenes ni archivos. "
+                            "¿Puedes repetir tu consulta por escrito o como nota de voz? 💕"
                         ),
                         conversation_id=payload.conversation.id,
                     )
@@ -374,7 +374,7 @@ async def receive_chatwoot_webhook(
                                 chatwoot_client = ChatwootClient()
                                 await chatwoot_client.send_message(
                                     customer_phone=payload.sender.phone_number,
-                                    message="El audio es demasiado largo. Por favor, enviá un mensaje más corto o escribí tu consulta. 🎙️",
+                                    message="El audio es demasiado largo. Por favor, envía un mensaje más corto o escribe tu consulta. 🎙️",
                                     conversation_id=payload.conversation.id,
                                 )
                             except Exception:
@@ -398,7 +398,7 @@ async def receive_chatwoot_webhook(
                                         chatwoot_client = ChatwootClient()
                                         await chatwoot_client.send_message(
                                             customer_phone=payload.sender.phone_number,
-                                            message="El audio es demasiado largo. Por favor, enviá un mensaje más corto o escribí tu consulta. 🎙️",
+                                            message="El audio es demasiado largo. Por favor, envía un mensaje más corto o escribe tu consulta. 🎙️",
                                             conversation_id=payload.conversation.id,
                                         )
                                     except Exception:
