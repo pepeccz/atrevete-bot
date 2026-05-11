@@ -373,7 +373,7 @@ Rollback:
 DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" ./venv/bin/alembic downgrade -1
 ```
 
-No checkpoint flush required. Revision: `a7b8c9d0e1f2` (parent: `z6a7b8c9d0e1`).
+No checkpoint flush required. Revision: `e9d1f2b8c7a4` (parent: `a7b8c9d0e1f2`).
 
 ---
 
